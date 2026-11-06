@@ -189,7 +189,7 @@
             # empty values trip the absolute-path assertion. Same narrow leaf
             # stubs as above; the standalone pi module never references yolo
             # options (only documents the explicit extraReadWritePaths binding).
-            evalWorktree = piExtra: (nixpkgs.lib.evalModules {
+            evalPi = piExtra: historian: (nixpkgs.lib.evalModules {
               specialArgs = { pkgs = import nixpkgs { inherit system; }; };
               modules = [
                 ./nix/hm/pi.nix
@@ -213,9 +213,18 @@
                 ({ ... }: {
                   config.smind.hm.dev.llm.enable = true;
                   config.smind.hm.dev.llm.pi = piExtra;
+                  config.programs.pi.historian = historian;
                 })
               ];
             }).config;
+            evalWorktree = piExtra: evalPi piExtra { };
+            historianOptions = { journalRoot = "/srv/pi-journals"; model = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; }; };
+            historianConfigured = evalPi { } historianOptions;
+            historianInvalid = evalPi { } { journalRoot = "relative"; };
+            historianInvalidModels = map (model: evalPi { } { inherit model; }) [
+              (historianOptions.model // { provider = ""; })
+              (historianOptions.model // { id = ""; })
+            ];
             worktreeDefault = (evalWorktree { }).smind.hm.dev.llm.pi.subagentsWorktreeRoot;
             worktreeCustom = (evalWorktree { subagentsWorktreeRoot = "/srv/nvme/subagents-worktrees"; }).smind.hm.dev.llm.pi.subagentsWorktreeRoot;
             worktreeManagedDefault = (evalWorktree { }).home.file ? "/home/alice/.pi/agent/subagents-policy.json";
@@ -281,6 +290,12 @@
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian.json");
+          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
+          assert !(historianConfigured.home.file ? "/home/alice/.pi/agent/historian.json");
+          assert builtins.fromJSON historianConfigured.home.file."/home/alice/.pi/agent/historian-defaults.json".text == historianOptions // { version = 1; };
+          assert builtins.all (a: a.assertion) historianConfigured.assertions;
+          assert builtins.any (a: !a.assertion && builtins.match ".*historian.journalRoot.*" a.message != null) historianInvalid.assertions;
+          assert builtins.all (c: builtins.any (a: !a.assertion && builtins.match ".*historian.model.*" a.message != null) c.assertions) historianInvalidModels;
           assert !(failedLimitAssertion limitsDefault.assertions);
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;

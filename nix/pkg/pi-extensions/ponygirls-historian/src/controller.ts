@@ -1,5 +1,5 @@
-import { join } from 'node:path';
-import { existsSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { existsSync, realpathSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import type { ExtensionAPI, ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { resolveProject } from '../../ponygirls-decisions/src/project.ts';
@@ -8,7 +8,8 @@ import { HISTORY_CHANNEL, type HistoryFeed } from './feed.ts';
 import { MAX_PENDING_EVENTS, type Evidence, type SourceCursor } from './model.ts';
 import { effectivePreferences, modelKey, type EffectivePreferences, type PreferenceStore, type StoredPreferences } from './preferences.ts';
 import { acquireSessionLock, JournalStore } from './store.ts';
-import { HistorianWorker } from './worker.ts';
+import { HistorianWorker, OBJECTIVE_VERSION } from './worker.ts';
+import { WorkerFailure, type AttemptFinish } from './attempt.ts';
 
 export const RECONCILE_INTERVAL_MS = 10000;
 const MAX_BASELINE_PAGES = 1000;
@@ -44,9 +45,9 @@ export class HistorianController {
   private lastCommit: string | null = null;
   private activeConfiguration: string | null = null;
 
-  constructor(pi: ExtensionAPI, preferences: PreferenceStore, ctx: ExtensionContext, agentDir: string, changed: () => void) {
+  constructor(pi: ExtensionAPI, preferences: PreferenceStore, ctx: ExtensionContext, changed: () => void) {
     this.pi = pi; this.preferences = preferences; this.ctx = ctx; this.owner = ctx.sessionManager.getSessionId();
-    this.project = resolveProject(ctx.cwd); this.directory = join(agentDir, 'historian', 'projects', digest(this.project)); this.changed = changed;
+    this.project = resolveProject(ctx.cwd); this.directory = join(preferences.journalRoot(), 'projects', digest(this.project)); this.changed = changed;
     this.worker = new HistorianWorker(ctx.modelRegistry);
   }
   effective(): EffectivePreferences { return effectivePreferences(this.preferences.read(), this.ctx.sessionManager.getEntries(), this.owner); }
@@ -57,8 +58,18 @@ export class HistorianController {
   }
   private open(): JournalStore {
     if (this.store === null) {
-      const release = acquireSessionLock(this.directory, this.owner);
-      try { this.store = new JournalStore(join(this.directory, 'journal.sqlite'), this.project); this.release = release; }
+      const stableDirectory = join(dirname(this.preferences.path), 'historian', 'projects', digest(this.project));
+      const releaseStable = acquireSessionLock(stableDirectory, this.owner);
+      let releaseJournal: (() => void) | null = null;
+      const release = () => { try { if (releaseJournal !== null) releaseJournal(); } finally { releaseStable(); } };
+      try {
+        if (!existsSync(this.directory) || realpathSync(this.directory) !== realpathSync(stableDirectory)) {
+          releaseJournal = acquireSessionLock(this.directory, this.owner);
+        }
+        const store = new JournalStore(join(this.directory, 'journal.sqlite'), this.project);
+        try { store.interruptAttempts(this.owner); } catch (error) { store.close(); throw error; }
+        this.store = store; this.release = release;
+      }
       catch (error) { release(); throw error; }
     }
     return this.store;
@@ -171,22 +182,41 @@ export class HistorianController {
       if (this.working === null && !this.worker.busy && this.failures < MAX_RETRIES && performance.now() >= this.retryAt) {
         const batch = store.batch(this.owner);
         if (batch !== null) {
+          const recent = store.recent(RECENT_EPISODES);
+          const contextDigest = digest(JSON.stringify([batch.id, recent, model, config.focus, OBJECTIVE_VERSION]));
+          const attempt = store.beginAttempt(batch, model, OBJECTIVE_VERSION, contextDigest);
+          const started = performance.now(); let finalized = false;
+          const finish = (result: Omit<AttemptFinish, 'durationMs' | 'endedAt'>) => {
+            store.finishAttempt(attempt.id, { ...result, durationMs: performance.now() - started, endedAt: new Date().toISOString() });
+            finalized = true;
+          };
           const request = new AbortController(); this.request = request;
-          this.working = this.worker.run(batch, store.recent(RECENT_EPISODES), model, config.focus, request.signal)
+          this.working = this.worker.run(batch, recent, model, config.focus, request.signal)
             .then(result => {
+              finish({ outcome: 'validated', failure: null, ...result.metrics });
               if (this.disposed || request.signal.aborted) return;
               const committed = this.preferences.withSnapshot(latest => {
                 if (!this.authorized(latest, key)) return false;
-                store.commit(batch, result.proposals, result.meta); return true;
+                store.commit(batch, result.proposals, { ...result.meta, attemptId: attempt.id }); return true;
               });
               if (!committed) return;
               this.projectMarkdown(store);
               this.lastCommit = new Date().toISOString(); this.failures = 0; this.error = null;
-            }).catch(error => { if (!this.disposed && !request.signal.aborted) { this.failures++; this.retryAt = performance.now() + RETRY_BASE_MS * 2 ** (this.failures - 1); this.fault(error); } })
+            }).catch(error => {
+              let reported = error;
+              if (!finalized) {
+                const failure = error instanceof WorkerFailure ? error : new WorkerFailure('runtime-error', { responseChars: null, usage: null });
+                reported = failure;
+                try { finish({ outcome: failure.code === 'cancelled' ? 'cancelled' : 'failed', failure: failure.code, ...failure.metrics }); }
+                catch (storageError) { this.failures = MAX_RETRIES; this.fault(storageError); return; }
+              }
+              if (!this.disposed && !request.signal.aborted) { this.failures++; this.retryAt = performance.now() + RETRY_BASE_MS * 2 ** (this.failures - 1); this.fault(reported); }
+            })
             .finally(() => { this.working = null; if (this.request === request) this.request = null; if (!this.disposed) { this.changed(); this.schedule(100); } });
         }
       }
     });
+    if (this.failures === 0) this.error = null;
     this.projectMarkdown(store);
   }
   private projectMarkdown(store: JournalStore): void {
@@ -206,6 +236,15 @@ export class HistorianController {
     if (this.capture !== null) await this.capture;
     await this.reconcile();
   }
+  private attemptStatus(): string {
+    if (this.store === null) return 'Attempt diagnostics: no journal open\n';
+    const s = this.store.attemptSummary(this.owner);
+    const recent = this.store.attempts(this.owner, 10).map(a =>
+      `  ${a.id}: ${a.outcome}${a.failure === null ? '' : ` (${a.failure})`}; ${a.provider}/${a.model} (${a.thinking}); ${a.startedAt}; ${a.durationMs === null ? 'duration unknown' : `${Math.round(a.durationMs)} ms`}; batch ${a.batchId}`);
+    return `Attempt totals: ${s.total}; validated: ${s.validated}; failed: ${s.failed}; recovered: ${s.recovered}; cancelled: ${s.cancelled}; interrupted: ${s.interrupted}; running: ${s.running}\n` +
+      'This session, since diagnostics began. Admissions, not wire requests (SDK retries may occur). Validated is not published; interrupted means outcome unknown. Recovery means a later validated response for the same batch.\n' +
+      (recent.length === 0 ? '' : `Latest attempts (maximum 10):\n${recent.join('\n')}\n`);
+  }
   status(): string {
     let config: EffectivePreferences;
     try { config = this.effective(); } catch (error) { return `Historian ERROR: ${String(error)}`; }
@@ -215,6 +254,7 @@ export class HistorianController {
       `Model: ${config.model === null ? 'unconfigured' : `${config.model.provider}/${config.model.id} (${config.model.thinking})`} (${config.modelSource})\n` +
       `Activity: ${this.working !== null ? 'journaling' : this.worker.busy ? 'cancelled; waiting for provider drain' : 'idle'}; pending events: ${this.store === null ? 0 : this.store.pending(this.owner)}\n` +
       `Last commit this runtime: ${this.lastCommit ?? 'none'}; failed attempts: ${this.failures}/${MAX_RETRIES}\n` +
+      this.attemptStatus() +
       `Error: ${this.error ?? 'none'}\nMarkdown projection error: ${this.projectionError ?? 'none'}\nCoverage: ${state === null ? 'not capturing' : state.gaps.join('; ') || 'native transcript (not tool internals)'}\n` +
       'Configured provider receives this session family’s eligible evidence and shared published project episodes. Journals are historical, not current-state verification.';
   }

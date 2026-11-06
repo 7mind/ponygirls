@@ -428,6 +428,41 @@ in
       '';
     };
 
+    programs.pi.historian.journalRoot = lib.mkOption {
+      type = lib.types.nullOr lib.types.str;
+      default = null;
+      example = "/home/alice/.local/state/pi/historian";
+      description = ''
+        Absolute parent directory for Historian's projects/<identity>/ journals
+        and per-session locks. Ownership also uses a stable agent-directory lease.
+        Null keeps <agentDir>/historian. Read at session startup; changing it does not move existing journals or pending evidence.
+        Keep it outside source repositories. In a sandbox, explicitly bind a
+        custom location read-write. This option does not enable Historian.
+      '';
+    };
+
+    programs.pi.historian.model = lib.mkOption {
+      type = lib.types.nullOr (lib.types.submodule {
+        options = {
+          provider = lib.mkOption { type = lib.types.str; description = "Explicit Pi provider ID; no credentials belong here."; };
+          id = lib.mkOption { type = lib.types.str; description = "Explicit model ID in that provider's registry."; };
+          thinking = lib.mkOption {
+            type = lib.types.enum [ "off" "minimal" "low" "medium" "high" "xhigh" ];
+            description = "Historian's reasoning effort, independent of the main session.";
+          };
+        };
+      });
+      default = null;
+      example = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
+      description = ''
+        Managed fallback model for Historian. Null leaves it unconfigured.
+        Written with journalRoot to historian-defaults.json, never to mutable
+        historian.json. Global runtime and session selections take precedence.
+        Does not enable Historian or grant provider disclosure approval; use
+        /historian on after reviewing the effective selection.
+      '';
+    };
+
     programs.pi.keybindings = lib.mkOption {
       type = lib.types.attrsOf (lib.types.either lib.types.str (lib.types.listOf lib.types.str));
       default = {
@@ -896,6 +931,12 @@ in
     (lib.mkIf subagentsPolicyManaged {
       home.file."${piCfg.configDir}/subagents-policy.json".source = piSubagentsPolicyJson;
     })
+    (lib.mkIf (piCfg.historian.journalRoot != null || piCfg.historian.model != null) {
+      home.file."${piCfg.configDir}/historian-defaults.json".text = builtins.toJSON {
+        version = 1;
+        inherit (piCfg.historian) journalRoot model;
+      };
+    })
     # Declarative keybindings (see piKeybindingsJson). RO store symlink like
     # settings.json: manage via programs.pi.keybindings, not by hand-editing
     # the file. The /tree footer resolves labels through the live keybinding
@@ -908,6 +949,14 @@ in
       # A pooled worktree root must be an absolute path (never a store path).
       # Scheduler limits must be ordered as the extension validates them.
       assertions = [
+        {
+          assertion = piCfg.historian.journalRoot == null || lib.hasPrefix "/" piCfg.historian.journalRoot;
+          message = "programs.pi.historian.journalRoot must be null or an absolute path.";
+        }
+        {
+          assertion = piCfg.historian.model == null || (piCfg.historian.model.provider != "" && piCfg.historian.model.id != "");
+          message = "programs.pi.historian.model requires nonempty provider and id.";
+        }
         {
           assertion = !(cfg.pi.subagentsNesting && cfg.pi.subagentsMaxDepth < 2);
           message = "smind.hm.dev.llm.pi.subagentsNesting needs smind.hm.dev.llm.pi.subagentsMaxDepth = 2.";

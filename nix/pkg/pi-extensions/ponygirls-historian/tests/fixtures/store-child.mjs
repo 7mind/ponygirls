@@ -1,12 +1,21 @@
 import { join } from 'node:path';
 import { acquireSessionLock, JournalStore } from '../../src/store.ts';
-import { evidenceFromEntry } from '../../src/evidence.ts';
+import { digest, evidenceFromEntry } from '../../src/evidence.ts';
 const [mode, directory, owner] = process.argv.slice(2);
 if (process.send === undefined) throw new Error('IPC required');
 try {
   if (mode === 'lock') {
     const release = acquireSessionLock(directory, owner);
     process.on('message', () => { release(); process.disconnect(); });
+    process.send({ ready: true });
+  } else if (mode === 'attempt') {
+    const journalDir = join(directory, 'historian', 'projects', digest(directory));
+    const release = acquireSessionLock(journalDir, owner);
+    const store = new JournalStore(join(journalDir, 'journal.sqlite'), directory);
+    const evidence = evidenceFromEntry(owner, owner, { type: 'message', id: 'pending', parentId: null, timestamp: '2026-11-06T18:00:00Z', message: { role: 'user', content: 'Synthetic admitted work', timestamp: 1 } });
+    store.capture(owner, true, [], [evidence], []);
+    store.beginAttempt(store.batch(owner), { provider: 'fixture', id: 'scripted', thinking: 'off' }, 'v1', digest('synthetic context'));
+    process.on('message', () => { store.close(); release(); process.disconnect(); });
     process.send({ ready: true });
   } else if (mode === 'commit') {
     const store = new JournalStore(join(directory, 'journal.sqlite'), '/synthetic-project');

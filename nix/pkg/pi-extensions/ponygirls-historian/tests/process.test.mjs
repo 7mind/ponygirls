@@ -6,6 +6,8 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { JournalStore } from '../src/store.ts';
+import { HistorianController } from '../src/controller.ts';
+import { PreferenceStore } from '../src/preferences.ts';
 
 function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'historian-process-'));
@@ -53,6 +55,25 @@ test('two OS processes publish into one journal without losing revisions or proj
     const markdown = readFileSync(join(directory, 'journal.md'), 'utf8');
     assert.match(markdown, /first/); assert.match(markdown, /second/);
   } finally { store.close(); }
+});
+
+test('controller cannot interrupt a live owner; process death leaves an unknown attempt and pending evidence', { timeout: 15000 }, async t => {
+  const { directory, spawn } = fixture(t);
+  const first = spawn('attempt', 'root'); assert.deepEqual(await first.ready, { ready: true });
+  const other = spawn('attempt', 'other'); assert.deepEqual(await other.ready, { ready: true });
+  const preferences = new PreferenceStore(join(directory, 'historian.json'));
+  const ctx = { cwd: directory, sessionManager: { getSessionId: () => 'root', getEntries: () => [] }, modelRegistry: { find: () => undefined }, ui: { notify() {} } };
+  const controller = new HistorianController({ events: { emit() {} } }, preferences, ctx, () => {});
+  t.after(() => controller.dispose()); await controller.reconcile();
+  assert.match(controller.status(), /already owned/);
+  const store = new JournalStore(join(controller.directory, 'journal.sqlite'), directory); t.after(() => store.close());
+  assert.equal(store.attemptSummary('root').running, 1);
+  first.child.kill('SIGKILL'); assert.equal((await first.exited)[1], 'SIGKILL');
+  await controller.reconcile(); assert.match(controller.status(), /Error: none/);
+  assert.equal(store.attemptSummary('root').interrupted, 1); assert.equal(store.pending('root'), 1);
+  assert.equal(store.attempts('root', 1)[0].durationMs, null);
+  assert.equal(store.attemptSummary('other').running, 1, 'another live root is untouched');
+  other.child.send('release'); assert.equal((await other.exited)[0], 0);
 });
 
 test('captured pending evidence survives an owner process dying before publication', { timeout: 15000 }, async t => {

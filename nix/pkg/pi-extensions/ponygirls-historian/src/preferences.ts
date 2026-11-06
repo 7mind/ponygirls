@@ -3,7 +3,7 @@ import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { object, text } from './model.ts';
 import type { WorkerModel } from './worker.ts';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { acquireSessionLock } from './store.ts';
 
 export const ENABLED_TYPE = 'historian.enabled';
@@ -11,6 +11,7 @@ export const MODEL_TYPE = 'historian.model';
 export const CONSENT_TYPE = 'historian.consent';
 export const FOCUS_TYPE = 'historian.focus';
 export const DEFAULT_FOCUS = 'Significant research, experiments, external-system interactions, blockers and reusable discoveries.';
+export interface ManagedPreferences { journalRoot: string | null; model: WorkerModel | null }
 export interface Preferences { enabled: boolean; model: WorkerModel | null; focus: string; approvedModel: WorkerModel | null }
 export interface StoredPreferences extends Preferences { enabledGeneration: number }
 export interface EffectivePreferences extends Preferences { enabledSource: 'session' | 'global'; modelSource: 'session' | 'global'; enabledGeneration: number | null; enabledRevision: number }
@@ -23,7 +24,23 @@ export function modelKey(model: WorkerModel | null): string { return JSON.string
 export class PreferenceStore {
   readonly path: string;
   constructor(path: string) { this.path = path; }
+  private managed(): ManagedPreferences {
+    return readJsonPreferences(join(dirname(this.path), 'historian-defaults.json'), () => ({ journalRoot: null, model: null }), raw => {
+      const p = object(raw);
+      if (p.version !== 1) throw new Error('Invalid Historian managed defaults version');
+      const journalRoot = p.journalRoot === null ? null : text(p.journalRoot, 'journal root', 4096);
+      if (journalRoot !== null && !isAbsolute(journalRoot)) throw new Error('Historian journal root must be absolute');
+      return { journalRoot, model: p.model === null ? null : parseModel(p.model) };
+    }, 'Historian managed defaults');
+  }
+  journalRoot(): string {
+    return this.managed().journalRoot ?? join(dirname(this.path), 'historian');
+  }
   read(): StoredPreferences {
+    const local = this.local(); const managed = this.managed();
+    return { ...local, model: local.model === null ? managed.model : local.model };
+  }
+  private local(): StoredPreferences {
     return readJsonPreferences(this.path, () => ({ enabled: false, enabledGeneration: 0, model: null, focus: DEFAULT_FOCUS, approvedModel: null }), raw => {
       const p = object(raw);
       if (p.version !== 1 || typeof p.enabled !== 'boolean' || !Number.isSafeInteger(p.enabledGeneration) || (p.enabledGeneration as number) < 0) throw new Error('Invalid Historian defaults version/enabled/generation');
@@ -36,9 +53,9 @@ export class PreferenceStore {
     const release = acquireSessionLock(join(dirname(this.path), 'historian'), 'global-preferences');
     try { return use(this.read()); } finally { release(); }
   }
-  update(change: (current: StoredPreferences) => Preferences): void {
+  update(change: (current: StoredPreferences) => Partial<Preferences>): void {
     this.withSnapshot(previous => {
-      const value = change(previous);
+      const value = { ...this.local(), ...change(previous) };
       const enabledGeneration = previous.enabledGeneration + (value.enabled === previous.enabled ? 0 : 1);
       if (!Number.isSafeInteger(enabledGeneration)) throw new Error('Historian enablement generation overflow');
       writeJsonPreferences(this.path, { version: 1, ...value, enabledGeneration });
