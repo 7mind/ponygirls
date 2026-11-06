@@ -86,6 +86,9 @@ Always apply authorization and `X-Content-Type-Options: nosniff` on raw/asset ro
   failed diagrams do not silently fall back to raw source. The original download
   link stays available, regardless of renderer success.
 
-Focused Node tests are Behavioral/Active/Blackbox/Atomic safety-contract tests.
-They do not establish browser rendering, CSP, authentication or PDF fidelity;
-those are covered by the parent project's real-browser acceptance checks.
+Focused Node tests cover safety contracts (Blackbox/Atomic) and the production
+PDF page-operation closure (Whitebox/Atomic regression tests), all Behavioral/Active.
+After building, run `CHROMIUM_BIN=/path/to/chromium npm run test:browser` for the
+real-browser Mermaid regression: sanitized labels must survive as SVG text under
+the production CSP without permitting foreignObject. Authentication, complete
+browser journeys and PDF fidelity remain parent-project acceptance checks.

@@ -46,7 +46,7 @@ function graphviz(text) {
     worker.postMessage(text);
   });
 }
-mermaid.initialize({startOnLoad:false, securityLevel:'strict', maxTextSize:50000, maxEdges:500, suppressErrorRendering:true, flowchart:{htmlLabels:false}, secure:['secure','securityLevel','startOnLoad','maxTextSize','maxEdges','suppressErrorRendering','flowchart']});
+mermaid.initialize({startOnLoad:false, securityLevel:'strict', htmlLabels:false, maxTextSize:50000, maxEdges:500, suppressErrorRendering:true, flowchart:{htmlLabels:false}, secure:['secure','securityLevel','htmlLabels','startOnLoad','maxTextSize','maxEdges','suppressErrorRendering','flowchart']});
 let graphId = 0;
 async function diagram(text, kind, target) {
   const source = graphSource(text);
