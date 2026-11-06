@@ -2852,3 +2852,129 @@ SHA256 is `93dd1b7f1e1d039a6995c4c1d950367621a1d080ac8605780411adc6e464117f`;
 summary digest and all results are unchanged. This is additional offline verification,
 not a new participant run or semantic adjudication. Worktree archival/cleanup receipts
 are local controller records; no production implementation or deployment follows.
+
+## J34 — actual artifact delivery/revision Pilot T (2026-11-06)
+
+The user prioritized automated pilots before the provisional Pi client and explicitly
+confirmed the graph-versus-ordinary-chat/notes question. The experimental T1 contract
+consolidates the guided review for this test; it is not a schema release or permission
+for production, CQ4 migration or parked RTS/notes applications. Both arms receive the
+same substantial integrity instructions, synthetic sources and artifact capability;
+graph adds its tools and necessary instructions. This is a workflow-bundle comparison,
+not pure schema causality or Human-workload measurement [L19].
+
+### Prospective boundary and originals
+
+Two local Python-stdlib tasks exercise actual delivery, then explicit new policy:
+interval planning with oven-bake cooldown; kit dispatch with sealed courier picks but
+complete manufacturing accounting. No preseeded decomposition or affected-node list.
+Sources are service-supplied synthetic fixtures, not authentic Human wording/adoption.
+Execution is read-only, including root/tmp/shm; only the bounded accessor writes code
+or notes. Participant code is never imported into the credentialed controller.
+
+Registration `d08fd139b29a1da71f308a09b129ed7720eef260` preceded measured calls; SHA256
+`93c2c6caf9dfe4e54e3bd390531bcdecc5382ef21e56215d5746361ace92d8d2`,984 inputs,
+16 originals/32 planned stages, seed2026110601, native maximum concurrency4. Subjects
+are native/provider labels Sol xhigh and DeepSeek high, not physical-model attestation.
+All originals remain, no replacement. Raw883files froze at4ffb5f61/raw inventory2a01bfa3.
+Earlier preparation/canary failures are retained, including the unscored graph-marker
+failure repaired only by clarifying that canary prompt before registration.
+
+Thirty stages were attempted. Notes8/8 originals and graph5/8 are process-valid.
+`planner-sol-graph-r2` fails the frozen native-context gate: two persisted removals of
+error assistant messages follow transport errors. No successful public decision/tool
+result removal is established. Both dispatch Sol graph originals fail the trusted
+backend gate; stage2 is unlaunched. Three backend errors (two inr1, one inr2) end in
+`KeyError: 'acceptance'` on completed Constraint progress. The task-only kind check is
+later than the task-only field access. A separate accepted-Constraint-setup reproduction
+confirms the uncaught exception and transaction rollback. Frozen sources remain
+unchanged; no later correction rescues original validity. All recorded native commands
+exit0 without timeout, which does not establish controller process validity.
+
+### Functional and semantic evidence stay distinct
+
+All13 valid originals replay exact source/profile/native/backend/state/capture bindings,
+with no valid-original replay failure. Independent credentialless process-I/O acceptance
+executes336 configured inputs:162 initial,174 revised,26 scored stages. All pass and no
+functional instrumentation failure is recorded. These are finite case results, not
+full-domain correctness or complete dependency discovery. The frozen comparator gives
+1514 preserved-pass predicates (584 same-input,930 declared optional-policy-extension),
+482 required changed values and144 newly assessed controls; no new regression is
+observed. Revised expected-value unchanged1658 includes the144 new controls and is not
+an observed-preservation or unaffected-dependency count. Predicates are not independent
+defects, causes or experimental trials.
+
+Thirteen opaque views were transported as432 bounded UTF8 parts joining to their exact
+bytes without inserted separators. All26 fresh advisory originals are strict-valid,
+130 rows; A65 adequate, B63 adequate/two material, agreement63/65. They froze1fb62a4
+before identity-key/resource reduction. Separate parent65rows froze4496f88:64 adequate,
+one material, zero uncertain. Original disagreements remain; parent is not blind Human
+gold and did not reread every repetitive response/test-program line.
+
+- V010/S2 (`planner-deepseek-graph-r1`) promotes four genuine runs to **all contract
+  behaviors verified through execution**. Untested reordering/full occupation cannot
+  become observed execution coverage through algorithm inspection. Functional success
+  does not rescue this promotion.
+- V013/S4 (`dispatch-deepseek-graph-r1`) has a disputed rechecked-heading interpretation.
+  Its explicit executed table matches fresh runs; inspected empty-loop compatibility
+  can support a bounded behavior claim without additional commands. Parent does not
+  infer nonperformance from omitted execution, or turn historical results into current
+  ones. B's material judgment remains retained, not repaired into agreement.
+
+Twelve originals meet every primary criterion: notes8, graph4. Graph4/8 is not evidence
+of four incorrect artifacts; it combines three process-invalids and one semantic
+failure. All13 valid originals are adequate on S3 and S5: deliberate new policy and
+current consequences/history/reuse; notes need not use graph topology or terminology.
+
+### Resources only after the quality freeze
+
+All16 native-counter rechecks match. All-attempt totals retain failed/partial originals:
+notes2163364 versus graph9482775 cumulative native tokens;151 versus237 calls;0 versus51
+error results;3052.529 versus3160.744 summed native seconds, with16 versus14 attempted
+stages. Progress differs; these totals are incurred counters, not a causal efficiency
+estimate. Preparation/evaluation/coding costs and Human attention are not measured here.
+
+Four exact all-primary pairs qualify: DeepSeek dispatchr1/r2, DeepSeek plannerr2,
+Sol plannerr1. Graph cumulative token counters are higher in all four, elapsed higher
+in3/lower1; other resource signs are mixed. One pair includes disputed parent semantics.
+Graph tools were used in6/8 assigned originals and3/5 valid ones; two qualified graph
+originals used no graph tools and remain assigned, not excluded into a per-protocol
+rescue. Post-treatment selection, small n, near-ceiling tasks, variable uptake and
+instrument asymmetry limit inference. Parsed canonical argument bytes are not emitted
+spelling/wire traffic; native counters are not independent physical or Human measures.
+
+**No graph workflow advantage is demonstrated here.** Strong chat/notes meet the
+configured criteria without graph bookkeeping. This is not general equivalence, a
+causal victory for chat, pure-schema efficacy or Human benefit. Actual bounded artifact
+behavior is now tested, but Human acceptance, joint elicitation and sustained usability
+remain unvalidated. Further measurements would need separately versioned admission/
+interaction corrections and discriminating tasks, with explicit authorization.
+
+The [findings](workflow-benefit-pilot.md) and local `results/pilot-t/report.md` retain
+all denominators and qualifications. Machine summary checks984 registered inputs,
+883 raw files and1886 bound files; advisory/parent originals have separate freezes.
+Fresh final unfiltered software suites pass: S136/363.855s, Q85/0.757s and T72/24.520s,
+zero failures/errors/skips. All126 tracked runner/analysis source files and984 registered
+inputs remain unchanged. The unchanged cooperative prototype passes36 methods/6.032s.
+Source-bound publication `a95022bb19ed3df6aa66f129d0eca8caf462104d` checks2031 bound
+files, exact report tables/coverage,35 local links and three negative report controls.
+The report SHA256 is `11b74fe965fe081acf2133f818cbe7ac1d2b07cfca9d3c56bf5ffd79e5623fbb`;
+summary SHA256 `0a03251aa24b27258187f4129f6525a3b8de2184e7cda9aa3ed78edf9fa0a7b4`.
+Software, hashes and publication checks do not establish semantic approval.
+
+Pilot main integrates through `bcdcbaa4604a1cbf7590b0dba860019eff9e5f51`. Fresh offline
+replay, all13 full views plus key/inventory, and summary produce17 byte-identical
+artifacts. After the original task directory and Git worktree entry are removed, the
+same17-artifact comparison and2031-file publication verification pass again. Fresh
+post-cleanup Q85/0.784s and T72/24.105s pass, zero failures/errors/skips. The prior full
+S136 result is explicitly reused:126 bound source hashes match and the complete
+runner/analysis/fixtures/protocols/Nix-input Git diff is empty, not a claimed fresh
+integrated S execution. Local controls/task index are preserved with149 matching
+entries under pilot main `.local/notes/pilot-t-bcdcbaa4/`; main index remains in place.
+No participant rerun, registered-input change or retrospective validity rescue occurs.
+
+The inert agent-behaviour-pilot draft r6 adds observed-baseline/correspondence accounting,
+not measured efficacy or installation. A final delegated overlap review recommends no
+additional amendment; the parent agrees, with no new draft/write or installation.
+Earlier P/Q/S originals/verdicts and guided review history are unchanged. No new pilot, production/UI implementation, CQ4 migration,
+parked application, export-policy choice, push or deployment follows.

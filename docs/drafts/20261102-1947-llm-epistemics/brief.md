@@ -1,6 +1,7 @@
 # Brief — epistemics of LLM-accelerated development
 
-Status: through J33, including the bounded RDF evaluation, 2026-11-05.
+Status: through J34, including published bounded actual-artifact Pilot T, 2026-11-06.
+Final unfiltered software regressions and source-bound publication verification pass.
 The working schema is **one shared human–agent project graph**, correcting the earlier
 agent-payload focus. CQ4 review and Pilots Q/S are complete. Pilot S preserves all16
 originals/64 stages and separate source-based adjudication; JSON-reference is the
@@ -20,8 +21,11 @@ Pilot T: graph assistance versus equally capable ordinary chat/notes for actual
 artifact delivery and a deliberate scoped policy revision. The
 [experimental contract T1](experimental-contract-t1.md) consolidates the review for
 that test. Automated pilots precede the provisional Pi-extension client; production,
-CQ4 migration and parked applications remain deferred. Preparation/canary success
-is not a measured workflow-benefit or Human-efficacy result.
+CQ4 migration and parked applications remain deferred. The
+[Pilot T findings](workflow-benefit-pilot.md) now retain all16 originals:13 process-valid,
+all13 passing finite functional acceptance,12 fully adequate after separate parent
+semantics. No graph workflow advantage is demonstrated; differential instrument
+attrition and ceiling effects limit inference. Human efficacy remains untested.
 
 ## Problem and proposed response
 
@@ -110,6 +114,14 @@ The case is closed: framing was participant-confirmed; scenario revision is
   RDF-native writing, storage/retrieval performance and Human ergonomics are untested.
   The eventual Scala/distage/BIO/logstage/PostgreSQL/shared-retrieval intent is
   unchanged [J33; L18].
+- Pilot T tests actual artifact delivery and deliberate policy revision, graph bundle
+  versus equally capable chat/notes. All16 originals remain: notes8/8 and graph5/8
+  process-valid; three graph invalids are unscored, including two trusted-backend
+  failures. All13 valid originals pass336 finite independent input executions; parent
+  semantics64 adequate/one material of65. Four exact all-primary pairs have higher
+  graph native cumulative token counters, with mixed other resources; two graph
+  originals in those pairs never used graph tools. No causal efficiency, pure-schema,
+  Human-workload or general superiority claim follows [J34; L19].
 - The cooperative v1 CLI has 36 passing software test methods. Case checks verified
   record/projection/history integrity, not semantic approval or application security.
 
@@ -139,13 +151,18 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 
 - Read: this brief → [shared schema](cq4-node-schema.md) →
   [semantics/worked trace](cq4-unified-graph-semantics.md) →
+  [Pilot T findings](workflow-benefit-pilot.md)/J34 →
   [RDF evaluation](rdf-graph-evaluation.md)/J33 → historical J32/J31 → J30/source review →
   [synthesis](synthesis.md) → J29/J28 →
   [provenance extension](belief-network-provenance.md) →
   [methodology](belief-network-methodology.md) and
   [validation frame](belief-network-validation.md). Detailed historical hypotheses
   and source provenance remain in their registers.
-- Research artifacts: local `~/work/epistemics-pilots`; Pilot S report in
+- Research artifacts: local `~/work/epistemics-pilots`; Pilot T report/summary in
+  `results/pilot-t/`, advisory originals frozen at `1fb62a4`, separate parent at
+  `4496f88`, both before identity-key/resource reduction. All984 registered inputs
+  remain unchanged; no original replacement or instrument repair rescues invalidity.
+  Pilot S report in
   `results/pilot-s/report.md`, source-bound `summary-001.json`, original codings frozen
   at `ee7a7e0`, separate parent at `330f62c`, both before identity/resources. The native
   parse-rejection auditor amendment is versioned separately; no219 registered input
@@ -161,7 +178,8 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 - Saved during the human case: inert `joint-belief-framing` draft r2, get-verified;
   the portable bundle was not changed or installed. The separate agent-behaviour
   pilot draft was r4 during Q; a narrow audit-to-projection/citation amendment is now
-  r5, saved/get-verified during S instrument work. Neither is installed or a measured
+  r5 during S; a narrow observed-baseline/correspondence accounting amendment is now
+  r6, saved/get-verified during T preparation. Neither draft is installed or a measured
   human-workflow result.
 - The RTS case remains unfinished with its old-context Q20/C2/C5 scope conflict
   unresolved. Do not resume game work or transfer consent between examples.
@@ -177,4 +195,5 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 Pilot Q ended at its registered matrix; no outcome-conditioned extension, private
 acceptance case, installation, deployment or push. The framework remains provisional:
 procedural feasibility is not comparative
-fidelity, sustained usability, reduced overload or end-to-end delivery validation.
+fidelity, sustained usability, reduced overload or Human-level end-to-end workflow
+validation. T adds finite artifact behavior/revision evidence, not those broader claims.
