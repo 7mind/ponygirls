@@ -1,7 +1,7 @@
 # Brief — epistemics of LLM-accelerated development
 
-Status: through J36, including versioned Pilot T admission repair and additive rejection diagnostics, 2026-11-06.
-Final unfiltered software regressions and source-bound publication verification pass.
+Status: through J37, including a separate agent-memory M1 candidate and ongoing Pilot U preparation, 2026-11-06.
+Historical Pilot T final regressions/publication checks passed; U is not yet registered or launched.
 The working schema is **one shared human–agent project graph**, correcting the earlier
 agent-payload focus. CQ4 review and Pilots Q/S are complete. Pilot S preserves all16
 originals/64 stages and separate source-based adjudication; JSON-reference is the
@@ -35,9 +35,19 @@ Bounded autonomous continuation delivered [additive rejection diagnostics](pilot
 missing versus stale governing context, exact attributable input locations and explicit
 batch-scoped errors, without automatic repair or changed admission gates.401 full
 software tests pass; no behavioral benefit or new model readiness is established.
-Static schema alignment, binding preview, evidence-method reporting and narrowly
-specified recovery remain proposals. Native transport failures and the historical
-context-edit rule are not corrected.
+Those checks did not establish a transport correction or workflow benefit. A later
+request authorizes further fixes and a larger Pilot U. Preparation now includes
+schema alignment, bounded reads/binding previews and symmetric evidence-method
+reporting, with retained reproductions. Native readiness and measurement remain
+pending; conservative context-edit invalidation and no-replacement rules remain.
+
+The separate [agent-memory M1 candidate](agent-memory-m1.md) extends existing
+source-bound Statement/content/use contracts, not a competing ontology or truth bit.
+It distinguishes observations, assessments, normative policies, procedures,
+heuristics and empirical regularities; preserves time, scope, correction and source
+dependence; separates retrieval from admissible use. Six prior-art section reviews
+inform the design [J37; R69–R74]. This is not ratification, implementation or measured
+benefit. M1 stays outside U's first comparison.
 
 ## Problem and proposed response
 
@@ -163,6 +173,7 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 
 - Read: this brief → [shared schema](cq4-node-schema.md) →
   [semantics/worked trace](cq4-unified-graph-semantics.md) →
+  [agent-memory M1 candidate](agent-memory-m1.md)/J37 →
   [Pilot T diagnostics](pilot-t-diagnostics.md)/J36 →
   [Pilot T repair/proposals](pilot-t-repair.md)/J35 →
   [Pilot T findings](workflow-benefit-pilot.md)/J34 →
