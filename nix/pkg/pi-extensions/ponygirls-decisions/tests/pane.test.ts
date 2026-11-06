@@ -357,7 +357,7 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
 test("allocated decisions layout retains close hints", () => {
   const h = open([decision(1, { context: "line\n".repeat(50) })]);
   const frame = renderLayoutFrame(h.pane, 100, 18, () => {});
-  assert.match(plain(frame.lines.join("\n")), /esc close/);
+  assert.match(plain(frame.lines.join("\n")), /⎋ close/);
 });
 
 test("wide intrinsic previews preserve decisions detail scroll and root resize regrows the body", () => {
