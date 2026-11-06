@@ -112,18 +112,36 @@ async function pdf() {
   async function render(number) {
     if (busy || number < 1 || number > doc.numPages) return;
     busy = true; previous.disabled = next.disabled = true;
+    let page, renderTask, deadline;
+    let expired = false;
+    const cleanup = () => { const current = page; page = null; current?.cleanup(); };
+    // The deadline starts BEFORE GetPage and settles independently of the worker.
+    const timeout = new Promise((_, reject) => {
+      deadline = setTimeout(() => {
+        expired = true;
+        reject(new Error('PDF page operation exceeded the 15 second deadline.'));
+        try { renderTask?.cancel(); } catch { /* still destroy a failed worker */ }
+        try { cleanup(); } catch { /* worker destruction remains mandatory */ }
+        try { Promise.resolve(doc.destroy()).catch(() => {}); } catch { /* deadline already reported */ }
+      }, 15000);
+    });
+    const operation = (async () => {
+      try {
+        page = await doc.getPage(number);
+        if (expired) return; // A late worker reply must not render into detached UI.
+        const initial = page.getViewport({scale:1});
+        const scale = Math.min(2, 1600 / initial.width, Math.sqrt(12000000 / (initial.width * initial.height)));
+        const viewport = page.getViewport({scale});
+        canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
+        renderTask = page.render({canvasContext:canvas.getContext('2d'), viewport});
+        await renderTask.promise;
+      } finally { cleanup(); }
+    })();
     try {
-      const page = await doc.getPage(number);
-      const initial = page.getViewport({scale:1});
-      const scale = Math.min(2, 1600 / initial.width, Math.sqrt(12000000 / (initial.width * initial.height)));
-      const viewport = page.getViewport({scale});
-      canvas.width = Math.ceil(viewport.width); canvas.height = Math.ceil(viewport.height);
-      const renderTask = page.render({canvasContext:canvas.getContext('2d'), viewport});
-      const deadline = setTimeout(() => renderTask.cancel(), 15000);
-      try {await renderTask.promise;} finally {clearTimeout(deadline);}
-      pageNumber = number; label.textContent = `Page ${number} of ${doc.numPages}`; page.cleanup();
+      await Promise.race([operation, timeout]);
+      pageNumber = number; label.textContent = `Page ${number} of ${doc.numPages}`;
     } catch (error) { fail(error); }
-    finally {busy = false; previous.disabled = pageNumber <= 1; next.disabled = pageNumber >= doc.numPages;}
+    finally {clearTimeout(deadline); busy = false; previous.disabled = pageNumber <= 1; next.disabled = pageNumber >= doc.numPages;}
   }
   await render(1);
   addEventListener('pagehide', () => doc.destroy(), {once:true});
