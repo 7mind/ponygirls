@@ -4,7 +4,7 @@ import {
   CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component, type Focusable, type MarkdownTheme, type TUI,
 } from "@earendil-works/pi-tui";
-import { PanelLayout, type PanelParts, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
+import { MARKER_WIDTH, PanelLayout, type PanelParts, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
 import type { Decision } from "./store.ts";
 import { relativeTime } from "./time.ts";
 
@@ -322,8 +322,8 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
   private detailSections(d: Decision): Section[] {
     return [
       { label: "Question", body: d.question },
-      { label: "Created", body: `${relativeTime(d.createdAt, Date.now())} (${d.createdAt})` },
-      { label: "Modified", body: `${relativeTime(d.updatedAt, Date.now())} (${d.updatedAt})` },
+      { label: "Created", body: `${relativeTime(d.createdAt, Date.now())} (${new Date(d.createdAt).toISOString().slice(0, 16).replace("T", " ")} UTC)` },
+      { label: "Modified", body: `${relativeTime(d.updatedAt, Date.now())} (${new Date(d.updatedAt).toISOString().slice(0, 16).replace("T", " ")} UTC)` },
       d.context ? { label: "Context", body: d.context } : null,
       d.options.length ? { label: "Options", body: d.options.map((s, i) => `${i + 1}. ${s}`).join("\n") } : null,
       d.recommendation ? { label: "Recommendation", body: d.recommendation } : null,
@@ -342,9 +342,16 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
   }
 
   /** Short dim id, glyph+colour status, question; secondary text is muted inside the selection band. */
-  private row(item: Decision, selected: boolean, idWidth: number): string {
+  private row(item: Decision, selected: boolean, idWidth: number, width: number): string[] {
     const id = this.theme.fg(selected ? "muted" : "dim", fitCell(oneLine(item.id), idWidth));
-    return [id, this.statusCell(item.status, STATUS_WIDTH), this.sessionLabel(item), this.theme.fg("text", oneLine(item.question)), this.theme.fg("muted", `created ${relativeTime(item.createdAt, Date.now())} · modified ${relativeTime(item.updatedAt, Date.now())}`)].filter(Boolean).join(COLUMN_GAP);
+    const prefix = [id, this.statusCell(item.status, STATUS_WIDTH), this.sessionLabel(item)].filter(Boolean).join(COLUMN_GAP);
+    const ages = this.theme.fg("muted", `created ${relativeTime(item.createdAt, Date.now())} · modified ${relativeTime(item.updatedAt, Date.now())}`);
+    const questionWidth = width - visibleWidth(prefix) - visibleWidth(ages) - 2 * COLUMN_GAP.length;
+    if (questionWidth > 0) {
+      return [`${prefix}${COLUMN_GAP}${this.theme.fg("text", fitCell(oneLine(item.question), questionWidth))}${COLUMN_GAP}${ages}`];
+    }
+    return [truncateToWidth(`${prefix}${COLUMN_GAP}${this.theme.fg("text", oneLine(item.question))}`, width, "…"),
+      ...wrapTextWithAnsi(ages, Math.max(1, width))];
   }
 
   private viewport(lines: string[], rows: number): string[] {
@@ -384,14 +391,16 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
     let rows = Math.max(0, height - bottom.length - 1);
     if (rows && !draft && !this.detail) {
       const list = this.visible();
-      const count = Math.min(Math.max(1, Math.floor(rows / 3)), MAX_LIST_ROWS, Math.max(1, list.length));
+      const rowWidth = Math.max(0, w - MARKER_WIDTH);
+      const idWidth = Math.max(0, ...list.map((item) => visibleWidth(oneLine(item.id))));
+      const rowHeight = Math.max(1, ...list.map((item) => this.row(item, false, idWidth, rowWidth).length));
+      const count = Math.min(Math.max(1, Math.floor(rows / Math.max(3, rowHeight))), MAX_LIST_ROWS, Math.max(1, list.length));
       const index = Math.max(0, list.findIndex((item) => item.id === this.selectedId));
       const from = Math.max(0, Math.min(index - Math.floor(count / 2), list.length - count));
       const shown = list.slice(from, from + count);
-      const idWidth = Math.max(0, ...shown.map((item) => visibleWidth(oneLine(item.id))));
-      const listLines = shown.map((item) => {
+      const listLines = shown.flatMap((item) => {
         const selected = item.id === this.selectedId;
-        return listRow(this.theme, w, this.row(item, selected, idWidth), selected);
+        return this.row(item, selected, idWidth, rowWidth).map((line) => listRow(this.theme, w, line, selected));
       });
       out.push(...(listLines.length ? listLines : [dim("No pending decisions. ⇥ shows history.")]));
       rows -= listLines.length || 1;

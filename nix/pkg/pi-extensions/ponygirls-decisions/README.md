@@ -26,8 +26,9 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
   Questions originating in the active session carry a `[this session]` marker in
   both tabs and in detail. Rows show creation and last-modification ages (for
   example, `2h 30m ago`); the selected question's preview and detail show both
-  ages alongside exact UTC timestamps, including when row text is truncated.
-  Ages refresh while the inbox is open. Detail also shows the full originating
+  ages alongside UTC timestamps at minute precision. Long questions are
+  ellipsized to reserve room for both ages; narrow rows place ages below the
+  question instead. Ages refresh while the inbox is open. Detail also shows the full originating
   session ID.
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved

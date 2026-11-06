@@ -77,6 +77,23 @@ test("creation and modification ages are visible in inbox, history and detail an
   assert.match(h.screen().split("\n")[1]!, /modified just now/);
 });
 
+test("long questions retain both ages at narrow and wide terminal widths", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T02:30:00Z") });
+  for (const sessionId of ["current", "other"]) {
+    const h = open([decision(1, { question: "界é".repeat(200), sessionId, updatedAt: "2026-01-01T02:20:35Z" })]);
+    for (const width of [20, 40, 80, 120]) {
+      const lines = h.pane.render(width).map(plain);
+      const list = lines.slice(1, lines.findIndex((line, index) => index > 1 && line.includes("─"))).join("\n");
+      assert.match(list, /…/, `question ellipsis at ${width}`);
+      assert.match(list.replace(/▌/g, "").replace(/\s+/g, " "), /created 2h 30m ago · modified 9m ago/, `ages at ${width}`);
+      assert.ok(lines.every((line) => visibleWidth(line) <= width));
+    }
+    h.press(ENTER);
+    assert.match(h.screen(), /2026-01-01 02:20 UTC/);
+    assert.doesNotMatch(h.screen(), /02:20:35/);
+  }
+});
+
 test("pending inbox, wrapped Markdown detail, history toggle, and stable selection after refresh", () => {
   const h = open([decision(1), decision(2), decision(3, { status: "answered", answer: "HISTORY-ANSWER" })]);
   assert.equal(h.activeTab(), "pending 2");
