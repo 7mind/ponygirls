@@ -119,6 +119,7 @@ buildNpmPackage (finalAttrs: {
   checkPhase = ''
     runHook preCheck
     (cd packages/coding-agent && ../../node_modules/.bin/vitest run \
+      test/chat-viewport.test.ts \
       test/custom-editor-border-content.test.ts \
       test/interactive-mode-widget-placement.test.ts \
       test/interactive-mode-extension-dialogs.test.ts \

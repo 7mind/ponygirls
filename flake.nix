@@ -881,6 +881,7 @@
             cd context-archive
             mkdir -p node_modules/@ponygirls
             ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             mkdir -p node_modules/@earendil-works
             ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
             for package in pi-ai pi-agent-core pi-tui; do
