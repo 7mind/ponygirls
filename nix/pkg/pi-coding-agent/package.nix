@@ -62,6 +62,9 @@ buildNpmPackage (finalAttrs: {
     ./patches/surface-settings-write-errors.patch
     ./patches/agent-retry-after-delays.patch
     ./patches/border-widgets.patch
+    # Keep border badges clickable around opted-in custom views, with stale
+    # hit targets revoked on widget replacement and dialog transitions.
+    ./patches/clickable-border-widgets.patch
     ./patches/footer-options.patch
     # Retain accepted extension messages across flush failures/cancellation;
     # allow subagent lifecycle notices to resume their governor safely. A
