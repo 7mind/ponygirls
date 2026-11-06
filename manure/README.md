@@ -29,6 +29,30 @@ summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
   returned **once**, hash stored; lost it → `rotate-password`) /
   `public` (anonymous reads); optional TTL on upload.
 
+## Convenient file viewers
+
+Opening a standalone Markdown, image (including SVG), PDF, Mermaid (`.mmd`,
+`.mermaid`) or Graphviz (`.dot`, `.gv`) artifact in a browser opens a formatted
+viewer with an original-file download. Markdown supports GFM and fenced
+`mermaid`, `dot` and `graphviz` diagrams. Rendering uses bundled browser code;
+there are no CDN or external rendering-service requests. External resources in
+Markdown are not loaded automatically.
+
+Non-HTML requests, range requests and existing attachment routes still return
+original bytes. Directory uploads remain unchanged static sites; an explicit
+`<content-base>/__manure/view/<segment-encoded-file-path>` opens a supported
+file in a viewer without changing its static asset URL. The inline raw route
+is `<content-base>/__manure/raw/<segment-encoded-file-path>`; the attachment
+route remains `<content-base>/__manure/files/<segment-encoded-file-path>/content`.
+All routes retain artifact authorization, expiry and revocation checks.
+
+The packaged service installs viewer assets. Source development requires building
+`manure/web/viewer` first; see its README. `viewer_dir` selects the asset
+directory (development default `manure/web/viewer/dist`); explicit JSON `null`
+disables viewers and preserves raw serving. Missing configured assets produce a
+visible error, not a silent fallback. This feature does not remove path mode's
+shared-origin trust limitation or authorize deploying a new server.
+
 ## Opt-in LOW-SECURITY path hosting (TRUSTED CONTENT ONLY)
 
 The secure default remains `content_mode: "subdomain"`: each artifact has

@@ -13,11 +13,12 @@ export function artifactResourceUrl(value, base, mountPath) {
   const url = new URL(href);
   try {
     const segments = url.pathname.split('/').map(decodeURIComponent);
-    // Refuse encoded separators/traversal, nested encoding and reserved controls.
-    if (segments.some(part => /[\\/%]/.test(part) || part === '.' || part === '..' || part === '__manure')) return null;
+    // Match the server's single-pass decoding: literal percent names stay literal.
+    if (segments.some(part => /[\u0000-\u001f\u007f\\/]/.test(part) || part === '.' || part === '..')) return null;
     const path = segments.join('/');
     if (mountPath && !path.startsWith(`${mountPath}/`)) return null;
-    if (!mountPath && /^\/(api|view)(\/|$)/.test(path)) return null;
+    const resource = mountPath ? path.slice(mountPath.length + 1) : path.slice(1);
+    if (['api','__manure'].includes(resource.split('/')[0])) return null;
     return href;
   } catch { return null; }
 }

@@ -34,7 +34,7 @@ const expected = (key, name = filename(key)) => Buffer.from(record(key).files[na
 const allowedOrigins = new Set([new URL(input.base).origin,
   ...Object.keys(input.records).map((key) => new URL(root(key)).origin)]);
 
-const check = async (name, run) => {
+const check = async (name, run, hostileFixture) => {
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1000, height: 800 } });
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
@@ -42,11 +42,16 @@ const check = async (name, run) => {
   const offOrigin = [];
   const pageErrors = [];
   const cspErrors = [];
+  const blockedInlineHandlers = [];
   page.on("console", (message) => {
     // PDF/font diagnostics can be harmless. Only browser CSP errors belong in
     // this guard, particularly stylesheet blocks that semantic checks miss.
     if (message.type() === "error" && /content[- ]security[- ]policy|\bcsp\b/i.test(message.text())) {
-      if (cspErrors.length < 20) cspErrors.push(clean(message.text()));
+      if (/Executing inline event handler violates/i.test(message.text())) {
+        // Retain blocked hostile-handler diagnostics; their originating stage
+        // is not isolated. Execution and surviving attributes are checked below.
+        blockedInlineHandlers.push(clean(message.text()));
+      } else if (cspErrors.length < 20) cspErrors.push(clean(message.text()));
     }
   });
   let dialogs = 0;
@@ -75,10 +80,11 @@ const check = async (name, run) => {
     assert.deepEqual(offOrigin, [], "viewer must never automatically request third-party resources");
     assert.deepEqual(pageErrors, [], "viewer must not leave uncaught browser errors");
     assert.deepEqual(cspErrors, [], "viewer resources/styles must not be blocked by CSP");
+    if (!hostileFixture) assert.deepEqual(blockedInlineHandlers, [], "benign content must not attempt inline handlers");
     for (const secret of secrets) if (secret) assert.equal(requestURLs.some((url) => url.includes(secret)), false, "credential in URL");
-    results.push({ name, ok: true });
+    results.push({ name, ok: true, blockedInlineHandlers });
   } catch (error) {
-    results.push({ name, ok: false, error: clean(error), cspErrors });
+    results.push({ name, ok: false, error: clean(error), cspErrors, blockedInlineHandlers });
   } finally {
     await context.close();
   }
@@ -128,11 +134,18 @@ const downloadEqual = async (page, key, name = filename(key)) => {
 const markdownRendered = async (page) => {
   await page.getByRole("heading", { name: "Viewer specification", exact: true }).waitFor();
   await page.getByRole("cell", { name: "GFM table", exact: true }).waitFor();
-  await page.getByText("completed task", { exact: true }).waitFor();
+  await page.locator('article.markdown li').filter({ has: page.getByRole('img', { name: 'Completed task', exact: true }) }).filter({ hasText: 'completed task' }).waitFor();
   await page.locator("article.markdown del").filter({ hasText: "removed text" }).waitFor();
   await imagesRendered(page, 2, 'img[alt="Rendered diagram"]');
+  const mermaidLabels = await page.locator('img[alt="Rendered diagram"]').first().evaluate(async (image) => {
+    const svg = await (await fetch(image.src)).text();
+    return [...new DOMParser().parseFromString(svg, 'image/svg+xml').querySelectorAll('text')].map((node) => node.textContent).join(' ');
+  });
+  assert.match(mermaidLabels, /Start/, 'Mermaid must retain its start label after sanitization');
+  assert.match(mermaidLabels, /Finish/, 'Mermaid must retain its finish label after sanitization');
   assert.equal(await page.locator('main a[href^="javascript:" i]').count(), 0);
-  assert.equal(await page.locator("main script, main [onerror], main [onload]").count(), 0);
+  assert.equal(await page.locator("main script").count(), 0);
+  assert.equal(await page.locator('main *').evaluateAll((nodes) => nodes.some((node) => [...node.attributes].some((attribute) => /^on/i.test(attribute.name)))), false);
 };
 const management = async (page, command) => {
   const response = await page.request.post(input.base + "/api/current", {
@@ -149,7 +162,7 @@ await check("markdown renders headings, GFM and both fenced diagrams without exe
   await rawEqual(page, "markdown");
   await downloadEqual(page, "markdown");
   await capture(page, "markdown-diagrams");
-});
+}, true);
 
 await check("standalone Mermaid and Graphviz produce decoded diagram images and exact original downloads", async (page) => {
   for (const key of ["mermaid", "dot"]) {
@@ -158,7 +171,7 @@ await check("standalone Mermaid and Graphviz produce decoded diagram images and 
     await rawEqual(page, key);
     await downloadEqual(page, key);
   }
-});
+}, false);
 
 await check("SVG and PNG decode safely and support visible Fit and Zoom changes", async (page) => {
   for (const key of ["svg", "png"]) {
@@ -173,7 +186,7 @@ await check("SVG and PNG decode safely and support visible Fit and Zoom changes"
   assert.ok(fit.width <= 1000 && fit.height <= 800, "fit image stays inside viewport");
   await page.getByRole("button", { name: /zoom in/i }).click();
   await page.waitForFunction((width) => document.querySelector("main img").getBoundingClientRect().width > width, fit.width);
-});
+}, true);
 
 const canvasSnapshot = async (page) => {
   await page.waitForFunction(() => {
@@ -201,7 +214,7 @@ await check("two-page PDF paints nonempty distinct canvases and navigates forwar
   await page.waitForFunction((first) => document.querySelector("main canvas")?.toDataURL() === first, first);
   await rawEqual(page, "pdf");
   await downloadEqual(page, "pdf");
-});
+}, false);
 
 await check("directory index remains original while explicit nested viewer and raw assets work", async (page) => {
   await page.goto(root("directory") + "/", { waitUntil: "domcontentloaded" });
@@ -214,7 +227,7 @@ await check("directory index remains original while explicit nested viewer and r
     await rawEqual(page, "directory", name);
     await downloadEqual(page, "directory", name);
   }
-});
+}, true);
 
 await check("invalid and oversized Graphviz sources fail visibly within a bounded time", async (page) => {
   for (const key of ["malformed", "graph-limit", "oversized"]) {
@@ -225,12 +238,14 @@ await check("invalid and oversized Graphviz sources fail visibly within a bounde
     assert.equal(await page.locator("main img").evaluateAll((images) => images.some((image) => image.naturalWidth > 0)), false);
     await downloadEqual(page, key);
   }
-});
+}, false);
 
 await check("external raw and assets deny locked/revoked grants; unlock permits real nested rendering", async (page) => {
   const key = "external";
   const name = "docs/guide ü.md";
-  await page.goto(viewer(key, name), { waitUntil: "domcontentloaded" });
+  const lockedView = await page.goto(viewer(key, name), { waitUntil: "domcontentloaded" });
+  assert.ok(lockedView.status() >= 400, 'locked deep links must not become successful HTML shells');
+  await page.goto(root(key) + '/', { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
   const protectedURLs = [rawURL(key, name), rawURL(key, "assets/picture.png"), downloadURL(key, name),
     ...["viewer.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
@@ -256,7 +271,7 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
   assert.ok(denied.status >= 400, "revoked cookie must deny a new raw request (not cached display)");
   const deniedAsset = await fetchBytes(page, rawURL(key, "assets/picture.png"));
   assert.ok(deniedAsset.status >= 400, "revoked cookie must deny fresh assets too");
-});
+}, true);
 
 await check("internal dashboard Open hands off a grant and renders the standalone private viewer", async (page) => {
   await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
@@ -270,8 +285,9 @@ await check("internal dashboard Open hands off a grant and renders the standalon
   await shell(page, "internal");
   await rawEqual(page, "internal");
   await downloadEqual(page, "internal");
-});
+}, false);
 
 await browser.close();
+if (input.artifacts) await fs.writeFile(path.join(input.artifacts, `${input.mode}-results.json`), JSON.stringify(results, null, 2));
 process.stdout.write(JSON.stringify(results));
 process.exitCode = results.some((result) => !result.ok) ? 1 : 0;

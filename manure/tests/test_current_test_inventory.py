@@ -158,12 +158,13 @@ class CurrentTestInventoryTests(unittest.TestCase):
             'PATH':os.defpath,'MANURE_TOKEN':'SYNTHETIC','OPENAI_API_KEY':'SYNTHETIC',
             'PGHOST':'never-connect.invalid','PGPASSFILE':'/must-not-read',
             'MANURE_TEST_PROVISION_COMMAND':'synthetic-helper','PG_PROVIDER':'/trusted/provider.py',
+            'MANURE_TEST_VIEWER_DIR':'/explicit/viewer','MANURE_VIEWER_ARTIFACTS':'/explicit/screenshots',
             'PONYGIRLS_OWNED_FIXTURE_ROOT':'/owned/root','PONYGIRLS_TEST_PROVISION_SERVICE':'manure',
             'MANURE_TEST_JDBC_URL':'jdbc:postgresql://127.0.0.1:1/owned'},clear=True):
             discarded=GATE.hermetic_environment(ROOT,Path(tmp))
             for name in ('MANURE_TOKEN','OPENAI_API_KEY','PGHOST','PGPASSFILE'):
                 self.assertNotIn(name,os.environ);self.assertIn(name,discarded)
-            for name in ('MANURE_TEST_PROVISION_COMMAND','PG_PROVIDER','PONYGIRLS_OWNED_FIXTURE_ROOT','PONYGIRLS_TEST_PROVISION_SERVICE','MANURE_TEST_JDBC_URL'):
+            for name in ('MANURE_TEST_PROVISION_COMMAND','PG_PROVIDER','PONYGIRLS_OWNED_FIXTURE_ROOT','PONYGIRLS_TEST_PROVISION_SERVICE','MANURE_TEST_JDBC_URL','MANURE_TEST_VIEWER_DIR','MANURE_VIEWER_ARTIFACTS'):
                 self.assertIn(name,os.environ)
             self.assertEqual(Path(os.environ['HOME']),Path(tmp)/'runtime-home')
 

@@ -65,6 +65,7 @@ let
         "native_mode":"linked", "posix_library":None, "embedding":None,
         "dashboard_dir":os.path.join(pkg,"share/manure/web/dashboard"),
         "unlock_shell_dir":os.path.join(pkg,"share/manure/web/unlock"),
+        "viewer_dir":os.path.join(pkg,"share/manure/web/viewer"),
         "port": port,
         "data_dir": data,
         "api_origin": "http://127.0.0.1:%d" % port,
@@ -271,7 +272,13 @@ let
         server_log.close()
     artifact = Path(pkg, "bin/manure-server").resolve(strict=True)
     assets = Path(pkg, "share/manure/web")
-    assert len(passed) == 8 and len(passed) == len(set(passed))
+    viewer = assets / "viewer"
+    expected_viewer = {"index.html", "viewer.js", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs", "styles.css"}
+    assert {path.name for path in viewer.iterdir() if path.is_file()} == expected_viewer
+    assert all((viewer / name).stat().st_size > 0 for name in expected_viewer)
+    assert "__MANURE_ASSET_BASE__/viewer.js" in (viewer / "index.html").read_text()
+    passed.append("installed-offline-viewer-assets")
+    assert len(passed) == 9 and len(passed) == len(set(passed))
     receipt = {"tests":passed,"cases":len(passed),"failures":0,"errors":0,"skips":0,
       "package":pkg,"artifact":str(artifact),"artifactSHA256":hashlib.sha256(artifact.read_bytes()).hexdigest(),
       "driverSHA256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

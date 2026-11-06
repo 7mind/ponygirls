@@ -45,7 +45,7 @@ def _tool_defs() -> list[dict[str, Any]]:
                          "properties": {"artifact_id": {"type": "string"}},
                          "required": ["artifact_id"], "additionalProperties": False},
          "annotations": dict(ro)},
-        {"name": "upload_artifact", "description": "Upload a file or directory (chunk-resumed, atomic publish).",
+        {"name": "upload_artifact", "description": "Upload a file or directory (chunk-resumed, atomic publish). Browser content URLs provide local viewers for Markdown, images/SVG, PDF, Mermaid (.mmd/.mermaid) and Graphviz (.dot/.gv) when enabled; upload source files directly. Downloads/fetch preserve original bytes; directories remain static sites.",
          "inputSchema": {"type": "object",
                          "properties": {"local_path": {"type": "string"},
                                         "access": {"type": "string", "enum": ["internal", "external", "public"]},

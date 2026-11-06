@@ -86,6 +86,7 @@ let
     posix_library = null;
     dashboard_dir = if cfg.dashboardDir == null then "${cfg.package}/share/manure/web/dashboard" else cfg.dashboardDir;
     unlock_shell_dir = if cfg.unlockShellDir == null then "${cfg.package}/share/manure/web/unlock" else cfg.unlockShellDir;
+    viewer_dir = "${cfg.package}/share/manure/web/viewer";
     listen_address = cfg.listenAddress;
     port = cfg.port;
     data_dir = cfg.dataDir;

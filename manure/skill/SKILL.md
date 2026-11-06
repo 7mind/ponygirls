@@ -56,6 +56,29 @@ Both wrap the same client code; bearer auth never travels on the command line
   trailing slashes; `/assets/...` targets the API root, not the artifact.
   Uploaded HTML/CSS/JS is not automatically rewritten.
 
+## File viewers (agent publishing)
+
+Upload the source file directly; do not build an HTML wrapper just to make it
+readable. With viewer assets enabled, opening a standalone file's returned
+content URL in a browser shows:
+
+- `.md` / `.markdown`: formatted Markdown, including tables and fenced
+  `mermaid`, `dot` or `graphviz` diagrams.
+- Common images, including `.svg`: an image viewer.
+- `.pdf`: a paginated PDF viewer.
+- `.mmd` / `.mermaid`: Mermaid diagrams; `.dot` / `.gv`: Graphviz diagrams.
+
+Renderers are bundled locally; source is not sent to a rendering service.
+Viewers provide original-file download links. CLI/MCP fetch remains byte-exact;
+non-HTML requests and byte ranges are not replaced with viewer HTML.
+Directory uploads still serve static sites unchanged. To view a supported file
+inside a directory, append `/__manure/view/<segment-encoded-file-path>` to its
+content base (e.g. `/__manure/view/reports/summary.md`). Use relative paths for
+Markdown resources; automatic external resource loading is blocked. A viewer
+is not an authorization change: internal/external/public and expiry still apply.
+Do not present the existence of these source changes as proof that a particular
+server has been upgraded; verify the deployed instance when that matters.
+
 ## Visibility / access
 
 - `--access internal|external|public` is required on `upload` (and

@@ -39,6 +39,15 @@ if [[ $scope == full ]]; then
 fi
 sha256sum "$artifact" > "$report/artifact.sha256"
 git rev-parse HEAD > "$report/git-head"
+# Viewer assets have their own build/input identity, separate from the ELF.
+viewer_dir=${MANURE_TEST_VIEWER_DIR:-$PWD/manure/web/viewer/dist}
+if [[ -d $viewer_dir ]]; then
+ find "$viewer_dir" -type f -print0 | sort -z | xargs -0 sha256sum > "$report/viewer-assets.sha256"
+ sha256sum manure/web/viewer/package.json manure/web/viewer/package-lock.json > "$report/viewer-dependencies.sha256"
+elif [[ $scope == full ]]; then
+ echo 'full acceptance requires built viewer assets (manure/web/viewer/dist or MANURE_TEST_VIEWER_DIR)' >&2
+ exit 1
+fi
 "$POSTGRES_HOME/bin/postgres" --version > "$report/postgres-version"
 find manure/tests manure/manure manure/web manure/models/fixtures -type f \( -name '*.py' -o -name '*.js' -o -name '*.mjs' -o -name '*.json' -o -name '*.html' -o -name '*.css' \) ! -path '*/__pycache__/*' -print0 | sort -z | xargs -0 sha256sum > "$report/test-inputs.sha256"
 base=$(mktemp -d "${TMPDIR:-/tmp}/manure-target-fixture.XXXXXXXX")

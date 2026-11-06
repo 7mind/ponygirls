@@ -37,6 +37,12 @@ credential directories are retained. `native_mode` defaults `linked`;
 null to disable. Installed package should set both absolute paths (dashboard and
 unlock subdirectories of its immutable web tree). Repository development defaults
 are `manure/web/dashboard`, `manure/web/unlock` relative to launch cwd.
+`viewer_dir` likewise selects the bundled viewer tree; installed packages set
+`/opt/manure/share/manure/web/viewer`, source development defaults to
+`manure/web/viewer/dist` (build first, see that directory's README). Explicit
+`null` disables formatted viewers without disabling raw content. Viewer assets
+and raw bytes use the same artifact authorization checks; no render service is
+contacted.
 
 Example minimal synthetic server configuration:
 
@@ -49,6 +55,7 @@ Example minimal synthetic server configuration:
   ]}],
   "dashboard_dir": "/opt/manure/share/manure/web/dashboard",
   "unlock_shell_dir": "/opt/manure/share/manure/web/unlock",
+  "viewer_dir": "/opt/manure/share/manure/web/viewer",
   "database": {
     "jdbcUrl":"jdbc:postgresql://127.0.0.1:15433/manure", "user":"manure",
     "passwordFile":"/run/credentials/manure/database-password",

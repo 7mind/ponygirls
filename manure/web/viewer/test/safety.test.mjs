@@ -15,9 +15,18 @@ test('artifact resources cannot request management or sibling mounts', () => {
   const mount = '/view/abc';
   assert.equal(artifactResourceUrl('../photo.svg',base,mount),'https://artifacts.example/view/abc/photo.svg');
   assert.equal(artifactResourceUrl('#heading',base,mount),`${base}#heading`);
-  for (const value of ['/api/users','/view/other/image.png','../../../api/users','../__manure/logout','/view/abc/%2fapi/x','/view/abc/%255f_manure/x','http://[broken']) assert.equal(artifactResourceUrl(value,base,mount),null, value);
+  for (const value of ['/api/users','/view/other/image.png','../../../api/users','../__manure/logout','/view/abc/%2fapi/x','/view/abc/%5f%5fmanure/x','/view/abc/%61pi/users','http://[broken']) assert.equal(artifactResourceUrl(value,base,mount),null, value);
   assert.equal(artifactResourceUrl('/__manure/logout','https://artifact.example/docs/a.md',''),null);
   assert.equal(artifactResourceUrl('/api/users','https://artifact.example/docs/a.md',''),null);
+});
+test('legal manifest resource names retain single-pass percent and nested-directory semantics', () => {
+  const base = 'https://artifacts.example/view/abc/docs/README.md';
+  const mount = '/view/abc';
+  for (const name of ['CPU 90%.svg', '%2f.svg', '__manure/chart.svg']) {
+    const encoded = name.split('/').map(encodeURIComponent).join('/');
+    assert.equal(artifactResourceUrl(encoded,base,mount),new URL(encoded,base).href,name);
+  }
+  assert.equal(artifactResourceUrl('/view/chart.svg','https://artifact.example/docs/a.md',''),'https://artifact.example/view/chart.svg');
 });
 test('whole-document diagram count is bounded', () => {
   assert.doesNotThrow(() => diagramCount(32));

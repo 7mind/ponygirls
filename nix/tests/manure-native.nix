@@ -15,6 +15,7 @@ in pkgs.runCommand "manure-native-full-target" ({
   MANURE_CHROMIUM_BIN = "${pkgs.chromium}/bin/chromium";
   MANURE_OPENSSL_BIN = "${pkgs.openssl}/bin/openssl";
   MANURE_MCP_SDK_PATH = "${sdk}/lib/node_modules/@modelcontextprotocol/sdk";
+  MANURE_TEST_VIEWER_DIR = "${manurePackage}/share/manure/web/viewer";
   FONTCONFIG_FILE = pkgs.makeFontsConf { fontDirectories = [ pkgs.dejavu_fonts ]; };
 } // (import ./owned-postgres-environment.nix { inherit pkgs; })) ''
   cp -r ${sources.manureTargetTests} source
@@ -43,6 +44,7 @@ in pkgs.runCommand "manure-native-full-target" ({
   python3 ${./with-owned-postgres.py} ${pkgs.runtimeShell} run-target.sh || { cat "$out/run.log"; exit 1; }
   cp current-artifact-source.sha256 headers.txt dynamic.txt "$out/"
   sha256sum ${native}/libexec/manure-server > "$out/artifact.sha256"
+  find "$MANURE_TEST_VIEWER_DIR" -type f -print0 | sort -z | xargs -0 sha256sum > "$out/viewer-assets.sha256"
   python3 - "$out" <<'PY'
   import json,pathlib,sys
   root=pathlib.Path(sys.argv[1]); summary=json.loads((root/'summary.json').read_text()); inventory=json.loads((root/'inventory.json').read_text())

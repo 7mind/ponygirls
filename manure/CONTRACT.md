@@ -856,6 +856,29 @@ uses the decoded path against the manifest (exact match).
   (same `<p>` decoding). Public anon ok.
 - Unknown `/__manure/*`, all `/api/*` → 404 `not-found` JSON.
 
+### 7.3.1 Formatted file viewer amendment
+
+The current Scala adapter's protocol routes are specified in
+`docs/current-api.md`; this amendment adds browser presentation, not a new
+Baboon API version. With `viewer_dir` enabled, standalone supported file roots
+may return a trusted viewer for HTML navigation (`Accept: text/html`). Non-HTML
+and range requests retain byte-serving behavior; responses vary on Accept.
+Supported formats: Markdown, images including SVG, PDF, Mermaid and Graphviz.
+Directory static-site paths are not replaced by viewers.
+
+`/__manure/view/<p>` explicitly selects a supported manifest file viewer;
+`/__manure/raw/<p>` serves original inline bytes; and
+`/__manure/viewer/<asset-name>` serves only allowlisted packaged assets.
+All require the same artifact authorization and expiry checks. Existing current
+attachment routes remain attachments, with unchanged range semantics.
+
+Viewer assets and renderers are bundled locally, never fetched from a CDN or
+external rendering service. Untrusted markup and renderer output must not
+execute scripts or automatically load off-origin resources. Preserve the
+viewer's restrictive CSP through final middleware. Explicit `viewer_dir: null`
+disables viewer presentation; it does not disable raw content. This amendment
+does not change the low-security trust warning for shared-origin path mode.
+
 ### 7.4 Error codes (stable codes)
 
 Error codes (stable; HTTP in parentheses): `bad-envelope` (400),

@@ -84,9 +84,20 @@ These are current routes, not retained legacy management APIs:
   authorized/public eligible raw attachment download. `Range`/206/416,
   `Accept-Ranges`, `Content-Range` and streaming bounds unchanged.
 * `GET /__manure/files/<encoded-segments>/content`: grant-authorized/public
-  inline download; same range contract. Prefix `/view/<id>` in path mode.
-* Content `/`, nested paths, directory canonical 303 redirects and
-  `GET /__manure/password` remain raw document routes. Never auto-list.
+  attachment download; same range contract. Prefix `/view/<id>` in path mode.
+* `GET /__manure/raw/<encoded-segments>`: authorized inline original bytes,
+  with the same range contract; viewer source/image reads use this route.
+* Standalone supported file roots negotiate a trusted formatted viewer for
+  `Accept: text/html` when viewer assets are enabled. Responses vary on Accept;
+  range requests and non-HTML clients receive original bytes. Unsupported files
+  remain raw. Supported formats are Markdown, images/SVG, PDF, Mermaid and
+  Graphviz; no generated API version or model change is required.
+* `GET /__manure/view/<encoded-segments>` explicitly views a supported manifest
+  file (including directory members). `GET /__manure/viewer/<asset-name>` serves
+  only allowlisted bundled assets, after artifact authorization. Viewers retain
+  restrictive CSP through final response middleware. No external renderer/CDN.
+* Directory `/`, nested static paths, canonical 303 redirects and
+  `GET /__manure/password` retain their behavior. Never auto-list.
 * HTML navigation uses URL-encoded form adapters `POST /__manure/unlock`,
   `/__manure/grant`, `/__manure/logout` and API `/api/current/login` and
   `/api/current/logout`, with the same Origin/auth checks as their typed
