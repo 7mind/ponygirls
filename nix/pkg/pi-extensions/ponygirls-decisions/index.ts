@@ -16,7 +16,7 @@ const STATUS_KEY = "decisions";
 const PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 const PANE_CHROME_ROWS = 4;
-const INBOX_SHORTCUT = { key: "ctrl+alt+d", label: "Ctrl+Alt+D" } as const;
+const INBOX_SHORTCUT = { key: "ctrl+alt+d", label: "⌃⌥D" } as const;
 export const SESSION_SETTING_TYPE = "ponygirls.decisions.setting";
 export const PREFERENCE_FILENAME = "decisions.json";
 
@@ -122,11 +122,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       const hasUI = b.ctx.hasUI;
       const questions = storeFor(b).list(b.project);
       if (hasUI) {
-        const pending = questions.filter((q) => q.status === "pending").length;
-        if (pending === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
+        const pending = questions.filter((q) => q.status === "pending");
+        const here = pending.filter((q) => q.sessionId === b.sessionId).length;
+        const other = pending.length - here;
+        if (pending.length === 0) b.ctx.ui.setWidget(STATUS_KEY, undefined);
         else b.ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
-          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${pending} · ${INBOX_SHORTCUT.label} `)), width)],
-          renderCompact: () => compactChip(theme, "?", "attention", String(pending)),
+          render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${here} here · ${other} other · ${INBOX_SHORTCUT.label} `)), width)],
+          renderCompact: () => compactChip(theme, "?", "attention", `${here}/${other}`),
           invalidate() {},
           handleMouse(event) {
             if (event.type !== "click" || event.button !== "left") return;

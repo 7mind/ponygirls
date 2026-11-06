@@ -55,16 +55,16 @@ const MAX_HINT_LINES = 4;
 
 const LIST_HINTS: readonly KeyHint[] = [
   { key: "↑↓", action: "select" }, { key: "⏎", action: "detail" }, { key: "⇥", action: "pending/all" },
-  { key: "⇞⇟", action: "scroll detail" }, { key: "esc", action: "close" },
+  { key: "⇞⇟", action: "scroll detail" }, { key: "⎋", action: "close" },
 ];
-const DETAIL_HINTS: readonly KeyHint[] = [{ key: "↑↓/⇞⇟", action: "scroll" }, { key: "esc", action: "inbox" }, { key: "⇥", action: "pending/all" }];
+const DETAIL_HINTS: readonly KeyHint[] = [{ key: "↑↓/⇞⇟", action: "scroll" }, { key: "⎋", action: "inbox" }, { key: "⇥", action: "pending/all" }];
 const ACTION_HINTS: readonly KeyHint[] = [
   { key: "a/e", action: "answer" }, { key: "1–9/o", action: "options" }, { key: "d", action: "dismiss" }, { key: "u", action: "reopen" },
 ];
-const EDITOR_HINTS: readonly KeyHint[] = [{ key: "⏎", action: "newline" }, { key: "ctrl+s", action: "save" }, { key: "esc", action: "discard" }];
-const REBASE_HINTS: readonly KeyHint[] = [{ key: "ctrl+r", action: "reload latest revision, keeping draft" }];
+const EDITOR_HINTS: readonly KeyHint[] = [{ key: "⏎", action: "newline" }, { key: "⌃S", action: "save" }, { key: "⎋", action: "discard" }];
+const REBASE_HINTS: readonly KeyHint[] = [{ key: "⌃R", action: "reload latest revision, keeping draft" }];
 const OPTIONS_HINTS: readonly KeyHint[] = [
-  { key: "↑↓/1–9", action: "choose" }, { key: "ctrl+s", action: "save" }, { key: "e", action: "edit" }, { key: "esc", action: "discard" },
+  { key: "↑↓/1–9", action: "choose" }, { key: "⌃S", action: "save" }, { key: "e", action: "edit" }, { key: "⎋", action: "discard" },
 ];
 
 /** A detail section: a styled label over an indented, sanitized Markdown body. */
@@ -171,7 +171,7 @@ export class DecisionsPane implements Component, Focusable {
       this.scroll = 0;
     };
     // Enter merely selects; it is deliberately NOT a persistence action.
-    list.onSelect = () => { this.notice = "Option selected. Ctrl+S saves; e edits it."; };
+    list.onSelect = () => { this.notice = "Option selected. ⌃S saves; e edits it."; };
     return list;
   }
 
@@ -258,7 +258,7 @@ export class DecisionsPane implements Component, Focusable {
           this.draft.base = { ...latest, options: [...latest.options] };
           // Keep the exact staged text, even if the options changed externally.
           if (this.draft.mode === "options") this.edit();
-          this.notice = "Latest revision loaded; draft kept. Review before Ctrl+S.";
+          this.notice = "Latest revision loaded; draft kept. Review before ⌃S.";
         } else this.notice = "Decision no longer exists; draft kept.";
       } else if (this.draft.mode === "editor") this.editorInput(data);
       else if (this.draft.mode === "options") {
@@ -357,10 +357,10 @@ export class DecisionsPane implements Component, Focusable {
     const fit = (s: string) => truncateToWidth(s, w, "…");
     const dim = (s: string) => this.theme.fg("dim", s);
     const draft = this.draft, d = draft?.base ?? this.current();
-    const warning = [this.loadError, this.notice, this.changed() ? "Changed elsewhere; draft kept. Ctrl+R adopts latest revision." : ""].filter(Boolean).join(" ");
+    const warning = [this.loadError, this.notice, this.changed() ? "Changed elsewhere; draft kept. ⌃R adopts latest revision." : ""].filter(Boolean).join(" ");
     const hints: (readonly KeyHint[])[] = draft?.mode === "editor" ? [EDITOR_HINTS, REBASE_HINTS]
       : draft?.mode === "options" ? [OPTIONS_HINTS]
-      : draft ? [[{ key: "ctrl+s", action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: "esc", action: "cancel" }]]
+      : draft ? [[{ key: "⌃S", action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: "⎋", action: "cancel" }]]
       : [this.detail ? DETAIL_HINTS : LIST_HINTS, ACTION_HINTS];
     const foot = [
       ...warning ? wrapTextWithAnsi(this.theme.fg("warning", oneLine(warning)), w).slice(0, MAX_WARNING_LINES) : [],
@@ -385,11 +385,11 @@ export class DecisionsPane implements Component, Focusable {
         const selected = item.id === this.selectedId;
         return listRow(this.theme, w, this.row(item, selected, idWidth), selected);
       });
-      out.push(...(listLines.length ? listLines : [dim("No pending decisions. Tab shows history.")]));
+      out.push(...(listLines.length ? listLines : [dim("No pending decisions. ⇥ shows history.")]));
       rows -= listLines.length || 1;
       if (d && rows > 1) { out.push(frameRule(this.theme, w)); rows--; }
     }
-    if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. Tab shows history."));
+    if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. ⇥ shows history."));
     if (d && rows > 0) {
       if (draft || this.detail) {
         out.push([dim(oneLine(d.id)), this.statusCell(d.status, visibleWidth(statusLabel(d.status))), this.sessionLabel(d)].filter(Boolean).join(COLUMN_GAP));

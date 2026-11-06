@@ -14,11 +14,13 @@ next configuration activation. To try it without activation:
 pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 ```
 
-- `/decisions` or **Ctrl+Alt+D** opens the project's pending inbox.
+- `/decisions` or **⌃⌥D** opens the project's pending inbox (⌃ = Control, ⌥ = Alt).
 - `/decisions Q12` opens a particular question, including answered history.
-- The **? N · Ctrl+Alt+D** pending-count badge lives on the editor's bottom-left
-  border alongside the existing badges and shows the inbox shortcut. In fullscreen
-  mode it is clickable. When the border is too narrow it shrinks to a compact `?N` chip.
+- The **? N here · M other · ⌃⌥D** badge counts unanswered questions from this
+  session and all other sessions in the same project. It lives on the editor's
+  bottom-left border and shows the inbox shortcut. In fullscreen mode it is
+  clickable. When the border is too narrow it shrinks to `?N/M`, in the same order.
+  Both counters include zero; the badge disappears when both are zero.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).
   Questions originating in the active session carry a `[this session]` marker in
@@ -26,10 +28,10 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved
   explicitly, never by merely moving the selection. Escape cancels an edit.
-- **↑/↓** selects; **Enter** expands detail; **Page Up/Down** scrolls; **Tab**
-  toggles pending/history. **a/e** edits an answer, **o** or **1–9** stages an
-  option, **d** stages dismissal, **u** stages reopening. **Ctrl+S** saves.
-  A stale edit keeps its draft; **Ctrl+R** explicitly adopts the latest revision.
+- **↑/↓** selects; **⏎** expands detail; **⇞/⇟** scrolls; **⇥** toggles
+  pending/history. **a/e** edits an answer, **o** or **1–9** stages an option,
+  **d** stages dismissal, **u** stages reopening. **⌃S** saves; **⎋** cancels.
+  A stale edit keeps its draft; **⌃R** explicitly adopts the latest revision.
 - History retains answered and dismissed questions. Answers can be revised;
   reopening withdraws the previous answer and makes the question pending again.
 

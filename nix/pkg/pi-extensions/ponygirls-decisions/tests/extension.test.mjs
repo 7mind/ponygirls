@@ -80,15 +80,45 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.equal(factory(null, theme).render(80)[0], " ? 1 · Ctrl+Alt+D ");
+  assert.equal(factory(null, theme).render(80)[0], " ? 1 here · 0 other · ⌃⌥D ");
   assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
   assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
-  assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1</text> [/toolPendingBg]");
+  assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1/0</text> [/toolPendingBg]");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);
   assert.equal((await f.call({ action: "ask", question: "Which storage?", options: ["SQLite", "JSONL"], context: "Concurrent sessions", recommendation: "SQLite" }, "call-1")).details.id, "Q1");
+});
+
+test("badge partitions only pending project questions by originating session and refreshes on changes", async (t) => {
+  const f = fixture(t); f.start();
+  assert.equal(f.widgets.at(-1)[1], undefined);
+  const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
+  const badge = (here, other) => {
+    const widget = f.widgets.at(-1)[1](null, theme);
+    assert.equal(widget.render(100)[0], ` ? ${here} here · ${other} other · ⌃⌥D `);
+    assert.equal(widget.renderCompact(20), ` ?${here}/${other} `);
+  };
+  const external = new SqliteDecisionStore(f.path);
+  t.after(() => external.close());
+  const input = { question: "Other question", context: "", options: [], recommendation: "", sessionId: "other", toolCallId: "other" };
+  external.ask("project-a", input);
+  external.ask("project-a", { ...input, sessionId: "third", toolCallId: "third" });
+  external.ask("project-b", input);
+  f.tick(); badge(0, 2);
+  await f.call({ action: "ask", question: "Here" }, "here");
+  badge(1, 2);
+  await f.command("dismiss Q1"); badge(1, 1);
+  await f.command("answer Q2 Done"); badge(1, 0);
+  await f.command("reopen Q1"); badge(1, 1);
+  f.ctx.sessionManager.getSessionId = () => "third";
+  f.start(); badge(0, 2);
+  f.ctx.sessionManager.getSessionId = () => "origin";
+  f.start(); badge(1, 1);
+  await f.command("dismiss Q3"); badge(0, 1);
+  await f.command("dismiss Q1");
+  assert.equal(f.widgets.at(-1)[1], undefined);
 });
 
 test("agents can review answered and dismissed history with full answers through get", async (t) => {
