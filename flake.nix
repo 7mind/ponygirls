@@ -218,8 +218,10 @@
               ];
             }).config;
             evalWorktree = piExtra: evalPi piExtra { };
-            historianOptions = { journalRoot = "/srv/pi-journals"; model = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; }; };
+            historianDefaultModel = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
+            historianOptions = { journalRoot = "/srv/pi-journals"; model = { provider = "fixture"; id = "custom"; thinking = "high"; }; };
             historianConfigured = evalPi { } historianOptions;
+            historianUnconfigured = evalPi { } { model = null; };
             historianInvalid = evalPi { } { journalRoot = "relative"; };
             historianInvalidModels = map (model: evalPi { } { inherit model; }) [
               (historianOptions.model // { provider = ""; })
@@ -290,7 +292,9 @@
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian.json");
-          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
+          assert builtins.fromJSON limitsDefault.home.file."/home/alice/.pi/agent/historian-defaults.json".text == { version = 1; journalRoot = null; model = historianDefaultModel; };
+          assert !(historianUnconfigured.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
+          assert !(historianUnconfigured.home.file ? "/home/alice/.pi/agent/historian.json");
           assert !(historianConfigured.home.file ? "/home/alice/.pi/agent/historian.json");
           assert builtins.fromJSON historianConfigured.home.file."/home/alice/.pi/agent/historian-defaults.json".text == historianOptions // { version = 1; };
           assert builtins.all (a: a.assertion) historianConfigured.assertions;

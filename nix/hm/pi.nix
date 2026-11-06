@@ -452,10 +452,11 @@ in
           };
         };
       });
-      default = null;
+      default = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
       example = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
       description = ''
-        Managed fallback model for Historian. Null leaves it unconfigured.
+        Managed fallback model for Historian, defaulting to Sol 6.1 with medium
+        effort via openai-codex. Null disables the managed model default.
         Written with journalRoot to historian-defaults.json, never to mutable
         historian.json. Global runtime and session selections take precedence.
         Does not enable Historian or grant provider disclosure approval; use
