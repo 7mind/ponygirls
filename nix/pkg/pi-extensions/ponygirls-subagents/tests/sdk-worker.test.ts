@@ -248,7 +248,7 @@ test("M1: evict + reload restores the recorded leaf through the native branch AP
       deterministic: true,
       agentDir: join(dir, "wah", agentId),
       sessionsDir: join(dir, "sessions"),
-      script: launches++ === 0 ? [{ text: "run-one" }] : [{ text: "run-two" }],
+      script: [{ text: `run-${++launches}` }],
     }, newWorkerBinding(rootEpoch, agentId)),
   });
   try {
@@ -267,6 +267,16 @@ test("M1: evict + reload restores the recorded leaf through the native branch AP
     assert.ok(cp1, "settled generation checkpoint captured");
     assert.ok(cp1.ref.leafEntryId);
     assert.ok(Buffer.from(cp1.bytes).toString("utf8").includes("first"));
+    const feed = sup.historyFeed("governor", new AbortController().signal);
+    const original = feed.sources()[0]!;
+    assert.equal(cp1.ref.historySourceId, original.sourceId); assert.equal(original.reconstructedPrefixBytes, 0);
+    const note = await sup.sendMessage("governor", res.agentId, "note", "PRIVATE_PREACTIVATION_NOTE", {}, "req-old-note");
+    const hasReceipt = () => store.readSince(0, store.durableSeq()).records.some(record => record.kind === "mailbox.receipt" && record.body["messageId"] === note.messageId);
+    const receiptStart = Date.now();
+    while (!hasReceipt() && Date.now() - receiptStart < 15_000) await new Promise(resolve => setTimeout(resolve, 50));
+    assert.ok(hasReceipt(), "native note receipt observed before its original source is baselined");
+    assert.match(JSON.stringify((await feed.read(original.sourceId, 0, 256)).entries), /PRIVATE_PREACTIVATION_NOTE/);
+    assert.doesNotMatch(Buffer.from(store.loadCheckpoint(res.agentId)!.bytes).toString("utf8"), /PRIVATE_PREACTIVATION_NOTE/);
     // Evict, then resume: the replacement worker opens the restored bytes
     // and selects the recorded leaf (no raw-line patching, no invented results).
     await sup.evictWorker("governor", res.agentId);
@@ -285,6 +295,28 @@ test("M1: evict + reload restores the recorded leaf through the native branch AP
     const transcript = Buffer.from(cp2.bytes).toString("utf8");
     assert.ok(transcript.includes("first"), "restored run retains prior conversation");
     assert.ok(transcript.includes("second"), "resumed run appended");
+    const restored = feed.sources().find(source => source.copiedFrom === original.sourceId)!;
+    assert.ok(restored); assert.equal(cp2.ref.historySourceId, restored.sourceId);
+    assert.ok(restored.reconstructedPrefixBytes >= cp1.ref.bytes);
+    const suffix = JSON.stringify((await feed.read(restored.sourceId, restored.reconstructedPrefixBytes, 256)).entries);
+    assert.match(suffix, /second/); assert.doesNotMatch(suffix, /PRIVATE_PREACTIVATION_NOTE|"first"/);
+    await sup.evictWorker("governor", res.agentId);
+    await sup.sendMessage("governor", res.agentId, "note", "QUEUED_WHILE_UNLOADED", {}, "req-queued-note");
+    assert.doesNotMatch(JSON.stringify((await feed.read(restored.sourceId, 0, 256)).entries), /QUEUED_WHILE_UNLOADED/);
+    await sup.sendMessage("governor", res.agentId, "task", "third", {}, "req-r3");
+    const cpStart3 = Date.now(); let cp3 = store.loadCheckpoint(res.agentId);
+    while ((!cp3 || cp3.ref.generation !== 3) && Date.now() - cpStart3 < 15_000) {
+      await new Promise(resolve => setTimeout(resolve, 50)); cp3 = store.loadCheckpoint(res.agentId);
+    }
+    assert.ok(cp3 && cp3.ref.generation === 3);
+    const chained = feed.sources().find(source => source.copiedFrom === restored.sourceId)!;
+    assert.ok(chained); assert.equal(cp3.ref.historySourceId, chained.sourceId);
+    assert.ok(chained.reconstructedPrefixBytes >= cp2.ref.bytes);
+    const finalPage = await feed.read(chained.sourceId, chained.reconstructedPrefixBytes, 256);
+    const finalSuffix = JSON.stringify(finalPage.entries);
+    assert.match(finalSuffix, /third/); assert.doesNotMatch(finalSuffix, /PRIVATE_PREACTIVATION_NOTE|QUEUED_WHILE_UNLOADED|"first"|"second"/);
+    assert.match(finalPage.gaps.join(" "), /first deliveries queued while unloaded/);
+    assert.equal(feed.sources().length, 3);
   } finally {
     await sup.shutdown();
     rmSync(dir, { recursive: true, force: true });

@@ -214,7 +214,7 @@ test("billing-debt repair: onChange-after-commit accounts once, no false hold (r
       const executors = { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() };
       const sup = new Supervisor({
         rootId: "root-billfix-cb",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: base,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -339,7 +339,7 @@ test("billing-debt repair: nested NEW native denied while INNER debt held (real 
       const byName = new Map(handles.map((h) => [h.name, h]));
       const sup = new Supervisor({
         rootId: "root-billfix-nest",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),

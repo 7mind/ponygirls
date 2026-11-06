@@ -481,7 +481,7 @@ test("R11-C mid-launch shutdown parks the ready reviewer without inference (real
     policy.allowedModels = [{ provider: "p", id: "m" }];
     const executors = { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() };
     const sup: any = new Supervisor({
-      rootId: "root-r11cm", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-r11cm"), policy,
+      rootId: "root-r11cm", rootDir: dir, store: new InMemoryRunStore("root-r11cm"), policy,
       governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
       schedulerLimits: { maxRunnable: 4, maxResidentWorkers: 8, maxOpenAgents: 8 },
       executors,

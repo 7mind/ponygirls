@@ -75,6 +75,7 @@ export type JournalKind =
   | "gate.repair_command"
   | "gate.limits"
   | "gate.review_session"
+  | "history.source"
   | "checkpoint.published"
   | "checkpoint.superseded"
   | "recovery.event"
@@ -108,6 +109,8 @@ export interface CheckpointRef {
   bytes: number;
   createdAt: string;
   superseded: boolean;
+  /** Registered native source copied into this checkpoint; absent in legacy stores. */
+  historySourceId?: string | null;
 }
 
 /** A result text kept beside the journal, as its journal record references it. */
@@ -458,6 +461,7 @@ export class FileRunStore implements RunStore {
       sha256: ref.sha256,
       bytes: ref.bytes,
       createdAt: ref.createdAt,
+      historySourceId: ref.historySourceId ?? null,
       file,
     });
     this.retirePredecessors(ref.agentId, file);
@@ -467,7 +471,7 @@ export class FileRunStore implements RunStore {
   loadCheckpoint(agentId: string): { ref: CheckpointRef; bytes: Uint8Array } | null {
     const published = this.latestPublished(agentId);
     if (!published) return null;
-    const b = published.body as { taskRunId: string; generation: number; leafEntryId: string | null; sha256: string; bytes: number; createdAt: string; file: string };
+    const b = published.body as { taskRunId: string; generation: number; leafEntryId: string | null; sha256: string; bytes: number; createdAt: string; file: string; historySourceId?: string | null };
     let bytes: Buffer;
     try {
       bytes = readFileSync(join(this.checkpointDir, agentId, b.file));
@@ -478,7 +482,7 @@ export class FileRunStore implements RunStore {
       throw err("RECOVERY_CORRUPT", `live checkpoint ${agentId}/${b.file} failed validation`);
     }
     return {
-      ref: { agentId, taskRunId: b.taskRunId, generation: b.generation, leafEntryId: b.leafEntryId, sha256: b.sha256, bytes: b.bytes, createdAt: b.createdAt, superseded: false },
+      ref: { agentId, taskRunId: b.taskRunId, generation: b.generation, leafEntryId: b.leafEntryId, sha256: b.sha256, bytes: b.bytes, createdAt: b.createdAt, superseded: false, historySourceId: b.historySourceId ?? null },
       bytes,
     };
   }
@@ -672,6 +676,7 @@ export class InMemoryRunStore implements RunStore {
       agentId: ref.agentId,
       taskRunId: ref.taskRunId,
       generation: ref.generation,
+      historySourceId: ref.historySourceId ?? null,
       sha256: ref.sha256,
       bytes: ref.bytes,
     });

@@ -226,6 +226,8 @@
             # file unmanaged); a changed limit manages it; misordered limits
             # trip the ordering assertion.
             limitsDefault = evalWorktree { };
+            observerExtensions = builtins.filter (name: builtins.elem name [ "ponygirls-subagents" "ponygirls-historian" ])
+              (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
             limitsCustom = evalWorktree { subagentsMaxRunnable = 8; subagentsMaxResidentWorkers = 12; };
             limitsMisordered = evalWorktree { subagentsMaxRunnable = 10; };
             failedLimitAssertion = assertions: builtins.any (a: !a.assertion && builtins.match ".*subagentsMaxRunnable.*" a.message != null) assertions;
@@ -277,6 +279,8 @@
           assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+          assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
+          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian.json");
           assert !(failedLimitAssertion limitsDefault.assertions);
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;
@@ -391,12 +395,6 @@
           };
           manure-config = import ./nix/tests/manure-config.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           manure-backend = import ./nix/tests/manure-backend.nix { inherit pkgs; squishLib = inputs.squish.lib; };
-          manure-unittests = import ./nix/tests/manure-unittests.nix {
-            inherit pkgs;
-            backendCheck = self.checks.${system}.manure-backend;
-            installedClientCheck = self.checks.${system}.manure-client;
-            nativeCheck = self.checks.${system}.manure-native;
-          };
           haystack-nixos-eval =
             let
               mkSystem = extra: (nixpkgs.lib.nixosSystem {
@@ -894,6 +892,34 @@
             node --test tests/*.test.mjs
             touch $out
           '';
+          ponygirls-historian = pkgs.runCommand "ponygirls-historian-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git ];
+            PI_HISTORIAN_SUBAGENTS_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-subagents/index.ts";
+            PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            sdk=${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-historian} ponygirls-historian
+            mkdir -p ponygirls-decisions/src
+            cp ${./nix/pkg/pi-extensions/ponygirls-decisions/src/project.ts} ponygirls-decisions/src/project.ts
+            chmod -R u+w ponygirls-historian
+            cd ponygirls-historian
+            mkdir -p node_modules/@ponygirls node_modules/@earendil-works
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
+            for package in pi-ai pi-agent-core pi-tui; do
+              ln -s "$sdk/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
+            done
+            ln -s "$sdk/node_modules/typebox" node_modules/typebox
+            ln -s "$sdk/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.mjs
+            PI_HISTORIAN_EXTENSION=${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-historian/index.ts node --test tests/host.test.mjs
+            touch $out
+          '';
           ponygirls-decisions = pkgs.runCommand "ponygirls-decisions-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git ];
             PI_DECISIONS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
@@ -1017,6 +1043,14 @@
             touch "$out"
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          manure-portable-root = import ./nix/tests/manure-portable-root.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
+          manure-unittests = import ./nix/tests/manure-unittests.nix {
+            inherit pkgs;
+            backendCheck = self.checks.${system}.manure-backend;
+            installedClientCheck = self.checks.${system}.manure-client;
+            nativeCheck = self.checks.${system}.manure-native;
+            portableRootCheck = self.checks.${system}.manure-portable-root;
+          };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
           hm-service-unit-graph-harness = import ./nix/tests/hm-service-unit-graph-harness.nix { inherit pkgs; };
           hm-service-unit-graph-vm = import ./nix/tests/hm-service-unit-graph-vm.nix {

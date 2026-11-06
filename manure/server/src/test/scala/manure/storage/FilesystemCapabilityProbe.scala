@@ -38,7 +38,7 @@ object FilesystemCapabilityProbe:
         println(s"PASS: ${cases.size} filesystem contracts; no publish/recovery claim")
       case Vector("--try-root", root) =>
         try Using.resource(ConfinedDirectory.open(Path.of(root), runtime.bridge))(_.forceRootDirectory())
-        catch case _: RootAlreadyClaimed => System.exit(3)
+        catch case _: RootAlreadyClaimed | _: RootLocked => System.exit(3)
       case Vector("--reject-existing", root, leaf) =>
         Using.resource(ConfinedDirectory.open(Path.of(root), runtime.bridge)) { directory =>
           Vector(ExistingFileAccess.ReadOnly, ExistingFileAccess.ReadWrite).foreach { access =>

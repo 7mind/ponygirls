@@ -19,9 +19,10 @@ test("a restored agent's transcript is its newest session file; a running one us
   assert.equal(sup.transcript("governor", a.agentId).sessionFile, join(sessions, "restored-new.jsonl"));
 
   const workers: CtlWorker[] = [];
-  const b = mkSup({ factory: (o) => { const w = new CtlWorker(o.agentId); w.sessionFile = "/sessions/live.jsonl"; workers.push(w); return w; } });
+  const liveDir = join(dir, "live-root");
+  const b = mkSup({ dir: liveDir, factory: (o) => { const w = new CtlWorker(o.agentId); w.sessionFile = join(liveDir, "sessions", o.agentId, "live.jsonl"); workers.push(w); return w; } });
   const live = await b.sup.spawn("governor", { taskName: "b", message: "m", profile: "reader" }, "rb");
-  assert.equal(b.sup.transcript("governor", live.agentId).sessionFile, "/sessions/live.jsonl");
+  assert.equal(b.sup.transcript("governor", live.agentId).sessionFile, join(liveDir, "sessions", live.agentId, "live.jsonl"));
   assert.throws(() => b.sup.transcript(live.agentId, live.agentId), /FORBIDDEN/);
 });
 
@@ -61,7 +62,7 @@ test("each review's conversation is kept and shown with its gated agent and its 
   const dir = mkdtempSync(join(tmpdir(), "subagents-review-sessions-"));
   const factory = (o: { agentId: string }): CtlWorker => {
     const w = new CtlWorker(o.agentId);
-    w.sessionFile = `/sessions/${o.agentId}/${Math.random().toString(36).slice(2)}.jsonl`;
+    w.sessionFile = join(dir, "sessions", o.agentId, `${Math.random().toString(36).slice(2)}.jsonl`);
     return w;
   };
   try {

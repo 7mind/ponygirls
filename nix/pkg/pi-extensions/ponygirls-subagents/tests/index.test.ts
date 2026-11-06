@@ -4,6 +4,8 @@
  */
 import assert from "node:assert/strict";
 import test from "node:test";
+import { EventEmitter } from "node:events";
+import { HISTORY_CHANNEL, type HistoryFeed } from "../src/history.ts";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -16,7 +18,7 @@ type Handler = (event: unknown, ctx: unknown) => Promise<void>;
 
 type Schema = { properties?: Record<string, Schema>; items?: Schema; anyOf?: Schema[] };
 
-async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; descriptions: Map<string, string>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown }> {
+async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; descriptions: Map<string, string>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown; events: EventEmitter }> {
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
   process.env["PI_SUBAGENTS_SDK_ROOT"] = process.env["PI_SUBAGENTS_SDK_ROOT"] ?? "/nonexistent-sdk";
   const tools = new Map<string, ToolExecute>();
@@ -24,7 +26,9 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
   const descriptions = new Map<string, string>();
   const handlers = new Map<string, Handler>();
   const sent: Submission[] = [];
+  const events = new EventEmitter();
   const pi = {
+    events,
     registerTool: (t: { name: string; execute: ToolExecute; parameters: Schema; description: string }) => {
       tools.set(t.name, t.execute);
       schemas.set(t.name, t.parameters);
@@ -49,7 +53,7 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     },
     ui: { notify: () => {}, setWidget: () => {}, theme: { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text } },
   };
-  return { tools, schemas, descriptions, handlers, sent, ctx };
+  return { tools, schemas, descriptions, handlers, sent, ctx, events };
 }
 
 test("capacity tool descriptions explain descendant authority and reclaimable open slots", async () => {
@@ -155,6 +159,53 @@ test("a policy-changing reload replaces the supervisor and applies new limits", 
       { maxRunnable: 6, maxResidentWorkers: 12, maxOpenAgents: 40 });
   } finally {
     if (second) await second.handlers.get("session_shutdown")!({ reason: "quit" }, second.ctx);
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("history bridge is current-root scoped and old capabilities stay revoked after same-policy reload", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-history-bridge-"));
+  const first = await loadExtension(agentDir); let second: Awaited<ReturnType<typeof loadExtension>> | null = null;
+  const feeds: HistoryFeed[] = [];
+  const request = (extension: typeof first, rootSessionId: string) => extension.events.emit(HISTORY_CHANNEL, { rootSessionId, respond: (feed: HistoryFeed) => feeds.push(feed) });
+  try {
+    request(first, "sess-1"); assert.equal(feeds.length, 0);
+    await first.handlers.get("session_start")!({}, first.ctx);
+    request(first, "foreign"); assert.equal(feeds.length, 0);
+    request(first, "sess-1"); assert.equal(feeds.length, 1); assert.deepEqual(feeds[0]!.sources(), []);
+    await first.handlers.get("session_shutdown")!({ reason: "reload" }, first.ctx);
+    assert.throws(() => feeds[0]!.sources(), /revoked/);
+    second = await loadExtension(agentDir); await second.handlers.get("session_start")!({}, second.ctx);
+    request(first, "sess-1"); assert.equal(feeds.length, 1, "detached bridge cannot grant another capability");
+    request(second, "sess-1"); assert.equal(feeds.length, 2); assert.deepEqual(feeds[1]!.sources(), []);
+    assert.throws(() => feeds[0]!.subscribe(() => {}), /revoked/);
+    await assert.rejects(feeds[0]!.read("unused", 0, 1), /revoked/);
+  } finally {
+    if (second) await second.handlers.get("session_shutdown")!({ reason: "quit" }, second.ctx);
+    else await first.handlers.get("session_shutdown")!({ reason: "quit" }, first.ctx);
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+});
+
+test("an incompatible retained pre-bridge binding fails clearly without cancelling its retirement timer", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-history-upgrade-"));
+  const first = await loadExtension(agentDir);
+  await first.handlers.get("session_start")!({}, first.ctx);
+  await first.handlers.get("session_shutdown")!({ reason: "reload" }, first.ctx);
+  const runtime = (globalThis as Record<symbol, unknown>)[Symbol.for("ponygirls.subagents.process-runtime.v1")] as {
+    bindings: Map<string, { historyAbort?: AbortController; handoffTimer: unknown }>;
+  };
+  const binding = runtime.bindings.get(join(agentDir, "subagents", "sess-1"))!;
+  const abort = binding.historyAbort; const timer = binding.handoffTimer; delete binding.historyAbort;
+  const second = await loadExtension(agentDir);
+  try {
+    const result = await second.tools.get("list_agents")!("upgrade", {}, undefined, undefined, second.ctx);
+    assert.equal(result.isError, true); assert.match(result.content[0]!.text, /UPGRADE_RESTART_REQUIRED/);
+    assert.equal(binding.handoffTimer, timer, "old runtime must retain its own retirement path");
+  } finally {
+    binding.historyAbort = abort;
+    await second.handlers.get("session_start")!({}, second.ctx);
+    await second.handlers.get("session_shutdown")!({ reason: "quit" }, second.ctx);
     rmSync(agentDir, { recursive: true, force: true });
   }
 });

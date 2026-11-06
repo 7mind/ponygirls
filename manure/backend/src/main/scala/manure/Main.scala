@@ -6,7 +6,7 @@ import cats.syntax.all.*
 import com.comcast.ip4s.{Host,Port}
 import distage.*
 import manure.plugins.{ManurePlugin,RuntimeServices}
-import manure.storage.{ConfinedDirectory,ExistingFileAccess,PosixNative,RelativeName,RootLease}
+import manure.storage.{ConfinedDirectory,RelativeName,RootLease,RootLocked}
 import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
@@ -20,9 +20,21 @@ object Main extends IOApp:
     case List("check-casefold") => IO.blocking(UnicodeCaseFoldProbe.main(Array.empty[String])).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("serve",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case List("check-config",path) => IO.blocking(Config.load(Path.of(path))).flatMap(_ => IO.println("MANURE_CONFIG_OK")).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
+    case List("migrate",path) => IO.blocking(Config.load(Path.of(path))).flatMap(config => buildResources(config,false,config.rootAuthority.map(RootAuthorityProvider.kubernetes)).use(_ => IO.unit)).as(ExitCode.Success).handleErrorWith(safeFailure)
+    case List("plan-root-identity",path,output,evidence) => stage("plan-root-identity",for
+      config <- IO.blocking(Config.load(Path.of(path)))
+      plan <- RootIdentityMigration.prepare(config,RootAuthorityProvider.configured(config),evidence)
+      _ <- IO.blocking(RootMigrationPlan.writeNew(plan,Path.of(output)))
+      _ <- IO.println(Json.obj("status" -> Json.fromString("planned-not-applied"),"planSha256" -> Json.fromString(plan.sha256)).noSpaces)
+    yield ExitCode.Success).handleErrorWith(safeFailure)
+    case List("migrate-root-identity",path,input,expected) => stage("migrate-root-identity",for
+      config <- IO.blocking(Config.load(Path.of(path)))
+      plan <- IO.blocking(RootMigrationPlan.read(Path.of(input)))
+      result <- RootIdentityMigration.applyPlan(config,RootAuthorityProvider.configured(config),plan,expected,RootMigrationCheckpoints.quiet)
+      _ <- IO.println(Json.obj("status" -> Json.fromString(if result.replayed then "replayed" else "applied"),"planSha256" -> Json.fromString(result.planSha256),"contextRefreshed" -> Json.fromBoolean(result.contextRefreshed)).noSpaces)
+    yield ExitCode.Success).handleErrorWith(safeFailure)
     case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
-    case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json").as(ExitCode.Error)
+    case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
   private final case class StartupFailure(stage: String,code: String) extends RuntimeException(code)
   private def safeCode(error: Throwable): String = error match
     case s: StartupFailure => s.code
@@ -30,6 +42,7 @@ object Main extends IOApp:
     case r: ponygirls.runtime.RuntimeFailure if r.code.matches("[a-z][a-z-]{0,63}") => r.code
     case j: ponygirls.runtime.JdbcFailure => "jdbc-" + j.sqlState.getOrElse("unknown")
     case n: manure.storage.NativeFailure => "posix-" + n.errno()
+    case _: RootLocked => "root-locked"
     case _: java.nio.file.FileSystemException => "filesystem"
     case _: java.io.IOException => "io"
     case e if e.getClass.getName.startsWith("izumi.") => "wiring"
@@ -53,26 +66,13 @@ object Main extends IOApp:
     * precede JDBC/migrations/recovery/HTTP/workers. Release reverses that order,
     * awaiting uncancelable JDBC and streamed file cleanup before releasing claim.
     */
-  def resources(config: Config): Resource[IO,RuntimeServices] = buildResources(config,true)
-  private def buildResources(config: Config,recover: Boolean): Resource[IO,RuntimeServices] = for
-    bridge <- Resource.eval(IO.blocking(config.nativeMode match
-      case "shared" => PosixNative.shared(config.posixLibrary.get)
-      case "linked" => PosixNative.linked()
-      case _ => throw DomainError("bad-envelope")))
-    directory <- Resource.make(IO.blocking(ConfinedDirectory.open(config.dataDir,bridge)))(root => IO.blocking(root.close()))
-    lease <- Resource.make(IO.blocking(directory.lease()))(lease => IO.blocking(lease.close()))
-    control <- config.migrationReceiptDir.traverse { path =>
-      Resource.make(IO.blocking(ConfinedDirectory.open(path,bridge)))(r => IO.blocking(r.close())).flatMap { r =>
-        Resource.make(IO.blocking(r.lease()))(l => IO.blocking(l.close())).as(r)
-      }
-    }
-    _ <- Resource.eval(IO.blocking {
-      if recover then
-        val legacy = try
-          Using.resource(directory.openExistingFile(RelativeName.parse("manure.db"),ExistingFileAccess.ReadOnly))(_ => true)
-        catch case _: NoSuchFileException => false
-        Require(!legacy, "migration-required")
-    })
+  def resources(config: Config): Resource[IO,RuntimeServices] = buildResources(config,true,config.rootAuthority.map(RootAuthorityProvider.kubernetes))
+  private[manure] def resourcesWithAuthority(config: Config,provider: RootAuthorityProvider): Resource[IO,RuntimeServices] = buildResources(config,true,Some(provider))
+  private def buildResources(config: Config,recover: Boolean,provider: Option[RootAuthorityProvider]): Resource[IO,RuntimeServices] = for
+    files <- RootDirectories.resource(config,recover)
+    directory=files.payload
+    lease=files.lease
+    control=files.control
     database <- JdbcDatabase.resource(config.database)
     models <- if recover then embedding(config) else Resource.pure[IO,Option[EmbeddingClient]](None)
     gate <- Resource.eval(Semaphore[IO](1L))
@@ -90,34 +90,22 @@ object Main extends IOApp:
     observation <- Resource.eval(services.database.transaction { c =>
       // Read-only observation: no root-owner adoption or artifact mutation may
       // precede complete imported payload verification.
-      val imported = Jdbc.rows(c,"SELECT to_regclass('manure_offline.destination') IS NOT NULL")(_.getBoolean(1)).head
-      val record = if imported then
-        val records = Jdbc.rows(c,"SELECT id,root,source,writes_started FROM manure_offline.destination") { r =>
-          ImportedDestination(r.getString(1),r.getString(2),Option(r.getString(3)).getOrElse(""),r.getBoolean(4))
-        }
-        Require(records.size == 1,"migration-required");Some(records.head)
-      else None
-      val bound = if Jdbc.rows(c,"SELECT to_regclass('manure.root_owner') IS NOT NULL")(_.getBoolean(1)).head then
-        val bindings=Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1))
-        Require(bindings.size <= 1,"migration-required");bindings.headOption
-      else None
-      val hasArtifacts=Jdbc.rows(c,"SELECT to_regclass('manure.artifacts') IS NOT NULL")(_.getBoolean(1)).head
-      val empty = !hasArtifacts || Jdbc.rows(c,"SELECT NOT EXISTS(SELECT 1 FROM manure.artifacts)")(_.getBoolean(1)).head
-      (record,bound,empty)
+      RootOwnership.read(c)
     })
+    ownership <- Resource.eval(RootOwnership.verify(config,files,observation,provider))
     _ <- Resource.eval(IO.blocking {
-      observation._2.foreach(expected => Require(java.util.Arrays.equals(expected,ImportReceipt.rootBytes(directory)),"migration-required"))
-      observation._1 match
+      ownership.revalidate(directory)
+      observation.destination match
         case Some(record) if recover || record.source.nonEmpty =>
-          ImportReceipt.validate(config,directory,control.getOrElse(throw DomainError("migration-required")),record,observation._2.isEmpty,recover)
+          ImportReceipt.validate(config,directory,control.getOrElse(throw DomainError("migration-required")),record,observation.binding.isEmpty,recover,ownership.imported)
         case _ => ()
       if recover then
-        observation._1 match
+        observation.destination match
           // A matching existing binding already establishes this root's domain
           // ownership. Empty metadata can follow a committed last-row delete
           // whose filesystem cleanup was interrupted; normal orphan recovery is
           // then required. This refusal is ONLY for first, unbound adoption.
-          case None if observation._3 && observation._2.isEmpty =>
+          case None if observation.emptyArtifacts && observation.binding.isEmpty =>
             val unexpected=Vector("staging","live").exists { name =>
               try directory.tree(RelativeName.parse(name),config.limits.cleanupEntries,68).nonEmpty
               catch case _: NoSuchFileException => false
@@ -131,9 +119,10 @@ object Main extends IOApp:
         // File/hash validation above ran without an open DB transaction. Both
         // physical claims remain held; check root identities again before the
         // FIRST insert. migrate is schema-only and NEVER adopts a payload root.
-        val bytes=ImportReceipt.rootBytes(directory)
+        ownership.revalidate(directory)
+        val bytes=ownership.binding.bytes
         control.foreach(_.physicalIdentity)
-        Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
+        if observation.binding.isEmpty then Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
         Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
       services.projection.initialize(c)
     })

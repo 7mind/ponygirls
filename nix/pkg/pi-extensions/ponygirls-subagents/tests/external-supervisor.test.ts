@@ -234,7 +234,7 @@ test("process: real deterministic worker calls external via IPC with structured/
   policy.allowedTools = ["mcp__codegraph__codegraph_explore"];
   const sup = new Supervisor({
     rootId: "root-proc",
-    rootDir: join(dir, "root"),
+    rootDir: dir,
     store: new InMemoryRunStore("root-proc"),
     policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),

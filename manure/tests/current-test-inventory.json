@@ -738,6 +738,20 @@
       ]
     },
     {
+      "module": "test_target_root_identity",
+      "path": "manure/tests/test_target_root_identity.py",
+      "classification": "current",
+      "requires": [
+        "target"
+      ],
+      "tests": [
+        "test_target_root_identity.PortableRootStartupTests.test_apply_command_reports_its_own_error_stage",
+        "test_target_root_identity.PortableRootStartupTests.test_opted_in_legacy_root_refuses_and_default_auth_payload_remain_usable",
+        "test_target_root_identity.PortableRootStartupTests.test_opted_in_unbound_root_refuses_before_schema_or_adoption",
+        "test_target_root_identity.PortableRootStartupTests.test_plan_command_reports_its_own_error_stage"
+      ]
+    },
+    {
       "module": "test_target_search",
       "path": "manure/tests/test_target_search.py",
       "classification": "current",
@@ -1310,7 +1324,7 @@
     },
     {
       "id": "filesystem-lifetime",
-      "invariant": "Descriptor-relative no-follow operations, regular-file checks, bounded non-following cleanup, physical-root identity/alias ownership and retained claim until all file/worker leases release; linked native parity required.",
+      "invariant": "Descriptor-relative no-follow operations, regular-file checks, bounded non-following cleanup, physical-root identity/alias ownership and retained claim until all file/worker leases release; authority-enabled startup refuses unbound or unmigrated roots before schema/adoption; linked native parity required.",
       "sourceRefs": [
         {
           "path": "manure/manure/storage.py",
@@ -1353,6 +1367,26 @@
         {
           "path": "manure/backend/src/test/scala/manure/RuntimeSuite.scala",
           "marker": "test(\"nonempty payload root with no import/metadata fails closed, no orphan sweep adoption\""
+        },
+        {
+          "path": "manure/backend/src/test/scala/manure/RootMigrationSuite.scala",
+          "marker": "test(\"authority-enabled startup refuses an unbound root before schema or adoption effects\""
+        },
+        {
+          "path": "manure/tests/test_target_root_identity.py",
+          "testId": "test_target_root_identity.PortableRootStartupTests.test_opted_in_unbound_root_refuses_before_schema_or_adoption"
+        },
+        {
+          "path": "manure/tests/test_target_root_identity.py",
+          "testId": "test_target_root_identity.PortableRootStartupTests.test_opted_in_legacy_root_refuses_and_default_auth_payload_remain_usable"
+        },
+        {
+          "path": "manure/tests/test_target_root_identity.py",
+          "testId": "test_target_root_identity.PortableRootStartupTests.test_plan_command_reports_its_own_error_stage"
+        },
+        {
+          "path": "manure/tests/test_target_root_identity.py",
+          "testId": "test_target_root_identity.PortableRootStartupTests.test_apply_command_reports_its_own_error_stage"
         }
       ],
       "openGaps": []

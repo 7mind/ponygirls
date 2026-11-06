@@ -6,12 +6,15 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <linux/magic.h>
+#include <linux/fs.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/file.h>
 #include <sys/socket.h>
+#include <sys/sysmacros.h>
 #include <sys/stat.h>
 #include <sys/statfs.h>
 #include <sys/un.h>
@@ -270,6 +273,30 @@ JNIEXPORT jlongArray JNICALL JNI_METHOD(identity)(JNIEnv *env, jobject self, jin
     if (result != NULL) (*env)->SetLongArrayRegion(env, result, 0, 2, values);
     return result;
 }
+JNIEXPORT void JNICALL JNI_METHOD(lockRoot)(JNIEnv *env, jobject self, jint fd) {
+    UNUSED_SELF;
+    const char *op = "lockRoot";
+    if (!valid_fd(env, fd, op)) return;
+    struct stat st;
+    if (stat_fd(fd, &st) < 0) { failure(env, errno, op); return; }
+    if (!S_ISDIR(st.st_mode)) { failure(env, ENOTDIR, op); return; }
+    int r;
+    do { r = flock(fd, LOCK_EX | LOCK_NB); } while (r < 0 && errno == EINTR);
+    if (r < 0) failure(env, errno, op);
+}
+JNIEXPORT jlongArray JNICALL JNI_METHOD(filesystemIdentity)(JNIEnv *env, jobject self, jint fd) {
+    UNUSED_SELF;
+    const char *op = "filesystemIdentity";
+    if (!valid_fd(env, fd, op)) return NULL;
+    struct stat st;
+    struct statfs fs;
+    if (stat_fd(fd, &st) < 0 || fstatfs(fd, &fs) < 0) { failure(env, errno, op); return NULL; }
+    if (!S_ISDIR(st.st_mode)) { failure(env, ENOTDIR, op); return NULL; }
+    jlong values[3] = {(jlong)fs.f_type, (jlong)major(st.st_dev), (jlong)minor(st.st_dev)};
+    jlongArray result = (*env)->NewLongArray(env, 3);
+    if (result != NULL) (*env)->SetLongArrayRegion(env, result, 0, 3, values);
+    return result;
+}
 JNIEXPORT jint JNICALL JNI_METHOD(kind)(JNIEnv *env, jobject self, jint parent, jbyteArray name) {
     UNUSED_SELF;
     const char *op = "kind";
@@ -423,6 +450,21 @@ JNIEXPORT void JNICALL JNI_METHOD(move)(JNIEnv *env, jobject self, jint source_p
     if (d == NULL) { free(s); return; }
     int r;
     do { r = renameat(source_parent, s, destination_parent, d); } while (r < 0 && errno == EINTR);
+    int error = errno;
+    free(s); free(d);
+    if (r < 0) failure(env, error, op);
+}
+JNIEXPORT void JNICALL JNI_METHOD(moveNew)(JNIEnv *env, jobject self, jint source_parent, jbyteArray source,
+                                            jint destination_parent, jbyteArray destination) {
+    UNUSED_SELF;
+    const char *op = "moveNew";
+    if (!valid_fd(env, source_parent, op) || !valid_fd(env, destination_parent, op)) return;
+    char *s = component(env, source, op);
+    if (s == NULL) return;
+    char *d = component(env, destination, op);
+    if (d == NULL) { free(s); return; }
+    int r;
+    do { r = renameat2(source_parent, s, destination_parent, d, RENAME_NOREPLACE); } while (r < 0 && errno == EINTR);
     int error = errno;
     free(s); free(d);
     if (r < 0) failure(env, error, op);

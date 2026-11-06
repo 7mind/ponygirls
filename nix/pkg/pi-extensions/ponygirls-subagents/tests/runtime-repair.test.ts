@@ -63,7 +63,7 @@ test("W1 oversize prepare settles promptly with error, zero effects (real worker
   policy.allowedModels = [{ provider: "p", id: "m" }];
   policy.allowedTools = [CG];
   const sup = new Supervisor({
-    rootId: "root-w1r", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-w1r"), policy,
+    rootId: "root-w1r", rootDir: dir, store: new InMemoryRunStore("root-w1r"), policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
     schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
@@ -264,7 +264,7 @@ async function realPrepareHarness(t: TestContext, opts: { schema: unknown; prepa
   policy.allowedModels = [{ provider: "p", id: "m" }];
   policy.allowedTools = [CG];
   const sup = new Supervisor({
-    rootId: "root-ar", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-ar"), policy,
+    rootId: "root-ar", rootDir: dir, store: new InMemoryRunStore("root-ar"), policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
     schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },
@@ -597,7 +597,7 @@ test("delayed prepare errors once, no fallback; late ignored (real worker, delay
   const dir = mkdtempSync(join(tmpdir(), "subagents-dr2-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const sup = new Supervisor({
-    rootId: "root-dr2", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-dr2"),
+    rootId: "root-dr2", rootDir: dir, store: new InMemoryRunStore("root-dr2"),
     policy: (() => { const p = defaultSupervisorPolicy(); p.allowedModels = [{ provider: "p", id: "m" }]; p.allowedTools = [CG]; return p; })(),
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
     schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
@@ -1753,7 +1753,7 @@ test("tickets: oversize prepare fails visibly without minting (real worker)", as
   policy.allowedModels = [{ provider: "p", id: "m" }];
   policy.allowedTools = [CG];
   const sup = new Supervisor({
-    rootId: "root-tov", rootDir: join(dir, "root"), store: new InMemoryRunStore("root-tov"), policy,
+    rootId: "root-tov", rootDir: dir, store: new InMemoryRunStore("root-tov"), policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
     schedulerLimits: { maxRunnable: 2, maxResidentWorkers: 4, maxOpenAgents: 8 },
     executors: { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() },

@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { Supervisor } from "../src/supervisor.ts";
 import { InMemoryRunStore, checkpointSha256 } from "../src/store.ts";
 import { DummyToolExecutor } from "../src/sandbox.ts";
@@ -33,7 +34,15 @@ function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
       const request = worker.request.bind(worker);
       worker.request = async (operation, payload, opts) => {
         if (operation === "initialize") initialized.push(payload as Record<string, unknown>);
-        return request(operation, payload, opts);
+        const result = await request(operation, payload, opts);
+        if (operation === "initialize") {
+          const restore = (payload as { restore: { sessionFile: string } | null }).restore;
+          if (restore !== null) {
+            const session = SessionManager.open(restore.sessionFile, dirname(restore.sessionFile));
+            return { ok: true, sessionId: session.getSessionId(), sessionFile: session.getSessionFile() };
+          }
+        }
+        return result;
       };
       workers.push(worker);
       return worker;
@@ -42,7 +51,7 @@ function setup(script: "settle-text" | "hang" = "settle-text", limits = {}) {
   const sup = new Supervisor(options);
   const spawn = () => sup.spawn("governor", { taskName: "worker", message: "first", profile: "reader" }, "spawn");
   const checkpoint = (agentId: string, taskRunId: string) => {
-    const bytes = Buffer.from("retained-native-history\n");
+    const bytes = Buffer.from(JSON.stringify({ type: "session", version: 3, id: "retained-native-history", timestamp: new Date().toISOString(), cwd: dir }) + "\n");
     store.saveCheckpoint({ agentId, taskRunId, generation: 1, leafEntryId: "leaf", sha256: checkpointSha256(bytes), bytes: bytes.length, createdAt: new Date().toISOString(), superseded: false }, bytes);
   };
   return { sup, store, workers, initialized, options, spawn, checkpoint, markUsageUnknown: () => { unknownUsage = true; },

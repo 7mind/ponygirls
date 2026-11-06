@@ -644,7 +644,7 @@ test("provider-start hold: worker continuation ASK denied BEFORE entry while hel
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdfix",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -761,7 +761,7 @@ test("provider-start hold: healthy two-turn enters (control, passes)", () => {
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdfixh",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdfixh"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -835,7 +835,7 @@ test("provider-start hold: healthy retryable-error retries through guard (contro
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdretry",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdretry"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -918,7 +918,7 @@ test("provider-start hold: managed reviewer continuation ASK denied BEFORE entry
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdrev",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1062,7 +1062,7 @@ test("provider-start hold: healthy reviewer two-turn enters (control, passes)", 
       const candidates: CtlWorker[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdrevh",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdrevh"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1251,7 +1251,7 @@ test("provider-start hold: continuation-specific unavailable denies next ENTRY (
       let calls = 0;
       const sup = new Supervisor({
         rootId: "root-provholdnext",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdnext"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1361,7 +1361,7 @@ test("provider-start hold: held retry denied during backoff window (fixed)", () 
       const holders: CtlWorker[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdheldretry",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1465,7 +1465,7 @@ test("provider-start hold: healthy overflow turn admitted, no hold (control, pas
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdcompact",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdcompact"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1556,7 +1556,7 @@ test("provider-start hold: held overflow turn denied with zero ENTRY (fixed)", (
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdcompactheld",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1640,7 +1640,7 @@ test("provider-start hold: admission requires task-run/generation identity (fixe
       const probeResults: Record<string, { ok: boolean; code: string }> = {};
       const sup = new Supervisor({
         rootId: "root-provholdids",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdids"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1787,7 +1787,7 @@ test("provider-start hold: healthy split compaction enters twice via guard (fixe
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdcompact2",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdcompact2"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -1960,7 +1960,7 @@ test("provider-start hold: held split compaction denies second summary (fixed)",
       const pendingLatch = (agentDir: string): string => join(agentDir, "summary-pending");
       const sup = new Supervisor({
         rootId: "root-provholdcompactheld2",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -2243,7 +2243,7 @@ test("provider-start hold: compaction cancellation aborts pending summary (fixed
       const pendingLatch = (agentDir: string): string => join(agentDir, "summary-pending");
       const sup = new Supervisor({
         rootId: "root-provholdcompactcancel",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdcompactcancel"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -2456,7 +2456,7 @@ test("provider-start hold: collision literals keep script semantics (fixed)", ()
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdcollide",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdcollide"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -2552,7 +2552,7 @@ test("provider-start hold: original seam faults mark unknown and join settlement
     let primary: unknown = null;
     const secondaries: Array<{ phase: string; error: unknown }> = [];
     const runMode = async (mode: string, tag: string): Promise<void> => {
-      const sessionsDir = join(dir, "sessions");
+      const sessionsDir = join(dir, "root-" + tag, "sessions");
       mkdirSync(sessionsDir, { recursive: true });
       const SCRIPT = [{ text: "never served" }];
       const policy = defaultSupervisorPolicy();
@@ -2773,7 +2773,7 @@ test("provider-start hold: external 5/7 billed once across OS process restart (f
       const executors = { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() };
       const sup = new Supervisor({
         rootId: "root-restart",
-        rootDir: join(dir, "root2"),
+        rootDir: dir,
         store: new FileRunStore(storeDir, "root-restart"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -2957,7 +2957,7 @@ test("provider-start hold: mid-run collector append and read faults fail loudly 
       const executors = { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() };
       const sup = new Supervisor({
         rootId: "root-provholdfaults",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdfaults"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3057,7 +3057,7 @@ test("provider-start hold: malformed returned usage marks unknown without fabric
     let primary: unknown = null;
     const secondaries: Array<{ phase: string; error: unknown }> = [];
     const runMode = async (mode: string, tag: string): Promise<void> => {
-      const sessionsDir = join(dir, "sessions-" + tag);
+      const sessionsDir = join(dir, "root-" + tag, "sessions");
       mkdirSync(sessionsDir, { recursive: true });
       const SCRIPT = [{ text: "served despite malformed accounting" }];
       const policy = defaultSupervisorPolicy();
@@ -3160,7 +3160,7 @@ test("provider-start hold: observer record fault fails terminal with cause, usag
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdobsfault",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdobsfault"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3268,7 +3268,7 @@ test("provider-start hold: end-without-message fails explicitly without interrup
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdendbare",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdendbare"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3365,7 +3365,7 @@ test("provider-start hold: lifecycle append fault fails terminal with cause, usa
       const trace: AdmissionTrace[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdcyclefault",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdcyclefault"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3470,7 +3470,7 @@ test("supervisor ledger bills late ORIGINAL receipt under captured identity exac
       policy.allowedTools = [];
       const sup = new Supervisor({
         rootId: "root-latereceipt",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-latereceipt"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3579,7 +3579,7 @@ test("supervisor ledger attributes late ORIGINAL to its captured generation acro
       policy.allowedTools = [];
       const sup = new Supervisor({
         rootId: "root-latenewgen",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-latenewgen"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3715,7 +3715,7 @@ test("failed late-report append holds admission until recovery bills exactly onc
       });
       const sup = new Supervisor({
         rootId: "root-laterecover",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: store as any,
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -3848,7 +3848,7 @@ test("reviewer late ORIGINAL receipt bills under reviewer identity (boundary)", 
       const candidates: CtlWorker[] = [];
       const sup = new Supervisor({
         rootId: "root-provholdrevlate",
-        rootDir: join(dir, "root"),
+        rootDir: dir,
         store: new InMemoryRunStore("root-provholdrevlate"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),
@@ -4002,7 +4002,7 @@ test("failed late receipt survives OS-process restart via durable outbox (bounda
       const executors = { sandbox: new DummyToolExecutor(), host: new DummyToolExecutor() };
       const sup = new Supervisor({
         rootId: "root-latereboot",
-        rootDir: join(dir, "root2"),
+        rootDir: dir,
         store: new FileRunStore(storeDir, "root-latereboot"),
         policy,
         governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),

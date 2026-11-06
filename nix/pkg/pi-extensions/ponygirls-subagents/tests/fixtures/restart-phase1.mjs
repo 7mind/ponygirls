@@ -59,7 +59,7 @@ policy.allowedTools = [CG];
 const holders = [];
 const sup = new Supervisor({
   rootId: 'root-restart',
-  rootDir: join(markerDir, 'root'),
+  rootDir: markerDir,
   store,
   policy,
   governor: () => ({ model: { provider: 'p', id: 'm', thinkingLevel: 'off' }, cwd: markerDir, instructions: { contextFiles: [], skills: [] } }),
