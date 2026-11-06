@@ -217,6 +217,19 @@
       ]
     },
     {
+      "module": "test_browser_viewers",
+      "path": "manure/tests/test_browser_viewers.py",
+      "classification": "current",
+      "requires": [
+        "target",
+        "browser"
+      ],
+      "tests": [
+        "test_browser_viewers.ViewerBrowserTests.test_path_viewer_rendering_and_authorization",
+        "test_browser_viewers.ViewerBrowserTests.test_subdomain_viewer_rendering_and_authorization"
+      ]
+    },
+    {
       "module": "test_catalogue",
       "path": "manure/tests/test_catalogue.py",
       "classification": "architecture-retired",
