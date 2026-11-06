@@ -15,6 +15,14 @@ working agreements, tentative ideas and open questions from the guided human rev
 including Question/Conflict naming. It is a resumable review log, not an implemented
 schema revision or authorization to start another pilot or service implementation.
 
+A later explicit confirmation authorized the bounded automated workflow-benefit
+Pilot T: graph assistance versus equally capable ordinary chat/notes for actual
+artifact delivery and a deliberate scoped policy revision. The
+[experimental contract T1](experimental-contract-t1.md) consolidates the review for
+that test. Automated pilots precede the provisional Pi-extension client; production,
+CQ4 migration and parked applications remain deferred. Preparation/canary success
+is not a measured workflow-benefit or Human-efficacy result.
+
 ## Problem and proposed response
 
 Agents expand a small statement of intent into more implementation detail than a
