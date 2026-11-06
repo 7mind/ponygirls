@@ -1,6 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
 import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
 import { localCatalog } from "./projects.ts";
@@ -33,6 +34,7 @@ function isDirectory(path: string): boolean {
 }
 
 export default function codegraphExtension(pi: ExtensionAPI): void {
+  let statusView = new CustomViewToggle();
   let workspace: CodegraphWorkspace | undefined;
   const toolCalls = new Set<string>();
   let currentContext: ExtensionContext | undefined;
@@ -49,10 +51,20 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     const label = toolCalls.size > 0 ? `querying (${toolCalls.size}) / ${state.phase}` : state.phase;
     const detail = state.phase === "working" ? ` ${state.detail.split(":")[0]}` : "";
     const querying = toolCalls.size > 0;
+    const controller = statusView;
+    const runtime = workspace;
     ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
       render: () => [theme.bg("selectedBg", ` CG: ${label}${detail} `)],
       renderCompact: () => renderCompactBadge(theme, state.phase, querying),
       invalidate: () => {},
+      handleMouse: (event) => {
+        if (event.type !== "click" || event.button !== "left" || runtime === undefined || !ctx.hasUI) return undefined;
+        void controller.toggle(ctx.ui, async (tui, theme, keys, done) => new StatusView({
+          title: "Codegraph status", text: await runtime.report(null), theme, keys,
+          rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
+        })).catch((error: unknown) => { if (workspace === runtime) notify(ctx, String(error), true); });
+        return { handled: true };
+      },
     }), { placement: "borderBottomLeft" });
   };
   const create = (ctx: ExtensionContext): CodegraphWorkspace => {
@@ -74,11 +86,14 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     return runtime;
   };
   pi.on("session_start", (_event, ctx) => {
+    statusView.dispose();
+    statusView = new CustomViewToggle();
     toolCalls.clear();
     const runtime = create(ctx);
     void runtime.start(process.env.SMIND_CODEGRAPH_DISABLED !== "1");
   });
   pi.on("session_shutdown", async () => {
+    statusView.dispose();
     const previous = workspace;
     workspace = undefined;
     const ctx = currentContext;

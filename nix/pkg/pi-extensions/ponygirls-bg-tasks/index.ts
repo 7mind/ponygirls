@@ -4,7 +4,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { compactChip } from "@ponygirls/pi-ui";
+import { compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
@@ -19,8 +19,7 @@ interface Bound {
   activation: Activation;
   dispatcher: NoticeDispatcher;
   ctx: ExtensionContext;
-  /** Open /bg views; closed when the activation ends. */
-  views: Set<{ view: BgInspector; close: () => void }>;
+  view: CustomViewToggle;
   statusTimer: ReturnType<typeof setTimeout> | null;
   /** Last status-backend error, or null when reachable (outage episode state). */
   statusError: string | null;
@@ -66,7 +65,7 @@ function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
-        void openBgInspector(entry.ctx, entry);
+        void openBgInspector(entry.ctx, entry, "toggle").catch((error: unknown) => report(entry.ctx, errorText(error), "error"));
         return { handled: true };
       },
     }),
@@ -139,7 +138,8 @@ function scheduleStatus(entry: Bound, isCurrent: () => boolean): void {
 const NO_RECEIPTS: ReceiptSource = { scan: () => ({ present: new Set(), answered: new Set() }) };
 
 /** Open the /bg inspector in the TUI (or dump a first page for RPC/print clients). */
-const openBgInspector = async (ctx: ExtensionContext, b: Bound): Promise<void> => {
+const openBgInspector = async (ctx: ExtensionContext, b: Bound, action: "open" | "toggle"): Promise<void> => {
+  if (b.view.isDisposed) return;
   if (ctx.mode !== "tui") {
     // RPC/print clients get a plain first page; the terminal viewer needs the TUI.
     const backend = await b.activation.backend();
@@ -148,9 +148,8 @@ const openBgInspector = async (ctx: ExtensionContext, b: Bound): Promise<void> =
     ctx.ui.notify(lines.length ? lines.join("\n") : "No retained background tasks in this session.", "info");
     return;
   }
-  await ctx.ui.custom<void>((tui, theme, _kb, done) => {
-    const entry = { view: null as unknown as BgInspector, close: () => done() };
-    entry.view = new BgInspector({
+  await b.view[action](ctx.ui, (tui, theme, _kb, done) => {
+    return new BgInspector({
       backend: () => b.activation.backend(),
       noticeState: (task) => b.dispatcher.localState(task),
       noticeForgotten: (task) => b.dispatcher.forget(task),
@@ -161,15 +160,10 @@ const openBgInspector = async (ctx: ExtensionContext, b: Bound): Promise<void> =
       },
       requestRender: () => tui.requestRender(),
       rows: () => tui.terminal.rows,
-      close: () => {
-        b.views.delete(entry);
-        done();
-      },
+      close: done,
       theme,
       now: () => Date.now(),
     });
-    b.views.add(entry);
-    return entry.view;
   });
 };
 
@@ -220,7 +214,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
       if (self.value) scheduleStatus(self.value, () => bound === self.value);
     });
     self.value = {
-      activation, dispatcher, ctx, views: new Set(), statusTimer: null, statusError: null, tasks: new Map(),
+      activation, dispatcher, ctx, view: new CustomViewToggle(), statusTimer: null, statusError: null, tasks: new Map(),
       submitNotice: (status, text) =>
         pi.sendMessage(
           { customType: STATUS_CUSTOM_TYPE, content: text, display: true, details: { status } },
@@ -247,11 +241,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
     } catch {
       // Stale UI after replacement/reload: nothing to do.
     }
-    for (const { view, close } of ending.views) {
-      view.dispose();
-      close();
-    }
-    ending.views.clear();
+    ending.view.dispose();
     await ending.activation.shutdown(event.reason);
   });
 
@@ -271,7 +261,7 @@ export default function bgTasks(pi: ExtensionAPI): void {
 
   pi.registerCommand("bg", {
     description: "Inspect background tasks: list, live/retained terminal output, terminate, signal, mute, clear",
-    handler: (_args, ctx) => openBgInspector(ctx, current()),
+    handler: (_args, ctx) => openBgInspector(ctx, current(), "open"),
   });
 
   pi.on("agent_start", (_event, ctx) => {

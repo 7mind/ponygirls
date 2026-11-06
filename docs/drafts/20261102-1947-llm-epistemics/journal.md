@@ -3042,3 +3042,102 @@ Fresh integrated Q85/0.782s, T72/24.730s and successor38/6.953s pass, zero failu
 errors/skips. S136 is explicitly reused on matching128-source hashes, registered inputs
 and unchanged historical source/fixture/protocol/Nix inputs. Relocated public inventory
 matches,2031-file publication verification passes. No fresh integrated S run is implied.
+
+## J36 — additive T rejection diagnostics under bounded autonomy (2026-11-06)
+
+The user invited autonomous continuation. The selected increment was localized
+[rejection diagnostics](pilot-t-diagnostics.md), independent of pending Q22,
+transport recovery and new participant measurement. Diagnostics003 in local
+`epistemics-pilots` is integrated at `09bc22043de27edee1fd3f7f68753e113c77310a`
+[L21]. It adds missing/stale governing refs, stale-definition and wrong-progress-kind
+explanations; preserves002 admission order/code/detail and transaction semantics;
+never selects context or repairs the caller's request. Attributable bind/state
+pointers differ from referenced graph records. Whole-packet/final-context errors
+remain batch-scoped, not assigned to the last operation. Tentative refs are not
+admission receipts; oversized reasons are explicitly omitted, not truncated.
+
+The corrected16-method fail-before contract fails on missing diagnostics; an
+initial fixture-reference precedence error remains retained.70 successor methods
+pass, including memory/file and actual SDK→extension→copied-backend/CLI/audit
+controls. Three retained process-valid graph users provide65 exact-prestate mutation
+comparisons (27 accepted/38 rejected):002/003 legacy outcome and complete store state
+agree. Frozen original replay still controls historical verification. No participant
+artifact is executed/imported and no original verdict changes.
+
+Complete final fresh suites pass401 methods: S136/400.226s,Q85/0.821s,T72/25.448s,
+repair00238/6.128s,diagnostics00370/11.531s; zero failures/errors/skips.137 source
+hashes,984 registered inputs and2031 publication-bound files verify. Integrated and
+post-cleanup runs each freshly pass265 Q/T/002/003 tests; S136 is explicitly reused
+with exact source binding and unchanged historical inputs. Pilot task worktree
+removed normally after preserving11 local/index entries; an earlier cleanup guard
+failed before any move because it omitted internally ignored index files, and its
+failure/correction are retained. Main index was not moved or edited by this work.
+
+Read-only design/code/skill reviews and parent dispositions are retained. No new
+skill/amendment, native participant run, production/UI/CQ4 change, export-policy
+choice, transport correction, deployment or push. Software diagnostics are not
+measured agent improvement or Human usability. Static schema alignment, binding
+preview and evidence-method reporting remain independent proposals, not implied
+implementations.
+
+Research handover checks20 documents/93 local links/36 journal entries/89 references;
+J1–J35 and prior references are exact prefixes, protected schema/semantics/review/T1
+and prototype sources unchanged. The prototype's36 methods freshly pass6.610s,
+zero failures/errors/skips. Structural/regression checks are not semantic approval.
+
+## J37 — agent-memory content/use candidate, separate from Pilot U (2026-11-06)
+
+The user requested Astra-assisted analysis/fixes of small-experiment failures, then
+a larger experiment, and an extension of the design with agentic memory—rules,
+observations/facts and prior-art research. The parent keeps these as two independent
+increments: repaired workflow measurement in U, and the [M1 design candidate](agent-memory-m1.md).
+New memory semantics do not enter U's first comparison. This preserves an interpretable
+bundle comparison without attributing changed behavior solely to schema repair.
+
+The baseline already maps memory to source-bound Statements with applicability and
+history. M1 therefore proposes discriminated content/use profiles, not new canonical
+truth kinds or a parallel memory service. Observations and domain occurrences retain
+method, conditions, time, material and uncertainty; they are separately inspectable
+from assessments and do not become binding-local Task progress. “Fact” is a bounded
+presentation under a named use policy, not an intrinsic verification bit. Policies,
+heuristics, procedures and empirical regularities have distinct roles; retrieving
+or editing a procedure cannot authorize side effects or promote it to Human approval.
+
+Recorded/observed/claimed-validity time, exact applicability and use-specific recheck
+remain distinct. Correction, world change, scope refinement, retraction, normative
+change and summary replacement are attributed changes, not one timeless newest
+winner. Distillation preserves shared evidence roots and limitations; repeated
+summaries are not independent corroboration. Retrieval returns candidates, not
+permission or established gates. Missing corrections/context and retention losses
+must remain visible. No universal TTL, automatic cross-project standing or blanket
+approval for engineering choices is introduced. Independently wanted outcomes and
+support routes survive failure of one means, without retaining revoked permission.
+
+Six primary-source snapshots inform bounded transfer [R69–R74]: CoALA's memory and
+action cycle; LangMem's collections/profiles and formation timing; Zep's temporal
+records; A-Mem's linked evolving notes; Letta MemFS's editable file context; and
+LongMemEval's temporal/update/abstention and retrieval-versus-use distinctions.
+Only named sections were inspected, except the short retained MemFS page read in
+full. Author performance claims are not replicated results. Zep's new-information
+invalidation and A-Mem's representation replacement are not adopted as universal
+truth/history policies. Letta's MEMORY.md directory indexes are not assumed to be
+semantic/vector retrieval or authenticated authority.
+
+Astra local-gap analysis, a separate writer and a read-only candidate review are
+retained with exact receipts. Parent read M1 completely, checked its scope against
+the baseline and retained-source findings, and applied one nonblocking clarification
+about Letta's directory indexes. The review found no material design defect; it is
+advisory, not Human ratification. Twelve prohibited-conclusion/legitimate-neighbor
+pairs are proposed falsification cases, not executed semantic validation. Observation
+profile enforcement, partial temporal applicability, sufficient context expansion
+and retention/privacy effects remain open design work rather than new user blockers.
+
+U preparation meanwhile retains real SDK schema/read/storage reproductions, a broader
+four-family/four-variant corpus, and launch/readiness gate corrections. At this entry,
+no U native canary, registration or measured participant call has occurred. Proposed
+64 originals/128 stages are not reported outcomes. Corpus mutant discrimination is
+instrument sensitivity, not model difficulty. Pilot T's demonstrated disadvantages
+remain historical findings; neither repairs nor M1 establish a workflow advantage.
+Q22 was freshly observed pending/null at2026-11-06T12:39Z; neither increment selects
+its export policy. No client/service/CQ4/application implementation, deployment,
+push or skill installation is authorized or claimed [L22].

@@ -4,8 +4,9 @@ import {
   CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component, type Focusable, type MarkdownTheme, type TUI,
 } from "@earendil-works/pi-tui";
-import { fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
+import { PanelLayout, type PanelParts, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
 import type { Decision } from "./store.ts";
+import { relativeTime } from "./time.ts";
 
 export interface DecisionsPaneCallbacks {
   tui: TUI;
@@ -55,16 +56,16 @@ const MAX_HINT_LINES = 4;
 
 const LIST_HINTS: readonly KeyHint[] = [
   { key: "↑↓", action: "select" }, { key: "⏎", action: "detail" }, { key: "⇥", action: "pending/all" },
-  { key: "⇞⇟", action: "scroll detail" }, { key: "esc", action: "close" },
+  { key: "⇞⇟", action: "scroll detail" }, { key: "⎋", action: "close" },
 ];
-const DETAIL_HINTS: readonly KeyHint[] = [{ key: "↑↓/⇞⇟", action: "scroll" }, { key: "esc", action: "inbox" }, { key: "⇥", action: "pending/all" }];
+const DETAIL_HINTS: readonly KeyHint[] = [{ key: "↑↓/⇞⇟", action: "scroll" }, { key: "⎋", action: "inbox" }, { key: "⇥", action: "pending/all" }];
 const ACTION_HINTS: readonly KeyHint[] = [
   { key: "a/e", action: "answer" }, { key: "1–9/o", action: "options" }, { key: "d", action: "dismiss" }, { key: "u", action: "reopen" },
 ];
-const EDITOR_HINTS: readonly KeyHint[] = [{ key: "⏎", action: "newline" }, { key: "ctrl+s", action: "save" }, { key: "esc", action: "discard" }];
-const REBASE_HINTS: readonly KeyHint[] = [{ key: "ctrl+r", action: "reload latest revision, keeping draft" }];
+const EDITOR_HINTS: readonly KeyHint[] = [{ key: "⏎", action: "newline" }, { key: "⌃S", action: "save" }, { key: "⎋", action: "discard" }];
+const REBASE_HINTS: readonly KeyHint[] = [{ key: "⌃R", action: "reload latest revision, keeping draft" }];
 const OPTIONS_HINTS: readonly KeyHint[] = [
-  { key: "↑↓/1–9", action: "choose" }, { key: "ctrl+s", action: "save" }, { key: "e", action: "edit" }, { key: "esc", action: "discard" },
+  { key: "↑↓/1–9", action: "choose" }, { key: "⌃S", action: "save" }, { key: "e", action: "edit" }, { key: "⎋", action: "discard" },
 ];
 
 /** A detail section: a styled label over an indented, sanitized Markdown body. */
@@ -81,7 +82,7 @@ interface Section {
  * Render reloads current records; a draft retains its original CAS revision.
  * Ctrl+R explicitly adopts the latest revision without dropping draft text.
  */
-export class DecisionsPane implements Component, Focusable {
+export class DecisionsPane extends PanelLayout implements Component, Focusable {
   private items: Decision[] = [];
   private selectedId: string | null;
   private all = false;
@@ -105,6 +106,7 @@ export class DecisionsPane implements Component, Focusable {
   private sessionId: string;
 
   constructor(theme: Theme, callbacks: DecisionsPaneCallbacks, projectName: string, initialId: string | null, getHeight: () => number, sessionId: string) {
+    super((width) => this.renderParts(width));
     this.theme = theme;
     this.callbacks = callbacks;
     this.projectName = projectName;
@@ -135,7 +137,7 @@ export class DecisionsPane implements Component, Focusable {
     if (this.editor) this.editor.focused = value && this.draft?.mode === "editor";
   }
 
-  invalidate(): void { this.sectionCache = null; this.editor?.invalidate(); }
+  invalidate(): void { super.invalidate(); this.sectionCache = null; this.editor?.invalidate(); }
 
   /** Also called on every render and key event; does not replace an active draft. */
   refresh(): void {
@@ -171,7 +173,7 @@ export class DecisionsPane implements Component, Focusable {
       this.scroll = 0;
     };
     // Enter merely selects; it is deliberately NOT a persistence action.
-    list.onSelect = () => { this.notice = "Option selected. Ctrl+S saves; e edits it."; };
+    list.onSelect = () => { this.notice = "Option selected. ⌃S saves; e edits it."; };
     return list;
   }
 
@@ -258,7 +260,7 @@ export class DecisionsPane implements Component, Focusable {
           this.draft.base = { ...latest, options: [...latest.options] };
           // Keep the exact staged text, even if the options changed externally.
           if (this.draft.mode === "options") this.edit();
-          this.notice = "Latest revision loaded; draft kept. Review before Ctrl+S.";
+          this.notice = "Latest revision loaded; draft kept. Review before ⌃S.";
         } else this.notice = "Decision no longer exists; draft kept.";
       } else if (this.draft.mode === "editor") this.editorInput(data);
       else if (this.draft.mode === "options") {
@@ -320,6 +322,8 @@ export class DecisionsPane implements Component, Focusable {
   private detailSections(d: Decision): Section[] {
     return [
       { label: "Question", body: d.question },
+      { label: "Created", body: `${relativeTime(d.createdAt, Date.now())} (${d.createdAt})` },
+      { label: "Modified", body: `${relativeTime(d.updatedAt, Date.now())} (${d.updatedAt})` },
       d.context ? { label: "Context", body: d.context } : null,
       d.options.length ? { label: "Options", body: d.options.map((s, i) => `${i + 1}. ${s}`).join("\n") } : null,
       d.recommendation ? { label: "Recommendation", body: d.recommendation } : null,
@@ -340,27 +344,31 @@ export class DecisionsPane implements Component, Focusable {
   /** Short dim id, glyph+colour status, question; secondary text is muted inside the selection band. */
   private row(item: Decision, selected: boolean, idWidth: number): string {
     const id = this.theme.fg(selected ? "muted" : "dim", fitCell(oneLine(item.id), idWidth));
-    return [id, this.statusCell(item.status, STATUS_WIDTH), this.sessionLabel(item), this.theme.fg("text", oneLine(item.question))].filter(Boolean).join(COLUMN_GAP);
+    return [id, this.statusCell(item.status, STATUS_WIDTH), this.sessionLabel(item), this.theme.fg("text", oneLine(item.question)), this.theme.fg("muted", `created ${relativeTime(item.createdAt, Date.now())} · modified ${relativeTime(item.updatedAt, Date.now())}`)].filter(Boolean).join(COLUMN_GAP);
   }
 
   private viewport(lines: string[], rows: number): string[] {
-    this.detailRows = Math.max(1, rows);
-    this.detailLength = lines.length;
-    this.scroll = Math.max(0, Math.min(this.scroll, lines.length - this.detailRows));
-    return lines.slice(this.scroll, this.scroll + rows);
+    const detailRows = Math.max(1, rows);
+    const scroll = Math.max(0, Math.min(this.scroll, lines.length - detailRows));
+    if (!this.isMeasuring) {
+      this.detailRows = detailRows;
+      this.detailLength = lines.length;
+      this.scroll = scroll;
+    }
+    return lines.slice(scroll, scroll + rows);
   }
 
-  render(width: number): string[] {
-    this.refresh();
-    const w = Math.max(0, Math.floor(width)), height = Math.max(0, Math.floor(this.getHeight()));
-    if (!w || !height) return [];
+  private renderParts(width: number): PanelParts {
+    if (!this.isMeasuring) this.refresh();
+    const w = Math.max(0, Math.floor(width)), height = Math.max(0, Math.floor(this.height(this.getHeight())));
+    if (!w || !height) return { header: [], body: [], footer: [] };
     const fit = (s: string) => truncateToWidth(s, w, "…");
     const dim = (s: string) => this.theme.fg("dim", s);
     const draft = this.draft, d = draft?.base ?? this.current();
-    const warning = [this.loadError, this.notice, this.changed() ? "Changed elsewhere; draft kept. Ctrl+R adopts latest revision." : ""].filter(Boolean).join(" ");
+    const warning = [this.loadError, this.notice, this.changed() ? "Changed elsewhere; draft kept. ⌃R adopts latest revision." : ""].filter(Boolean).join(" ");
     const hints: (readonly KeyHint[])[] = draft?.mode === "editor" ? [EDITOR_HINTS, REBASE_HINTS]
       : draft?.mode === "options" ? [OPTIONS_HINTS]
-      : draft ? [[{ key: "ctrl+s", action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: "esc", action: "cancel" }]]
+      : draft ? [[{ key: "⌃S", action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: "⎋", action: "cancel" }]]
       : [this.detail ? DETAIL_HINTS : LIST_HINTS, ACTION_HINTS];
     const foot = [
       ...warning ? wrapTextWithAnsi(this.theme.fg("warning", oneLine(warning)), w).slice(0, MAX_WARNING_LINES) : [],
@@ -385,11 +393,11 @@ export class DecisionsPane implements Component, Focusable {
         const selected = item.id === this.selectedId;
         return listRow(this.theme, w, this.row(item, selected, idWidth), selected);
       });
-      out.push(...(listLines.length ? listLines : [dim("No pending decisions. Tab shows history.")]));
+      out.push(...(listLines.length ? listLines : [dim("No pending decisions. ⇥ shows history.")]));
       rows -= listLines.length || 1;
       if (d && rows > 1) { out.push(frameRule(this.theme, w)); rows--; }
     }
-    if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. Tab shows history."));
+    if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. ⇥ shows history."));
     if (d && rows > 0) {
       if (draft || this.detail) {
         out.push([dim(oneLine(d.id)), this.statusCell(d.status, visibleWidth(statusLabel(d.status))), this.sessionLabel(d)].filter(Boolean).join(COLUMN_GAP));
@@ -404,8 +412,9 @@ export class DecisionsPane implements Component, Focusable {
         out.push(...lines.slice(start, start + rows));
       } else if (draft?.mode === "options") {
         const count = Math.min(d.options.length + 1, Math.max(1, Math.floor(rows / 2)));
-        this.choices = this.makeChoices(Math.max(1, count - 1));
-        const choices = this.choices.render(w).slice(0, count);
+        const selection = this.makeChoices(Math.max(1, count - 1));
+        if (!this.isMeasuring) this.choices = selection;
+        const choices = selection.render(w).slice(0, count);
         out.push(...choices);
         out.push(...this.viewport(this.sections([{ label: "Selected option", body: draft.answer ?? "" }], w), Math.max(0, rows - choices.length)));
       } else {
@@ -416,6 +425,6 @@ export class DecisionsPane implements Component, Focusable {
         out.push(...this.viewport(this.sections(sections, w), rows));
       }
     }
-    return [...out.slice(0, height - bottom.length), ...bottom].map(fit);
+    return { header: out.slice(0, 1).map(fit), body: out.slice(1, height - bottom.length).map(fit), footer: bottom.map(fit) };
   }
 }

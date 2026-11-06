@@ -9,8 +9,8 @@
  * so short tables leave the transcript visible above it.
  */
 
-import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, type Component, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
-import { frameRule, frameTitle, keyHints, type UiTheme } from "@ponygirls/pi-ui";
+import { Key, matchesKey, truncateToWidth, wrapTextWithAnsi, ScrollView, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { frameRule, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from "@ponygirls/pi-ui";
 import type { QuotaReport } from "./service.ts";
 import { buildTable, type TableStyle } from "./table.ts";
 import type { ModelReport } from "./report.ts";
@@ -44,21 +44,24 @@ function countdown(ms: number): string {
   return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
-export class TokemonView implements Component {
+export class TokemonView extends PanelLayout {
   private readonly deps: TokemonViewDeps;
   private report: QuotaReport | null = null;
   private error: string | null = null;
   private loading = false;
   private showInvalid = false;
   private showModels = false;
-  private scrollTop = 0;
+  private readonly regularScroll: ScrollView;
+  private lastWidth: number | null = null;
   /** Key hint lines at the last rendered width (they wrap on narrow terminals). */
   private hintLines = 1;
   private nextRefreshAt: Date;
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(deps: TokemonViewDeps) {
+    super((width) => this.renderParts(width));
     this.deps = deps;
+    this.regularScroll = new ScrollView({ render: (width) => this.content(width).lines, invalidate() {} });
     this.nextRefreshAt = deps.now();
     this.load(deps.refreshEveryMs);
     this.timer = setInterval(() => this.tick(), TICK_MS);
@@ -68,7 +71,9 @@ export class TokemonView implements Component {
     clearInterval(this.timer);
   }
 
-  invalidate(): void {}
+  override invalidate(): void {}
+
+  private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
 
   private load(maxAgeMs: number): void {
     this.loading = true;
@@ -117,11 +122,11 @@ export class TokemonView implements Component {
     return { lines, caption: table.caption };
   }
 
-  render(width: number): string[] {
+  private renderParts(width: number): PanelParts {
+    this.lastWidth = width;
     const s = this.deps.style;
     const w = Math.max(40, width);
-    const now = this.deps.now();
-    const status = this.loading ? "querying…" : this.report ? `updated ${clock(this.report.refreshedAt)} · next refresh in ${countdown(this.nextRefreshAt.getTime() - now.getTime())}` : "";
+    const status = this.loading ? "querying…" : this.report ? `updated ${clock(this.report.refreshedAt)} · next refresh in ${countdown(this.nextRefreshAt.getTime() - this.deps.now().getTime())}` : "";
     const t = this.deps.theme;
     const hints = keyHints(t, w, [
       { key: "r", action: "refresh" },
@@ -132,40 +137,48 @@ export class TokemonView implements Component {
     ]);
     this.hintLines = hints.lines.length;
     const { lines, caption } = this.content(w);
-    // The pane is only as tall as its content (up to the terminal budget):
-    // short tables leave the transcript visible below the overlay.
-    const height = Math.min(this.viewportHeight(), lines.length);
-    this.scrollTop = Math.min(this.scrollTop, Math.max(0, lines.length - height));
-    const visible = lines.slice(this.scrollTop, this.scrollTop + height);
-    const below = lines.length - this.scrollTop - height;
-    const position = this.scrollTop > 0 || below > 0 ? ` · lines ${this.scrollTop + 1}-${Math.min(lines.length, this.scrollTop + height)} of ${lines.length}` : "";
-    return [
-      frameTitle(t, w, { title: TITLE, right: status === "" ? undefined : t.fg("dim", status) }, "none").line,
-      ...visible.map((l) => truncateToWidth(l, w, "…")),
-      truncateToWidth(s.dim(`${caption ?? ""}${position}`), w, "…"),
-      frameRule(t, w),
-      ...hints.lines,
-    ];
+    const scroll = this.scroll;
+    const end = Math.min(lines.length, scroll.scrollTop + scroll.viewportHeight);
+    const position = scroll.scrollTop > 0 || end < lines.length ? ` · lines ${scroll.scrollTop + 1}-${end} of ${lines.length}` : "";
+    return {
+      header: [frameTitle(t, w, { title: TITLE, right: status === "" ? undefined : t.fg("dim", status) }, "none").line],
+      body: lines.map((line) => truncateToWidth(line, w, "…")),
+      footer: [truncateToWidth(s.dim(`${caption ?? ""}${position}`), w, "…"), frameRule(t, w), ...hints.lines],
+    };
+  }
+
+  override render(width: number): string[] {
+    const { body } = this.renderParts(width);
+    const height = Math.min(this.viewportHeight(), body.length);
+    // Keep regular-mode paging separate: intrinsic measurement must not clamp the allocated viewport's scroll position.
+    this.regularScroll.updateLayout(body.length, height, this.deps.requestRender);
+    const start = Math.min(this.scroll.scrollTop, Math.max(0, body.length - height));
+    const { header, footer } = this.renderParts(width);
+    return [...header, ...body.slice(start, start + height), ...footer];
   }
 
   handleInput(data: string): void {
-    const page = Math.max(1, this.viewportHeight() - 1);
+    if (this.lastWidth !== null) {
+      const scroll = this.scroll;
+      scroll.updateLayout(this.content(this.lastWidth).lines.length, scroll.viewportHeight, this.deps.requestRender);
+    }
+    const page = Math.max(1, this.scroll.viewportHeight - 1);
     if (matchesKey(data, Key.escape) || data === "q") this.deps.close();
-    else if (matchesKey(data, Key.up) || data === "k") this.scrollTop = Math.max(0, this.scrollTop - 1);
-    else if (matchesKey(data, Key.down) || data === "j") this.scrollTop += 1;
-    else if (matchesKey(data, Key.pageUp)) this.scrollTop = Math.max(0, this.scrollTop - page);
-    else if (matchesKey(data, Key.pageDown)) this.scrollTop += page;
-    else if (matchesKey(data, Key.home) || data === "g") this.scrollTop = 0;
-    else if (matchesKey(data, Key.end) || data === "G") this.scrollTop = Number.MAX_SAFE_INTEGER;
+    else if (matchesKey(data, Key.up) || data === "k") this.scroll.scrollBy(-1);
+    else if (matchesKey(data, Key.down) || data === "j") this.scroll.scrollBy(1);
+    else if (matchesKey(data, Key.pageUp)) this.scroll.scrollBy(-page);
+    else if (matchesKey(data, Key.pageDown)) this.scroll.scrollBy(page);
+    else if (matchesKey(data, Key.home) || data === "g") this.scroll.scrollToStart();
+    else if (matchesKey(data, Key.end) || data === "G") this.scroll.scrollToEnd();
     else if (data === "r" && !this.loading) this.load(0);
     else if (data === "i") this.showInvalid = !this.showInvalid;
     else if (data === "m") this.showModels = !this.showModels;
     this.deps.requestRender();
   }
 
-  handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined {
+  handleMouse(event: TuiMouseEvent): ReturnType<PanelLayout["handleMouse"]> {
     if (event.type !== "wheel" || !event.wheelDelta) return undefined;
-    this.scrollTop = Math.max(0, this.scrollTop + event.wheelDelta);
-    return { handled: true };
+    this.scroll.scrollBy(event.wheelDelta);
+    return { handled: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
   }
 }

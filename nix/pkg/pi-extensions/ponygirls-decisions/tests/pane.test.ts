@@ -1,10 +1,11 @@
+import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 /** Behavioral-Active × Blackbox × Group (specified): pane + real Pi widgets.
  * These headless keyboard/render checks complement, not replace, real PTY tests.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { Theme } from "@earendil-works/pi-coding-agent";
-import { CURSOR_MARKER, visibleWidth, type TUI } from "@earendil-works/pi-tui";
+import { VStack, CURSOR_MARKER, visibleWidth, type TUI } from "@earendil-works/pi-tui";
 import { DecisionsPane } from "../src/pane.ts";
 import type { Decision } from "../src/store.ts";
 
@@ -60,6 +61,22 @@ function open(items = [decision(1)], initialId: string | null = null, projectNam
   };
 }
 
+test("creation and modification ages are visible in inbox, history and detail and refresh with time", (t) => {
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse("2026-01-01T02:30:00Z") });
+  const h = open([decision(1, { updatedAt: "2026-01-01T02:20:00Z" })]);
+  assert.match(h.screen().split("\n")[1]!, /created 2h 30m ago.*modified 10m ago/);
+  h.press(ENTER);
+  assert.match(h.screen(), /Created\n\s+2h 30m ago/);
+  assert.match(h.screen(), /Modified\n\s+10m ago/);
+  t.mock.timers.tick(60_000);
+  assert.match(h.screen(), /Modified\n\s+11m ago/);
+  h.setRecords([decision(1, { status: "answered", answer: "Saved", updatedAt: new Date().toISOString() })]);
+  h.press(TAB);
+  assert.match(h.screen(), /Modified\n\s+just now/);
+  h.press(ESC);
+  assert.match(h.screen().split("\n")[1]!, /modified just now/);
+});
+
 test("pending inbox, wrapped Markdown detail, history toggle, and stable selection after refresh", () => {
   const h = open([decision(1), decision(2), decision(3, { status: "answered", answer: "HISTORY-ANSWER" })]);
   assert.equal(h.activeTab(), "pending 2");
@@ -111,8 +128,8 @@ test("saving the last pending answer returns from detail to an inbox that closes
     assert.equal(h.records()[0]!.status, "answered");
     assert.equal(h.activeTab(), "pending 0");
     assert.match(h.screen(), /No pending decisions/);
-    assert.match(h.screen(), /esc close/);
-    assert.doesNotMatch(h.screen(), /esc inbox/);
+    assert.match(h.screen(), /⎋ close/);
+    assert.doesNotMatch(h.screen(), /⎋ inbox/);
     assert.equal(h.closed(), false, "saving returns to the inbox without closing it");
     h.press(ESC);
     assert.equal(h.closed(), true, "one Escape closes the empty inbox");
@@ -132,6 +149,22 @@ test("saving from detail returns to the remaining pending list and preserves his
   assert.match(history.screen(), /▌ Q7\s+✓ answered/);
   history.press(ESC);
   assert.equal(history.closed(), true);
+});
+
+test("shortcut hints and notices use key symbols across interaction modes", () => {
+  const h = open();
+  const check = (expected: RegExp) => {
+    assert.match(h.screen(), expected);
+    assert.doesNotMatch(h.screen(), /\b(?:ctrl|alt|esc|Tab)\b/i);
+  };
+  check(/⎋ close/);
+  h.press(ENTER); check(/⎋ inbox/);
+  h.press("a"); check(/⌃S save[\s\S]*⌃R reload/);
+  h.setRecords([decision(1, { revision: 2 })]); check(/⌃R adopts latest/);
+  h.press(REBASE); check(/Review before ⌃S/);
+  h.press(ESC, "o", ENTER); check(/⌃S saves/);
+  h.press(ESC, "d"); check(/⌃S confirm dismiss/);
+  h.press(ESC, "d", SAVE); check(/⇥ shows history/);
 });
 
 test("narrow inbox retains the full answer/dismiss/reopen keyboard hint", () => {
@@ -303,12 +336,12 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
   assert.equal(visibleWidth(raw[0]!), width);
   assert.ok(raw[0]!.includes(fgCode("dim") + "pony"), "project name is dim on the right");
   assert.doesNotMatch(lines.join("\n"), /\.git|\/projects\//, "the raw project path is never printed");
-  assert.match(lines[1]!, /^▌ Q1\s+\? pending\s+Question 1\?\s*$/);
+  assert.match(lines[1]!, /^▌ Q1\s+\? pending\s+Question 1\?\s+created .* · modified .*\s*$/);
   assert.equal(visibleWidth(raw[1]!), width, "selection spans the full width");
   assert.ok(raw[1]!.startsWith(SELECTED_BG));
   assert.ok(raw[1]!.includes(fgCode("muted") + "Q1"), "ids are muted, not dim, inside the selection band");
   assert.ok(raw[1]!.includes(fgCode("warning") + "? pending"));
-  assert.match(lines[2]!, /^ {2}Q2\s+\? pending\s+Question 2\?$/);
+  assert.match(lines[2]!, /^ {2}Q2\s+\? pending\s+Question 2\?\s+created .* · modified .*$/);
   assert.ok(raw[2]!.includes(fgCode("dim") + "Q2"), "unselected ids are dim");
   assert.match(lines[3]!, /^─+$/, "a rule separates the list from the detail");
   assert.equal(lines[4], "Question");
@@ -317,7 +350,7 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
   assert.match(lines.join("\n"), /\nContext\n {2}Useful context\.\s*\nOptions\n {2}1\. First option\s*\n {2}2\. Second option\s*\nRecommendation\n {2}Prefer the second option\./);
   const rule = lines.findLastIndex((line) => /^─+$/.test(line));
   assert.deepEqual(lines.slice(rule + 1), [
-    "↑↓ select  ⏎ detail  ⇥ pending/all  ⇞⇟ scroll detail  esc close",
+    "↑↓ select  ⏎ detail  ⇥ pending/all  ⇞⇟ scroll detail  ⎋ close",
     "a/e answer  1–9/o options  d dismiss  u reopen",
   ]);
   assert.ok(raw[rule + 1]!.includes(fgCode("muted") + "select"), "hint actions are muted");
@@ -329,9 +362,35 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
   h.press("d");
   const confirm = h.pane.render(width).map(plain);
   assert.match(confirm.join("\n"), /\nQ1\s+\? pending\nDismiss this decision\?\n {2}Question 1\?/);
-  assert.equal(confirm.at(-1), "ctrl+s confirm dismiss  esc cancel");
+  assert.equal(confirm.at(-1), "⌃S confirm dismiss  ⎋ cancel");
   h.press(ESC);
   h.press("r");
   const notice = h.pane.render(width);
   assert.ok(notice.some((line) => line.startsWith(fgCode("warning") + "Refreshed.")), "notices keep the warning colour");
+});
+
+// Behavioral-Active × Blackbox × Group; regression: allocated-height clipping lost pane actions.
+test("allocated decisions layout retains close hints", () => {
+  const h = open([decision(1, { context: "line\n".repeat(50) })]);
+  const frame = renderLayoutFrame(h.pane, 100, 18, () => {});
+  assert.match(plain(frame.lines.join("\n")), /⎋ close/);
+});
+
+test("wide intrinsic previews preserve decisions detail scroll and root resize regrows the body", () => {
+  const h = open([decision(1, { context: Array.from({ length: 20 }, (_, i) => `context-${i} ` + "wrapped words ".repeat(10)).join("\n") })]);
+  h.press(ENTER);
+  const root = new VStack([
+    { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+    { component: h.pane, grow: 0 },
+    { component: { render: () => ["status", "badges"], invalidate() {} }, shrink: 0 },
+  ]);
+  const draw = () => renderLayoutFrame(root, 48, 12, () => {}).lines;
+  draw(); draw();
+  h.press(END);
+  const before = draw();
+  h.pane.render(120);
+  assert.deepEqual(draw(), before);
+  const short = h.pane.bodyScroll.viewportHeight;
+  renderLayoutFrame(root, 100, 24, () => {});
+  assert.ok(h.pane.bodyScroll.viewportHeight > short);
 });

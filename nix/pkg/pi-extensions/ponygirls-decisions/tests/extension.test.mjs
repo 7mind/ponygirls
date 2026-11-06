@@ -80,15 +80,45 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(key, "decisions");
   assert.equal(options.placement, "borderBottomLeft");
   const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
-  assert.equal(factory(null, theme).render(80)[0], " ? 1 · Ctrl+Alt+D ");
+  assert.equal(factory(null, theme).render(80)[0], " ? 1+0 · ⌃⌥D ");
   assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
   assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
-  assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1</text> [/toolPendingBg]");
+  assert.equal(factory(null, tagged).renderCompact(10), "[toolPendingBg] <warning>?</warning><text>1+0</text> [/toolPendingBg]");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);
   assert.equal((await f.call({ action: "ask", question: "Which storage?", options: ["SQLite", "JSONL"], context: "Concurrent sessions", recommendation: "SQLite" }, "call-1")).details.id, "Q1");
+});
+
+test("badge partitions only pending project questions by originating session and refreshes on changes", async (t) => {
+  const f = fixture(t); f.start();
+  assert.equal(f.widgets.at(-1)[1], undefined);
+  const theme = { bg: (_color, s) => s, fg: (_color, s) => s };
+  const badge = (here, other) => {
+    const widget = f.widgets.at(-1)[1](null, theme);
+    assert.equal(widget.render(100)[0], ` ? ${here}+${other} · ⌃⌥D `);
+    assert.equal(widget.renderCompact(20), ` ?${here}+${other} `);
+  };
+  const external = new SqliteDecisionStore(f.path);
+  t.after(() => external.close());
+  const input = { question: "Other question", context: "", options: [], recommendation: "", sessionId: "other", toolCallId: "other" };
+  external.ask("project-a", input);
+  external.ask("project-a", { ...input, sessionId: "third", toolCallId: "third" });
+  external.ask("project-b", input);
+  f.tick(); badge(0, 2);
+  await f.call({ action: "ask", question: "Here" }, "here");
+  badge(1, 2);
+  await f.command("dismiss Q1"); badge(1, 1);
+  await f.command("answer Q2 Done"); badge(1, 0);
+  await f.command("reopen Q1"); badge(1, 1);
+  f.ctx.sessionManager.getSessionId = () => "third";
+  f.start(); badge(0, 2);
+  f.ctx.sessionManager.getSessionId = () => "origin";
+  f.start(); badge(1, 1);
+  await f.command("dismiss Q3"); badge(0, 1);
+  await f.command("dismiss Q1");
+  assert.equal(f.widgets.at(-1)[1], undefined);
 });
 
 test("agents can review answered and dismissed history with full answers through get", async (t) => {
@@ -492,4 +522,43 @@ test("corrupt session override stops automation and a later explicit setting rep
   assert.equal(f.notifications.at(-1).level, "error");
   assert.match(f.notifications.at(-1).message, /append denied/);
   assert.ok(f.active().includes("decisions"));
+});
+
+// Behavioral-Active × Blackbox × Group; regression: a badge could open but not close its pane.
+test("badge toggles the inbox, while command/Esc and shutdown share its lifecycle", async (t) => {
+  const f = fixture(t);
+  f.ctx.mode = "tui";
+  const theme = { bg: (_color, text) => text, fg: (_color, text) => text, bold: (text) => text };
+  let opens = 0;
+  let closes = 0;
+  let pane;
+  f.ctx.ui.custom = (factory) => new Promise((resolve) => {
+    opens += 1;
+    pane = factory({ terminal: { rows: 24 }, requestRender() {} }, theme, {}, () => { closes += 1; resolve(); });
+  });
+  f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "toggle-question");
+  const badge = f.widgets.at(-1)[1](null, theme);
+  const click = () => badge.handleMouse({ type: "click", button: "left" });
+  assert.equal(badge.handleMouse({ type: "click", button: "right" }), undefined);
+  assert.equal(opens, 0);
+  click();
+  assert.equal(opens, 1);
+  click();
+  assert.equal(closes, 1, "second badge click must invoke the custom completion callback");
+  await new Promise((resolve) => setImmediate(resolve));
+  const command = f.command("");
+  assert.equal(opens, 2);
+  click();
+  assert.equal(closes, 2, "badge closes a command-opened pane too");
+  await command;
+  click();
+  pane.handleInput("\x1b");
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(closes, 3);
+  click();
+  f.handlers.get("session_shutdown")({}, f.ctx);
+  assert.equal(closes, 4);
+  click();
+  assert.equal(opens, 4, "a retained old badge cannot reopen a disposed session");
 });
