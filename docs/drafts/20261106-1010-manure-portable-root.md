@@ -7,10 +7,16 @@ remain independent production prerequisites. Preserve authoritative sources and 
 not promote a retained import merely because staging recovery succeeds.
 
 The current revision moves the deployment-specific CSI driver pin into required
-trusted configuration. Its new configuration tests are being revalidated; the native
-receipts below describe the preceding code-pinned implementation, not this revision.
+trusted configuration. Its integrated acceptance passed:163backend/32storage,
+339native,8installed-client cases and13portable-VM check groups, zero failures,
+errors or skips. Current evidence is
+`/nix/store/bkpbczqipsb24xxy3bkb158m8d8s7j2w-manure-current-acceptance-composition`;
+current ELF SHA256 is
+`db6d97a4bbd9f4dc42d0409144370ce707bbda4940c063e893517f055c168d18`.
+Earlier code-pinned receipts below remain historical evidence, not a substitute
+for this revision. Main integration preserved the exact native/acceptance build graph.
 
-Current JVM snapshot:161 backend tests/15suites and32 storage tests/1suite, zero
+Prior code-pinned JVM snapshot (historical):161 backend tests/15suites and32 storage tests/1suite, zero
 failures/errors/skips. The corrected source-bound static-musl ELF passed the complete
 339-case native target/browser inventory plus Node/codec gates, including four
 explicit opt-in/maintenance regressions. A contained VM separately passed native
@@ -302,7 +308,7 @@ Private evidence is retained outside Git under
   not alter that ELF. Neither this baseline nor its host mount refusal covers the
   subsequent opt-in startup correction.
 
-- Corrected source-bound ELF SHA
+- Prior code-pinned source-bound ELF SHA
   `6d684d134c2f29a7c92f91053ced14b4c7b4973b95e765d2ccd61dd397304fdf`
   passed339/339 cases with zero failures/errors/skips/expected failures/unexpected
   successes, exact inventory equality and Node/codec gates. The four new startup
