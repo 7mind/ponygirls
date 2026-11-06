@@ -291,6 +291,7 @@
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
+          assert limitsDefault.programs.pi.settings.regularMouse == true;
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian.json");
           assert builtins.fromJSON limitsDefault.home.file."/home/alice/.pi/agent/historian-defaults.json".text == { version = 1; journalRoot = null; model = historianDefaultModel; };
           assert !(historianUnconfigured.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
