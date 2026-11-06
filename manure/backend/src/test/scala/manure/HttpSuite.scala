@@ -261,7 +261,12 @@ final class HttpSuite extends FunSuite:
         assert(html.contains(base + "/__manure/raw/" + encoded))
         assert(html.contains("src=\"" + base + "/__manure/viewer/viewer.js\""))
         assert(value(shell,"Content-Security-Policy").contains("script-src 'self' 'wasm-unsafe-eval'"))
-        assert(value(shell,"Content-Security-Policy").contains("object-src 'none'"))
+        // Regression: Chromium blocks Mermaid's generated inline SVG styles without this allowance.
+        val policy = value(shell,"Content-Security-Policy")
+        assert(policy.contains("style-src 'self' 'unsafe-inline'"))
+        assertEquals(policy.split(";").map(_.trim).find(_.startsWith("script-src ")),Some("script-src 'self' 'wasm-unsafe-eval'"))
+        assert(policy.contains("object-src 'none'"))
+        assert(policy.contains("frame-src 'none'"))
       }
       _ <- Vector(base + "/",base + "/__manure/raw/" + encoded,base + "/__manure/view/" + encoded,base + "/__manure/files/" + encoded + "/content").traverse_ { path =>
         h.app.run(request(Method.GET,path).putHeaders(hdr("Accept","text/html"),hdr("Range","bytes=2-7"))).flatMap { r =>

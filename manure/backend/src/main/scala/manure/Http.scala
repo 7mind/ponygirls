@@ -372,7 +372,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       val html = "__MANURE_(?:ASSET_BASE|PATH|RAW_URL|DOWNLOAD_URL|KIND)__".r.replaceAllIn(Exact.string(bytes),
         m => java.util.regex.Matcher.quoteReplacement(htmlAttribute(values(m.matched))))
       Response[IO](Status.Ok).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
-        raw("Content-Security-Policy","default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
+        raw("Content-Security-Policy","default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
     }
   private def form(req: Request[IO]): IO[Map[String,String]] =
     IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/x-www-form-urlencoded"), "bad-envelope")) *>
