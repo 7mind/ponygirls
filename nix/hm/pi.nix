@@ -782,7 +782,6 @@ in
           defaultModel = cfg.models.pi.model;
           defaultThinkingLevel = cfg.models.pi.thinkingLevel;
           tuiMode = if cfg.fullscreenTui.enable then "fullscreen" else "regular";
-          regularMouse = lib.mkDefault true;
           compaction = {
             enabled = true;
             reserveTokens = 100000;
