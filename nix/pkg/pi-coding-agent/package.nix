@@ -72,6 +72,9 @@ buildNpmPackage (finalAttrs: {
     # prompt would be rejected as concurrent); the prompt's run satisfies it.
     # Only abort() cancels retained wakes; clearQueue() clears user input only.
     ./patches/retained-custom-message-ingress.patch
+    ./patches/border-gesture-lifecycle.patch
+    # Opt-in main-screen mouse routing; native terminal selection remains the default.
+    ./patches/regular-mode-mouse.patch
   ];
 
   npmDepsHash = "sha256-aBzVz78IxZQlzPYC72Ufa2YFtkow6nZR24YBYZrv9W0=";
@@ -121,9 +124,17 @@ buildNpmPackage (finalAttrs: {
     (cd packages/coding-agent && ../../node_modules/.bin/vitest run \
       test/chat-viewport.test.ts \
       test/custom-editor-border-content.test.ts \
+      test/custom-editor-border-gesture.test.ts \
       test/interactive-mode-widget-placement.test.ts \
       test/interactive-mode-extension-dialogs.test.ts \
-      test/interactive-mode-status.test.ts)
+      test/interactive-mode-status.test.ts \
+      test/interactive-tui.test.ts \
+      test/regular-mouse-settings.test.ts \
+      test/config-schemas.test.ts)
+    node --test \
+      packages/tui/test/cursor-position.test.ts \
+      packages/tui/test/tui-main-screen-mouse.test.ts \
+      packages/tui/test/stdin-buffer.test.ts
     runHook postCheck
   '';
 

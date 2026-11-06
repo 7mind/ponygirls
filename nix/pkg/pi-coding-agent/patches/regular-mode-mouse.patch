@@ -1,0 +1,1993 @@
+From 31cf211c82e3ccdf21def5b2aec6c302e05a8ee8 Mon Sep 17 00:00:00 2001
+From: Pavel Shirshov <pshirshov@eml.cc>
+Date: Fri, 6 Nov 2026 12:57:05 +0000
+Subject: [PATCH] feat(tui): backport opt-in regular-mode component mouse input
+
+---
+ packages/coding-agent/docs/settings.md        |   1 +
+ packages/coding-agent/docs/tui.md             |   8 +-
+ .../coding-agent/schemas/settings.schema.json |   5 +
+ .../src/core/settings-defaults.ts             |   1 +
+ .../coding-agent/src/core/settings-manager.ts |   4 +
+ .../coding-agent/src/core/settings-schema.ts  |   7 +
+ .../src/modes/interactive/interactive-mode.ts |   2 +
+ .../src/modes/interactive/tui-renderer.ts     |   5 +-
+ .../coding-agent/test/interactive-tui.test.ts |  98 +++-
+ .../test/regular-mouse-settings.test.ts       |  80 +++
+ packages/tui/README.md                        |  14 +-
+ packages/tui/src/components/box.ts            |  32 +-
+ packages/tui/src/cursor-position.ts           |  46 ++
+ packages/tui/src/index.ts                     |   2 +-
+ packages/tui/src/main-screen-mouse.ts         | 277 +++++++++
+ packages/tui/src/stdin-buffer.ts              |  29 +-
+ packages/tui/src/terminal.ts                  |   4 +
+ packages/tui/src/tui-main-screen.ts           |  88 +++
+ packages/tui/src/tui.ts                       |  97 ++-
+ packages/tui/test/cursor-position.test.ts     |  76 +++
+ packages/tui/test/stdin-buffer.test.ts        |  37 +-
+ .../tui/test/tui-main-screen-mouse.test.ts    | 555 ++++++++++++++++++
+ 22 files changed, 1406 insertions(+), 62 deletions(-)
+ create mode 100644 packages/coding-agent/test/regular-mouse-settings.test.ts
+ create mode 100644 packages/tui/src/cursor-position.ts
+ create mode 100644 packages/tui/src/main-screen-mouse.ts
+ create mode 100644 packages/tui/test/cursor-position.test.ts
+ create mode 100644 packages/tui/test/tui-main-screen-mouse.test.ts
+
+diff --git a/packages/coding-agent/docs/settings.md b/packages/coding-agent/docs/settings.md
+index 7e28985..38d4006 100644
+--- a/packages/coding-agent/docs/settings.md
++++ b/packages/coding-agent/docs/settings.md
+@@ -95,6 +95,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
+ | `theme` | string | `"system"` | Built-in or custom theme name. `system` derives colors from the terminal theme. |
+ | `quietStartup` | boolean \| `"header"` | `false` | `true` hides the startup header and loaded-resource listing. `"header"` keeps the header (version and key hints) but hides the model scope line and loaded-resource listing. |
+ | `tuiMode` | `"regular" \| "fullscreen"` | `"fullscreen"` | Interactive terminal UI mode. |
++| `regularMouse` | boolean | `false` | Enable component clicks in regular mode (restart required). Captures mouse input terminal-wide; native drag selection and scrollback wheel handling are available with this off. No fullscreen-style transcript selection or copy-on-select is added. Requires terminal cursor-position replies. No effect in fullscreen mode. |
+ | `fullscreenExitOutput` | `"transcript" \| "resume-hint"` | `"transcript"` | Output printed when fullscreen mode exits. |
+ | `fullscreenScrollbar` | `"auto" \| "always" \| "hidden"` | `"auto"` | Fullscreen transcript scrollbar behavior. |
+ | `fullscreenCopyOnSelect` | boolean | `true` | Copy selected text automatically in fullscreen mode. |
+diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
+index 9aa915e..0f6e601 100644
+--- a/packages/coding-agent/docs/tui.md
++++ b/packages/coding-agent/docs/tui.md
+@@ -55,11 +55,11 @@ Forward keys your editor does not own to the base implementation, and restore th
+ 
+ ## Handle mouse input
+ 
+-Fullscreen mode routes normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render. Components shown in an editor border slot (`ctx.ui.setWidget` with a border placement) receive events on their own columns of the border line, with coordinates local to the visible content. A border component may also implement `renderCompact(width)`, a shorter one-line form shown when its full first line does not fit its share of the border.
++Fullscreen mode and regular mode with `regularMouse: true` route normalized mouse events to components. A handler can mark an event handled, capture a drag sequence, request focus, or request a render. Components shown in an editor border slot (`ctx.ui.setWidget` with a border placement) receive events on their own columns of the border line, with coordinates local to the visible content. A border component may also implement `renderCompact(width)`, a shorter one-line form shown when its full first line does not fit its share of the border.
+ 
+-Unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
++In fullscreen mode, unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
+ 
+-Regular mode leaves mouse input to the terminal because the terminal owns scrollback. Design every interaction with a keyboard path even when fullscreen mouse input is available.
++Regular mode leaves mouse input to the terminal by default. Set `regularMouse: true` in settings and restart to enable component clicks. This captures mouse input terminal-wide: native drag selection and scrollback wheel handling are only guaranteed with the setting off. Regular capture does not add fullscreen transcript selection or copy-on-select. Clicks wait until terminal geometry is known; keyboard input and rendering continue while waiting. Design every interaction with a keyboard path even when mouse input is available.
+ 
+ ## Use custom screens and overlays
+ 
+@@ -143,7 +143,7 @@ Treat each custom component instance as belonging to one interaction. Create a n
+ 
+ Finish the interaction with the completion callback supplied to the component factory. It resolves the `ctx.ui.custom()` promise and disposes the component. Do not call `OverlayHandle.hide()` on an overlay created by `ctx.ui.custom()`.
+ 
+-For an inline detail view opened by an editor-border badge, pass `{ retainEditorBorders: true }` to `ctx.ui.custom()`. The editor's visible border widgets remain above/below the view, without showing the draft or moving keyboard focus to the hidden editor. A second badge click can call that interaction's completion callback to close it. Keep one pending/open interaction per badge and revoke its callback on session shutdown; repeated clicks must not stack duplicate views. Empty border rows take no space. The option is ignored for overlays and custom editors without `createBorderComponent()` support. Nested confirmation/input dialogs do not retain the rows. Mouse interaction still requires fullscreen mode; preserve command/shortcut and keyboard dismissal paths.
++For an inline detail view opened by an editor-border badge, pass `{ retainEditorBorders: true }` to `ctx.ui.custom()`. The editor's visible border widgets remain above/below the view, without showing the draft or moving keyboard focus to the hidden editor. A second badge click can call that interaction's completion callback to close it. Keep one pending/open interaction per badge and revoke its callback on session shutdown; repeated clicks must not stack duplicate views. Empty border rows take no space. The option is ignored for overlays and custom editors without `createBorderComponent()` support. Nested confirmation/input dialogs do not retain the rows. Mouse interaction requires fullscreen mode or regular mode with `regularMouse: true`; preserve command/shortcut and keyboard dismissal paths.
+ 
+ See [`retained-border-details.ts`](../examples/extensions/retained-border-details.ts) for a repeat-click detail view with a command and keyboard dismissal path. See [`overlay-qa-tests.ts`](../examples/extensions/overlay-qa-tests.ts) for positioning, stacking, focus, responsive visibility, and animation behavior.
+ 
+diff --git a/packages/coding-agent/schemas/settings.schema.json b/packages/coding-agent/schemas/settings.schema.json
+index 4d6c23a..6a7fee2 100644
+--- a/packages/coding-agent/schemas/settings.schema.json
++++ b/packages/coding-agent/schemas/settings.schema.json
+@@ -696,6 +696,11 @@
+       ],
+       "default": "fullscreen"
+     },
++    "regularMouse": {
++      "type": "boolean",
++      "description": "Capture terminal-wide mouse input for regular-mode component clicks. Disables native mouse selection and scrollback wheel handling while enabled. No effect in fullscreen mode.",
++      "default": false
++    },
+     "fullscreenExitOutput": {
+       "anyOf": [
+         {
+diff --git a/packages/coding-agent/src/core/settings-defaults.ts b/packages/coding-agent/src/core/settings-defaults.ts
+index 1f90280..92dd32c 100644
+--- a/packages/coding-agent/src/core/settings-defaults.ts
++++ b/packages/coding-agent/src/core/settings-defaults.ts
+@@ -60,6 +60,7 @@ export const SETTINGS_DEFAULTS = {
+ 	},
+ 	cacheWarming: "streaming",
+ 	tuiMode: "fullscreen",
++	regularMouse: false,
+ 	fullscreenExitOutput: "transcript",
+ 	fullscreenScrollbar: "auto",
+ 	fullscreenCopyOnSelect: true,
+diff --git a/packages/coding-agent/src/core/settings-manager.ts b/packages/coding-agent/src/core/settings-manager.ts
+index 713a369..4f9d8ac 100644
+--- a/packages/coding-agent/src/core/settings-manager.ts
++++ b/packages/coding-agent/src/core/settings-manager.ts
+@@ -1281,6 +1281,10 @@ export class SettingsManager {
+ 		this.save();
+ 	}
+ 
++	getRegularMouse(): boolean {
++		return this.settings.regularMouse === true;
++	}
++
+ 	getFullscreenExitOutput(): FullscreenExitOutput {
+ 		return this.settings.fullscreenExitOutput === "resume-hint"
+ 			? "resume-hint"
+diff --git a/packages/coding-agent/src/core/settings-schema.ts b/packages/coding-agent/src/core/settings-schema.ts
+index b17bab5..d02d9c3 100644
+--- a/packages/coding-agent/src/core/settings-schema.ts
++++ b/packages/coding-agent/src/core/settings-schema.ts
+@@ -416,6 +416,13 @@ export const SettingsSchema = Type.Object(
+ 				default: SETTINGS_DEFAULTS.tuiMode,
+ 			}),
+ 		),
++		regularMouse: Type.Optional(
++			Type.Boolean({
++				description:
++					"Capture terminal-wide mouse input for regular-mode component clicks. Disables native mouse selection and scrollback wheel handling while enabled. No effect in fullscreen mode.",
++				default: SETTINGS_DEFAULTS.regularMouse,
++			}),
++		),
+ 		fullscreenExitOutput: Type.Optional(
+ 			Type.Union([Type.Literal("transcript"), Type.Literal("resume-hint")], {
+ 				description: "No effect in regular TUI mode.",
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index a5a897e..3f043ae 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -683,6 +683,7 @@ export class InteractiveMode {
+ 			logDirectory: getAgentDir(),
+ 			terminal: options.terminal,
+ 			onRightClickPaste: this.onRightClickPaste,
++			regularMouse: this.settingsManager.getRegularMouse(),
+ 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+ 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+ 			onCapturedOutput: (text, stream) => this.handleCapturedTerminalOutput(text, stream),
+@@ -972,6 +973,7 @@ export class InteractiveMode {
+ 			logDirectory: getAgentDir(),
+ 			terminal,
+ 			onRightClickPaste: this.onRightClickPaste,
++			regularMouse: this.settingsManager.getRegularMouse(),
+ 			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
+ 			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
+ 		});
+diff --git a/packages/coding-agent/src/modes/interactive/tui-renderer.ts b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
+index a868f4e..9aeef11 100644
+--- a/packages/coding-agent/src/modes/interactive/tui-renderer.ts
++++ b/packages/coding-agent/src/modes/interactive/tui-renderer.ts
+@@ -11,6 +11,7 @@ export interface InteractiveTuiOptions {
+ 	readonly logDirectory: string;
+ 	readonly terminal?: Terminal;
+ 	readonly onRightClickPaste?: () => void;
++	readonly regularMouse?: boolean;
+ 	readonly fullscreenCopyOnSelect?: boolean;
+ 	readonly fullscreenWheelScrollLines?: WheelScrollLines;
+ 	/** See ProcessTerminalOptions.onCapturedOutput; ignored when a terminal is passed in. */
+@@ -48,7 +49,9 @@ export function createInteractiveTui(options: InteractiveTuiOptions): TuiMainScr
+ 			},
+ 		});
+ 	}
+-	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory);
++	return new TuiMainScreen(terminal, options.showHardwareCursor, options.logDirectory, {
++		mouse: options.regularMouse,
++	});
+ }
+ 
+ /** Stable reference for components while InteractiveMode replaces the active renderer. */
+diff --git a/packages/coding-agent/test/interactive-tui.test.ts b/packages/coding-agent/test/interactive-tui.test.ts
+index ffb9e1a..8d72a76 100644
+--- a/packages/coding-agent/test/interactive-tui.test.ts
++++ b/packages/coding-agent/test/interactive-tui.test.ts
+@@ -48,7 +48,83 @@ class RecordingTerminal extends VirtualTerminal implements Terminal {
+ 	}
+ }
+ 
++type SwitchContext = {
++	runtimeHost: {
++		session: {
++			settingsManager: {
++				getRegularMouse: () => boolean;
++				getFullscreenCopyOnSelect: () => boolean;
++				getFullscreenWheelScrollLines: () => WheelScrollLines;
++			};
++		};
++	};
++	renderer: ReturnType<typeof createInteractiveTui>;
++	ui: TUI;
++	fullscreenLayoutRoot: Component;
++	options: { tuiMode?: TuiMode };
++	themeController: { rebindTui: () => void };
++	extensionTerminalInputSubscriptions: Set<never>;
++};
++
+ describe("createInteractiveTui", () => {
++	it.each([false, true])("applies regularMouse=%s when switching from fullscreen", async (regularMouse) => {
++		const terminal = new RecordingTerminal(40, 8);
++		const renderer = createInteractiveTui({
++			tuiMode: "fullscreen",
++			showHardwareCursor: false,
++			logDirectory: "/tmp",
++			terminal,
++		});
++		const events: string[] = [];
++		const component: Component = {
++			render: () => ["control"],
++			invalidate: () => {},
++			handleMouse: (event) => {
++				events.push(event.type);
++				return { handled: true };
++			},
++		};
++		renderer.addChild(component);
++		const context = Object.assign(Object.create(InteractiveMode.prototype), {
++			runtimeHost: {
++				session: {
++					settingsManager: {
++						getRegularMouse: () => regularMouse,
++						getFullscreenCopyOnSelect: () => true,
++						getFullscreenWheelScrollLines: () => "auto",
++					},
++				},
++			},
++			renderer,
++			ui: undefined as unknown as TUI,
++			fullscreenLayoutRoot: component,
++			options: { tuiMode: "fullscreen" as TuiMode },
++			themeController: { rebindTui: () => {} },
++			extensionTerminalInputSubscriptions: new Set<never>(),
++		}) as SwitchContext;
++		context.ui = createInteractiveTuiReference(() => context.renderer);
++		const { switchTuiMode } = InteractiveMode.prototype as unknown as {
++			switchTuiMode(this: typeof context, mode: TuiMode, restoreProgress: boolean): boolean;
++		};
++		renderer.start();
++		try {
++			renderer.renderNow();
++			await terminal.flush();
++			const before = terminal.writes.length;
++			expect(switchTuiMode.call(context, "regular", false)).toBe(true);
++			context.renderer.renderNow();
++			await terminal.flush();
++			expect(terminal.writes.slice(before).join("").includes("\x1b[?1000h")).toBe(regularMouse);
++			const row = terminal.getCursorPosition().y;
++			terminal.sendInput(`\x1b[${row + 1};1R`);
++			terminal.sendInput(`\x1b[<0;2;${row + 1}M`);
++			terminal.sendInput(`\x1b[<0;2;${row + 1}m`);
++			expect(events).toEqual(regularMouse ? ["press", "release", "click"] : []);
++		} finally {
++			context.renderer.stop();
++		}
++	});
++
+ 	it("selects the alternate-screen renderer only when requested", async () => {
+ 		const mainTerminal = new RecordingTerminal();
+ 		const mainTui = createInteractiveTui({
+@@ -126,26 +202,14 @@ describe("createInteractiveTui", () => {
+ 		renderer.addChild(component);
+ 		renderer.setFocus(component);
+ 
+-		type SwitchContext = {
+-			runtimeHost: {
+-				session: {
+-					settingsManager: {
+-						getFullscreenCopyOnSelect: () => boolean;
+-						getFullscreenWheelScrollLines: () => WheelScrollLines;
+-					};
+-				};
+-			};
+-			renderer: ReturnType<typeof createInteractiveTui>;
+-			ui: TUI;
+-			fullscreenLayoutRoot: Component;
+-			options: { tuiMode?: TuiMode };
+-			themeController: { rebindTui: () => void };
+-			extensionTerminalInputSubscriptions: Set<never>;
+-		};
+ 		const context = Object.assign(Object.create(InteractiveMode.prototype), {
+ 			runtimeHost: {
+ 				session: {
+-					settingsManager: { getFullscreenCopyOnSelect: () => true, getFullscreenWheelScrollLines: () => "auto" },
++					settingsManager: {
++						getRegularMouse: () => false,
++						getFullscreenCopyOnSelect: () => true,
++						getFullscreenWheelScrollLines: () => "auto",
++					},
+ 				},
+ 			},
+ 			renderer,
+diff --git a/packages/coding-agent/test/regular-mouse-settings.test.ts b/packages/coding-agent/test/regular-mouse-settings.test.ts
+new file mode 100644
+index 0000000..eafba39
+--- /dev/null
++++ b/packages/coding-agent/test/regular-mouse-settings.test.ts
+@@ -0,0 +1,80 @@
++import { Text } from "@earendil-works/pi-tui";
++import { describe, expect, it } from "vitest";
++import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
++import { InMemorySettingsStorage, SettingsManager } from "../src/core/settings-manager.ts";
++import { SettingsSchema } from "../src/core/settings-schema.ts";
++import { createInteractiveTui } from "../src/modes/interactive/tui-renderer.ts";
++
++class RecordingTerminal extends VirtualTerminal {
++	readonly writes: string[] = [];
++	override write(data: string): void {
++		this.writes.push(data);
++		super.write(data);
++	}
++}
++
++describe("regularMouse settings and renderer composition", () => {
++	it("defaults to off without changing the default fullscreen mode", () => {
++		const settings = SettingsManager.inMemory();
++		expect(settings.getRegularMouse()).toBe(false);
++		expect(settings.getTuiMode()).toBe("fullscreen");
++		expect(SettingsSchema.properties.regularMouse).toMatchObject({ default: false });
++	});
++
++	it("allows a trusted project override and ignores an untrusted override", () => {
++		const storage = new InMemorySettingsStorage();
++		storage.withLock("global", () => JSON.stringify({ regularMouse: true }));
++		storage.withLock("project", () => JSON.stringify({ regularMouse: false }));
++		expect(SettingsManager.fromStorage(storage).getRegularMouse()).toBe(false);
++		expect(SettingsManager.fromStorage(storage, { projectTrusted: false }).getRegularMouse()).toBe(true);
++	});
++
++	it("requires an explicit boolean true at the settings-file boundary", () => {
++		const storage = new InMemorySettingsStorage();
++		storage.withLock("global", () => JSON.stringify({ regularMouse: "true" }));
++		expect(SettingsManager.fromStorage(storage).getRegularMouse()).toBe(false);
++	});
++
++	it.each([true, false])("wires regularMouse=%s without entering the alternate screen", async (enabled) => {
++		const terminal = new RecordingTerminal();
++		const settings = SettingsManager.inMemory({ regularMouse: enabled });
++		const tui = createInteractiveTui({
++			tuiMode: "regular",
++			showHardwareCursor: false,
++			logDirectory: "/tmp",
++			terminal,
++			regularMouse: settings.getRegularMouse(),
++		});
++		tui.addChild(new Text("control", 0, 0));
++		tui.start();
++		try {
++			tui.renderNow();
++			await terminal.flush();
++			const output = terminal.writes.join("");
++			expect(output.includes("\x1b[?1000h")).toBe(enabled);
++			expect(output.includes("\x1b[6n")).toBe(enabled);
++			expect(output.includes("\x1b[?1049h")).toBe(false);
++		} finally {
++			tui.stop();
++		}
++	});
++
++	it("does not disable fullscreen mouse capture when regularMouse is off", async () => {
++		const terminal = new RecordingTerminal();
++		const tui = createInteractiveTui({
++			tuiMode: "fullscreen",
++			showHardwareCursor: false,
++			logDirectory: "/tmp",
++			terminal,
++			regularMouse: false,
++		});
++		tui.start();
++		try {
++			tui.renderNow();
++			await terminal.flush();
++			expect(terminal.writes.join("")).toContain("\x1b[?1000h");
++		} finally {
++			tui.stop();
++		}
++	});
++});
+diff --git a/packages/tui/README.md b/packages/tui/README.md
+index 1150ebc..9594034 100644
+--- a/packages/tui/README.md
++++ b/packages/tui/README.md
+@@ -259,14 +259,24 @@ interface Component {
+ |--------|-------------|
+ | `render(width)` | Returns an array of strings, one per line. Each line **must not exceed `width`** or the TUI will error. Use `truncateToWidth()` or manual wrapping to ensure this. |
+ | `handleInput?(data)` | Called when the component has focus and receives keyboard input. The `data` string contains raw terminal input (may include ANSI escape sequences). |
+-| `handleMouse?(event)` | Called by `TuiAltScreen` for normalized pointer input targeted at the component. |
++| `handleMouse?(event)` | Called by a mouse-enabled renderer for normalized pointer input targeted at the component. |
+ | `invalidate()` | Required. Clear any cached render state so the next `render()` starts from scratch. Components without cached render state can use an empty implementation. |
+ 
+ The TUI appends a full SGR reset and OSC 8 reset at the end of each rendered line. Styles do not carry across lines. If you emit multi-line text with styling, reapply styles per line or use `wrapTextWithAnsi()` so styles are preserved for each wrapped line.
+ 
+ ### Mouse Input
+ 
+-`TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta. `TuiMainScreen` does not capture mouse input because the terminal owns its scrollback.
++`TuiAltScreen` normalizes SGR mouse input and hit-tests components and overlays. `TuiMainScreen` supports the same component events when explicitly enabled:
++
++```typescript
++const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++```
++
++Events contain component-local `x`/`y`, absolute `screenX`/`screenY`, bounds, button, modifiers, click count, and wheel delta. Regular-mode mouse capture defaults to off, preserving native terminal selection and scrollback wheel handling. Capture is terminal-wide when enabled: regular mode does not provide fullscreen's transcript selection, copy-on-select, or scrollback-wheel emulation. Use the terminal's mouse-bypass modifier if supported, or disable capture, for native selection and scrolling.
++
++Regular mode establishes its physical position with a standard cursor-position query when the renderer cannot already prove the viewport origin. Clicks are ignored while the origin is unknown. Once established, the origin follows the renderer's known scrolling, so streaming appends do not wait for more replies. Text-only and cursor-only renders also do not restart a pending query. Queries are serialized per terminal without timeout retries because replies have no request identifiers. A stopped renderer drops its callbacks but leaves a pending-request marker until the reply arrives, preventing a new renderer from mistaking an old reply for its own. If no reply arrives and the viewport origin remains unknown, keyboard input and rendering continue but clicks remain unavailable. Before the first usable startup/resume reply, continuously changing geometry can invalidate replies; a stable frame and its reply restore clicks. Rendering is not paused to wait for the terminal.
++
++The renderer settles pending autowrap before probing; save/restore alone cannot preserve it. Real cursor markers retain their row and column, while an unmarked hidden cursor is settled to column 1. The query temporarily moves to column 1 with cursor save/restore; `CSI row;1R` is reserved for replies throughout the enabled capture lifetime (including the ambiguous explicit legacy F3 encoding `CSI 1;1R`). Modified-F3 reports with other columns and other F3 encodings are not consumed.
+ 
+ ```typescript
+ import type { TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
+diff --git a/packages/tui/src/components/box.ts b/packages/tui/src/components/box.ts
+index 185c78c..3bcb022 100644
+--- a/packages/tui/src/components/box.ts
++++ b/packages/tui/src/components/box.ts
+@@ -90,13 +90,29 @@ export class Box implements Component {
+ 		let childY = 0;
+ 		for (const { component: child, height: childHeight } of mouseChildren) {
+ 			if (contentY >= childY && contentY < childY + childHeight) {
+-				return dispatchMouseEvent(child, {
++				if (!this.children.includes(child)) return undefined;
++				const layout = this.mouseLayout;
++				const paddingX = this.paddingX;
++				const result = dispatchMouseEvent(child, {
+ 					...event,
+ 					x: contentX,
+ 					y: contentY - childY,
+ 					width: contentWidth,
+ 					height: childHeight,
+ 				});
++				if (!result) return undefined;
++				const isValid = result.target.isValid;
++				return {
++					...result,
++					target: {
++						...result.target,
++						isValid: () =>
++							this.children.includes(child) &&
++							this.paddingX === paddingX &&
++							this.mouseLayout === layout &&
++							(isValid?.() ?? true),
++					},
++				};
+ 			}
+ 			childY += childHeight;
+ 		}
+@@ -123,7 +139,19 @@ export class Box implements Component {
+ 				childLines.push(line);
+ 			}
+ 		}
+-		this.mouseLayout = { width: contentWidth, children: mouseChildren };
++		const previous = this.mouseLayout;
++		if (
++			!previous ||
++			previous.width !== contentWidth ||
++			previous.children.length !== mouseChildren.length ||
++			mouseChildren.some(
++				(child, index) =>
++					child.component !== previous.children[index].component ||
++					child.height !== previous.children[index].height,
++			)
++		) {
++			this.mouseLayout = { width: contentWidth, children: mouseChildren };
++		}
+ 
+ 		if (childLines.length === 0) {
+ 			return [];
+diff --git a/packages/tui/src/cursor-position.ts b/packages/tui/src/cursor-position.ts
+new file mode 100644
+index 0000000..8f3a99a
+--- /dev/null
++++ b/packages/tui/src/cursor-position.ts
+@@ -0,0 +1,46 @@
++import type { Terminal } from "./terminal.ts";
++
++const POSITION_QUERY = "\x1b7\x1b[1G\x1b[6n\x1b8";
++
++/** Serializes untagged cursor reports across renderers sharing one terminal. */
++export class CursorPositionProbe {
++	private readonly terminal: Terminal;
++	private pending: { reply: ((row: number) => void) | undefined } | undefined;
++	private whenIdle: (() => void) | undefined;
++
++	constructor(terminal: Terminal) {
++		this.terminal = terminal;
++	}
++
++	listen(whenIdle: () => void): void {
++		this.whenIdle = whenIdle;
++	}
++
++	unlisten(whenIdle: () => void): void {
++		if (this.whenIdle === whenIdle) this.whenIdle = undefined;
++	}
++
++	cancel(reply: (row: number) => void): void {
++		if (this.pending?.reply === reply) this.pending.reply = undefined;
++	}
++
++	/** Requires a positioned cursor with no pending autowrap; DECRC cannot restore that state. */
++	request(reply: (row: number) => void): boolean {
++		if (this.pending) return false;
++		this.pending = { reply };
++		// Column 1 distinguishes CPR from modified F3; save/restore preserves the renderer's cursor.
++		this.terminal.write(POSITION_QUERY);
++		return true;
++	}
++
++	consume(data: string): boolean {
++		if (!this.pending) return false;
++		const match = /^\x1b\[(\d+);1R$/.exec(data);
++		if (!match) return false;
++		const reply = this.pending.reply;
++		this.pending = undefined;
++		reply?.(Number(match[1]) - 1);
++		this.whenIdle?.();
++		return true;
++	}
++}
+diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
+index 15aba3d..01df076 100644
+--- a/packages/tui/src/index.ts
++++ b/packages/tui/src/index.ts
+@@ -188,7 +188,7 @@ export {
+ 	type ViewportTUI,
+ } from "./tui.ts";
+ export { TuiAltScreen, type TuiAltScreenOptions } from "./tui-alt-screen.ts";
+-export { TuiMainScreen, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
++export { TuiMainScreen, type TuiMainScreenOptions, type TuiMainScreenRenderState } from "./tui-main-screen.ts";
+ // Utilities
+ export {
+ 	getOsc8LinkAtColumn,
+diff --git a/packages/tui/src/main-screen-mouse.ts b/packages/tui/src/main-screen-mouse.ts
+new file mode 100644
+index 0000000..cf4f284
+--- /dev/null
++++ b/packages/tui/src/main-screen-mouse.ts
+@@ -0,0 +1,277 @@
++import { CursorPositionProbe } from "./cursor-position.ts";
++import type { Terminal } from "./terminal.ts";
++import {
++	type Component,
++	dispatchMouseEvent,
++	retargetMouseEvent,
++	type TuiMouseDispatchResult,
++	type TuiMouseDispatchTarget,
++	type TuiMouseEvent,
++} from "./tui.ts";
++
++const ENABLE_MOUSE = "\x1b[?1000h\x1b[?1002h\x1b[?1004h\x1b[?1006h";
++export const DISABLE_MAIN_SCREEN_MOUSE = "\x1b[?1006l\x1b[?1004l\x1b[?1002l\x1b[?1000l";
++const DOUBLE_CLICK_INTERVAL_MS = 500;
++
++export interface MainScreenMouseFrame {
++	width: number;
++	height: number;
++	lines: number;
++	cursorRow: number;
++	redraws: number;
++	origin: number | undefined;
++	layout: object | undefined;
++	overlays: object | undefined;
++}
++
++interface Press {
++	focusTarget: Component | undefined;
++	target: TuiMouseDispatchTarget;
++	button: TuiMouseEvent["button"];
++	x: number;
++	y: number;
++	moved: boolean;
++}
++
++/** Main-screen pointer dispatch; never guesses the physical origin of the rendered document. */
++export class MainScreenMouse {
++	private readonly terminal: Terminal;
++	private readonly dispatch: (event: TuiMouseEvent) => TuiMouseDispatchResult | undefined;
++	private readonly apply: (event: TuiMouseEvent, result: TuiMouseDispatchResult) => void;
++	private frame: MainScreenMouseFrame | undefined;
++	private origin: number | undefined;
++	private generation = 0;
++	private readonly probe: CursorPositionProbe;
++	private readonly onOrigin: (origin: number) => void;
++	private pendingReply: ((row: number) => void) | undefined;
++	private active = false;
++	private press: Press | undefined;
++	private lastClick:
++		| {
++				target: TuiMouseDispatchTarget;
++				button: TuiMouseEvent["button"];
++				x: number;
++				y: number;
++				time: number;
++				count: number;
++		  }
++		| undefined;
++
++	constructor(
++		terminal: Terminal,
++		dispatch: (event: TuiMouseEvent) => TuiMouseDispatchResult | undefined,
++		apply: (event: TuiMouseEvent, result: TuiMouseDispatchResult) => void,
++		onOrigin: (origin: number) => void,
++	) {
++		this.terminal = terminal;
++		this.dispatch = dispatch;
++		this.apply = apply;
++		this.onOrigin = onOrigin;
++		this.probe = terminal.cursorPositionProbe ?? new CursorPositionProbe(terminal);
++		terminal.cursorPositionProbe = this.probe;
++	}
++
++	start(): void {
++		this.active = true;
++		this.probe.listen(this.queryPosition);
++		this.invalidate();
++		this.terminal.write(ENABLE_MOUSE);
++	}
++
++	stop(): void {
++		this.active = false;
++		this.probe.unlisten(this.queryPosition);
++		if (this.pendingReply) this.probe.cancel(this.pendingReply);
++		this.pendingReply = undefined;
++		this.invalidate();
++		this.terminal.write(DISABLE_MAIN_SCREEN_MOUSE);
++	}
++
++	invalidate(): void {
++		this.generation++;
++		this.origin = undefined;
++		this.frame = undefined;
++		this.clearGesture();
++		// Replies are untagged. Keep the outstanding request, even across stop/start;
++		// abandoning it on a timeout would let a late reply answer a newer request.
++	}
++
++	commit(frame: MainScreenMouseFrame): void {
++		const previous = this.frame;
++		if (
++			!previous ||
++			previous.width !== frame.width ||
++			previous.height !== frame.height ||
++			previous.lines !== frame.lines ||
++			previous.redraws !== frame.redraws
++		) {
++			this.generation++;
++			this.origin = undefined;
++			this.clearGesture();
++		} else if (previous.layout !== frame.layout || previous.overlays !== frame.overlays) {
++			this.clearGesture();
++		}
++		this.frame = frame;
++		if (frame.origin !== undefined) this.origin = frame.origin;
++		this.queryPosition();
++	}
++
++	private readonly queryPosition = (): void => {
++		if (!this.active || !this.frame || this.origin !== undefined || this.pendingReply) return;
++		const frame = this.frame;
++		const generation = this.generation;
++		const reply = (row: number): void => {
++			this.pendingReply = undefined;
++			if (
++				this.active &&
++				generation === this.generation &&
++				frame.width === this.terminal.columns &&
++				frame.height === this.terminal.rows &&
++				Number.isSafeInteger(row) &&
++				row >= 0 &&
++				row < frame.height
++			) {
++				this.origin = row - frame.cursorRow;
++				this.onOrigin(this.origin);
++			}
++		};
++		this.pendingReply = reply;
++		if (!this.probe.request(reply)) this.pendingReply = undefined;
++	};
++
++	consume(data: string): boolean {
++		if (/^\x1b\[\d+;1R$/.test(data)) return true;
++		if (data === "\x1b[O" || data === "\x1b[I") {
++			this.clearGesture();
++			return true;
++		}
++		if (!data.startsWith("\x1b[<") && !data.startsWith("\x1b[M")) return false;
++		const match = /^\x1b\[<(\d+);(\d+);(\d+)([Mm])$/.exec(data);
++		if (
++			!match ||
++			!this.active ||
++			this.origin === undefined ||
++			!this.frame ||
++			this.frame.width !== this.terminal.columns ||
++			this.frame.height !== this.terminal.rows
++		) {
++			this.clearGesture();
++			return true;
++		}
++		const code = Number(match[1]);
++		const x = Number(match[2]) - 1;
++		const y = Number(match[3]) - 1;
++		if (
++			!Number.isSafeInteger(code) ||
++			code < 0 ||
++			code > 127 ||
++			!Number.isSafeInteger(x) ||
++			x < 0 ||
++			x >= this.frame.width ||
++			!Number.isSafeInteger(y) ||
++			y < 0 ||
++			y >= this.frame.height
++		) {
++			this.clearGesture();
++			return true;
++		}
++		const wheel = (code & 64) !== 0;
++		const button = (["left", "middle", "right", "none"] as const)[code & 3];
++		const event: TuiMouseEvent = {
++			type: wheel
++				? "wheel"
++				: match[4] === "m"
++					? "release"
++					: (code & 32) !== 0
++						? button === "none"
++							? "move"
++							: "drag"
++						: "press",
++			button: wheel ? "none" : button,
++			x,
++			y: y - this.origin,
++			screenX: x,
++			screenY: y,
++			width: this.frame.width,
++			height: this.frame.lines,
++			shift: (code & 4) !== 0,
++			alt: (code & 8) !== 0,
++			ctrl: (code & 16) !== 0,
++			...(wheel ? { wheelDelta: (code & 1) === 0 ? -1 : 1 } : {}),
++		};
++		if (wheel && ((code & 3) > 1 || match[4] === "m")) return true;
++		this.handle(event);
++		return true;
++	}
++
++	private clearGesture(): void {
++		this.press = undefined;
++		this.lastClick = undefined;
++	}
++
++	private handle(event: TuiMouseEvent): void {
++		if (event.type === "press") this.press = undefined;
++		const press = this.press;
++		if (event.type === "release" || event.type === "drag") {
++			if (!press || press.button !== event.button || press.target.isValid?.() === false) {
++				this.clearGesture();
++				return;
++			}
++			if (press.x !== event.screenX || press.y !== event.screenY) {
++				press.moved = true;
++				this.lastClick = undefined;
++			}
++			const result = dispatchMouseEvent(press.target.component, retargetMouseEvent(event, press.target));
++			if (!this.active || this.press !== press || press.target.isValid?.() === false) return;
++			if (result) this.apply(event, { ...result, focusTarget: press.focusTarget ?? result.focusTarget });
++			if (event.type === "release") {
++				this.press = undefined;
++				if (!press.moved) {
++					const previous = this.lastClick;
++					const now = Date.now();
++					const count =
++						previous &&
++						previous.target.component === press.target.component &&
++						previous.button === event.button &&
++						previous.x === event.screenX &&
++						previous.y === event.screenY &&
++						now - previous.time <= DOUBLE_CLICK_INTERVAL_MS
++							? (previous.count % 3) + 1
++							: 1;
++					this.lastClick = {
++						target: press.target,
++						button: event.button,
++						x: event.screenX,
++						y: event.screenY,
++						time: now,
++						count,
++					};
++					const click = { ...event, type: "click" as const, clickCount: count };
++					const generation = this.generation;
++					const clicked = dispatchMouseEvent(press.target.component, retargetMouseEvent(click, press.target));
++					if (clicked && this.active && generation === this.generation && press.target.isValid?.() !== false)
++						this.apply(click, { ...clicked, focusTarget: press.focusTarget ?? clicked.focusTarget });
++				}
++			}
++			return;
++		}
++		const generation = this.generation;
++		const result = this.dispatch(event);
++		if (!this.active || generation !== this.generation || result?.target.isValid?.() === false) return;
++		if (!result) {
++			if (event.type === "press") this.lastClick = undefined;
++			return;
++		}
++		if (event.type === "press") {
++			this.press = {
++				target: result.target,
++				focusTarget: result.focusTarget,
++				button: event.button,
++				x: event.screenX,
++				y: event.screenY,
++				moved: false,
++			};
++		}
++		this.apply(event, result);
++	}
++}
+diff --git a/packages/tui/src/stdin-buffer.ts b/packages/tui/src/stdin-buffer.ts
+index ed1b3ea..780e304 100644
+--- a/packages/tui/src/stdin-buffer.ts
++++ b/packages/tui/src/stdin-buffer.ts
+@@ -24,6 +24,7 @@ const DEFAULT_SEQUENCE_TIMEOUT_MS = 50;
+ const DEFAULT_ESCAPE_TIMEOUT_MS = 10;
+ const BRACKETED_PASTE_START = "\x1b[200~";
+ const BRACKETED_PASTE_END = "\x1b[201~";
++const MOUSE_REPORT_HEADER_PATTERN = /^\x1b\[(?:<|M)/;
+ // Color and program-status OSC replies, XTVersion, and Kitty graphics replies.
+ // Until their header is complete, the input may be batched legacy Alt keystrokes.
+ const TERMINAL_REPLY_HEADER_PATTERN = /^\x1b(?:\](?:1[01];|4;\d{1,3};|7501;\?)|P>\||_G(?:[a-z]=\d+,)*[a-z]=\d+;)/;
+@@ -111,21 +112,8 @@ function isCompleteCsiSequence(data: string): "complete" | "incomplete" {
+ 		// Special handling for SGR mouse sequences
+ 		// Format: ESC[<B;X;Ym or ESC[<B;X;YM
+ 		if (payload.startsWith("<")) {
+-			// Must have format: <digits;digits;digits[Mm]
+-			const mouseMatch = /^<\d+;\d+;\d+[Mm]$/.test(payload);
+-			if (mouseMatch) {
+-				return "complete";
+-			}
+-			// If it ends with M or m but doesn't match the pattern, still incomplete
+-			if (lastChar === "M" || lastChar === "m") {
+-				// Check if we have the right structure
+-				const parts = payload.slice(1, -1).split(";");
+-				if (parts.length === 3 && parts.every((p) => /^\d+$/.test(p))) {
+-					return "complete";
+-				}
+-			}
+-
+-			return "incomplete";
++			// Deliver malformed reports as a whole too; the renderer validates the payload.
++			return lastChar === "M" || lastChar === "m" ? "complete" : "incomplete";
+ 		}
+ 
+ 		return "complete";
+@@ -208,17 +196,22 @@ function extractCompleteSequences(buffer: string): { sequences: string[]; remain
+ 		// Try to extract a sequence starting at this position
+ 		if (remaining.startsWith(ESC)) {
+ 			const terminalReply = isControlString(remaining) && TERMINAL_REPLY_HEADER_PATTERN.test(remaining);
++			const mouseReport = MOUSE_REPORT_HEADER_PATTERN.test(remaining);
+ 			// Find the end of this escape sequence
+ 			let seqEnd = 1;
+ 			while (seqEnd <= remaining.length) {
+-				if (terminalReply && seqEnd > 2) {
++				if ((terminalReply && seqEnd > 2) || (mouseReport && seqEnd > 3)) {
+ 					const char = remaining[seqEnd - 1];
+ 					if (char === "\x18" || char === "\x1a") {
+ 						// CAN and SUB cancel the string, not subsequent keyboard input.
+ 						pos += seqEnd;
+ 						break;
+ 					}
+-					if (char === ESC && seqEnd < remaining.length && remaining[seqEnd] !== "\\") {
++					if (mouseReport && char !== ESC && char.charCodeAt(0) < 32) {
++						pos += seqEnd - 1;
++						break;
++					}
++					if (char === ESC && seqEnd < remaining.length && (mouseReport || remaining[seqEnd] !== "\\")) {
+ 						// A new escape sequence aborts an unterminated reply. Keep a
+ 						// trailing ESC buffered until we can distinguish it from ST.
+ 						pos += seqEnd - 1;
+@@ -413,7 +406,7 @@ export class StdinBuffer extends EventEmitter<StdinBufferEventMap> {
+ 			// Flushing it would turn a delayed tail into text and an OSC's BEL
+ 			// terminator into Ctrl+G (the external editor shortcut). Other input,
+ 			// including Alt+] followed by text, must retain bounded recovery.
+-			if (TERMINAL_REPLY_HEADER_PATTERN.test(this.buffer)) return;
++			if (TERMINAL_REPLY_HEADER_PATTERN.test(this.buffer) || MOUSE_REPORT_HEADER_PATTERN.test(this.buffer)) return;
+ 			const timeoutMs = this.buffer === ESC ? this.escapeTimeoutMs : this.timeoutMs;
+ 			this.timeout = setTimeout(() => {
+ 				const flushed = this.flush();
+diff --git a/packages/tui/src/terminal.ts b/packages/tui/src/terminal.ts
+index 1a96f51..aa37a10 100644
+--- a/packages/tui/src/terminal.ts
++++ b/packages/tui/src/terminal.ts
+@@ -1,5 +1,6 @@
+ import * as fs from "node:fs";
+ import * as path from "node:path";
++import type { CursorPositionProbe } from "./cursor-position.ts";
+ import { setKittyProtocolActive } from "./keys.ts";
+ import { isNativeModifierPressed } from "./native-modifiers.ts";
+ import { getNativePlatformHelper } from "./native-platform.ts";
+@@ -76,6 +77,9 @@ export function normalizeAppleTerminalInput(data: string, isAppleTerminal: boole
+  * Minimal terminal interface for TUI
+  */
+ export interface Terminal {
++	/** Shared wire-query ownership survives renderer replacement on the same terminal. */
++	cursorPositionProbe?: CursorPositionProbe;
++
+ 	// Start the terminal with input and resize handlers
+ 	start(onInput: (data: string) => void, onResize: () => void): void;
+ 
+diff --git a/packages/tui/src/tui-main-screen.ts b/packages/tui/src/tui-main-screen.ts
+index c497acd..518d4e0 100644
+--- a/packages/tui/src/tui-main-screen.ts
++++ b/packages/tui/src/tui-main-screen.ts
+@@ -1,6 +1,8 @@
+ import * as fs from "node:fs";
+ import * as os from "node:os";
+ import * as path from "node:path";
++import { DISABLE_MAIN_SCREEN_MOUSE, MainScreenMouse } from "./main-screen-mouse.ts";
++import type { Terminal } from "./terminal.ts";
+ import { deleteKittyImage, isImageLine } from "./terminal-image.ts";
+ import { type TUI, TuiBase, type TuiStopOptions } from "./tui.ts";
+ import { visibleWidth } from "./utils.ts";
+@@ -120,6 +122,11 @@ export interface TuiMainScreenRenderState {
+ 	previousViewportTop: number;
+ }
+ 
++export interface TuiMainScreenOptions {
++	/** Capture terminal-wide mouse input for component interaction. Defaults to false. */
++	mouse?: boolean;
++}
++
+ /** TUI implementation that renders into the terminal's main screen and scrollback. */
+ export class TuiMainScreen extends TuiBase implements TUI {
+ 	readonly mode = "regular" as const;
+@@ -131,6 +138,57 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 	private hardwareCursorRow = 0;
+ 	private maxLinesRendered = 0;
+ 	private previousViewportTop = 0;
++	private readonly mouse: MainScreenMouse | undefined;
++	private mouseOriginKnown = false;
++
++	constructor(
++		terminal: Terminal,
++		showHardwareCursor?: boolean,
++		logDirectory?: string,
++		options: TuiMainScreenOptions = {},
++	) {
++		super(terminal, showHardwareCursor, logDirectory);
++		if (options.mouse) {
++			this.mouse = new MainScreenMouse(
++				terminal,
++				(event) => {
++					const overlay = this.hasOverlayEntries ? this.dispatchMouseToOverlay(event) : { hit: false };
++					return overlay.result ?? (overlay.hit ? undefined : super.handleMouse(event));
++				},
++				(event, result) => {
++					const target = this.resolveMouseFocusTarget(result.focusTarget ?? result.target.component);
++					const focusChanged = result.focus === true && this.getFocusedComponent() !== target;
++					if (result.focus) this.setFocus(target);
++					if (result.render ?? (focusChanged || (event.type !== "move" && event.type !== "release")))
++						this.requestRender();
++				},
++				(origin) => {
++					this.previousViewportTop = -origin;
++					this.mouseOriginKnown = true;
++					this.updateMouseOverlayOrigin();
++				},
++			);
++		}
++	}
++
++	protected override afterTerminalStart(): void {
++		this.mouseOriginKnown = false;
++		this.mouse?.start();
++	}
++
++	protected override onTerminalResize(): void {
++		this.mouseOriginKnown = false;
++		this.mouse?.invalidate();
++		super.onTerminalResize();
++	}
++
++	protected override consumeRendererInput(data: string): boolean {
++		return this.mouse?.consume(data) ?? false;
++	}
++
++	protected override getExitRestorePrefix(): string {
++		return `${this.mouse ? DISABLE_MAIN_SCREEN_MOUSE : ""}${super.getExitRestorePrefix()}`;
++	}
+ 
+ 	captureRenderState(): TuiMainScreenRenderState {
+ 		return {
+@@ -145,6 +203,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 	}
+ 
+ 	restoreRenderState(state: TuiMainScreenRenderState): void {
++		this.mouseOriginKnown = false;
++		this.mouse?.invalidate();
+ 		this.previousLines = state.previousLines.map((line) => (isImageLine(line) ? "" : line));
+ 		this.previousKittyImageIds = new Set();
+ 		this.previousWidth = state.previousWidth;
+@@ -156,6 +216,8 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 	}
+ 
+ 	protected override resetRenderState(): void {
++		this.mouseOriginKnown = false;
++		this.mouse?.invalidate();
+ 		this.previousLines = [];
+ 		this.previousWidth = -1;
+ 		this.previousHeight = -1;
+@@ -166,6 +228,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 	}
+ 
+ 	protected override beforeTerminalStop(options: TuiStopOptions): void {
++		this.mouse?.stop();
+ 		if (options.preserveScreen || this.previousLines.length === 0) return;
+ 		this.terminal.write(" ");
+ 		const targetRow = this.previousLines.length;
+@@ -244,8 +307,29 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 		return this.deleteKittyImages(ids);
+ 	}
+ 
++	private updateMouseOverlayOrigin(): void {
++		if (!this.mouse || !this.mouseOriginKnown) return;
++		this.mouseOverlayRowOffset =
++			Math.max(0, this.previousLines.length - this.previousHeight) - this.previousViewportTop;
++	}
++
+ 	protected doRender(): void {
+ 		if (this.stopped) return;
++		this.renderScreen();
++		this.updateMouseOverlayOrigin();
++		this.mouse?.commit({
++			width: this.previousWidth,
++			height: this.previousHeight,
++			lines: this.previousLines.length,
++			cursorRow: this.hardwareCursorRow,
++			redraws: this.fullRedrawCount,
++			origin: this.mouseOriginKnown ? -this.previousViewportTop : undefined,
++			layout: this.mouseLayoutToken,
++			overlays: this.mouseOverlayLayoutToken,
++		});
++	}
++
++	private renderScreen(): void {
+ 		const width = this.terminal.columns;
+ 		const height = this.terminal.rows;
+ 		const widthChanged = this.previousWidth !== 0 && this.previousWidth !== width;
+@@ -312,6 +396,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 			}
+ 			const bufferLength = Math.max(height, newLines.length);
+ 			this.previousViewportTop = Math.max(0, bufferLength - height);
++			this.mouseOriginKnown = clear || newLines.length >= height;
+ 			this.positionHardwareCursor(cursorPos, newLines.length);
+ 			this.previousLines = newLines;
+ 			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
+@@ -623,6 +708,9 @@ export class TuiMainScreen extends TuiBase implements TUI {
+ 	 */
+ 	private positionHardwareCursor(cursorPos: { row: number; col: number } | null, totalLines: number): void {
+ 		if (!cursorPos || totalLines <= 0) {
++			// DECRC does not preserve pending wrap. Settle it before mouse position probes;
++			// without a cursor marker there is no application column to preserve.
++			if (this.mouse) this.terminal.write("\r");
+ 			this.terminal.hideCursor();
+ 			return;
+ 		}
+diff --git a/packages/tui/src/tui.ts b/packages/tui/src/tui.ts
+index d888940..1035879 100644
+--- a/packages/tui/src/tui.ts
++++ b/packages/tui/src/tui.ts
+@@ -59,6 +59,8 @@ export interface TuiMouseEventResult {
+ 
+ /** Internal target metadata used by containers and alternate-screen dispatch. */
+ export interface TuiMouseDispatchTarget {
++	/** Whether the rendered path still contains this target at the same position. */
++	isValid?: () => boolean;
+ 	component: Component;
+ 	originX: number;
+ 	originY: number;
+@@ -357,7 +359,11 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
+  */
+ export class Container implements Component {
+ 	children: Component[] = [];
+-	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number }> };
++	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number; layout?: object }> };
++
++	protected get mouseLayoutToken(): object | undefined {
++		return this.mouseLayout;
++	}
+ 
+ 	addChild(component: Component): void {
+ 		this.children.push(component);
+@@ -389,12 +395,20 @@ export class Container implements Component {
+ 		let childY = 0;
+ 		for (const { component: child, height: childHeight } of mouseChildren) {
+ 			if (event.y >= childY && event.y < childY + childHeight) {
++				if (!this.children.includes(child)) return undefined;
++				const layout = this.mouseLayout;
+ 				const result = dispatchMouseEvent(child, {
+ 					...event,
+ 					y: event.y - childY,
+ 					height: childHeight,
+ 				});
+-				if (result?.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
++				if (!result) return undefined;
++				const isValid = result.target.isValid;
++				result.target = {
++					...result.target,
++					isValid: () => this.children.includes(child) && this.mouseLayout === layout && (isValid?.() ?? true),
++				};
++				if (result.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
+ 				return result;
+ 			}
+ 			childY += childHeight;
+@@ -404,15 +418,32 @@ export class Container implements Component {
+ 
+ 	render(width: number): string[] {
+ 		const lines: string[] = [];
+-		const mouseChildren: Array<{ component: Component; height: number }> = [];
++		const mouseChildren: Array<{ component: Component; height: number; layout?: object }> = [];
+ 		for (const child of this.children) {
+ 			const childLines = child.render(width);
+-			mouseChildren.push({ component: child, height: childLines.length });
++			mouseChildren.push({
++				component: child,
++				height: childLines.length,
++				...(child instanceof Container ? { layout: child.mouseLayoutToken } : {}),
++			});
+ 			for (const line of childLines) {
+ 				lines.push(line);
+ 			}
+ 		}
+-		this.mouseLayout = { width, children: mouseChildren };
++		const previous = this.mouseLayout;
++		if (
++			!previous ||
++			previous.width !== width ||
++			previous.children.length !== mouseChildren.length ||
++			mouseChildren.some(
++				(child, index) =>
++					child.component !== previous.children[index].component ||
++					child.height !== previous.children[index].height ||
++					child.layout !== previous.children[index].layout,
++			)
++		) {
++			this.mouseLayout = { width, children: mouseChildren };
++		}
+ 		return lines;
+ 	}
+ }
+@@ -534,6 +565,7 @@ export abstract class TuiBase extends Container implements TUI {
+ 	private focusOrderCounter = 0;
+ 	private overlayStack: OverlayStackEntry[] = [];
+ 	private renderedOverlayLayouts: RenderedOverlayLayout[] = [];
++	protected mouseOverlayRowOffset = 0;
+ 
+ 	get hasOverlayEntries(): boolean {
+ 		return this.overlayStack.length > 0;
+@@ -557,6 +589,18 @@ export abstract class TuiBase extends Container implements TUI {
+ 
+ 	protected afterTerminalStart(): void {}
+ 
++	protected onTerminalResize(): void {
++		this.requestRender();
++	}
++
++	protected consumeRendererInput(_data: string): boolean {
++		return false;
++	}
++
++	protected get mouseOverlayLayoutToken(): object | undefined {
++		return this.overlayStack.length === 0 ? undefined : this.renderedOverlayLayouts;
++	}
++
+ 	protected beforeTerminalStop(_options: TuiStopOptions): void {}
+ 
+ 	protected afterTerminalStop(_options: TuiStopOptions): void {}
+@@ -843,7 +887,7 @@ export abstract class TuiBase extends Container implements TUI {
+ 			isFocused: () => this.focusedComponent === component,
+ 			getBounds: () => {
+ 				if (!this.overlayStack.includes(entry) || !this.isOverlayVisible(entry) || !entry.bounds) return undefined;
+-				return { ...entry.bounds };
++				return { ...entry.bounds, row: entry.bounds.row + this.mouseOverlayRowOffset };
+ 			},
+ 		};
+ 	}
+@@ -896,21 +940,36 @@ export abstract class TuiBase extends Container implements TUI {
+ 	protected dispatchMouseToOverlay(event: TuiMouseEvent): { hit: boolean; result?: TuiMouseDispatchResult } {
+ 		for (let index = this.renderedOverlayLayouts.length - 1; index >= 0; index--) {
+ 			const layout = this.renderedOverlayLayouts[index]!;
++			if (!this.overlayStack.includes(layout.entry) || !this.isOverlayVisible(layout.entry)) continue;
++			const rowOffset = this.mouseOverlayRowOffset;
++			const row = layout.row + rowOffset;
+ 			if (
+ 				event.screenX < layout.col ||
+ 				event.screenX >= layout.col + layout.width ||
+-				event.screenY < layout.row ||
+-				event.screenY >= layout.row + layout.height
++				event.screenY < row ||
++				event.screenY >= row + layout.height
+ 			) {
+ 				continue;
+ 			}
+ 			const result = dispatchMouseEvent(layout.entry.component, {
+ 				...event,
+ 				x: event.screenX - layout.col,
+-				y: event.screenY - layout.row,
++				y: event.screenY - row,
+ 				width: layout.width,
+ 				height: layout.height,
+ 			});
++			if (result) {
++				const isValid = result.target.isValid;
++				result.target = {
++					...result.target,
++					isValid: () =>
++						this.overlayStack.includes(layout.entry) &&
++						this.isOverlayVisible(layout.entry) &&
++						this.mouseOverlayRowOffset === rowOffset &&
++						this.renderedOverlayLayouts.includes(layout) &&
++						(isValid?.() ?? true),
++				};
++			}
+ 			return result
+ 				? {
+ 						hit: true,
+@@ -954,7 +1013,7 @@ export abstract class TuiBase extends Container implements TUI {
+ 		this.beforeTerminalStart();
+ 		this.terminal.start(
+ 			(data) => this.handleTerminalInput(data),
+-			() => this.requestRender(),
++			() => this.onTerminalResize(),
+ 		);
+ 		this.afterTerminalStart();
+ 		this.terminal.hideCursor();
+@@ -1079,6 +1138,8 @@ export abstract class TuiBase extends Container implements TUI {
+ 	}
+ 
+ 	private handleTerminalInput(data: string): void {
++		if (this.terminal.cursorPositionProbe?.consume(data)) return;
++		if (this.consumeRendererInput(data)) return;
+ 		if (this.consumeTerminalColorResponse(data)) {
+ 			return;
+ 		}
+@@ -1410,13 +1471,27 @@ export abstract class TuiBase extends Container implements TUI {
+ 			rendered.push({ entry, overlayLines, row, col, w: width });
+ 			minLinesNeeded = Math.max(minLinesNeeded, row + overlayLines.length);
+ 		}
+-		this.renderedOverlayLayouts = rendered.map(({ entry, row, col, w, overlayLines }) => ({
++		const layouts = rendered.map(({ entry, row, col, w, overlayLines }) => ({
+ 			entry,
+ 			row,
+ 			col,
+ 			width: w,
+ 			height: overlayLines.length,
+ 		}));
++		if (
++			layouts.length !== this.renderedOverlayLayouts.length ||
++			layouts.some((layout, index) => {
++				const previous = this.renderedOverlayLayouts[index];
++				return (
++					layout.entry !== previous.entry ||
++					layout.row !== previous.row ||
++					layout.col !== previous.col ||
++					layout.width !== previous.width ||
++					layout.height !== previous.height
++				);
++			})
++		)
++			this.renderedOverlayLayouts = layouts;
+ 
+ 		// Pad to at least terminal height so overlays have screen-relative positions.
+ 		// Excludes maxLinesRendered: the historical high-water mark caused self-reinforcing
+diff --git a/packages/tui/test/cursor-position.test.ts b/packages/tui/test/cursor-position.test.ts
+new file mode 100644
+index 0000000..6620bea
+--- /dev/null
++++ b/packages/tui/test/cursor-position.test.ts
+@@ -0,0 +1,76 @@
++import assert from "node:assert/strict";
++import { describe, it } from "node:test";
++import { CursorPositionProbe } from "../src/cursor-position.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++describe("cursor-position wire ownership", () => {
++	it("retains only a tombstone when the owner cancels", () => {
++		const terminal = new VirtualTerminal();
++		const probe = new CursorPositionProbe(terminal);
++		let oldReplies = 0;
++		let oldWakeups = 0;
++		let newWakeups = 0;
++		const reply = () => {
++			oldReplies++;
++		};
++		const idle = () => {
++			oldWakeups++;
++		};
++		probe.listen(idle);
++		assert.equal(probe.request(reply), true);
++		probe.cancel(reply);
++		probe.unlisten(idle);
++		probe.listen(() => {
++			newWakeups++;
++		});
++		assert.equal(
++			probe.request(() => {}),
++			false,
++		);
++		assert.equal(probe.consume("\x1b[3;1R"), true);
++		assert.equal(oldReplies, 0);
++		assert.equal(oldWakeups, 0);
++		assert.equal(newWakeups, 1);
++		assert.equal(
++			probe.request(() => {}),
++			true,
++		);
++	});
++
++	it("does not let a nonmatching modified-F3 report release the pending query", () => {
++		const probe = new CursorPositionProbe(new VirtualTerminal());
++		let replies = 0;
++		probe.request(() => {
++			replies++;
++		});
++		assert.equal(probe.consume("\x1b[1;2R"), false);
++		assert.equal(
++			probe.request(() => {}),
++			false,
++		);
++		assert.equal(replies, 0);
++		assert.equal(probe.consume("\x1b[2;1R"), true);
++		assert.equal(replies, 1);
++	});
++
++	it("restores the cursor column, including a one-column terminal", async () => {
++		for (const width of [1, 40]) {
++			const terminal = new VirtualTerminal(width, 12);
++			terminal.write(`\x1b[3;${width}H`);
++			await terminal.flush();
++			const before = terminal.getCursorPosition();
++			new CursorPositionProbe(terminal).request(() => {});
++			await terminal.flush();
++			assert.deepEqual(terminal.getCursorPosition(), before);
++		}
++	});
++
++	it("does not add a row when the caller settles pending wrap before probing", async () => {
++		const terminal = new VirtualTerminal(5, 12);
++		terminal.write("12345\r");
++		new CursorPositionProbe(terminal).request(() => {});
++		terminal.write("\r\nX");
++		await terminal.flush();
++		assert.deepEqual(terminal.getViewport().slice(0, 2), ["12345", "X"]);
++	});
++});
+diff --git a/packages/tui/test/stdin-buffer.test.ts b/packages/tui/test/stdin-buffer.test.ts
+index d3e1bb4..f39ec34 100644
+--- a/packages/tui/test/stdin-buffer.test.ts
++++ b/packages/tui/test/stdin-buffer.test.ts
+@@ -127,14 +127,14 @@ describe("StdinBuffer", () => {
+ 			assert.deepStrictEqual(emittedSequences, ["\x1b[<35;20;5m"]);
+ 		});
+ 
+-		it("should flush incomplete sequence after timeout", async () => {
+-			processInput("\x1b[<35");
++		it("should flush an ambiguous CSI introducer after timeout", async () => {
++			processInput("\x1b[");
+ 			assert.deepStrictEqual(emittedSequences, []);
+ 
+ 			// Wait for timeout
+ 			await wait(15);
+ 
+-			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
++			assert.deepStrictEqual(emittedSequences, ["\x1b["]);
+ 		});
+ 
+ 		it("should flush a lone ESC as Escape when CR arrives after the timeout", async () => {
+@@ -439,6 +439,31 @@ describe("StdinBuffer", () => {
+ 	});
+ 
+ 	describe("Mouse Events", () => {
++		it("retains recognized reports across timeouts at every payload split", (t) => {
++			t.mock.timers.enable({ apis: ["setTimeout"] });
++			for (const report of ["\x1b[<0;20;5M", "\x1b[<0;20;5m", "\x1b[M ab"]) {
++				for (let split = 3; split < report.length; split++) {
++					emittedSequences.length = 0;
++					processInput(report.slice(0, split));
++					t.mock.timers.tick(1000);
++					assert.deepStrictEqual(emittedSequences, []);
++					processInput(`${report.slice(split)}x`);
++					assert.deepStrictEqual(emittedSequences, [report, "x"]);
++				}
++			}
++		});
++
++		it("recovers from canceled and interrupted mouse reports", () => {
++			for (const cancel of ["\x18", "\x1a"]) processInput(`\x1b[<0;2;${cancel}x`);
++			processInput("\x1b[<0;2;\x1b[A");
++			processInput("\x1b[<0;2;\r");
++			assert.deepStrictEqual(emittedSequences, ["x", "x", "\x1b[A", "\r"]);
++		});
++
++		it("delivers malformed SGR reports whole for renderer validation", () => {
++			processInput("\x1b[<0;no;1Mx");
++			assert.deepStrictEqual(emittedSequences, ["\x1b[<0;no;1M", "x"]);
++		});
+ 		it("should handle mouse press event", () => {
+ 			processInput("\x1b[<0;10;5M");
+ 			assert.deepStrictEqual(emittedSequences, ["\x1b[<0;10;5M"]);
+@@ -544,14 +569,14 @@ describe("StdinBuffer", () => {
+ 			assert.deepStrictEqual(flushed, []);
+ 		});
+ 
+-		it("should emit flushed data via timeout", async () => {
+-			processInput("\x1b[<35");
++		it("should emit ambiguous keyboard input via timeout", async () => {
++			processInput("\x1b[1;");
+ 			assert.deepStrictEqual(emittedSequences, []);
+ 
+ 			// Wait for timeout to flush
+ 			await wait(15);
+ 
+-			assert.deepStrictEqual(emittedSequences, ["\x1b[<35"]);
++			assert.deepStrictEqual(emittedSequences, ["\x1b[1;"]);
+ 		});
+ 	});
+ 
+diff --git a/packages/tui/test/tui-main-screen-mouse.test.ts b/packages/tui/test/tui-main-screen-mouse.test.ts
+new file mode 100644
+index 0000000..4f83924
+--- /dev/null
++++ b/packages/tui/test/tui-main-screen-mouse.test.ts
+@@ -0,0 +1,555 @@
++import assert from "node:assert/strict";
++import { describe, it, type TestContext } from "node:test";
++import { Box } from "../src/components/box.ts";
++import { StdinBuffer } from "../src/stdin-buffer.ts";
++import { type Component, Container, CURSOR_MARKER, type TuiMouseEvent } from "../src/tui.ts";
++import { TuiAltScreen } from "../src/tui-alt-screen.ts";
++import { TuiMainScreen } from "../src/tui-main-screen.ts";
++import { VirtualTerminal } from "./virtual-terminal.ts";
++
++class MouseTerminal extends VirtualTerminal {
++	writes: string[] = [];
++	override write(data: string): void {
++		this.writes.push(data);
++		super.write(data);
++	}
++
++	async replyPosition(): Promise<void> {
++		await this.flush();
++		const cursor = this.getCursorPosition();
++		this.sendInput(`\x1b[${cursor.y + 1};1R`);
++	}
++}
++
++class Control implements Component {
++	lines = ["button"];
++	events: TuiMouseEvent[] = [];
++	keys: string[] = [];
++	onMouse: ((event: TuiMouseEvent) => void) | undefined;
++	render(): string[] {
++		return this.lines;
++	}
++	handleMouse(event: TuiMouseEvent) {
++		this.events.push(event);
++		this.onMouse?.(event);
++		return { handled: true, focus: true };
++	}
++	handleInput(data: string): void {
++		this.keys.push(data);
++	}
++	invalidate(): void {}
++}
++
++function click(terminal: MouseTerminal, x: number, y: number): void {
++	terminal.sendInput(`\x1b[<0;${x + 1};${y + 1}M`);
++	terminal.sendInput(`\x1b[<0;${x + 1};${y + 1}m`);
++}
++
++async function harness(t: TestContext) {
++	const terminal = new MouseTerminal(40, 12);
++	const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++	const control = new Control();
++	tui.addChild(control);
++	tui.setFocus(control);
++	tui.start();
++	t.after(() => tui.stop());
++	tui.renderNow();
++	await terminal.replyPosition();
++	return { terminal, tui, control };
++}
++
++// Behavioral, blackbox-group: real renderer and components against a terminal emulator.
++describe("regular-mode mouse", () => {
++	it("does not apply a click result across a renderer restart", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		control.onMouse = (event) => {
++			if (event.type !== "click") return;
++			tui.stop({ preserveScreen: true });
++			tui.setFocus(null);
++			tui.start();
++			tui.renderNow(true);
++		};
++		click(terminal, 1, 0);
++		assert.equal(tui.getFocusedComponent(), null);
++	});
++
++	it("tracks append and shrink after shell output without a resize", async () => {
++		const terminal = new MouseTerminal(40, 12);
++		terminal.write("shell\r\n".repeat(7));
++		const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		const control = new Control();
++		control.lines = ["line 0"];
++		tui.addChild(control);
++		tui.start();
++		try {
++			tui.renderNow();
++			await terminal.replyPosition();
++			for (const count of [3, 8, 15, 20, 18, 12, 2]) {
++				control.lines = Array.from({ length: count }, (_, index) => `line ${index}`);
++				tui.renderNow();
++				await terminal.flush();
++				const viewport = terminal.getViewport();
++				for (const [row, line] of viewport.entries()) {
++					const match = /^line (\d+)$/.exec(line);
++					if (!match) continue;
++					click(terminal, 1, row);
++					assert.equal(control.events.at(-1)?.y, Number(match[1]));
++				}
++			}
++		} finally {
++			tui.stop();
++		}
++	});
++	it("maps an overlay after a non-clearing shrink to its committed physical row", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		control.lines = Array.from({ length: 20 }, (_, index) => `line ${index}`);
++		const overlay = new Control();
++		overlay.lines = ["overlay"];
++		const handle = tui.showOverlay(overlay, { row: 10, col: 0, width: 10 });
++		tui.renderNow();
++		await terminal.flush();
++		control.lines = control.lines.slice(0, 12);
++		const clears = terminal.writes.filter((write) => write.includes("\x1b[3J")).length;
++		tui.renderNow();
++		await terminal.flush();
++		const row = terminal.getViewport().findIndex((line) => line.startsWith("overlay"));
++		assert.equal(row, 2);
++		assert.equal(handle.getBounds()?.row, row);
++		terminal.sendInput(`\x1b[<0;2;${row + 1}M`);
++		tui.renderNow();
++		terminal.sendInput(`\x1b[<0;2;${row + 1}m`);
++		assert.equal(overlay.events.at(-1)?.type, "click");
++		assert.equal(overlay.events.at(-1)?.y, 0);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[3J")).length, clears);
++	});
++	it("preserves full-width append output without extra rows or scrollback", async () => {
++		const terminals = [new MouseTerminal(5, 4), new MouseTerminal(5, 4)];
++		for (const [index, terminal] of terminals.entries()) {
++			terminal.write("shell\r\n");
++			const tui = new TuiMainScreen(terminal, false, undefined, { mouse: index === 1 });
++			const control = new Control();
++			control.lines = ["12345"];
++			tui.addChild(control);
++			tui.start();
++			try {
++				tui.renderNow();
++				await terminal.replyPosition();
++				assert.equal(terminal.getCursorPosition().y, 1);
++				for (const line of ["67890", "abcde", "fghij"]) {
++					control.lines.push(line);
++					tui.renderNow();
++					await terminal.flush();
++				}
++			} finally {
++				tui.stop({ preserveScreen: true });
++			}
++		}
++		assert.deepEqual(terminals[1].getViewport(), terminals[0].getViewport());
++		assert.deepEqual(terminals[1].getScrollBuffer(), terminals[0].getScrollBuffer());
++	});
++
++	it("preserves a real cursor marker's column and row across the probe", async () => {
++		const terminal = new MouseTerminal(20, 12);
++		terminal.write("shell\r\n");
++		const tui = new TuiMainScreen(terminal, true, undefined, { mouse: true });
++		const control = new Control();
++		control.lines = [`12345${CURSOR_MARKER}text`];
++		tui.addChild(control);
++		tui.start();
++		try {
++			tui.renderNow();
++			await terminal.flush();
++			assert.deepEqual(terminal.getCursorPosition(), { x: 5, y: 1 });
++			await terminal.replyPosition();
++			assert.deepEqual(terminal.getCursorPosition(), { x: 5, y: 1 });
++		} finally {
++			tui.stop();
++		}
++	});
++	it("keeps bottom controls clickable during append streaming without query churn", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		const transcript = new Control();
++		transcript.lines = ["history"];
++		tui.clear();
++		tui.addChild(transcript);
++		tui.addChild(control);
++		const before = terminal.writes.filter((write) => write.includes("\x1b[6n")).length;
++		for (let index = 0; index < 50; index++) {
++			transcript.lines.push(`stream ${index}`);
++			tui.renderNow();
++			await terminal.flush();
++			const row = terminal.getViewport().indexOf("button");
++			assert.notEqual(row, -1);
++			click(terminal, 1, row);
++			assert.equal(control.events.at(-1)?.type, "click");
++			assert.equal(control.events.at(-1)?.y, 0);
++		}
++		assert.equal(control.events.filter((event) => event.type === "click").length, 50);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, before);
++	});
++
++	it("does not assign a stopped renderer's reply to a new regular instance", async (t) => {
++		const terminal = new MouseTerminal(40, 12);
++		const old = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		old.addChild(new Control());
++		old.start();
++		old.renderNow();
++		old.stop({ preserveScreen: true });
++		const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		const control = new Control();
++		tui.addChild(control);
++		tui.start();
++		t.after(() => tui.stop());
++		tui.renderNow();
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, 1);
++		terminal.sendInput("\x1b[8;1R");
++		click(terminal, 1, 7);
++		assert.equal(control.events.length, 0);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, 2);
++		await terminal.replyPosition();
++		click(terminal, 1, terminal.getCursorPosition().y);
++		assert.equal(control.events.at(-1)?.type, "click");
++	});
++
++	it("retires an old regular query in fullscreen without reviving its owner", async (t) => {
++		const terminal = new MouseTerminal(40, 12);
++		const old = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		old.addChild(new Control());
++		old.start();
++		old.renderNow();
++		old.stop({ preserveScreen: true });
++		const full = new TuiAltScreen(terminal);
++		const focused = new Control();
++		full.addChild(focused);
++		full.setFocus(focused);
++		full.start();
++		full.renderNow();
++		terminal.sendInput("\x1b[9;1R");
++		assert.deepEqual(focused.keys, []);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, 1);
++		full.stop({ preserveScreen: true });
++		const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		tui.addChild(new Control());
++		tui.start();
++		t.after(() => tui.stop());
++		tui.renderNow();
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, 2);
++	});
++
++	it("keeps the delegating keyboard host focused through release and click", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		class Host extends Container {
++			handleInput(data: string): void {
++				control.handleInput(data);
++			}
++		}
++		const host = new Host();
++		host.addChild(control);
++		tui.clear();
++		tui.addChild(host);
++		tui.renderNow();
++		click(terminal, 1, 0);
++		assert.equal(tui.getFocusedComponent(), host);
++	});
++
++	it("does not combine clicks from different buttons", async (t) => {
++		const { terminal, control } = await harness(t);
++		click(terminal, 1, 0);
++		terminal.sendInput("\x1b[<2;2;1M");
++		terminal.sendInput("\x1b[<2;2;1m");
++		assert.deepEqual(
++			control.events.filter((event) => event.type === "click").map((event) => event.clickCount),
++			[1, 1],
++		);
++	});
++	it("does not enable reporting or query the cursor by default", async () => {
++		const terminal = new MouseTerminal();
++		const tui = new TuiMainScreen(terminal);
++		tui.addChild(new Control());
++		tui.start();
++		try {
++			tui.renderNow();
++			await terminal.flush();
++			assert.doesNotMatch(terminal.writes.join(""), /\x1b\[\?(?:1000|1002|1004|1006)h|\x1b\[6n/);
++		} finally {
++			tui.stop();
++		}
++	});
++
++	it("does not starve a delayed position report during same-size spinner renders", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		tui.stop({ preserveScreen: true });
++		tui.start();
++		tui.renderNow();
++		await terminal.flush();
++		const row = terminal.getCursorPosition().y;
++		const queries = terminal.writes.filter((write) => write.includes("\x1b[6n")).length;
++		for (let i = 0; i < 50; i++) {
++			control.lines = [`spinner ${i}${CURSOR_MARKER}`];
++			tui.renderNow();
++		}
++		terminal.sendInput(`\x1b[${row + 1};1R`);
++		click(terminal, 1, row);
++		assert.equal(control.events.filter((event) => event.type === "click").length, 1);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, queries);
++	});
++
++	it("rejects superseded position replies and serializes fresh probes", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		tui.stop({ preserveScreen: true });
++		tui.start();
++		control.lines.push("second");
++		tui.renderNow();
++		await terminal.flush();
++		const staleRow = terminal.getCursorPosition().y;
++		control.lines.push("third");
++		tui.renderNow();
++		const before = terminal.writes.filter((write) => write.includes("\x1b[6n")).length;
++		terminal.sendInput(`\x1b[${staleRow + 1};1R`);
++		click(terminal, 1, 0);
++		terminal.sendInput("k");
++		assert.deepEqual(control.keys, ["k"]);
++		assert.equal(control.events.length, 0);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, before + 1);
++		await terminal.replyPosition();
++		click(terminal, 1, 0);
++		assert.equal(control.events.at(-1)?.type, "click");
++	});
++
++	it("invalidates geometry immediately on resize, then maps growth and shrink", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		for (const [width, height, count] of [
++			[30, 8, 20],
++			[50, 15, 5],
++			[20, 5, 3],
++		]) {
++			terminal.resize(width, height);
++			click(terminal, 1, 0);
++			const before = control.events.length;
++			control.lines = Array.from({ length: count }, (_, index) => `line ${index}`);
++			tui.renderNow();
++			assert.equal(control.events.length, before);
++			await terminal.replyPosition();
++			const viewport = terminal.getViewport();
++			const row = viewport.findIndex((line) => line.startsWith("line"));
++			const logical = Number(/line (\d+)/.exec(viewport[row])?.[1]);
++			click(terminal, 1, row);
++			assert.equal(control.events.at(-1)?.y, logical);
++		}
++	});
++
++	it("cancels presses on resize, focus loss, and mismatched releases", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		terminal.sendInput("\x1b[<0;2;1M");
++		terminal.sendInput("\x1b[O");
++		terminal.sendInput("\x1b[<0;2;1m");
++		terminal.sendInput("\x1b[<0;2;1M");
++		terminal.sendInput("\x1b[<2;2;1m");
++		terminal.sendInput("\x1b[<0;2;1M");
++		terminal.resize(41, 12);
++		tui.renderNow();
++		await terminal.replyPosition();
++		terminal.sendInput("\x1b[<0;2;1m");
++		assert.equal(control.events.filter((event) => event.type === "click").length, 0);
++	});
++
++	it("keeps a pre-suspend query distinct from the resumed query", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		tui.stop({ preserveScreen: true });
++		tui.start();
++		control.lines.push("second");
++		tui.renderNow();
++		tui.stop({ preserveScreen: true });
++		tui.start();
++		tui.renderNow();
++		const queries = terminal.writes.filter((write) => write.includes("\x1b[6n")).length;
++		terminal.sendInput("\x1b[2;1R");
++		click(terminal, 1, 0);
++		assert.equal(control.events.length, 0);
++		assert.equal(terminal.writes.filter((write) => write.includes("\x1b[6n")).length, queries + 1);
++		await terminal.replyPosition();
++		click(terminal, 1, 0);
++		assert.equal(control.events.at(-1)?.type, "click");
++	});
++
++	it("ignores unrequested reports and preserves legacy modified-F3 input", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		terminal.sendInput("\x1b[10;1R");
++		click(terminal, 1, 0);
++		assert.equal(control.events.at(-1)?.y, 0);
++		control.lines.push("second");
++		tui.renderNow();
++		terminal.sendInput("\x1b[1;2R");
++		terminal.sendInput("\x1bOR");
++		assert.deepEqual(control.keys, ["\x1b[1;2R", "\x1bOR"]);
++		await terminal.replyPosition();
++		click(terminal, 1, 0);
++		assert.equal(control.events.at(-1)?.y, 0);
++	});
++
++	it("consumes malformed, out-of-bounds, and legacy reports without typing them", async (t) => {
++		const { terminal, control } = await harness(t);
++		for (const report of [
++			"\x1b[<0;0;1M",
++			"\x1b[<0;41;1M",
++			"\x1b[<0;1;13M",
++			"\x1b[<999999999999999999999999;1;1M",
++			"\x1b[<0;no;1M",
++			"\x1b[Mabc",
++		])
++			terminal.sendInput(report);
++		assert.deepEqual(control.events, []);
++		assert.deepEqual(control.keys, []);
++	});
++
++	it("never turns a delayed mouse report tail into editor input", async (t) => {
++		const { terminal, control } = await harness(t);
++		const buffer = new StdinBuffer({ timeout: 5 });
++		t.after(() => buffer.destroy());
++		buffer.on("data", (data) => terminal.sendInput(data));
++		buffer.process("\x1b[<0;2;");
++		await new Promise((resolve) => setTimeout(resolve, 20));
++		buffer.process("1M\x1b[<0;2;1m");
++		assert.deepEqual(control.keys, []);
++		assert.equal(control.events.at(-1)?.type, "click");
++	});
++
++	it("dispatches overlays before the document and drops a hidden overlay's pending press", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		const overlay = new Control();
++		const handle = tui.showOverlay(overlay, { row: 0, col: 2, width: 10 });
++		tui.renderNow();
++		await terminal.replyPosition();
++		click(terminal, 3, 0);
++		assert.equal(overlay.events.at(-1)?.x, 1);
++		assert.deepEqual(control.events, []);
++		terminal.sendInput("\x1b[<0;4;1M");
++		handle.hide();
++		terminal.sendInput("\x1b[<0;4;1m");
++		assert.equal(overlay.events.filter((event) => event.type === "click").length, 1);
++	});
++
++	it("drops stale nested targets even when an overlay rectangle is unchanged", async (t) => {
++		const { terminal, tui } = await harness(t);
++		const nested = new Container();
++		const oldControl = new Control();
++		nested.addChild(oldControl);
++		tui.showOverlay(nested, { row: 0, col: 0, width: 10 });
++		tui.renderNow();
++		await terminal.replyPosition();
++		terminal.sendInput("\x1b[<0;2;1M");
++		nested.clear();
++		nested.addChild(new Control());
++		tui.renderNow();
++		terminal.sendInput("\x1b[<0;2;1m");
++		assert.deepEqual(
++			oldControl.events.map((event) => event.type),
++			["press"],
++		);
++	});
++
++	it("does not deliver a captured release to a removed Box child before paint", async (t) => {
++		const { terminal, tui, control } = await harness(t);
++		tui.clear();
++		const box = new Box(0, 0);
++		box.addChild(control);
++		tui.addChild(box);
++		tui.renderNow();
++		terminal.sendInput("\x1b[<0;2;1M");
++		box.clear();
++		terminal.sendInput("\x1b[<0;2;1m");
++		assert.deepEqual(
++			control.events.map((event) => event.type),
++			["press"],
++		);
++	});
++
++	for (const action of ["stop", "reset", "remove"] as const) {
++		it(`does not synthesize a click after the release handler performs ${action}`, async (t) => {
++			const { terminal, tui, control } = await harness(t);
++			control.onMouse = (event) => {
++				if (event.type !== "release") return;
++				if (action === "stop") tui.stop();
++				else if (action === "reset") tui.renderNow(true);
++				else tui.removeChild(control);
++			};
++			click(terminal, 1, 0);
++			assert.deepEqual(
++				control.events.map((event) => event.type),
++				["press", "release"],
++			);
++		});
++	}
++
++	it("routes drags to the pressed control without synthesizing a click", async (t) => {
++		const { terminal, control } = await harness(t);
++		terminal.sendInput("\x1b[<0;2;1M");
++		terminal.sendInput("\x1b[<32;5;2M");
++		terminal.sendInput("\x1b[<0;5;2m");
++		assert.deepEqual(
++			control.events.map((event) => event.type),
++			["press", "drag", "release"],
++		);
++	});
++
++	it("disables all enabled reporting modes on stop", async (t) => {
++		const { terminal, tui } = await harness(t);
++		tui.stop();
++		const output = terminal.writes.join("");
++		for (const mode of [1000, 1002, 1004, 1006]) assert.ok(output.includes(`\x1b[?${mode}l`));
++	});
++	it("maps clicks after existing shell output only after a position report", async () => {
++		const terminal = new MouseTerminal(40, 12);
++		terminal.write("shell one\r\nshell two\r\n");
++		const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		const control = new Control();
++		tui.addChild(control);
++		tui.setFocus(control);
++		tui.start();
++		try {
++			tui.renderNow();
++			click(terminal, 1, 2);
++			assert.equal(control.events.length, 0);
++			assert.deepEqual(control.keys, []);
++			assert.ok(terminal.writes.includes("\x1b7\x1b[1G\x1b[6n\x1b8"));
++			await terminal.replyPosition();
++			click(terminal, 1, 0);
++			assert.equal(control.events.length, 0);
++			click(terminal, 1, 2);
++			assert.deepEqual(
++				control.events.map((e) => [e.type, e.x, e.y]),
++				[
++					["press", 1, 0],
++					["release", 1, 0],
++					["click", 1, 0],
++				],
++			);
++			assert.ok(!terminal.writes.join("").includes("\x1b[3J"));
++		} finally {
++			tui.stop();
++		}
++	});
++
++	it("preserves a press across geometry-stable renders and counts repeated clicks", async () => {
++		const terminal = new MouseTerminal(40, 12);
++		const tui = new TuiMainScreen(terminal, false, undefined, { mouse: true });
++		const control = new Control();
++		tui.addChild(control);
++		tui.start();
++		try {
++			tui.renderNow();
++			await terminal.replyPosition();
++			terminal.sendInput("\x1b[<0;2;1M");
++			control.lines = [`${CURSOR_MARKER}changed`];
++			tui.renderNow();
++			terminal.sendInput("\x1b[<0;2;1m");
++			click(terminal, 1, 0);
++			assert.deepEqual(
++				control.events.filter((e) => e.type === "click").map((e) => e.clickCount),
++				[1, 2],
++			);
++		} finally {
++			tui.stop();
++		}
++	});
++});
+-- 
+2.56.0
+
