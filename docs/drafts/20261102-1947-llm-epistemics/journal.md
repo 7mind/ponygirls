@@ -2978,3 +2978,67 @@ not measured efficacy or installation. A final delegated overlap review recommen
 additional amendment; the parent agrees, with no new draft/write or installation.
 Earlier P/Q/S originals/verdicts and guided review history are unchanged. No new pilot, production/UI implementation, CQ4 migration,
 parked application, export-policy choice, push or deployment follows.
+
+---
+
+## J35 — Pilot T successor repair and failure-mode proposals (2026-11-06)
+
+After clarification that publication completion did not mean instrument repair,
+the user requested: “I think, you should fix the pilot implementation, then analyze
+the failure modes of the previous sessions - and attempt to formulate improvement
+proposals.” This authorizes repair/analysis, not another participant measurement.
+
+The [continuation](pilot-t-repair.md) records the explicit successor
+`runner/ledger_t_002.py` and prepared recipe `runner/instrument_t_002.py` in local
+`epistemics-pilots` [L20]. Binding definition/kind/content are validated before
+Task-only acceptance access. Fail-before:15 methods,1 failure/10 errors, expected
+`KeyError: 'acceptance'` in memory/file/copied backend; the same15 pass after repair.
+The expanded suite initially had two Source-digest fixture setup errors (retained);
+corrected38 methods pass. Controls include all11 non-Task kinds ×5 phases on both
+adapters, valid Task operations, rollback, idempotency/recovery, unchanged contract
+bodies, copied-source verification and actual SDK→extension→backend execution.
+A real missing-state failure remains infrastructure failure, not a domain rejection.
+
+All16 original public-tool traces are inventoried without private-thinking export.
+Graph's51 tool errors reconcile as47 audited domain rejections,3 backend exceptions
+and1 workspace-interface rejection; the47 comprise23 shape/10 context/9 reference/
+5 acceptance responses. Ten generic context errors span all six graph users;36/47
+domain rejections cluster in two DeepSeek r1 originals. Broad endpoint arrays conflict
+with runtime cardinality; repeated kind/reference confusion persists despite explicit
+instructions. These observations motivate localized diagnostics, schema alignment,
+executable examples and an explicit read-only binding preview—not weaker invariants.
+
+V010's admitted universal execution claim remains material; V013's bounded
+inspection/reuse judgment and coder disagreement remain. Evidence-method reporting
+should preserve both distinctions rather than force exhaustive execution. The two
+qualifying graph nonusers remain assigned; availability/capture records are not use.
+The connection-error/context-edit original stays invalid. Its diagnostic motivates
+only a prospective recovery design preserving original logs/counters and excluding
+public-evidence deletion or uncertain effects; no transport correction is established.
+
+Two read-only advisory analyses and a later scoped code review are retained with
+exact receipts. Parent verified decisive calls/counts/mechanisms and test results,
+not every application/test line or a new Human gold. The separate delegated skill
+review recommends no new draft/amendment; parent agrees, current r6 unchanged.
+
+Frozen T registration/publication and earlier P/Q/S evidence remain unchanged.
+No new measured participant, production/UI/CQ4 work, export-policy choice, skill
+installation, push or deployment. Further proposals need separately scoped checks;
+software repair is not evidence of graph workflow benefit.
+
+Fresh complete final suites pass331 methods: S136/374.816s, Q85/0.757s,
+T72/24.207s, successor38/5.838s; zero failures/errors/skips. Receipt
+`e0109d526e1975ad16758a777b078970bd40f45be21677a9e7eaabab81cac8eb` binds128
+enumerated runner/analysis Python/TypeScript/MJS sources;984 registered inputs and
+2031 historical publication-bound files remain unchanged. An earlier validation
+launcher failed before running tests due an off-by-one repository-root path; its
+controller/error are retained, corrected run uses a fresh directory. Unchanged
+prototype36/6.177s also passes;19docs/88links/35journal/88references checked with
+J1–J34 prefix and protected schema/T1/prototype unchanged. These are software and
+preservation checks, not participant improvement or Human acceptance.
+
+Pilot successor/analysis integrated at `69f42b77cef8db75ec6070653233b5e98d02cd21`.
+Fresh integrated Q85/0.782s, T72/24.730s and successor38/6.953s pass, zero failures/
+errors/skips. S136 is explicitly reused on matching128-source hashes, registered inputs
+and unchanged historical source/fixture/protocol/Nix inputs. Relocated public inventory
+matches,2031-file publication verification passes. No fresh integrated S run is implied.

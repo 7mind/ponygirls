@@ -1,6 +1,6 @@
 # Brief — epistemics of LLM-accelerated development
 
-Status: through J34, including published bounded actual-artifact Pilot T, 2026-11-06.
+Status: through J35, including versioned Pilot T admission repair and failure-mode proposals, 2026-11-06.
 Final unfiltered software regressions and source-bound publication verification pass.
 The working schema is **one shared human–agent project graph**, correcting the earlier
 agent-payload focus. CQ4 review and Pilots Q/S are complete. Pilot S preserves all16
@@ -26,6 +26,14 @@ CQ4 migration and parked applications remain deferred. The
 all13 passing finite functional acceptance,12 fully adequate after separate parent
 semantics. No graph workflow advantage is demonstrated; differential instrument
 attrition and ceiling effects limit inference. Human efficacy remains untested.
+
+The user subsequently authorized [implementation repair and failure analysis](pilot-t-repair.md).
+A separately versioned successor rejects non-Task progress before Task-only field access;
+original T sources/verdicts remain frozen. The complete public-tool inventory separates
+47 domain rejections,3 infrastructure exceptions and1 workspace-interface rejection.
+Diagnostic/schema alignment, binding preview, evidence-method reporting and narrowly
+specified recovery are proposals—not deployed improvements or a new measured pilot.
+Native transport failures and the historical context-edit rule are not corrected.
 
 ## Problem and proposed response
 
@@ -151,6 +159,7 @@ exists here. Do not revive NASA-TLX or substitute time/question counts as a prox
 
 - Read: this brief → [shared schema](cq4-node-schema.md) →
   [semantics/worked trace](cq4-unified-graph-semantics.md) →
+  [Pilot T repair/proposals](pilot-t-repair.md)/J35 →
   [Pilot T findings](workflow-benefit-pilot.md)/J34 →
   [RDF evaluation](rdf-graph-evaluation.md)/J33 → historical J32/J31 → J30/source review →
   [synthesis](synthesis.md) → J29/J28 →
