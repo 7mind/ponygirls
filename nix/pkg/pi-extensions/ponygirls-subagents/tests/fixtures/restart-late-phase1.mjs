@@ -74,7 +74,7 @@ mkdirSync(sessionsDir, { recursive: true });
 const handles = [];
 const sup = new Supervisor({
   rootId: 'root-latereboot',
-  rootDir: join(markerDir, 'root1'),
+  rootDir: markerDir,
   store,
   policy,
   governor: () => ({ model: { provider: 'p', id: 'm', thinkingLevel: 'off' }, cwd: markerDir, instructions: { contextFiles: [], skills: [] } }),

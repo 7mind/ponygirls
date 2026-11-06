@@ -860,6 +860,8 @@ in
             # file ~/.pi/agent/subagents-policy.json: repos for `sandbox`
             # children, nesting, model, and gate limits).
             "${piExtensions}/ponygirls-subagents"
+            # Shared project journals outside repositories; explicitly selected model, default off.
+            "${piExtensions}/ponygirls-historian"
             # Background shell tasks: the `bg_task` tool, the /bg terminal
             # output inspector, and completion notices that wake an idle
             # session. Runtime executables come from piWrapped above; state

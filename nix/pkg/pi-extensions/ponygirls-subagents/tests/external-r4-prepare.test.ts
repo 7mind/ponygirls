@@ -52,7 +52,7 @@ async function realWorkerHarness(
   policy.allowedTools = [CG];
   const sup = new Supervisor({
     rootId: "root-r4",
-    rootDir: join(dir, "root"),
+    rootDir: dir,
     store: new InMemoryRunStore("root-r4"),
     policy,
     governor: () => ({ model: { provider: "p", id: "m", thinkingLevel: "off" }, cwd: dir, instructions: { contextFiles: [], skills: [] } }),

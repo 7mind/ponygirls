@@ -12,6 +12,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { defineTool } from "@earendil-works/pi-coding-agent";
 import { CustomViewToggle } from "@ponygirls/pi-ui";
 import { FileRunStore } from "./src/store.ts";
+import { HISTORY_CHANNEL, type HistoryRequest } from "./src/history.ts";
 import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
 import { renderNotice, renderSpawnCall, renderSpawnResult } from "./src/render.ts";
 import { Supervisor, TOOL_RESULT_MAX, type AgentView, type CallerId } from "./src/supervisor.ts";
@@ -120,6 +121,7 @@ interface SessionBinding {
   governingBaseCtx: object | null;
   /** Binding active until session shutdown (revokes external dispatch). */
   governingActive: boolean;
+  historyAbort: AbortController;
   /** Parent-provider registry remains usable during a bounded reload handoff. */
   providerActive: boolean;
   /** The governing session's model at its latest tool call (what children inherit). */
@@ -194,6 +196,14 @@ export default function (pi: ExtensionAPI): void {
   if (typeof pi.enqueueMessage !== "function") throw new Error("UNSUPPORTED_SDK: subagent notices require this flake's retained-ingress Pi patch");
   const bindings = new Map<string, SessionBinding>();
   const durableBindings = processRuntime().bindings;
+  let currentBinding: SessionBinding | null = null;
+  pi.events.on(HISTORY_CHANNEL, (value) => {
+    const request = value as Partial<HistoryRequest> | null;
+    const binding = currentBinding;
+    if (!request || typeof request.respond !== "function" || !binding || !binding.governingActive) return;
+    if (request.rootSessionId !== binding.sessionId || binding.currentCtx?.sessionManager.getSessionId() !== binding.sessionId) return;
+    request.respond(binding.supervisor.historyFeed("governor", binding.historyAbort.signal));
+  });
 
   function refreshStatus(binding: SessionBinding): void {
     if (binding.statusTimer) return;
@@ -218,6 +228,9 @@ export default function (pi: ExtensionAPI): void {
   }
 
   function attach(binding: SessionBinding, ctx: ExtensionContext): SessionBinding {
+    if (!(binding.historyAbort instanceof AbortController) || typeof binding.supervisor.historyFeed !== "function") {
+      throw new Error("UPGRADE_RESTART_REQUIRED: retained subagent runtime predates the history bridge; restart Pi before using the upgraded extension");
+    }
     if (binding.retiring) throw new Error("NOT_RUNNING: detached supervisor retirement is still in progress");
     if (binding.handoffTimer) clearTimeout(binding.handoffTimer);
     binding.handoffTimer = null;
@@ -228,6 +241,9 @@ export default function (pi: ExtensionAPI): void {
     binding.ui = ctx.ui;
     binding.currentCtx = ctx;
     binding.pane = new CustomViewToggle();
+    binding.historyAbort.abort();
+    binding.historyAbort = new AbortController();
+    currentBinding = binding;
     binding.governingActive = true;
     binding.providerActive = true;
     binding.prepareDelegatedCall = (call) => prepareThroughEventBus(pi.events, call);
@@ -255,6 +271,7 @@ export default function (pi: ExtensionAPI): void {
 
   function retireDetachedBinding(binding: SessionBinding): void {
     if (binding.retiring) return;
+    binding.historyAbort.abort();
     binding.providerActive = false;
     binding.prepareDelegatedCall = async () => { throw new Error("STALE_GENERATION: extension runtime did not reattach"); };
     finishDetachedHandoff(binding);
@@ -303,7 +320,7 @@ export default function (pi: ExtensionAPI): void {
       ui: ctx.ui, statusTimer: null, currentCtx: ctx, pane: new CustomViewToggle(), governingBaseCtx: null, governingActive: true, providerActive: true,
       prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
       onSupervisorChange: () => {}, handoffTimer: null, finishHandoff: null,
-      policyFingerprint: "", retiring: null,
+      policyFingerprint: "", retiring: null, historyAbort: new AbortController(),
       // Start at the journal end: history from an earlier attachment is not redelivered.
       notices: new NoticeDelivery(
         { noticesSince: (cursor, limit) => binding.supervisor.noticesSince(cursor, limit) },
@@ -782,6 +799,8 @@ export default function (pi: ExtensionAPI): void {
     if (!binding) return;
     binding.pane.dispose();
     bindings.delete(sessionId);
+    binding.historyAbort.abort();
+    if (currentBinding === binding) currentBinding = null;
     binding.governingActive = false;
     binding.governingBaseCtx = null;
     binding.currentCtx = null;

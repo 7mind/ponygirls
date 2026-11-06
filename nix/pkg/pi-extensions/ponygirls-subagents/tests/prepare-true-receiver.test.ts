@@ -206,7 +206,7 @@ test("prepare timeout true receiver: gated positive RX strictly after parsed SDK
 
   const sup = new Supervisor({
     rootId: "root-true-rx",
-    rootDir: join(dir, "root"),
+    rootDir: dir,
     store: new InMemoryRunStore("root-true-rx"),
     policy: (() => {
       const p = defaultSupervisorPolicy();
@@ -427,7 +427,7 @@ test("prepare interrupt while awaiting RPC: exact positive ACK, single interrupt
 
   const sup = new Supervisor({
     rootId: "root-prep-int",
-    rootDir: join(dir, "root"),
+    rootDir: dir,
     store: new InMemoryRunStore("root-prep-int"),
     policy: (() => {
       const p = defaultSupervisorPolicy();

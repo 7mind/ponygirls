@@ -19,6 +19,7 @@ import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
 import { err } from "./errors.ts";
+import { historyPath, nativeHistoryId, openRegisteredHistoryFile, publicHistorySource, readRegisteredHistoryPage, reconstructedHistoryPrefix, type HistoryFeed, type RegisteredHistorySource } from "./history.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
@@ -474,6 +475,8 @@ export class Supervisor implements GateHost {
   private pendingLost = new Map<AgentId, { taskRunId: TaskRunId; generation: number; workerPid: number | null; workerBoot: ProcessIdentity | null }>();
   /** Every gate evaluation's conversation file, in start order. */
   private reviewSessions: ReviewSession[] = [];
+  private historySources = new Map<string, RegisteredHistorySource>();
+  private historyListeners = new Set<() => void>();
   /** Deferred owner outcomes and failed terminal commits retained until recovery. */
   private pendingSettle = new Map<TaskRunId, { agentId: AgentId; outcome: string; error: string }>();
   private epoch!: string;
@@ -688,6 +691,14 @@ export class Supervisor implements GateHost {
           }
           if (b["gated"] === true) this.agents.get(agentId)!.gateTaskRunId = record.currentTaskRunId;
           spawned++;
+          break;
+        }
+        case "history.source": {
+          const source = b as unknown as RegisteredHistorySource;
+          this.validateHistorySource(source);
+          if (this.historySources.has(source.sourceId)) throw err("RECOVERY_CORRUPT", "duplicate native history source");
+          this.historySources.set(source.sourceId, source);
+          if (source.kind === "agent") this.agents.get(source.agentId)!.record.nativeSessionPath = source.sessionFile;
           break;
         }
         case "gate.review_session":
@@ -1261,6 +1272,7 @@ export class Supervisor implements GateHost {
   }
 
   private notifyChanged(): void {
+    this.notifyHistory();
     this.evaluateWaiters();
     try {
       this.opts.onChange?.();
@@ -1273,6 +1285,71 @@ export class Supervisor implements GateHost {
     const record = this.store.append(kind, body);
     this.notifyChanged();
     return record;
+  }
+
+  private notifyHistory(): void {
+    for (const listener of this.historyListeners) {
+      try { listener(); } catch { /* Observers cannot fail agent execution. */ }
+    }
+  }
+
+  private validateHistorySource(source: RegisteredHistorySource): void {
+    const rt = this.agents.get(source.agentId);
+    if (!rt || source.rootSessionId !== this.rootId || source.agentPath !== rt.record.path || source.parentAgentId !== rt.record.parentId ||
+        typeof source.sourceId !== "string" || !source.sourceId || typeof source.sessionId !== "string" || !source.sessionId ||
+        typeof source.sessionFile !== "string" || !Number.isSafeInteger(source.reconstructedPrefixBytes) || source.reconstructedPrefixBytes < 0 || !Array.isArray(source.gaps) || !source.gaps.every(gap => typeof gap === "string") ||
+        !["agent", "review"].includes(source.kind) || (source.kind === "agent" ? source.taskRunId !== null : typeof source.taskRunId !== "string")) {
+      throw err("RECOVERY_CORRUPT", "invalid registered native history source");
+    }
+    historyPath(this.rootDir, source);
+    if (source.copiedFrom !== null) {
+      const predecessor = this.historySources.get(source.copiedFrom);
+      if (!predecessor || predecessor.agentId !== source.agentId || predecessor.sessionId !== source.sessionId) throw err("RECOVERY_CORRUPT", "invalid native history copy lineage");
+    }
+  }
+
+  private registerHistory(rt: AgentRuntime, sessionId: unknown, sessionFile: unknown, kind: "agent" | "review", taskRunId: string | null, copiedFrom: string | null | undefined, reconstructedPrefixBytes: number | undefined): void {
+    if (typeof sessionFile !== "string") return;
+    if (typeof sessionId !== "string" || !sessionId) throw err("RECOVERY_CORRUPT", "worker omitted native session identity");
+    const existing = [...this.historySources.values()].find(source => source.sessionFile === sessionFile);
+    if (existing) {
+      if (existing.agentId !== rt.record.id || existing.sessionId !== sessionId || existing.kind !== kind || existing.taskRunId !== taskRunId ||
+          (copiedFrom !== undefined && existing.copiedFrom !== copiedFrom) || (reconstructedPrefixBytes !== undefined && existing.reconstructedPrefixBytes !== reconstructedPrefixBytes)) throw err("RECOVERY_CORRUPT", "native history source identity changed");
+      return;
+    }
+    const source: RegisteredHistorySource = {
+      sourceId: randomUUID(), rootSessionId: this.rootId, agentId: rt.record.id, agentPath: rt.record.path, sessionId,
+      parentAgentId: rt.record.parentId, taskRunId, kind, copiedFrom: copiedFrom ?? null, reconstructedPrefixBytes: reconstructedPrefixBytes ?? 0, sessionFile,
+      gaps: ["Native outer tool calls/results only; complete internal nested-tool inputs/results are not captured",
+        ...(kind === "agent" ? ["Native session may span tasks; exact per-entry task-run attribution is unavailable"] : []),
+        ...(copiedFrom === null && basename(sessionFile).startsWith("restored-") ? ["Legacy checkpoint copy lineage unavailable"] : []),
+        ...((reconstructedPrefixBytes ?? 0) > 0 ? ["Restored prefix excludes checkpoint and mailbox reconstruction, including first deliveries queued while unloaded; recipient-side events absent from original sources may be omitted"] : [])],
+    };
+    this.validateHistorySource(source);
+    this.store.append("history.source", { ...source });
+    this.historySources.set(source.sourceId, source);
+    this.notifyChanged();
+  }
+
+  historyFeed(caller: CallerId, signal: AbortSignal): HistoryFeed {
+    if (!isGovernor(caller)) throw err("FORBIDDEN", "native history is for the governing session");
+    const active = () => { if (signal.aborted || this.disposed) throw err("STALE_GENERATION", "history capability revoked"); };
+    active();
+    return {
+      sources: () => { active(); return [...this.historySources.values()].map(publicHistorySource); },
+      read: async (sourceId, offset, limit) => {
+        active(); const source = this.historySources.get(sourceId);
+        if (!source) throw err("NOT_FOUND", "unknown native history source");
+        const page = await readRegisteredHistoryPage(this.rootDir, source, offset, limit); active(); return page;
+      },
+      subscribe: listener => {
+        active();
+        const wrapped = () => { if (!signal.aborted && !this.disposed) listener(); };
+        const unsubscribe = () => { this.historyListeners.delete(wrapped); signal.removeEventListener("abort", unsubscribe); };
+        this.historyListeners.add(wrapped); signal.addEventListener("abort", unsubscribe, { once: true });
+        return unsubscribe;
+      },
+    };
   }
 
   // -- leases and capacity ---------------------------------------------------
@@ -2399,7 +2476,7 @@ export class Supervisor implements GateHost {
     rt.record.residency = "loaded";
     worker.setEventHandler((event) => {
       this.detached(() => {
-        if (rt.worker === worker) this.onWorkerEvent(rt, event);
+        if (rt.worker === worker) { this.onWorkerEvent(rt, event); this.notifyHistory(); }
       });
     });
     worker.setToolRequestHandler(async (payload, envelope) => this.onToolRequest(rt, worker, payload, envelope));
@@ -2513,8 +2590,9 @@ export class Supervisor implements GateHost {
     // The run is active from the moment the worker may prompt.
     rt.activeRun = { taskRunId: record.currentTaskRunId!, generation: record.executionGeneration, interruptRequested: false };
     try {
-      const res = (await worker.request("initialize", init, { taskRunId: record.currentTaskRunId ?? undefined, generation: record.executionGeneration })) as { ok?: boolean; sessionFile?: string | null; message?: string };
+      const res = (await worker.request("initialize", init, { taskRunId: record.currentTaskRunId ?? undefined, generation: record.executionGeneration })) as { ok?: boolean; sessionId?: string; sessionFile?: string | null; message?: string };
       if (!res || res.ok !== true) throw err("INVALID", `worker initialize rejected: ${res?.message ?? "unknown"}`);
+      this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, undefined);
       record.nativeSessionPath = typeof res.sessionFile === "string" ? res.sessionFile : record.nativeSessionPath;
     } catch (e) {
       rt.activeRun = null;
@@ -3410,14 +3488,27 @@ export class Supervisor implements GateHost {
       }
       // The worker synchronized its session file; read it from the root
       // store (never a path outside it) and require the worker's digest.
-      const sessionsDir = join(this.rootDir, "sessions");
-      if (relative(sessionsDir, resolve(res.sessionFile)).startsWith("..")) throw new Error(`session file ${res.sessionFile} lies outside the root store`);
-      const bytes = readFileSync(res.sessionFile).subarray(0, res.byteCount);
+      const source = [...this.historySources.values()].find(source => source.agentId === rt.record.id && source.sessionFile === res.sessionFile);
+      if (!source) throw new Error("checkpoint source is not registered for this agent");
+      if (!Number.isSafeInteger(res.byteCount) || res.byteCount < 0) throw new Error("invalid checkpoint byte count");
+      const file = await openRegisteredHistoryFile(this.rootDir, source);
+      let bytes: Buffer;
+      try {
+        if ((await file.stat()).size < res.byteCount) throw new Error("checkpoint source shrank");
+        bytes = Buffer.alloc(res.byteCount);
+        let read = 0;
+        while (read < bytes.length) {
+          const part = await file.read(bytes, read, bytes.length - read, read);
+          if (part.bytesRead === 0) throw new Error("checkpoint source ended early");
+          read += part.bytesRead;
+        }
+      } finally { await file.close(); }
+      if (nativeHistoryId(bytes) !== source.sessionId) throw new Error("checkpoint native identity changed");
       if (bytes.length !== res.byteCount || checkpointSha256(bytes) !== res.sha256) {
         this.publish("recovery.event", { agentId: rt.record.id, phase: "checkpoint_skipped", reason: "session file does not match the worker's digest" });
         return;
       }
-      this.store.saveCheckpoint({ agentId: rt.record.id, taskRunId, generation, leafEntryId: res.leafEntryId ?? null, sha256: res.sha256 ?? checkpointSha256(bytes), bytes: bytes.length, createdAt: this.now(), superseded: false }, bytes);
+      this.store.saveCheckpoint({ agentId: rt.record.id, taskRunId, generation, historySourceId: source.sourceId, leafEntryId: res.leafEntryId ?? null, sha256: res.sha256 ?? checkpointSha256(bytes), bytes: bytes.length, createdAt: this.now(), superseded: false }, bytes);
     } catch (e) {
       this.publish("recovery.event", { agentId: rt.record.id, phase: "checkpoint_skipped", reason: (e as Error).message.slice(0, 200) });
     }
@@ -4381,8 +4472,32 @@ export class Supervisor implements GateHost {
     let worker: WorkerPort;
     try {
       worker = await this.launchWorker(rt);
-      const res = (await worker.request("initialize", this.initPayload(rt, null, this.workdirOf(rt)), {})) as { ok?: boolean; message?: string; sessionFile?: string | null };
+      const res = (await worker.request("initialize", this.initPayload(rt, null, this.workdirOf(rt)), {})) as { ok?: boolean; message?: string; sessionId?: string; sessionFile?: string | null };
       if (!res || res.ok !== true) throw err("INVALID", `worker initialize rejected: ${res?.message ?? "unknown"}`);
+      if (checkpoint) {
+        if (typeof res.sessionFile !== "string" || typeof res.sessionId !== "string" || rt.pendingRestore === null ||
+            res.sessionFile !== rt.pendingRestore.sessionFile || res.sessionId !== nativeHistoryId(checkpoint.bytes)) throw err("RECOVERY_CORRUPT", "restored native identity missing or changed during initialization");
+        const source = { agentId: rt.record.id, sessionFile: res.sessionFile, sessionId: res.sessionId };
+        const initializedPrefix = await reconstructedHistoryPrefix(this.rootDir, source);
+        await this.reconcileMailbox(rt, worker);
+        // Both native-format migration and mailbox replay reconstruct old history.
+        // Exclude their final, verified prefix before dispatching new inference.
+        const reconstructedPrefix = await reconstructedHistoryPrefix(this.rootDir, source);
+        if (reconstructedPrefix < initializedPrefix) throw err("RECOVERY_CORRUPT", "restored history shrank during mailbox replay");
+        this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, checkpoint.ref.historySourceId ?? null, reconstructedPrefix);
+      } else {
+        const reconstructed = await this.reconcileMailbox(rt, worker);
+        let prefix = 0;
+        if (reconstructed) {
+          try {
+            if (typeof res.sessionId !== "string" || typeof res.sessionFile !== "string") throw err("RECOVERY_CORRUPT", "reloaded native identity missing");
+            prefix = await reconstructedHistoryPrefix(this.rootDir, { agentId: rt.record.id, sessionId: res.sessionId, sessionFile: res.sessionFile });
+          } catch (error) {
+            throw err("RECOVERY_OWNER_UNCONFIRMED", `mailbox reconstruction has no verified materialized history boundary: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+        this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, prefix);
+      }
       rt.record.nativeSessionPath = typeof res.sessionFile === "string" ? res.sessionFile : rt.record.nativeSessionPath;
     } catch (e) {
       const loaded = rt.worker as WorkerPort | null;
@@ -4395,7 +4510,6 @@ export class Supervisor implements GateHost {
       rt.pendingRestore = null;
     }
     rt.record.detail = "reloaded";
-    await this.reconcileMailbox(rt, worker);
   }
 
   /**
@@ -4403,23 +4517,28 @@ export class Supervisor implements GateHost {
    * message id), regardless of older receipts; entries retained in the
    * branch (even if compacted out of model context) are not duplicated.
    */
-  private async reconcileMailbox(rt: AgentRuntime, worker: WorkerPort): Promise<void> {
+  private async reconcileMailbox(rt: AgentRuntime, worker: WorkerPort): Promise<boolean> {
+    let reconstructed = false;
     for (const messageId of rt.record.pendingMessageIds) {
       const message = this.messages.get(messageId);
       if (!message || message.mode === "task") continue;
+      reconstructed = true;
       try {
         const found = (await worker.request("find_entry", { messageId: message.id }, { timeoutMs: FIND_ENTRY_TIMEOUT_MS })) as { ok?: boolean; entryId?: string | null };
-        if (found?.ok === true && typeof found.entryId === "string") {
+        if (found?.ok !== true || (found.entryId !== null && typeof found.entryId !== "string")) throw err("INVALID", "mailbox branch inspection did not return a verified presence/absence result");
+        if (typeof found.entryId === "string") {
           message.receipt = { messageId: message.id, nativeEntryId: found.entryId, leafId: found.entryId, checkpointSeq: this.store.durableSeq(), byteOffset: -1 };
           this.publish("mailbox.receipt", { messageId: message.id, agentId: rt.record.id, leafEntryId: found.entryId, reconciled: true });
           continue;
         }
         message.receipt = null;
-        await worker.request("deliver", { mode: "note", text: message.text, messageId: message.id }, {});
-      } catch {
-        // Remains pending; a later load retries.
+        const delivered = await worker.request("deliver", { mode: "note", text: message.text, messageId: message.id }, {}) as { ok?: boolean; inserted?: boolean };
+        if (delivered?.ok !== true || delivered.inserted !== true) throw err("INVALID", "mailbox reconstruction did not confirm insertion");
+      } catch (error) {
+        throw err("RECOVERY_OWNER_UNCONFIRMED", `mailbox reconstruction unconfirmed for ${message.id}: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
+    return reconstructed;
   }
 
   /**
@@ -5017,8 +5136,9 @@ export class Supervisor implements GateHost {
           }
           return;
         }
-        const res = (await worker.request("initialize", { ...this.initPayload(rt, input.prompt, this.workdirOf(rt)), restore: null }, { taskRunId: run.taskRunId, generation })) as { ok?: boolean; message?: string; sessionFile?: string | null };
+        const res = (await worker.request("initialize", { ...this.initPayload(rt, input.prompt, this.workdirOf(rt)), restore: null }, { taskRunId: run.taskRunId, generation })) as { ok?: boolean; message?: string; sessionId?: string; sessionFile?: string | null };
         if (!res || res.ok !== true) throw new Error(`reviewer initialize rejected: ${res?.message ?? "unknown"}`);
+        this.registerHistory(rt, res.sessionId, res.sessionFile, "review", input.taskRunId, null, 0);
         this.detached(() => {
           if (rt.activeRun === run) rt.record.observed = "running";
           const agentId = this.gate.inspect(input.taskRunId)?.agentId;

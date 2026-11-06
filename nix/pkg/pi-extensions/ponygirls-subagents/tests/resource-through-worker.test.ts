@@ -114,7 +114,7 @@ test("selected resources read through native host adapter (ordinary none)", asyn
 
   const sup = new Supervisor({
     rootId: "root-res",
-    rootDir: join(dir, "root"),
+    rootDir: dir,
     store: new InMemoryRunStore("root-res"),
     policy: (() => {
       const p = defaultSupervisorPolicy();

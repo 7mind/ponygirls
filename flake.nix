@@ -226,6 +226,8 @@
             # file unmanaged); a changed limit manages it; misordered limits
             # trip the ordering assertion.
             limitsDefault = evalWorktree { };
+            observerExtensions = builtins.filter (name: builtins.elem name [ "ponygirls-subagents" "ponygirls-historian" ])
+              (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
             limitsCustom = evalWorktree { subagentsMaxRunnable = 8; subagentsMaxResidentWorkers = 12; };
             limitsMisordered = evalWorktree { subagentsMaxRunnable = 10; };
             failedLimitAssertion = assertions: builtins.any (a: !a.assertion && builtins.match ".*subagentsMaxRunnable.*" a.message != null) assertions;
@@ -277,6 +279,8 @@
           assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+          assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
+          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian.json");
           assert !(failedLimitAssertion limitsDefault.assertions);
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;
@@ -892,6 +896,34 @@
             ln -s "$sdk/node_modules/@types" node_modules/@types
             tsc -p tsconfig.json
             node --test tests/*.test.mjs
+            touch $out
+          '';
+          ponygirls-historian = pkgs.runCommand "ponygirls-historian-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git ];
+            PI_HISTORIAN_SUBAGENTS_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-subagents/index.ts";
+            PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            sdk=${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-historian} ponygirls-historian
+            mkdir -p ponygirls-decisions/src
+            cp ${./nix/pkg/pi-extensions/ponygirls-decisions/src/project.ts} ponygirls-decisions/src/project.ts
+            chmod -R u+w ponygirls-historian
+            cd ponygirls-historian
+            mkdir -p node_modules/@ponygirls node_modules/@earendil-works
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
+            for package in pi-ai pi-agent-core pi-tui; do
+              ln -s "$sdk/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
+            done
+            ln -s "$sdk/node_modules/typebox" node_modules/typebox
+            ln -s "$sdk/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.mjs
+            PI_HISTORIAN_EXTENSION=${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-historian/index.ts node --test tests/host.test.mjs
             touch $out
           '';
           ponygirls-decisions = pkgs.runCommand "ponygirls-decisions-test" {
