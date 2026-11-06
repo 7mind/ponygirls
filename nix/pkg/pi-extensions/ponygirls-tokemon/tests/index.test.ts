@@ -102,7 +102,7 @@ test("/tokemon opens in place as a bottom panel, not a popup overlay", async () 
       modelRegistry: { getProviderAuth: async () => ({ auth: { apiKey: "x" } }), getAvailable: () => [] },
     };
     await commands.get("tokemon")!("", tuiCtx);
-    assert.equal(customOptions, undefined, "in place like /usage and /perf: no overlay option");
+    assert.deepEqual(customOptions, { retainEditorBorders: true }, "in-place panel retains clickable border badges without an overlay");
   } finally {
     for (const [name, value] of saved) if (value !== undefined) process.env[name] = value;
     delete process.env["PI_CODING_AGENT_DIR"];

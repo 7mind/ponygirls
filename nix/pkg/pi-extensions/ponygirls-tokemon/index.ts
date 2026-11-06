@@ -21,6 +21,7 @@
 import { homedir } from "node:os";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { getTerminalColorMode, parseColor, styleText } from "@earendil-works/pi-tui";
+import { CustomViewToggle } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { readableProviderColor, type Appearance } from "./src/colors.ts";
@@ -95,6 +96,7 @@ export default function (pi: ExtensionAPI): void {
    * widget. Shared Anthropic values retain their original timestamp and show
    * a stale marker when refreshes fail or another process holds the lease.
    */
+  let view = new CustomViewToggle();
   let statusContext: ExtensionContext | null = null;
   let statusReport: QuotaReport | null = null;
   let statusGeneration = 0;
@@ -104,7 +106,17 @@ export default function (pi: ExtensionAPI): void {
     const provider = ctx.model?.provider;
     const line = provider && statusReport !== null ? quotaLine(provider, statusReport.results, new Date()) : null;
     if (line === null) ctx.ui.setWidget(STATUS_KEY, undefined);
-    else ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({ render: () => [line(tableStyle(theme))], invalidate: () => {} }), { placement: "borderTopRight" });
+    else {
+      const currentView = view;
+      ctx.ui.setWidget(STATUS_KEY, (_tui, theme) => ({
+        render: () => [line(tableStyle(theme))], invalidate: () => {},
+        handleMouse: (event) => {
+          if (event.type !== "click" || event.button !== "left") return undefined;
+          void showView(ctx, currentView, true).catch((error: unknown) => ctx.ui.notify(`/tokemon: ${String(error)}`, "error"));
+          return { handled: true };
+        },
+      }), { placement: "borderTopRight" });
+    }
   };
   const refreshStatus = (ctx: ExtensionContext): void => {
     if (ctx.mode !== "tui") return;
@@ -136,13 +148,15 @@ export default function (pi: ExtensionAPI): void {
   };
   pi.on("session_start", (_event, ctx) => {
     stopStatus();
+    view.dispose();
+    view = new CustomViewToggle();
     if (ctx.mode !== "tui") return;
     refreshStatus(ctx);
     // Age/countdowns advance without network traffic; shared values refresh at the normal cadence.
     redrawTimer = setInterval(() => { if (statusContext !== null) drawStatus(statusContext); }, STATUS_REDRAW_MS);
     refreshTimer = setInterval(() => { if (statusContext !== null) refreshStatus(statusContext); }, PANE_REFRESH_MS);
   });
-  pi.on("session_shutdown", () => stopStatus());
+  pi.on("session_shutdown", () => { view.dispose(); stopStatus(); });
   pi.on("turn_end", (_event, ctx) => refreshStatus(ctx));
   pi.on("model_select", (_event, ctx) => refreshStatus(ctx));
 
@@ -175,6 +189,24 @@ export default function (pi: ExtensionAPI): void {
     }),
   );
 
+  // In place, replacing the editor, as /usage and /perf do. An overlay is a popup.
+  const showView = async (ctx: ExtensionContext, controller: CustomViewToggle, toggle: boolean): Promise<void> => {
+    if (ctx.mode !== "tui" || !ctx.hasUI) return;
+    await controller[toggle ? "toggle" : "open"](ctx.ui, (tui, theme, _kb, done) =>
+      new TokemonView({
+        report: (maxAgeMs) => service.report(authOf(ctx), maxAgeMs),
+        models: () => modelsOf(ctx),
+        now: () => new Date(),
+        rows: () => tui.terminal.rows,
+        requestRender: () => tui.requestRender(),
+        close: () => done(),
+        style: tableStyle(theme),
+        theme,
+        refreshEveryMs: PANE_REFRESH_MS,
+      }),
+    );
+  };
+
   pi.registerCommand("tokemon", {
     description: "Provider quotas: a scrollable, auto-refreshing table",
     handler: async (_args, ctx) => {
@@ -188,20 +220,7 @@ export default function (pi: ExtensionAPI): void {
         }
         return;
       }
-      // In place, replacing the editor, as /usage and /perf do. An overlay is a popup.
-      await ctx.ui.custom<void>((tui, theme, _kb, done) =>
-        new TokemonView({
-          report: (maxAgeMs) => service.report(authOf(ctx), maxAgeMs),
-          models: () => modelsOf(ctx),
-          now: () => new Date(),
-          rows: () => tui.terminal.rows,
-          requestRender: () => tui.requestRender(),
-          close: () => done(),
-          style: tableStyle(theme),
-          theme,
-          refreshEveryMs: PANE_REFRESH_MS,
-        }),
-      );
+      await showView(ctx, view, false);
     },
   });
 }

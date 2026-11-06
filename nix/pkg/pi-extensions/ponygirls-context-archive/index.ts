@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { parseToggleCommand, sessionEnabledData, TOGGLE_ARGUMENTS } from "@ponygirls/pi-settings";
+import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
@@ -22,6 +23,7 @@ function formatPercent(value: number): string {
 }
 
 export function registerContextArchive(pi: ExtensionAPI, preferences: PreferenceStore): void {
+  let statusView = new CustomViewToggle();
   let mode: Mode = { kind: "fault", message: "settings not loaded" };
   let lastReason = "no boundary evaluated";
   let lastWarning: string | null = null;
@@ -55,10 +57,19 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
       return;
     }
     const fault = mode.kind === "fault";
+    const controller = statusView;
     ctx.ui.setWidget(BADGE_KEY, (_tui, theme) => ({
       render: (width) => [truncateToWidth(theme.fg(fault ? "warning" : "accent", fault ? " CTX ! " : " CTX archive "), width)],
       renderCompact: (width) => truncateToWidth(theme.fg(fault ? "warning" : "accent", fault ? " ! " : " CTX "), width),
       invalidate() {},
+      handleMouse: (event) => {
+        if (event.type !== "click" || event.button !== "left" || ctx.mode !== "tui" || !ctx.hasUI) return undefined;
+        void controller.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({
+          title: "Context archive status", text: statusText(ctx), theme, keys,
+          rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
+        })).catch((error: unknown) => warn(ctx, String(error)));
+        return { handled: true };
+      },
     }), { placement: "borderBottomLeft" });
   }
   function refresh(ctx: ExtensionContext, reconcileTools: boolean): boolean {
@@ -129,6 +140,23 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
     }
   }
 
+  function statusText(ctx: ExtensionContext): string {
+    const enabled = mode.kind === "ready" && mode.effective.enabled;
+    const catalog = recallArchive(ctx.sessionManager.getBranch(), { action: "list", offset: 0, limit: 1 });
+    if (!("total" in catalog)) throw new Error("Archive catalog invariant violated");
+    const usage = ctx.getContextUsage();
+    const contextWindow = usage === undefined ? ctx.model === undefined ? 0 : ctx.model.contextWindow : usage.contextWindow;
+    const pressure = mode.kind === "fault" ? "Threshold status unavailable due to settings error.\n" : Number.isFinite(contextWindow) && contextWindow > 0
+      ? `Pi context usage: ${usage === undefined || usage.tokens === null ? "unknown" : usage.tokens} / ${contextWindow} tokens; archive trigger ${Math.ceil(contextWindow * mode.effective.highWatermark)} (${formatPercent(mode.effective.highWatermark)}), release toward ${Math.ceil(contextWindow * mode.effective.lowWatermark)} (${formatPercent(mode.effective.lowWatermark)}).\n`
+      : `Effective thresholds: trigger ${formatPercent(mode.effective.highWatermark)}, release toward ${formatPercent(mode.effective.lowWatermark)}; model context capacity unknown.\n`;
+    const source = mode.kind === "fault" ? "settings error" : mode.overrides.enabled === null ? "inherited global default" : `session override; global default ${mode.defaults.enabled ? "ON" : "OFF"}`;
+    const thresholdSource = mode.kind === "fault" ? "" : `Threshold source: ${mode.overrides.thresholds === null ? "inherited global defaults" : "session override"}; global defaults ${formatPercent(mode.defaults.highWatermark)} / ${formatPercent(mode.defaults.lowWatermark)}.\n`;
+    return `Context archive: ${mode.kind === "fault" ? "ERROR" : enabled ? "ON" : "OFF"} (${source})\n` +
+      `${catalog.total} archived entries on this branch. Last boundary: ${lastReason}.\n` + pressure + thresholdSource +
+      (enabled ? "Automatic selection begins at a completed-turn boundary; no summarizer calls.\n" : "No new archival. Retained originals reach future requests; native restoration waits for the next completed boundary. Independent Pi compaction is not undone.\n") +
+      `Global defaults: ${preferences.path}`;
+  }
+
   pi.registerCommand("context-archive", {
     description: "Context archival: on|off|inherit and thresholds HIGH LOW|inherit for this session; default on|off or default thresholds HIGH LOW; status",
     getArgumentCompletions: (prefix) => [...TOGGLE_ARGUMENTS.slice(0, -1), "thresholds 70 50", "thresholds inherit", "default thresholds 70 50", "status"].filter((a) => a.startsWith(prefix)).map((a) => ({ value: a, label: a })),
@@ -154,24 +182,12 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
           else pi.appendEntry(SESSION_THRESHOLDS_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholds });
         }
         if (inheritThresholdAction) pi.appendEntry(SESSION_THRESHOLDS_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholds: null });
-        const enabled = refresh(ctx, !statusAction);
-        const catalog = recallArchive(ctx.sessionManager.getBranch(), { action: "list", offset: 0, limit: 1 });
-        if (!("total" in catalog)) throw new Error("Archive catalog invariant violated");
-        const usage = ctx.getContextUsage();
-        const contextWindow = usage === undefined ? ctx.model === undefined ? 0 : ctx.model.contextWindow : usage.contextWindow;
-        const pressure = mode.kind === "fault" ? "Threshold status unavailable due to settings error.\n" : Number.isFinite(contextWindow) && contextWindow > 0
-          ? `Pi context usage: ${usage === undefined || usage.tokens === null ? "unknown" : usage.tokens} / ${contextWindow} tokens; archive trigger ${Math.ceil(contextWindow * mode.effective.highWatermark)} (${formatPercent(mode.effective.highWatermark)}), release toward ${Math.ceil(contextWindow * mode.effective.lowWatermark)} (${formatPercent(mode.effective.lowWatermark)}).\n`
-          : `Effective thresholds: trigger ${formatPercent(mode.effective.highWatermark)}, release toward ${formatPercent(mode.effective.lowWatermark)}; model context capacity unknown.\n`;
-        const source = mode.kind === "fault" ? "settings error" : mode.overrides.enabled === null ? "inherited global default" : `session override; global default ${mode.defaults.enabled ? "ON" : "OFF"}`;
-        const thresholdSource = mode.kind === "fault" ? "" : `Threshold source: ${mode.overrides.thresholds === null ? "inherited global defaults" : "session override"}; global defaults ${formatPercent(mode.defaults.highWatermark)} / ${formatPercent(mode.defaults.lowWatermark)}.\n`;
-        ctx.ui.notify(`Context archive: ${mode.kind === "fault" ? "ERROR" : enabled ? "ON" : "OFF"} (${source})\n` +
-          `${catalog.total} archived entries on this branch. Last boundary: ${lastReason}.\n` + pressure + thresholdSource +
-          (enabled ? "Automatic selection begins at a completed-turn boundary; no summarizer calls.\n" : "No new archival. Retained originals reach future requests; native restoration waits for the next completed boundary. Independent Pi compaction is not undone.\n") +
-          `Global defaults: ${preferences.path}`, "info");
+        refresh(ctx, !statusAction);
+        ctx.ui.notify(statusText(ctx), "info");
       } catch (error) { warn(ctx, String(error)); }
     },
   });
-  pi.on("session_start", (_event, ctx) => { lastReason = "no boundary evaluated"; refresh(ctx, true); });
+  pi.on("session_start", (_event, ctx) => { statusView.dispose(); statusView = new CustomViewToggle(); lastReason = "no boundary evaluated"; refresh(ctx, true); });
   pi.on("session_tree", (_event, ctx) => { lastReason = "no boundary evaluated"; refresh(ctx, true); });
   pi.on("context", (event, ctx) => {
     try {
@@ -183,7 +199,7 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
   });
   pi.on("turn_end", boundary);
   pi.on("agent_before_settle", boundary);
-  pi.on("session_shutdown", (_event, ctx) => { ctx.ui.setWidget(BADGE_KEY, undefined); });
+  pi.on("session_shutdown", (_event, ctx) => { statusView.dispose(); ctx.ui.setWidget(BADGE_KEY, undefined); });
 }
 
 export default function (pi: ExtensionAPI): void {

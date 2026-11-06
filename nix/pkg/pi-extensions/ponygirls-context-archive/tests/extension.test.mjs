@@ -363,3 +363,45 @@ test("unverifiable archive aborts the operation, never silently invents a replac
   assert.throws(() => f.handlers.get("context")({ messages: f.manager.buildSessionProjection().messages }, f.ctx), /manifest/);
   assert.equal(f.aborts(), 1); assert.match(f.notifications.at(-1).message, /operation aborted/);
 });
+
+// Specified Behavioral-Active / Blackbox-Group: badge actions use the public UI boundary.
+test("badge toggles a read-only status view, supports keyboard close, and closes on shutdown", async (t) => {
+  const f = fixture(t, "memory"); f.ctx.mode = "tui"; f.ctx.hasUI = true;
+  f.start(); await f.command("on");
+  const theme = { fg: (_color, text) => text, bg: (_color, text) => text, bold: (text) => text };
+  const views = [];
+  f.ctx.ui.custom = (factory, options) => new Promise((resolve) => {
+    const view = { closed: false, options };
+    views.push(view);
+    view.component = factory({ terminal: { rows: 24 }, requestRender() {} }, theme,
+      { matches: (data, action) => data === "\u001b" && action === "tui.select.cancel" }, () => { view.closed = true; resolve(); });
+  });
+  const badge = () => f.widgets.at(-1)[1](null, theme);
+  assert.equal(typeof badge().handleMouse, "function", "archive badge must expose mouse actions");
+  const click = { type: "click", button: "left", x: 0, y: 0 };
+  const before = f.manager.getEntries().length;
+  const defaults = structuredClone(f.preferences.read());
+  assert.equal(badge().handleMouse({ ...click, button: "right" }), undefined);
+  assert.equal(badge().handleMouse({ ...click, type: "release" }), undefined);
+  assert.equal(views.length, 0);
+  assert.equal(badge().handleMouse(click).handled, true);
+  await new Promise(setImmediate);
+  assert.equal(views.length, 1);
+  assert.equal(views[0].options.retainEditorBorders, true);
+  assert.match(views[0].component.render(100).join("\n"), /Context archive: ON/);
+  assert.match(views[0].component.render(100).join("\n"), /archived entries on this branch/);
+  assert.equal(badge().handleMouse(click).handled, true);
+  await new Promise(setImmediate);
+  assert.equal(views[0].closed, true);
+  badge().handleMouse(click); await new Promise(setImmediate);
+  views[1].component.handleInput("\u001b"); await new Promise(setImmediate);
+  assert.equal(views[1].closed, true);
+  badge().handleMouse(click); await new Promise(setImmediate);
+  const oldBadge = badge();
+  f.handlers.get("session_shutdown")({}, f.ctx); await new Promise(setImmediate);
+  assert.equal(views[2].closed, true);
+  f.start(); oldBadge.handleMouse(click); await new Promise(setImmediate);
+  assert.equal(views.length, 3, "old-session badge callbacks remain revoked after restart");
+  assert.equal(f.manager.getEntries().length, before, "view cannot write session preferences or archives");
+  assert.deepEqual(f.preferences.read(), defaults);
+});

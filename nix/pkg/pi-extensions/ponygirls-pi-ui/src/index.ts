@@ -4,3 +4,5 @@ export { MARKER_WIDTH, columnCells, columnHeader, fit, fitRight, listRow, reopen
 export { GRID_SEPARATOR, countCell, gridRule, gridSeparator, zebra, type RuleJunction } from "./table.ts";
 export { ATTENTION_FRACTION, compactChip, fractionState, usageBar } from "./meter.ts";
 export { completeArgument, type ArgumentChoice, type CompletionItem } from "./complete.ts";
+
+export { StatusView, type StatusViewOptions } from "./status-view.ts";
