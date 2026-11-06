@@ -37,6 +37,9 @@ async function load(t: test.TestContext) {
   const userMessages: string[] = [];
   const notices: string[] = [];
   const confirms: boolean[] = [];
+  let badge: { handleMouse(event: { type: string; button: string }): unknown } | undefined;
+  let opens = 0;
+  let closes = 0;
   let pane: PaneLike | undefined;
   let closePane: (() => void) | undefined;
   const pi = {
@@ -59,14 +62,15 @@ async function load(t: test.TestContext) {
   };
   const ui = {
     notify: (message: string) => { notices.push(message); },
-    setWidget: () => {},
+    setWidget: (_key: string, factory: (() => typeof badge) | undefined) => { badge = factory?.(); },
     theme: plainTheme,
     confirm: async () => confirms.shift() ?? false,
     editor: async () => "edited objective",
     custom: (factory: (tui: unknown, theme: unknown, kb: unknown, done: () => void) => PaneLike) =>
       new Promise<void>((resolve) => {
+        opens += 1;
         closePane = resolve;
-        pane = factory({ requestRender: () => {} }, plainTheme, {}, () => resolve());
+        pane = factory({ requestRender: () => {} }, plainTheme, {}, () => { closes += 1; resolve(); });
       }),
   };
   const ctx = { sessionManager, ui, isIdle: () => true, hasPendingMessages: () => false, mode: "tui", hasUI: true, abort: () => {} };
@@ -75,6 +79,7 @@ async function load(t: test.TestContext) {
   return {
     ctx, commands, messageRenderers, entryRenderers, entries, userMessages, notices, confirms, goal,
     pane: () => pane!,
+    badge: () => badge!, opens: () => opens, closes: () => closes, handlers,
     closed: () => closePane === undefined,
   };
 }
@@ -166,4 +171,28 @@ test("commit entries and pause notices collapse; expanded they show today's text
   assert.equal(notice({ type: "custom", customType: "codex-goal-notice", data: pause }, { expanded: true }, plainTheme)!.render(120)[0]!.trimEnd(), "Goal paused (g).");
   const legacy = { text: "Goal paused (g).", at: "2026-10-30T20:46:55.412Z" };
   assert.equal(notice({ type: "custom", customType: "codex-goal-notice", data: legacy }, { expanded: false }, plainTheme)!.render(120)[0]!.trimEnd(), "Goal paused (g).");
+});
+
+// Behavioral-Active × Blackbox × Group: command and badge share one custom interaction.
+test("goal badge toggles and closes command-opened panes, then ignores shutdown callbacks", async (t) => {
+  const f = await load(t);
+  const goal = f.commands.get("goal")!;
+  await goal.handler("toggle objective" as never, f.ctx as never);
+  const badge = f.badge();
+  const click = () => badge.handleMouse({ type: "click", button: "left" });
+  click(); click();
+  assert.equal(f.opens(), 1);
+  assert.equal(f.closes(), 1);
+  await settle();
+  const command = goal.handler("" as never, f.ctx as never);
+  await settle();
+  click();
+  await command;
+  assert.equal(f.opens(), 2);
+  assert.equal(f.closes(), 2);
+  click();
+  await f.handlers.get("session_shutdown")!({} as never, f.ctx as never);
+  click();
+  assert.equal(f.opens(), 3);
+  assert.equal(f.closes(), 3);
 });

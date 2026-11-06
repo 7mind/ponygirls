@@ -16,6 +16,8 @@ function badgeLine(factory: unknown): string {
 test("border badge shows running tasks and clears when none remain", async (t) => {
   const dir = tempDir(t, "bg-status-");
   const sessionFile = join(dir, "session.jsonl");
+  let opens = 0;
+  let closes = 0;
   const statuses: StatusEntry[] = [];
   const tools = new Map<string, { execute: (...args: never[]) => Promise<{ details: unknown }> }>();
   const handlers = new Map<string, (...args: never[]) => Promise<unknown>>();
@@ -34,7 +36,12 @@ test("border badge shows running tasks and clears when none remain", async (t) =
       getSessionFile: () => sessionFile,
       getEntries: () => [],
     },
+    mode: "tui",
     ui: {
+      custom: (factory: (tui: unknown, theme: unknown, keys: unknown, done: () => void) => { dispose(): void }) => new Promise<void>((resolve) => {
+        opens += 1;
+        const component = factory({ terminal: { rows: 24 }, requestRender() {} }, { bg: (_color: string, text: string) => text, fg: (_color: string, text: string) => text }, {}, () => { closes += 1; resolve(); component.dispose(); });
+      }),
       setWidget: (...args: StatusEntry) => { statuses.push(args); },
       theme: { bg: (color: string, text: string) => `[${color}]${text}`, fg: (color: string, text: string) => `<${color}>${text}` },
       notify: () => {},
@@ -57,6 +64,11 @@ test("border badge shows running tasks and clears when none remain", async (t) =
   const mark = statuses.length;
   const badge = statuses.findLast(([k, v]) => k === "bg" && v !== undefined)![1]!();
   assert.equal(badge.renderCompact?.(10), "[toolPendingBg] <accent>⚙<text>1 ", "short form: neutral chip, running glyph, count");
+
+  badge.handleMouse?.({ type: "click", button: "left" });
+  badge.handleMouse?.({ type: "click", button: "left" });
+  assert.equal(opens, 1, "rapid clicks never duplicate the task inspector");
+  assert.equal(closes, 1, "second click invokes the custom completion callback");
 
   await tool.execute("terminate-1" as never, { action: "terminate", id } as never, undefined as never);
   await eventually(async () => (statuses.slice(mark).some(([k, v]) => k === "bg" && v === undefined) ? true : null), "status clear after finish");
