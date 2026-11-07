@@ -24,7 +24,10 @@ Prerequisites: pinned Python3.14.8, Node24.21.0, Nix, and pinned Pi1.4.0 SDK. No
 From the repository root:
 
 ```bash
-python3 -B -m unittest discover -s scripts/objective-steward-pilot -p 'test_*.py' -v
+stamp=$(date +%Y%m%d-%H%M%S)
+STEWARD_TEST_REPOSITORY="$PWD" STEWARD_TEST_REVISION="$(git rev-parse HEAD)" \
+  STEWARD_TEST_ARTIFACTS="$PWD/.local/steward-tests-$stamp/interrupt" \
+  python3 -B -m unittest discover -s scripts/objective-steward-pilot -p 'test_*.py' -v
 node --test scripts/objective-steward-pilot/live.test.mjs
 python3 -B scripts/objective-steward-pilot/run.py validate-corpus \
   --cases scripts/objective-steward-pilot/fixtures/cases.json \
@@ -53,9 +56,16 @@ python3 -B "$frozen/run.py" view \
 
 `view --details` exposes typed notes/proposals, source text and exact issue IDs; `view --history` exposes historical scoped publications. View opens SQLite in read-only mode and performs no inference. It is a CLI projection, **not an acceptance-tested Pi TUI/hotkey**. The raw records remain available rather than being hidden behind summary wording.
 
+After scoring, `report.py --cases PATH --oracle PATH --out RUN_DIR --html NEW_FILE`
+creates a static, escaped source/claim/assessment comparison. It rechecks artifact
+bindings and primary-record invariants before rendering; expanding details is not
+an acknowledgement or acceptance. Report generation never calls a model.
+
 ## Evaluation protocol and limits
 
 16 cases, 8 development and 8 heldout, 18 claims. Generic prompt frozen before parent inspection of heldout narratives. Agent-authored oracle stored separately; no Human gold or independent-model-family evidence. Read `corpus.md` for counts/rubric. Keep the oracle fixed; no participant reruns, replacement or selective failure removal to manufacture a pass. If a later change is tested, use a separately identified successor run and retain the original.
+
+Admission and terminal receipts preserve normal and gracefully interrupted cases. The aggregate inventory is checkpointed; scoring reconstructs admitted incomplete cases rather than calling them unattempted. `attempted` counts case admissions, **not wire submissions**. An admission without a terminal receipt remains process/submission-unknown; this accounting does not authorize replay. No guaranteed capture across every abrupt OS/storage failure is claimed.
 
 Exact verdict/citation/primary-source checks are controls, not proof of entailment, complete objective extraction or useful Human oversight. Non-blind parent inspection of the actual synthetic sources and output is a separate qualitative assessment. Usage is SDK-reported telemetry, potentially normalized; null is not zero, and neither SDK counters nor elapsed time establish quality. Report correct-worker false challenges as well as missed challenges.
 

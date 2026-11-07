@@ -1,5 +1,6 @@
 """Behavioral-Active Blackbox Good-Communication source-binding contract."""
 from pathlib import Path
+from contextlib import closing
 import json
 import shutil
 import sqlite3
@@ -13,11 +14,11 @@ class BindingTests(unittest.TestCase):
     def test_view_does_not_initialize_or_modify_an_existing_database(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "other.sqlite"
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection:
                 connection.execute("CREATE TABLE sentinel (id INTEGER)")
             result = subprocess.run([sys.executable, "-B", str(Path(__file__).parent / "run.py"), "view", "--database", str(path)], capture_output=True)
             self.assertNotEqual(result.returncode, 0)
-            with sqlite3.connect(path) as connection:
+            with closing(sqlite3.connect(path)) as connection:
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertEqual(tables, {"sentinel"})
 
