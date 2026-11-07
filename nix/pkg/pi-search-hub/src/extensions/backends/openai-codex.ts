@@ -1,126 +1,23 @@
-import { AuthStorage } from "@earendil-works/pi-coding-agent";
-import {
-	getModel,
-	streamOpenAICodexResponses,
-	type Context,
-	type Model,
-} from "@earendil-works/pi-ai";
-import { Type } from "typebox";
-
-import { timeoutSignal } from "../utils.js";
+import { discoverNativeEngines, type NativeDiscoveryContext, type NativeSearchResponse } from "../native.js";
 import type { BackendConfig, SearchResult } from "../types.js";
 
-const DEFAULT_MODEL_ID = "gpt-5.4-mini";
 const DEFAULT_SEARCH_CONTEXT_SIZE = "low";
 const MAX_TOOL_RESULTS = 20;
 const MAX_TITLE_LENGTH = 200;
 const MAX_SNIPPET_LENGTH = 1000;
 
-const SUBMIT_SEARCH_RESULTS_TOOL = {
-	name: "submit_search_results",
-	description: "Submit structured search results based on the available source evidence.",
-	parameters: Type.Object({
-		results: Type.Array(
-			Type.Object({
-				title: Type.String({
-					description: "Page title or clearest source title for the URL.",
-				}),
-				url: Type.String({
-					description: "Canonical http/https URL for the result.",
-				}),
-				snippet: Type.String({
-					description:
-						"A dense 450-500 character, multi-sentence paragraph with the most query-relevant facts, claims, numbers, dates, caveats, scope limits, and source-specific details from the available source evidence. Prefer completeness and concrete details over brevity while staying within normal search-result display. Shorter is acceptable only when evidence is thin. Do not write an opinion about usefulness.",
-				}),
-			}),
-			{ maxItems: MAX_TOOL_RESULTS },
-		),
-	}),
-} as const;
-
+/** Compatibility alias. Credentials and endpoints must come from this session's registry. */
 export async function searchOpenAICodex(
 	query: string,
 	numResults: number,
 	signal?: AbortSignal,
-	backendConfig?: BackendConfig,
-): Promise<{ results: SearchResult[] }> {
-	if (signal?.aborted) {
-		throw new Error("OpenAI Codex search cancelled");
-	}
-
-	const apiKey = await resolveOpenAICodexAccessToken();
-	const modelId = backendConfig?.model?.trim() || DEFAULT_MODEL_ID;
-	const model = getModel("openai-codex", modelId) as Model<"openai-codex-responses"> | undefined;
-	if (!model) {
-		throw new Error(`OpenAI Codex model not found: ${modelId}`);
-	}
-
-	const context: Context = {
-		systemPrompt: buildSystemPrompt(numResults),
-		messages: [
-			{
-				role: "user",
-				content: query,
-				timestamp: Date.now(),
-			},
-		],
-		tools: [SUBMIT_SEARCH_RESULTS_TOOL],
-	};
-
-	const message = await streamOpenAICodexResponses(model, context, {
-		apiKey,
-		signal: timeoutSignal(signal),
-		transport: "sse",
-		reasoningEffort: "minimal",
-		textVerbosity: "low",
-		onPayload: (payload) => injectCodexSearchPayload(payload),
-	}).result();
-
-	if (message.stopReason === "error") {
-		throw new Error(message.errorMessage || "OpenAI Codex search failed");
-	}
-	if (message.stopReason === "aborted") {
-		throw new Error("OpenAI Codex search cancelled");
-	}
-
-	const submitCall = message.content.find(
-		(block) => block.type === "toolCall" && block.name === "submit_search_results",
-	);
-	if (!submitCall || submitCall.type !== "toolCall") {
-		throw new Error("OpenAI Codex search did not submit structured results");
-	}
-
-	const results = normalizeSubmitSearchResults(submitCall.arguments, numResults);
-	if (results.length === 0) {
-		throw new Error("OpenAI Codex search returned no valid URL results");
-	}
-
-	return { results };
-}
-
-async function resolveOpenAICodexAccessToken(): Promise<string> {
-	const authStorage = AuthStorage.create();
-	const apiKey = await authStorage.getApiKey("openai-codex", {
-		includeFallback: false,
-	});
-
-	if (!apiKey) {
-		throw new Error("OpenAI Codex authentication not found. Run /login and select OpenAI Codex.");
-	}
-
-	return apiKey;
-}
-
-function buildSystemPrompt(numResults: number): string {
-	return [
-		`Research the user's query with hosted web_search and call submit_search_results exactly once with at most ${numResults} results.`,
-		"Return only real http/https URLs.",
-		"Prefer primary sources.",
-		"For snippet, write a dense 450-500 character, multi-sentence paragraph with the most query-relevant facts, claims, numbers, dates, caveats, scope limits, and source-specific details from the available source evidence. Prefer completeness and concrete details over brevity while staying within normal search-result display. Shorter is acceptable only when evidence is thin.",
-		"Do not invent details or present unsupported text as source content.",
-		"No prose.",
-		"No internal references.",
-	].join(" ");
+	_backendConfig?: BackendConfig,
+	ctx?: NativeDiscoveryContext,
+): Promise<NativeSearchResponse> {
+	if (!ctx) throw new Error("OpenAI search requires the active Pi model registry context");
+	const engine = (await discoverNativeEngines(ctx, signal)).find((candidate) => candidate.id === "openai");
+	if (!engine) throw new Error("No configured OpenAI native web-search model is available");
+	return engine.search(query, numResults, signal);
 }
 
 export function injectCodexSearchPayload(payload: unknown): unknown {

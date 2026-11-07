@@ -1,54 +1,28 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { streamOpenAICodexResponsesMock } = vi.hoisted(() => ({
-	streamOpenAICodexResponsesMock: vi.fn(),
-}));
+import type { NativeDiscoveryContext } from "./native.js";
 
-vi.mock("@earendil-works/pi-coding-agent", () => ({
-	AuthStorage: {
-		create: () => ({
-			getApiKey: async () => "test-api-key",
-		}),
-	},
+const { discoverNativeEnginesMock, nativeSearchMock } = vi.hoisted(() => ({
+	discoverNativeEnginesMock: vi.fn(), nativeSearchMock: vi.fn(),
 }));
-
-vi.mock("@earendil-works/pi-ai", () => ({
-	getModel: () => ({ id: "gpt-5.4-mini" }),
-	streamOpenAICodexResponses: streamOpenAICodexResponsesMock,
-}));
-
-vi.mock("typebox", () => ({
-	Type: {
-		Object: (value: unknown) => value,
-		String: (value?: unknown) => value ?? {},
-		Optional: (value: unknown) => value,
-		Array: (value: unknown, options?: unknown) => ({ value, options }),
-	},
-}));
-
+vi.mock("./native.js", () => ({ discoverNativeEngines: discoverNativeEnginesMock }));
 beforeEach(() => {
-	streamOpenAICodexResponsesMock.mockReset();
-	streamOpenAICodexResponsesMock.mockReturnValue({
-		result: async () => ({ stopReason: "error", errorMessage: "not used in helper tests", content: [] }),
-	});
+	discoverNativeEnginesMock.mockReset();
+	nativeSearchMock.mockReset();
+	discoverNativeEnginesMock.mockResolvedValue([{ id: "openai", label: "configured OpenAI", search: nativeSearchMock }]);
+	nativeSearchMock.mockResolvedValue({ results: [] });
 });
 
 describe("openai-codex helpers", () => {
-	it("searchOpenAICodex asks Codex for rich source-grounded snippets", async () => {
+	it("searchOpenAICodex delegates to the active registry and has no direct auth fallback", async () => {
 		const { searchOpenAICodex } = await import("./backends/openai-codex.ts");
-
-		await expect(searchOpenAICodex("test query", 3)).rejects.toThrow("not used in helper tests");
-
-		const [, context] = streamOpenAICodexResponsesMock.mock.calls[0];
-		const submitTool = context.tools[0];
-		const resultSchema = submitTool.parameters.results.value;
-
-		expect(context.systemPrompt).toContain("450-500 character");
-		expect(context.systemPrompt).toContain("normal search-result display");
-		expect(context.systemPrompt).not.toContain("For content");
-		expect(resultSchema.snippet.description).toContain("450-500 character");
-		expect(resultSchema.snippet.description).toContain("Prefer completeness and concrete details over brevity");
-		expect("content" in resultSchema).toBe(false);
+		await expect(searchOpenAICodex("test query", 3)).rejects.toThrow("active Pi model registry");
+		expect(discoverNativeEnginesMock).not.toHaveBeenCalled();
+		const ctx = { modelRegistry: {} } as NativeDiscoveryContext;
+		const signal = new AbortController().signal;
+		await expect(searchOpenAICodex("test query", 3, signal, undefined, ctx)).resolves.toEqual({ results: [] });
+		expect(discoverNativeEnginesMock).toHaveBeenCalledWith(ctx, signal);
+		expect(nativeSearchMock).toHaveBeenCalledWith("test query", 3, signal);
 	});
 
 	it("injectCodexSearchPayload prepends hosted search and preserves function tools", async () => {
