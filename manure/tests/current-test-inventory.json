@@ -81,7 +81,8 @@
         "browser"
       ],
       "tests": [
-        "test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows"
+        "test_browser_dashboard_ux.DashboardUXTests.test_catalogue_detail_and_session_flows",
+        "test_browser_dashboard_ux.DashboardLayoutTests.test_responsive_catalogue_and_manifest"
       ]
     },
     {

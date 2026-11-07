@@ -53,3 +53,13 @@ class DashboardUXTests(unittest.TestCase):
         self.assertTrue(all(check["ok"] for check in report), report)
         for check in report:
             print("ok - " + check["name"])
+
+
+class DashboardLayoutTests(unittest.TestCase):
+    def test_responsive_catalogue_and_manifest(self):
+        env = dict(os.environ, MANURE_PLAYWRIGHT_CORE_PATH=bf.playwright_core_path(),
+                   MANURE_CHROMIUM_BIN=bf.chromium_bin())
+        result = subprocess.run([bf.node_bin(), str(Path(__file__).resolve().parent / "browser/dashboard-layout.mjs")],
+                                env=env, capture_output=True, text=True, timeout=180)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        print(result.stdout, end="")

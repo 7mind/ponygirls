@@ -12,7 +12,7 @@
 <div class="auth-card session-card">
 <span class="brand-mark" aria-hidden="true"></span>
 <p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
-<h1>Opening your workspace</h1>
+<h1>Checking session</h1>
 <p id="session-status" role="status">Checking your session…</p>
 <button type="button" id="session-retry-button" class="primary" hidden>Retry connection</button>
 </div>
@@ -23,7 +23,7 @@
 <span class="brand-mark" aria-hidden="true"></span>
 <p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
 <h1 id="login-heading">Log in</h1>
-<p>A quiet place for your files, directories, and published artifacts.</p>
+<p>Log in to manage files, directories, and published artifacts.</p>
 <form id="login-form" method="post" action="/api/current/login">
 <label for="token-input">API token</label>
 <input type="password" id="token-input" name="token"
@@ -33,7 +33,7 @@ aria-describedby="token-note">
 </form>
 <p id="login-error" class="error" role="alert" hidden></p>
 <p id="token-note" class="auth-note">Your token is sent in the login request body, then cleared from the input and JavaScript reference. Your session uses a host-only HttpOnly cookie, not web storage or a URL.</p>
-<div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> Paste files. Upload. Share links.</div>
+<div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> File and directory uploads.</div>
 </div>
 </section>
 
@@ -50,7 +50,7 @@ aria-describedby="token-note">
 </nav>
 <div class="sidebar-note">
 <p class="workspace-label">FROM YOUR TERMINAL</p>
-<p>Files in. Links out.</p>
+<p>Upload with the CLI.</p>
 <code>manure upload ./path --access internal</code>
 <small>Or paste, drop, or choose files here. Directories use the CLI.</small>
 </div>
@@ -83,7 +83,7 @@ aria-describedby="token-note">
 </section>
 <section id="dashboard-section" aria-labelledby="artifacts-heading" hidden>
 <div class="page-heading">
-<div><p class="eyebrow">YOUR WORKSPACE</p><h1 id="artifacts-heading">Artifacts</h1><p>Find, inspect, and manage files and directories.</p></div>
+<div><p class="eyebrow">ARTIFACT CATALOGUE</p><h1 id="artifacts-heading">Artifacts</h1><p>Find, inspect, and manage files and directories.</p></div>
 <details class="upload-guide">
 <summary>Upload with the CLI</summary>
 <div class="upload-guide-body"><p>For directories, resumable uploads across sessions, and advanced options, use the CLI.</p><pre><code>manure upload ./path --access internal</code></pre><p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p></div>
@@ -106,7 +106,7 @@ aria-describedby="token-note">
 </form>
 
 <div class="results-heading"><h2>Results <span id="loaded-count" class="count-badge">0 loaded</span></h2><span id="sort-summary">Created · newest first</span></div>
-<p id="results-help" class="scroll-help">Sort all matching artifacts by any column. Scroll within the table to load more; all columns remain available horizontally.</p>
+<p id="results-help" class="scroll-help">Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width.</p>
 <p id="list-error" class="error" role="alert" hidden></p>
 <div id="results-panel" class="records-panel" role="region" aria-label="Artifact results" aria-describedby="results-help" tabindex="0">
 <table id="catalogue-table" class="artifacts">

@@ -134,6 +134,9 @@ await check("sortable table, global search, URL reload and responsive themes", a
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-dark.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "390px viewport must not have document overflow");
+  assert.equal(await page.locator("#results-panel").evaluate(node => node.scrollWidth <= node.clientWidth), true, "all catalogue metadata fits without horizontal scrolling");
+  assert.equal(await page.locator("#artifact-list > tr").first().locator("td").count(), 10);
+  assert.equal(await page.locator("thead [data-sort]").count(), 9);
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-mobile.png"), fullPage: true });
 });
 

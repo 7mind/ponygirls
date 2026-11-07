@@ -474,7 +474,11 @@ function expressionInput(input, list, change, compositionChange) {
       var remove = rowAction("Delete", "delete", item, function () { deleteArtifact(item.artifact_id); });
       remove.disabled = deleting.has(item.artifact_id) || accessMutations.has(item.artifact_id);
       group.appendChild(remove);
-      actions.appendChild(group); row.appendChild(actions); fragment.appendChild(row);
+      actions.appendChild(group); row.appendChild(actions);
+      ["Name", "Kind", "Access", "State", "Size", "Files", "Created", "Expires", "Owner", "Actions"].forEach(function (label, index) {
+        row.children[index].dataset.label = label;
+      });
+      fragment.appendChild(row);
     });
     list.replaceChildren(fragment);
     if (focused !== null && focused.id) {
