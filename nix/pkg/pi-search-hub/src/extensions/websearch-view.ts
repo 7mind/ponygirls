@@ -1,6 +1,6 @@
 import { stripVTControlCharacters } from "node:util";
 import { Input, Key, matchesKey, ScrollView, truncateToWidth, wrapTextWithAnsi, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import { frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from "@ponygirls/pi-ui";
+import { frameTitle, hintAt, keyHints, PanelLayout, type PanelParts, type Span, type UiTheme } from "@ponygirls/pi-ui";
 import { type EngineDescriptor, type EngineSnapshot, SearchMonitor } from "./search-monitor.js";
 
 export interface WebSearchViewDeps {
@@ -21,6 +21,8 @@ const MAX_RESULT_CHARS = 16_000;
 const MAX_RESULT_LINES = 200;
 const MAX_WRAPPED_RESULT_LINES = 400;
 const MAX_ENGINES = 64;
+const TAB_LABELS = ["Search engines", "Fetchers", "Test search"] as const;
+const TEST_TAB = 2;
 
 /** Untrusted search content is plain text, never executable terminal escapes or hyperlinks. */
 function plain(text: string): string {
@@ -49,6 +51,11 @@ export class WebSearchView extends PanelLayout implements Focusable {
 	private generation = 0;
 	private result = "";
 	private state: "idle" | "searching" | "done" | "failed" | "cancelled" = "idle";
+	private tab = 0;
+	private paneFocused = false;
+	private readonly scrollTops = [0, 0, 0];
+	private renderedWidth = 80;
+	private tabSpans: Span[] = [];
 
 	constructor(deps: WebSearchViewDeps) {
 		super((width) => this.renderParts(width));
@@ -59,8 +66,11 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.unsubscribe = deps.monitor.subscribe(() => this.repaint());
 	}
 
-	get focused(): boolean { return this.input.focused; }
-	set focused(value: boolean) { this.input.focused = value; }
+	get focused(): boolean { return this.paneFocused; }
+	set focused(value: boolean) {
+		this.paneFocused = value;
+		this.input.focused = value && this.tab === TEST_TAB;
+	}
 
 	private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
 
@@ -83,6 +93,29 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		if (!this.disposed) this.deps.requestRender();
 	}
 
+	private selectTab(index: number): void {
+		if (index === this.tab) return;
+		this.scrollTops[this.tab] = this.scroll.scrollTop;
+		const previous = this.renderParts(this.renderedWidth);
+		const height = this.hasAllocatedHeight
+			? this.scroll.viewportHeight + previous.header.length + previous.footer.length
+			: Math.max(1, Math.floor(this.deps.rows()));
+		this.tab = index;
+		this.input.focused = this.paneFocused && index === TEST_TAB;
+		const next = this.renderParts(this.renderedWidth);
+		// Refresh both content extent and chrome-adjusted viewport before restoring:
+		// a short previous tab or its smaller header must not clamp the saved offset.
+		const viewport = Math.max(0, height - next.header.length - next.footer.length);
+		this.scroll.updateLayout(next.body.length, viewport, () => this.repaint());
+		this.scroll.scrollTo(this.scrollTops[index]);
+		this.repaint();
+	}
+
+	private resetTestScroll(): void {
+		this.scrollTops[TEST_TAB] = 0;
+		if (this.tab === TEST_TAB) this.scroll.scrollToStart();
+	}
+
 	private async run(value: string): Promise<void> {
 		const query = plain(value).replace(/\n/g, " ").slice(0, MAX_QUERY_CHARS).trim();
 		if (this.disposed || this.active || !query) return;
@@ -91,7 +124,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.active = controller;
 		this.state = "searching";
 		this.result = "";
-		this.scroll.scrollToStart();
+		this.resetTestScroll();
 		this.repaint();
 		try {
 			const text = await this.deps.search(query, controller.signal);
@@ -105,7 +138,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		} finally {
 			if (!this.disposed && generation === this.generation) {
 				this.active = null;
-				this.scroll.scrollToStart();
+				this.resetTestScroll();
 				this.repaint();
 			}
 		}
@@ -136,8 +169,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		];
 	}
 
-	private content(width: number): string[] {
-		const w = Math.max(1, Math.floor(width));
+	private testLines(width: number): string[] {
 		const t = this.deps.theme;
 		const lines: string[] = [];
 		if (this.state === "idle") lines.push(t.fg("dim", "Enter a query above to test search. Opening this pane does not issue search or fetch probes."));
@@ -146,33 +178,51 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		else if (this.state === "cancelled") lines.push(t.fg("warning", "Search cancelled."));
 		else {
 			lines.push(t.bold("Search result"));
-			const wrapped = this.result.split("\n").flatMap((line) => wrapTextWithAnsi(line, w));
+			const wrapped = this.result.split("\n").flatMap((line) => wrapTextWithAnsi(line, width));
 			lines.push(...wrapped.slice(0, MAX_WRAPPED_RESULT_LINES));
 			if (wrapped.length > MAX_WRAPPED_RESULT_LINES) lines.push(t.fg("dim", "[Result truncated for display]"));
 			if (!this.result.trim()) lines.push(t.fg("dim", "No displayable results returned."));
 		}
-		lines.push("", t.bold("Engine activity (this extension instance)"));
+		return lines;
+	}
+
+	private engineContent(): string[] {
+		const t = this.deps.theme;
+		const fetchers = this.tab === 1;
+		const lines = [t.bold(`${fetchers ? "Fetcher" : "Search engine"} activity (this extension instance)`)];
 		const snapshots = this.deps.monitor.snapshot();
 		const stats = new Map(snapshots.map((entry) => [engineKey(entry), entry]));
 		const engines = new Map(this.deps.engines().map((entry) => [engineKey(entry), entry]));
 		// Preserve observations of engines removed by a config refresh, without calling them configured.
 		for (const entry of snapshots) if (!engines.has(engineKey(entry))) engines.set(engineKey(entry), { name: entry.name, label: entry.label, tier: entry.tier });
-		const shown = [...engines.values()].slice(0, MAX_ENGINES);
-		if (shown.length === 0) lines.push(t.fg("dim", "No engine descriptors available; configuration and health unknown."));
+		const matching = [...engines.values()].filter((engine) => (engine.tier === "reader") === fetchers);
+		const shown = matching.slice(0, MAX_ENGINES);
+		if (shown.length === 0) lines.push(t.fg("dim", `No ${fetchers ? "fetcher" : "search engine"} descriptors available; configuration and health unknown.`));
 		for (const engine of shown) lines.push(...this.engineLines(engine, stats.get(engineKey(engine))));
-		if (engines.size > MAX_ENGINES) lines.push(t.fg("dim", `[${engines.size - MAX_ENGINES} more engines omitted]`));
+		if (matching.length > MAX_ENGINES) lines.push(t.fg("dim", `[${matching.length - MAX_ENGINES} more engines omitted]`));
+		return lines;
+	}
+
+	private content(width: number): string[] {
+		const w = Math.max(1, Math.floor(width));
+		const lines = this.tab === TEST_TAB ? this.testLines(w) : this.engineContent();
 		return lines.flatMap((line) => wrapTextWithAnsi(line, w)).map((line) => truncateToWidth(line, w, ""));
 	}
 
 	private renderParts(width: number): PanelParts {
 		const w = Math.max(1, Math.floor(width));
 		const t = this.deps.theme;
-		const hints = w < 35 ? [{ key: "esc", action: "close" }] : [
-			{ key: "enter", action: "search" }, { key: "↑↓ Ctrl+PgUp/PgDn", action: "scroll" },
+		this.renderedWidth = w;
+		const hints = [
+			{ key: "Tab/Shift+Tab", action: "tabs" },
+			...(this.tab === TEST_TAB ? [{ key: "enter", action: "search" }] : []),
+			{ key: "↑↓ Ctrl+PgUp/PgDn", action: "scroll" },
 			{ key: "Ctrl+C", action: "cancel" }, { key: "esc", action: "close" },
 		];
+		const title = frameTitle(t, w, { title: "websearch", tabs: { labels: TAB_LABELS, active: this.tab } }, "none");
+		this.tabSpans = title.tabSpans;
 		return {
-			header: [frameTitle(t, w, { title: "websearch", meta: this.state }, "none").line, ...this.input.render(w)],
+			header: [title.line, ...(this.tab === TEST_TAB ? this.input.render(w) : [])],
 			body: this.content(w),
 			footer: keyHints(t, w, hints).lines,
 		};
@@ -197,6 +247,8 @@ export class WebSearchView extends PanelLayout implements Focusable {
 			this.deps.close();
 			return;
 		}
+		if (matchesKey(data, Key.tab)) { this.selectTab((this.tab + 1) % TAB_LABELS.length); return; }
+		if (matchesKey(data, Key.shift("tab"))) { this.selectTab((this.tab + TAB_LABELS.length - 1) % TAB_LABELS.length); return; }
 		const page = Math.max(1, this.scroll.viewportHeight - 1);
 		if (matchesKey(data, Key.up)) this.scroll.scrollBy(-1);
 		else if (matchesKey(data, Key.down)) this.scroll.scrollBy(1);
@@ -204,7 +256,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		else if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("pageDown"))) this.scroll.scrollBy(page);
 		else if (matchesKey(data, Key.ctrl("home"))) this.scroll.scrollToStart();
 		else if (matchesKey(data, Key.ctrl("end"))) this.scroll.scrollToEnd();
-		else {
+		else if (this.tab === TEST_TAB) {
 			// Home/End and ordinary characters belong to the query editor, not pane commands.
 			this.input.handleInput(data);
 			const value = this.input.getValue();
@@ -216,7 +268,14 @@ export class WebSearchView extends PanelLayout implements Focusable {
 	}
 
 	override handleMouse(event: TuiMouseEvent): ReturnType<PanelLayout["handleMouse"]> {
-		if (this.disposed || event.type !== "wheel" || !event.wheelDelta) return undefined;
+		if (this.disposed) return undefined;
+		if (event.type === "click" && event.button === "left" && event.y === 0) {
+			const tab = hintAt(this.tabSpans, event.x);
+			if (tab === undefined) return undefined;
+			this.selectTab(tab);
+			return { handled: true, render: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
+		}
+		if (event.type !== "wheel" || !event.wheelDelta) return undefined;
 		this.scroll.scrollBy(event.wheelDelta);
 		return { handled: true, render: true, target: { component: this, originX: event.screenX - event.x, originY: event.screenY - event.y, width: event.width, height: event.height } };
 	}
