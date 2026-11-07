@@ -68,7 +68,7 @@ class QuickUploadBrowserTests(unittest.TestCase):
             {"op": "eval", "fn": paste, "arg": base64.b64encode(png).decode()},
             {"op": "eval", "fn": "() => {return true;}"},
             {"op": "setInputFiles", "selector": "#upload-files", "files": [{"name": "report.pdf", "mimeType": "application/pdf", "base64": base64.b64encode(pdf).decode()}]},
-            {"op": "eval", "fn": """() => {document.querySelector('#upload-visibility').value='external';const t=new DataTransfer();t.items.add(new File([],'empty.txt'));document.querySelector('#quick-upload').dispatchEvent(new DragEvent('drop',{dataTransfer:t,bubbles:true,cancelable:true}));return {count:document.querySelectorAll('#upload-list li').length,inits:window.__inits};}"""},
+            {"op": "eval", "fn": """() => {document.querySelector('#upload-external').click();const t=new DataTransfer();t.items.add(new File([],'empty.txt'));document.querySelector('#quick-upload').dispatchEvent(new DragEvent('drop',{dataTransfer:t,bubbles:true,cancelable:true}));return {count:document.querySelectorAll('#upload-list li').length,inits:window.__inits};}"""},
             {"op": "click", "selector": "#upload-submit"},
             {"op": "waitForEval", "fn": "() => document.querySelectorAll('#upload-list input[readonly]').length===3"},
             {"op": "eval", "fn": verify, "arg": [base64.b64encode(png).decode(), base64.b64encode(pdf).decode(), ""]},
@@ -109,7 +109,7 @@ class QuickUploadBrowserTests(unittest.TestCase):
             {"op": "waitForEval", "fn": "() => document.querySelectorAll('#upload-list input[readonly]').length===1"},
             {"op": "eval", "fn": "() => ({inits:window.__uploadTest.inits,chunk:window.__uploadTest.lostChunk,finish:window.__uploadTest.lostFinish})"},
             {"op": "click", "selector": "#upload-clear"},
-            {"op": "eval", "fn": "() => {window.__uploadTest.hold=true;document.querySelector('#upload-visibility').value='external';return true;}"},
+            {"op": "eval", "fn": "() => {window.__uploadTest.hold=true;document.querySelector('#upload-external').click();return true;}"},
             {"op": "setInputFiles", "selector": "#upload-files", "files": [{"name": "late.txt", "mimeType": "text/plain", "base64": "bGF0ZQ=="}]},
             {"op": "click", "selector": "#upload-submit"},
             {"op": "waitForEval", "fn": "() => typeof window.__uploadTest.release==='function'"},
@@ -134,7 +134,7 @@ class QuickUploadBrowserTests(unittest.TestCase):
               const data=new Uint8Array(window.__binarySize);for(let i=0;i<data.length;i++)data[i]=(i*31+17)%256;
               const transfer=new DataTransfer();transfer.items.add(new File([data],'binary.bin',{type:'application/octet-stream'}));
               document.dispatchEvent(new ClipboardEvent('paste',{clipboardData:transfer,bubbles:true,cancelable:true}));
-              document.querySelector('#upload-visibility').value='public';
+              document.querySelector('#upload-public').click();
               return document.querySelector('#upload-list strong').textContent.endsWith('internal');
             }"""},
             {"op": "click", "selector": "#upload-submit"},

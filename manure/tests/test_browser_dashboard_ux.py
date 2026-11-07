@@ -49,7 +49,7 @@ class DashboardUXTests(unittest.TestCase):
             input=json.dumps(payload).encode(), capture_output=True, timeout=240)
         self.assertEqual(result.returncode, 0, "; ".join(check["name"] + ": " + check.get("error", "ok") for check in json.loads(result.stdout)))
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 20)
+        self.assertEqual(len(report), 23)
         self.assertTrue(all(check["ok"] for check in report), report)
         for check in report:
             print("ok - " + check["name"])

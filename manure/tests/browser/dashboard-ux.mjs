@@ -82,7 +82,7 @@ const capture = async (page, name) => {
 const search = async (page, text) => {
   await page.locator("#filter-text").fill(text);
   await page.locator("#filter-text").press("Enter");
-  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("q") === q && document.querySelector("#list-status").textContent.includes("shown"), text);
+  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes(q) && document.querySelector("#list-status").textContent.includes("shown"), text);
 };
 const recordSearch = async (page) => {
   await search(page, "ux-record-");
@@ -128,7 +128,7 @@ await check("sortable table, global search, URL reload and responsive themes", a
   assert.deepEqual(await titles(page), Array.from({ length: 25 }, (_, i) => `ux-record-${String(i).padStart(2, "0")}`));
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
-  assert.equal(await page.locator("#filter-text").inputValue(), "ux-record-");
+  assert.equal(await page.locator("#filter-text").inputValue(), "sort:name direction:asc ux-record-");
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-light.png"), fullPage: true });
   await page.emulateMedia({ colorScheme: "dark" });
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-dark.png"), fullPage: true });
@@ -137,35 +137,28 @@ await check("sortable table, global search, URL reload and responsive themes", a
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-mobile.png"), fullPage: true });
 });
 
-// Specified contract: catalogue has no artificial client query length cap.
-await check("catalogue query remains uncapped and delayed capabilities preserve draft", async (page) => {
-  assert.equal(await page.locator("#filter-text").getAttribute("maxlength"), null);
-  await page.locator("#filter-text").fill("x".repeat(9000));
-  assert.equal((await page.locator("#filter-text").inputValue()).length, 9000);
+await check("expression length bound and delayed capabilities preserve draft", async (page) => {
+  assert.equal(await page.locator("#filter-text").getAttribute("maxlength"), "4096");
+  await page.locator("#filter-text").fill("x".repeat(4097));
+  await page.locator("#search-submit").click();
+  assert.match(await page.locator("#query-diagnostic").textContent(), /4096/);
   await page.evaluate(() => { location.hash = "#/artifacts?mode=semantic&q=ux-bundle"; });
   await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("unavailable"));
-  assert.equal(await page.locator('#filter-mode option[value="semantic"]').isDisabled(), true);
-  assert.equal(await page.locator('#filter-mode option[value="hybrid"]').isDisabled(), true);
-  assert.equal(await page.locator('#filter-mode option[value="lexical"]').isDisabled(), false);
-  assert.equal(await page.locator("#filter-mode").inputValue(), "semantic", "unsupported requested URL mode remains selected");
+  assert.equal(await page.locator("#filter-text").inputValue(), "mode:semantic ux-bundle");
   await page.evaluate(() => { window.__ux.holdCapabilities = true; });
   await page.locator("#retry-list-button").click();
   await page.waitForFunction(() => window.__ux.releaseCapabilities !== null, null, { timeout: 10000 });
   try {
     await page.locator("#filter-text").fill("unsent draft");
-    await page.locator("#filter-mode").selectOption("catalogue");
     await page.evaluate(() => window.__ux.releaseCapabilities());
     await settle(page);
-    assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft", "capability response must preserve unsent query");
-    assert.equal(await page.locator("#filter-mode").inputValue(), "catalogue", "capability response must preserve draft mode");
-    assert.equal(await page.locator("#sort-summary").textContent(), "Relevance order · not sortable",
-      "summary belongs to applied semantic mode, not unsent catalogue draft");
+    assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
+    assert.equal(await page.locator("#sort-summary").textContent(), "Relevance order · not sortable");
   } finally { await page.evaluate(() => window.__ux.releaseCapabilities?.()); }
 });
 
 await check("direct route fences held retrieval and never replays unsent URL query", async (page) => {
-  await page.locator("#filter-mode").selectOption("lexical");
-  await page.locator("#filter-text").fill("ux-public");
+  await page.locator("#filter-text").fill("mode:lexical ux-public");
   await page.evaluate(() => { window.__ux.holdSearch = true; });
   await page.locator("#list-form button[type=submit]").click();
   await page.waitForFunction(() => window.__ux.releaseSearch !== null, null, { timeout: 10000 });
@@ -179,39 +172,28 @@ await check("direct route fences held retrieval and never replays unsent URL que
   } finally { await page.evaluate(() => window.__ux.releaseSearch?.()); }
 });
 
-await check("sort/preset preserve applied query and visible unsent draft", async (page) => {
+await check("sort never submits draft and sidebar presets insert visible syntax only", async (page) => {
   await recordSearch(page);
-  await page.locator("#filter-text").fill("unsent draft");
-  await page.locator("#filter-mode").selectOption("lexical");
-  await page.locator("#filter-kind").selectOption("dir");
-  await page.locator("#filter-owner").fill("unsent-owner");
-  await page.locator('[data-sort="name"]').click();
-  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("sort") === "name");
-  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("q"), "ux-record-");
-  assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
-  assert.equal(await page.locator("#filter-mode").inputValue(), "lexical", "sort must retain unsent mode");
-  assert.equal(await page.locator("#filter-kind").inputValue(), "dir", "sort must retain unsent kind");
-  assert.equal(await page.locator("#filter-owner").inputValue(), "unsent-owner", "sort must retain unsent creator");
+  const before = await page.evaluate(() => window.__ux.readCommands.length);
+  await page.locator("#filter-text").fill("mode:lexical kind:dir owner:unsent-owner unsent draft");
+  assert.equal(await page.locator('[data-sort="name"]').isDisabled(), true);
+  await page.locator("#refresh-button").click();
+  await page.waitForFunction((n)=>window.__ux.readCommands.length === n+1,before);
+  assert.deepEqual(await page.evaluate(()=>window.__ux.readCommands.at(-1)),{mode:"catalogue",query:"ux-record-"});
+  assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical kind:dir owner:unsent-owner unsent draft");
   await page.locator('[data-visibility-preset="external"]').click();
-  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("access") === "external");
-  await page.waitForFunction(() => document.querySelector("#filter-visibility").value === "external");
-  assert.equal(await page.locator("#filter-visibility").inputValue(), "external");
-  assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
-  assert.equal(await page.locator("#filter-mode").inputValue(), "catalogue", "sidebar preset intentionally resets draft mode");
-  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("q"), "ux-record-");
-  await page.locator("#filter-visibility").selectOption("public");
-  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("access") === "public");
-  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("q"), "ux-record-",
-    "catalogue filter must not silently submit an unsent text draft");
-  assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
+  assert.equal(await page.locator("#filter-text").inputValue(), "access:external ");
+  assert.equal(await page.evaluate(() => window.__ux.readCommands.length), before+1);
+  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("query"), "ux-record-");
+  await page.locator("#search-submit").click();
+  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external");
+  assert.equal(await page.locator("#filter-text").inputValue(),"access:external");
 });
 
 await check("confirmed logout clears owner/query fragment and next login does not replay it", async (page) => {
-  await page.locator("#filter-mode").selectOption("lexical");
-  await page.locator("#filter-text").fill("ux-public");
-  await page.locator("#filter-owner").fill("private-creator");
+  await page.locator("#filter-text").fill("mode:lexical owner:private-creator ux-public");
   await page.locator("#list-form button[type=submit]").click();
-  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("owner") === "private-creator");
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes("owner:private-creator"));
   await page.waitForFunction(() => window.__ux.readCommands.some(c => c.mode === "Lexical"));
   const before = await page.evaluate(() => window.__ux.readCommands.length);
   await page.locator("#logout-button").click();
@@ -221,8 +203,7 @@ await check("confirmed logout clears owner/query fragment and next login does no
   await page.locator("#token-input").fill(input.token);
   await page.locator("#login-form button[type=submit]").click();
   await page.locator("#whoami-text").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#filter-owner").inputValue(), "", "new login owner filter");
-  assert.equal(await page.locator("#filter-mode").inputValue(), "catalogue", "new login mode");
+  assert.equal(await page.locator("#filter-text").inputValue(), "", "new login clears expression");
   assert.equal(await page.evaluate((start) => window.__ux.readCommands.slice(start).some(c => c.mode !== "catalogue"), before), false, "no retrieval replay across logout/login");
 });
 
@@ -236,9 +217,7 @@ await check("unauthenticated incoming retrieval deep link survives login without
   await page.locator("#token-input").fill(input.token);
   await page.locator("#login-form button[type=submit]").click();
   await page.locator("#whoami-text").waitFor({ state: "visible" });
-  assert.equal(await page.locator("#filter-mode").inputValue(), "lexical");
-  assert.equal(await page.locator("#filter-owner").inputValue(), "one-user");
-  assert.equal(await page.locator("#filter-text").inputValue(), "ux-public");
+  assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical owner:one-user ux-public");
   assert.equal(await page.locator("#retrieval-results").textContent(), "");
   assert.equal(await page.evaluate(() => window.__ux.readCommands.some(c => c.mode !== "catalogue")), false);
 });
@@ -252,7 +231,7 @@ await check("infinite scrolling appends without duplicates and reaches exhaustio
   await bottom(page); await count(page, 65);
   assert.equal(await page.locator("#load-more-button").isVisible(), false);
   assert.equal(await page.locator("#artifact-list > tr").evaluateAll((nodes) => new Set(nodes.map((node) => node.dataset.artifactId)).size), 65);
-  await page.locator("#filter-visibility").selectOption("external");
+  await search(page, "access:external ux-record-");
   await count(page, 22);
   assert.equal(await rows(page).evaluateAll((nodes) => nodes.every((node) => node.children[2].textContent === "external")), true);
 });
@@ -276,7 +255,7 @@ await check("old pages cannot append after a sort change", async (page) => {
   await bottom(page);
   await page.waitForFunction(() => window.__ux.releaseList !== null);
   await page.locator('[data-sort="name"]').click();
-  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("sort") === "name");
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes("sort:name"));
   assert.equal(await page.evaluate(() => window.__ux.listInFlight), 0,
     "network body finished, but held reply has not settled in the application");
   await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 0);
@@ -347,7 +326,7 @@ await check("public previews and protected unlock keep isolated origin flows", a
 
 await check("expired artifacts remain deletable from the catalogue", async (page) => {
   await search(page, "ux-expired");
-  await page.locator("#include-expired").check();
+  await search(page, "expired:true ux-expired");
   await count(page, 1);
   assert.equal(await page.locator('[data-action=delete]').isEnabled(), true);
   page.once("dialog", (dialog) => dialog.accept());
@@ -441,8 +420,7 @@ await check("a new detail target cannot retain old metadata and destructive acti
 });
 
 await check("retrieval detail denial clears pinned evidence", async (page) => {
-  await page.locator("#filter-mode").selectOption("lexical");
-  await page.locator("#filter-text").fill("ux-bundle");
+  await page.locator("#filter-text").fill("mode:lexical ux-bundle");
   await page.locator("#list-form button[type=submit]").click();
   try { await page.waitForFunction(() => document.querySelector("#retrieval-results").textContent.includes("ux-bundle"), null, { timeout: 10000 }); }
   catch (error) { throw new Error("retrieval status: " + await page.locator("#list-status").textContent() + " / " + await page.locator("#list-error").textContent()); }
@@ -456,6 +434,75 @@ await check("retrieval detail denial clears pinned evidence", async (page) => {
 });
 
 
+
+await check("caret-aware completion supports keyboard, pointer, dismissal and IME without requests", async (page) => {
+  const query=page.locator('#filter-text'), popup=page.locator('#query-suggestions');
+  const before=await page.evaluate(()=>window.__ux.readCommands.length);
+  await query.fill('ac');
+  await page.locator('#query-suggestions [role=option]').first().waitFor();
+  await query.press('Enter');
+  assert.equal(await query.inputValue(),'access:');
+  assert.equal(await page.evaluate(()=>document.querySelector('#filter-text').selectionStart),7);
+  await query.press('ArrowDown'); await query.press('Enter');
+  assert.equal(await query.inputValue(),'access:external ');
+  await query.fill('text:"kept literal" access:pubzzz sort:name');
+  await query.evaluate(node=>{node.setSelectionRange(29,29);node.dispatchEvent(new Event('select'));});
+  await page.locator('#query-suggestions [role=option]').filter({hasText:'public'}).click();
+  assert.equal(await query.inputValue(),'text:"kept literal" access:public sort:name');
+  assert.equal(await page.evaluate(()=>document.querySelector('#filter-text').selectionStart),33);
+  assert.equal(await page.evaluate(()=>document.activeElement.id),'filter-text');
+  await query.fill('ac'); await query.press('Escape');
+  assert.equal(await popup.isVisible(),false); assert.equal(await query.inputValue(),'ac');
+  await query.press('Tab'); assert.notEqual(await page.evaluate(()=>document.activeElement.id),'filter-text');
+  await query.focus(); await query.dispatchEvent('compositionstart');
+  assert.equal(await popup.isVisible(),false);
+  await query.press('Enter'); await page.locator('#search-submit').click();
+  assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before);
+  await query.dispatchEvent('compositionend');
+  await page.locator('#clear-search-button').click();
+  assert.equal(await query.inputValue(),''); assert.equal(await popup.isVisible(),false);
+  await query.fill('access:PUBLIC'); await page.locator('#search-submit').click();
+  assert.equal(await page.locator('#query-diagnostic').isVisible(),true);
+  assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before);
+  await page.evaluate(()=>{location.hash='#/artifacts?query=mode:INVALID';});
+  await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('Invalid URL query'));
+  assert.equal(await query.inputValue(),'mode:INVALID');
+  assert.equal(await page.locator('#refresh-button').isDisabled(),true);
+  assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before,'invalid URL never falls back to catalogue');
+});
+
+await check("latest unsent catalogue expression replaces queued reads", async (page) => {
+  await recordSearch(page);
+  await page.evaluate(()=>{window.__ux.holdList=true;});
+  await bottom(page); await page.waitForFunction(()=>window.__ux.releaseList!==null);
+  const before=await page.evaluate(()=>window.__ux.readCommands.length);
+  for (const text of ['ux-protected','ux-public','ux-hostile']) {
+    await page.locator('#filter-text').fill(text); await page.locator('#search-submit').click();
+    await page.waitForFunction(q=>new URLSearchParams(location.hash.split('?')[1]).get('query')===q,text);
+  }
+  assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before);
+  await page.evaluate(()=>window.__ux.releaseList());
+  await page.waitForFunction(()=>document.querySelector('#artifact-list').textContent.includes('ux-hostile'));
+  assert.deepEqual(await page.evaluate(n=>window.__ux.readCommands.slice(n).map(c=>c.query),before),['ux-hostile']);
+  assert.equal(await page.evaluate(()=>window.__ux.listPeak),1);
+});
+
+await check("quick upload is one desktop row, accessible segments and bounded mobile wrap", async (page) => {
+  const boxes=await Promise.all(['#upload-files','#upload-visibility','#upload-submit','#upload-clear'].map(selector=>page.locator(selector).boundingBox()));
+  const centers=boxes.map(b=>b.y+b.height/2);
+  assert.ok(Math.max(...centers)-Math.min(...centers)<3,'all upload controls share one desktop row');
+  assert.ok(boxes[0].width<=240,'file picker remains short');
+  assert.equal(await page.locator('#quick-upload h2, #quick-upload select').count(),0);
+  await page.locator('#upload-external').check();
+  assert.equal(await page.locator('#upload-access-help').isVisible(),true);
+  await page.locator('#upload-public').check();
+  assert.equal(await page.locator('#upload-access-help').isVisible(),false);
+  await page.setViewportSize({width:390,height:844});
+  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
+  for (const selector of ['#upload-files','#upload-visibility','#upload-submit','#upload-clear']) {
+    const box=await page.locator(selector).boundingBox(); assert.ok(box.x>=0 && box.x+box.width<=390);
+  }
+});
 
 await browser.close();
 process.stdout.write(JSON.stringify(results));

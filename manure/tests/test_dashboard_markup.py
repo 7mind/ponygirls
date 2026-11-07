@@ -77,12 +77,25 @@ class DashboardMarkupTests(unittest.TestCase):
         self.assertEqual(self.elements.ids["upload-form"][0], "form")
         self.assertEqual(self.elements.ids["upload-files"][1]["type"], "file")
         self.assertIn("multiple", self.elements.ids["upload-files"][1])
-        self.assertEqual(self.elements.select_options["upload-visibility"], ["internal", "external", "public"])
+        self.assertEqual(self.elements.ids["upload-visibility"][0], "fieldset")
+        for value in ("internal", "external", "public"):
+            self.assertEqual(self.elements.ids["upload-" + value][1]["type"], "radio")
         self.assertEqual(self.elements.ids["upload-submit"][1]["type"], "submit")
         self.assertIn("disabled", self.elements.ids["upload-submit"][1])
         self.assertEqual(self.elements.ids["upload-status"][1]["role"], "status")
         self.assertIn("upload-clear", self.elements.ids)
         self.assertNotIn("Uploads are handled by the CLI", self.html)
+
+    def test_single_expression_editor_has_completion_and_secondary_help(self):
+        attrs = self.elements.ids["filter-text"][1]
+        self.assertEqual(attrs["role"], "combobox")
+        self.assertEqual(attrs["aria-controls"], "query-suggestions")
+        self.assertEqual(attrs["maxlength"], "4096")
+        self.assertEqual(self.elements.ids["query-suggestions"][1]["role"], "listbox")
+        self.assertEqual(self.elements.ids["query-syntax"][0], "details")
+        self.assertEqual(self.elements.ids["query-diagnostic"][1]["role"], "status")
+        for stale in ("filter-mode", "filter-visibility", "filter-kind", "filter-owner", "filter-state", "include-expired"):
+            self.assertNotIn(stale, self.elements.ids)
 
     def test_path_mode_notice_is_an_icon_with_a_tooltip(self):
         for shell in ("dashboard", "unlock"):

@@ -181,3 +181,158 @@ export async function putChunk(fetch,id,path,offset,data,sha256,signal) {
   if(receipt.path!==path || receipt.offset!==BigInt(offset) || receipt.length!==data.size ||
     receipt.receivedBytes<BigInt(offset+data.size)) bad();
 }
+
+export const QUERY_LIMIT = 4096;
+export const SORTS = Object.freeze(['name', 'kind', 'visibility', 'state', 'total_bytes', 'file_count', 'created_at', 'expires_at', 'created_by_user']);
+const FIELDS = Object.freeze({
+  mode: {values:['catalogue','lexical','semantic','hybrid'], detail:'Search mode'},
+  access: {values:['internal','external','public'], detail:'Artifact access'},
+  state: {values:['ready','uploading','publishing'], scope:'catalogue', detail:'Publication state'},
+  expired: {values:['true','false'], scope:'catalogue', detail:'Include expired artifacts'},
+  kind: {values:['file','dir'], scope:'retrieval', detail:'Artifact kind'},
+  owner: {scope:'retrieval', detail:'Exact creator · JSON quotes allowed'},
+  sort: {values:SORTS, scope:'catalogue', detail:'Global catalogue sort'},
+  direction: {values:['asc','desc'], scope:'catalogue', detail:'Catalogue sort direction'},
+  text: {detail:'Exact search text · JSON quotes allowed'}
+});
+export class ExpressionError extends Error {
+  constructor(message, start, end) { super(message); this.name = 'ExpressionError'; this.start = start; this.end = end; }
+}
+export function scalarBoundary(text, offset) {
+  return Number.isInteger(offset) && offset >= 0 && offset <= text.length &&
+    !(offset > 0 && offset < text.length && /[\uD800-\uDBFF]/.test(text[offset - 1]) && /[\uDC00-\uDFFF]/.test(text[offset]));
+}
+function unicode(text, start, end) {
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = text.charCodeAt(++i);
+      if (next >= 0xdc00 && next <= 0xdfff) continue;
+    } else if (!(code >= 0xdc00 && code <= 0xdfff)) continue;
+    throw new ExpressionError('Query must contain valid Unicode scalar values.', start, end);
+  }
+}
+function scan(text, lenient) {
+  const tokens = [];
+  let i = 0;
+  while (i < text.length) {
+    if (/\s/u.test(text[i])) { i++; continue; }
+    const start = i;
+    let quoted = false, escaped = false;
+    while (i < text.length) {
+      const char = text[i];
+      if (!quoted && /\s/u.test(char)) break;
+      if (escaped) escaped = false;
+      else if (quoted && char === '\\') escaped = true;
+      else if (char === '"') quoted = !quoted;
+      i++;
+    }
+    if (quoted && !lenient) throw new ExpressionError('Use a complete JSON string with valid escapes.', start, i);
+    tokens.push({raw:text.slice(start,i), start, end:i, unfinished:quoted});
+  }
+  return tokens;
+}
+function valueOf(raw, start, end) {
+  if (!raw) throw new ExpressionError('Expected a value immediately after the colon.', start, end);
+  let value;
+  if (raw.startsWith('"')) {
+    try { value = JSON.parse(raw); } catch (_) { throw new ExpressionError('Use a complete JSON string with valid escapes.', start, end); }
+  } else {
+    if (/[":]/u.test(raw)) throw new ExpressionError('Separate tokens with whitespace; quote literal colons or quotes using a JSON string.', start, end);
+    value = raw;
+  }
+  unicode(value,start,end);
+  return value;
+}
+export function parseExpression(expression) {
+  if (expression.length > QUERY_LIMIT) throw new ExpressionError('Query exceeds 4096 UTF-16 code units.', QUERY_LIMIT, expression.length);
+  unicode(expression,0,expression.length);
+  const values = new Map(), positions = new Map(), bare = [];
+  for (const token of scan(expression,false)) {
+    const colon = token.raw.startsWith('"') ? -1 : token.raw.indexOf(':');
+    if (colon < 0) { bare.push({raw:token.raw,value:valueOf(token.raw,token.start,token.end)}); continue; }
+    const field = token.raw.slice(0,colon).toLowerCase();
+    if (!Object.hasOwn(FIELDS,field)) throw new ExpressionError('Unknown field; use a supported query field.',token.start,token.start+colon);
+    if (values.has(field)) throw new ExpressionError('Duplicate field; specify each field once.',token.start,token.end);
+    const value = valueOf(token.raw.slice(colon+1),token.start+colon+1,token.end);
+    const spec = FIELDS[field];
+    if (spec.values && !spec.values.includes(value)) throw new ExpressionError('Invalid '+field+' value; use '+spec.values.join(', ')+'.',token.start+colon+1,token.end);
+    if (field === 'owner' && !value.trim()) throw new ExpressionError('Owner must not be blank.',token.start+colon+1,token.end);
+    values.set(field,value); positions.set(field,token);
+  }
+  const mode = values.get('mode') || 'catalogue';
+  for (const [field,token] of positions) {
+    const scope = FIELDS[field].scope;
+    if (scope === 'catalogue' && mode !== 'catalogue') throw new ExpressionError('Catalogue-only fields cannot be used in retrieval mode.',token.start,token.end);
+    if (scope === 'retrieval' && mode === 'catalogue') throw new ExpressionError('Retrieval-only fields require lexical, semantic or hybrid mode.',token.start,token.end);
+  }
+  if (values.has('text') && bare.length) throw new ExpressionError('text: cannot be combined with bare search terms.',0,expression.length);
+  const decoded = values.has('text') ? values.get('text') : bare.map(token=>token.value).join(' ');
+  if (mode !== 'catalogue' && !decoded.trim()) throw new ExpressionError('Retrieval mode requires nonblank search text.',expression.length,expression.length);
+  const q = values.has('text') || mode === 'catalogue' ? decoded : bare.map(token=>token.raw).join(' ');
+  return {q, mode, visibility:values.get('access') ?? null, itemState:values.get('state') ?? null,
+    includeExpired:values.get('expired') === 'true', kind:values.get('kind') ?? null,
+    createdByUser:values.get('owner') ?? null, sort:values.get('sort') || 'created_at', direction:values.get('direction') || 'desc'};
+}
+export function serializeExpression(state) {
+  const parts = [];
+  if (state.mode !== 'catalogue') parts.push('mode:'+state.mode);
+  if (state.visibility) parts.push('access:'+state.visibility);
+  if (state.mode === 'catalogue') {
+    if (state.itemState) parts.push('state:'+state.itemState);
+    if (state.includeExpired) parts.push('expired:true');
+    if (state.sort !== 'created_at') parts.push('sort:'+state.sort);
+    if (state.direction !== 'desc') parts.push('direction:'+state.direction);
+  } else {
+    if (state.kind) parts.push('kind:'+state.kind);
+    if (state.createdByUser) parts.push('owner:'+(/^[^\s":]+$/u.test(state.createdByUser) ? state.createdByUser : JSON.stringify(state.createdByUser)));
+  }
+  const candidates = state.q ? [state.q, JSON.stringify(state.q), 'text:'+JSON.stringify(state.q)].sort((a,b)=>a.length-b.length) : [''];
+  const expected = {...state,visibility:state.visibility || null,itemState:state.itemState || null,kind:state.kind || null,createdByUser:state.createdByUser || null};
+  for (const text of candidates) {
+    const expression = [...parts,...(text ? [text] : [])].join(' ');
+    try { if (JSON.stringify(parseExpression(expression)) === JSON.stringify(expected)) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
+  }
+  throw new ExpressionError('Query cannot be represented within the expression limit.',0,0);
+}
+export function acceptCompletion(expression, hint) {
+  if (!scalarBoundary(expression,hint.start) || !scalarBoundary(expression,hint.end) || hint.start > hint.end ||
+      typeof hint.insertText !== 'string' || !scalarBoundary(hint.insertText,hint.caret)) throw new Error('Invalid completion edit.');
+  const result = expression.slice(0,hint.start)+hint.insertText+expression.slice(hint.end);
+  if (result.length > QUERY_LIMIT) throw new Error('Completion exceeds query limit.');
+  unicode(result,0,result.length);
+  return {expression:result,caret:hint.start+hint.caret};
+}
+export function completeExpression(expression, caret) {
+  if (!scalarBoundary(expression,caret) || expression.length > QUERY_LIMIT) return [];
+  try { unicode(expression,0,expression.length); } catch (_) { return []; }
+  const tokens = scan(expression,true);
+  const token = tokens.find(t=>caret >= t.start && caret <= t.end);
+  if (token && (token.unfinished || token.raw.startsWith('"'))) return [];
+  const start = token ? token.start : caret, end = token ? token.end : caret;
+  const raw = token ? token.raw : '', colon = raw.indexOf(':');
+  const modeToken = tokens.find(t=>/^mode:/i.test(t.raw));
+  const mode = modeToken ? modeToken.raw.slice(5).replace(/^"|"$/g,'') : 'catalogue';
+  const used = new Set(tokens.filter(t=>t!==token && t.raw.includes(':') && !t.raw.startsWith('"')).map(t=>t.raw.split(':')[0].toLowerCase()));
+  const hints = [];
+  const add = (label,detail,from,to,insertText) => {
+    const hint = {label,detail,start:from,end:to,insertText,caret:insertText.length};
+    try { acceptCompletion(expression,hint); hints.push(hint); } catch (_) { /* Omit edits that exceed the query boundary. */ }
+  };
+  if (colon >= 0 && caret > start+colon) {
+    const field = raw.slice(0,colon).toLowerCase(), spec = FIELDS[field];
+    const prefix = expression.slice(start+colon+1,caret);
+    if (!spec || !spec.values || prefix.includes('"') || used.has(field)) return [];
+    for (const value of spec.values) if (value.startsWith(prefix) && raw.slice(colon+1) !== value) {
+      const separator = end === expression.length ? ' ' : '';
+      add(value,spec.detail,start+colon+1,end,value+separator);
+    }
+  } else {
+    const prefix = expression.slice(start,caret).toLowerCase();
+    for (const [field,spec] of Object.entries(FIELDS)) {
+      if (!field.startsWith(prefix) || used.has(field) || spec.scope === 'catalogue' && mode !== 'catalogue' || spec.scope === 'retrieval' && mode === 'catalogue') continue;
+      add(field+':',spec.detail,start,colon >= 0 ? start+colon+1 : end,field+':');
+    }
+  }
+  return hints.slice(0,12);
+}

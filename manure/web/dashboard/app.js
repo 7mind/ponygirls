@@ -3,14 +3,80 @@
  */
 import * as current from "./current-protocol.js";
 import { FileUpload } from "./quick-upload.js";
+import { parseExpression, serializeExpression, completeExpression, acceptCompletion } from "./current-protocol.js";
 
 "use strict";
+
+function expressionInput(input, list, change, compositionChange) {
+  const document = input.ownerDocument;
+  let composing = false, hints = [], choice = 0, dismissed = null;
+  const stamp = () => JSON.stringify([input.value,input.selectionStart,input.selectionEnd]);
+  function close() {
+    hints = []; list.replaceChildren(); list.hidden = true;
+    input.setAttribute('aria-expanded','false'); input.removeAttribute('aria-activedescendant');
+  }
+  function select(index) {
+    choice = index;
+    [...list.children].forEach((node,i)=>node.setAttribute('aria-selected',String(i === choice)));
+    if (hints.length) {
+      input.setAttribute('aria-activedescendant',list.id+'-'+choice);
+      list.children[choice].scrollIntoView({block:'nearest'});
+    }
+  }
+  function refresh() {
+    close();
+    if (composing || document.activeElement !== input || input.selectionStart !== input.selectionEnd || dismissed === stamp()) return;
+    hints = completeExpression(input.value,input.selectionStart);
+    for (const [index,hint] of hints.entries()) {
+      const option = document.createElement('div'); option.id = list.id+'-'+index;
+      option.setAttribute('role','option');
+      const label = document.createElement('span'); label.textContent = hint.label;
+      const detail = document.createElement('small'); detail.textContent = hint.detail;
+      option.append(label,detail);
+      option.addEventListener('pointerdown',event=>{ event.preventDefault(); if (!composing) accept(index); });
+      option.addEventListener('pointermove',()=>select(index));
+      list.append(option);
+    }
+    if (hints.length) { list.hidden = false; input.setAttribute('aria-expanded','true'); select(0); }
+  }
+  function accept(index) {
+    if (composing || !hints[index]) return;
+    const next = acceptCompletion(input.value,hints[index]);
+    input.value = next.expression; input.focus(); input.setSelectionRange(next.caret,next.caret);
+    dismissed = input.value[next.caret-1] === ':' ? null : stamp();
+    close(); change(); refresh();
+  }
+  input.addEventListener('input',()=>{ dismissed = null; change(); refresh(); });
+  input.addEventListener('focus',()=>{ dismissed = null; refresh(); });
+  input.addEventListener('click',refresh);
+  input.addEventListener('select',refresh);
+  input.addEventListener('keyup',event=>{ if (['ArrowLeft','ArrowRight','Home','End'].includes(event.key)) refresh(); });
+  input.addEventListener('blur',close);
+  input.addEventListener('compositionstart',()=>{ composing = true; compositionChange(true); close(); });
+  input.addEventListener('compositionend',()=>{ composing = false; compositionChange(false); dismissed = null; change(); refresh(); });
+  input.addEventListener('keydown',event=>{
+    if (composing || event.isComposing || event.keyCode === 229) { if (event.key === 'Enter') event.preventDefault(); return; }
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation();
+      if (hints.length) { dismissed = stamp(); close(); }
+      else reset();
+    } else if (event.key === 'Tab') { dismissed = stamp(); close(); }
+    else if (hints.length && ['ArrowDown','ArrowUp'].includes(event.key)) {
+      event.preventDefault(); select((choice+(event.key === 'ArrowDown' ? 1 : hints.length-1))%hints.length);
+    } else if (event.key === 'Enter' && hints.length) { event.preventDefault(); accept(choice); }
+  });
+  function reset() {
+    if (composing) return;
+    input.value = ''; input.focus(); input.setSelectionRange(0,0); dismissed = stamp(); close(); change();
+  }
+  return {reset,close};
+}
+
 
 (function (document, window, fetch) {
   var API = "/api/current";
   var ID_RE = /^[0-9a-f]{32}$/;
   var PAGE_LIMIT = 25;
-  var SORTS = ["name", "kind", "visibility", "state", "total_bytes", "file_count", "created_at", "expires_at", "created_by_user"];
   var sessionEpoch = 0;
   var authenticated = false;
   var listGeneration = 0;
@@ -23,7 +89,6 @@ import { FileUpload } from "./quick-upload.js";
   var capabilities = null;
   var capabilitiesError = false;
   var capabilityGeneration = 0;
-  var preservedDraftControls = null;
   var searchPage = null;
   var submittedKey = null;
   var composing = false;
@@ -127,84 +192,55 @@ import { FileUpload } from "./quick-upload.js";
     var hash = window.location.hash;
     var queryAt = hash.indexOf("?");
     var params = new URLSearchParams(queryAt === -1 ? "" : hash.slice(queryAt + 1));
-    var sort = params.get("sort");
-    var mode = params.get("mode");
-    var kind = params.get("kind");
-    var visibility = params.get("access");
-    var itemState = params.get("state");
-    var direction = params.get("direction");
     var match = /^#\/artifact\/([0-9a-f]{32})(?:\?|$)/.exec(hash);
-    return { id: match ? match[1] : null, state: {
-      q: params.get("q") || "",
-      mode: ["lexical", "semantic", "hybrid"].includes(mode) ? mode : "catalogue",
-      kind: ["file", "dir"].includes(kind) ? kind : "",
-      createdByUser: params.get("owner") || "",
-      visibility: ["internal", "external", "public"].indexOf(visibility) !== -1 ? visibility : "",
-      itemState: ["ready", "uploading", "publishing"].indexOf(itemState) !== -1 ? itemState : "",
-      includeExpired: params.get("expired") === "true",
-      sort: SORTS.indexOf(sort) !== -1 ? sort : "created_at",
-      direction: direction === "asc" || direction === "desc" ? direction : "desc"
-    } };
+    var parts = [];
+    params.forEach(function (value,key) {
+      if (["mode","access","state","expired","kind","owner","sort","direction","q"].includes(key)) {
+        parts.push((key === "q" ? "text" : key) + ":" + JSON.stringify(value));
+      }
+    });
+    var expression = [params.get("query"),parts.join(" ")].filter(function (value) { return value; }).join(" ");
+    try {
+      if (params.getAll("query").length > 1) { throw new current.ExpressionError("Duplicate query URL parameter.",0,expression.length); }
+      return { id: match ? match[1] : null, state: parseExpression(expression), error: null, expression: expression };
+    }
+    catch (error) { return { id: match ? match[1] : null, state: parseExpression(""), error: error, expression: expression }; }
   }
+
   function stateParams(value) {
     var params = new URLSearchParams();
-    if (value.q) { params.set("q", value.q); }
-    if (value.mode !== "catalogue") { params.set("mode", value.mode); }
-    if (value.kind) { params.set("kind", value.kind); }
-    if (value.createdByUser) { params.set("owner", value.createdByUser); }
-    if (value.visibility) { params.set("access", value.visibility); }
-    if (value.itemState) { params.set("state", value.itemState); }
-    if (value.includeExpired) { params.set("expired", "true"); }
-    if (value.sort !== "created_at" || value.direction !== "desc") {
-      params.set("sort", value.sort); params.set("direction", value.direction);
-    }
+    var expression = serializeExpression(value);
+    if (expression) { params.set("query",expression); }
     return params;
   }
   function routeHash(id) {
     var query = stateParams(state).toString();
     return (id ? "#/artifact/" + id : "#/artifacts") + (query ? "?" + query : "");
   }
-  function draftState() {
-    return Object.assign({}, state, { q: $("filter-text").value, mode: $("filter-mode").value,
-      visibility: $("filter-visibility").value, kind: $("filter-kind").value,
-      createdByUser: $("filter-owner").value, itemState: $("filter-state").value,
-      includeExpired: $("include-expired").checked });
-  }
+  function draftState() { return parseExpression($("filter-text").value); }
   function updateDraft() {
-    ["lexical", "semantic", "hybrid"].forEach(function (value) {
-      var option = $("filter-mode").querySelector('option[value="' + value + '"]');
-      option.disabled = !supported(value);
-      option.textContent = "Retrieval · " + value + (capabilities === null ? " (checking availability)" : option.disabled ? " (unavailable)" : "");
+    var draft = null, diagnostic = null;
+    try { draft = draftState(); } catch (error) { diagnostic = error; }
+    var differs = draft === null || JSON.stringify(draft) !== JSON.stringify(state);
+    var unavailable = draft !== null && draft.mode !== "catalogue" && !supported(draft.mode);
+    $("query-diagnostic").hidden = diagnostic === null && !unavailable;
+    $("query-diagnostic").textContent = diagnostic !== null ? diagnostic.message : unavailable ? "Retrieval mode " + draft.mode + " unavailable; no fallback will be sent." : "";
+    $("filter-text").setAttribute("aria-invalid", String(diagnostic !== null));
+    $("refresh-button").disabled = readRoute().error !== null;
+    $("clear-search-button").disabled = composing || $("filter-text").value.length === 0;
+    setText("draft-status", differs ? "Draft changed · press Search to apply. Sort is disabled. Applied: " + (serializeExpression(state) || "all unexpired artifacts · created_at descending") : "Draft matches applied query · Search to run. Typing never sends a request.");
+    document.querySelectorAll("[data-sort]").forEach(function (button) {
+      button.disabled = state.mode !== "catalogue" || differs;
+      button.title = differs ? "Apply or clear the changed draft before sorting" : "Sort applied query";
     });
-    var mode = $("filter-mode").value;
-    var retrieval = mode !== "catalogue";
-    document.querySelectorAll(".catalogue-only").forEach(function (node) { node.hidden = retrieval; });
-    document.querySelectorAll(".retrieval-only").forEach(function (node) { node.hidden = !retrieval; });
-    $("filter-text").placeholder = retrieval ? "Search names and manifest paths" : "Name or artifact ID";
-    if (retrieval) { $("filter-text").maxLength = 4096; }
-    else { $("filter-text").removeAttribute("maxlength"); }
-    $("filter-text").required = retrieval;
-    setText("query-help", !retrieval ? "Catalogue: literal name/ID substring, all states and optional expired artifacts. Press Search to apply; no query syntax or suggestions." :
-      "Retrieval · " + mode + ": metadata names and manifest paths only, never file bytes. Ready, unexpired artifacts; relevance order. " +
-      (mode === "lexical" ? "English full-text words/stems, quoted phrases, OR and -negation; no model call." :
-        mode === "hybrid" ? "English full-text words/stems, quoted phrases, OR and -negation plus semantic similarity; model called only by Search/Refresh." :
-          "Semantic similarity in a bounded candidate window; model called only by Search/Refresh.") +
-      " Use the dedicated filters, not field: expressions; no completion.");
-    var differs = JSON.stringify(draftState()) !== JSON.stringify(state);
-    setText("draft-status", differs ? "Draft controls differ from applied URL · press Search to apply." : "Search controls match the applied URL.");
     setText("sort-summary", state.mode !== "catalogue" ? "Relevance order · not sortable" : "Sorted by " + document.querySelector('[data-sort="' + state.sort + '"]').getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓"));
     setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll within the table to load more; all columns remain available horizontally." : "One bounded page in relevance order. Evidence is a pinned name or manifest path, not file contents; opening details fetches fresh metadata.");
     $("catalogue-table").hidden = state.mode !== "catalogue";
     $("retrieval-results").hidden = state.mode === "catalogue";
   }
   function updateControls() {
-    $("filter-text").value = state.q;
-    $("filter-mode").value = state.mode;
-    $("filter-visibility").value = state.visibility;
-    $("filter-kind").value = state.kind;
-    $("filter-owner").value = state.createdByUser;
-    $("filter-state").value = state.itemState;
-    $("include-expired").checked = state.includeExpired;
+    $("filter-text").value = serializeExpression(state);
+    if (typeof queryEditor !== "undefined") { queryEditor.close(); }
     document.querySelectorAll("[data-sort]").forEach(function (button) {
       var selected = button.dataset.sort === state.sort && state.mode === "catalogue";
       button.disabled = state.mode !== "catalogue";
@@ -213,7 +249,7 @@ import { FileUpload } from "./quick-upload.js";
       if (arrow !== null) { arrow.textContent = selected ? state.direction === "asc" ? "↑" : "↓" : "↕"; }
     });
     document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {
-      button.setAttribute("aria-pressed", String(button.dataset.visibilityPreset === state.visibility));
+      button.setAttribute("aria-pressed", String(button.dataset.visibilityPreset === (state.visibility || "")));
     });
     updateDraft();
   }
@@ -223,9 +259,7 @@ import { FileUpload } from "./quick-upload.js";
     if (observer !== null) { observer.disconnect(); }
     hideRotateOutput();
   }
-  function navigateList(next, submitted, keepDraft) {
-    preservedDraftControls = keepDraft === "all" ? draftState() :
-      keepDraft === "query" ? { q: $("filter-text").value } : null;
+  function navigateList(next, submitted) {
     invalidateNavigation();
     loadedKey = "";
     submittedKey = submitted ? JSON.stringify(next) : null;
@@ -237,39 +271,23 @@ import { FileUpload } from "./quick-upload.js";
   function handleRoute(keepDraft) {
     if (!authenticated) { return; }
     var route = readRoute();
-    var currentDraft = keepDraft === true ? draftState() : null;
+    var currentDraft = keepDraft === true ? $("filter-text").value : null;
     var changed = JSON.stringify(route.state) !== JSON.stringify(state);
     if (changed) {
       // Direct hash/history navigation bypasses navigateList. Fence both a held
       // result and any queued unsent intent before changing the owner of rows.
       invalidateNavigation(); loadedKey = ""; submittedKey = null;
-      preservedDraftControls = null;
     }
     state = route.state;
-    var savedDraft = preservedDraftControls;
-    preservedDraftControls = null;
     updateControls();
-    if (savedDraft !== null) {
-      $("filter-text").value = savedDraft.q;
-      if (savedDraft.mode !== undefined) {
-        $("filter-mode").value = savedDraft.mode;
-        $("filter-visibility").value = savedDraft.visibility;
-        $("filter-kind").value = savedDraft.kind;
-        $("filter-owner").value = savedDraft.createdByUser;
-        $("filter-state").value = savedDraft.itemState;
-        $("include-expired").checked = savedDraft.includeExpired;
-      }
-      updateDraft();
-    }
-    if (!changed && currentDraft !== null) {
-      $("filter-text").value = currentDraft.q;
-      $("filter-mode").value = currentDraft.mode;
-      $("filter-visibility").value = currentDraft.visibility;
-      $("filter-kind").value = currentDraft.kind;
-      $("filter-owner").value = currentDraft.createdByUser;
-      $("filter-state").value = currentDraft.itemState;
-      $("include-expired").checked = currentDraft.includeExpired;
-      updateDraft();
+    if (!changed && currentDraft !== null) { $("filter-text").value = currentDraft; updateDraft(); }
+    if (route.error !== null) {
+      invalidateNavigation(); loadedKey = ""; summaries = []; searchPage = null; nextCursor = null;
+      $("filter-text").value = route.expression; updateDraft(); renderList();
+      $("detail-section").hidden = true; $("dashboard-section").hidden = false;
+      $("retry-list-button").hidden = true;
+      setText("list-status", "Invalid URL query. Edit the visible expression and press Search; no request was sent.");
+      return;
     }
     if (route.id !== null) { showDetail(route.id); return; }
     detailGeneration++; openGeneration++; hideRotateOutput();
@@ -476,7 +494,7 @@ import { FileUpload } from "./quick-upload.js";
     observer.observe($("list-sentinel"));
   }
   function loadPage(reset) {
-    if (!authenticated || readRoute().id !== null || capabilities === null ||
+    if (!authenticated || readRoute().id !== null || readRoute().error !== null || capabilities === null ||
         (state.mode !== "catalogue" && (!supported(state.mode) || submittedKey !== JSON.stringify(state))) ||
         (!reset && (state.mode !== "catalogue" || nextCursor === null || listError || loadedKey !== JSON.stringify(state)))) { return; }
     // Capture the entire intent now. A superseding request replaces only an
@@ -845,13 +863,14 @@ import { FileUpload } from "./quick-upload.js";
   var uploadGeneration = 0;
   var uploadBusy = false;
   var uploadAbort = null;
+  function uploadVisibility() { return document.querySelector('input[name="upload-access"]:checked').value; }
   function clearUploads() {
     uploadGeneration++;
     if (uploadAbort !== null) { uploadAbort.abort(); uploadAbort = null; }
     uploads.forEach(function (item) { item.clear(); });
     uploads = []; uploadBusy = false;
     $("upload-files").value = "";
-    $("upload-visibility").value = "internal";
+    $("upload-internal").checked = true;
     setText("upload-status", ""); renderUploads();
   }
   function renderUploads() {
@@ -883,6 +902,7 @@ import { FileUpload } from "./quick-upload.js";
     $("upload-submit").disabled = uploadBusy || !uploads.some(function (item) { return item.phase !== "ready" && item.phase !== "init-uncertain"; });
     $("upload-files").disabled = uploadBusy;
     $("upload-visibility").disabled = uploadBusy;
+    $("upload-access-help").hidden = uploadVisibility() !== "external";
   }
   function stageFiles(files) {
     if (!authenticated || uploadBusy || $("logout-button").disabled) { return; }
@@ -890,10 +910,11 @@ import { FileUpload } from "./quick-upload.js";
       if (!file.name || /[\\/\x00-\x1f\x7f]/.test(file.name) || file.name === "." || file.name === "..") {
         setText("upload-status", "Rejected an unsupported file name. Rename it before uploading."); return;
       }
-      uploads.push(new FileUpload(file, $("upload-visibility").value));
+      uploads.push(new FileUpload(file, uploadVisibility()));
     });
     $("upload-files").value = ""; renderUploads();
   }
+  $("upload-visibility").addEventListener("change", renderUploads);
   $("upload-files").addEventListener("change", function (event) { stageFiles(event.target.files); });
   document.addEventListener("paste", function (event) {
     if (authenticated && event.clipboardData && event.clipboardData.files.length) {
@@ -910,7 +931,7 @@ import { FileUpload } from "./quick-upload.js";
     if (!authenticated || uploadBusy || $("logout-button").disabled) { return; }
     var generation = uploadGeneration, epoch = sessionEpoch;
     uploads.forEach(function (item) {
-      if (item.id === null && item.phase !== "init-uncertain") { item.visibility = $("upload-visibility").value; }
+      if (item.id === null && item.phase !== "init-uncertain") { item.visibility = uploadVisibility(); }
     });
     var controller = new AbortController(); uploadAbort = controller; uploadBusy = true;
     function check() { if (!authenticated || generation !== uploadGeneration || epoch !== sessionEpoch) { throw new Error("cancelled"); } }
@@ -945,22 +966,10 @@ import { FileUpload } from "./quick-upload.js";
   $("list-form").addEventListener("submit", function (event) {
     event.preventDefault();
     if (composing || event.isComposing || pointerCompositionBlocked) { return; }
-    var next = draftState();
-    if (next.mode !== "catalogue" && (!next.q.trim() || next.q.length > 4096)) { setText("draft-status", "Retrieval requires a query of at most 4096 characters."); return; }
-    navigateList(next, true, false);
+    try { navigateList(draftState(), true); }
+    catch (error) { updateDraft(); $("filter-text").focus(); $("filter-text").setSelectionRange(error.start,error.end); }
   });
-  ["filter-visibility", "filter-state", "include-expired"].forEach(function (id) {
-    $(id).addEventListener("change", function () {
-      if (state.mode === "catalogue" && $("filter-mode").value === "catalogue") {
-        navigateList(Object.assign({}, state, { visibility: $("filter-visibility").value,
-          itemState: $("filter-state").value, includeExpired: $("include-expired").checked }), true, "all");
-      } else { updateDraft(); }
-    });
-  });
-  ["filter-text", "filter-mode", "filter-visibility", "filter-kind", "filter-owner"].forEach(function (id) {
-    $(id).addEventListener("input", updateDraft);
-    $(id).addEventListener("change", updateDraft);
-  });
+  var queryEditor = expressionInput($("filter-text"), $("query-suggestions"), updateDraft, function (active) { composing = active; updateDraft(); });
   $("search-submit").addEventListener("pointerdown", function (event) {
     pointerCompositionBlocked = composing;
     if (composing) { event.preventDefault(); }
@@ -978,13 +987,10 @@ import { FileUpload } from "./quick-upload.js";
   document.addEventListener("pointerdown", function (event) {
     if (!event.composedPath().includes($("search-submit"))) { pointerCompositionBlocked = false; }
   });
-  $("filter-text").addEventListener("compositionstart", function () { composing = true; });
-  $("filter-text").addEventListener("compositionend", function () { composing = false; updateDraft(); });
-  $("filter-text").addEventListener("keydown", function (event) {
-    if (event.key === "Escape" && !event.isComposing && !composing) { event.preventDefault(); $("filter-text").value = ""; updateDraft(); }
-    if (event.key === "Enter" && (event.isComposing || composing || event.keyCode === 229)) { event.preventDefault(); }
+  $("clear-search-button").addEventListener("click", queryEditor.reset);
+  $("query-diagnostic").addEventListener("click", function () {
+    try { draftState(); } catch (error) { $("filter-text").focus(); $("filter-text").setSelectionRange(error.start,error.end); }
   });
-  $("clear-search-button").addEventListener("click", function () { $("filter-text").value = ""; $("filter-text").focus(); updateDraft(); });
   document.addEventListener("keydown", function (event) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !event.altKey &&
         !event.isComposing && !composing && authenticated && !$("workspace-shell").hidden &&
@@ -1003,12 +1009,16 @@ import { FileUpload } from "./quick-upload.js";
   document.querySelectorAll("[data-sort]").forEach(function (button) {
     button.addEventListener("click", function () {
       var sort = button.dataset.sort;
-      navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }), false, "all");
+      if (button.disabled) { return; }
+      navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }), false);
     });
   });
   document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {
     button.addEventListener("click", function () {
-      navigateList(Object.assign({}, state, { mode: "catalogue", visibility: button.dataset.visibilityPreset, itemState: "", includeExpired: false, sort: "created_at", direction: "desc" }), true, "query");
+      if (composing) { return; }
+      $("filter-text").value = button.dataset.visibilityPreset ? "access:" + button.dataset.visibilityPreset + " " : "";
+      $("filter-text").focus(); $("filter-text").setSelectionRange($("filter-text").value.length,$("filter-text").value.length);
+      queryEditor.close(); updateDraft();
     });
   });
   $("open-button").addEventListener("click", function () { if (currentDetailId !== null) { openArtifact(currentDetailId, currentDetailInfo); } });

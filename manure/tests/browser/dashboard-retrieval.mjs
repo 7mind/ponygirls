@@ -36,37 +36,32 @@ try{
   await page.locator('#login-form button[type=submit]').click();
   await page.locator('#whoami-text').waitFor({state:'visible',timeout:15000});
   await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('shown'),null,{timeout:15000});
-  const mode=page.locator('#filter-mode'),query=page.locator('#filter-text');
-  assert.equal(await mode.inputValue(),'catalogue');
+  const query=page.locator('#filter-text');
+  assert.equal(await query.inputValue(),'');
   if(input.stage==='outage'){
-    await mode.selectOption('hybrid');await query.fill('hayneedle');
+    await query.fill('mode:hybrid hayneedle');
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#list-error').textContent.includes('search-unavailable'),null,{timeout:15000});
     assert.equal(await page.locator('#retrieval-results').textContent(),'');
     assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode)),['Hybrid'],
       'hybrid failure must not fall back to lexical');
-    await mode.selectOption('lexical');
+    await query.fill('mode:lexical hayneedle');
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#retrieval-results').textContent.includes('hayneedle'),null,{timeout:15000});
     assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode)),['Hybrid','Lexical']);
   } else if(input.stage==='no-provider'){
     await page.goto(input.base+'/#/artifacts?mode=semantic&q=hayneedle',{waitUntil:'domcontentloaded'});
     await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('unavailable'),null,{timeout:15000});
-    assert.equal(await mode.inputValue(),'semantic');
-    assert.equal(await page.locator('#filter-mode option[value="semantic"]').isDisabled(),true);
-    assert.equal(await page.locator('#filter-mode option[value="hybrid"]').isDisabled(),true);
-    assert.equal(await page.locator('#filter-mode option[value="lexical"]').isDisabled(),false);
+    assert.equal(await query.inputValue(),'mode:semantic hayneedle');
+    assert.match(await page.locator('#query-diagnostic').textContent(),/unavailable/);
     assert.equal(await page.locator('#retrieval-results').textContent(),'');
     assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue')),[]);
-    await mode.selectOption('lexical');await query.fill('hayneedle');
+    await query.fill('mode:lexical hayneedle');
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#retrieval-results').textContent.includes('hayneedle'),null,{timeout:15000});
     assert.equal((await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode==='Lexical'))).length,1);
   } else {
-    await mode.selectOption('lexical');await query.fill('hayneedle');
-    await page.locator('#filter-visibility').selectOption('external');
-    await page.locator('#filter-kind').selectOption('dir');
-    await page.locator('#filter-owner').fill('search-manager');
+    await query.fill('mode:lexical access:external kind:dir owner:search-manager hayneedle');
     assert.equal(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').length),0,'draft never sends search');
     await page.locator('#list-form button[type=submit]').click();
     await page.waitForFunction(()=>document.querySelector('#retrieval-results').textContent.includes('hayneedle'),null,{timeout:15000});
@@ -79,7 +74,7 @@ try{
     assert.ok(command.limit<=25 && command.limit>0);assert.equal(command.cursor,null);
     if(input.stage==='semantic'){
       const record=async selected=>{
-        await mode.selectOption(selected);await page.locator('#list-form button[type=submit]').click();
+        await query.fill('mode:'+selected+' access:external kind:dir owner:search-manager hayneedle');await page.locator('#list-form button[type=submit]').click();
         await page.waitForFunction((wanted)=>document.querySelector('#list-status').textContent.includes('candidate-window') &&
           window.__retrieval.commands.at(-1)?.mode===wanted,selected[0].toUpperCase()+selected.slice(1),{timeout:15000});
         assert.match(await page.locator('#list-status').textContent(),/not a corpus-wide total/);
@@ -108,7 +103,7 @@ try{
       await page.locator('#clear-search-button').click();
       assert.equal(await page.locator('#filter-text').inputValue(),'');
       assert.equal(await page.evaluate(()=>document.activeElement.id),'filter-text');
-      await page.locator('#filter-text').fill('hayneedle');
+      await page.locator('#filter-text').fill('mode:hybrid access:external kind:dir owner:search-manager hayneedle');
       await page.locator('#filter-text').dispatchEvent('compositionstart');
       await page.locator('#filter-text').press('Enter');
       assert.equal(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode==='Hybrid').length),1,

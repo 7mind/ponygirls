@@ -240,10 +240,11 @@ await check("all six access transitions preserve metadata and enforce real acces
     await hiddenPassword(page);
     await page.locator("#detail-back-button").click();
     await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("shown"));
-    assert.equal(await page.locator("#filter-visibility").inputValue(), source);
+    assert.equal(await page.locator("#filter-text").inputValue(), "access:"+source+" sort:visibility direction:asc");
     assert.equal(await page.locator('[data-sort="visibility"]').evaluate((node) => node.closest("th").getAttribute("aria-sort")), "ascending");
     assert.equal(await page.locator(`#artifact-list tr[data-artifact-id="${original.artifact_id}"]`).count(), 0, "old filtered catalogue must not retain changed access");
-    await page.locator("#filter-visibility").selectOption(target);
+    await page.locator("#filter-text").fill("access:"+target+" sort:visibility direction:asc");
+    await page.locator("#search-submit").click();
     await page.waitForFunction(({ id, target }) => {
       const row = document.querySelector(`#artifact-list tr[data-artifact-id="${id}"]`);
       return document.querySelector("#list-status").textContent.includes("shown") && row?.children[2].textContent === target;

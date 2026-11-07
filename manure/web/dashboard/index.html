@@ -64,18 +64,20 @@ aria-describedby="token-note">
 <main id="main" class="workspace-main" tabindex="-1">
 <header class="topbar"><span>Workspace<span class="breadcrumb-separator" aria-hidden="true">/</span><strong>Artifacts</strong></span><span class="service-label">Artifact management <span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span></span></header>
 <div class="workspace-content">
-<section id="quick-upload" class="detail-panel quick-upload" aria-labelledby="upload-heading">
-<h2 id="upload-heading">Quick upload</h2>
-<p id="upload-help">Paste a screenshot (Ctrl+V), drop files here, or choose files. Files are staged only: Upload explicitly publishes each as a separate artifact. Directories use the CLI.</p>
+<section id="quick-upload" class="detail-panel quick-upload" aria-label="Quick upload" title="Paste or drop files to stage; Upload publishes each file. Directories use the CLI.">
 <form id="upload-form">
-<label for="upload-files">Choose files</label>
-<input id="upload-files" type="file" multiple aria-describedby="upload-help">
-<label for="upload-visibility">Access for files not yet initialized</label>
-<select id="upload-visibility" aria-describedby="upload-access-help"><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select>
-<p id="upload-access-help">Internal: authenticated readers only (a remote agent needs Manure credentials). External: password required, shown once. Public: anyone who can reach the link can read it. Links never contain passwords.</p>
-<button id="upload-submit" type="submit" class="primary" disabled>Upload staged files / retry</button>
-<button id="upload-clear" type="button">Dismiss uploads &amp; passwords</button>
+<label for="upload-files" class="sr-only">Stage files</label>
+<input id="upload-files" type="file" multiple aria-label="Stage files" title="Choose files, paste, or drop to stage. Upload publishes each file separately.">
+<fieldset id="upload-visibility" class="access-segments" aria-label="Upload access">
+<legend class="sr-only">Upload access</legend>
+<label title="Authenticated readers only"><input id="upload-internal" type="radio" name="upload-access" value="internal" checked><span>Internal</span></label>
+<label title="Password required; shown once after upload"><input id="upload-external" type="radio" name="upload-access" value="external"><span>External</span></label>
+<label title="Anyone with the link can read"><input id="upload-public" type="radio" name="upload-access" value="public"><span>Public</span></label>
+</fieldset>
+<button id="upload-submit" type="submit" class="primary" title="Publish staged files or retry the same uploads" disabled>Upload</button>
+<button id="upload-clear" type="button" title="Dismiss staged files, outcomes and one-time passwords">Dismiss</button>
 </form>
+<p id="upload-access-help" role="status" hidden>External passwords are shown once after upload. Save them before dismissing; links never include passwords.</p>
 <p id="upload-status" role="status" aria-live="polite"></p>
 <ul id="upload-list" aria-label="Staged uploads"></ul>
 </section>
@@ -89,16 +91,18 @@ aria-describedby="token-note">
 </div>
 
 <form id="list-form" class="search-panel">
-<div class="query-control"><label for="filter-mode">Search mode</label><select id="filter-mode"><option value="catalogue">Catalogue · name/ID</option><option value="lexical">Retrieval · lexical</option><option value="semantic">Retrieval · semantic</option><option value="hybrid">Retrieval · hybrid</option></select></div>
-<div class="query-control query-text"><label for="filter-text">Search artifacts</label><div class="query-input"><input type="search" id="filter-text" placeholder="Name or artifact ID" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear search query">Clear</button></div></div>
-<div class="query-control"><label for="filter-visibility">Access</label><select id="filter-visibility"><option value="">All access modes</option><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select></div>
-<div class="query-control catalogue-only"><label for="filter-state">State</label><select id="filter-state"><option value="">All states</option><option value="ready">Ready</option><option value="uploading">Uploading</option><option value="publishing">Publishing</option></select></div>
-<div class="query-control retrieval-only" hidden><label for="filter-kind">Kind</label><select id="filter-kind"><option value="">All kinds</option><option value="file">File</option><option value="dir">Directory</option></select></div>
-<div class="query-control retrieval-only" hidden><label for="filter-owner">Created by user</label><input id="filter-owner" type="text" autocomplete="off" spellcheck="false" placeholder="Any creator"></div>
-<div class="search-actions"><button type="submit" id="search-submit" class="primary">Search</button><button type="button" id="refresh-button">Refresh</button></div>
-<label for="include-expired" class="checkbox-label catalogue-only"><input type="checkbox" id="include-expired"> Include expired artifacts</label>
-<p id="query-help" class="search-help">Catalogue searches name or ID as a literal substring. Press Search to apply; no query syntax or suggestions.</p>
-<p id="draft-status" class="search-help" role="status">Search controls match the applied URL.</p>
+<div class="query-control query-text"><label for="filter-text">Search artifacts</label>
+<div class="expression-composer"><div class="query-input"><input type="text" id="filter-text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="query-suggestions" aria-describedby="query-diagnostic draft-status" maxlength="4096" placeholder="Search or filter · access:public" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear draft · Escape after closing suggestions">×</button></div>
+<div id="query-suggestions" class="expression-hints" role="listbox" aria-label="Expression suggestions" hidden></div></div></div>
+<div class="search-actions"><button type="submit" id="search-submit" class="primary">Search</button><button type="button" id="refresh-button" title="Refresh applied query, not the draft">Refresh</button></div>
+<p id="query-diagnostic" class="query-diagnostic" role="status" hidden></p>
+<p id="draft-status" class="search-help" role="status">Draft matches applied query.</p>
+<details id="query-syntax" class="search-help"><summary>Query syntax</summary>
+<p>Press Search to apply. Typing and suggestions never run retrieval. Fields are conjunctions: <code>access:internal|external|public</code>, <code>mode:catalogue|lexical|semantic|hybrid</code>.</p>
+<p>Catalogue: literal name/ID text; <code>state:ready|uploading|publishing</code>, <code>expired:true|false</code>, <code>sort:name</code>, <code>direction:asc|desc</code>. Defaults: unexpired, created_at descending.</p>
+<p>Retrieval: names and manifest paths, never file bytes; <code>kind:file|dir</code>, <code>owner:"Exact User"</code>. Ready, unexpired artifacts; relevance order. Lexical uses English words/stems, quoted phrases, OR and -negation. Semantic/hybrid call the model only on Search or Refresh.</p>
+<p>Use <code>text:"exact text: with spaces"</code> for literal colons, JSON escapes, or arbitrary retrieval syntax. Do not combine text: with bare terms. Field names ignore case; values are exact lowercase. ↑↓ select · Enter insert · Escape close, then clear · Ctrl/⌘ K focus.</p>
+</details>
 </form>
 
 <div class="results-heading"><h2>Results <span id="loaded-count" class="count-badge">0 loaded</span></h2><span id="sort-summary">Created · newest first</span></div>
