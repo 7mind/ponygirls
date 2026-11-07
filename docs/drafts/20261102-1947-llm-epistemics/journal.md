@@ -3141,3 +3141,64 @@ remain historical findings; neither repairs nor M1 establish a workflow advantag
 Q22 was freshly observed pending/null at2026-11-06T12:39Z; neither increment selects
 its export policy. No client/service/CQ4/application implementation, deployment,
 push or skill installation is authorized or claimed [L22].
+
+## J38 — Pilot U complete; freeze development and retain notes default (2026-11-07)
+
+The accepted bounded course was finish U without participant replacement/rerun,
+freeze further broad graph development, keep source-linked notes provisional,
+and leave M1 unimplemented. [U findings](pilot-u-findings.md) now report the completed
+comparison, not the prospective counts at J37. No later outcome rescues an original
+failure or retrospectively validates an earlier inspection attestation.
+
+64 originals/128 planned stages/125 attempted stages remain.61 are process/replay
+valid, three invalid/unscored. Frozen credentialless functional execution finds54/61
+adequate on both stages;112/122 stages adequate,10 failed;1830 inputs,1733 adequate
+and97 failed. Parent305 semantic rows are283 adequate/21 material/one uncertain:
+separate non-blind Agent judgments, not Human gold, after seeing A/B advisories.
+The ambiguity in V057's claimed empty-items execution remains uncertain. Historical
+parent delivery overclaims are withdrawn, affected source ranges recovered/bound,
+and old notes/scripts/receipts/commits preserved. Hashes/strictness/delivery are not
+semantic approval; a shared mechanism may affect multiple rows.
+
+The complete parent was freshly strictly validated before quality freeze, and the
+quality file persisted/hashed before resource extraction. Combined notes outcomes
+are23 pass/7 fail/2 unavailable out of32; graph24/6/2.28/32 paired quality outcomes
+are available:19 both pass,4 graph-only,4 notes-only,1 both fail. Uncertain/invalid
+is not passed, failed by imputation or zero-cost.19 exact pairs qualify for the
+post-treatment descriptive resource comparison: graph-assigned tokens higher19/19,
+calls18/19, returned text17/19, argument bytes18/19, elapsed16/19. Complete all-attempt
+condition totals remain unavailable; observed subtotals remain separate.
+
+Configured-model/uptake qualification matters: all16 Sol pairs pass both arms, and
+all16 graph-assigned Sol originals use graph tools; NONE of14 valid DeepSeek graph
+originals does so, with two additional unknown. Nonuse neither reassigns an original
+nor automatically fails semantics. The3 qualified DeepSeek pairs have higher graph
+reported tokens but lower elapsed, whereas all16 Sol pairs have higher graph tokens,
+calls and elapsed. These are workflow-bundle/assignment observations, not isolated
+serialization, general model ranking or a causal use effect. No significance,
+equivalence, quality-cost composite or Human workload/usability benefit is claimed.
+
+A/B122 exact originals/610 cached strict-valid rows remain separate: agreement299/305,
+disagreement6; parent differs from A on16/B on18. Exact-input cached validation was
+reused explicitly, not rerun or promoted to semantic truth. Final review found a
+missing non-blind-Agent disclosure in standalone report001. A fail-first reproduction
+preceded a versioned disclosure-only successor;8 presentation tests pass, original
+bytes and typed numerical summary unchanged. The historical registered formatter
+was not modified. Final report002 includes the methodological limitation.
+
+Research source `524bdc3f0e7284bf470fba2f6ebb28faad1ddec3` is integrated in
+`~/work/epistemics-pilots`; its registered report composes canonically identically
+from main, with source bindings and presentation summary preserved. Full source,
+counts, failed launches, corrections, raw freeze, quality freeze, resource availability
+and report/repair evidence remain in `results/pilot-u/`. Task-worktree archival/removal
+and post-removal verification are separate gates, not established by this entry.
+
+Disposition: retain source-linked notes provisional default; shelve graph-by-default
+and further broad development, no new pilot or M1 implementation/deployment. No
+concrete narrow graph capability benefit warrants continuation now. This is a bounded
+engineering allocation judgment, not intrinsic graph inferiority. Existing CQ4
+provenance/dependency/authorization/CAS/history safeguards stay. Local r7 remains
+preserved/inert/uninstalled; delegated overlap analysis found no useful new candidate.
+No service/CQ4/application implementation, migration, deployment, push or skill
+activation occurred. Future work requires a newly authorized concrete capability,
+decision, independent assessment basis and exit criterion.

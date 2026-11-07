@@ -188,6 +188,7 @@ measure, numerical cap or no-hard-cap agreement exists here; no proxy is introdu
 | Bounded human case, J29 [L14] | One participant explicitly confirmed a consolidated framing; sources and later adoption remained inspectable; the governing purpose was explicitly reanchored. | Comparative fidelity/effort benefits, complete latent intent or a genuine scenario-revision result. Revision was declined; delivery was outside scope. |
 | Cooperative CLI [L11, L14] | Its 36-method public software suite passed; the bounded case's record, projection and history checks passed. | Authenticated human authority, semantic approval, inferred support, human efficacy or application security. |
 | Pilot T, J34 [L19] |16 originals;13 process-valid, all passing336 finite independent functional inputs;12 meet all primary criteria after separate source-based semantics. Strong notes meet the configured criteria; no graph advantage demonstrated. | Three graph process-invalids are not three incorrect artifacts. Ceiling effects, varied graph uptake, differential instrument failure and four post-treatment qualified pairs do not establish pure-schema effects, general equivalence/efficiency or Human benefit. |
+| Pilot U, J38 |64 originals;61 process/replay valid,54 adequate on both functional stages;19/32 quality-qualified pairs. Available quality discordances4 graph-only/4 notes-only; graph-assigned reported tokens higher19/19 qualified pairs. | Non-blind Agent judgments are not Human gold. Four pair outcomes unavailable;14 valid graph nonusers remain graph-assigned. No causal/pure-schema/equivalence/Human-benefit or monetary-cost result. |
 
 The [T delivery/revision comparison](workflow-benefit-pilot.md) preserves the distinction
 between artifact correctness and faithful evidence/completion reports: one graph
@@ -242,3 +243,10 @@ These are candidate research directions, not new run instructions. Comparative
 acceptance quality, continuing usability and human effort require their own
 prospective design and authorization; product construction is not automatically
 the next step after confirming a framing example.
+
+After [Pilot U](pilot-u-findings.md)/J38, retain source-linked notes as the
+provisional default and shelve graph-by-default/further broad graph development.
+No narrow graph capability benefit is demonstrated that warrants continuation now.
+M1 remains archived/unimplemented; no new pilot, deployment or application work is
+implied. This bounded allocation decision does not remove existing CQ4 safeguards
+or establish that graphs are intrinsically inferior.

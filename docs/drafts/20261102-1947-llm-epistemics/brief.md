@@ -169,9 +169,25 @@ the representation available—not unaided recall, confidence or graph size. No
 accepted mechanical attention/overload measure or numeric/no-hard-cap agreement
 exists here. Do not revive NASA-TLX or substitute time/question counts as a proxy.
 
+## Current boundary after Pilot U
+
+[Pilot U findings](pilot-u-findings.md)/J38 complete the repaired comparison:
+19/32 quality-qualified pairs, balanced4/4 available quality discordances, higher
+reported tokens for graph assignment19/19 qualified pairs. Primary judgments are
+non-blind Agent assessments, not Human gold; graph nonuse and unavailable outcomes
+remain explicit. This is no causal/schema-superiority or Human-effort result.
+
+Keep source-linked notes as the provisional default. Shelve graph-by-default and
+further broad graph development; no new pilot or M1 implementation/deployment.
+Preserve existing CQ4 provenance/dependency/authorization/CAS/history safeguards.
+M1 remains an archived, unimplemented design candidate; local r7 remains inert and
+uninstalled. A concrete new capability/decision/assessment/exit proposal would need
+new authorization, not automatic continuation from these findings.
+
 ## Handover and next boundary
 
-- Read: this brief → [shared schema](cq4-node-schema.md) →
+- Read: this brief → [Pilot U findings](pilot-u-findings.md)/J38 →
+  [shared schema](cq4-node-schema.md) →
   [semantics/worked trace](cq4-unified-graph-semantics.md) →
   [agent-memory M1 candidate](agent-memory-m1.md)/J37 →
   [Pilot T diagnostics](pilot-t-diagnostics.md)/J36 →
