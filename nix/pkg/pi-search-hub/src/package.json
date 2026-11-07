@@ -1,0 +1,75 @@
+{
+  "name": "pi-search-hub",
+  "version": "2.8.0",
+  "description": "Unified web search + content extraction extension for pi with 19 backends (DuckDuckGo, Jina AI, Tavily, Brave, Brave LLM, Exa, Exa MCP, OpenAI Codex, Serper, Firecrawl [keyless], fastCRW, Marginalia, LangSearch, Linkup, Perplexity Sonar, SearXNG, WebSearchAPI, You.com, Sofya). Auto-fallback, RRF combine mode, pluggable web_read reader (Jina or Sofya), secure credential resolution.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "search",
+    "web-search",
+    "web-read",
+    "content-extraction",
+    "search-hub",
+    "duckduckgo",
+    "jina",
+    "tavily",
+    "serper",
+    "exa",
+    "brave",
+    "firecrawl",
+    "langsearch",
+    "websearchapi",
+    "perplexity",
+    "brave-llm",
+    "fastcrw",
+    "linkup",
+    "youcom",
+    "sofya",
+    "openai-codex",
+    "rrf",
+    "ai-agent"
+  ],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "bugs": {
+    "url": "https://github.com/ronnieops/pi-search-hub/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ronnieops/pi-search-hub.git"
+  },
+  "homepage": "https://github.com/ronnieops/pi-search-hub#readme",
+  "pi": {
+    "extensions": [
+      "./extensions/search-hub.ts"
+    ],
+    "image": "https://pi.dev/assets/packages/pi-search-hub.png"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-ai": {
+      "optional": true
+    },
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    }
+  },
+  "dependencies": {
+    "wreq-js": "^2.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.7"
+  }
+}

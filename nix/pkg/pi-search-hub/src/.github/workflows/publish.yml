@@ -1,0 +1,63 @@
+name: Publish Package
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish (must match package.json)"
+        required: true
+        type: string
+
+  release:
+    types: [published]
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          registry-url: 'https://registry.npmjs.org'
+
+      - run: npm ci
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Verify version
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          if [ -n "${{ inputs.version }}" ] && [ "$PKG_VERSION" != "${{ inputs.version }}" ]; then
+            echo "ERROR: package.json version ($PKG_VERSION) != requested version (${{ inputs.version }})"
+            exit 1
+          fi
+          echo "Publishing $NAME@$PKG_VERSION"
+
+      - name: Check if version already published
+        id: check
+        run: |
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          NAME=$(node -p "require('./package.json').name")
+          EXISTING=$(npm view "$NAME@$PKG_VERSION" version 2>/dev/null || echo "")
+          if [ -n "$EXISTING" ]; then
+            echo "$NAME@$PKG_VERSION already published — skipping"
+            echo "skip_publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "$NAME@$PKG_VERSION not on registry — will publish"
+            echo "skip_publish=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: steps.check.outputs.skip_publish != 'true'
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
