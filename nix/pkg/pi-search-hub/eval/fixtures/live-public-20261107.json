@@ -1,0 +1,1876 @@
+{
+  "schema": 1,
+  "binding": {
+    "sourceSha256": "c407aedf18c65aea85092a9f6dbc079ff8fef4cfe0b2043c734743aa8f0dfbf5",
+    "harnessSha256": "853e822e9b72bad7fc59a2c5d02e12a902e1fabb0910a8ef71f679a340f6bdf2",
+    "queriesSha256": "51b2ac6ed402736e9a74b8b139b91d52343e0507165add5acb6c038744ad15fd",
+    "sdk": "/nix/store/z0whzcf3qadlbapf48whxgdq2p5l4aaw-pi-coding-agent-1.4.0/lib/node_modules/pi-monorepo",
+    "dispatchSha256": "0ba96a017846b8b495f3117dac8c258499f5c1cd342a556428ff774ebbe764f2"
+  },
+  "note": "Public URL/rank metadata only. Non-target documents are unjudged, not irrelevant. Native source encounter order is not verified relevance order.",
+  "cases": [
+    {
+      "query": {
+        "id": "http429",
+        "split": "development",
+        "query": "HTTP 429 meaning Retry-After official specification",
+        "targets": [
+          {
+            "host": "www.rfc-editor.org",
+            "path": "^/(rfc/rfc6585\\.(html|txt)|info/rfc6585)/?$"
+          },
+          {
+            "host": "datatracker.ietf.org",
+            "path": "^/doc/html/rfc6585/?$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:48:21.565Z",
+      "elapsedMs": 21697,
+      "rawRecordSha256": "55d5bdc114ba0e9fb3f4fc92fd4799292e9dde1322dd896786a065e9843c5395",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1554,
+          "documents": [
+            "https://www.rfc-editor.org/rfc/rfc6585.html",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+            "https://www.iana.org/assignments/http-status-codes",
+            "https://www.rfc-editor.org/rfc/rfc9110.pdf",
+            "https://routebase.dev/guides/api-design/api-rate-limiting/",
+            "https://softwareengineering.stackexchange.com/questions/128512/suggested-http-rest-status-code-for-request-limit-reached",
+            "https://qodex.ai/blog/http-429-too-many-requests",
+            "https://wheregoes.com/http-status-codes/429/",
+            "https://www.bortzmeyer.org/6585.pdf"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 979,
+          "documents": [
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429",
+            "https://zuplo.com/learning-center/http-429-too-many-requests-guide",
+            "https://datatracker.ietf.org/doc/html/rfc6585",
+            "https://http.dev/retry-after",
+            "https://adaptlypost.com/blog/social-media-api-429-retry-after",
+            "https://www.host-tracker.com/en/learn/http-status-codes/429-too-many-requests",
+            "https://mdn2.netlify.app/en-us/docs/web/http/status/429/",
+            "https://http.dev/429"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1555,
+          "documents": [
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+            "https://httpwg.org/specs/rfc6585.html",
+            "https://www.rfc-editor.org/info/rfc6585/",
+            "https://howhttpworks.com/status-codes/429",
+            "https://learn.microsoft.com/en-us/microsoft-cloud/dev/dev-proxy/concepts/retry-after-header",
+            "https://http.dev/retry-after",
+            "https://openllm.wavise.com/blog/http-rate-limiting-reference",
+            "https://we.inc/guides/http-429-too-many-requests",
+            "https://www.rfc-editor.org/rfc/rfc6585.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2082,
+          "documents": [
+            "https://blog.sucuri.net/2024/05/what-is-http-error-429-too-many-requests.html",
+            "https://adobe-apiplatform.github.io/umapi-documentation/en/api/getUsersWithPage.html",
+            "https://github.com/matrix-org/matrix-spec-proposals/pull/4041/commits/39435c446ba7776e26a8f9c57bff6dde89383cca"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1192,
+          "documents": [
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+            "https://pulsetic.com/errors/429-too-many-requests/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 11885,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After?trk=article-ssr-frontend-pulse_little-text-block",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429?trk=article-ssr-frontend-pulse_little-text-block",
+            "https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-429/",
+            "https://datatracker.ietf.org/doc/html/rfc9110",
+            "https://datatracker.ietf.org/doc/rfc9110/",
+            "https://github.com/mdn/content/blob/main/files/en-us/web/http/reference/status/429/index.md?plain=1",
+            "https://github.com/mdn/content/blob/main/files/en-us/web/http/reference/headers/retry-after/index.md?plain=1",
+            "https://github.com/mdn/content/blob/main/files/en-us/web/http/reference/status/429/index.md",
+            "https://httpwg.org/specs/rfc6585.html",
+            "https://www.ietf.org/rfc/rfc6585.txt.pdf"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 21694,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://http.dev/retry-after",
+            "https://zuplo.com/learning-center/http-429-too-many-requests-guide",
+            "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+            "https://pulsetic.com/errors/429-too-many-requests/",
+            "https://www.context.dev/glossary/http-errors/429",
+            "https://adaptlypost.com/blog/social-media-api-429-retry-after",
+            "https://dnsrobot.net/blog/http-error-429",
+            "https://www.sume.com/blog/retry-after-header-429-how-long-to-wait",
+            "https://blog.postman.com/http-error-429/"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After",
+        "https://http.dev/retry-after",
+        "https://zuplo.com/learning-center/http-429-too-many-requests-guide",
+        "https://pulsetic.com/errors/429-too-many-requests/",
+        "https://www.rfc-editor.org/rfc/rfc6585.html",
+        "https://httpwg.org/specs/rfc6585.html",
+        "https://adaptlypost.com/blog/social-media-api-429-retry-after",
+        "https://blog.sucuri.net/2024/05/what-is-http-error-429-too-many-requests.html",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Retry-After?trk=article-ssr-frontend-pulse_little-text-block",
+        "https://adobe-apiplatform.github.io/umapi-documentation/en/api/getUsersWithPage.html",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Status/429?trk=article-ssr-frontend-pulse_little-text-block",
+        "https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/429",
+        "https://github.com/matrix-org/matrix-spec-proposals/pull/4041/commits/39435c446ba7776e26a8f9c57bff6dde89383cca",
+        "https://developers.cloudflare.com/support/troubleshooting/http-status-codes/4xx-client-error/error-429/",
+        "https://www.iana.org/assignments/http-status-codes",
+        "https://www.rfc-editor.org/info/rfc6585/",
+        "https://datatracker.ietf.org/doc/html/rfc9110",
+        "https://www.rfc-editor.org/rfc/rfc9110.pdf",
+        "https://datatracker.ietf.org/doc/html/rfc6585",
+        "https://howhttpworks.com/status-codes/429",
+        "https://datatracker.ietf.org/doc/rfc9110/",
+        "https://www.context.dev/glossary/http-errors/429",
+        "https://routebase.dev/guides/api-design/api-rate-limiting/",
+        "https://learn.microsoft.com/en-us/microsoft-cloud/dev/dev-proxy/concepts/retry-after-header",
+        "https://github.com/mdn/content/blob/main/files/en-us/web/http/reference/status/429/index.md?plain=1",
+        "https://softwareengineering.stackexchange.com/questions/128512/suggested-http-rest-status-code-for-request-limit-reached",
+        "https://github.com/mdn/content/blob/main/files/en-us/web/http/reference/headers/retry-after/index.md?plain=1",
+        "https://dnsrobot.net/blog/http-error-429",
+        "https://qodex.ai/blog/http-429-too-many-requests",
+        "https://www.host-tracker.com/en/learn/http-status-codes/429-too-many-requests",
+        "https://openllm.wavise.com/blog/http-rate-limiting-reference",
+        "https://github.com/mdn/content/blob/main/files/en-us/web/http/reference/status/429/index.md",
+        "https://www.sume.com/blog/retry-after-header-429-how-long-to-wait",
+        "https://wheregoes.com/http-status-codes/429/",
+        "https://mdn2.netlify.app/en-us/docs/web/http/status/429/",
+        "https://we.inc/guides/http-429-too-many-requests",
+        "https://blog.postman.com/http-error-429/",
+        "https://www.bortzmeyer.org/6585.pdf",
+        "https://http.dev/429",
+        "https://www.ietf.org/rfc/rfc6585.txt.pdf"
+      ]
+    },
+    {
+      "query": {
+        "id": "python-taskgroup",
+        "split": "heldout",
+        "query": "Python asyncio TaskGroup task cancellation exceptions official documentation",
+        "targets": [
+          {
+            "host": "docs.python.org",
+            "path": "^/[0-9.]+/library/asyncio-task\\.html$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:48:46.770Z",
+      "elapsedMs": 25204,
+      "rawRecordSha256": "5fe64a762d759355fb6b1fd8508482d34587720cf1b5e6180340b094fac2cfef",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1486,
+          "documents": [
+            "https://docs.python.org/3/library/asyncio-task.html",
+            "https://github.com/python/cpython/blob/main/Lib/asyncio/taskgroups.py",
+            "https://docs.python.org/3/library/asyncio-exceptions.html",
+            "https://github.com/python/cpython/issues/90908",
+            "https://github.com/python/cpython/pull/123837",
+            "https://sglmr.com/blog/python-asyncio-taskgroup-by-example/",
+            "https://discuss.python.org/t/how-to-cancel-all-tasks-created-within-same-taskgroup/30215",
+            "https://stackoverflow.com/questions/75250788/how-to-prevent-python3-11-taskgroup-from-canceling-all-the-tasks",
+            "https://github.com/python/cpython/issues/101581",
+            "https://stackoverflow.com/questions/77974525/what-is-the-right-way-to-await-cancelling-an-asyncio-task"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1061,
+          "documents": [
+            "https://docs.python.org/3/library/asyncio-task.html",
+            "https://docs.python.org/3/library/asyncio-exceptions.html",
+            "https://runebook.dev/en/docs/python/library/asyncio-task/task-groups",
+            "https://stackoverflow.com/questions/75250788/how-to-prevent-python3-11-taskgroup-from-canceling-all-the-tasks",
+            "https://discuss.python.org/t/how-to-cancel-all-tasks-created-within-same-taskgroup/30215",
+            "https://universopython.com/en/blog/python-asyncio-taskgroup",
+            "https://realpython.com/python311-exception-groups/",
+            "https://www.w3schools.in/python/asyncio-taskgroup",
+            "https://stackoverflow.com/questions/78452284/keyboardinterrupt-in-asyncio-taskgroup",
+            "https://dev.to/koladev/creating-and-managing-tasks-with-asyncio-4kjl"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1375,
+          "documents": [
+            "https://docs.python.org/3.11/library/asyncio-task.html",
+            "https://docs.python.org/3/library/asyncio-exceptions.html",
+            "https://stackoverflow.com/questions/76286028/how-to-cancel-all-tasks-in-a-taskgroup",
+            "https://runebook.dev/en/docs/python/library/asyncio-task/task-groups",
+            "https://stackoverflow.com/questions/56052748/python-asyncio-task-cancellation",
+            "https://www.phenomic.io/handling-cancellation-in-python-asyncio/",
+            "https://www.async-concurrency.com/resilience-cancellation-error-handling/exception-groups-and-taskgroups/",
+            "https://www.geeksforgeeks.org/python/python-taskgroups-with-asyncio/",
+            "https://github.com/python/cpython/blob/main/Lib/asyncio/taskgroups.py",
+            "https://superfastpython.com/asyncio-taskgroup/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 3138,
+          "documents": [
+            "https://www.arthrop0d.com/articles/python-asyncio-task-cancellation.html",
+            "https://github.com/python/cpython/issues/108951",
+            "https://github.com/python/cpython/issues/95704"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1126,
+          "documents": [
+            "https://docs.python.org/3/library/asyncio-task.html",
+            "https://stackoverflow.com/questions/75250788/how-to-prevent-python3-11-taskgroup-from-canceling-all-the-tasks",
+            "https://github.com/python/asyncio"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 8890,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://docs.python.org/3/library/asyncio-task.html?highlight=to_thread",
+            "https://docs.python.org/3/library/asyncio-task.html?highlight=n",
+            "https://docs.python.org/3/library/asyncio-task.html?highlight=coroutine_threadsafe",
+            "https://docs.python.org/de/3/library/asyncio-task.html",
+            "https://docs.python.org/3/library/asyncio-task.html?highlight=gather",
+            "https://docs.python.org/3.12/library/asyncio-task.html",
+            "https://docs.python.org/3.16/library/asyncio-task.html",
+            "https://docs.python.org/pl/dev/library/asyncio-task.html",
+            "https://docs.python.org/3.11/library/asyncio-task.html?highlight=asyncio+sleep",
+            "https://docs.python.org/pt-br/3/library/asyncio-task.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 25203,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://docs.python.org/3/library/asyncio-task.html",
+            "https://docs.python.org/3/library/asyncio-exceptions.html",
+            "https://anyio.readthedocs.io/en/stable/tasks.html",
+            "https://universopython.com/en/blog/python-asyncio-taskgroup",
+            "https://www.w3schools.in/python/asyncio-taskgroup",
+            "https://github.com/python/cpython/pull/101648",
+            "https://bruceeckel.substack.com/p/python-311-asynciotaskgroup",
+            "https://github.com/python/cpython/commit/04adf2df395ded81922c71360a5d66b597471e49",
+            "https://github.com/python/cpython/pull/102815/files"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://docs.python.org/3/library/asyncio-task.html",
+        "https://docs.python.org/3/library/asyncio-exceptions.html",
+        "https://stackoverflow.com/questions/75250788/how-to-prevent-python3-11-taskgroup-from-canceling-all-the-tasks",
+        "https://runebook.dev/en/docs/python/library/asyncio-task/task-groups",
+        "https://universopython.com/en/blog/python-asyncio-taskgroup",
+        "https://github.com/python/cpython/blob/main/Lib/asyncio/taskgroups.py",
+        "https://discuss.python.org/t/how-to-cancel-all-tasks-created-within-same-taskgroup/30215",
+        "https://www.w3schools.in/python/asyncio-taskgroup",
+        "https://docs.python.org/3.11/library/asyncio-task.html",
+        "https://www.arthrop0d.com/articles/python-asyncio-task-cancellation.html",
+        "https://docs.python.org/3/library/asyncio-task.html?highlight=to_thread",
+        "https://github.com/python/cpython/issues/108951",
+        "https://docs.python.org/3/library/asyncio-task.html?highlight=n",
+        "https://stackoverflow.com/questions/76286028/how-to-cancel-all-tasks-in-a-taskgroup",
+        "https://github.com/python/cpython/issues/95704",
+        "https://github.com/python/asyncio",
+        "https://docs.python.org/3/library/asyncio-task.html?highlight=coroutine_threadsafe",
+        "https://anyio.readthedocs.io/en/stable/tasks.html",
+        "https://github.com/python/cpython/issues/90908",
+        "https://docs.python.org/de/3/library/asyncio-task.html",
+        "https://github.com/python/cpython/pull/123837",
+        "https://stackoverflow.com/questions/56052748/python-asyncio-task-cancellation",
+        "https://docs.python.org/3/library/asyncio-task.html?highlight=gather",
+        "https://sglmr.com/blog/python-asyncio-taskgroup-by-example/",
+        "https://www.phenomic.io/handling-cancellation-in-python-asyncio/",
+        "https://docs.python.org/3.12/library/asyncio-task.html",
+        "https://github.com/python/cpython/pull/101648",
+        "https://realpython.com/python311-exception-groups/",
+        "https://www.async-concurrency.com/resilience-cancellation-error-handling/exception-groups-and-taskgroups/",
+        "https://docs.python.org/3.16/library/asyncio-task.html",
+        "https://bruceeckel.substack.com/p/python-311-asynciotaskgroup",
+        "https://www.geeksforgeeks.org/python/python-taskgroups-with-asyncio/",
+        "https://docs.python.org/pl/dev/library/asyncio-task.html",
+        "https://github.com/python/cpython/commit/04adf2df395ded81922c71360a5d66b597471e49",
+        "https://github.com/python/cpython/issues/101581",
+        "https://stackoverflow.com/questions/78452284/keyboardinterrupt-in-asyncio-taskgroup",
+        "https://docs.python.org/3.11/library/asyncio-task.html?highlight=asyncio+sleep",
+        "https://github.com/python/cpython/pull/102815/files",
+        "https://stackoverflow.com/questions/77974525/what-is-the-right-way-to-await-cancelling-an-asyncio-task",
+        "https://dev.to/koladev/creating-and-managing-tasks-with-asyncio-4kjl",
+        "https://superfastpython.com/asyncio-taskgroup/",
+        "https://docs.python.org/pt-br/3/library/asyncio-task.html"
+      ]
+    },
+    {
+      "query": {
+        "id": "postgres-isolation",
+        "split": "development",
+        "query": "PostgreSQL 18 transaction isolation Read Committed Repeatable Read documentation",
+        "targets": [
+          {
+            "host": "www.postgresql.org",
+            "path": "^/docs/18/transaction-iso\\.html$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:49:24.743Z",
+      "elapsedMs": 20571,
+      "rawRecordSha256": "2845935b233c82f23e99b9edd95da1c5ad4702ced40bbfa6b0a40801a03aa3a1",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1225,
+          "documents": [
+            "https://www.postgresql.org/docs/18/transaction-iso.html",
+            "https://www.postgresql.org/docs/current/sql-set-transaction.html",
+            "https://www.postgresql.org/docs/current/mvcc.html",
+            "https://www.cybertec-postgresql.com/en/transactions-in-postgresql-read-committed-vs-repeatable-read/",
+            "https://int18.pgsql.cc/en/04-snapshots/",
+            "https://pgpedia.info/t/transaction_isolation.html",
+            "https://www.postgresql.org/docs/current/transaction-iso.html",
+            "https://pg.center/docs/18/sql-lock.html",
+            "https://pg.center/docs/18/transaction-iso.html",
+            "https://www.postgresql.org/docs/current/tutorial-transactions.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 849,
+          "documents": [
+            "https://www.postgresql.org/docs/current/transaction-iso.html",
+            "https://www.postgresql.org/docs/current/sql-set-transaction.html",
+            "https://www.postgresql.org/docs/current/mvcc.html",
+            "https://www.mydbops.com/blog/postgresql-transaction-isolation-levels-guide",
+            "https://gist.github.com/joeycumines/d15d58a7986312f63071ff546bf7d6b2",
+            "https://dev.to/philip_mcclarence_2ef9475/postgresql-transaction-isolation-levels-explained-52kj",
+            "https://medium.com/@darora8/transaction-isolation-in-postgres-ec4d34a65462",
+            "https://www.postgresql.org/docs/16/transaction-iso.html",
+            "https://www.reddit.com/r/PostgreSQL/comments/1bnlkco/backend_dev_here_please_explain_a_rule_of_thumb/",
+            "https://www.postgresql.org/docs/15/transaction-iso.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1158,
+          "documents": [
+            "https://www.postgresql.org/docs/current/transaction-iso.html",
+            "https://www.postgresql.org/docs/current/sql-set-transaction.html",
+            "https://blog.rajpoot.dev/posts/postgresql/postgresql-mvcc-isolation-locking/",
+            "https://www.mydbops.com/blog/postgresql-transaction-isolation-levels-guide",
+            "https://dbhelm.com/learn/postgresql/lessons/isolation-levels",
+            "https://www.cybertec-postgresql.com/en/transactions-in-postgresql-read-committed-vs-repeatable-read/",
+            "https://afadeev.substack.com/p/postgresql-transaction-isolation",
+            "https://postgresqlco.nf/doc/en/param/transaction_isolation/",
+            "https://pgviz.com/guides/isolation-levels/",
+            "https://martinuke0.github.io/posts/2026-05-27-deep-dive-into-postgresql-mvcc-internals-transaction-isolation-and-performance-at-scale/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2177,
+          "documents": [
+            "https://www.postgresql.org/docs/devel/static/transaction-iso.html",
+            "https://www.postgresql.org/docs/7.4/transaction-iso.html",
+            "https://dev.to/philip_mcclarence_2ef9475/postgresql-transaction-isolation-levels-explained-52kj"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1313,
+          "documents": [
+            "https://www.postgresql.org/docs/current/transaction-iso.html",
+            "https://www.postgresql.org/docs/current/sql-set-transaction.html",
+            "https://www.postgresql.org/docs/current/mvcc.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 10345,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://www.postgresql.org/docs/18/sql-set-transaction.html?trk=article-ssr-frontend-pulse_little-text-block",
+            "https://sql.org/sql-database/postgresql/manual/transaction-iso.html",
+            "https://www.postgresql.org/files/documentation/pdf/18/postgresql-18-US.pdf",
+            "https://www.postgresql.fastware.com/hubfs/_Global/Manuals/FEP-v18forx86-PostgreSQLDocumentation.pdf",
+            "https://www.postgresql.org/docs/current/mvcc.html",
+            "https://www.postgresql.org/docs/18/applevel-consistency.html",
+            "https://www.postgresql.org/docs/14/transaction-iso.html",
+            "https://www.uwemahlmann.de/doc/packages/postgresql18/postgresql-18-A4.pdf",
+            "https://www.postgresql.org/docs/16/transaction-iso.html",
+            "https://www.rockdata.net/docs/18/sql-start-transaction.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 20568,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://www.postgresql.org/docs/current/sql-set-transaction.html",
+            "https://www.postgresql.org/docs/current/transaction-iso.html",
+            "https://medium.com/@darora8/transaction-isolation-in-postgres-ec4d34a65462",
+            "https://www.postgresql.org/docs/8.4/transaction-iso.html",
+            "https://www.postgresql.org/docs/7.2/xact-read-committed.html",
+            "https://gist.github.com/joeycumines/d15d58a7986312f63071ff546bf7d6b2",
+            "https://dev.to/philip_mcclarence_2ef9475/postgresql-transaction-isolation-levels-explained-52kj",
+            "https://www.mydbops.com/blog/postgresql-transaction-isolation-levels-guide",
+            "https://mydba.dev/blog/postgres-transaction-isolation-levels"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://www.postgresql.org/docs/current/sql-set-transaction.html",
+        "https://www.postgresql.org/docs/current/transaction-iso.html",
+        "https://www.postgresql.org/docs/current/mvcc.html",
+        "https://www.mydbops.com/blog/postgresql-transaction-isolation-levels-guide",
+        "https://dev.to/philip_mcclarence_2ef9475/postgresql-transaction-isolation-levels-explained-52kj",
+        "https://medium.com/@darora8/transaction-isolation-in-postgres-ec4d34a65462",
+        "https://www.cybertec-postgresql.com/en/transactions-in-postgresql-read-committed-vs-repeatable-read/",
+        "https://gist.github.com/joeycumines/d15d58a7986312f63071ff546bf7d6b2",
+        "https://www.postgresql.org/docs/16/transaction-iso.html",
+        "https://www.postgresql.org/docs/18/transaction-iso.html",
+        "https://www.postgresql.org/docs/devel/static/transaction-iso.html",
+        "https://www.postgresql.org/docs/18/sql-set-transaction.html?trk=article-ssr-frontend-pulse_little-text-block",
+        "https://www.postgresql.org/docs/7.4/transaction-iso.html",
+        "https://sql.org/sql-database/postgresql/manual/transaction-iso.html",
+        "https://blog.rajpoot.dev/posts/postgresql/postgresql-mvcc-isolation-locking/",
+        "https://www.postgresql.org/files/documentation/pdf/18/postgresql-18-US.pdf",
+        "https://www.postgresql.fastware.com/hubfs/_Global/Manuals/FEP-v18forx86-PostgreSQLDocumentation.pdf",
+        "https://www.postgresql.org/docs/8.4/transaction-iso.html",
+        "https://int18.pgsql.cc/en/04-snapshots/",
+        "https://dbhelm.com/learn/postgresql/lessons/isolation-levels",
+        "https://www.postgresql.org/docs/7.2/xact-read-committed.html",
+        "https://pgpedia.info/t/transaction_isolation.html",
+        "https://www.postgresql.org/docs/18/applevel-consistency.html",
+        "https://afadeev.substack.com/p/postgresql-transaction-isolation",
+        "https://www.postgresql.org/docs/14/transaction-iso.html",
+        "https://pg.center/docs/18/sql-lock.html",
+        "https://postgresqlco.nf/doc/en/param/transaction_isolation/",
+        "https://www.uwemahlmann.de/doc/packages/postgresql18/postgresql-18-A4.pdf",
+        "https://pg.center/docs/18/transaction-iso.html",
+        "https://www.reddit.com/r/PostgreSQL/comments/1bnlkco/backend_dev_here_please_explain_a_rule_of_thumb/",
+        "https://pgviz.com/guides/isolation-levels/",
+        "https://mydba.dev/blog/postgres-transaction-isolation-levels",
+        "https://www.postgresql.org/docs/current/tutorial-transactions.html",
+        "https://www.postgresql.org/docs/15/transaction-iso.html",
+        "https://martinuke0.github.io/posts/2026-05-27-deep-dive-into-postgresql-mvcc-internals-transaction-isolation-and-performance-at-scale/",
+        "https://www.rockdata.net/docs/18/sql-start-transaction.html"
+      ]
+    },
+    {
+      "query": {
+        "id": "nix-flake-update",
+        "split": "heldout",
+        "query": "Nix flake lock update reference manual nix flake update",
+        "targets": [
+          {
+            "host": "nix.dev",
+            "path": "/command-ref/new-cli/nix3-flake-update(\\.html)?/?$"
+          },
+          {
+            "host": "nixos.org",
+            "path": "/command-ref/new-cli/nix3-flake-update(\\.html)?/?$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:49:45.122Z",
+      "elapsedMs": 20379,
+      "rawRecordSha256": "ffeb13c3a4c65ca548d557ff9220953304ed80d4454e669f9a45e2381532a054",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1215,
+          "documents": [
+            "https://releases.nixos.org/nix/nix-2.34.8/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://manual.determinate.systems/command-ref/new-cli/nix3-flake-update.html",
+            "https://man.archlinux.org/man/extra/nix/nix3-flake-update.1.en",
+            "https://docs.lix.systems/manual/lix/2.90/command-ref/new-cli/nix3-flake-update.html",
+            "https://manpages.debian.org/testing/nix-bin/nix3-flake-update.1.en.html",
+            "https://discourse.nixos.org/t/nix-flake-update-just-a-specific-input/29563",
+            "https://docs.lix.systems/manual/lix/stable/command-ref/new-cli/nix3-flake-lock.html",
+            "https://ternix.org/docs/commands",
+            "https://ekala-project.github.io/nix-book/ch10-01-using-flakes.html",
+            "https://releases.nixos.org/nix/nix-2.34.0/manual/command-ref/new-cli/nix3-flake-update.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 752,
+          "documents": [
+            "https://nix.dev/manual/nix/2.25/command-ref/new-cli/nix3-flake-update",
+            "https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-flake-lock",
+            "https://nix.dev/manual/nix/2.34/command-ref/new-cli/nix3-flake-update.html",
+            "https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-flake-update",
+            "https://releases.nixos.org/nix/nix-2.18.4/manual/command-ref/new-cli/nix3-flake-lock.html",
+            "https://releases.nixos.org/nix/nix-2.32.0/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://nix.dev/manual/nix/2.29/command-ref/new-cli/nix3-flake-update",
+            "https://releases.nixos.org/nix/nix-2.22.0/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://manpages.ubuntu.com/manpages/noble/man1/nix3-flake-update.1.html",
+            "https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake-lock.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1889,
+          "documents": [
+            "https://nix.dev/manual/nix/stable/command-ref/new-cli/nix3-flake-update.html",
+            "https://nix.dev/manual/nix/2.22/command-ref/new-cli/nix3-flake-update",
+            "https://releases.nixos.org/nix/nix-2.13.6/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://manpages.ubuntu.com/manpages/noble/man1/nix3-flake-update.1.html",
+            "https://releases.nixos.org/nix/nix-2.13.6/manual/command-ref/new-cli/nix3-flake.html",
+            "https://docs.lix.systems/manual/lix/2.90/command-ref/new-cli/nix3-flake-update.html",
+            "https://hexmos.com/freedevtools/man-pages/user-commands/package-management/nix-flake-update/",
+            "https://github.com/DeterminateSystems/update-flake-lock",
+            "https://github.com/marketplace/actions/update-nix-flake-lock",
+            "https://man.archlinux.org/man/nix3-flake-update.1.en"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2172,
+          "documents": [
+            "https://github.com/edulix/update-flake-lock",
+            "https://github.com/nix-community/home-manager/pull/2009",
+            "https://github.com/dependabot/dependabot-core/issues/7340"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1518,
+          "documents": [
+            "https://nix.dev/manual/nix/2.25/command-ref/new-cli/nix3-flake-update",
+            "https://nix.dev/manual/nix/stable/command-ref/new-cli/nix3-flake-update.html",
+            "https://releases.nixos.org/nix/nix-2.13.6/manual/command-ref/new-cli/nix3-flake-update.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 9498,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-flake-update",
+            "https://releases.nixos.org/nix/nix-2.19.1/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://nix.dev/manual/nix/2.20/command-ref/new-cli/nix3-flake-update",
+            "https://nix.dev/manual/nix/2.31/command-ref/new-cli/nix3-flake-update.html",
+            "https://projects.localizethedocs.org/nix-ref-man-l10n/en-us/master/command-ref/new-cli/nix3-flake-update.html",
+            "https://releases.nixos.org/nix/nix-2.35.2/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://releases.lix.systems/lix/lix-2.93.4/manual/command-ref/new-cli/nix3-flake-update.html",
+            "https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-flake-lock",
+            "https://nix.dev/manual/nix/2.26/command-ref/new-cli/nix3-flake-lock",
+            "https://releases.nixos.org/nix/nix-2.18.0/manual/command-ref/new-cli/nix3-flake-lock.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 20378,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://docs.lix.systems/manual/lix/nightly/command-ref/new-cli/nix3-flake-lock.html",
+            "https://nix.dev/manual/nix/2.25/command-ref/new-cli/nix3-flake-update",
+            "https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-flake-lock",
+            "https://nix.dev/manual/nix/2.27/command-ref/new-cli/nix3-flake-lock",
+            "https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake-lock.html",
+            "https://nix.dev/manual/nix/2.34/command-ref/new-cli/nix3-flake.html",
+            "https://nix.dev/manual/nix/2.24/command-ref/new-cli/nix3-flake",
+            "https://manpages.ubuntu.com/manpages/noble/man1/nix3-flake-update.1.html",
+            "https://nixos-and-flakes.thiscute.world/nixos-with-flakes/update-the-system"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://nix.dev/manual/nix/2.25/command-ref/new-cli/nix3-flake-update",
+        "https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-flake-lock",
+        "https://manpages.ubuntu.com/manpages/noble/man1/nix3-flake-update.1.html",
+        "https://nix.dev/manual/nix/stable/command-ref/new-cli/nix3-flake-update.html",
+        "https://releases.nixos.org/nix/nix-2.13.6/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://docs.lix.systems/manual/lix/2.90/command-ref/new-cli/nix3-flake-update.html",
+        "https://nixos.org/manual/nix/stable/command-ref/new-cli/nix3-flake-lock.html",
+        "https://releases.nixos.org/nix/nix-2.34.8/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://github.com/edulix/update-flake-lock",
+        "https://nix.dev/manual/nix/2.18/command-ref/new-cli/nix3-flake-update",
+        "https://docs.lix.systems/manual/lix/nightly/command-ref/new-cli/nix3-flake-lock.html",
+        "https://manual.determinate.systems/command-ref/new-cli/nix3-flake-update.html",
+        "https://nix.dev/manual/nix/2.22/command-ref/new-cli/nix3-flake-update",
+        "https://github.com/nix-community/home-manager/pull/2009",
+        "https://releases.nixos.org/nix/nix-2.19.1/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://man.archlinux.org/man/extra/nix/nix3-flake-update.1.en",
+        "https://nix.dev/manual/nix/2.34/command-ref/new-cli/nix3-flake-update.html",
+        "https://github.com/dependabot/dependabot-core/issues/7340",
+        "https://nix.dev/manual/nix/2.20/command-ref/new-cli/nix3-flake-update",
+        "https://nix.dev/manual/nix/2.35/command-ref/new-cli/nix3-flake-update",
+        "https://nix.dev/manual/nix/2.31/command-ref/new-cli/nix3-flake-update.html",
+        "https://nix.dev/manual/nix/2.27/command-ref/new-cli/nix3-flake-lock",
+        "https://manpages.debian.org/testing/nix-bin/nix3-flake-update.1.en.html",
+        "https://releases.nixos.org/nix/nix-2.18.4/manual/command-ref/new-cli/nix3-flake-lock.html",
+        "https://releases.nixos.org/nix/nix-2.13.6/manual/command-ref/new-cli/nix3-flake.html",
+        "https://projects.localizethedocs.org/nix-ref-man-l10n/en-us/master/command-ref/new-cli/nix3-flake-update.html",
+        "https://discourse.nixos.org/t/nix-flake-update-just-a-specific-input/29563",
+        "https://releases.nixos.org/nix/nix-2.32.0/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://releases.nixos.org/nix/nix-2.35.2/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://nix.dev/manual/nix/2.34/command-ref/new-cli/nix3-flake.html",
+        "https://docs.lix.systems/manual/lix/stable/command-ref/new-cli/nix3-flake-lock.html",
+        "https://nix.dev/manual/nix/2.29/command-ref/new-cli/nix3-flake-update",
+        "https://hexmos.com/freedevtools/man-pages/user-commands/package-management/nix-flake-update/",
+        "https://releases.lix.systems/lix/lix-2.93.4/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://nix.dev/manual/nix/2.24/command-ref/new-cli/nix3-flake",
+        "https://ternix.org/docs/commands",
+        "https://releases.nixos.org/nix/nix-2.22.0/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://github.com/DeterminateSystems/update-flake-lock",
+        "https://ekala-project.github.io/nix-book/ch10-01-using-flakes.html",
+        "https://github.com/marketplace/actions/update-nix-flake-lock",
+        "https://nix.dev/manual/nix/2.26/command-ref/new-cli/nix3-flake-lock",
+        "https://nixos-and-flakes.thiscute.world/nixos-with-flakes/update-the-system",
+        "https://releases.nixos.org/nix/nix-2.34.0/manual/command-ref/new-cli/nix3-flake-update.html",
+        "https://man.archlinux.org/man/nix3-flake-update.1.en",
+        "https://releases.nixos.org/nix/nix-2.18.0/manual/command-ref/new-cli/nix3-flake-lock.html"
+      ]
+    },
+    {
+      "query": {
+        "id": "typescript-satisfies",
+        "split": "development",
+        "query": "TypeScript satisfies operator introduced 4.9 release notes",
+        "targets": [
+          {
+            "host": "www.typescriptlang.org",
+            "path": "^/docs/handbook/release-notes/typescript-4-9\\.html$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:50:02.416Z",
+      "elapsedMs": 17293,
+      "rawRecordSha256": "379b6b6530bfb780c3726f77e230a7f47660008d4cea121c74fa0f746999f8db",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1607,
+          "documents": [
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/",
+            "https://github.com/Microsoft/TypeScript/releases/v4.9.3",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-rc/",
+            "https://www.learningtypescript.com/articles/the-satisfies-operator",
+            "https://www.bitovi.com/blog/typescript-4.9-features-and-improvements",
+            "https://www.alexey-nikiforov.name/introducing-the-satisfies-operator-in-typescript-4.9",
+            "https://github.com/microsoft/TypeScript-Website-Localizations/pull/192",
+            "https://www.allthingstypescript.dev/p/a-deep-dive-into-the-typescript-satisfies",
+            "https://dev.to/ayc0/typescript-49-satisfies-operator-1e4i"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 819,
+          "documents": [
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/",
+            "https://dev.to/ayc0/typescript-49-satisfies-operator-1e4i",
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-0.html",
+            "https://typescriptdocs.com/release-notes/TypeScript%204.9",
+            "https://www.reddit.com/r/javascript/comments/yt2gfo/typescript_satisfies_operatornew_keyword_coming/",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-beta/",
+            "https://glasp.co/discover?url=www.typescriptlang.org%2Fdocs%2Fhandbook%2Frelease-notes%2Ftypescript-4-9.html",
+            "https://careers.edicomgroup.com/techblog/frontend-new-features-of-typescript-4-9-5-4/",
+            "https://zetcode.com/typescript/satisfies/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 4508,
+          "documents": [
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+            "https://www.typescriptlang.org/ko/docs/handbook/release-notes/typescript-4-9.html",
+            "https://www.learningtypescript.com/articles/the-satisfies-operator",
+            "https://www.devloom.dev/learning-bytes/typescript/ts-satisfies-operator",
+            "https://www.zetcode.com/typescript/satisfies/",
+            "https://medium.com/@under_the_hook/typescript-4-9-satisfies-operator-a9a8ca93acf7",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/",
+            "https://skillcertify.org/question/what-does-the-satisfies-operator-introduced-in-typescript-4-9-do/",
+            "https://www.youtube.com/watch?v=5mAS7jXPrLk"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2244,
+          "documents": [
+            "https://dev.to/ayc0/typescript-49-satisfies-operator-1e4i",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-beta",
+            "https://dev.to/manikbajaj/the-new-satisfies-operator-will-satisfy-you-cheesy-4mic"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1002,
+          "documents": [
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+            "https://www.typescriptlang.org/ko/docs/handbook/release-notes/typescript-4-9.html",
+            "https://www.typescriptlang.org/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 7569,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-rc/",
+            "https://github.com/microsoft/TypeScript-Website/blob/v2/packages/documentation/copy/en/release-notes/TypeScript%204.9.md",
+            "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-beta/",
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-0.html",
+            "https://www.youtube.com/watch?v=A5nzTpquGJ4",
+            "https://www.learningtypescript.com/articles/the-satisfies-operator",
+            "https://soundscode.com/typescript/satisfies",
+            "https://github.com/microsoft/TypeScript-Website/blob/v2/packages/documentation/copy/en/release-notes/TypeScript%205.0.md"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 17292,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-0.html",
+            "https://blog.openreplay.com/typescript-satisfies-operator/",
+            "https://www.bitovi.com/blog/typescript-4.9-features-and-improvements",
+            "https://careers.edicomgroup.com/techblog/frontend-new-features-of-typescript-4-9-5-4/",
+            "https://devm.io/javascript/typescript-release",
+            "https://schpet.com/linklog/typescript-satisfies-operator",
+            "https://www.infoworld.com/article/2336866/typescript-49-intros-operator-for-finding-coding-mistakes.html",
+            "https://typescriptdocs.com/release-notes/TypeScript%204.9",
+            "https://www.xjavascript.com/blog/satisfies-typescript/"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-4-9.html",
+        "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9/",
+        "https://www.typescriptlang.org/docs/handbook/release-notes/typescript-5-0.html",
+        "https://dev.to/ayc0/typescript-49-satisfies-operator-1e4i",
+        "https://www.learningtypescript.com/articles/the-satisfies-operator",
+        "https://www.typescriptlang.org/ko/docs/handbook/release-notes/typescript-4-9.html",
+        "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-rc/",
+        "https://www.bitovi.com/blog/typescript-4.9-features-and-improvements",
+        "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-beta/",
+        "https://careers.edicomgroup.com/techblog/frontend-new-features-of-typescript-4-9-5-4/",
+        "https://typescriptdocs.com/release-notes/TypeScript%204.9",
+        "https://devblogs.microsoft.com/typescript/announcing-typescript-4-9-beta",
+        "https://blog.openreplay.com/typescript-satisfies-operator/",
+        "https://github.com/Microsoft/TypeScript/releases/v4.9.3",
+        "https://dev.to/manikbajaj/the-new-satisfies-operator-will-satisfy-you-cheesy-4mic",
+        "https://www.typescriptlang.org/",
+        "https://www.devloom.dev/learning-bytes/typescript/ts-satisfies-operator",
+        "https://github.com/microsoft/TypeScript-Website/blob/v2/packages/documentation/copy/en/release-notes/TypeScript%204.9.md",
+        "https://www.zetcode.com/typescript/satisfies/",
+        "https://devm.io/javascript/typescript-release",
+        "https://www.reddit.com/r/javascript/comments/yt2gfo/typescript_satisfies_operatornew_keyword_coming/",
+        "https://medium.com/@under_the_hook/typescript-4-9-satisfies-operator-a9a8ca93acf7",
+        "https://schpet.com/linklog/typescript-satisfies-operator",
+        "https://www.alexey-nikiforov.name/introducing-the-satisfies-operator-in-typescript-4.9",
+        "https://www.youtube.com/watch?v=A5nzTpquGJ4",
+        "https://www.infoworld.com/article/2336866/typescript-49-intros-operator-for-finding-coding-mistakes.html",
+        "https://github.com/microsoft/TypeScript-Website-Localizations/pull/192",
+        "https://glasp.co/discover?url=www.typescriptlang.org%2Fdocs%2Fhandbook%2Frelease-notes%2Ftypescript-4-9.html",
+        "https://skillcertify.org/question/what-does-the-satisfies-operator-introduced-in-typescript-4-9-do/",
+        "https://www.allthingstypescript.dev/p/a-deep-dive-into-the-typescript-satisfies",
+        "https://www.youtube.com/watch?v=5mAS7jXPrLk",
+        "https://soundscode.com/typescript/satisfies",
+        "https://www.xjavascript.com/blog/satisfies-typescript/",
+        "https://zetcode.com/typescript/satisfies/",
+        "https://github.com/microsoft/TypeScript-Website/blob/v2/packages/documentation/copy/en/release-notes/TypeScript%205.0.md"
+      ]
+    },
+    {
+      "query": {
+        "id": "kubernetes-eviction",
+        "split": "heldout",
+        "query": "Kubernetes pod ephemeral storage eviction official documentation",
+        "targets": [
+          {
+            "host": "kubernetes.io",
+            "path": "^/docs/concepts/(configuration/manage-resources-containers|scheduling-eviction/node-pressure-eviction)/?$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:51:39.595Z",
+      "elapsedMs": 23217,
+      "rawRecordSha256": "dc9a6074703f1886fd7d5924565f7bd0ac26555802a3c495c4c886f04fff13a7",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 2013,
+          "documents": [
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-storage/",
+            "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+            "https://kubernetes.io/blog/2022/09/19/local-storage-capacity-isolation-ga/",
+            "https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/",
+            "https://www.kubernetes.dev/resources/keps/6386/",
+            "https://www.kubernetes.dev/resources/keps/361/",
+            "https://github.com/kubernetes/kubernetes/issues/122160",
+            "https://docs.redhat.com/en/documentation/red_hat_build_of_microshift/4.21/html/storage/using-ephemeral-storage-microshift",
+            "https://kubernetes.io/docs/concepts/workloads/pods/disruptions/",
+            "https://www.kubernetes.dev/resources/keps/2837/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1081,
+          "documents": [
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-storage/",
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/",
+            "https://kubernetes.io/docs/reference/kubernetes-api/core/pod-v1/",
+            "https://www.kubernetes.dev/resources/keps/6386/",
+            "https://docs.okd.io/latest/storage/understanding-ephemeral-storage.html",
+            "https://jorijn.com/en/knowledge-base/kubernetes/storage/kubernetes-ephemeral-storage-limits-and-eviction/",
+            "https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/",
+            "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+            "https://portworx.com/knowledge-hub/ephemeral-storage-in-kubernetes-overview-guide/",
+            "https://www.sherlocks.ai/guides/kubernetes/pod-eviction-ephemeral-storage"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 2777,
+          "documents": [
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/",
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-storage/",
+            "https://kubernetes.recipes/recipes/storage/kubernetes-ephemeral-storage-management/",
+            "https://dev.to/usman_khan_io/kubernetes-pod-churn-node-thrashing-ephemeral-storage-exhaustion-and-eviction-cascades-4035",
+            "https://www.sherlocks.ai/guides/kubernetes/pod-eviction-ephemeral-storage",
+            "https://k8s.info/docs/expert/evictions",
+            "https://docs.kubex.ai/docs-kubex/Content/Kubex/Ephemeral_Storage"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1746,
+          "documents": [
+            "https://discuss.kubernetes.io/t/the-ephemeral-storage-issue-in-my-kubernetes-cluster/12775",
+            "https://www.mongodb.com/resources/basics/databases/ephemeral-storage",
+            "https://web.archive.org/web/20221004154557/https:/kubernetes.io/docs/concepts/configuration/manage-resources-containers"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1078,
+          "documents": [
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-storage/",
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/",
+            "https://www.sherlocks.ai/guides/kubernetes/pod-eviction-ephemeral-storage"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 11498,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-storage/",
+            "https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/",
+            "https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/",
+            "https://v1-33.docs.kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+            "https://v1-32.docs.kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+            "https://v1-35.docs.kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/",
+            "https://www.kubernetes.dev/resources/keps/361/",
+            "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/plan-node-sizes",
+            "https://www.kubernetes.dev/resources/keps/6386/",
+            "https://github.com/kubernetes/website/blob/main/content/en/docs/concepts/scheduling-eviction/node-pressure-eviction.md"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 23214,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://zesty.co/finops-glossary/kubernetes-ephemeral-storage/",
+            "https://kubernetes.io/docs/reference/kubernetes-api/core/pod-v1/",
+            "https://www.kubernetes.dev/resources/keps/6386/",
+            "https://jorijn.com/en/knowledge-base/kubernetes/storage/kubernetes-ephemeral-storage-limits-and-eviction/",
+            "https://docs.okd.io/latest/storage/understanding-ephemeral-storage.html",
+            "https://oneuptime.com/blog/post/2026-08-28-emptydir-sizelimit-vs-ephemeral-storage-limit/view",
+            "https://docs.redhat.com/en/documentation/red_hat_openshift_service_on_aws_classic_architecture/4/html/storage/understanding-ephemeral-storage",
+            "https://v1-33.docs.kubernetes.io/blog/2022/09/19/local-storage-capacity-isolation-ga",
+            "https://gitlab.com/sylva-projects/sylva-core/-/issues/2175"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://kubernetes.io/docs/concepts/storage/ephemeral-storage/",
+        "https://kubernetes.io/docs/concepts/storage/ephemeral-volumes/",
+        "https://www.kubernetes.dev/resources/keps/6386/",
+        "https://www.sherlocks.ai/guides/kubernetes/pod-eviction-ephemeral-storage",
+        "https://kubernetes.io/docs/reference/kubernetes-api/core/pod-v1/",
+        "https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+        "https://jorijn.com/en/knowledge-base/kubernetes/storage/kubernetes-ephemeral-storage-limits-and-eviction/",
+        "https://docs.okd.io/latest/storage/understanding-ephemeral-storage.html",
+        "https://kubernetes.io/docs/concepts/scheduling-eviction/node-pressure-eviction/",
+        "https://www.kubernetes.dev/resources/keps/361/",
+        "https://discuss.kubernetes.io/t/the-ephemeral-storage-issue-in-my-kubernetes-cluster/12775",
+        "https://zesty.co/finops-glossary/kubernetes-ephemeral-storage/",
+        "https://www.mongodb.com/resources/basics/databases/ephemeral-storage",
+        "https://kubernetes.io/blog/2022/09/19/local-storage-capacity-isolation-ga/",
+        "https://kubernetes.recipes/recipes/storage/kubernetes-ephemeral-storage-management/",
+        "https://web.archive.org/web/20221004154557/https:/kubernetes.io/docs/concepts/configuration/manage-resources-containers",
+        "https://kubernetes.io/docs/concepts/workloads/pods/ephemeral-containers/",
+        "https://dev.to/usman_khan_io/kubernetes-pod-churn-node-thrashing-ephemeral-storage-exhaustion-and-eviction-cascades-4035",
+        "https://v1-33.docs.kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+        "https://v1-32.docs.kubernetes.io/docs/concepts/configuration/manage-resources-containers/",
+        "https://k8s.info/docs/expert/evictions",
+        "https://v1-35.docs.kubernetes.io/docs/concepts/workloads/pods/pod-lifecycle/",
+        "https://oneuptime.com/blog/post/2026-08-28-emptydir-sizelimit-vs-ephemeral-storage-limit/view",
+        "https://github.com/kubernetes/kubernetes/issues/122160",
+        "https://docs.kubex.ai/docs-kubex/Content/Kubex/Ephemeral_Storage",
+        "https://docs.redhat.com/en/documentation/red_hat_openshift_service_on_aws_classic_architecture/4/html/storage/understanding-ephemeral-storage",
+        "https://docs.redhat.com/en/documentation/red_hat_build_of_microshift/4.21/html/storage/using-ephemeral-storage-microshift",
+        "https://docs.cloud.google.com/kubernetes-engine/docs/concepts/plan-node-sizes",
+        "https://v1-33.docs.kubernetes.io/blog/2022/09/19/local-storage-capacity-isolation-ga",
+        "https://kubernetes.io/docs/concepts/workloads/pods/disruptions/",
+        "https://portworx.com/knowledge-hub/ephemeral-storage-in-kubernetes-overview-guide/",
+        "https://gitlab.com/sylva-projects/sylva-core/-/issues/2175",
+        "https://www.kubernetes.dev/resources/keps/2837/",
+        "https://github.com/kubernetes/website/blob/main/content/en/docs/concepts/scheduling-eviction/node-pressure-eviction.md"
+      ]
+    },
+    {
+      "query": {
+        "id": "rust-mutex",
+        "split": "development",
+        "query": "Rust std sync Mutex poisoning docs",
+        "targets": [
+          {
+            "host": "doc.rust-lang.org",
+            "path": "^/std/sync/(struct\\.Mutex|poison/struct\\.Mutex)\\.html$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:51:58.594Z",
+      "elapsedMs": 18998,
+      "rawRecordSha256": "45ef0087141a3e8c2ecccf472689923831023370ae0d1f662b919376635aaa7a",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 6491,
+          "documents": [
+            "https://doc.rust-lang.org/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/poison/index.html",
+            "https://doc.rust-lang.org/std/sync/struct.PoisonError.html",
+            "https://doc.rust-lang.org/std/sync/",
+            "https://doc.rust-lang.org/stable/std/sync/poison/struct.Mutex.html",
+            "https://blog.rust-lang.org/2020/12/11/lock-poisoning-survey/",
+            "https://doc.rust-lang.org/stable/book/ch16-03-shared-state.html",
+            "https://doc.rust-lang.org/stable/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/stable/src/std/sync/poison/mutex.rs.html",
+            "https://doc.rust-lang.org/src/std/sync/poison/mutex.rs.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 908,
+          "documents": [
+            "https://doc.rust-lang.org/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/poison/struct.Mutex.html",
+            "https://web.mit.edu/rust-lang_v1.25/arch/amd64_ubuntu1404/share/doc/rust/html/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/stable/src/std/sync/poison/mutex.rs.html",
+            "https://dev-doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/struct.PoisonError.html",
+            "https://docs.adacore.com/live/wave/rust/html/rust_ug/_static/std/sync/struct.Mutex.html",
+            "https://blog.logrocket.com/understanding-handling-rust-mutex-poisoning/",
+            "https://web.mit.edu/rust-lang_v1.25/arch/amd64_ubuntu1404/share/doc/rust/html/std/sync/struct.PoisonError.html",
+            "https://oneuptime.com/blog/post/2026-01-25-mutex-thread-safe-data-access-rust/view"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1089,
+          "documents": [
+            "https://doc.rust-lang.org/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/poison/index.html",
+            "https://dev-doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+            "https://docs.rs/rustc-std-workspace-std/latest/std/sync/poison/index.html",
+            "https://krircc.github.io/rust/std/sync/struct.Mutex.html",
+            "https://edp.fortanix.com/docs/api/std/sync/struct.Mutex.html",
+            "https://mitaa.github.io/rust/doc/std/sync/struct.Mutex.html",
+            "https://docs.rs/subsoil/latest/subsoil/std/sync/poison/index.html",
+            "https://github.com/rust-lang/rust/blob/main/library/std/src/sync/poison/mutex.rs",
+            "https://github.com/rust-lang/rust/blob/master/library/std/src/sync/poison.rs"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1803,
+          "documents": [
+            "https://doc.rust-lang.org/1.95.0/src/std/sync/poison/mutex.rs.html",
+            "https://doc.rust-lang.org/nightly/src/std/sync/poison/mutex.rs.html",
+            "https://github.com/rust-lang/rust/pull/54078"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1147,
+          "documents": [
+            "https://doc.rust-lang.org/std/sync/struct.Mutex.html",
+            "https://dev-doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+            "https://rust.facepunch.com/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 7418,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://dev-doc.rust-lang.org/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/poison/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/poison/index.html",
+            "https://doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+            "https://dev-doc.rust-lang.org/std/sync/poison/index.html",
+            "https://dev-doc.rust-lang.org/nightly/std/sync/poison/struct.Mutex.html",
+            "https://dev-doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/",
+            "https://doc.rust-lang.org/std/sync/struct.Mutex.html?search=rwmutex",
+            "https://dev-doc.rust-lang.org/nightly/std/sync/struct.Mutex.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 18997,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://doc.rust-lang.org/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/struct.PoisonError.html",
+            "https://web.mit.edu/rust-lang_v1.25/arch/amd64_ubuntu1404/share/doc/rust/html/std/sync/struct.Mutex.html",
+            "https://www.cs.brandeis.edu/~cs146a/rust/doc-02-21-2015/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/std/sync/poison/struct.Mutex.html",
+            "https://doc.rust-lang.org/1.6.0/std/sync/struct.Mutex.html",
+            "https://web.mit.edu/rust-lang_v1.25/arch/amd64_ubuntu1404/share/doc/rust/html/std/sync/struct.PoisonError.html",
+            "https://oneuptime.com/blog/post/2026-01-25-mutex-thread-safe-data-access-rust/view",
+            "https://doc.rust-lang.org/nightly/std/sync/struct.Mutex.html",
+            "https://doc.rust-lang.org/nightly/std/sync/nonpoison/struct.Mutex.html"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://doc.rust-lang.org/std/sync/struct.Mutex.html",
+        "https://dev-doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/std/sync/poison/index.html",
+        "https://doc.rust-lang.org/std/sync/poison/struct.Mutex.html",
+        "https://doc.rust-lang.org/std/sync/struct.PoisonError.html",
+        "https://web.mit.edu/rust-lang_v1.25/arch/amd64_ubuntu1404/share/doc/rust/html/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/std/sync/",
+        "https://doc.rust-lang.org/stable/src/std/sync/poison/mutex.rs.html",
+        "https://web.mit.edu/rust-lang_v1.25/arch/amd64_ubuntu1404/share/doc/rust/html/std/sync/struct.PoisonError.html",
+        "https://oneuptime.com/blog/post/2026-01-25-mutex-thread-safe-data-access-rust/view",
+        "https://doc.rust-lang.org/1.95.0/src/std/sync/poison/mutex.rs.html",
+        "https://dev-doc.rust-lang.org/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/nightly/src/std/sync/poison/mutex.rs.html",
+        "https://github.com/rust-lang/rust/pull/54078",
+        "https://rust.facepunch.com/",
+        "https://docs.rs/rustc-std-workspace-std/latest/std/sync/poison/index.html",
+        "https://doc.rust-lang.org/beta/std/sync/struct.Mutex.html",
+        "https://www.cs.brandeis.edu/~cs146a/rust/doc-02-21-2015/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/stable/std/sync/poison/struct.Mutex.html",
+        "https://krircc.github.io/rust/std/sync/struct.Mutex.html",
+        "https://dev-doc.rust-lang.org/std/sync/poison/index.html",
+        "https://blog.rust-lang.org/2020/12/11/lock-poisoning-survey/",
+        "https://edp.fortanix.com/docs/api/std/sync/struct.Mutex.html",
+        "https://dev-doc.rust-lang.org/nightly/std/sync/poison/struct.Mutex.html",
+        "https://doc.rust-lang.org/1.6.0/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/stable/book/ch16-03-shared-state.html",
+        "https://docs.adacore.com/live/wave/rust/html/rust_ug/_static/std/sync/struct.Mutex.html",
+        "https://mitaa.github.io/rust/doc/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/stable/std/sync/struct.Mutex.html",
+        "https://blog.logrocket.com/understanding-handling-rust-mutex-poisoning/",
+        "https://docs.rs/subsoil/latest/subsoil/std/sync/poison/index.html",
+        "https://github.com/rust-lang/rust/blob/main/library/std/src/sync/poison/mutex.rs",
+        "https://doc.rust-lang.org/std/sync/struct.Mutex.html?search=rwmutex",
+        "https://doc.rust-lang.org/nightly/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/src/std/sync/poison/mutex.rs.html",
+        "https://github.com/rust-lang/rust/blob/master/library/std/src/sync/poison.rs",
+        "https://dev-doc.rust-lang.org/nightly/std/sync/struct.Mutex.html",
+        "https://doc.rust-lang.org/nightly/std/sync/nonpoison/struct.Mutex.html"
+      ]
+    },
+    {
+      "query": {
+        "id": "stable-sort",
+        "split": "heldout",
+        "query": "JavaScript Array sort stability ES2019 V8 stable sort",
+        "targets": [
+          {
+            "host": "v8.dev",
+            "path": "^/features/stable-sort/?$"
+          },
+          {
+            "host": "tc39.es",
+            "path": "^/ecma262/?$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:52:18.168Z",
+      "elapsedMs": 19574,
+      "rawRecordSha256": "a04fda9101675b45a67865bdc4592e7b4e25f34837c035fc3210756b4f51e2e5",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 2187,
+          "documents": [
+            "https://v8.dev/features/stable-sort",
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+            "https://mathiasbynens.be/demo/sort-stability",
+            "https://stackoverflow.com/questions/3026281/what-is-the-stability-of-the-array-sort-method-in-different-browsers",
+            "https://github.com/tc39/ecma262/pull/1340",
+            "https://egghead.io/lessons/javascript-stable-sort-an-array-with-es2019-javascript",
+            "https://www.infoq.com/news/2019/03/ES2019-feature-set-released/",
+            "https://evoniuk.github.io/posts/sorting.html",
+            "https://egghead.io/lessons/javascript-explore-es2019-stable-array-sorting-by-example",
+            "https://stackoverflow.com/questions/56891655/how-javascript-sorts-arrays-with-the-same-property"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 806,
+          "documents": [
+            "https://v8.dev/features/stable-sort",
+            "https://stackoverflow.com/questions/3026281/what-is-the-stability-of-the-array-sort-method-in-different-browsers",
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+            "https://egghead.io/lessons/javascript-stable-sort-an-array-with-es2019-javascript",
+            "https://egghead.io/lessons/javascript-explore-es2019-stable-array-sorting-by-example",
+            "https://reintech.io/blog/javascript-array-sorting-stable-sort-custom-comparators",
+            "https://stackoverflow.com/questions/1427608/fast-stable-sorting-algorithm-implementation-in-javascript",
+            "https://www.javascriptroom.com/blog/what-is-the-stability-of-the-array-sort-method-in-different-browsers/",
+            "https://mathiasbynens.be/demo/sort-stability",
+            "https://dev.to/137foundry/why-javascripts-sort-behaves-the-way-it-does-and-how-to-fix-it-356e"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1021,
+          "documents": [
+            "https://v8.dev/features/stable-sort",
+            "https://stackoverflow.com/questions/3026281/what-is-the-stability-of-the-array-sort-method-in-different-browsers",
+            "https://v8-script-engine.vercel.app/en/features/stable-sort",
+            "https://www.geeksforgeeks.org/javascript/is-javascript-array-sort-stable/",
+            "https://github.com/v8/v8.dev/blob/master/src/features/stable-sort.md",
+            "https://stackoverflow.com/questions/43005455/how-can-i-ensure-a-stable-array-sort-order-javascript",
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+            "https://github.com/v8/v8.dev/blob/main/src/blog/array-sort.md",
+            "https://www.xjavascript.com/blog/javascript-array-sort-implementation/",
+            "https://adarshm.com/blog/javascript-array-sorting-and-comparators"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2984,
+          "documents": [
+            "https://duvanenko.tech.blog/2017/07/04/stable-sorting-in-javascript",
+            "https://v8.dev/features/stable-sort",
+            "https://wp.dmcinfo.com/blog/25016/sorting-in-javascript-handling-google-chromes-unstable-sort/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1065,
+          "documents": [
+            "https://v8.dev/features/stable-sort",
+            "https://stackoverflow.com/questions/3026281/what-is-the-stability-of-the-array-sort-method-in-different-browsers",
+            "https://www.geeksforgeeks.org/javascript/is-javascript-array-sort-stable/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 12645,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort?redirectlocale=en-US&redirectslug=JavaScript%2FReference%2FGlobal_Objects%2FArray%2Fsort",
+            "https://v8.dev/features/stable-sort",
+            "https://github.com/mdn/content/blob/main/files/en-us/web/javascript/reference/global_objects/array/sort/index.md",
+            "https://github.com/v8/v8.dev/blob/main/src/blog/array-sort.md",
+            "https://v8.dev/blog/array-sort",
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+            "https://www.typeerror.org/docs/javascript/global_objects/array/sort",
+            "https://www.supremezsy.dpdns.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+            "https://exploringjs.com/js/downloads/exploring-js-book-preview.pdf",
+            "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort?v=ontrol"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 19573,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://v8.dev/features/stable-sort",
+            "https://reintech.io/blog/javascript-array-sorting-stable-sort-custom-comparators",
+            "https://dev.to/137foundry/why-javascripts-sort-behaves-the-way-it-does-and-how-to-fix-it-356e",
+            "https://bigfrontend.dev/question/what-sorting-algorithm-does-Array-prototype-sort-use-in-JavaScript/discuss/22062",
+            "https://mathiasbynens.be/demo/sort-stability",
+            "https://www.javascriptroom.com/blog/what-is-the-stability-of-the-array-sort-method-in-different-browsers/",
+            "https://www.scribd.com/document/799709448/webdev-report",
+            "https://dev.to/areknawo/ecmascript-2019-and-beyond-12c6",
+            "https://www.naukri.com/code360/library/javascript-array-sort"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://v8.dev/features/stable-sort",
+        "https://stackoverflow.com/questions/3026281/what-is-the-stability-of-the-array-sort-method-in-different-browsers",
+        "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+        "https://mathiasbynens.be/demo/sort-stability",
+        "https://www.geeksforgeeks.org/javascript/is-javascript-array-sort-stable/",
+        "https://reintech.io/blog/javascript-array-sorting-stable-sort-custom-comparators",
+        "https://egghead.io/lessons/javascript-stable-sort-an-array-with-es2019-javascript",
+        "https://github.com/v8/v8.dev/blob/main/src/blog/array-sort.md",
+        "https://dev.to/137foundry/why-javascripts-sort-behaves-the-way-it-does-and-how-to-fix-it-356e",
+        "https://egghead.io/lessons/javascript-explore-es2019-stable-array-sorting-by-example",
+        "https://www.javascriptroom.com/blog/what-is-the-stability-of-the-array-sort-method-in-different-browsers/",
+        "https://duvanenko.tech.blog/2017/07/04/stable-sorting-in-javascript",
+        "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort?redirectlocale=en-US&redirectslug=JavaScript%2FReference%2FGlobal_Objects%2FArray%2Fsort",
+        "https://v8-script-engine.vercel.app/en/features/stable-sort",
+        "https://wp.dmcinfo.com/blog/25016/sorting-in-javascript-handling-google-chromes-unstable-sort/",
+        "https://github.com/mdn/content/blob/main/files/en-us/web/javascript/reference/global_objects/array/sort/index.md",
+        "https://bigfrontend.dev/question/what-sorting-algorithm-does-Array-prototype-sort-use-in-JavaScript/discuss/22062",
+        "https://github.com/tc39/ecma262/pull/1340",
+        "https://github.com/v8/v8.dev/blob/master/src/features/stable-sort.md",
+        "https://v8.dev/blog/array-sort",
+        "https://stackoverflow.com/questions/43005455/how-can-i-ensure-a-stable-array-sort-order-javascript",
+        "https://www.infoq.com/news/2019/03/ES2019-feature-set-released/",
+        "https://stackoverflow.com/questions/1427608/fast-stable-sorting-algorithm-implementation-in-javascript",
+        "https://www.typeerror.org/docs/javascript/global_objects/array/sort",
+        "https://www.scribd.com/document/799709448/webdev-report",
+        "https://evoniuk.github.io/posts/sorting.html",
+        "https://www.supremezsy.dpdns.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort",
+        "https://dev.to/areknawo/ecmascript-2019-and-beyond-12c6",
+        "https://www.xjavascript.com/blog/javascript-array-sort-implementation/",
+        "https://exploringjs.com/js/downloads/exploring-js-book-preview.pdf",
+        "https://www.naukri.com/code360/library/javascript-array-sort",
+        "https://stackoverflow.com/questions/56891655/how-javascript-sorts-arrays-with-the-same-property",
+        "https://adarshm.com/blog/javascript-array-sorting-and-comparators",
+        "https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Array/sort?v=ontrol"
+      ]
+    },
+    {
+      "query": {
+        "id": "tls13",
+        "split": "development",
+        "query": "RFC 8446 TLS 1.3 specification",
+        "targets": [
+          {
+            "host": "www.rfc-editor.org",
+            "path": "^/(rfc/rfc8446\\.(html|txt)|info/rfc8446)/?$"
+          },
+          {
+            "host": "datatracker.ietf.org",
+            "path": "^/doc/html/rfc8446/?$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:54:44.191Z",
+      "elapsedMs": 14800,
+      "rawRecordSha256": "9505cae993d95cd3262447289312f6cc003f0b10e7add365749664df535e7206",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1571,
+          "documents": [
+            "https://www.rfc-editor.org/info/rfc8446/",
+            "https://blog.cloudflare.com/rfc-8446-aka-tls-1-3/",
+            "https://www.rfc-editor.org/rfc/rfc8446.html",
+            "https://tools.ietf.org/html/rfc8446",
+            "https://www.internetsociety.org/blog/2018/08/deploying-tls-1-3/",
+            "https://publications.bensmyth.com/files/Smyth19-TLS-tutorial.pdf",
+            "https://www.rfc-editor.org/rfc/rfc8446.txt",
+            "https://www.pwg.org/archives/ipp/2018/019699.html",
+            "https://github.com/BenSmyth/tls-tutorial/blob/master/rfc8446-annotated.txt",
+            "https://rfcinfo.com/rfc-8446/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1068,
+          "documents": [
+            "https://datatracker.ietf.org/doc/html/rfc8446",
+            "https://www.rfc-editor.org/info/rfc8446/",
+            "https://tex2e.github.io/rfc-translater/html/rfc8446.html",
+            "https://blog.cloudflare.com/rfc-8446-aka-tls-1-3",
+            "https://www.iankduncan.com/projects/rfc-browser/8446",
+            "https://rfcs.web.fc2.com/rfc8446.html",
+            "https://www.rfc-editor.org/rfc/rfc8446.html",
+            "https://rfcinfo.com/rfc-8446/",
+            "http://abcdrfc.free.fr/rfc-vf/pdf/rfc8446.pdf",
+            "https://smtpedia.com/rfc-8446/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 2822,
+          "documents": [
+            "https://www.rfc-editor.org/info/rfc8446/",
+            "https://www.ietf.org/archive/id/draft-ietf-tls-rfc8446bis-13.html",
+            "https://www.rfc-editor.org/rfc/rfc9846.html",
+            "https://rfcinfo.com/rfc-8446/",
+            "https://rfc.blacklabs.team/rfc8446.html",
+            "https://dl.acm.org/doi/abs/10.17487/RFC8446",
+            "https://smtpedia.com/rfc-8446/",
+            "https://archive.org/details/rfc8446",
+            "https://publications.bensmyth.com/2026-TLS-1.3-specification/",
+            "https://datatracker.ietf.org/doc/draft-ietf-tls-tls13/01/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2403,
+          "documents": [
+            "https://www.internetsociety.org/blog/2018/08/deploying-tls-1-3",
+            "https://httpd.apache.org/docs/trunk/misc/relevant_standards.html",
+            "https://github.com/Srabutdotcom/param"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1027,
+          "documents": [
+            "https://www.rfc-editor.org/info/rfc8446/",
+            "https://blog.cloudflare.com/rfc-8446-aka-tls-1-3/",
+            "https://rfcinfo.com/rfc-8446/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 7477,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://www.rfc-editor.org/rfc/rfc8446.html",
+            "https://www.rfc-editor.org/info/rfc8446/",
+            "https://datatracker.ietf.org/doc/rfc9846/",
+            "https://www.rfc-editor.org/rfc/inline-errata/rfc8446.html",
+            "https://www.rfc-editor.org/info/rfc9846/",
+            "https://datatracker.ietf.org/doc/html/rfc8446.html",
+            "https://datatracker.ietf.org/doc/html/rfc8446-TLS",
+            "https://www.ietf.org/ietf-ftp/rfc/rfc8446.txt.pdf",
+            "https://datatracker.ietf.org/doc/html/rfc8446",
+            "https://datatracker.ietf.org/doc/rfc8446/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 14797,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://www.rfc-editor.org/info/rfc8446/",
+            "https://tex2e.github.io/rfc-translater/html/rfc8446.html",
+            "https://en.wikipedia.org/wiki/Transport_Layer_Security",
+            "https://csperkins.org/teaching/2022-2023/networked-systems/lecture03/lecture03c.pdf",
+            "https://www.iankduncan.com/projects/rfc-browser/8446",
+            "https://en.wikipedia.org/wiki/Comparison_of_TLS_implementations",
+            "https://www.arc-it.net/html/standards/standard1099.html",
+            "https://ciphersuite.info/rfc/8446/",
+            "https://rfcinfo.com/rfc-8446/"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://www.rfc-editor.org/info/rfc8446/",
+        "https://rfcinfo.com/rfc-8446/",
+        "https://www.rfc-editor.org/rfc/rfc8446.html",
+        "https://blog.cloudflare.com/rfc-8446-aka-tls-1-3/",
+        "https://tex2e.github.io/rfc-translater/html/rfc8446.html",
+        "https://datatracker.ietf.org/doc/html/rfc8446",
+        "https://www.iankduncan.com/projects/rfc-browser/8446",
+        "https://smtpedia.com/rfc-8446/",
+        "https://www.internetsociety.org/blog/2018/08/deploying-tls-1-3",
+        "https://www.ietf.org/archive/id/draft-ietf-tls-rfc8446bis-13.html",
+        "https://httpd.apache.org/docs/trunk/misc/relevant_standards.html",
+        "https://www.rfc-editor.org/rfc/rfc9846.html",
+        "https://github.com/Srabutdotcom/param",
+        "https://datatracker.ietf.org/doc/rfc9846/",
+        "https://en.wikipedia.org/wiki/Transport_Layer_Security",
+        "https://tools.ietf.org/html/rfc8446",
+        "https://blog.cloudflare.com/rfc-8446-aka-tls-1-3",
+        "https://www.rfc-editor.org/rfc/inline-errata/rfc8446.html",
+        "https://csperkins.org/teaching/2022-2023/networked-systems/lecture03/lecture03c.pdf",
+        "https://www.internetsociety.org/blog/2018/08/deploying-tls-1-3/",
+        "https://rfc.blacklabs.team/rfc8446.html",
+        "https://www.rfc-editor.org/info/rfc9846/",
+        "https://publications.bensmyth.com/files/Smyth19-TLS-tutorial.pdf",
+        "https://rfcs.web.fc2.com/rfc8446.html",
+        "https://dl.acm.org/doi/abs/10.17487/RFC8446",
+        "https://datatracker.ietf.org/doc/html/rfc8446.html",
+        "https://en.wikipedia.org/wiki/Comparison_of_TLS_implementations",
+        "https://www.rfc-editor.org/rfc/rfc8446.txt",
+        "https://datatracker.ietf.org/doc/html/rfc8446-TLS",
+        "https://www.arc-it.net/html/standards/standard1099.html",
+        "https://www.pwg.org/archives/ipp/2018/019699.html",
+        "https://archive.org/details/rfc8446",
+        "https://www.ietf.org/ietf-ftp/rfc/rfc8446.txt.pdf",
+        "https://ciphersuite.info/rfc/8446/",
+        "https://github.com/BenSmyth/tls-tutorial/blob/master/rfc8446-annotated.txt",
+        "http://abcdrfc.free.fr/rfc-vf/pdf/rfc8446.pdf",
+        "https://publications.bensmyth.com/2026-TLS-1.3-specification/",
+        "https://datatracker.ietf.org/doc/draft-ietf-tls-tls13/01/",
+        "https://datatracker.ietf.org/doc/rfc8446/"
+      ]
+    },
+    {
+      "query": {
+        "id": "rrf-paper",
+        "split": "heldout",
+        "query": "Reciprocal Rank Fusion SIGIR 2009 Cormack Clarke Büttcher paper",
+        "targets": [
+          {
+            "host": "cormack.uwaterloo.ca",
+            "path": "^/cormacksigir09-rrf\\.pdf$"
+          },
+          {
+            "host": "dl.acm.org",
+            "path": "^/doi/(abs/|full/)?10\\.1145/1571941\\.1572114/?$"
+          }
+        ]
+      },
+      "capturedAt": "2026-11-07T02:55:04.840Z",
+      "elapsedMs": 20647,
+      "rawRecordSha256": "3c9b5da0ca2ec237271f47afe3529467ceac3d2ab1d421eeff426d8e0ced7f33",
+      "engines": [
+        {
+          "name": "exa",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 1388,
+          "documents": [
+            "https://dl.acm.org/doi/10.1145/1571941.1572114",
+            "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+            "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",
+            "https://www.semanticscholar.org/paper/Reciprocal-rank-fusion-outperforms-condorcet-and-Cormack-Clarke/9e698010f9d8fa374e7f49f776af301dd200c548",
+            "https://cormack.uwaterloo.ca/cormacksigir09-rrf",
+            "http://www.stefan.buettcher.org/cv/publications.html",
+            "https://www.researchgate.net/publication/221301121_Reciprocal_Rank_Fusion_outperforms_Condorcet_and_Individual_Rank_Learning_Methods",
+            "https://bibtex.github.io/SIGIR-2009-CormackCB.html",
+            "https://research.elamur.ai/free/en/papers/cormack-2009-reciprocal-rank-fusion-outperforms/",
+            "https://ir.webis.de/anthology/publications/rec+conf+sigir+CormackCB09"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "brave",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 823,
+          "documents": [
+            "https://dl.acm.org/doi/abs/10.1145/1571941.1572114",
+            "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+            "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",
+            "https://www.semanticscholar.org/paper/Reciprocal-rank-fusion-outperforms-condorcet-and-Cormack-Clarke/9e698010f9d8fa374e7f49f776af301dd200c548",
+            "https://ir.webis.de/anthology/2009.sigirconf_conference-2009.146/",
+            "https://www.researchgate.net/publication/221301121_Reciprocal_Rank_Fusion_outperforms_Condorcet_and_Individual_Rank_Learning_Methods",
+            "https://dblp.org/rec/conf/sigir/CormackCB09.html",
+            "https://bibbase.org/network/publication/cormack-clarke-buettcher-reciprocalrankfusionoutperformscondorcetandindividualranklearningmethods-2009",
+            "https://bibtex.github.io/SIGIR-2009-CormackCB.html",
+            "https://blog.serghei.pl/posts/reciprocal-rank-fusion-explained/"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "duckduckgo",
+          "tier": "main",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 2163,
+          "documents": [
+            "https://dl.acm.org/doi/10.1145/1571941.1572114",
+            "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",
+            "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+            "https://dl.acm.org/doi/abs/10.1145/1571941.1572114",
+            "https://www.researchgate.net/publication/221301121_Reciprocal_Rank_Fusion_outperforms_Condorcet_and_Individual_Rank_Learning_Methods",
+            "https://github.com/ContextualWisdomLab/RankWeave/blob/main/docs/research/pdfs/cormack-clarke-buettcher-2009-reciprocal-rank-fusion.pdf",
+            "https://tesble.com/10.1145/1571941.1572114",
+            "https://dblp.org/rec/conf/sigir/CormackCB09",
+            "https://bibbase.org/network/publication/cormack-clarke-buettcher-reciprocalrankfusionoutperformscondorcetandindividualranklearningmethods-2009",
+            "https://bibtex.github.io/SIGIR-2009-CormackCB.html"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "langsearch",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 2055,
+          "documents": [
+            "https://github.com/opensearch-project/neural-search/issues/865",
+            "https://doris.apache.org/docs/dev/key-features/reciprocal-rank-fusion",
+            "https://dev.to/gabrielanhaia/hybrid-search-is-the-phrase-youll-hear-at-every-rag-talk-in-2026-4dpd"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "searxng",
+          "tier": "fallback",
+          "requested": 3,
+          "ok": true,
+          "elapsedMs": 1187,
+          "documents": [
+            "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+            "https://dl.acm.org/doi/10.1145/1571941.1572114",
+            "https://dl.acm.org/doi/abs/10.1145/1571941.1572114"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:openai-codex",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 9368,
+          "label": "OpenAI Codex (gpt-6.1-sol; subscription OAuth)",
+          "documents": [
+            "https://doi.org/10.1145/1571941.1572114",
+            "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",
+            "https://cormack.uwaterloo.ca/cormack/cormacksigir09-rrf.pdf",
+            "https://ir.webis.de/anthology/publications/rec%2Bconf%2Bsigir%2BCormackCB09",
+            "https://dblp.org/rec/conf/sigir/CormackCB09.html",
+            "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+            "https://doi.org/10.1145/1571941.1572114?trk=article-ssr-frontend-pulse_little-text-block",
+            "https://bibtex.github.io/SIGIR-2009-CormackCB.html",
+            "https://xeraa.net/talks/reciprocal-rank-fusion/reciprocal-rank-fusion.pdf",
+            "https://bibbase.org/network/publication/cormack-clarke-buettcher-reciprocalrankfusionoutperformscondorcetandindividualranklearningmethods-2009"
+          ],
+          "duplicateRows": 0
+        },
+        {
+          "name": "native:anthropic",
+          "tier": "native",
+          "requested": 10,
+          "ok": true,
+          "elapsedMs": 20646,
+          "label": "Anthropic (claude-sonnet-4-6; subscription OAuth)",
+          "documents": [
+            "https://blog.serghei.pl/posts/reciprocal-rank-fusion-explained/",
+            "https://dblp.org/rec/conf/sigir/CormackCB09.html",
+            "https://arxiv.org/pdf/2608.07152",
+            "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+            "https://arxiv.org/pdf/2010.06467",
+            "https://bibtex.github.io/SIGIR-2009-CormackCB.html",
+            "https://ai.updf.com/paper-detail/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods-cormack-clarke-9e698010f9d8fa374e7f49f776af301dd200c548",
+            "https://arxiv.org/pdf/2410.13118",
+            "https://bibbase.org/network/publication/cormack-clarke-buettcher-reciprocalrankfusionoutperformscondorcetandindividualranklearningmethods-2009",
+            "https://www.scaler.com/topics/reciprocal-rank-fusion/"
+          ],
+          "duplicateRows": 0
+        }
+      ],
+      "productionRrf60": [
+        "https://research.google/pubs/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods/",
+        "https://bibtex.github.io/SIGIR-2009-CormackCB.html",
+        "https://cormack.uwaterloo.ca/cormacksigir09-rrf.pdf",
+        "https://bibbase.org/network/publication/cormack-clarke-buettcher-reciprocalrankfusionoutperformscondorcetandindividualranklearningmethods-2009",
+        "https://dl.acm.org/doi/10.1145/1571941.1572114",
+        "https://dl.acm.org/doi/abs/10.1145/1571941.1572114",
+        "https://dblp.org/rec/conf/sigir/CormackCB09.html",
+        "https://www.researchgate.net/publication/221301121_Reciprocal_Rank_Fusion_outperforms_Condorcet_and_Individual_Rank_Learning_Methods",
+        "https://www.semanticscholar.org/paper/Reciprocal-rank-fusion-outperforms-condorcet-and-Cormack-Clarke/9e698010f9d8fa374e7f49f776af301dd200c548",
+        "https://blog.serghei.pl/posts/reciprocal-rank-fusion-explained/",
+        "https://github.com/opensearch-project/neural-search/issues/865",
+        "https://doi.org/10.1145/1571941.1572114",
+        "https://doris.apache.org/docs/dev/key-features/reciprocal-rank-fusion",
+        "https://dev.to/gabrielanhaia/hybrid-search-is-the-phrase-youll-hear-at-every-rag-talk-in-2026-4dpd",
+        "https://cormack.uwaterloo.ca/cormack/cormacksigir09-rrf.pdf",
+        "https://arxiv.org/pdf/2608.07152",
+        "https://ir.webis.de/anthology/publications/rec%2Bconf%2Bsigir%2BCormackCB09",
+        "https://cormack.uwaterloo.ca/cormacksigir09-rrf",
+        "https://ir.webis.de/anthology/2009.sigirconf_conference-2009.146/",
+        "https://arxiv.org/pdf/2010.06467",
+        "http://www.stefan.buettcher.org/cv/publications.html",
+        "https://github.com/ContextualWisdomLab/RankWeave/blob/main/docs/research/pdfs/cormack-clarke-buettcher-2009-reciprocal-rank-fusion.pdf",
+        "https://tesble.com/10.1145/1571941.1572114",
+        "https://doi.org/10.1145/1571941.1572114?trk=article-ssr-frontend-pulse_little-text-block",
+        "https://ai.updf.com/paper-detail/reciprocal-rank-fusion-outperforms-condorcet-and-individual-rank-learning-methods-cormack-clarke-9e698010f9d8fa374e7f49f776af301dd200c548",
+        "https://dblp.org/rec/conf/sigir/CormackCB09",
+        "https://arxiv.org/pdf/2410.13118",
+        "https://research.elamur.ai/free/en/papers/cormack-2009-reciprocal-rank-fusion-outperforms/",
+        "https://xeraa.net/talks/reciprocal-rank-fusion/reciprocal-rank-fusion.pdf",
+        "https://ir.webis.de/anthology/publications/rec+conf+sigir+CormackCB09",
+        "https://www.scaler.com/topics/reciprocal-rank-fusion/"
+      ]
+    }
+  ]
+}

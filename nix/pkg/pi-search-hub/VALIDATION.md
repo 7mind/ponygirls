@@ -1,5 +1,88 @@
 # Validation — 2026-11-07
 
+## Current follow-up: fusion, live native search, and pane tabs
+
+- Source Git tree (`src/`): `e97f68a6adf80c41b089d707f79ad57b4ad3f550`.
+- All 65 tracked source files byte-match final Nix source
+  `/nix/store/0d9zq0cr8v51rl8jm4vx7b0q20rdcc4g-source`.
+- Tested package: `/nix/store/yawh5kb0349whypp5s230mf213ngngw2-pi-search-hub-2.8.0-ponygirls.1`.
+- NAR hash: `sha256-XSJD7jpRknElLxbCN29gwrAIn6T+iXmE5Jeb5JhBVk4=`.
+- Tested evaluation check: `/nix/store/dvn9wapvs17kr1ick77mkzq6p4mxr29j-pi-search-hub-fusion-evaluation`.
+- Native adapter SHA256: `db21d9a92dc4654a0746ad74b58ca0312ecf54f8ddb3ec26ed1cc2b123d03a44`.
+
+Fresh command:
+
+```bash
+nix build .#pi-search-hub .#checks.x86_64-linux.pi-search-hub-eval --no-link --print-out-paths -L
+```
+
+Result: strict pinned-SDK typecheck; **18 Vitest files / 302 cases passed**,
+0 failures/errors/skips. The evaluation check passed **37 Python tests**,
+reproduced both calibrated public benchmark reports byte-for-byte, replayed the
+10 frozen live pools and verified the installed TypeScript/Python RRF60 orders.
+See [the research report](eval/REPORT.md), [protocol](eval/PLAN.md) and
+[reproduction commands](eval/README.md) for hashes, formulas and limitations.
+RRF k=60 and tier policy remain unchanged; correctness corrections are distinct
+from relevance improvements.
+
+Additional command:
+
+```bash
+nix build .#checks.x86_64-linux.subagents-policy-shape .#checks.x86_64-linux.ponygirls-pi-ui --no-link --print-out-paths
+```
+
+Current module assertions evaluated successfully; exact-input existing artifacts
+were reused, including the unchanged shared-UI 32-test result. This is not claimed
+as a fresh shared-UI test execution.
+
+### Real credentials and real terminal acceptance
+
+With explicit user authorization, the parent used Pi's stored credentials via
+ModelRuntime/ModelRegistry, not copied tokens or independently constructed HTTP
+authentication. Actual models/authentication modes:
+
+- `openai-codex/gpt-6.1-sol`, subscription OAuth;
+- `anthropic/claude-sonnet-4-6`, subscription OAuth.
+
+The exact query `bullshit` failed on both original adapters. Required tool choice
+alone improved Anthropic but left repeated Codex clarification/no-source failures,
+sometimes despite a completed hosted tool block. Generic literal query-data framing
+plus required tool choice then succeeded on the final source without prototype
+overrides for `bullshit` and `test` on both providers. The same native bytes also
+succeeded for both providers on all 10 frozen public documentation queries.
+These 24 sourced successes establish those observed calls, not universal entitlement
+or semantic quality. No credential values or authorization headers were recorded;
+only sanitized diagnostics, public results and usage counts were retained locally.
+
+Fresh controlled Pi 1.4.0 / tmux 3.8 PTY journeys passed in **regular and fullscreen**
+modes at 120×40 → 80×24 → 120×40. Explicit environment allowlist, disposable
+HOME/agent state, no personal credentials or live-model inference in the UI fixture.
+Both verified:
+
+- Search engines / Fetchers / Test search segregation;
+- ignored query input on statistics tabs, Tab/Shift+Tab switching;
+- actual query submission only in Test search, in-flight completion while viewing
+  engine statistics, and preserved query/result on return;
+- resize, Ctrl+PageDown scrolling, cancellation, redacted failure and Escape closure;
+- no search/fetch status-bar entries and normal Pi exit 0;
+- private-server shutdown, rejected socket control afterward, and owned scratch cleanup.
+
+Fullscreen additionally verified an SGR mouse click switching tabs. Default regular
+mode leaves mouse to the terminal; a first test incorrectly expected mouse capture
+there and failed without any implementation correction. A second test's close
+predicate accidentally matched `websearch` in the temporary working-directory name;
+the screen already showed the closed pane. Both diagnostic attempts were retained;
+final journeys used fresh reporting directories and correct explicit postconditions.
+Terminal cells establish PTY/key/layout behavior, not font pixels, IME or physical
+mouse transport. No Home Manager activation, deployment or push was performed.
+
+---
+
+## Historical initial vendoring acceptance (16c65271)
+
+The following is retained evidence for the earlier source/artifact, not current
+source acceptance or a claim that the current suite still contains only 253 cases.
+
 ## Input/artifact binding
 
 - Vendored source Git tree (`src/`): `6909e1bd8e512682062acc4f47a549f20fd76e2f`.

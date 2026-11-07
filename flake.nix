@@ -812,6 +812,9 @@
             touch $out
           '';
           pi-search-hub = self.packages.${system}.pi-search-hub;
+          pi-search-hub-eval = pkgs.callPackage ./nix/pkg/pi-search-hub/eval/check.nix {
+            inherit (self.packages.${system}) pi-coding-agent pi-search-hub;
+          };
           ponygirls-pi-ui = pkgs.runCommand "ponygirls-pi-ui-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";

@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "bundle": {
+    "url": "https://github.com/GioiaZheng/msmarco-genqa/releases/download/v2.1-trec-dl-baselines/trec-dl-baselines-v1.zip",
+    "sha256": "e7001a943beb1b1a220ef4a58fae445569725682dc0dbbcb0d9300473a360aa3",
+    "bytes": 1041738,
+    "experimentCommit": "0362a48bb4d000a93f5af5c26a4de934db37e74f"
+  },
+  "qrels": [
+    {
+      "file": "qrels.dl19-passage.txt",
+      "originalUrl": "https://trec.nist.gov/data/deep/2019qrels-pass.txt",
+      "url": "https://mirror.ir-datasets.com/2f4be390198da108f6845c822e5ada14",
+      "md5": "2f4be390198da108f6845c822e5ada14",
+      "sha256": "8a1f10d550732e4cd91d7fc49846a3784de4040972f583e69285a88f3c5fee92",
+      "bytes": 187092
+    },
+    {
+      "file": "qrels.dl20-passage.txt",
+      "originalUrl": "https://trec.nist.gov/data/deep/2020qrels-pass.txt",
+      "url": "https://mirror.ir-datasets.com/0355ccee7509ac0463e8278186cdd8d1",
+      "md5": "0355ccee7509ac0463e8278186cdd8d1",
+      "sha256": "60d4c34561f9687f8f73e0a752ba80ab80159b3e9c1bedd0a351f747ed6f5684",
+      "bytes": 218617
+    }
+  ]
+}

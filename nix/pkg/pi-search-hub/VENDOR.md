@@ -26,7 +26,10 @@ Three tiers contribute original ranked lists to the same reciprocal-rank fusion
 
 A named `backend` remains a single-engine request and bypasses other tiers.
 All tiers' raw lists are fused together before the final `numResults` cutoff;
-we do not fuse already-truncated tier pages.
+we do not fuse already-truncated tier pages. Each named engine contributes once
+per distinct document, including in lone-engine searches. URL identity preserves
+path/query case and slash semantics, removing fragments for page-level identity.
+See [the ranking investigation](eval/REPORT.md) for evidence behind keeping k=60.
 
 ### Native provider support
 
@@ -44,8 +47,11 @@ models of supported providers remain visible as unsupported, not healthy.
 Discovery and nested inference use Pi's configured registry: authentication,
 OAuth refresh, endpoints and headers remain authoritative. A compatible current
 model is preferred, otherwise a verified candidate from the configured catalog
-is selected. Only the search query is sent, not the conversation history.
-Configured credentials do not establish server-tool entitlement; account/proxy
+is selected. Only the search query is sent, not the conversation history. It is
+losslessly framed as literal query data rather than a chat message, and hosted tool
+use is required. A completed tool call alone is not retrieval proof; structured
+source evidence is still required. Configured credentials do not establish
+server-tool entitlement; account/proxy
 restrictions appear as engine failures.
 
 Results come only from structured native search sources/citation events, never
@@ -71,9 +77,13 @@ Reader counts represent successful page fetches. Session replacement/reload
 resets observations. No search queries, credentials or raw provider errors are
 retained by the monitor.
 
-Type a query and press Enter to test the same metasearch used by `web_search`.
-Arrow keys and Ctrl+PageUp/PageDown scroll; Ctrl+C cancels the test; Escape closes
-the pane and cancels its owned work. Bare PageUp/PageDown also work in regular
+The pane has separate **Search engines**, **Fetchers**, and **Test search** tabs.
+Tab/Shift+Tab switches views; mouse tabs work in fullscreen or regular mode with
+Pi's `regularMouse` enabled. Default regular mode leaves mouse to the terminal.
+Only Test search accepts query input; Enter tests the same metasearch as `web_search`.
+Query/results and per-tab scrolling survive tab switches; an in-flight test may
+finish while viewing statistics. Arrow keys and Ctrl+PageUp/PageDown scroll;
+Ctrl+C cancels the owned test from any tab; Escape closes the pane and its work. Bare PageUp/PageDown also work in regular
 mode, but Pi reserves them for transcript scrolling in fullscreen mode. Closing
 or replacing a pane prevents late results from repainting it. Search output is
 bounded and terminal-control sequences are removed before pane display.
@@ -88,6 +98,7 @@ the separate backend-rewriting extension has been removed.
 ```bash
 nix build .#pi-search-hub
 nix build .#checks.x86_64-linux.pi-search-hub
+nix build .#checks.x86_64-linux.pi-search-hub-eval
 ```
 
 The package runs all vendored tests and strict typechecking against the pinned
@@ -97,3 +108,5 @@ Local iteration uses that same SDK/shared UI and the package lock, with an
 isolated HOME so personal search.json files cannot change fixture expectations.
 Real-PTY acceptance must cover both regular and fullscreen modes; component
 checks alone do not establish host-level keyboard routing or runtime loading.
+The evaluation check additionally replays pinned public relevance data and frozen
+live URL pools; see [eval/README.md](eval/README.md).
