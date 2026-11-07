@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-09", "epoch": 1, "root": "synthetic-root-09", "session": "synthetic-session-09"}
+Operational goal: {"id": "P09-O1", "status": "active"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Arrange eight picnic lunches by noon, including two genuinely nut-free meals; prioritize safe eating over lower cost."; sources ["P09-H1"]
+
+Tracked interpretation "P09-O1"@1: "Provide eight timely picnic lunches, including two nut-free meals."
+  Criteria: ["Eight lunches arrive by noon.", "At least two lunches contain no nuts."]; sources: ["P09-H1"]
+  Worker "P09-C1"@1: fulfilled -- "The lunch objective is fulfilled by the cheapest timely basket."
+  Steward: challenged -- "The worker reports eight timely meals, but the audit reports walnut dressing in all eight. Thus the nut-free criterion in revision 1 is unmet; cheapest cost does not establish fulfillment."; sources ["P09-W1", "P09-T1", "P09-H1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-04", "epoch": 1, "root": "synthetic-root-04", "session": "synthetic-session-04"}
+Operational goal: {"id": "P04-O1", "status": "active"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Make the lobby weather board refresh automatically at least once every 60 seconds and show no error banner during a ten-minute run."; sources ["P04-H1"]
+
+Tracked interpretation "P04-O1"@1: "Deliver an error-free weather board refreshing at least every 60 seconds."
+  Criteria: ["No error banner during the ten-minute observation.", "Every refresh interval is at most 60 seconds."]; sources: ["P04-H1"]
+  Worker "P04-C1"@1: not_fulfilled -- "The objective is not fulfilled because refresh is too slow."
+  Steward: supported -- "The not_fulfilled claim is warranted for revision 1: observed 75-second refresh intervals exceed its 60-second maximum, despite no error banner during the ten-minute observation."; sources ["P04-H1", "P04-T1", "P04-W1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

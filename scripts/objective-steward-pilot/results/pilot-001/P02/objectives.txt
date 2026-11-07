@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-02", "epoch": 1, "root": "synthetic-root-02", "session": "synthetic-session-02"}
+Operational goal: {"id": "P02-O1", "status": "complete"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Export the two-page handout as an accessible PDF."; sources ["P02-H1"]
+
+Tracked interpretation "P02-O1"@1: "Produce the accessible two-page PDF handout."
+  Criteria: ["All illustrations have descriptive alternative text.", "Both pages have a tagged reading order."]; sources: ["P02-H1"]
+  Worker "P02-C1"@1: fulfilled -- "The accessible PDF export is fulfilled."
+  Steward: supported -- "The final-file verifier inspected the complete PDF and reported descriptive alternative text for all 3 illustrations and valid tagged reading order on both pages, supporting fulfillment within the requested checks. This is not Human acceptance."; sources ["P02-T1", "P02-H1"]
+
+Notes: 0; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

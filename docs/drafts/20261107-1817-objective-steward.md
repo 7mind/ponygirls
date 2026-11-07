@@ -235,3 +235,10 @@ Repository paths below are relative to this repository; these are source observa
 - [Existing M1](20261102-1947-llm-epistemics/agent-memory-m1.md) is a design candidate, not an installed dependency of this proposal.
 
 Two read-only workers supplied source feasibility, minimal-core analysis and synthesis of parent-fetched public-source observations. They are advisory Agent analyses, not independent model-family evidence or Human approval. The first minimal-core return was stored-truncated; its missing adversarial tail was requested separately rather than assumed read. A placeholder-only draft materialization was caught before review; it was preserved locally and replaced with actual text. No review of that placeholder is counted as design acceptance. Research notes retain these limits.
+
+## Subsequent authorized feasibility pilot
+
+The later user-requested [isolated pilot](20261107-2114-objective-steward-pilot.md)
+implements and exercises a narrow advisory core on synthetic data. It preserves
+this proposal's authority boundaries; it is not native integration, automatic
+intent adoption, a production schema decision or demonstrated Human benefit.

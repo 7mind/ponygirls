@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-14", "epoch": 1, "root": "synthetic-root-14", "session": "synthetic-session-14"}
+Operational goal: {"id": "P14-O1", "status": "complete"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Deliver an exhibition poster in A3 grayscale, replacing the earlier A2 full-colour requirements, without producing the superseded version after revision."; sources ["P14-H1", "P14-H2"]
+
+Tracked interpretation "P14-O1"@2: "Deliver an A3 grayscale exhibition poster instead of the superseded A2 colour version."
+  Criteria: ["The delivered poster is A3.", "The poster is grayscale.", "No old-format A2 colour version is produced after revision."]; sources: ["P14-H1", "P14-H2"]
+  Worker "P14-C1"@1: fulfilled -- "The current, revised poster objective is fulfilled."
+  Steward: supported -- "For objective P14-O1 revision 2, the delivery inventory reports one A3 grayscale poster, verifies its dimensions and colour space, and states that no A2 colour poster was produced after revision. This supports fulfillment within the supplied evidence, not Human acceptance."; sources ["P14-T1", "P14-W1"]
+
+Notes: 0; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

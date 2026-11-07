@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-06", "epoch": 1, "root": "synthetic-root-06", "session": "synthetic-session-06"}
+Operational goal: {"id": "P06-O1", "status": "active"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Save the weekly totals only in an offline CSV, without sending any email after the revision."; sources ["P06-H2"]
+
+Tracked interpretation "P06-O1"@2: "Save the weekly totals in an offline CSV without sending email."
+  Criteria: ["The CSV contains the weekly totals.", "No report email is sent after the revision."]; sources: ["P06-H1", "P06-H2"]
+  Worker "P06-C1"@1: fulfilled -- "The revised objective is fulfilled, including the old email step."
+  Steward: challenged -- "The fulfillment claim contradicts revision 2's explicit no-email requirement. Both the worker and tool report sending the withdrawn email; the tool's reported CSV creation supports only the CSV portion."; sources ["P06-H2", "P06-W1", "P06-T1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

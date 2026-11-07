@@ -1,0 +1,309 @@
+{
+  "scope": "Observed SDK telemetry, not independently verified actual usage/billing; null is not zero. No quality/cost composite or causal comparison. Read after qualitative parent assessment persisted.",
+  "rows": [
+    {
+      "case": "P01",
+      "elapsed_seconds": 6.554128127172589,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.0018059999999999999,
+          "output": 0.00238,
+          "total": 0.0041860000000000005
+        },
+        "input": 903,
+        "output": 238,
+        "reasoning": 0,
+        "totalTokens": 1141
+      }
+    },
+    {
+      "case": "P02",
+      "elapsed_seconds": 4.529962250031531,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.0017879999999999999,
+          "output": 0.00144,
+          "total": 0.003228
+        },
+        "input": 894,
+        "output": 144,
+        "reasoning": 0,
+        "totalTokens": 1038
+      }
+    },
+    {
+      "case": "P03",
+      "elapsed_seconds": 7.153118798043579,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001784,
+          "output": 0.0022800000000000003,
+          "total": 0.004064
+        },
+        "input": 892,
+        "output": 228,
+        "reasoning": 0,
+        "totalTokens": 1120
+      }
+    },
+    {
+      "case": "P04",
+      "elapsed_seconds": 6.039262403966859,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.0017879999999999999,
+          "output": 0.0022600000000000003,
+          "total": 0.004048
+        },
+        "input": 894,
+        "output": 226,
+        "reasoning": 0,
+        "totalTokens": 1120
+      }
+    },
+    {
+      "case": "P05",
+      "elapsed_seconds": 5.798985514091328,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001844,
+          "output": 0.00214,
+          "total": 0.003984
+        },
+        "input": 922,
+        "output": 214,
+        "reasoning": 0,
+        "totalTokens": 1136
+      }
+    },
+    {
+      "case": "P06",
+      "elapsed_seconds": 6.388306273147464,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.0018759999999999998,
+          "output": 0.00237,
+          "total": 0.004246
+        },
+        "input": 938,
+        "output": 237,
+        "reasoning": 0,
+        "totalTokens": 1175
+      }
+    },
+    {
+      "case": "P07",
+      "elapsed_seconds": 6.39302181894891,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001836,
+          "output": 0.00236,
+          "total": 0.004196
+        },
+        "input": 918,
+        "output": 236,
+        "reasoning": 0,
+        "totalTokens": 1154
+      }
+    },
+    {
+      "case": "P08",
+      "elapsed_seconds": 7.313077076105401,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001952,
+          "output": 0.00269,
+          "total": 0.004642
+        },
+        "input": 976,
+        "output": 269,
+        "reasoning": 0,
+        "totalTokens": 1245
+      }
+    },
+    {
+      "case": "P09",
+      "elapsed_seconds": 6.432513524079695,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.0017699999999999999,
+          "output": 0.0024000000000000002,
+          "total": 0.00417
+        },
+        "input": 885,
+        "output": 240,
+        "reasoning": 0,
+        "totalTokens": 1125
+      }
+    },
+    {
+      "case": "P10",
+      "elapsed_seconds": 5.159469014964998,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001852,
+          "output": 0.00184,
+          "total": 0.003692
+        },
+        "input": 926,
+        "output": 184,
+        "reasoning": 0,
+        "totalTokens": 1110
+      }
+    },
+    {
+      "case": "P11",
+      "elapsed_seconds": 6.155561157967895,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.0017879999999999999,
+          "output": 0.0022700000000000003,
+          "total": 0.004058
+        },
+        "input": 894,
+        "output": 227,
+        "reasoning": 0,
+        "totalTokens": 1121
+      }
+    },
+    {
+      "case": "P12",
+      "elapsed_seconds": 6.259739801986143,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001816,
+          "output": 0.00215,
+          "total": 0.003966
+        },
+        "input": 908,
+        "output": 215,
+        "reasoning": 0,
+        "totalTokens": 1123
+      }
+    },
+    {
+      "case": "P13",
+      "elapsed_seconds": 8.732885919045657,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.00182,
+          "output": 0.0022700000000000003,
+          "total": 0.00409
+        },
+        "input": 910,
+        "output": 227,
+        "reasoning": 0,
+        "totalTokens": 1137
+      }
+    },
+    {
+      "case": "P14",
+      "elapsed_seconds": 5.706280185841024,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001934,
+          "output": 0.0018800000000000002,
+          "total": 0.003814
+        },
+        "input": 967,
+        "output": 188,
+        "reasoning": 0,
+        "totalTokens": 1155
+      }
+    },
+    {
+      "case": "P15",
+      "elapsed_seconds": 7.613631490850821,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.001856,
+          "output": 0.00269,
+          "total": 0.004546
+        },
+        "input": 928,
+        "output": 269,
+        "reasoning": 0,
+        "totalTokens": 1197
+      }
+    },
+    {
+      "case": "P16",
+      "elapsed_seconds": 7.643574329093099,
+      "sdk_usage": {
+        "cacheRead": 0,
+        "cacheWrite": 0,
+        "cost": {
+          "cacheRead": 0,
+          "cacheWrite": 0,
+          "input": 0.002018,
+          "output": 0.00305,
+          "total": 0.005068
+        },
+        "input": 1009,
+        "output": 305,
+        "reasoning": 0,
+        "totalTokens": 1314
+      }
+    }
+  ]
+}

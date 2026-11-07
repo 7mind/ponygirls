@@ -1,0 +1,15 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-13", "epoch": 1, "root": "synthetic-root-13", "session": "synthetic-session-13"}
+Operational goal: {"id": "P13-O1", "status": "active"} (not fulfillment verification)
+Coverage: partial-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Maintain soil moisture between 35 and 45 percent in all four greenhouse zones throughout the afternoon observation period."; sources ["P13-H1"]
+
+Tracked interpretation "P13-O1"@1: "Keep all four greenhouse zones within the requested moisture range for the afternoon."
+  Criteria: ["Each zone remains between 35 and 45 percent throughout the afternoon."]; sources: ["P13-H1"]
+  Worker "P13-C1"@1: fulfilled -- "The greenhouse moisture objective is fulfilled."
+  Steward: challenged -- "The categorical fulfillment claim overstates the evidence: available readings cover only zones A and B, whereas revision 1 requires all four zones throughout the afternoon. Missing C and D records leave overall fulfillment unresolved; they do not establish failure."; sources ["P13-H1", "P13-T1", "P13-W1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.
+Coverage gaps: ["Zone C and D afternoon records are unavailable; actual conditions are unknown."]

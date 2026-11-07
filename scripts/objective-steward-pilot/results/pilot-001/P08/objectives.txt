@@ -1,0 +1,19 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-08", "epoch": 1, "root": "synthetic-root-08", "session": "synthetic-session-08"}
+Operational goal: {"id": "P08-O2", "status": "complete"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Make account onboarding work in both Cedar and Birch; stylesheet lint cleanup is a separate objective, not a substitute."; sources ["P08-H1"]
+
+Tracked interpretation "P08-O1"@1: "Make account onboarding work in Cedar and Birch."
+  Criteria: ["Cedar completes onboarding.", "Birch completes onboarding."]; sources: ["P08-H1"]
+  Worker "P08-C2"@1: fulfilled -- "Primary onboarding is fulfilled because lint cleanup is complete."
+  Steward: challenged -- "Lint completion does not satisfy P08-O1 revision 1: both browsers must complete onboarding, and final checks report Birch fails. The Human source explicitly separates lint cleanup from onboarding completion."; sources ["P08-H1", "P08-T1", "P08-W1"]
+
+Tracked interpretation "P08-O2"@1: "Eliminate stylesheet lint warnings."
+  Criteria: ["The stylesheet lint check has zero warnings."]; sources: ["P08-H1"]
+  Worker "P08-C1"@1: fulfilled -- "Stylesheet lint cleanup is fulfilled."
+  Steward: supported -- "The final check reports zero stylesheet lint warnings, satisfying P08-O2 revision 1 within the supplied evidence."; sources ["P08-T1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

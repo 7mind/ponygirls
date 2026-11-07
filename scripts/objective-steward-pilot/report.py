@@ -18,7 +18,27 @@ def generate(cases_path: Path, oracle_path: Path, directory: Path) -> str:
     score = read_json(directory / "score.json")
     if frozen_sources(cases_path, oracle_path) != manifest["source_sha256"] or score["manifest_sha256"] != sha(directory / "manifest.json"):
         raise ValueError("report source binding mismatch")
+    inventory = directory / "attempts.json"
+    observed_inventory = sha(inventory) if inventory.exists() else None
+    if score["attempts_sha256"] != observed_inventory:
+        raise ValueError("report score-to-attempt binding mismatch")
+    qualitative_path = directory / "semantic-review.json"
+    if qualitative_path.exists():
+        qualitative = read_json(qualitative_path)
+        if qualitative["score_sha256"] != sha(directory / "score.json") or {item["case"] for item in qualitative["rows"]} != {item["id"] for item in cases} or len(qualitative["rows"]) != len(cases):
+            raise ValueError("qualitative review binding mismatch")
+        qualifications = ["<h2>Qualitative findings (non-blind Agent, not Human gold)</h2><p>" + escape(qualitative["method"]) + "</p><p><strong>" + escape(qualitative["conclusion"]) + "</strong></p><ul>"]
+        for item in qualitative["rows"]:
+            for key in ("risk", "qualification"):
+                if key in item:
+                    qualifications.append("<li><strong>" + escape(item["case"]) + ":</strong> " + escape(item[key]) + "</li>")
+        qualifications.append("</ul><h3>Unestablished capabilities</h3>" + literal(qualitative["cross_case_limits"]) + "<details><summary>Full qualitative assessment of all sixteen cases</summary>" + literal(qualitative["rows"]) + "</details>")
+        qualitative_html = "".join(qualifications)
+    else:
+        qualitative_html = "<p class='warning'>No qualitative review supplied. Mechanical results do not establish faithful objective interpretation, ontology quality or Human benefit.</p>"
     attempts = {item["case"]: item for item in admitted_attempts(directory, cases)}
+    if attempts and score["attempts_sha256"] is None:
+        raise ValueError("report score has no anchored attempt inventory")
     if {item["case"] for item in score["rows"]} != {item["id"] for item in cases} or len(score["rows"]) != len(cases):
         raise ValueError("report inventory mismatch")
     cards = []
@@ -56,7 +76,7 @@ body{background:#111827;color:#e5e7eb;font:16px/1.55 system-ui,sans-serif;max-wi
 </style><h1>Objective steward: feasibility, not acceptance</h1>
 <p>Isolated prescribed-profile pilot. Synthetic captures only; no private sessions, installed writer, live goal mutation or automatic Human approval. A fresh tool-less model reviews each input.</p>
 <p class="warning">Controls below test verdict/citation/source-link behavior on a small authored corpus, not complete semantic truth or improved Human oversight. Native Pi commands/hotkeys, real safe-boundary feedback and native source authentication are not implemented. Pending-request crash recovery remains fail-closed and unresolved.</p>
-<h2>Single-pass control results</h2>""" + literal(summary) + "<p>Generic prompt and oracle were frozen before live evaluation. No participant replacement or rescue. Oracle and qualitative review are fallible Agent judgments, not Human gold. Correct-worker cases are negative controls against manufactured criticism.</p>" + literal({"model": {key: manifest["model"][key] for key in ("provider", "model", "thinking")}, "source_commit": manifest["head"], "prompt_sha256": manifest["prompt_sha256"], "score_sha256": sha(directory / "score.json")}) + "".join(cards) + "<footer><p>Read-only evidence presentation. Expanding a section records no acceptance, acknowledgement or authorization. Any proposed correction remains a proposal; original intent and worker claims remain visible.</p></footer></html>"
+<h2>Single-pass control results</h2>""" + literal(summary) + "<p>Generic prompt and oracle were frozen before live evaluation. No participant replacement or rescue. Oracle and qualitative review are fallible Agent judgments, not Human gold. Correct-worker cases are negative controls against manufactured criticism.</p>" + literal({"model": {key: manifest["model"][key] for key in ("provider", "model", "thinking")}, "source_commit": manifest["head"], "prompt_sha256": manifest["prompt_sha256"], "score_sha256": sha(directory / "score.json")}) + qualitative_html + "".join(cards) + "<footer><p>Read-only evidence presentation. Expanding a section records no acceptance, acknowledgement or authorization. Any proposed correction remains a proposal; original intent and worker claims remain visible.</p></footer></html>"
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)

@@ -1,0 +1,57 @@
+{
+  "scope": "Pilot-only final local verification; no application/Chronicle/native-TUI/Human-benefit suite claim.",
+  "working_base_commit": "3c471bea5a4c0853e0bd433f470c3c53ba0796c5",
+  "tested_file_sha256": {
+    "scripts/objective-steward-pilot/freeze.py": "15179848be846ba2127efb0890480875061132ec9231ac2e313a491138515551",
+    "scripts/objective-steward-pilot/pilot.py": "1902b2d0012069e9b4e29f1c38643e2ca9a4fb48526fe5ad81d41c7b5bc9c484",
+    "scripts/objective-steward-pilot/profile.py": "94d1ca80e214e44211d84ac262e275a2a4717c3d8b044370cb9ae398d761385a",
+    "scripts/objective-steward-pilot/report.py": "546252651d93ef33a280796fe3c80e145bc6a6018e1edcb8e73acb4d48cb9845",
+    "scripts/objective-steward-pilot/run.py": "c6a9655f0cea90ae155a02630d24229677f4c759cc918830282e9758d14f04df",
+    "scripts/objective-steward-pilot/store.py": "ea96d0d0d456515bad4fd07fffff6fe1a66b3f0757f7903eb3cd313686d9477a",
+    "scripts/objective-steward-pilot/test_bindings.py": "99a0be4cd90f48051071447041ed0b109a9a930c56b2ae3d2f72032f868585d1",
+    "scripts/objective-steward-pilot/test_pilot.py": "fb926fafde2d9b351f33301422010f776d754f72c4a7e2eeb774f2a5ba3e338b",
+    "scripts/objective-steward-pilot/test_report.py": "941b86628cc37e66c4127590146dc8d6ce3127c54e32680fb7a50aa773a9a71c",
+    "scripts/objective-steward-pilot/test_runner.py": "4918e507cb4a082b77765f4b6514710d726498e085ad8abddb80366127bbe904",
+    "scripts/objective-steward-pilot/live.mjs": "d5403d8ae8e99a7de4b61c3946da20c8bb0fb3451102b11e31b66e2a270d8d28",
+    "scripts/objective-steward-pilot/live.test.mjs": "946ed0a36b748a576e895b4c8477383973983af697ef484e60878d734708db42",
+    "scripts/objective-steward-pilot/fixtures/cases.json": "86f6f56767872073043df632da5a853d52fe0d72945738c68a0f0c9f0a17dcd0",
+    "scripts/objective-steward-pilot/fixtures/oracle.json": "9643fff2d6035e3ae19b29c9d99c3a65246ff751d0b3992a9bd55aaf1c5b7a60"
+  },
+  "commands": [
+    "STEWARD_TEST_REPOSITORY=$PWD STEWARD_TEST_REVISION=3c471bea STEWARD_TEST_ARTIFACTS=$PWD/.local/final-check-002/interrupt python3 -B -m unittest discover -s scripts/objective-steward-pilot -p 'test_*.py' -v",
+    "node --test scripts/objective-steward-pilot/live.test.mjs",
+    "report.py source/artifact-bound regeneration plus cmp original retained HTML"
+  ],
+  "python": {
+    "tests": 30,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "exit": 0
+  },
+  "node": {
+    "tests": 17,
+    "passed": 16,
+    "failed": 0,
+    "skipped": 1,
+    "exit": 0,
+    "skip": "quarantined remote-provider leg; actual16-case live evaluation separately executed"
+  },
+  "log_sha256": {
+    "node.stdout": "0ca06099c2e90ded2a6ec5643f97b33ea8fe465fea4e5d4f123dd783a6dfa2c4",
+    "python.stdout": "43b3ff44844f4c78bd0d3d39b42f9c1e47a12d53121ed1ec2ab0aaa80032fe86",
+    "node.stderr": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "python.stderr": "d513a8bf86aa9f73269bdd8f1621934fb0e9fdb3654ea36147d4c92bc6856379"
+  },
+  "live": {
+    "source_commit": "db883ad84cd03d740f4e301f2025dcfda1d7841a",
+    "planned": 16,
+    "admitted": 16,
+    "published": 16,
+    "exit": 0,
+    "fresh_inference": "One original evaluation only. Subsequent checks/reports reuse exact bound outputs, not new model calls."
+  },
+  "presentation_sha256": "13bca6fea8e35eb433c2c7401dc0ef810e7f624d8c9bbfeca5610d875b995df1",
+  "schema_and_application_changes": "none; six original schema/design inputs verified separately at integration",
+  "supersedes": "verification-001.json; report/test source changed after new score-root tamper repro; original live inference/data unchanged"
+}

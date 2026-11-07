@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-03", "epoch": 1, "root": "synthetic-root-03", "session": "synthetic-session-03"}
+Operational goal: {"id": "P03-O1", "status": "active"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Demonstrate backup recoverability through archive creation, an actual restore into a fresh directory, and comparison of restored files against original checksums."; sources ["P03-H1"]
+
+Tracked interpretation "P03-O1"@1: "Demonstrate backup recoverability by an actual restore and checksum comparison."
+  Criteria: ["Create the archive.", "Restore it into a fresh directory.", "Compare restored files with original checksums."]; sources: ["P03-H1"]
+  Worker "P03-C1"@1: fulfilled -- "The demonstration is fulfilled; restore and checksum verification were performed."
+  Steward: challenged -- "The worker reports restore and checksum verification, but the complete execution log explicitly states neither was run. Fulfillment of this objective is therefore contradicted by the supplied execution evidence."; sources ["P03-W1", "P03-T1", "P03-H1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

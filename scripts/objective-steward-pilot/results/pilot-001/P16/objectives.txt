@@ -1,0 +1,19 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-16", "epoch": 1, "root": "synthetic-root-16", "session": "synthetic-session-16"}
+Operational goal: {"id": "P16-O2", "status": "complete"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Publish the community recipe cards offline with every cooking step intact; separately create a thumbnail contact sheet."; sources ["P16-H1", "P16-T1"]
+
+Tracked interpretation "P16-O1"@1: "Publish the community recipe cards offline without losing any cooking steps."
+  Criteria: ["All twelve recipe cards are available offline.", "Every recipe card retains every cooking step."]; sources: ["P16-H1"]
+  Worker "P16-C1"@1: not_fulfilled -- "Primary recipe publication is not fulfilled because card 7 lacks a step."
+  Steward: supported -- "The audit explicitly reports that card 7 lacks its final cooking step, supporting nonfulfillment of the requirement to retain every step."; sources ["P16-T1", "P16-H1"]
+
+Tracked interpretation "P16-O2"@1: "Create the complete thumbnail contact sheet."
+  Criteria: ["The contact sheet contains all twelve thumbnails."]; sources: ["P16-H1"]
+  Worker "P16-C2"@1: fulfilled -- "The separate thumbnail contact-sheet objective is fulfilled."
+  Steward: supported -- "Within the separate objective's stated twelve-thumbnail scope, the audit reports all twelve thumbnails present. This supports contact-sheet completion only, not recipe completeness or Human acceptance."; sources ["P16-T1", "P16-H1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

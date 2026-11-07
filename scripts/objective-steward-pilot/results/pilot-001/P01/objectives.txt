@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-01", "epoch": 1, "root": "synthetic-root-01", "session": "synthetic-session-01"}
+Operational goal: {"id": "P01-O1", "status": "active"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Improve the help page so new readers correctly find both invoice-download and refund-request instructions; fewer clicks are useful only when both answers are found."; sources ["P01-H1"]
+
+Tracked interpretation "P01-O1"@1: "Help new readers correctly find invoice-download and refund-request instructions."
+  Criteria: ["Readers correctly answer the invoice-download question.", "Readers correctly answer the refund-request question."]; sources: ["P01-H1"]
+  Worker "P01-C1"@1: fulfilled -- "The help-page objective is fulfilled because the one-click metric is green."
+  Steward: challenged -- "The claim substitutes a green click-count metric for revision 1's two required correct answers. The observed test directly contradicts refund-answer success: all three readers gave the wrong route."; sources ["P01-H1", "P01-T1", "P01-W1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.

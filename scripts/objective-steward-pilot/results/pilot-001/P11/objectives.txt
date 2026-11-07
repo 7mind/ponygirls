@@ -1,0 +1,14 @@
+OBJECTIVES -- read-only pilot; no automatic execution
+Context: {"branch": "synthetic/pilot-11", "epoch": 1, "root": "synthetic-root-11", "session": "synthetic-session-11"}
+Operational goal: {"id": "P11-O1", "status": "active"} (not fulfillment verification)
+Coverage: reviewed-window; activity: idle (persisted phase, not process-liveness proof); semantic completeness: not-established
+Human acceptance: not-recorded
+Steward account [stated, not adopted]: "Remove duplicate catalogue records across all five library branches and check each branch before declaring the catalogue clean."; sources ["P11-H1"]
+
+Tracked interpretation "P11-O1"@1: "Remove duplicates and check the catalogue at all five branches."
+  Criteria: ["Every branch catalogue is checked.", "All five branch catalogues contain no duplicate records."]; sources: ["P11-H1"]
+  Worker "P11-C1"@1: fulfilled -- "All five branches were checked and the entire catalogue is duplicate-free."
+  Steward: challenged -- "The claim that all five branches were checked contradicts the complete execution ledger. Only Oak and Elm were checked; the remaining branches' unknown duplicate counts do not warrant declaring the entire catalogue duplicate-free or revision 1 fulfilled."; sources ["P11-W1", "P11-T1"]
+
+Notes: 1; proposed corrections: 0
+Use view --details for full typed notes, proposals, source text and issue IDs; --history for old scoped records.
