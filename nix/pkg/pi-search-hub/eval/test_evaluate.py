@@ -178,6 +178,10 @@ class InputOutputTests(unittest.TestCase):
         self.assertEqual(ev.read_run(path), {"q": ["a", "b"], "p": ["b"]})
         self.assertEqual(ev.read_qrels(self.file("q Q0 a 3\nq Q0 b 1\np Q0 b 0\n")), {"q": {"a": 3, "b": 1}, "p": {"b": 0}})
 
+    def test_standard_zero_qrels_iteration_token(self):
+        # Regression: official DL2020 qrels uses 0, while DL2019 uses Q0.
+        self.assertEqual(ev.read_qrels(self.file("q 0 a 3\nq 0 b 0\n")), {"q": {"a": 3, "b": 0}})
+
     def test_malformed_ranks_scores_and_duplicate_run_ids_fail(self):
         invalid = [
             "q Q0 a 0 1 tag\n", "q Q0 a 2 1 tag\n", "q Q0 a 1.0 1 tag\n",

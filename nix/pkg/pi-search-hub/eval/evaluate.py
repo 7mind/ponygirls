@@ -105,7 +105,7 @@ def read_qrels(path):
     judgments = {}
     for line_number, line in enumerate(path.read_text().splitlines(), 1):
         fields = line.split()
-        if len(fields) != 4 or fields[1] != "Q0":
+        if len(fields) != 4 or fields[1] not in ("0", "Q0"):
             raise ValueError(f"Malformed qrels row {path}:{line_number}")
         qid, _unused, docid, raw_grade = fields
         try:
