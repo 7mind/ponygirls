@@ -58,3 +58,25 @@ is the commit containing this document. Sanitized logs, resolved environment and
 normal/stress screenshots are retained in ignored `debug/manure-ui-20261107/`.
 Normal-record density screenshots are `screenshots/catalogue-light.png` and
 `screenshots/catalogue-dark.png`; stress images include the viewport in the name.
+
+## Runtime helper correction
+
+The original `screenshots/catalogue-dark.png` was a fresh native runtime capture,
+not stale: `app.js:updateDraft` replaced the edited static `index.html` helper
+with the old horizontal-scrolling instruction. Thus the original screenshot's
+helper contradicted the responsive layout. The prior final-source screenshot
+claim was incomplete: source HTML alone did not establish runtime copy.
+
+Added an exact runtime-helper assertion to the maintained layout test. Before
+correction it failed for the expected reason: actual helper ended in “all columns
+remain available horizontally”, while expected copy described fitting metadata
+and actions. Updated the catalogue branch of `updateDraft` to match the HTML.
+
+Fresh post-correction owned-native dashboard UX run: 2 tests, including all 20
+layout/theme combinations and 23 native browser scenarios, passed in 101.788s;
+no failures/errors/skips. Dashboard Node suites: 32 passed, no skips.
+Red/green logs are `runtime-help-red.log`, `runtime-help-green.log`, and
+`runtime-help-node.log` within the preserved debug directory. Refreshed normal
+and stress screenshots are in `runtime-help-final-screenshots/`; these supersede
+original screenshots for helper-copy validation. Normal desktop examples remain
+`catalogue-light.png` and `catalogue-dark.png` within that new directory.

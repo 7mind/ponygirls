@@ -234,7 +234,7 @@ function expressionInput(input, list, change, compositionChange) {
       button.title = differs ? "Apply or clear the changed draft before sorting" : "Sort applied query";
     });
     setText("sort-summary", state.mode !== "catalogue" ? "Relevance order · not sortable" : "Sorted by " + document.querySelector('[data-sort="' + state.sort + '"]').getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓"));
-    setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll within the table to load more; all columns remain available horizontally." : "One bounded page in relevance order. Evidence is a pinned name or manifest path, not file contents; opening details fetches fresh metadata.");
+    setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width." : "One bounded page in relevance order. Evidence is a pinned name or manifest path, not file contents; opening details fetches fresh metadata.");
     $("catalogue-table").hidden = state.mode !== "catalogue";
     $("retrieval-results").hidden = state.mode === "catalogue";
   }

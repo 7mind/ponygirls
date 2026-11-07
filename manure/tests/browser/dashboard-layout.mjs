@@ -52,6 +52,7 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       await page.locator('#artifact-list > tr').first().waitFor();
+      assert.equal(await page.locator('#results-help').textContent(), 'Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width.', 'runtime catalogue help describes wrapping, not horizontal scrolling');
       if (out) await page.screenshot({ path: path.join(out, `catalogue-${width}-${colorScheme}.png`), fullPage: true });
       const noOverflow = async selector => {
         const measurements = await page.locator(selector).evaluateAll(nodes => nodes.map(node => ({ width: node.clientWidth, scroll: node.scrollWidth })));
