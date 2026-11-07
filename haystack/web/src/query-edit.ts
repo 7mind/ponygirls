@@ -3,7 +3,7 @@ const FIELDS = new Set(["project", "id", "type", "status", "importance", "human-
 const MAX_QUERY = 4096;
 
 function completeBody(query: string): boolean {
-  let quoted = false, escaped = false, depth = 0;
+  let quoted = false, escaped = false, depth = 0, brackets = 0;
   let structure = "";
   for (const char of query) {
     if (escaped) { escaped = false; structure += "x"; continue; }
@@ -13,17 +13,18 @@ function completeBody(query: string): boolean {
     structure += char;
     if (char === "(") depth++;
     if (char === ")" && --depth < 0) return false;
+    if (char === "[") brackets++;
+    if (char === "]" && --brackets < 0) return false;
   }
-  if (quoted || escaped || depth !== 0 || /\(\s*\)|(?:[:<>=!,]|\b(?:AND|OR|NOT)|(?:^|[\s(])-)\s*\)|\(\s*(?:AND|OR)\b/i.test(structure)) return false;
+  if (quoted || escaped || depth !== 0 || brackets !== 0 || /\(\s*\)|\[\s*\]|(?:[:<>=!,])\s*\]|(?:[:<>=!,]|\b(?:AND|OR|NOT)|(?:^|[\s(])-)\s*\)|\(\s*(?:AND|OR)\b/i.test(structure)) return false;
+  for (const link of structure.matchAll(/\blink:\s*\[([^\]]*)\]/gi)) {
+    if (!/^\s*[^,\s][^,]*,\s*[^,\s][^,]*$/.test(link[1]!)) return false;
+  }
+  for (const field of structure.matchAll(/\bfield\s*\[[^\]]*\]/gi)) {
+    if (!/^\s*(?:!=|<=|>=|=|<|>)/.test(structure.slice(field.index + field[0].length))) return false;
+  }
   const tail = query.trimEnd();
   return tail === "" || !/(?:\b(?:AND|OR|NOT)\b|[-:(<>=!,])\s*$/i.test(tail);
-}
-
-export function appendField(query: string, field: string): string | null {
-  if (!FIELDS.has(field) || !completeBody(query)) return null;
-  const body = query.trim();
-  const next = `${body ? `(${body}) ` : ""}${field}:`;
-  return next.length <= MAX_QUERY ? next : null;
 }
 
 export function appendFilter(query: string, field: string, value: string): string | null {

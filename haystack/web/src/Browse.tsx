@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
-import { browseHash, sameBrowseState, type ArchiveMode, type BrowseState } from "./browse-state";
+import { browseHash, sameBrowseState, type BrowseState } from "./browse-state";
 import { useLiveUpdates } from "./Live";
 import { Icon } from "./Icon";
 import { QueryInput } from "./QueryInput";
@@ -14,23 +14,6 @@ const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
   { field: "modified-at", label: "Modified" }, { field: "revision", label: "Rev" },
 ];
 
-function tagPredicate(tag: string): string {
-  const t = tag.trim();
-  if (/^[A-Za-z0-9._~\-]+$/.test(t)) return `tag:${t}`;
-  return `tag:${JSON.stringify(t)}`;
-}
-
-/** Compose tag + archive controls with the query AST (never a contradictory
- *  appended filter): an explicit selector anywhere disables the default. */
-export function composedQuery(state: BrowseState): string {
-  const q = state.query.trim();
-  const tag = (state.tag ?? "").trim();
-  const base = tag === "" ? q : q === "" ? tagPredicate(tag) : `(${q}) ${tagPredicate(tag)}`;
-  if (state.archive === "hide") return base;
-  if (state.archive === "show") return base === "" ? "archived:all" : `archived:all (${base})`;
-  return base === "" ? "archived:true" : `archived:true (${base})`;
-}
-
 export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   initial: BrowseState;
   inbox: boolean;
@@ -38,9 +21,6 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   onAuthLost: () => void;
 }) {
   const [query, setQuery] = useState(initial.query);
-  const [project, setProject] = useState(initial.project);
-  const [archive, setArchive] = useState<ArchiveMode>(initial.archive);
-  const [tag, setTag] = useState(initial.tag);
   const [sort, setSort] = useState<SearchSort>(initial.sort);
   const [items, setItems] = useState<Summary[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
@@ -72,8 +52,8 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
       if (panel.current !== null) panel.current.scrollTop = 0;
     }
     try {
-      const page = await api.search(composedQuery(state), {
-        project: state.project.trim() === "" ? undefined : state.project.trim(),
+      if (state.migrationError !== null) { setError(state.migrationError); return; }
+      const page = await api.search(state.query, {
         limit: PAGE_SIZE,
         cursor: cursorValue,
         sort: state.sort,
@@ -103,12 +83,12 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   useEffect(() => {
     // A submitted route can arrive after the user starts a newer draft.
     if (!sameBrowseState(initial, applied.current)) {
-      setQuery(initial.query); setProject(initial.project); setArchive(initial.archive); setTag(initial.tag);
+      setQuery(initial.query);
     }
     setSort(initial.sort);
     applied.current = initial;
     void run(initial, undefined);
-  }, [initial.query, initial.project, initial.archive, initial.tag, initial.sort.field, initial.sort.direction, run]);
+  }, [initial.query, initial.migrationError, initial.sort.field, initial.sort.direction, run]);
 
   useEffect(() => {
     if (live.version !== 0) void run(applied.current, undefined);
@@ -125,6 +105,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   }, [cursor, busy, error, run]);
 
   function apply(state: BrowseState) {
+    if (state.migrationError !== null) return;
     // Invalidate an in-flight page before the hashchange event can arrive.
     pending.current = ++sequence.current;
     continuation.current = undefined;
@@ -144,7 +125,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
 
   function sortHeader(field: SearchSortField, label: string) {
     return <th key={field} scope="col" aria-sort={sort.field === field ? sort.direction === "asc" ? "ascending" : "descending" : "none"}>
-      <button type="button" className="sort-header" aria-label={`Sort by ${label}`} onClick={() => changeSort(field)}>
+      <button type="button" className="sort-header" disabled={initial.migrationError !== null} aria-label={`Sort by ${label}`} onClick={() => changeSort(field)}>
         {label}<span aria-hidden="true">{sort.field === field ? sort.direction === "asc" ? "↑" : "↓" : "↕"}</span>
       </button>
     </th>;
@@ -153,45 +134,22 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   return (
     <section className="browse-view" aria-label="Browse" aria-busy={busy}>
       <div className="page-heading"><div>
-        <h1>{inbox ? "Attention inbox" : initial.query === "type:skill-draft" ? "Skill candidates" : initial.archive === "only" ? "Archive" : initial.query.includes("github-") ? "Upstream activity" : "Records"}</h1>
+        <h1>{inbox ? "Attention inbox" : initial.query === "type:skill-draft" ? "Skill candidates" : initial.query === "archived:true" || initial.query === 'archived:"true"' ? "Archive" : initial.query.includes("github-") ? "Upstream activity" : "Records"}</h1>
         <p>{inbox ? "Records requiring review." : "Search by text, metadata, tags, or project."}</p></div></div>
       <form
         className="search-panel"
         onSubmit={(e) => {
           e.preventDefault();
           if (composing.current) return;
-          apply({ query, project, archive, tag, sort });
+          apply({ query, sort, migrationError: initial.migrationError });
         }}
       >
         <QueryInput value={query} onChange={setQuery} onAuthLost={onAuthLost} onCompositionChange={(state) => { composing.current = state; }} />
-        <label>
-          Project scope
-          <input placeholder="All projects" value={project} onChange={(e) => setProject(e.target.value)} autoComplete="off" />
-        </label>
-        <label>
-          Tag filter
-          <input placeholder="tag name (exact)" value={tag} onChange={(e) => setTag(e.target.value)} autoComplete="off" />
-        </label>
-        <fieldset className="archive-control">
-          <legend>Archived</legend>
-          <label>
-            <input type="radio" name="archive" checked={archive === "hide"} onChange={() => setArchive("hide")} />
-            Hide
-          </label>
-          <label>
-            <input type="radio" name="archive" checked={archive === "show"} onChange={() => setArchive("show")} />
-            Show
-          </label>
-          <label>
-            <input type="radio" name="archive" checked={archive === "only"} onChange={() => setArchive("only")} />
-            Only archived
-          </label>
-        </fieldset>
-        <div className="search-actions"><button className="primary" type="submit"
+        <div className="search-actions"><button className="primary" type="submit" disabled={initial.migrationError !== null}
           onPointerDownCapture={(event) => { blockedSearchPointer.current = composing.current; if (composing.current) event.preventDefault(); }}
           onClickCapture={(event) => { if (composing.current || blockedSearchPointer.current) { event.preventDefault(); event.stopPropagation(); } blockedSearchPointer.current = false; }}>Search</button></div>
       </form>
-      {(query !== applied.current.query || project !== applied.current.project || archive !== applied.current.archive || tag !== applied.current.tag) && <p className="draft-status" role="status">Draft changed · press Search to update results.</p>}
+      {(initial.migrationError === null && query !== applied.current.query) && <p className="draft-status" role="status">Draft changed · press Search to update results.</p>}
       {diagnostics.length > 0 && (
         <ul aria-label="Search errors">
           {diagnostics.map((d, i) => (
@@ -203,7 +161,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
       )}
       <div className="results-heading"><h2>{inbox ? "Waiting for review" : "Records"} <span className="count-badge">{items.length}{cursor !== undefined && "+"}</span></h2><span>Sorted by {SORT_COLUMNS.find((column) => column.field === sort.field)?.label ?? "record key"} {sort.direction === "asc" ? "↑" : "↓"}</span></div>
       <p id="records-scroll-help" className="scroll-help">Scroll the table to load more records. Select a column heading to sort all results.</p>
-      {error !== "" && <p role="alert">{error} {diagnostics.length === 0 && <button type="button" onClick={() => void run(applied.current, cursor)}>Retry loading records</button>}</p>}
+      {error !== "" && <p role="alert">{error} {diagnostics.length === 0 && initial.migrationError === null && <button type="button" onClick={() => void run(applied.current, cursor)}>Retry loading records</button>}</p>}
       {items.length === 0 && !busy && error === "" && <div className="empty-state"><Icon name={inbox ? "inbox" : "search"} /><h3>{inbox ? "No records requiring review" : "No records found"}</h3><p>{inbox ? "Records requiring attention appear here." : "Try a different query or include archived records."}</p></div>}
         <div className="records-panel" ref={panel} role="region" aria-label="Record results" aria-describedby="records-scroll-help" tabIndex={0}><table>
           <thead>

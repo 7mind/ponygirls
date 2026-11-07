@@ -239,7 +239,7 @@ await check("login flow + persisted session", async () => {
   await ctx.close();
 });
 
-// Search, diagnostics, archive control.
+// Search, diagnostics and archive expressions.
 await check("gateway outages are connection failures and preserve the session across refreshes", async () => {
   const ctx = await browser.newContext();
   try {
@@ -347,6 +347,20 @@ await check("query completion supports keyboard, caret insertion, and pointer se
     assert.equal(new URL(page.url()).hash, "#/browse", "accepting a completion must not submit the query");
     assert.equal(await query.evaluate((element) => element === document.activeElement), true);
 
+    await query.fill("type:");
+    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+    const options = page.getByRole("option");
+    assert.ok(await options.count() > 1);
+    const first = await options.nth(0).textContent();
+    const secondId = await options.nth(1).getAttribute("id");
+    await query.press("ArrowDown");
+    assert.equal(await query.getAttribute("aria-activedescendant"), secondId);
+    await query.press("ArrowUp");
+    assert.equal(await query.getAttribute("aria-activedescendant"), await options.nth(0).getAttribute("id"));
+    await query.press("Enter");
+    assert.equal(await query.inputValue(), `${first} `);
+    assert.equal(await query.evaluate((element) => element === document.activeElement), true);
+
     await query.fill("(ty) AND importance:high");
     await query.evaluate((element) => element.setSelectionRange(3, 3));
     await query.press("Control+Space");
@@ -376,7 +390,7 @@ await check("query completion supports keyboard, caret insertion, and pointer se
   } finally { await ctx.close(); }
 });
 
-await check("query shortcuts, clear, keyboard focus and explicit Search keep draft separate", async () => {
+await check("one expression, clear, keyboard focus and explicit Search keep draft separate", async () => {
   const ctx = await browser.newContext();
   try {
     const page = await ctx.newPage();
@@ -385,9 +399,12 @@ await check("query shortcuts, clear, keyboard focus and explicit Search keep dra
     const searches = [];
     page.on("request", (request) => { if (request.url().endsWith("/api/v1/search")) searches.push(request.postDataJSON().query); });
     await query.fill("type:todo OR type:fact");
-    await page.getByRole("button", { name: "tag:", exact: true }).click();
-    assert.equal(await query.inputValue(), "(type:todo OR type:fact) tag:");
-    assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === input.value.length), true);
+    assert.equal(await page.getByLabel("Project scope").count(), 0);
+    assert.equal(await page.getByLabel("Tag filter").count(), 0);
+    assert.equal(await page.getByRole("radio").count(), 0);
+    assert.equal(await page.getByRole("checkbox").count(), 0);
+    assert.equal(await page.getByRole("combobox").count(), 1);
+    assert.equal(await page.getByRole("button", { name: "tag:", exact: true }).count(), 0);
     assert.equal(await page.getByText("Draft changed · press Search to update results.").count(), 1);
     await query.fill("ty");
     await page.getByRole("option", { name: "type:", exact: true }).waitFor();
@@ -403,15 +420,17 @@ await check("query shortcuts, clear, keyboard focus and explicit Search keep dra
     await page.keyboard.press("Control+k");
     assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === 0), true);
     assert.deepEqual(searches.filter((value) => value !== ""), [], "edits never search before explicit submit");
-    await query.fill("type:todo");
-    const applied = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "type:todo");
+    const expression = "  type:todo  ";
+    await query.fill(expression);
+    const applied = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === expression);
     await page.getByRole("button", { name: "Search", exact: true }).click();
-    await applied;
+    assert.equal((await applied).request().postDataJSON().project, null, "no invisible project constraint is sent");
+    assert.equal(await query.inputValue(), expression, "applied query is exactly the visible text, including whitespace");
     assert.equal(await page.getByText("Draft changed · press Search to update results.").count(), 0);
   } finally { await ctx.close(); }
 });
 
-await check("field shortcuts and accepted field prefixes immediately offer value hints", async () => {
+await check("accepted field prefixes immediately offer value hints without a preset row", async () => {
   const ctx = await browser.newContext();
   try {
     const page = await ctx.newPage();
@@ -421,10 +440,9 @@ await check("field shortcuts and accepted field prefixes immediately offer value
     await page.getByRole("option", { name: "type:", exact: true }).waitFor();
     await query.press("Enter");
     await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
-    await query.fill("type:todo");
-    await page.getByRole("button", { name: "type:", exact: true }).click();
-    assert.equal(await query.inputValue(), "(type:todo) type:");
-    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+    assert.equal(await query.inputValue(), "type:");
+    assert.equal(await query.evaluate((element) => element.selectionStart), 5);
+    assert.equal(await page.locator(".query-presets").count(), 0);
   } finally { await ctx.close(); }
 });
 
@@ -557,7 +575,7 @@ await check("search + diagnostics + archive", async () => {
     await page.getByLabel("Query").fill("buried");
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await page.getByRole("heading", { name: "No records found", exact: true }).waitFor();
-    await page.getByLabel("Show").check();
+    await page.getByLabel("Query").fill("archived:all buried");
     await page.getByRole("button", { name: "Search", exact: true }).click();
     await page.getByText("buried memory").waitFor();
   } catch (error) {

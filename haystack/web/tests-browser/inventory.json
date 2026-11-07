@@ -13,13 +13,15 @@
     "API replay lane retains exact current body after 503 and blocks edited drafts until replay",
     "API session auth loss clears pending but an unreadable success keeps it uncertain",
     "WebSocket auth loss and observed identity changes discard the previous session's pending lane",
-    "shortcuts conjoin the entire OR body and encode exact literals",
+    "legacy scope edits conjoin the entire OR body and encode exact literals",
     "completion replaces whole unquoted token but never touches quoted/selected text",
     "completion inserts a separator after operators but never exceeds the query limit",
-    "browse defaults to newest modified, inbox keeps its attention preset",
-    "filters and sort round-trip through shareable fragments, including inbox",
+    "browse defaults to newest modified, inbox keeps its visible attention preset",
+    "one visible expression and sort round-trip without secondary filter state",
+    "legacy URL scopes migrate into the whole Boolean body with exact quoted literals",
+    "unsafe legacy composition fails closed and preserves the original draft",
     "invalid URL sorting normalizes to known fields and directions",
-    "state equality includes tag and both sorting dimensions",
+    "state equality includes the visible expression, migration error and both sorting dimensions",
     "only a correlated pong establishes liveness",
     "silent heartbeat loss overlaps a replacement and preserves the old socket through grace",
     "a late matching pong recovers the original and closes its pending replacement",
@@ -74,8 +76,8 @@
     "query typing retains focus",
     "delayed search navigation preserves a newer query draft",
     "query completion supports keyboard, caret insertion, and pointer selection",
-    "query shortcuts, clear, keyboard focus and explicit Search keep draft separate",
-    "field shortcuts and accepted field prefixes immediately offer value hints",
+    "one expression, clear, keyboard focus and explicit Search keep draft separate",
+    "accepted field prefixes immediately offer value hints without a preset row",
     "query completion coalesces in-flight requests and replaces a mid-token suffix",
     "dismissed query completions do not reopen after a delayed response",
     "system theme changes update native controls and square layouts without reloading",
@@ -103,10 +105,12 @@
     "browse ignores an old in-flight page after sorting",
     "browse preserves rows on append failure and retries the same cursor",
     "browse route tag changes reset the infinite list",
+    "legacy URL filters become the exact visible applied expression",
+    "unsafe legacy URL filters show a migration error without searching",
     "HTTPS session survives backend stop, refresh, restart, refresh; logout still expires it",
     "quick-ui.sh restart retains its token and the existing browser session"
   ],
   "markupCases": [
-    "browse initial markup exposes sortable columns without pagination"
+    "browse initial markup exposes one expression, secondary help and sortable columns without pagination"
   ]
 }

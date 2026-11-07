@@ -1,22 +1,24 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendField, appendFilter, completionEdit, completionRange } from "../src/query-edit.ts";
+import { appendFilter, completionEdit, completionRange } from "../src/query-edit.ts";
 
-test("shortcuts conjoin the entire OR body and encode exact literals", () => {
+test("legacy scope edits conjoin the entire OR body and encode exact literals", () => {
   assert.equal(appendFilter("type:todo OR type:fact", "tag", 'a b:"\\🐎'), '(type:todo OR type:fact) tag:"a b:\\\"\\\\🐎"');
-  assert.equal(appendField("type:todo OR type:fact", "project"), "(type:todo OR type:fact) project:");
   assert.equal(appendFilter("", "human-attention", "required"), 'human-attention:"required"');
   assert.equal(appendFilter('tag:"unfinished', "type", "todo"), null);
-  assert.equal(appendField("type:todo OR", "tag"), null);
-  assert.equal(appendField('tag:"incomplete', "type"), null);
-  assert.equal(appendField("type:todo (", "tag"), null);
-  assert.equal(appendField("type:todo AND NOT", "tag"), null);
-  assert.equal(appendField("type:todo OR ()", "tag"), null);
-  assert.equal(appendField("type:todo OR (type:fact AND)", "tag"), null);
-  assert.equal(appendField("type:todo OR (tag:)", "status"), null);
+  assert.equal(appendFilter("type:todo OR", "tag", "example"), null);
+  assert.equal(appendFilter('tag:"incomplete', "type", "fact"), null);
+  assert.equal(appendFilter("type:todo (", "tag", "example"), null);
+  assert.equal(appendFilter("type:todo AND NOT", "tag", "example"), null);
+  assert.equal(appendFilter("type:todo OR ()", "tag", "example"), null);
+  assert.equal(appendFilter("type:todo OR (type:fact AND)", "tag", "example"), null);
+  assert.equal(appendFilter("type:todo OR (tag:)", "status", "actual"), null);
   assert.equal(appendFilter("type:todo OR (modified-at >=)", "archived", "all"), null);
-  assert.equal(appendField('tag:"paren (quoted)"', "project"), '(tag:"paren (quoted)") project:');
+  assert.equal(appendFilter('tag:"paren (quoted)"', "project", "example"), '(tag:"paren (quoted)") project:"example"');
   assert.equal(appendFilter("", "tag", "value\nwith control"), 'tag:"value\\nwith control"');
+  assert.equal(appendFilter('field["/n"] >= 3 OR exists["/x"]', "project", "example"), '(field["/n"] >= 3 OR exists["/x"]) project:"example"');
+  assert.equal(appendFilter('link:["depends-on","p:i"]', "project", "example"), '(link:["depends-on","p:i"]) project:"example"');
+  assert.equal(appendFilter('field["/a]("] = "square [ bracket]"', "project", "example"), '(field["/a]("] = "square [ bracket]") project:"example"');
 });
 
 test("completion replaces whole unquoted token but never touches quoted/selected text", () => {

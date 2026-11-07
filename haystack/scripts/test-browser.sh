@@ -109,7 +109,7 @@ browser=(report/'browser.log').read_text(); actual=[line.removeprefix('ok - ') f
 markup=[line.removeprefix('ok - ') for line in (report/'markup.log').read_text().splitlines() if line.startswith('ok - ')]
 browser_exact=sorted(actual)==sorted(inventory['browserCases'])
 markup_exact=markup==inventory['markupCases']
-no_skips='# SKIP' not in browser and '# 34 checks; 0 failures; 0 skipped' in browser
+no_skips='# SKIP' not in browser and '# 39 checks; 0 failures; 0 skipped' in browser
 receipt={'artifactKind':next(line.split('=',1)[1] for line in (report/'source.txt').read_text().splitlines() if line.startswith('artifact-kind=')),
  'atomicLeafCases':len(cases),'browserCases':len(actual),'markupCases':len(markup),'failuresAndErrors':failed,'skipped':skipped,
  'inventoryExact':atomic_exact and browser_exact and markup_exact,'exitStatuses':list(map(int,sys.argv[2:])),'artifactUnchanged':True,

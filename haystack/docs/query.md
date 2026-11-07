@@ -23,6 +23,24 @@ atom        := word | quoted-string | predicate
   diagnostic, not match-all. Only an entirely empty/whitespace query browses
   (all eligible items, keyset order).
 
+### Browser editor
+
+The browser uses this same language in one query field. Project, tag, and
+archive constraints are expression predicates, not separate filter controls.
+Completion, clear, and typing edit the draft; only **Search** applies it. The
+submitted expression is the exact visible applied text, without hidden scopes.
+Sorting and live refresh reuse the applied expression, not an unsent draft.
+
+Old links with `project`, `tag`, or `archive` parameters migrate once into a
+visible, canonical `q` expression. Each constraint applies to the entire
+Boolean body, including disjunctions. If the local structural gate cannot safely
+compose the expression, legacy values are invalid, or composition would exceed
+the query limit, migration fails closed: no search runs, the original link is
+retained, and an error explains how to reset using **Browse** or repair the
+original URL. The migration gate is conservative: valid keyword-shaped values
+such as `project:OR` may require quoting in the original link (`project:"OR"`).
+Ordinary query diagnostics remain server-authoritative.
+
 ## 2. Built-in predicates
 
 Names case-insensitive; ID/string values exact, case-sensitive.

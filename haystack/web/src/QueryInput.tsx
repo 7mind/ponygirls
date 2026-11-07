@@ -1,12 +1,11 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
 import { api, AuthError } from "./api";
 import { Icon } from "./Icon";
-import { appendField, appendFilter, completionEdit, completionRange } from "./query-edit";
+import { completionEdit, completionRange } from "./query-edit";
 
 interface Completion { stamp: string; start: number; end: number; values: string[] }
 const COMPLETION_DELAY_MS = 180;
 const COMPLETION_LIMIT = 20;
-const FIELDS = ["project", "type", "status", "importance", "human-attention", "tag"];
 
 export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }: {
   value: string; onChange: (value: string) => void; onAuthLost: () => void; onCompositionChange: (value: boolean) => void;
@@ -27,7 +26,6 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
   const [active, setActive] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [editError, setEditError] = useState("");
   const stamp = JSON.stringify([value, caret, focused, dismissed, composing, request]);
   const current = useRef(stamp);
   current.current = stamp;
@@ -88,7 +86,7 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
 
   function edit(next: string, position: number, continueHints: boolean) {
     pendingCaret.current = next === value ? null : position;
-    setCompletion(null); setDismissed(!continueHints); setActive(0); setEditError("");
+    setCompletion(null); setDismissed(!continueHints); setActive(0);
     onChange(next);
     input.current?.focus(); input.current?.setSelectionRange(position, position);
     setCaret(position);
@@ -128,7 +126,7 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
         <input id={`${id}-input`} ref={input} role="combobox" aria-autocomplete="list" aria-expanded={expanded}
           aria-controls={expanded ? `${id}-options` : undefined} aria-activedescendant={expanded && values.length > 0 ? `${id}-option-${active}` : undefined}
           placeholder='Search text or type:todo · Ctrl/⌘ K' maxLength={4096} value={value} autoComplete="off" spellCheck={false}
-          onChange={(event) => { setCompletion(null); setEditError(""); locate(event.currentTarget); onChange(event.currentTarget.value); }}
+          onChange={(event) => { setCompletion(null); locate(event.currentTarget); onChange(event.currentTarget.value); }}
           onFocus={(event) => { setFocused(true); locate(event.currentTarget); }} onClick={(event) => locate(event.currentTarget)}
           onSelect={(event) => { const element = event.currentTarget; setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart ?? -1 : -1); }}
           onBlur={() => { setFocused(false); setDismissed(true); }} onKeyDown={keydown}
@@ -148,11 +146,6 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
         {values.length > 0 && <div className="query-shortcuts">↑ ↓ select · Enter insert · Tab next field · Esc dismiss</div>}
       </div>}
     </div>
-    {editError !== "" && <p className="query-edit-error" role="status">{editError}</p>}
-    <div className="query-presets" aria-label="Insert filter">{FIELDS.map((field) => <button type="button" key={field}
-      onClick={() => { const next = appendField(value, field); if (next === null) { setEditError("Complete the query before inserting a filter."); setFocused(true); input.current?.focus(); return; } edit(next, next.length, true); }}>{field}:</button>)}
-      <button type="button" onClick={() => { const next = appendFilter(value, "archived", "all"); if (next !== null) edit(next, next.length, false); else { setEditError("Complete the query before inserting a filter."); setFocused(true); input.current?.focus(); } }}>include archived</button>
-    </div>
-    <details className="query-help"><summary>Search syntax</summary><p>Combine text and filters with <code>AND</code>, <code>OR</code>, <code>NOT</code> or parentheses. Spaces mean AND; quote values with spaces or colons.</p><p><code>(type:todo OR type:fact) tag:"machine learning"</code> · <code>modified-at &gt;= "2026-10-01T00:00:00Z"</code></p><p>Project scope, tag filter and archived controls apply when you press Search. Unquoted text matches normalized words; quoted text matches a phrase.</p></details>
+    <details className="query-help"><summary>Search syntax</summary><p>Combine text and filters with <code>AND</code>, <code>OR</code>, <code>NOT</code> or parentheses. Spaces mean AND; quote values with spaces or colons.</p><p><code>(type:todo OR type:fact) tag:"machine learning"</code> · <code>modified-at &gt;= "2026-10-01T00:00:00Z"</code></p><p>All filters belong in this expression: <code>project:example tag:mcp archived:all</code>. Press Search to apply the exact visible query. Unquoted text matches normalized words; quoted text matches a phrase.</p></details>
   </div>;
 }

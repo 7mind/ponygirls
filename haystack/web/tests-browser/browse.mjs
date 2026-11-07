@@ -10,7 +10,7 @@ export async function checkBrowse({ browser, base, login, humanToken, check, see
   const open = async (page) => {
     await login(page, humanToken);
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
-    await page.goto(`${base}/#/browse?project=scroll`);
+    await page.goto(`${base}/#/browse?${new URLSearchParams({ q: "project:scroll" })}`);
     await page.waitForFunction(() => document.querySelectorAll(".records-panel tbody .record-open").length === 20);
   };
   const count = (page, expected) => page.waitForFunction((n) => document.querySelectorAll(".records-panel tbody .record-open").length === n, expected);
@@ -49,7 +49,7 @@ export async function checkBrowse({ browser, base, login, humanToken, check, see
       const page = await ctx.newPage();
       const cursors = [];
       page.on("request", (request) => {
-        if (request.url().endsWith("/api/v1/search") && request.postDataJSON().project === "scroll" && request.postDataJSON().cursor) cursors.push(request.postDataJSON().cursor);
+        if (request.url().endsWith("/api/v1/search") && request.postDataJSON().query === "project:scroll" && request.postDataJSON().cursor) cursors.push(request.postDataJSON().cursor);
       });
       await open(page);
       await bottom(page);
@@ -135,10 +135,68 @@ export async function checkBrowse({ browser, base, login, humanToken, check, see
     try {
       const page = await ctx.newPage();
       await open(page);
-      await page.goto(`${base}/#/browse?project=scroll&tag=odd`);
+      await page.goto(`${base}/#/browse?${new URLSearchParams({ q: "project:scroll tag:odd" })}`);
       await page.waitForFunction(() => document.querySelector(".record-open")?.getAttribute("aria-label") === "scroll:01");
-      assert.equal(await page.getByLabel("Tag filter").inputValue(), "odd");
+      assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), "project:scroll tag:odd");
       assert.ok((await page.locator(".record-open").evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label")))).every((key) => Number(key.split(":")[1]) % 2 === 1));
     } finally { await ctx.close(); }
   });
+
+  await check("legacy URL filters become the exact visible applied expression", async () => {
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage();
+      await open(page);
+      const query = page.getByRole("combobox", { name: "Query", exact: true });
+      const expression = '(((id:"ui:note" OR project:scroll) project:"scroll") tag:"odd") archived:"all"';
+      const result = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === expression);
+      await page.goto(`${base}/#/browse?${new URLSearchParams({ q: 'id:"ui:note" OR project:scroll', project: "scroll", tag: "odd", archive: "show" })}`);
+      assert.equal((await result).request().postDataJSON().project, null, "there is no hidden project scope");
+      await count(page, 20);
+      assert.equal(await query.inputValue(), expression);
+      const params = new URLSearchParams(new URL(page.url()).hash.split("?")[1]);
+      assert.equal(params.get("q"), expression);
+      for (const field of ["project", "tag", "archive"]) assert.equal(params.has(field), false);
+      assert.ok((await page.locator(".record-open").evaluateAll((elements) => elements.map((element) => element.getAttribute("aria-label")))).every((key) => key.startsWith("scroll:") && Number(key.split(":")[1]) % 2 === 1), "scope constrains the entire OR body");
+      await page.reload();
+      await count(page, 20);
+      assert.equal(await query.inputValue(), expression, "canonical URL does not compose the scopes twice");
+      const archive = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "archived:true");
+      await page.getByRole("button", { name: "Archive", exact: true }).click();
+      assert.equal((await archive).request().postDataJSON().project, null);
+      assert.equal(await query.inputValue(), "archived:true", "sidebar presets also use the expression");
+      await page.getByRole("button", { name: "ui:old", exact: true }).waitFor();
+    } finally { await ctx.close(); }
+  });
+
+  await check("unsafe legacy URL filters show a migration error without searching", async () => {
+    const ctx = await browser.newContext();
+    try {
+      const page = await ctx.newPage();
+      await open(page);
+      const searches = [];
+      page.on("request", (request) => { if (request.url().endsWith("/api/v1/search")) searches.push(request.postDataJSON()); });
+      for (const draft of ['tag:"unfinished', "type:fact OR", "(type:fact", 'link:["depends-on","p:i"', 'link:["depends-on",]', 'link:["depends-on"]', 'field["/n"]', 'field["/n"] >=']) {
+        const hash = `#/browse?${new URLSearchParams({ q: draft, project: "scroll", archive: "show" })}`;
+        await page.goto(`${base}/${hash}`);
+        await page.waitForFunction((value) => {
+          const input = document.querySelector('input[role="combobox"]');
+          return input !== null && input.value === value;
+        }, draft);
+        await page.getByRole("alert").filter({ hasText: "Cannot safely migrate legacy URL filters" }).waitFor();
+        assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), draft);
+        assert.equal(await page.getByRole("button", { name: "Search", exact: true }).isDisabled(), true);
+        assert.equal(await page.locator(".record-open").count(), 0, "previous rows cannot masquerade as unscoped results");
+        assert.equal(new URL(page.url()).hash, hash, "failed migration retains the recoverable original URL");
+        await settle(page);
+        assert.equal(searches.length, 0);
+      }
+      const reset = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "");
+      await page.getByRole("button", { name: "Browse", exact: true }).click();
+      await reset;
+      assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), "");
+      assert.equal(await page.getByRole("button", { name: "Search", exact: true }).isEnabled(), true);
+    } finally { await ctx.close(); }
+  });
+
 }

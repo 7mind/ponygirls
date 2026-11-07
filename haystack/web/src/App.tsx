@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { api, AuthError, NetworkError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse } from "./Browse";
-import { readBrowseState, type BrowseState } from "./browse-state";
+import { browseHash, readBrowseState, type BrowseState } from "./browse-state";
 import { Detail } from "./Detail";
 import { LiveProvider } from "./Live";
 import { Icon, type IconName } from "./Icon";
@@ -13,7 +13,12 @@ function routeFromHash(): Route {
   const hash = location.hash;
   if (hash.startsWith("#/item/")) return { name: "item", key: decodeURIComponent(hash.slice("#/item/".length)) };
   const inbox = hash.startsWith("#/inbox");
-  return { name: inbox ? "inbox" : "browse", state: readBrowseState(hash, inbox) };
+  const state = readBrowseState(hash, inbox);
+  const start = hash.indexOf("?");
+  const params = new URLSearchParams(start === -1 ? "" : hash.slice(start + 1));
+  if (state.migrationError === null && ["project", "tag", "archive"].some((field) => params.has(field)))
+    history.replaceState(null, "", browseHash(state, inbox));
+  return { name: inbox ? "inbox" : "browse", state };
 }
 
 export function App() {
@@ -92,7 +97,7 @@ export function App() {
     { label: "Attention inbox", icon: "inbox", hash: "#/inbox" },
     { label: "Upstream activity", icon: "branch", hash: "#/browse?q=type%3Agithub-issue%20OR%20type%3Agithub-pr" },
     { label: "Skill candidates", icon: "spark", hash: "#/browse?q=type%3Askill-draft" },
-    { label: "Archive", icon: "archive", hash: "#/browse?archive=only" },
+    { label: "Archive", icon: "archive", hash: "#/browse?q=archived%3Atrue" },
   ];
 
   return (
@@ -103,7 +108,7 @@ export function App() {
         <div className="workspace-label">WORKSPACE</div>
         <nav aria-label="Workspace">{nav.map((entry) => {
           const active = route.name === "inbox" ? entry.hash === "#/inbox" : route.name === "browse" &&
-            (route.state.archive === "only" ? entry.label === "Archive" : route.state.query === "type:skill-draft" ? entry.label === "Skill candidates" :
+            (route.state.query === "archived:true" || route.state.query === 'archived:"true"' ? entry.label === "Archive" : route.state.query === "type:skill-draft" ? entry.label === "Skill candidates" :
               route.state.query === "type:github-issue OR type:github-pr" ? entry.label === "Upstream activity" : entry.label === "Browse");
           return <button key={entry.label} type="button" className={`nav-entry ${active ? "selected" : ""}`} aria-current={active ? "page" : undefined}
             onClick={() => { location.hash = entry.hash; }}><Icon name={entry.icon} />{entry.label}</button>;
