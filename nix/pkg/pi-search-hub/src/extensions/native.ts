@@ -193,7 +193,7 @@ function settleWithinAbortGrace<T>(terminal: Promise<T>, signal: AbortSignal, un
 	});
 }
 
-/** Payload is Pi's adapter-owned wire/SDK shape, not a generic chat tool. */
+/** Pi's adapter-owned payload for searchNative's native-only context, not a generic chat tool. */
 export function injectNativeSearchPayload(id: NativeProviderId, payload: unknown, modelId?: string): unknown {
 	if (!isRecord(payload)) throw new Error("Invalid native search request payload");
 	const body = { ...payload };
@@ -201,6 +201,10 @@ export function injectNativeSearchPayload(id: NativeProviderId, payload: unknown
 	body.tools = [id === "anthropic"
 		? { type: "web_search_20250305", name: "web_search", max_uses: 5 }
 		: { type: "web_search" }, ...existing];
+	// This is a search operation, not a chat turn that may answer or clarify
+	// without searching. searchNative declares no client tools, so hosted web
+	// search is the sole Responses tool and "required" guarantees its use.
+	body.tool_choice = id === "anthropic" ? { type: "tool", name: "web_search" } : "required";
 	if (id === "openai" || id === "openai-codex") {
 		const include = Array.isArray(body.include) ? body.include.filter((value): value is string => typeof value === "string") : [];
 		body.include = [...new Set([...include, "web_search_call.action.sources"])];

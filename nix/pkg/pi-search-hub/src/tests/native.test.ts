@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
-	createAssistantMessageEventStream, createModels, createProvider, InMemoryCredentialStore,
+	createAssistantMessageEventStream, createModels, createProvider, getCurrentTools, InMemoryCredentialStore,
 	type Api, type AssistantMessage, type Model, type SimpleStreamOptions, type TranscriptContext,
 } from "@earendil-works/pi-ai";
 import { discoverNativeEngines, injectNativeSearchPayload, NativeSearchError, NativeUsageUnavailableError, type NativeDiscoveryContext, type NativeProviderId } from "../extensions/native.js";
@@ -14,11 +14,26 @@ const responseEvent = (url = "https://example.org/facts", title?: string) => ({
 	item: { type: "message", content: [{ type: "output_text", text: "Factual claim with supporting citation.", annotations: [source(url, title)] }] },
 });
 
+/** A hosted-search server may clarify an ambiguous keyword unless search is required. */
+function hostedSearchEvents(id: NativeProviderId, payload: unknown): unknown[] {
+	const body = payload as { tools?: { type: string }[]; tool_choice?: string | { type: string; name?: string } };
+	const choice = body.tool_choice;
+	const forced = id === "anthropic"
+		? typeof choice === "object" && choice.type === "tool" && choice.name === "web_search"
+		: choice === "required" && body.tools?.length === 1 && body.tools[0].type === "web_search";
+	if (!forced) return id === "anthropic"
+		? [{ type: "content_block_start", content_block: { type: "text", text: "What would you like to know about this word?" } }]
+		: [{ type: "response.output_item.done", item: { type: "message", content: [{ type: "output_text", text: "What would you like to know about this word?", annotations: [] }] } }];
+	return id === "anthropic"
+		? [{ type: "content_block_start", content_block: { type: "web_search_tool_result", content: [{ type: "web_search_result", title: "Dictionary", url: "https://dictionary.example.org/bullshit" }] } }]
+		: [{ type: "response.output_item.done", item: { type: "web_search_call", action: { type: "search", sources: [{ type: "url", url: "https://dictionary.example.org/bullshit", title: "Dictionary" }] } } }];
+}
+
 /** Real Pi provider collection with in-memory credentials and dummy streams only. */
 async function fixture(config: {
 	providers?: NativeProviderId[];
 	oauth?: NativeProviderId[];
-	events?: unknown[];
+	events?: unknown[] | typeof hostedSearchEvents;
 	stopReason?: AssistantMessage["stopReason"];
 	rawStopReason?: string;
 	current?: NativeProviderId;
@@ -36,9 +51,10 @@ async function fixture(config: {
 		const stream = (requestModel: Model<Api>, context: TranscriptContext, options?: SimpleStreamOptions) => {
 			const output = createAssistantMessageEventStream();
 			void (async () => {
-				const payload = await options?.onPayload?.({ model: requestModel.id, store: false, include: ["reasoning.encrypted_content"] }, requestModel);
+				const payload = await options?.onPayload?.({ model: requestModel.id, store: false, include: ["reasoning.encrypted_content"], ...(id === "openai-codex" ? { tool_choice: "auto" } : {}) }, requestModel);
 				dispatch({ model: requestModel, context, options, payload });
-				for (const event of config.events ?? [responseEvent()]) await options?.onProviderStreamEvent?.(event, requestModel);
+				const events = typeof config.events === "function" ? config.events(id, payload) : config.events ?? [responseEvent()];
+				for (const event of events) await options?.onProviderStreamEvent?.(event, requestModel);
 				const message: AssistantMessage = {
 					role: "assistant", content: [{ type: "text", text: '{"url":"https://invented.invalid/"}' }],
 					api: requestModel.api, model: requestModel.id, provider: requestModel.provider,
@@ -85,6 +101,18 @@ async function fixture(config: {
 }
 
 describe("configured native search", () => {
+	// BG regression: live subscription searches answered/clarified "bullshit" without searching.
+	it.each<NativeProviderId>(["openai", "openai-codex", "anthropic", "xai", "grok-build"])("requires hosted search for ambiguous keywords through the registered %s provider", async (id) => {
+		const { ctx, dispatch } = await fixture({ providers: [id], oauth: [id], events: hostedSearchEvents });
+		const [engine] = await discoverNativeEngines(ctx);
+		await expect(engine.search("bullshit", 3)).resolves.toEqual({ results: [{ title: "Dictionary", url: "https://dictionary.example.org/bullshit" }], usage });
+		const call = dispatch.mock.calls[0][0];
+		expect(call.context.messages.at(-1)).toMatchObject({ role: "user", content: "bullshit" });
+		expect(call.context.tools).toBeUndefined();
+		expect(getCurrentTools(call.context.messages)).toEqual([]);
+		expect(call.payload.tools).toHaveLength(1);
+	});
+
 	it("discovers only configured catalog models with actual model/auth-mode labels", async () => {
 		const { ctx, dispatch } = await fixture({ providers: ["openai", "xai"], oauth: ["openai"] });
 		const engines = await discoverNativeEngines(ctx);
@@ -300,9 +328,10 @@ describe("configured native search", () => {
 	});
 
 	it("preserves unrelated payload fields and tools without mutating Pi's payload", () => {
-		const original = { model: "configured-id", tools: [{ type: "web_search_preview" }, { type: "function", name: "existing" }], include: ["reasoning.encrypted_content"], custom: true };
+		const original = { model: "configured-id", tool_choice: "none", tools: [{ type: "web_search_preview" }, { type: "function", name: "existing" }], include: ["reasoning.encrypted_content"], custom: true };
 		const payload = injectNativeSearchPayload("openai", original);
-		expect(payload).toMatchObject({ model: "configured-id", tools: [{ type: "web_search" }, { type: "function", name: "existing" }], custom: true });
+		expect(payload).toMatchObject({ model: "configured-id", tool_choice: "required", tools: [{ type: "web_search" }, { type: "function", name: "existing" }], custom: true });
 		expect(original.tools[0].type).toBe("web_search_preview");
+		expect(original.tool_choice).toBe("none");
 	});
 });
