@@ -14,6 +14,7 @@ import math
 import os
 from pathlib import Path
 import socket
+import subprocess
 import tempfile
 import threading
 import time
@@ -194,6 +195,72 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertEqual(client.search('hayneedle','lexical')['hits'],[])
                 client.delete(aid)
                 self.assertEqual(client.search('hayneedle','semantic')['hits'],[])
+            finally:
+                if server is not None:server.close()
+                database.close();model.close()
+
+
+    def test_dashboard_retrieval_real_browser_controlled_provider_and_no_provider(self):
+        with tempfile.TemporaryDirectory(prefix='manure-dashboard-retrieval-') as tmp:
+            root=Path(tmp);data=root/'data';data.mkdir(mode=0o700)
+            token=A.generate_token();hashfile=root/'operator.digest';hashfile.write_text(A.sha256_hex(token)+'\n');hashfile.chmod(0o600)
+            credential=root/'empty-model-credential';credential.write_text('');credential.chmod(0o600)
+            model=ControlledEmbedding();model.slow_document_once=0
+            database=OwnedDatabase(tmp)
+            sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
+            endpoint={'operationUrl':model.url,'model':'fixture-model','revision':'immutable-browser-v1','dimensions':3,'sendDimensions':True,
+                'documentPrefix':'doc: ','queryPrefix':'query: ','normalization':'cosine','credentialFile':str(credential),
+                'deadlineMs':10000,'maxResponseBytes':65536,'maxBatch':8,'maxInputBytes':16384,'maxRequestBytes':65536,
+                'maxConcurrent':2,'maxQueued':4,'batchSize':1,'leaseSeconds':3,'pollIntervalMs':500}
+            config={'data_dir':str(data),'api_origin':f'http://127.0.0.1:{port}','listen_address':'127.0.0.1','port':port,
+                'content_mode':'path','content_suffix':'','loopback_dev':True,'chunk_bytes':262144,'sweep_interval_s':3600,
+                'dashboard_dir':str(Path(__file__).resolve().parents[1]/'web/dashboard'),'unlock_shell_dir':None,'embedding':endpoint,
+                'users':[{'id':'search-manager','type':'human','tokens':[{'id':'primary','hashFile':str(hashfile)}]}]}
+            server=None
+            def browser(stage):
+                payload={'base':server.api_url,'token':token,'stage':stage,'browser':os.environ['MANURE_CHROMIUM_BIN'],
+                    'core':os.environ['MANURE_PLAYWRIGHT_CORE_PATH'],'artifacts':os.environ.get('MANURE_UX_ARTIFACTS','')}
+                result=subprocess.run([os.environ.get('MANURE_NODE_BIN','node'),str(Path(__file__).resolve().parent/'browser/dashboard-retrieval.mjs')],
+                    input=json.dumps(payload).encode(),capture_output=True,timeout=120)
+                self.assertEqual(result.returncode,0,result.stderr.decode()[-2000:])
+                return json.loads(result.stdout)
+            try:
+                server=TargetServer(config,tmp,owned_database=database,close_database=False)
+                client=ManureClient(server.api_url,token=token,cache_dir=str(root/'cache'))
+                payload=b'BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING\x00'*100
+                sha=hashlib.sha256(payload).hexdigest()
+                initialized=client.init_upload('<img src=x onerror=alert(1)> hayneedle','dir','external',
+                    [{'kind':'file','path':'catalogue/hayneedle.bin','size':len(payload),'sha256':sha}])
+                aid=initialized['artifact_id']
+                client.put_chunk(aid,'catalogue/hayneedle.bin',0,payload);client.publish(aid)
+                deadline=time.monotonic()+25
+                while time.monotonic()<deadline:
+                    try:
+                        if client.search('hayneedle','semantic')['hits']:break
+                    except ManureError as error:self.assertEqual(error.code,'search-unavailable')
+                    time.sleep(.1)
+                else:self.fail('controlled provider publication exceeded 25 seconds')
+                before=len(model.snapshot())
+                self.assertEqual(browser('lexical')['requests'].count('Lexical'),1)
+                self.assertEqual(len(model.snapshot()),before,'lexical browser request called embedding provider')
+                semantic=browser('semantic')
+                self.assertEqual(semantic['requests'].count('Semantic'),1)
+                self.assertEqual(semantic['requests'].count('Hybrid'),2,'explicit submit and recovered Enter after canceled pointer only')
+                calls=model.snapshot()[before:]
+                self.assertGreaterEqual(len(calls),2)
+                self.assertTrue(all('BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING' not in str(call) for call in calls))
+                model.fail_all=True
+                previous=len(model.snapshot())
+                outage=browser('outage')
+                self.assertEqual(outage['requests'].count('Hybrid'),1)
+                self.assertEqual(outage['requests'].count('Lexical'),1)
+                self.assertEqual(len(model.snapshot()),previous+1,'outage fallback or lexical requested an embedding')
+                model.fail_all=False
+                server.close();server=None
+                config['embedding']=None
+                server=TargetServer(config,tmp,owned_database=database,close_database=False)
+                self.assertEqual(browser('no-provider')['requests'].count('Lexical'),1)
+                self.assertEqual(len(model.snapshot()),previous+1,'no-provider browser caused model request')
             finally:
                 if server is not None:server.close()
                 database.close();model.close()

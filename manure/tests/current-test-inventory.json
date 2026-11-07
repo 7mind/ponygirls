@@ -784,9 +784,11 @@
       "path": "manure/tests/test_target_search.py",
       "classification": "current",
       "requires": [
-        "target"
+        "target",
+        "browser"
       ],
       "tests": [
+        "test_target_search.TargetSearchTests.test_dashboard_retrieval_real_browser_controlled_provider_and_no_provider",
         "test_target_search.TargetSearchTests.test_metadata_only_heartbeat_publication_modes_outage_and_profile_space"
       ]
     }
@@ -815,6 +817,7 @@
         "strict parser rejects duplicate escaped keys, nested duplicates and malformed JSON",
         "strict browser schema rejects i64 numbers, wrong enums, keys and surrogate strings",
         "dashboard builders use current generated commands with exact catalogue and tri-state patch",
+        "dashboard retrieval descriptor and projected enums use generated current Search codecs",
         "request correlates generated result and never accepts wrong or legacy responses",
         "errors expose enumerated code only, not untrusted secret-bearing messages",
         "opted-in insecure HTTP context does not require secure-only crypto.randomUUID",

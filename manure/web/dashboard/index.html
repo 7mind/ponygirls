@@ -89,18 +89,23 @@ aria-describedby="token-note">
 </div>
 
 <form id="list-form" class="search-panel">
-<div class="query-control"><label for="filter-text">Search artifacts</label><input type="search" id="filter-text" placeholder="Name or artifact ID" autocomplete="off" spellcheck="false"></div>
+<div class="query-control"><label for="filter-mode">Search mode</label><select id="filter-mode"><option value="catalogue">Catalogue · name/ID</option><option value="lexical">Retrieval · lexical</option><option value="semantic">Retrieval · semantic</option><option value="hybrid">Retrieval · hybrid</option></select></div>
+<div class="query-control query-text"><label for="filter-text">Search artifacts</label><div class="query-input"><input type="search" id="filter-text" placeholder="Name or artifact ID" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear search query">Clear</button></div></div>
 <div class="query-control"><label for="filter-visibility">Access</label><select id="filter-visibility"><option value="">All access modes</option><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select></div>
-<div class="query-control"><label for="filter-state">State</label><select id="filter-state"><option value="">All states</option><option value="ready">Ready</option><option value="uploading">Uploading</option><option value="publishing">Publishing</option></select></div>
-<div class="search-actions"><button type="submit" class="primary">Search</button><button type="button" id="refresh-button">Refresh</button></div>
-<label for="include-expired" class="checkbox-label"><input type="checkbox" id="include-expired"> Include expired artifacts</label>
+<div class="query-control catalogue-only"><label for="filter-state">State</label><select id="filter-state"><option value="">All states</option><option value="ready">Ready</option><option value="uploading">Uploading</option><option value="publishing">Publishing</option></select></div>
+<div class="query-control retrieval-only" hidden><label for="filter-kind">Kind</label><select id="filter-kind"><option value="">All kinds</option><option value="file">File</option><option value="dir">Directory</option></select></div>
+<div class="query-control retrieval-only" hidden><label for="filter-owner">Created by user</label><input id="filter-owner" type="text" autocomplete="off" spellcheck="false" placeholder="Any creator"></div>
+<div class="search-actions"><button type="submit" id="search-submit" class="primary">Search</button><button type="button" id="refresh-button">Refresh</button></div>
+<label for="include-expired" class="checkbox-label catalogue-only"><input type="checkbox" id="include-expired"> Include expired artifacts</label>
+<p id="query-help" class="search-help">Catalogue searches name or ID as a literal substring. Press Search to apply; no query syntax or suggestions.</p>
+<p id="draft-status" class="search-help" role="status">Search controls match the applied URL.</p>
 </form>
 
 <div class="results-heading"><h2>Results <span id="loaded-count" class="count-badge">0 loaded</span></h2><span id="sort-summary">Created · newest first</span></div>
 <p id="results-help" class="scroll-help">Sort all matching artifacts by any column. Scroll within the table to load more; all columns remain available horizontally.</p>
 <p id="list-error" class="error" role="alert" hidden></p>
 <div id="results-panel" class="records-panel" role="region" aria-label="Artifact results" aria-describedby="results-help" tabindex="0">
-<table class="artifacts">
+<table id="catalogue-table" class="artifacts">
 <caption class="sr-only">Artifact library. Column heading buttons sort all matching artifacts.</caption>
 <thead><tr>
 <th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="name" aria-label="Sort by Name">Name<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
@@ -116,6 +121,7 @@ aria-describedby="token-note">
 </tr></thead>
 <tbody id="artifact-list"></tbody>
 </table>
+<div id="retrieval-results" class="retrieval-results" hidden></div>
 <div id="empty-state" class="empty-state" hidden><span class="empty-mark" aria-hidden="true"></span><h3>No matching artifacts</h3><p>Try another search or access filter.<br>To add an artifact, paste or choose files above, or use the <code>manure</code> CLI.</p></div>
 <div id="list-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
 </div>

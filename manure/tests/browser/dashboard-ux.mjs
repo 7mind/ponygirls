@@ -25,7 +25,7 @@ const check = async (name, run) => {
     page.on("request", (request) => urls.push(request.url()));
     await page.addInitScript(() => {
       const original = window.fetch.bind(window);
-      window.__ux = { failList: false, holdList: false, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
+      window.__ux = { listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
       window.fetch = (url, options) => {
         const state = window.__ux;
         const value = String(url);
@@ -33,10 +33,24 @@ const check = async (name, run) => {
         const command=new URL(value,location.href).pathname==="/api/current" ? envelope?.command : null;
         if (state.failSession && command?.Whoami) return Promise.reject(new Error("test-offline"));
         if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
+        if (command?.ListArtifacts) state.readCommands.push({ mode: "catalogue", query: command.ListArtifacts.query.query });
+        if (command?.Search) state.readCommands.push({ mode: command.Search.query.mode, query: command.Search.query.query });
         const listPage=command?.ListArtifacts?.query.cursor != null;
         if (listPage && state.failList) { state.failList=false; return Promise.resolve(new Response(JSON.stringify({requestId:envelope.requestId,result:{Error:{failure:{code:"Unavailable",message:"controlled fixture",retryAfterSeconds:1}}}}),{status:503,headers:{"Content-Type":"application/json"}})); }
-        const response=original(url,options);
+        if (command?.ListArtifacts || command?.Search) {
+          state.listInFlight++;
+          state.listPeak=Math.max(state.listPeak,state.listInFlight);
+        }
+        const response=original(url,options).then(res => {
+          if (command?.ListArtifacts || command?.Search) state.listInFlight--;
+          return res;
+        }, error => {
+          if (command?.ListArtifacts || command?.Search) state.listInFlight--;
+          throw error;
+        });
         if (state.holdInfoId && command?.GetArtifact?.artifactId===state.holdInfoId) { state.holdInfoId=null;return response.then(res=>new Promise(resolve=>{state.releaseInfo=()=>resolve(res);})); }
+        if (command?.GetCapabilities && state.holdCapabilities) { state.holdCapabilities=false;return response.then(res=>new Promise(resolve=>{state.releaseCapabilities=()=>resolve(res);})); }
+        if (command?.Search && state.holdSearch) { state.holdSearch=false;return response.then(res=>new Promise(resolve=>{state.releaseSearch=()=>resolve(res);})); }
         if (listPage && state.holdList) { state.holdList=false;return response.then(res=>new Promise(resolve=>{state.releaseList=()=>resolve(res);})); }
         if (command?.RotateExternalPassword && state.holdRotate) { state.holdRotate=false;return response.then(res=>new Promise(resolve=>{state.releaseRotate=()=>resolve(res);})); }
         return response;
@@ -54,7 +68,7 @@ const check = async (name, run) => {
     results.push({ name, ok: true });
   } catch (error) {
     // Selectors and assertions contain fixture names/lengths only, never secrets.
-    results.push({ name, ok: false, error: error.message.split("\n").slice(0, 3).join(" ") });
+    results.push({ name, ok: false, error: error.message.split("\n").slice(0, 8).join(" ") });
   } finally { await context.close(); }
 };
 const rows = (page) => page.locator("#artifact-list > tr");
@@ -123,6 +137,112 @@ await check("sortable table, global search, URL reload and responsive themes", a
   if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-mobile.png"), fullPage: true });
 });
 
+// Specified contract: catalogue has no artificial client query length cap.
+await check("catalogue query remains uncapped and delayed capabilities preserve draft", async (page) => {
+  assert.equal(await page.locator("#filter-text").getAttribute("maxlength"), null);
+  await page.locator("#filter-text").fill("x".repeat(9000));
+  assert.equal((await page.locator("#filter-text").inputValue()).length, 9000);
+  await page.evaluate(() => { location.hash = "#/artifacts?mode=semantic&q=ux-bundle"; });
+  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("unavailable"));
+  assert.equal(await page.locator('#filter-mode option[value="semantic"]').isDisabled(), true);
+  assert.equal(await page.locator('#filter-mode option[value="hybrid"]').isDisabled(), true);
+  assert.equal(await page.locator('#filter-mode option[value="lexical"]').isDisabled(), false);
+  assert.equal(await page.locator("#filter-mode").inputValue(), "semantic", "unsupported requested URL mode remains selected");
+  await page.evaluate(() => { window.__ux.holdCapabilities = true; });
+  await page.locator("#retry-list-button").click();
+  await page.waitForFunction(() => window.__ux.releaseCapabilities !== null, null, { timeout: 10000 });
+  try {
+    await page.locator("#filter-text").fill("unsent draft");
+    await page.locator("#filter-mode").selectOption("catalogue");
+    await page.evaluate(() => window.__ux.releaseCapabilities());
+    await settle(page);
+    assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft", "capability response must preserve unsent query");
+    assert.equal(await page.locator("#filter-mode").inputValue(), "catalogue", "capability response must preserve draft mode");
+    assert.equal(await page.locator("#sort-summary").textContent(), "Relevance order · not sortable",
+      "summary belongs to applied semantic mode, not unsent catalogue draft");
+  } finally { await page.evaluate(() => window.__ux.releaseCapabilities?.()); }
+});
+
+await check("direct route fences held retrieval and never replays unsent URL query", async (page) => {
+  await page.locator("#filter-mode").selectOption("lexical");
+  await page.locator("#filter-text").fill("ux-public");
+  await page.evaluate(() => { window.__ux.holdSearch = true; });
+  await page.locator("#list-form button[type=submit]").click();
+  await page.waitForFunction(() => window.__ux.releaseSearch !== null, null, { timeout: 10000 });
+  try {
+    await page.evaluate(() => { location.hash = "#/artifacts?mode=lexical&q=ux-protected"; });
+    await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("Press Search"));
+    await page.evaluate(() => window.__ux.releaseSearch());
+    await settle(page);
+    assert.equal(await page.locator("#retrieval-results").textContent(), "");
+    assert.deepEqual(await page.evaluate(() => window.__ux.readCommands.filter(c => c.mode !== "catalogue").map(c => c.query)), ["ux-public"]);
+  } finally { await page.evaluate(() => window.__ux.releaseSearch?.()); }
+});
+
+await check("sort/preset preserve applied query and visible unsent draft", async (page) => {
+  await recordSearch(page);
+  await page.locator("#filter-text").fill("unsent draft");
+  await page.locator("#filter-mode").selectOption("lexical");
+  await page.locator("#filter-kind").selectOption("dir");
+  await page.locator("#filter-owner").fill("unsent-owner");
+  await page.locator('[data-sort="name"]').click();
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("sort") === "name");
+  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("q"), "ux-record-");
+  assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
+  assert.equal(await page.locator("#filter-mode").inputValue(), "lexical", "sort must retain unsent mode");
+  assert.equal(await page.locator("#filter-kind").inputValue(), "dir", "sort must retain unsent kind");
+  assert.equal(await page.locator("#filter-owner").inputValue(), "unsent-owner", "sort must retain unsent creator");
+  await page.locator('[data-visibility-preset="external"]').click();
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("access") === "external");
+  await page.waitForFunction(() => document.querySelector("#filter-visibility").value === "external");
+  assert.equal(await page.locator("#filter-visibility").inputValue(), "external");
+  assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
+  assert.equal(await page.locator("#filter-mode").inputValue(), "catalogue", "sidebar preset intentionally resets draft mode");
+  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("q"), "ux-record-");
+  await page.locator("#filter-visibility").selectOption("public");
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("access") === "public");
+  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("q"), "ux-record-",
+    "catalogue filter must not silently submit an unsent text draft");
+  assert.equal(await page.locator("#filter-text").inputValue(), "unsent draft");
+});
+
+await check("confirmed logout clears owner/query fragment and next login does not replay it", async (page) => {
+  await page.locator("#filter-mode").selectOption("lexical");
+  await page.locator("#filter-text").fill("ux-public");
+  await page.locator("#filter-owner").fill("private-creator");
+  await page.locator("#list-form button[type=submit]").click();
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("owner") === "private-creator");
+  await page.waitForFunction(() => window.__ux.readCommands.some(c => c.mode === "Lexical"));
+  const before = await page.evaluate(() => window.__ux.readCommands.length);
+  await page.locator("#logout-button").click();
+  await page.locator("#login-section").waitFor({ state: "visible" });
+  assert.equal(page.url().includes("private-creator"), false, "logout must remove owner from URL");
+  assert.equal(page.url().includes("ux-public"), false, "logout must remove query from URL");
+  await page.locator("#token-input").fill(input.token);
+  await page.locator("#login-form button[type=submit]").click();
+  await page.locator("#whoami-text").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#filter-owner").inputValue(), "", "new login owner filter");
+  assert.equal(await page.locator("#filter-mode").inputValue(), "catalogue", "new login mode");
+  assert.equal(await page.evaluate((start) => window.__ux.readCommands.slice(start).some(c => c.mode !== "catalogue"), before), false, "no retrieval replay across logout/login");
+});
+
+await check("unauthenticated incoming retrieval deep link survives login without implicit Search", async (page) => {
+  await page.locator("#logout-button").click();
+  await page.locator("#login-section").waitFor({ state: "visible" });
+  const link = input.base + "/#/artifacts?mode=lexical&q=ux-public&owner=one-user";
+  await page.goto(link, { waitUntil: "domcontentloaded" });
+  await page.locator("#login-section").waitFor({ state: "visible" });
+  assert.equal(page.url(), link);
+  await page.locator("#token-input").fill(input.token);
+  await page.locator("#login-form button[type=submit]").click();
+  await page.locator("#whoami-text").waitFor({ state: "visible" });
+  assert.equal(await page.locator("#filter-mode").inputValue(), "lexical");
+  assert.equal(await page.locator("#filter-owner").inputValue(), "one-user");
+  assert.equal(await page.locator("#filter-text").inputValue(), "ux-public");
+  assert.equal(await page.locator("#retrieval-results").textContent(), "");
+  assert.equal(await page.evaluate(() => window.__ux.readCommands.some(c => c.mode !== "catalogue")), false);
+});
+
 await check("infinite scrolling appends without duplicates and reaches exhaustion", async (page) => {
   await recordSearch(page);
   await page.locator("#artifact-list [data-action=details]").first().focus();
@@ -156,10 +276,16 @@ await check("old pages cannot append after a sort change", async (page) => {
   await bottom(page);
   await page.waitForFunction(() => window.__ux.releaseList !== null);
   await page.locator('[data-sort="name"]').click();
-  await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
+  await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("sort") === "name");
+  assert.equal(await page.evaluate(() => window.__ux.listInFlight), 0,
+    "network body finished, but held reply has not settled in the application");
+  await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 0);
+  assert.equal(await page.locator("#artifact-list > tr").count(), 0, "old response cannot append across sort");
   await page.evaluate(() => window.__ux.releaseList());
+  await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
   await settle(page);
   assert.deepEqual(await titles(page), Array.from({ length: 25 }, (_, i) => `ux-record-${String(i).padStart(2, "0")}`));
+  assert.equal(await page.evaluate(() => window.__ux.listPeak), 1, "only one physical request while stale read was unsettled");
 });
 
 await check("details show file manifest, inert names and attachment downloads", async (page) => {
@@ -313,6 +439,23 @@ await check("a new detail target cannot retain old metadata and destructive acti
   await page.waitForFunction(() => document.querySelector("#detail-name").textContent === "ux-protected");
   assert.equal(await page.locator("#delete-button").isEnabled(), true);
 });
+
+await check("retrieval detail denial clears pinned evidence", async (page) => {
+  await page.locator("#filter-mode").selectOption("lexical");
+  await page.locator("#filter-text").fill("ux-bundle");
+  await page.locator("#list-form button[type=submit]").click();
+  try { await page.waitForFunction(() => document.querySelector("#retrieval-results").textContent.includes("ux-bundle"), null, { timeout: 10000 }); }
+  catch (error) { throw new Error("retrieval status: " + await page.locator("#list-status").textContent() + " / " + await page.locator("#list-error").textContent()); }
+  const response = await page.request.post(input.base + "/api/current", { headers: { Origin: input.base }, data: {
+    requestId: crypto.randomUUID(), apiVersion: "1.0.0", command: { DeleteArtifact: { artifactId: input.bundle } }
+  }});
+  assert.equal(response.status(), 200);
+  await page.locator("#retrieval-results [data-action=details]").first().click();
+  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("Detail failed"));
+  assert.equal(await page.locator("#retrieval-results").textContent(), "", "denied artifact and evidence cannot be retained");
+});
+
+
 
 await browser.close();
 process.stdout.write(JSON.stringify(results));

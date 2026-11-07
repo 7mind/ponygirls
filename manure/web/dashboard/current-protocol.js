@@ -97,7 +97,9 @@ function local(value) {
   Object.keys(source).forEach(key => {
     if (key === '$type') { return; }
     let field = source[key];
-    if (['kind','visibility','state','principalType'].includes(key)) { field = field === 'Directory' ? 'dir' : field.toLowerCase(); }
+    if (['kind','visibility','state','principalType','mode','field','countScope','contentMode'].includes(key)) {
+      field = field === 'Directory' ? 'dir' : field === 'ManifestPath' ? 'manifestpath' : field === 'CandidateWindow' ? 'candidatewindow' : field === 'ExactMatches' ? 'exactmatches' : field.toLowerCase();
+    }
     output[key.replace(/[A-Z]/g,letter=>'_'+letter.toLowerCase())] = local(field);
   });
   if (value instanceof p.ManifestEntry_File) { output.kind='file'; }
@@ -129,6 +131,11 @@ export async function request(fetch, descriptor) {
 export const whoami = () => [new p.Command_Whoami(),p.Result_Identity,r=>local(r.principal)];
 export const login = token => [new p.Command_Login(token),p.Result_Identity,r=>local(r.principal)];
 export const logout = () => [new p.Command_Logout(),p.Result_Ok,()=>({ok:true})];
+export const search = (state,limit) => [new p.Command_Search(new p.SearchQuery(
+  state.q,p.SearchMode[state.mode[0].toUpperCase()+state.mode.slice(1)],
+  new p.SearchFilter(state.visibility ? p.Visibility[state.visibility[0].toUpperCase()+state.visibility.slice(1)] : null,
+    state.kind ? p.ArtifactKind[state.kind === 'dir' ? 'Directory' : 'File'] : null,state.createdByUser || null),
+  limit,null)),p.Result_SearchResults,r=>local(r.page)];
 export const catalogue = (cursor,state,limit) => [new p.Command_ListArtifacts(new p.CatalogueQuery(
   state.q,state.includeExpired,state.visibility ? p.Visibility[state.visibility[0].toUpperCase()+state.visibility.slice(1)] : null,
   state.itemState ? p.ArtifactState[state.itemState[0].toUpperCase()+state.itemState.slice(1)] : null,
@@ -144,7 +151,11 @@ export const access = (id,visibility) => [new p.Command_PatchArtifact(id,new p.A
   }];
 export const rotate = id => [new p.Command_RotateExternalPassword(id),p.Result_PasswordRotated,r=>local(r)];
 
-export const capabilities = () => [new p.Command_GetCapabilities(),p.Result_CapabilityInfo,r=>local(r.capabilities)];
+export const capabilities = () => [new p.Command_GetCapabilities(),p.Result_CapabilityInfo,r=>{
+  const value=local(r.capabilities);
+  value.search_modes=r.capabilities.searchModes.map(mode=>mode.toLowerCase());
+  return value;
+}];
 export const initUpload = (file,visibility,sha256) => [new p.Command_InitUpload(file.name,p.ArtifactKind.File,
   p.Visibility[visibility[0].toUpperCase()+visibility.slice(1)],null,
   [new p.ManifestEntry_File(file.name,BigInt(file.size),sha256)]),p.Result_UploadInitialized,r=>{

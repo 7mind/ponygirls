@@ -99,3 +99,30 @@ test('search goldens carry actual published space distinct from profile and lexi
   delete missing.result.SearchResults.page.hits[0].embeddingSpace;
   assert.throws(()=>boundary.validate('ServerEnvelope',missing),/bad-response/);
 });
+
+// Specified contract: retrieval is a separate typed Search command, never a
+// catalogue query with a different label or a hand-decoded response.
+test('dashboard retrieval descriptor and projected enums use generated current Search codecs',()=>{
+  const descriptor=boundary.search({q:'hayneedle',mode:'hybrid',visibility:'external',kind:'dir',createdByUser:'owner'},25);
+  assert.ok(descriptor[0] instanceof p.Command_Search);
+  assert.equal(descriptor[0].query.mode,p.SearchMode.Hybrid);
+  assert.equal(descriptor[0].query.filter.kind,p.ArtifactKind.Directory);
+  assert.equal(descriptor[0].query.filter.visibility,p.Visibility.External);
+  assert.equal(descriptor[0].query.filter.createdByUser,'owner');
+  assert.equal(descriptor[0].query.cursor,null);
+  assert.equal(descriptor[0].query.limit,25);
+  boundary.validate('ClientEnvelope',p.ClientEnvelope_JsonCodec.instance.encode(ctx,new p.ClientEnvelope(id,'1.0.0',descriptor[0])));
+  assert.ok(boundary.capabilities()[0] instanceof p.Command_GetCapabilities);
+  const vectors=JSON.parse(readFileSync(new URL('../../models/fixtures/results.json',import.meta.url),'utf8'));
+  for(const mode of ['Path','Subdomain']) {
+    const reply=structuredClone(vectors.find(v=>v.result.CapabilityInfo));
+    reply.result.CapabilityInfo.capabilities.contentMode=mode;
+    const capabilities=boundary.capabilities()[2](p.ServerEnvelope_JsonCodec.instance.decode(ctx,reply).result);
+    assert.equal(capabilities.content_mode,mode.toLowerCase());
+  }
+  const pages=vectors.filter(v=>v.result.SearchResults).map(v=>descriptor[2](p.ServerEnvelope_JsonCodec.instance.decode(ctx,v).result));
+  assert.equal(pages[0].count_scope,'candidatewindow');
+  assert.equal(pages[1].count_scope,'exactmatches');
+  assert.equal(pages[0].hits[0].evidence[0].field,'name');
+  assert.equal(pages[0].hits[0].artifact.kind,'dir');
+});

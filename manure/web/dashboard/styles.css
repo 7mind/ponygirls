@@ -149,7 +149,7 @@ nav { display: flex; flex-direction: column; gap: 4px; }
 .upload-guide-body p { margin-bottom: 10px; color: var(--muted); font-size: 12px; }
 .upload-guide-body p:last-child { margin: 10px 0 0; font-size: 11px; }
 .upload-guide-body pre { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; }
-.search-panel { display: grid; grid-template-columns: minmax(190px, 1fr) 155px 145px auto; align-items: end; gap: 12px; padding: 16px; background: var(--surface); border: 1px solid var(--line); }
+.search-panel { display: grid; grid-template-columns: 160px minmax(190px, 1fr) 140px 140px auto; align-items: end; gap: 12px; padding: 16px; background: var(--surface); border: 1px solid var(--line); }
 .query-control { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .search-actions { display: flex; align-items: center; gap: 6px; }
 .search-actions button { min-height: 37px; }
@@ -312,6 +312,22 @@ th[aria-sort=ascending] .sort-indicator, th[aria-sort=descending] .sort-indicato
   .password-reveal { padding: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+
+.query-input { display: flex; gap: 5px; }
+.query-input input { flex: 1; }
+.query-input button { flex: none; }
+.search-help { grid-column: 1 / -1; margin: 0; font-size: 11px; color: var(--muted); }
+.retrieval-results { padding: 10px; }
+.retrieval-hit { border: 1px solid var(--line); padding: 14px; margin-bottom: 10px; overflow-wrap: anywhere; }
+.retrieval-hit:last-child { margin-bottom: 0; }
+.retrieval-hit h3 { margin: 0 0 4px; }
+.retrieval-hit p { margin: 3px 0; }
+.retrieval-hit .source-note { color: var(--muted); font-size: 11px; }
+.retrieval-hit .evidence-list { margin: 8px 0; padding-left: 20px; }
+.retrieval-hit .evidence-list li { margin-bottom: 4px; white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 1200px) { .search-panel { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media (max-width: 600px) { .search-panel { grid-template-columns: minmax(0,1fr); } .query-input button { min-width: 60px; } }
+
 
 .quick-upload { margin-bottom: 1.5rem; padding: 1.25rem; }
 .quick-upload form { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }

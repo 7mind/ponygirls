@@ -3,7 +3,6 @@
  */
 import * as current from "./current-protocol.js";
 import { FileUpload } from "./quick-upload.js";
-import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./current/manure/api/index.js";
 
 "use strict";
 
@@ -19,6 +18,16 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
   var revealGeneration = 0;
   var openGeneration = 0;
   var pendingPage = null;
+  var readBusy = false;
+  var queuedRead = null;
+  var capabilities = null;
+  var capabilitiesError = false;
+  var capabilityGeneration = 0;
+  var preservedDraftControls = null;
+  var searchPage = null;
+  var submittedKey = null;
+  var composing = false;
+  var pointerCompositionBlocked = false;
   var nextCursor = null;
   var loadedKey = "";
   var summaries = [];
@@ -81,17 +90,37 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
 
   function checkHostingMode() {
     var notice = $("path-mode-warning");
-    // The static dashboard is also used in subdomain mode. Read the existing
-    // public typed capability, never infer origin isolation from artifact URLs
-    // or require a login before disclosing the low-security hosting warning.
-    current.request(fetch, [new Command_GetCapabilities(), Result_CapabilityInfo,
-      function (result) { return result.capabilities.contentMode; }]).then(function (mode) {
-      notice.hidden = mode !== ContentMode.Path;
+    var generation = ++capabilityGeneration, epoch = sessionEpoch;
+    return current.request(fetch, current.capabilities()).then(function (result) {
+      if (generation !== capabilityGeneration || epoch !== sessionEpoch) { return; }
+      if (!Number.isInteger(result.max_list_limit) || result.max_list_limit < 1 ||
+          !Array.isArray(result.search_modes) || typeof result.metadata_only_search !== "boolean") { throw new Error("bad-response"); }
+      capabilities = result; capabilitiesError = false;
+      notice.hidden = result.content_mode !== "path";
+      updateDraft();
+      if (authenticated && readRoute().id === null) { handleRoute(true); }
     }).catch(function () {
+      if (generation !== capabilityGeneration || epoch !== sessionEpoch) { return; }
+      capabilities = null; capabilitiesError = true;
       notice.hidden = false;
       notice.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
       notice.setAttribute("aria-label", notice.title);
+      updateDraft();
+      if (authenticated && readRoute().id === null) { handleRoute(true); }
     });
+  }
+  function supported(value) {
+    return capabilities !== null && capabilities.search_modes.includes(value) && capabilities.metadata_only_search;
+  }
+  function resultStatus() {
+    if (state.mode === "catalogue") {
+      return summaries.length + " artifacts shown" + (nextCursor !== null ? " · scroll to load more" : " · all matching artifacts loaded");
+    }
+    if (searchPage === null) { return "Press Search to run retrieval. No model query has been sent."; }
+    var scope = searchPage.count_scope === "exactmatches" ? "matching artifacts" : "candidate-window artifacts";
+    return searchPage.hits.length + " hits shown · " + searchPage.total + " " + scope +
+      (searchPage.count_scope === "candidatewindow" ? " (ranked candidate window " + searchPage.ranking_limit + "; not a corpus-wide total)" : " (exact matches)") +
+      " · one page, up to " + Math.min(PAGE_LIMIT,capabilities.max_list_limit) + " hits";
   }
 
   function readRoute() {
@@ -99,12 +128,17 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     var queryAt = hash.indexOf("?");
     var params = new URLSearchParams(queryAt === -1 ? "" : hash.slice(queryAt + 1));
     var sort = params.get("sort");
+    var mode = params.get("mode");
+    var kind = params.get("kind");
     var visibility = params.get("access");
     var itemState = params.get("state");
     var direction = params.get("direction");
     var match = /^#\/artifact\/([0-9a-f]{32})(?:\?|$)/.exec(hash);
     return { id: match ? match[1] : null, state: {
       q: params.get("q") || "",
+      mode: ["lexical", "semantic", "hybrid"].includes(mode) ? mode : "catalogue",
+      kind: ["file", "dir"].includes(kind) ? kind : "",
+      createdByUser: params.get("owner") || "",
       visibility: ["internal", "external", "public"].indexOf(visibility) !== -1 ? visibility : "",
       itemState: ["ready", "uploading", "publishing"].indexOf(itemState) !== -1 ? itemState : "",
       includeExpired: params.get("expired") === "true",
@@ -115,6 +149,9 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
   function stateParams(value) {
     var params = new URLSearchParams();
     if (value.q) { params.set("q", value.q); }
+    if (value.mode !== "catalogue") { params.set("mode", value.mode); }
+    if (value.kind) { params.set("kind", value.kind); }
+    if (value.createdByUser) { params.set("owner", value.createdByUser); }
     if (value.visibility) { params.set("access", value.visibility); }
     if (value.itemState) { params.set("state", value.itemState); }
     if (value.includeExpired) { params.set("expired", "true"); }
@@ -127,13 +164,50 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     var query = stateParams(state).toString();
     return (id ? "#/artifact/" + id : "#/artifacts") + (query ? "?" + query : "");
   }
+  function draftState() {
+    return Object.assign({}, state, { q: $("filter-text").value, mode: $("filter-mode").value,
+      visibility: $("filter-visibility").value, kind: $("filter-kind").value,
+      createdByUser: $("filter-owner").value, itemState: $("filter-state").value,
+      includeExpired: $("include-expired").checked });
+  }
+  function updateDraft() {
+    ["lexical", "semantic", "hybrid"].forEach(function (value) {
+      var option = $("filter-mode").querySelector('option[value="' + value + '"]');
+      option.disabled = !supported(value);
+      option.textContent = "Retrieval · " + value + (capabilities === null ? " (checking availability)" : option.disabled ? " (unavailable)" : "");
+    });
+    var mode = $("filter-mode").value;
+    var retrieval = mode !== "catalogue";
+    document.querySelectorAll(".catalogue-only").forEach(function (node) { node.hidden = retrieval; });
+    document.querySelectorAll(".retrieval-only").forEach(function (node) { node.hidden = !retrieval; });
+    $("filter-text").placeholder = retrieval ? "Search names and manifest paths" : "Name or artifact ID";
+    if (retrieval) { $("filter-text").maxLength = 4096; }
+    else { $("filter-text").removeAttribute("maxlength"); }
+    $("filter-text").required = retrieval;
+    setText("query-help", !retrieval ? "Catalogue: literal name/ID substring, all states and optional expired artifacts. Press Search to apply; no query syntax or suggestions." :
+      "Retrieval · " + mode + ": metadata names and manifest paths only, never file bytes. Ready, unexpired artifacts; relevance order. " +
+      (mode === "lexical" ? "English full-text words/stems, quoted phrases, OR and -negation; no model call." :
+        mode === "hybrid" ? "English full-text words/stems, quoted phrases, OR and -negation plus semantic similarity; model called only by Search/Refresh." :
+          "Semantic similarity in a bounded candidate window; model called only by Search/Refresh.") +
+      " Use the dedicated filters, not field: expressions; no completion.");
+    var differs = JSON.stringify(draftState()) !== JSON.stringify(state);
+    setText("draft-status", differs ? "Draft controls differ from applied URL · press Search to apply." : "Search controls match the applied URL.");
+    setText("sort-summary", state.mode !== "catalogue" ? "Relevance order · not sortable" : "Sorted by " + document.querySelector('[data-sort="' + state.sort + '"]').getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓"));
+    setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll within the table to load more; all columns remain available horizontally." : "One bounded page in relevance order. Evidence is a pinned name or manifest path, not file contents; opening details fetches fresh metadata.");
+    $("catalogue-table").hidden = state.mode !== "catalogue";
+    $("retrieval-results").hidden = state.mode === "catalogue";
+  }
   function updateControls() {
     $("filter-text").value = state.q;
+    $("filter-mode").value = state.mode;
     $("filter-visibility").value = state.visibility;
+    $("filter-kind").value = state.kind;
+    $("filter-owner").value = state.createdByUser;
     $("filter-state").value = state.itemState;
     $("include-expired").checked = state.includeExpired;
     document.querySelectorAll("[data-sort]").forEach(function (button) {
-      var selected = button.dataset.sort === state.sort;
+      var selected = button.dataset.sort === state.sort && state.mode === "catalogue";
+      button.disabled = state.mode !== "catalogue";
       button.closest("th").setAttribute("aria-sort", selected ? state.direction === "asc" ? "ascending" : "descending" : "none");
       var arrow = button.querySelector(".sort-indicator");
       if (arrow !== null) { arrow.textContent = selected ? state.direction === "asc" ? "↑" : "↓" : "↕"; }
@@ -141,53 +215,99 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {
       button.setAttribute("aria-pressed", String(button.dataset.visibilityPreset === state.visibility));
     });
-    var selected = document.querySelector('[data-sort="' + state.sort + '"]');
-    setText("sort-summary", "Sorted by " + selected.getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓"));
+    updateDraft();
   }
+
   function invalidateNavigation() {
-    listGeneration++; pendingPage = null; detailGeneration++; openGeneration++;
+    listGeneration++; pendingPage = null; queuedRead = null; detailGeneration++; openGeneration++;
     if (observer !== null) { observer.disconnect(); }
     hideRotateOutput();
   }
-  function navigateList(next) {
+  function navigateList(next, submitted, keepDraft) {
+    preservedDraftControls = keepDraft === "all" ? draftState() :
+      keepDraft === "query" ? { q: $("filter-text").value } : null;
     invalidateNavigation();
     loadedKey = "";
+    submittedKey = submitted ? JSON.stringify(next) : null;
     state = next;
     var hash = routeHash(null);
     if (window.location.hash === hash) { handleRoute(); }
     else { window.location.hash = hash; }
   }
-  function handleRoute() {
+  function handleRoute(keepDraft) {
     if (!authenticated) { return; }
     var route = readRoute();
+    var currentDraft = keepDraft === true ? draftState() : null;
     var changed = JSON.stringify(route.state) !== JSON.stringify(state);
+    if (changed) {
+      // Direct hash/history navigation bypasses navigateList. Fence both a held
+      // result and any queued unsent intent before changing the owner of rows.
+      invalidateNavigation(); loadedKey = ""; submittedKey = null;
+      preservedDraftControls = null;
+    }
     state = route.state;
-    if (changed) { updateControls(); }
-    else {
-      var draft = $("filter-text").value;
-      updateControls();
-      $("filter-text").value = draft;
+    var savedDraft = preservedDraftControls;
+    preservedDraftControls = null;
+    updateControls();
+    if (savedDraft !== null) {
+      $("filter-text").value = savedDraft.q;
+      if (savedDraft.mode !== undefined) {
+        $("filter-mode").value = savedDraft.mode;
+        $("filter-visibility").value = savedDraft.visibility;
+        $("filter-kind").value = savedDraft.kind;
+        $("filter-owner").value = savedDraft.createdByUser;
+        $("filter-state").value = savedDraft.itemState;
+        $("include-expired").checked = savedDraft.includeExpired;
+      }
+      updateDraft();
+    }
+    if (!changed && currentDraft !== null) {
+      $("filter-text").value = currentDraft.q;
+      $("filter-mode").value = currentDraft.mode;
+      $("filter-visibility").value = currentDraft.visibility;
+      $("filter-kind").value = currentDraft.kind;
+      $("filter-owner").value = currentDraft.createdByUser;
+      $("filter-state").value = currentDraft.itemState;
+      $("include-expired").checked = currentDraft.includeExpired;
+      updateDraft();
     }
     if (route.id !== null) { showDetail(route.id); return; }
     detailGeneration++; openGeneration++; hideRotateOutput();
     currentDetailId = null; currentDetailInfo = null;
     $("detail-section").hidden = true;
     $("dashboard-section").hidden = false;
-    if (loadedKey !== JSON.stringify(state)) { loadPage(true); }
+    if (loadedKey !== JSON.stringify(state)) {
+      summaries = []; searchPage = null; nextCursor = null; renderList();
+      if (capabilities === null) {
+        setText("list-status", capabilitiesError ? "Capabilities unavailable. Retry connection; no search was sent." : "Checking search capabilities…");
+        $("retry-list-button").hidden = !capabilitiesError;
+      } else if (state.mode !== "catalogue" && !supported(state.mode)) {
+        setText("list-status", "Retrieval mode " + state.mode + " unavailable on this server. No fallback was sent.");
+        $("retry-list-button").hidden = false;
+      } else if (state.mode !== "catalogue" && submittedKey !== JSON.stringify(state)) {
+        setText("list-status", resultStatus());
+      } else { loadPage(true); }
+    }
     else {
       renderList();
-      if (!listError) { setText("list-status", summaries.length + " artifacts shown" + (nextCursor !== null ? " · scroll to load more" : " · all matching artifacts loaded")); }
+      if (!listError) { setText("list-status", resultStatus()); }
       watchList();
     }
   }
 
   function clearAccount() {
     clearUploads();
-    sessionEpoch++; invalidateNavigation(); authenticated = false;
-    summaries = []; loadedKey = ""; nextCursor = null; listError = false;
+    var hadAccount = authenticated;
+    sessionEpoch++; capabilityGeneration++; invalidateNavigation(); authenticated = false;
+    // A URL fragment is visible to the next identity in this tab. On the
+    // session boundary remove applied queries, owner filters and unsent input.
+    if (hadAccount) { window.history.replaceState(null, "", "#/artifacts"); }
+    state = readRoute().state;
+    updateControls();
+    summaries = []; searchPage = null; submittedKey = null; queuedRead = null; loadedKey = ""; nextCursor = null; listError = false;
     currentDetailId = null; currentDetailInfo = null;
     if (observer !== null) { observer.disconnect(); }
-    $("artifact-list").textContent = "";
+    $("artifact-list").textContent = ""; $("retrieval-results").textContent = "";
     $("detail-list").textContent = "";
     $("file-list").textContent = "";
     setText("detail-name", "Artifact"); setText("detail-subtitle", "");
@@ -221,6 +341,7 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
       $("dashboard-section").hidden = false;
       setText("whoami-text", body.user_id);
       updateControls(); handleRoute();
+      if (capabilities === null) { checkHostingMode(); }
       return true;
     }).catch(function (error) {
       if (epoch !== sessionEpoch || error.message === "unauthorized") { return false; }
@@ -269,7 +390,31 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     button.addEventListener("click", handler);
     return button;
   }
+  function renderRetrieval() {
+    var list = $("retrieval-results");
+    var fragment = document.createDocumentFragment();
+    if (searchPage !== null) { searchPage.hits.forEach(function (hit) {
+      var item = hit.artifact;
+      var card = element("article", null, "retrieval-hit");
+      var heading = element("h3", null, null);
+      heading.appendChild(rowAction(item.name || item.artifact_id, "details", item, function () {
+        invalidateNavigation(); window.location.hash = routeHash(item.artifact_id);
+      }));
+      card.appendChild(heading);
+      card.appendChild(element("p", item.artifact_id + " · " + item.kind + " · " + item.visibility + " · created by " + item.created_by_user, null));
+      card.appendChild(element("p", "Pinned source " + hit.source_version + " · generation " + hit.generation_id + " · policy " + hit.policy_id, "source-note"));
+      var evidence = element("ul", null, "evidence-list");
+      hit.evidence.forEach(function (entry) {
+        evidence.appendChild(element("li", entry.field === "manifestpath" ? "Manifest path: " + entry.path : "Name: " + entry.text, null));
+      });
+      card.appendChild(evidence);
+      card.appendChild(element("p", "Representative name/path evidence only; not file bytes. Details fetch current artifact metadata.", "source-note"));
+      fragment.appendChild(card);
+    }); }
+    list.replaceChildren(fragment);
+  }
   function renderList() {
+    renderRetrieval();
     var list = $("artifact-list");
     var active = document.activeElement;
     var focused = active !== null && list.contains(active) ? { id: active.dataset.artifactId, action: active.dataset.action } : null;
@@ -316,14 +461,14 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
       var target = list.querySelector('button[data-artifact-id="' + focused.id + '"][data-action="' + focused.action + '"]');
       (target || $("results-panel")).focus({ preventScroll: true });
     }
-    setText("loaded-count", String(summaries.length) + (nextCursor !== null ? "+" : ""));
-    $("empty-state").hidden = summaries.length !== 0 || pendingPage !== null || listError;
-    $("load-more-button").hidden = nextCursor === null || listError;
+    setText("loaded-count", state.mode === "catalogue" ? String(summaries.length) + (nextCursor !== null ? "+" : "") : String(searchPage === null ? 0 : searchPage.hits.length));
+    $("empty-state").hidden = (state.mode === "catalogue" ? summaries.length !== 0 : searchPage === null || searchPage.hits.length !== 0) || pendingPage !== null || listError;
+    $("load-more-button").hidden = state.mode !== "catalogue" || nextCursor === null || listError;
     $("load-more-button").disabled = pendingPage !== null;
   }
   function watchList() {
     if (observer !== null) { observer.disconnect(); }
-    if (typeof IntersectionObserver === "undefined" || nextCursor === null || listError || pendingPage !== null || !authenticated || $("dashboard-section").hidden) { return; }
+    if (state.mode !== "catalogue" || typeof IntersectionObserver === "undefined" || nextCursor === null || listError || pendingPage !== null || !authenticated || $("dashboard-section").hidden) { return; }
     var cursor = nextCursor;
     observer = new IntersectionObserver(function (entries) {
       if (entries.some(function (entry) { return entry.isIntersecting; }) && cursor === nextCursor) { loadPage(false); }
@@ -331,41 +476,69 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     observer.observe($("list-sentinel"));
   }
   function loadPage(reset) {
-    if (!authenticated || (!reset && (pendingPage !== null || nextCursor === null || listError || loadedKey !== JSON.stringify(state)))) { return; }
-    var generation = ++listGeneration;
-    var epoch = sessionEpoch;
-    var cursor = reset ? null : nextCursor;
-    var value = Object.assign({}, state);
-    pendingPage = generation; listError = false;
-    $("list-error").hidden = true;
-    $("retry-list-button").hidden = true;
-    if (reset) { summaries = []; nextCursor = null; loadedKey = JSON.stringify(value); $("results-panel").scrollTop = 0; }
-    setText("list-status", reset ? "Loading artifacts…" : "Loading more artifacts…");
+    if (!authenticated || readRoute().id !== null || capabilities === null ||
+        (state.mode !== "catalogue" && (!supported(state.mode) || submittedKey !== JSON.stringify(state))) ||
+        (!reset && (state.mode !== "catalogue" || nextCursor === null || listError || loadedKey !== JSON.stringify(state)))) { return; }
+    // Capture the entire intent now. A superseding request replaces only an
+    // unsent intent, never launches another physical list/Search request.
+    var intent = { generation: ++listGeneration, epoch: sessionEpoch, cursor: reset ? null : nextCursor,
+      reset: reset, value: Object.assign({}, state), limit: Math.min(PAGE_LIMIT, capabilities.max_list_limit) };
+    pendingPage = intent.generation; listError = false;
+    $("list-error").hidden = true; $("retry-list-button").hidden = true;
+    if (reset) {
+      summaries = []; searchPage = null; nextCursor = null;
+      loadedKey = JSON.stringify(intent.value);
+      $("results-panel").scrollTop = 0;
+    }
+    setText("list-status", reset ? state.mode === "catalogue" ? "Loading artifacts…" : "Searching metadata and manifest paths…" : "Loading more artifacts…");
     renderList();
-    apiFetch(current.catalogue(cursor, value, PAGE_LIMIT)).then(function (body) {
-      if (epoch !== sessionEpoch || generation !== listGeneration) { return; }
-      if (!Array.isArray(body.artifacts) || (body.next_cursor !== null && body.next_cursor !== undefined && typeof body.next_cursor !== "string")) { throw new Error("bad-response"); }
-      var next = body.next_cursor || null;
-      if (cursor !== null && next === cursor) { throw new Error("repeated-cursor"); }
-      var merged = new Map(summaries.map(function (item) { return [item.artifact_id, item]; }));
-      body.artifacts.forEach(function (item) {
-        if (!item || !ID_RE.test(item.artifact_id)) { throw new Error("bad-response"); }
-        delete item.external_password;
-        merged.set(item.artifact_id, item);
-      });
-      summaries = Array.from(merged.values()); nextCursor = next;
-      setText("list-status", summaries.length + " artifacts shown" + (next !== null ? " · scroll to load more" : " · all matching artifacts loaded"));
+    queuedRead = intent;
+    pumpRead();
+  }
+  function pumpRead() {
+    if (readBusy || queuedRead === null) { return; }
+    var intent = queuedRead;
+    queuedRead = null; readBusy = true;
+    var generation = intent.generation, epoch = intent.epoch, value = intent.value, cursor = intent.cursor;
+    var descriptor = value.mode === "catalogue" ? current.catalogue(cursor,value,intent.limit) : current.search(value,intent.limit);
+    apiFetch(descriptor).then(function (body) {
+      if (epoch !== sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
+      if (value.mode !== "catalogue") {
+        if (!Array.isArray(body.hits) || (body.next_cursor !== null && body.next_cursor !== undefined) ||
+            !["exactmatches", "candidatewindow"].includes(body.count_scope) ||
+            (body.count_scope === "candidatewindow" && (!Number.isInteger(body.ranking_limit) || body.ranking_limit < 1)) ||
+            body.hits.some(function (hit) { return !hit.artifact || !ID_RE.test(hit.artifact.artifact_id) || !Array.isArray(hit.evidence) ||
+              hit.evidence.some(function (entry) { return entry.field === "manifestpath" && typeof entry.path !== "string" ||
+                entry.field === "name" && entry.path !== null && entry.path !== undefined; }); })) { throw new Error("bad-response"); }
+        body.hits.forEach(function (hit) { delete hit.artifact.external_password; });
+        searchPage = body;
+        nextCursor = null;
+      } else {
+        if (!Array.isArray(body.artifacts) || (body.next_cursor !== null && body.next_cursor !== undefined && typeof body.next_cursor !== "string")) { throw new Error("bad-response"); }
+        var next = body.next_cursor || null;
+        if (cursor !== null && next === cursor) { throw new Error("repeated-cursor"); }
+        var merged = new Map(summaries.map(function (item) { return [item.artifact_id, item]; }));
+        body.artifacts.forEach(function (item) {
+          if (!item || !ID_RE.test(item.artifact_id)) { throw new Error("bad-response"); }
+          delete item.external_password;
+          merged.set(item.artifact_id, item);
+        });
+        summaries = Array.from(merged.values()); nextCursor = next;
+      }
+      setText("list-status", resultStatus());
     }).catch(function (error) {
-      if (epoch !== sessionEpoch || generation !== listGeneration) { return; }
+      if (epoch !== sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
       listError = true;
-      setText("list-status", "List failed (" + errorLabel(error) + ").");
-      setText("list-error", "Could not load artifacts (" + errorLabel(error) + "). Loaded rows are preserved; retry when ready.");
-      $("list-error").hidden = false;
-      $("retry-list-button").hidden = false;
+      setText("list-status", (value.mode === "catalogue" ? "List" : "Retrieval") + " failed (" + errorLabel(error) + "). No alternate search was sent.");
+      setText("list-error", "Could not load " + (value.mode === "catalogue" ? "artifacts" : "retrieval") + " (" + errorLabel(error) + "). Retry when ready.");
+      $("list-error").hidden = false; $("retry-list-button").hidden = false;
     }).finally(function () {
+      readBusy = false;
       if (epoch === sessionEpoch && generation === listGeneration) { pendingPage = null; renderList(); watchList(); }
+      pumpRead();
     });
   }
+
   function failVisible(message) {
     setText("detail-status", message); setText("list-status", message);
     setText("list-error", message); $("list-error").hidden = false;
@@ -412,7 +585,9 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
   function showDetail(id) {
     var generation = ++detailGeneration;
     var epoch = sessionEpoch;
-    listGeneration++; pendingPage = null;
+    listGeneration++; pendingPage = null; queuedRead = null;
+    if (state.mode === "catalogue") { loadedKey = ""; }
+    else if (searchPage === null) { submittedKey = null; }
     if (observer !== null) { observer.disconnect(); }
     openGeneration++; hideRotateOutput();
     currentDetailId = null; currentDetailInfo = null;
@@ -438,11 +613,9 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
       currentDetailId = null; currentDetailInfo = null;
       $("detail-section").hidden = true; $("dashboard-section").hidden = false;
       window.history.replaceState(null, "", routeHash(null));
-      if (loadedKey !== JSON.stringify(state)) {
-        summaries = []; nextCursor = null; loadedKey = ""; listError = true;
-        renderList();
-        $("retry-list-button").hidden = false;
-      }
+      summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true;
+      renderList();
+      $("retry-list-button").hidden = false;
       failVisible("Detail failed (" + errorLabel(error) + "). The artifact may have expired or been deleted. Retry loading to return to the catalogue.");
     });
   }
@@ -526,7 +699,7 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
         $("detail-section").hidden = true; $("dashboard-section").hidden = false;
         window.history.replaceState(null, "", routeHash(null));
       }
-      loadPage(true);
+      invalidateCatalogue();
     }).catch(function (error) {
       if (epoch === sessionEpoch) { failVisible("Delete failed (" + errorLabel(error) + ")."); }
     }).finally(function () {
@@ -544,10 +717,11 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     $("rotate-copy-button").disabled = true;
   }
   function invalidateCatalogue() {
-    listGeneration++; pendingPage = null; summaries = []; nextCursor = null; loadedKey = ""; listError = false;
+    listGeneration++; pendingPage = null; queuedRead = null; summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; listError = false;
+    if (state.mode !== "catalogue") { submittedKey = null; setText("list-status", "Results invalidated. Press Search to run retrieval again."); }
     if (observer !== null) { observer.disconnect(); }
     renderList();
-    if (authenticated && readRoute().id === null) { loadPage(true); }
+    if (authenticated && readRoute().id === null && state.mode === "catalogue") { loadPage(true); }
   }
   function beginAccessMutation(id, message) {
     openGeneration++; hideRotateOutput();
@@ -757,7 +931,7 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
       }
       check(); setText("upload-status", "Finished this upload attempt. Ready links are shown below. Internal links require authenticated readers.");
       loadedKey = "";
-      if (!$("dashboard-section").hidden) { loadPage(true); }
+      if (!$("dashboard-section").hidden) { if (state.mode === "catalogue") { loadPage(true); } else { invalidateCatalogue(); } }
     } catch (_error) {
       // Logout/dismiss invalidates this operation; never restore its secrets or UI.
     } finally {
@@ -770,24 +944,71 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
   $("session-retry-button").addEventListener("click", checkSession);
   $("list-form").addEventListener("submit", function (event) {
     event.preventDefault();
-    navigateList(Object.assign({}, state, { q: $("filter-text").value, visibility: $("filter-visibility").value,
-      itemState: $("filter-state").value, includeExpired: $("include-expired").checked }));
+    if (composing || event.isComposing || pointerCompositionBlocked) { return; }
+    var next = draftState();
+    if (next.mode !== "catalogue" && (!next.q.trim() || next.q.length > 4096)) { setText("draft-status", "Retrieval requires a query of at most 4096 characters."); return; }
+    navigateList(next, true, false);
   });
   ["filter-visibility", "filter-state", "include-expired"].forEach(function (id) {
-    $(id).addEventListener("change", function () { $("list-form").requestSubmit(); });
+    $(id).addEventListener("change", function () {
+      if (state.mode === "catalogue" && $("filter-mode").value === "catalogue") {
+        navigateList(Object.assign({}, state, { visibility: $("filter-visibility").value,
+          itemState: $("filter-state").value, includeExpired: $("include-expired").checked }), true, "all");
+      } else { updateDraft(); }
+    });
   });
-  $("refresh-button").addEventListener("click", function () { loadPage(true); });
+  ["filter-text", "filter-mode", "filter-visibility", "filter-kind", "filter-owner"].forEach(function (id) {
+    $(id).addEventListener("input", updateDraft);
+    $(id).addEventListener("change", updateDraft);
+  });
+  $("search-submit").addEventListener("pointerdown", function (event) {
+    pointerCompositionBlocked = composing;
+    if (composing) { event.preventDefault(); }
+  });
+  $("search-submit").addEventListener("click", function (event) {
+    if (pointerCompositionBlocked || composing) {
+      event.preventDefault(); event.stopPropagation();
+    }
+    pointerCompositionBlocked = false;
+  }, true);
+  $("search-submit").addEventListener("pointercancel", function () { pointerCompositionBlocked = false; });
+  document.addEventListener("pointerup", function (event) {
+    if (!event.composedPath().includes($("search-submit"))) { pointerCompositionBlocked = false; }
+  });
+  document.addEventListener("pointerdown", function (event) {
+    if (!event.composedPath().includes($("search-submit"))) { pointerCompositionBlocked = false; }
+  });
+  $("filter-text").addEventListener("compositionstart", function () { composing = true; });
+  $("filter-text").addEventListener("compositionend", function () { composing = false; updateDraft(); });
+  $("filter-text").addEventListener("keydown", function (event) {
+    if (event.key === "Escape" && !event.isComposing && !composing) { event.preventDefault(); $("filter-text").value = ""; updateDraft(); }
+    if (event.key === "Enter" && (event.isComposing || composing || event.keyCode === 229)) { event.preventDefault(); }
+  });
+  $("clear-search-button").addEventListener("click", function () { $("filter-text").value = ""; $("filter-text").focus(); updateDraft(); });
+  document.addEventListener("keydown", function (event) {
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !event.altKey &&
+        !event.isComposing && !composing && authenticated && !$("workspace-shell").hidden &&
+        $("detail-section").hidden && !document.querySelector("dialog[open], [role=dialog]:not([hidden])")) {
+      event.preventDefault(); $("filter-text").focus(); $("filter-text").select();
+    }
+  });
+  $("refresh-button").addEventListener("click", function () { if (state.mode !== "catalogue") { submittedKey = JSON.stringify(state); } loadPage(true); });
   $("load-more-button").addEventListener("click", function () { loadPage(false); });
-  $("retry-list-button").addEventListener("click", function () { var reset = nextCursor === null; listError = false; loadPage(reset); });
+  $("retry-list-button").addEventListener("click", function () {
+    if (capabilities === null || state.mode !== "catalogue" && !supported(state.mode)) { checkHostingMode(); return; }
+    var reset = nextCursor === null; listError = false;
+    if (state.mode !== "catalogue") { submittedKey = JSON.stringify(state); }
+    loadPage(reset);
+  });
   document.querySelectorAll("[data-sort]").forEach(function (button) {
     button.addEventListener("click", function () {
       var sort = button.dataset.sort;
-      navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }));
+      navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }), false, "all");
     });
   });
   document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {
     button.addEventListener("click", function () {
-      navigateList({ q: "", visibility: button.dataset.visibilityPreset, itemState: "", includeExpired: false, sort: "created_at", direction: "desc" });
+      navigateList(Object.assign({}, state, { mode: "catalogue", visibility: button.dataset.visibilityPreset, itemState: "", includeExpired: false, sort: "created_at", direction: "desc" }), true, "query");
     });
   });
   $("open-button").addEventListener("click", function () { if (currentDetailId !== null) { openArtifact(currentDetailId, currentDetailInfo); } });

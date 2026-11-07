@@ -229,6 +229,32 @@ artifacts appear first. The table loads batches of 25 while scrolling;
 Search, filters and sort persist in the URL fragment, never in web storage.
 Failed batches preserve loaded rows and offer an explicit retry.
 
+The search mode selector keeps catalogue (literal name/ID substring, nine sorts,
+state/expiry filters and keyset pages) as the default. Separate lexical,
+semantic and hybrid retrieval use the current typed Search API over artifact
+metadata and manifest **paths only**, not uploaded file bytes. Retrieval is
+explicit-submit only; no model call occurs on typing, filter changes or ordinary
+navigation. Availability comes from GetCapabilities: without a provider, lexical
+remains usable but semantic/hybrid remain visibly unavailable, never silently
+falling back. Lexical/hybrid text search uses English full-text words/stems,
+quoted phrases, OR and -negation, not catalogue substring matching. Retrieval
+supports access, kind and creator filters and returns only ready, unexpired
+artifacts, in relevance order with a single bounded page (at most 25 or the
+advertised max list limit, whichever is smaller). Exact matches count matching
+artifacts; candidate-window counts are bounded ranked candidates, **not** the
+whole corpus. Results show representative inert name/path evidence from a pinned
+source snapshot; opening details makes a fresh GetArtifact request. Catalogue
+sorts, state/expiry toggles and pagination do not apply to retrieval.
+
+Draft controls are marked distinct from the URL-applied query; Search applies
+them. The fragment carries search mode and filters through reload, detail and
+back, but semantic/hybrid results on a fresh deep link require Search. Ctrl/Meta+K
+focuses the input when the workspace list is visible; Escape or named Clear
+clears its draft. No suggestions or browser storage are used. Confirmed logout
+or loss of an authenticated session removes the prior identity's URL query and
+creator filter. Incoming unauthenticated shared links survive login but do not
+auto-submit retrieval.
+
 Details show metadata and the file manifest, with same-origin attachment
 Downloads. **Open** uses the configured content endpoint and one-time
 internal grant handoff (isolated origin in default subdomain mode only); when content hosting is unavailable, no working link

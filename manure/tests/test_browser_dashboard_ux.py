@@ -47,9 +47,9 @@ class DashboardUXTests(unittest.TestCase):
             "artifacts": os.environ.get("MANURE_UX_ARTIFACTS", "")}
         result = subprocess.run([self.node, str(Path(__file__).resolve().parent / "browser/dashboard-ux.mjs")],
             input=json.dumps(payload).encode(), capture_output=True, timeout=240)
-        self.assertEqual(result.returncode, 0, result.stdout.decode() + result.stderr.decode()[-3000:])
+        self.assertEqual(result.returncode, 0, "; ".join(check["name"] + ": " + check.get("error", "ok") for check in json.loads(result.stdout)))
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 14)
+        self.assertEqual(len(report), 20)
         self.assertTrue(all(check["ok"] for check in report), report)
         for check in report:
             print("ok - " + check["name"])
