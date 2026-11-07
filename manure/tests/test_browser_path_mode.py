@@ -92,6 +92,9 @@ class PathTlsBrowserCase(unittest.TestCase):
         out = bf.run_steps([
             {'op': 'goto', 'url': fix.api_base + '/'},
             {'op': 'waitForEval', 'fn': '() => { const icon = document.getElementById("path-mode-warning"); return !icon.hidden && icon.tagName === "SPAN" && icon.getAttribute("role") === "img" && icon.title.includes("share") && icon.textContent === "ⓘ"; }'},
+            # Regression: public hosting safety must survive the unauthenticated
+            # session check and be visible outside the hidden workspace shell.
+            {'op': 'waitForEval', 'fn': '() => { const icon = document.getElementById("path-mode-warning"); const rect = icon.getBoundingClientRect(); return !document.getElementById("login-section").hidden && !icon.hidden && rect.width > 0 && rect.width <= 24 && rect.height > 0 && rect.height <= 24; }'},
             {'op': 'fill', 'selector': '#token-input', 'value': fix.identity.token},
             {'op': 'click', 'selector': '#login-form button[type=submit]'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},

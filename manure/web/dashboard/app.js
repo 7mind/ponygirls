@@ -155,9 +155,11 @@ function expressionInput(input, list, change, compositionChange) {
 
   function checkHostingMode() {
     var notice = $("path-mode-warning");
-    var generation = ++capabilityGeneration, epoch = sessionEpoch;
+    // Hosting capabilities are public, site-wide state: a concurrent session
+    // check/login/logout must not discard the warning response.
+    var generation = ++capabilityGeneration;
     return current.request(fetch, current.capabilities()).then(function (result) {
-      if (generation !== capabilityGeneration || epoch !== sessionEpoch) { return; }
+      if (generation !== capabilityGeneration) { return; }
       if (!Number.isInteger(result.max_list_limit) || result.max_list_limit < 1 ||
           !Array.isArray(result.search_modes) || typeof result.metadata_only_search !== "boolean") { throw new Error("bad-response"); }
       capabilities = result; capabilitiesError = false;
@@ -165,7 +167,7 @@ function expressionInput(input, list, change, compositionChange) {
       updateDraft();
       if (authenticated && readRoute().id === null) { handleRoute(true); }
     }).catch(function () {
-      if (generation !== capabilityGeneration || epoch !== sessionEpoch) { return; }
+      if (generation !== capabilityGeneration) { return; }
       capabilities = null; capabilitiesError = true;
       notice.hidden = false;
       notice.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
@@ -318,7 +320,7 @@ function expressionInput(input, list, change, compositionChange) {
   function clearAccount() {
     clearUploads();
     var hadAccount = authenticated;
-    sessionEpoch++; capabilityGeneration++; invalidateNavigation(); authenticated = false;
+    sessionEpoch++; invalidateNavigation(); authenticated = false;
     // A URL fragment is visible to the next identity in this tab. On the
     // session boundary remove applied queries, owner filters and unsent input.
     if (hadAccount) { window.history.replaceState(null, "", "#/artifacts"); }

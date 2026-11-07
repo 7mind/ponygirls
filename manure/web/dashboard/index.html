@@ -8,6 +8,8 @@
 <script type="module" src="./app.js"></script>
 </head>
 <body>
+<!-- Hosting safety applies before login as well as inside the workspace. -->
+<span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span>
 <section id="session-section" class="auth-screen" role="main" aria-label="Dashboard session">
 <div class="auth-card session-card">
 <span class="brand-mark" aria-hidden="true"></span>
@@ -62,7 +64,7 @@ aria-describedby="token-note">
 </aside>
 
 <main id="main" class="workspace-main" tabindex="-1">
-<header class="topbar"><span>Workspace<span class="breadcrumb-separator" aria-hidden="true">/</span><strong>Artifacts</strong></span><span class="service-label">Artifact management <span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span></span></header>
+<header class="topbar"><span>Workspace<span class="breadcrumb-separator" aria-hidden="true">/</span><strong>Artifacts</strong></span><span class="service-label">Artifact management</span></header>
 <div class="workspace-content">
 <section id="quick-upload" class="detail-panel quick-upload" aria-label="Quick upload" title="Paste or drop files to stage; Upload publishes each file. Directories use the CLI.">
 <form id="upload-form">
