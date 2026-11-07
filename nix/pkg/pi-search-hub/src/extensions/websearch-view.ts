@@ -2,11 +2,14 @@ import { stripVTControlCharacters } from "node:util";
 import { Input, Key, matchesKey, ScrollView, truncateToWidth, wrapTextWithAnsi, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { frameTitle, hintAt, keyHints, PanelLayout, type PanelParts, type Span, type UiTheme } from "@ponygirls/pi-ui";
 import { type EngineDescriptor, type EngineSnapshot, SearchMonitor } from "./search-monitor.js";
+import type { SearchPolicy } from "./search-policy.js";
 
 export interface WebSearchViewDeps {
 	monitor: SearchMonitor;
 	/** Safe metadata only, refreshed by the command owner when opening the pane. */
 	engines(): readonly EngineDescriptor[];
+	/** Resolved defaults only; reading this snapshot must not select or discover engines. */
+	policy(): SearchPolicy;
 	/** Owns backend dispatch/formatting. Never return credentials or raw provider errors. */
 	search(query: string, signal: AbortSignal): Promise<string>;
 	theme: UiTheme;
@@ -28,6 +31,12 @@ const TEST_TAB = 2;
 function plain(text: string): string {
 	return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").replace(/\t/g, "  ");
 }
+
+function plainName(text: string, limit = 64): string {
+	return plain(text).replace(/\n/g, " ").slice(0, limit);
+}
+
+function duration(ms: number): string { return `${ms / 1000}s`; }
 
 function boundedResult(text: string): string {
 	const clipped = text.slice(0, MAX_RESULT_CHARS);
@@ -154,11 +163,11 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.repaint();
 	}
 
-	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined): string[] {
+	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined, historical = false): string[] {
 		const t = this.deps.theme;
-		const label = plain(engine.label).replace(/\n/g, " ").slice(0, 80);
-		const name = plain(engine.name).replace(/\n/g, " ").slice(0, 64);
-		const title = `${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${engine.availability ?? "unknown"}`;
+		const label = plainName(engine.label, 80);
+		const name = plainName(engine.name);
+		const title = `${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`;
 		if (!stats) return [t.bold(title), t.fg("dim", "  not attempted · health unknown")];
 		const last = stats.lastOutcome ?? "pending";
 		const stateColor = last === "failed" ? "error" : last === "success" ? "success" : last === "empty" || last === "cancelled" ? "warning" : "muted";
@@ -186,6 +195,37 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		return lines;
 	}
 
+	private mainRules(policy: SearchPolicy, mainCount: number): string[] {
+		const { main } = policy;
+		const lines: string[] = [];
+		if (main.mode === "invalid") lines.push("Invalid configured combine mode: automatic search is rejected before any tier is launched.");
+		else if (main.mode === "targeted") lines.push(`Targeted: up to ${main.targetUsableEngines} non-empty Main responses; initial wave parallel, then top up failures/empty responses from remaining engines.`);
+		else if (main.mode === "all") lines.push("All: every Main engine is queried in parallel.");
+		else lines.push("First: walk Main engines until the first successful response, even empty; errors advance to the next engine.");
+		if (main.requestedPerEngine !== null) {
+			const basis = main.mode === "targeted" ? `ceil(n/${main.targetUsableEngines})` : main.mode === "all" ? "ceil(n/Main count)" : "n";
+			lines.push(`Default request: ${main.requestedPerEngine} results per Main engine (${basis}).`);
+		} else if (mainCount === 0) lines.push("No Main engines configured; no Main requests.");
+		else lines.push("Default Main request unavailable while the mode is invalid.");
+		const strategy = main.selectionStrategy;
+		if (strategy === "unrecognized") lines.push("Selection: unrecognized strategy; actual fallback is sequential (configured order).");
+		else if (strategy === "sequential") lines.push("Selection: sequential (configured order).");
+		else lines.push(`Selection: ${strategy}; configured preference below is not a prediction of the next wave/order.`);
+		const order = main.engineOrder.slice(0, MAX_ENGINES).map((name) => plainName(name)).join(" → ");
+		lines.push(`Configured preference (before strategy): ${order || "none"}${main.engineOrder.length > MAX_ENGINES ? " → [more omitted]" : ""}.`);
+		return lines.map((line) => this.deps.theme.fg("dim", line));
+	}
+
+	private aggregationRules(policy: SearchPolicy): string[] {
+		const t = this.deps.theme;
+		return [
+			t.bold("Aggregation · automatic search, all tiers"),
+			t.fg("dim", `Full-weight RRF: score = Σ 1/(k + rank), k=${policy.fusion.rankConstant}; original engine lists, unique-document ranks after within-engine URL dedup. One vote per named engine per distinct page.`),
+			t.fg("dim", "Cross-engine agreement boosts pages; URL deduplication preserves source attribution. No per-tier bonus or semantic reranker."),
+			t.fg("dim", `Fuse first, then cut to final n results (default n=${policy.defaultResultCount}). Named backend calls isolate one engine and bypass fusion/dedup; no other tiers are added.`),
+		];
+	}
+
 	private engineContent(): string[] {
 		const t = this.deps.theme;
 		const fetchers = this.tab === 1;
@@ -193,13 +233,50 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const snapshots = this.deps.monitor.snapshot();
 		const stats = new Map(snapshots.map((entry) => [engineKey(entry), entry]));
 		const engines = new Map(this.deps.engines().map((entry) => [engineKey(entry), entry]));
-		// Preserve observations of engines removed by a config refresh, without calling them configured.
-		for (const entry of snapshots) if (!engines.has(engineKey(entry))) engines.set(engineKey(entry), { name: entry.name, label: entry.label, tier: entry.tier });
-		const matching = [...engines.values()].filter((engine) => (engine.tier === "reader") === fetchers);
-		const shown = matching.slice(0, MAX_ENGINES);
-		if (shown.length === 0) lines.push(t.fg("dim", `No ${fetchers ? "fetcher" : "search engine"} descriptors available; configuration and health unknown.`));
-		for (const engine of shown) lines.push(...this.engineLines(engine, stats.get(engineKey(engine))));
-		if (matching.length > MAX_ENGINES) lines.push(t.fg("dim", `[${matching.length - MAX_ENGINES} more engines omitted]`));
+		const matchesTab = (engine: EngineDescriptor) => (engine.tier === "reader") === fetchers;
+		const current = [...engines.values()].filter(matchesTab);
+		// Tier is part of the identity: moving an engine must not relabel its old observations.
+		const historical = snapshots.filter((entry) => !engines.has(engineKey(entry)) && matchesTab(entry));
+		const shown = [...current, ...historical].slice(0, MAX_ENGINES);
+		const shownKeys = new Set(shown.map(engineKey));
+		const append = (engine: EngineDescriptor, history = false) => {
+			if (shownKeys.has(engineKey(engine))) lines.push(...this.engineLines(engine, stats.get(engineKey(engine)), history));
+		};
+		let policy: SearchPolicy | undefined;
+		if (fetchers) {
+			lines.push(t.bold(`Current fetchers · ${current.length}`));
+			if (current.length === 0) lines.push(t.fg("dim", "No current fetchers configured; health unknown."));
+			for (const engine of current) append(engine);
+		} else {
+			policy = this.deps.policy();
+			lines.push(t.fg("accent", `Default auto: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode} · combine ${policy.main.combineForced ? "true (forced)" : "false"} · configured combine mode ${policy.main.combineMode}`));
+			lines.push(t.fg("dim", policy.main.combineForced
+				? "Per-call count may override the default; configured combine=true cannot be disabled by a call."
+				: "Per-call count/combine may override these defaults; combine=true uses the configured combine mode."));
+			lines.push(t.fg("dim", "Attempts may use cached results; viewing this snapshot runs no discovery or provider probes."));
+			for (const tier of ["main", "fallback", "native"] as const) {
+				const group = current.filter((engine) => engine.tier === tier);
+				const title = tier === "main" ? "Main" : tier === "fallback" ? "Fallback" : "Native";
+				lines.push(t.bold(`${title} · ${tier === "native" ? policy.native.engineCount : group.length} current`));
+				if (tier === "main") lines.push(...this.mainRules(policy, group.length));
+				else if (tier === "fallback") lines.push(t.fg("dim", "Always attempted alongside valid automatic search; does not wait for Main failure or consume Main slots."));
+				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests n results; deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
+				if (group.length === 0) lines.push(t.fg("dim", `No current ${title} engines configured.`));
+				for (const engine of group) {
+					append(engine);
+					if (tier === "fallback" && shownKeys.has(engineKey(engine))) {
+						const limits = policy.fallback.find((entry) => entry.backend === engine.name);
+						lines.push(t.fg("dim", limits ? `  default request/local cap ${limits.maxResults} results · deadline ${duration(limits.timeoutMs)}` : "  default cap/deadline unavailable"));
+					}
+				}
+			}
+		}
+		if (historical.length > 0) {
+			lines.push(t.bold("Previously observed · not currently configured in this tier"));
+			for (const engine of historical) append(engine, true);
+		}
+		if (current.length + historical.length > MAX_ENGINES) lines.push(t.fg("dim", `[${current.length + historical.length - MAX_ENGINES} more engines omitted]`));
+		if (policy) lines.push(...this.aggregationRules(policy));
 		return lines;
 	}
 
