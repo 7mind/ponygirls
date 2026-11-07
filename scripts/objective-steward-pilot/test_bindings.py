@@ -21,6 +21,27 @@ class BindingTests(unittest.TestCase):
                 tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
             self.assertEqual(tables, {"sentinel"})
 
+    def test_changed_source_after_import_is_rejected_before_freezing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for source in ("profile.py", "store.py", "pilot.py", "run.py", "live.mjs"):
+                shutil.copyfile(Path(__file__).parent / source, root / source)
+            for source in ("cases.json", "oracle.json"):
+                (root / source).write_text("{}\n", encoding="utf-8")
+            command = """import sys
+from pathlib import Path
+sys.path.insert(0, sys.argv[1])
+from run import frozen_sources
+from profile import Rejected
+root = Path(sys.argv[1])
+with (root/'pilot.py').open('a') as stream: stream.write('\\n# changed after module load\\n')
+try: frozen_sources(root/'cases.json',root/'oracle.json')
+except Rejected: pass
+else: raise AssertionError('changed source was bound after old implementation was imported')
+"""
+            result = subprocess.run([sys.executable, "-B", "-c", command, str(root)], capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_identical_instrument_bytes_keep_bindings_after_relocation(self):
         with tempfile.TemporaryDirectory() as directory:
             results = []

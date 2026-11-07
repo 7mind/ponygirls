@@ -12,11 +12,13 @@ import signal
 import subprocess
 import time
 
+HERE = Path(__file__).resolve().parent
+SOURCE_NAMES = ("profile.py", "store.py", "pilot.py", "run.py", "live.mjs")
+LOAD_SOURCE_BINDINGS = tuple((name, hashlib.sha256((HERE / name).read_bytes()).hexdigest()) for name in SOURCE_NAMES)
+
 from pilot import Controller, Pilot, render
 from profile import SYSTEM, Rejected, canonical, decode, fields, parse_input
 from store import SqliteStore
-
-HERE = Path(__file__).resolve().parent
 HARD_DEADLINE_SECONDS = 205
 MAX_BRIDGE_BYTES = 256 * 1024
 
@@ -125,7 +127,10 @@ class LiveWorker:
 
 
 def frozen_sources(cases_path: Path, oracle_path: Path):
-    result = {"source/" + name: sha(HERE / name) for name in ("profile.py", "store.py", "pilot.py", "run.py", "live.mjs")}
+    actual = {name: sha(HERE / name) for name in SOURCE_NAMES}
+    if actual != dict(LOAD_SOURCE_BINDINGS):
+        raise Rejected("source changed after module load")
+    result = {"source/" + name: actual[name] for name in SOURCE_NAMES}
     result["corpus"] = sha(cases_path)
     result["oracle"] = sha(oracle_path)
     return result
@@ -133,21 +138,26 @@ def frozen_sources(cases_path: Path, oracle_path: Path):
 
 def execution_identity():
     identity = HERE / "source-identity.json"
+    if Path("/nix/store") not in HERE.parents or not identity.is_file():
+        raise Rejected("evaluation requires immutable Nix source export")
     if identity.exists():
         value = read_json(identity)
         for name, expected in value["files"].items():
             if sha(HERE / name) != expected:
                 raise Rejected("frozen source mismatch")
         return value["commit"]
-    return subprocess.check_output(["git", "-C", str(HERE), "rev-parse", "HEAD"], text=True).strip()
+    raise Rejected("source identity unavailable")
 
 
 async def evaluate(args):
+    head = execution_identity()
+    if args.cases.resolve() != HERE / "fixtures/cases.json" or args.oracle.resolve() != HERE / "fixtures/oracle.json":
+        raise Rejected("evaluation corpus must be in frozen export")
     cases, _ = corpus(args.cases, args.oracle)
     args.out.mkdir(parents=True, exist_ok=False)
     config = ModelConfig(args.node, args.sdk, args.provider, args.model, args.thinking)
     manifest = {"version": "steward-pilot-v1", "started": datetime.now(timezone.utc).isoformat(),
-                "head": execution_identity(),
+                "head": head,
                 "source_sha256": frozen_sources(args.cases, args.oracle), "prompt_sha256": hashlib.sha256(SYSTEM.encode()).hexdigest(),
                 "model": vars(config), "case_order": [item["id"] for item in cases],
                 "planned_cases": len(cases), "no_private_histories": True,
