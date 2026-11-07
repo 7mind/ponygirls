@@ -307,10 +307,11 @@ function normalizeUrl(url: string): string {
 	try {
 		const u = new URL(url);
 		u.hash = "";
-		u.pathname = u.pathname.replace(/\/+$/, "") || "/";
-		return u.toString().toLowerCase();
+		// URL canonicalizes scheme/host/default ports. Paths, queries, and
+		// trailing slashes can identify distinct resources and must survive.
+		return u.toString();
 	} catch {
-		return url.toLowerCase();
+		return url;
 	}
 }
 
@@ -322,16 +323,26 @@ function preferRicher(existing: SearchResultWithBackend, incoming: SearchResultW
 
 function scoreLists(backendResults: RankedBackendList[]): Map<string, ScoredHit> {
 	const urlMap = new Map<string, ScoredHit>();
+	const seenBackends = new Set<string>();
 	for (const { backend, results } of backendResults) {
-		for (let rank = 0; rank < results.length; rank++) {
-			const result = results[rank];
+		if (seenBackends.has(backend)) throw new Error(`Duplicate ranked backend list: "${backend}"`);
+		seenBackends.add(backend);
+		const seenUrls = new Set<string>();
+		for (const incoming of results) {
+			const result = { ...incoming, backend };
 			const key = normalizeUrl(result.url);
-			const contribution = 1 / (RRF_K + rank + 1);
 			const existing = urlMap.get(key);
+			if (existing) {
+				existing.result = preferRicher(existing.result, result);
+				if (seenUrls.has(key)) continue;
+			}
+			// Rank distinct documents, not rows: repeats neither add votes nor
+			// push down the next document, but can still enrich its metadata.
+			seenUrls.add(key);
+			const contribution = 1 / (RRF_K + seenUrls.size);
 			if (existing) {
 				existing.rrfScore += contribution;
 				existing.backends.push(backend);
-				existing.result = preferRicher(existing.result, result);
 				continue;
 			}
 			urlMap.set(key, {
@@ -355,11 +366,6 @@ function rankedFrom(urlMap: Map<string, ScoredHit>): ScoredHit[] {
 
 function fuseRanked(backendResults: RankedBackendList[], maxResults: number): SearchResultWithBackend[] {
 	if (backendResults.length === 0) return [];
-	if (backendResults.length === 1) {
-		return backendResults[0].results
-			.slice(0, maxResults)
-			.map((result) => attachSources(result, [backendResults[0].backend]));
-	}
 	return rankedFrom(scoreLists(backendResults))
 		.slice(0, maxResults)
 		.map((entry) => attachSources(entry.result, entry.backends));
@@ -368,7 +374,8 @@ function fuseRanked(backendResults: RankedBackendList[], maxResults: number): Se
 /**
  * Merge results from multiple backends using Reciprocal Rank Fusion (k=60).
  * URL dedup keeps the result with the richest content; the merged result
- * lists every backend that returned the URL in `sources`.
+ * lists every backend that returned the URL in `sources`. Each named backend
+ * must have exactly one list and contributes once per distinct document.
  */
 export function reciprocalRankFusion(
 	backendResults: RankedBackendList[],

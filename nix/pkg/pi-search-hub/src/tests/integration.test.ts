@@ -73,7 +73,7 @@ describe("reciprocalRankFusion", () => {
 		expect(results).toHaveLength(5);
 	});
 
-	it("normalizes URLs for dedup (trailing slash, lowercase)", () => {
+	it("normalizes host case for dedup without assuming trailing-slash equivalence", () => {
 		const results = reciprocalRankFusion(
 			[
 				{
@@ -85,15 +85,17 @@ describe("reciprocalRankFusion", () => {
 				{
 					backend: "b",
 					results: [
-						{ title: "B", url: "https://example.com/page", snippet: "b", backend: "b" },
+						{ title: "B", url: "https://example.com/page/", snippet: "b", backend: "b" },
 					],
 				},
 			],
 			10,
 		);
 
-		// Should deduplicate to 1 result
+		// Host case is equivalent; /page and /page/ need server evidence and
+		// are tested as distinct resources in fusion-invariants.test.ts.
 		expect(results).toHaveLength(1);
+		expect(results[0].sources).toEqual(["a", "b"]);
 	});
 
 	it("prefers result with richer content on dedup", () => {
@@ -254,7 +256,7 @@ describe("runTargetedCombine", () => {
 		expect(calls).toEqual([3, 3, 3]);
 	});
 
-	it("uses single backend results directly without RRF", async () => {
+	it("returns results from the lone usable backend", async () => {
 		const result = await runTargetedCombine({
 			orderedBackends: ["a", "b"],
 			query: "test query",
