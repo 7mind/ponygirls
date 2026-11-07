@@ -15,7 +15,8 @@ export async function searchOpenAICodex(
 	ctx?: NativeDiscoveryContext,
 ): Promise<NativeSearchResponse> {
 	if (!ctx) throw new Error("OpenAI search requires the active Pi model registry context");
-	const engine = (await discoverNativeEngines(ctx, signal)).find((candidate) => candidate.id === "openai");
+	const engines = await discoverNativeEngines(ctx, signal);
+	const engine = engines.find((candidate) => candidate.id === "openai-codex") ?? engines.find((candidate) => candidate.id === "openai");
 	if (!engine) throw new Error("No configured OpenAI native web-search model is available");
 	return engine.search(query, numResults, signal);
 }

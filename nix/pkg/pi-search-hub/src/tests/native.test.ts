@@ -6,8 +6,8 @@ import {
 import { discoverNativeEngines, injectNativeSearchPayload, NativeSearchError, type NativeDiscoveryContext, type NativeProviderId } from "../extensions/native.js";
 
 const usage = { input: 12, output: 7, cacheRead: 3, cacheWrite: 0, totalTokens: 22, cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 } };
-const ids = { openai: "gpt-4.1", anthropic: "claude-sonnet-4-6", xai: "grok-4.7" };
-const apis = { openai: "openai-responses", anthropic: "anthropic-messages", xai: "openai-responses" };
+const ids = { openai: "gpt-4.1", "openai-codex": "gpt-6.1-sol", anthropic: "claude-sonnet-4-6", xai: "grok-4.7", "grok-build": "grok-4.6" };
+const apis = { openai: "openai-responses", "openai-codex": "openai-codex-responses", anthropic: "anthropic-messages", xai: "openai-responses", "grok-build": "openai-responses" };
 const source = (url: string, title = "Primary source") => ({ type: "url_citation", url, title, start_index: 0, end_index: 13 });
 const responseEvent = (url = "https://example.org/facts", title?: string) => ({
 	type: "response.output_item.done",
@@ -23,11 +23,12 @@ async function fixture(config: {
 	rawStopReason?: string;
 	current?: NativeProviderId;
 } = {}) {
-	const models = createModels({ credentials: new InMemoryCredentialStore(), authContext: { env: async () => undefined, fileExists: async () => false } });
+	const credentials = new InMemoryCredentialStore();
+	const models = createModels({ credentials, authContext: { env: async () => undefined, fileExists: async () => false } });
 	const dispatch = vi.fn();
 	for (const id of config.providers ?? ["openai", "anthropic", "xai"]) {
 		const model: Model<Api> = {
-			id: ids[id], name: ids[id], provider: id, api: apis[id], baseUrl: `https://${id}.configured-proxy.test/v1`,
+			id: ids[id], name: ids[id], provider: id, api: apis[id], baseUrl: id === "grok-build" ? "https://cli-chat-proxy.grok.com/v1" : `https://${id}.configured-proxy.test/v1`,
 			headers: { "X-Model": "configured" }, reasoning: false, input: ["text"],
 			contextWindow: 10000, maxTokens: 3000, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
 		};
@@ -50,9 +51,18 @@ async function fixture(config: {
 			})();
 			return output;
 		};
+		if (config.oauth?.includes(id)) await credentials.modify(id, async () => ({ type: "oauth", access: "dummy-oauth-never-sent", refresh: "dummy-refresh", expires: Date.now() + 3_600_000 }));
 		models.setProvider(createProvider({
 			id, models: [model], api: { stream, streamSimple: stream },
-			auth: { apiKey: { name: "dummy", resolve: async () => ({ auth: { apiKey: "dummy-never-sent", baseUrl: "https://credential-endpoint.test/v1", headers: { "X-Gateway": "configured", "X-Suppress": null } } }) } },
+			auth: {
+				apiKey: { name: "dummy", resolve: async () => ({ auth: { apiKey: "dummy-never-sent", baseUrl: "https://credential-endpoint.test/v1", headers: { "X-Gateway": "configured", "X-Suppress": null } } }) },
+				...(config.oauth?.includes(id) ? { oauth: {
+					name: "dummy subscription", isSubscription: true,
+					login: async () => { throw new Error("must not login in tests"); },
+					refresh: async (credential: import("@earendil-works/pi-ai").OAuthCredential) => credential,
+					toAuth: async (credential: import("@earendil-works/pi-ai").OAuthCredential) => ({ apiKey: credential.access }),
+				} } : {}),
+			},
 		}));
 	}
 	const ctx: NativeDiscoveryContext = {
@@ -61,12 +71,7 @@ async function fixture(config: {
 			getAvailableOfType: models.getAvailableOfType.bind(models),
 			streamSimple: models.streamSimple.bind(models),
 			isUsingOAuth: (model) => config.oauth?.includes(model.provider as NativeProviderId) ?? false,
-			getProvider: (id) => {
-				const provider = models.getProvider(id);
-				return provider && config.oauth?.includes(id as NativeProviderId)
-					? { ...provider, auth: { ...provider.auth, oauth: { isSubscription: true } as NonNullable<typeof provider.auth.oauth> } }
-					: provider;
-			},
+			getProvider: models.getProvider.bind(models),
 		},
 	};
 	return { ctx, dispatch, models };
@@ -106,7 +111,50 @@ describe("configured native search", () => {
 		const lookup = vi.spyOn(ctx.modelRegistry, "getAvailableOfType");
 		const [engine] = await discoverNativeEngines(ctx);
 		expect(engine.label).toContain(models.getModels("xai")[0].id);
-		expect(lookup.mock.calls.map((call) => call[1])).toEqual(["openai", "anthropic", "xai"]);
+		expect(lookup.mock.calls.map((call) => call[1])).toEqual(["openai", "openai-codex", "anthropic", "xai", "grok-build"]);
+	});
+
+	it("keeps the real legacy Codex provider distinct from OpenAI API credentials", async () => {
+		const { ctx } = await fixture({ providers: ["openai", "openai-codex"], oauth: ["openai-codex"] });
+		const engines = await discoverNativeEngines(ctx);
+		expect(engines.map((engine) => engine.id)).toEqual(["openai", "openai-codex"]);
+		expect(engines[1].label).toContain("gpt-6.1-sol; subscription OAuth");
+		await expect(engines[1].search("q", 3)).resolves.toHaveProperty("results");
+	});
+
+	it("uses registered pi-xai Grok Build OAuth with proxy headers and native citations", async () => {
+		const { ctx, dispatch } = await fixture({ providers: ["grok-build"], oauth: ["grok-build"] });
+		ctx.sessionManager = { getSessionId: () => "test-session" };
+		const [engine] = await discoverNativeEngines(ctx);
+		expect(engine.id).toBe("grok-build");
+		expect(engine.label).toContain("subscription OAuth");
+		await expect(engine.search("q", 3)).resolves.toHaveProperty("results");
+		const call = dispatch.mock.calls[0][0];
+		expect(call.model.baseUrl).toBe("https://cli-chat-proxy.grok.com/v1");
+		expect(call.options.headers).toMatchObject({ "x-grok-conv-id": "test-session", "X-Model": "configured" });
+		expect(call.options.apiKey).toBe("dummy-oauth-never-sent");
+		expect(call.payload.tools).toEqual([{ type: "web_search" }]);
+	});
+
+	it("applies only the verified pi-xai nested-call compatibility cleanup", () => {
+		const payload = injectNativeSearchPayload("grok-build", {
+			seed: 123, parallel_tool_calls: true, prompt_cache_retention: "24h", service_tier: "auto",
+			reasoning: { effort: "low", summary: "auto" }, temperature: 3, top_p: -1, store: false,
+		}, "grok-4.6") as Record<string, unknown>;
+		expect(payload).toMatchObject({ reasoning: { effort: "low" }, temperature: 2, top_p: 0, store: false, include: ["reasoning.encrypted_content"] });
+		for (const key of ["seed", "parallel_tool_calls", "prompt_cache_retention", "service_tier"]) expect(key in payload).toBe(false);
+	});
+
+	it("surfaces configured providers with unverified model APIs rather than silently omitting them", async () => {
+		const { ctx } = await fixture({ providers: ["xai"] });
+		const get = ctx.modelRegistry.getAvailableOfType;
+		ctx.modelRegistry.getAvailableOfType = async (type, id, options) => {
+			const available = await get(type, id, options);
+			return available.map((model) => ({ ...model, api: "unknown-protocol" }));
+		};
+		const [engine] = await discoverNativeEngines(ctx);
+		expect(engine.label).toContain("unsupported search model/API");
+		await expect(engine.search("q", 1)).rejects.toThrow("no verified native search model");
 	});
 
 	it("keeps discovery failures local to one provider", async () => {
