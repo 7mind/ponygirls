@@ -242,6 +242,9 @@ class Controller:
                 if self.closed:
                     raise Rejected("controller-closed")
                 self.pilot.publish(job, decode(raw, 32768))
+            except asyncio.CancelledError:
+                self.pilot.fail(job, "interrupted")
+                raise
             except Exception as error:
                 self.pilot.fail(job, str(error) if isinstance(error, Rejected) else type(error).__name__)
             finally:

@@ -330,6 +330,23 @@ class ControllerTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pilot.history(), [])
         self.assertEqual(pilot.view()["activity"], "idle")
 
+    async def test_cancelled_waiter_records_interruption_after_worker_drains(self):
+        pilot = Pilot(MemoryStore())
+        pilot.initialize(parse_input(fixture()))
+        worker = GateWorker()
+        controller = Controller(pilot, worker)
+        controller.request()
+        await worker.started.wait()
+        waiter = asyncio.create_task(controller.wait_idle())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        self.assertEqual(worker.inflight, 0)
+        self.assertEqual(pilot.view()["activity"], "idle")
+        self.assertEqual(pilot.view()["error"], "interrupted")
+        self.assertEqual(pilot.history(), [])
+
     async def test_provider_error_does_not_advance_coverage(self):
         class FailedWorker:
             async def review(self, snapshot):

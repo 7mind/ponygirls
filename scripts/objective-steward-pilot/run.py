@@ -9,7 +9,6 @@ import json
 import os
 from pathlib import Path
 import signal
-import subprocess
 import time
 
 HERE = Path(__file__).resolve().parent
@@ -140,13 +139,11 @@ def execution_identity():
     identity = HERE / "source-identity.json"
     if Path("/nix/store") not in HERE.parents or not identity.is_file():
         raise Rejected("evaluation requires immutable Nix source export")
-    if identity.exists():
-        value = read_json(identity)
-        for name, expected in value["files"].items():
-            if sha(HERE / name) != expected:
-                raise Rejected("frozen source mismatch")
-        return value["commit"]
-    raise Rejected("source identity unavailable")
+    value = read_json(identity)
+    for name, expected in value["files"].items():
+        if sha(HERE / name) != expected:
+            raise Rejected("frozen source mismatch")
+    return value["commit"]
 
 
 async def evaluate(args):
@@ -165,6 +162,7 @@ async def evaluate(args):
                 "scope": "one isolated tool-less Agent per synthetic case; no native extension/UI/SDK enqueue or Human-benefit acceptance"}
     write_json(args.out / "manifest.json", manifest)
     attempts = []
+    checkpoint_inventory(args.out, attempts)
     for case in cases:
         directory = args.out / case["id"]
         directory.mkdir()
@@ -173,27 +171,70 @@ async def evaluate(args):
         pilot = Pilot(store)
         pilot.initialize(parse_input(case["input"]))
         controller = Controller(pilot, LiveWorker(config, directory))
+        write_json(directory / "admission.json", {"case": case["id"], "split": case["split"], "input_sha256": sha(directory / "input.json"), "meaning": "case review admission, not proof of provider submission"})
         start = time.monotonic()
-        controller.request()
-        await controller.wait_idle()
-        await controller.close()
-        elapsed = time.monotonic() - start
-        view = pilot.view()
-        write_json(directory / "view.json", view)
-        with (directory / "objectives.txt").open("x", encoding="utf-8") as stream:
-            stream.write(render(view))
-        receipt = {"case": case["id"], "split": case["split"], "published": view["review"] is not None,
-                   "error": view["error"], "elapsed_seconds": elapsed,
-                   "artifacts": {path.name: sha(path) for path in sorted(directory.iterdir()) if path.is_file() and path.suffix in (".json", ".txt")}}
-        write_json(directory / "attempt.json", receipt)
-        attempts.append(receipt)
-        store.close()
+        interrupted = False
+        try:
+            controller.request()
+            await controller.wait_idle()
+        except BaseException:
+            interrupted = True
+            raise
+        finally:
+            try:
+                await controller.close()
+            except asyncio.CancelledError:
+                interrupted = True
+            try:
+                view = pilot.view()
+                write_json(directory / "view.json", view)
+                with (directory / "objectives.txt").open("x", encoding="utf-8") as stream:
+                    stream.write(render(view))
+                receipt = {"case": case["id"], "split": case["split"], "published": view["review"] is not None,
+                           "status": "interrupted" if interrupted else "published" if view["review"] is not None else "failed",
+                           "error": "interrupted" if interrupted else view["error"], "elapsed_seconds": time.monotonic() - start,
+                           "artifacts": {path.name: sha(path) for path in sorted(directory.iterdir()) if path.is_file() and path.suffix in (".json", ".txt")}}
+                write_json(directory / "attempt.json", receipt)
+                attempts.append(receipt)
+                checkpoint_inventory(args.out, attempts)
+            finally:
+                store.close()
         print(case["id"], "published" if receipt["published"] else "failed: " + str(receipt["error"]), flush=True)
         if receipt["error"] in ("not-authenticated", "model-unavailable", "sdk-pin"):
             break
-    write_json(args.out / "attempts.json", attempts)
     if frozen_sources(args.cases, args.oracle) != manifest["source_sha256"]:
         raise Rejected("source changed during participant run")
+
+
+def checkpoint_inventory(directory: Path, attempts: list):
+    temporary = directory / "attempts.next"
+    write_json(temporary, attempts)
+    temporary.replace(directory / "attempts.json")
+
+
+def admitted_attempts(directory: Path, cases: list):
+    attempts = []
+    for case in cases:
+        target = directory / case["id"]
+        admission_path = target / "admission.json"
+        if not admission_path.exists():
+            if (target / "attempt.json").exists() or (target / "request.json").exists():
+                raise Rejected("orphan attempt without admission")
+            continue
+        admission = read_json(admission_path)
+        if admission["case"] != case["id"] or admission["split"] != case["split"] or admission["input_sha256"] != sha(target / "input.json") or read_json(target / "input.json") != case["input"]:
+            raise Rejected("admission binding mismatch")
+        terminal = target / "attempt.json"
+        receipt = read_json(terminal) if terminal.exists() else {"case": case["id"], "split": case["split"], "status": "incomplete", "published": False, "error": "no terminal receipt; process/submission outcome unknown"}
+        if receipt["case"] != case["id"] or receipt["split"] != case["split"]:
+            raise Rejected("terminal receipt identity mismatch")
+        attempts.append(receipt)
+    projection = directory / "attempts.json"
+    if projection.exists():
+        for item in read_json(projection):
+            if item not in attempts:
+                raise Rejected("attempt inventory mismatch")
+    return attempts
 
 
 def score(args):
@@ -201,7 +242,7 @@ def score(args):
     manifest = read_json(args.out / "manifest.json")
     if frozen_sources(args.cases, args.oracle) != manifest["source_sha256"]:
         raise Rejected("scoring inputs differ from frozen source")
-    attempts = read_json(args.out / "attempts.json")
+    attempts = admitted_attempts(args.out, cases)
     rows = []
     for case in cases:
         case_id = case["id"]
@@ -210,16 +251,17 @@ def score(args):
         if receipt is None:
             rows.append({"case": case_id, "split": case["split"], "status": "unattempted"})
             continue
-        if receipt != read_json(directory / "attempt.json"):
-            raise Rejected("attempt receipt mismatch")
+        if receipt["status"] == "incomplete":
+            rows.append({"case": case_id, "split": case["split"], "status": "incomplete", "error": receipt["error"]})
+            continue
         for name, expected in receipt["artifacts"].items():
             if sha(directory / name) != expected:
                 raise Rejected("artifact binding mismatch")
         view = read_json(directory / "view.json")
         if view["input"] != case["input"] or view["human_acceptance"] != "not-recorded":
             raise Rejected("primary records changed")
-        if not receipt["published"]:
-            rows.append({"case": case_id, "split": case["split"], "status": "failed", "error": receipt["error"]})
+        if receipt["status"] != "published":
+            rows.append({"case": case_id, "split": case["split"], "status": receipt["status"], "error": receipt["error"]})
             continue
         review = view["review"]
         expected = oracle[case_id]
@@ -233,7 +275,8 @@ def score(args):
         rows.append({"case": case_id, "split": case["split"], "status": "published", "checks": checks,
                      "primary_source_linked": expected["primary_source"] in primary["sources"],
                      "scope": "fixed verdict/citation/source-link controls, not entailment or Human-benefit proof"})
-    result = {"version": "steward-score-v1", "manifest_sha256": sha(args.out / "manifest.json"), "attempts_sha256": sha(args.out / "attempts.json"),
+    result = {"version": "steward-score-v1", "manifest_sha256": sha(args.out / "manifest.json"), "attempts_sha256": sha(args.out / "attempts.json") if (args.out / "attempts.json").exists() else None,
+              "attempt_definition": "case admissions, not wire requests; incomplete is not proof a process stopped",
               "rows": rows, "planned": len(cases), "attempted": len(attempts),
               "published": sum(row["status"] == "published" for row in rows),
               "verdict_checks": sum(len(row.get("checks", [])) for row in rows),
