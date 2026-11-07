@@ -1459,6 +1459,23 @@ class ManureClient:
             sort, self._enum(cp.SortDirection, direction), 50 if limit is None else limit, cursor or None)
         return cp.local(self._current(cp.Command_ListArtifacts(q), cp.Result_Catalogue).page)
 
+    def search_expression(self, query: str, *, limit: int | None = None,
+                          cursor: str | None = None) -> dict[str, Any]:
+        """Search using the shared dashboard/MCP expression dialect."""
+        from manure.query import QueryError, parse_expression
+        try:
+            plan = parse_expression(query)
+        except QueryError as error:
+            raise ManureError('bad-query', f'{error.message} (UTF-16 range {error.start}:{error.end})') from None
+        if plan.mode == 'catalogue':
+            return self.list_artifacts(limit=limit, cursor=cursor, query=plan.q,
+                include_expired=plan.include_expired, visibility=plan.visibility,
+                state=plan.item_state, sort_by=plan.sort, direction=plan.direction)
+        if cursor is not None:
+            raise ManureError('bad-query', 'Retrieval mode does not support cursors; remove cursor.')
+        return self.search(plan.q, plan.mode, limit=50 if limit is None else limit,
+            visibility=plan.visibility, kind=plan.kind, created_by_user=plan.created_by_user)
+
     def get_artifact(self, artifact_id: str) -> dict[str, Any]:
         self._require_token(); self._check_id(artifact_id)
         return cp.local(self._current(cp.Command_GetArtifact(artifact_id), cp.Result_ArtifactInfo).artifact)

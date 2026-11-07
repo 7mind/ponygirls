@@ -1,6 +1,6 @@
 ---
 name: manure
-description: Host files and directories on manure (artifacts.7mind.io) via CLI or MCP stdio. Use for uploading, fetching, listing, inspecting, deleting artifacts and rotating external passwords.
+description: Host files and directories on manure (artifacts.7mind.io) via CLI or MCP stdio. Use for uploading, fetching, listing, searching, inspecting, deleting artifacts and rotating external passwords.
 ---
 
 # manure skill
@@ -133,11 +133,37 @@ manure --cache-dir <dir> <subcommand>...
   framing. Stdout carries only protocol messages; diagnostics go to stderr.
 - Version `2025-11-25`. Lifecycle: `initialize` → `notifications/initialized`
   → `ping` / `tools/list` / `tools/call`.
-- Tools: `whoami`, `list_artifacts`, `get_artifact`, `get_manifest`,
+- Tools: `whoami`, `list_artifacts`, `search`, `get_artifact`, `get_manifest`,
   `upload_artifact`, `fetch_artifact`, `delete_artifact`,
   `rotate_external_password`. Read tools are read-only+idempotent;
   upload/fetch/delete/rotate are open-world. Auth comes from process env
   with the same precedence/ambiguity rules as the CLI.
+
+### Search expressions
+
+MCP `search` takes required `query` and optional `limit` / `cursor`, with no
+separate filtering arguments. It shares the dashboard query dialect:
+
+```text
+access:public state:ready sort:name direction:asc report
+mode:lexical access:internal kind:dir owner:"Exact User" "quarterly report"
+mode:semantic text:"release notes"
+```
+
+Default `mode:catalogue` matches literal name/artifact-ID substrings, hides
+expired items and sorts `created_at desc`. Catalogue-only fields are `state`,
+`expired`, `sort`, `direction`. Retrieval-only fields are `kind:file|dir` and
+`owner:<exact creator>`. `access:internal|external|public` works in all modes.
+Retrieval modes `lexical`, `semantic`, `hybrid` search artifact metadata/manifest
+paths, not file bytes; retrieval requires nonblank text and rejects cursors.
+Semantic/hybrid use the configured provider without silent mode fallback.
+Fields conjoin; no duplicate fields or Boolean metadata expressions. Field names
+are case-insensitive, closed values lowercase. Quote values with JSON strings.
+Bare quoted retrieval phrases preserve their quotes for the English search
+engine. Use `text:<JSON string>` for exact text or literal colon/operator-shaped
+data; do not combine it with bare terms. Expressions over 4096 UTF-16 units,
+invalid fields/values/escapes and unsupported filter combinations fail explicitly.
+See `docs/query.md` for all sort values and pagination semantics.
 
 ## Safety
 

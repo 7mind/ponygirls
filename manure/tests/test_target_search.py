@@ -122,6 +122,21 @@ class TargetSearchTests(unittest.TestCase):
                 lexical=client.search('hayneedle','lexical')
                 self.assertEqual(lexical['count_scope'],'exactmatches');self.assertEqual(lexical['hits'][0]['embedding_space'],None)
                 semantic=eventually(client,'semantic');hybrid=eventually(client,'hybrid')
+                # MCP expressions use the actual typed client and owned provider;
+                # rejected syntax must not reach either transport or model IO.
+                from unittest.mock import patch
+                from manure import mcp
+                count=len(model.snapshot())
+                with patch.object(mcp,'_client_from_env',return_value=client):
+                    with patch.object(client,'_current',wraps=client._current) as current:
+                        rejected=mcp.handle_tools_call('search',{'query':'mode:semantic unknown:private-secret'})
+                        self.assertTrue(rejected['isError']);current.assert_not_called()
+                    self.assertEqual(len(model.snapshot()),count)
+                    self.assertNotIn('private-secret',json.dumps(rejected))
+                    result=mcp.handle_tools_call('search',{'query':'mode:semantic access:external kind:dir owner:search-manager hayneedle','limit':5})
+                    self.assertNotIn('isError',result,result)
+                    page=json.loads(result['content'][0]['text'])
+                    self.assertEqual(page['hits'][0]['artifact']['artifact_id'],aid)
                 hit=semantic['hits'][0]
                 self.assertEqual(hit['artifact']['artifact_id'],aid)
                 for key in ('embedding_profile','embedding_space','source_version'):self.assertRegex(hit[key],r'^[0-9a-f]{64}$')

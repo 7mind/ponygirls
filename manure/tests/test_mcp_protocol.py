@@ -1,7 +1,7 @@
 """MCP stdio JSON-RPC 2.0 behavioral tests (contract v0.2 §10).
 
 Covers: initialize negotiation (supported + offered-downgrade),
-tools/list (8 tools+schemas+annotations), tools/call round-trip,
+tools/list (9 tools+schemas+annotations), tools/call round-trip,
 JSON-RPC error shapes, stdout-purity, SDK-client interop (skip w/o SDK).
 Pure-stdlib protocol always; SDK path discovered via env/repo.
 """
@@ -133,7 +133,7 @@ class TestMcpProtocol(unittest.TestCase):
         self.assertEqual(by_id[2]["result"], {})
         tools = by_id[3]["result"]["tools"]
         names = sorted(t["name"] for t in tools)
-        self.assertEqual(names, sorted(["whoami", "list_artifacts", "get_artifact", "get_manifest",
+        self.assertEqual(names, sorted(["whoami", "list_artifacts", "search", "get_artifact", "get_manifest",
                                         "upload_artifact", "fetch_artifact", "delete_artifact",
                                         "rotate_external_password"]))
         # schemas strict objects + annotations present
@@ -142,7 +142,7 @@ class TestMcpProtocol(unittest.TestCase):
             self.assertEqual(t["inputSchema"].get("type"), "object")
             self.assertIn("annotations", t)
         ann = {t["name"]: t["annotations"] for t in tools}
-        for n in ("whoami", "list_artifacts", "get_artifact", "get_manifest"):
+        for n in ("whoami", "list_artifacts", "search", "get_artifact", "get_manifest"):
             self.assertTrue(ann[n].get("readOnlyHint"))
             self.assertTrue(ann[n].get("idempotentHint"))
         for n in ("upload_artifact", "fetch_artifact", "delete_artifact", "rotate_external_password"):
@@ -355,7 +355,7 @@ await client.close();
                 _srv.shutdown()
                 _srv.server_close()
             obj = json.loads(proc.stdout.strip().splitlines()[-1])
-            self.assertEqual(obj["toolCount"], 8)
+            self.assertEqual(obj["toolCount"], 9)
             self.assertFalse(obj["whoErr"])
             self.assertTrue(obj["badErr"])
 

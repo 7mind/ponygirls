@@ -35,6 +35,14 @@ def _tool_defs() -> list[dict[str, Any]]:
                                         "include_expired": {"type": "boolean"}},
                          "additionalProperties": False},
          "annotations": dict(ro)},
+        {"name": "search",
+         "description": "Search artifacts with the dashboard expression syntax (max 4096 UTF-16 units). Default catalogue; fields: mode:catalogue|lexical|semantic|hybrid, access:internal|external|public; catalogue-only state:ready|uploading|publishing, expired:true|false, sort:name|created_at|expires_at|total_bytes|file_count|visibility|state|kind|created_by_user, direction:asc|desc; retrieval-only kind:file|dir, owner:<exact user>. Bare text is search text; text:<JSON string> preserves exact text and literal colons. Metadata fields conjoin, with no duplicates. Retrieval requires text and rejects cursor; quoted retrieval phrases/OR/NOT belong to the search engine, not metadata Boolean syntax. Defaults: expired:false sort:created_at direction:desc.",
+         "inputSchema": {"type": "object",
+                         "properties": {"query": {"type": "string", "maxLength": 4096},
+                                        "limit": {"type": "integer", "minimum": 1},
+                                        "cursor": {"type": "string"}},
+                         "required": ["query"], "additionalProperties": False},
+         "annotations": dict(ro)},
         {"name": "get_artifact", "description": "Inspect one artifact.",
          "inputSchema": {"type": "object",
                          "properties": {"artifact_id": {"type": "string"}},
@@ -163,6 +171,9 @@ def handle_tools_call(name: str, arguments: dict[str, Any], client_module: Any |
         elif name == "list_artifacts":
             res = client.list_artifacts(limit=arguments.get("limit"), cursor=arguments.get("cursor"),
                                         include_expired=bool(arguments.get("include_expired", False)))
+        elif name == "search":
+            res = client.search_expression(arguments["query"], limit=arguments.get("limit"),
+                                           cursor=arguments.get("cursor"))
         elif name == "get_artifact":
             res = client.get_artifact(arguments["artifact_id"])
         elif name == "get_manifest":

@@ -73,6 +73,51 @@ class _LocalhostResolver:
 
 
 class TestRealServer(unittest.TestCase):
+    def test_mcp_search_expression_catalogue_and_lexical_path_real_server(self):
+        from manure.client import ManureClient
+        from test_mcp_protocol import run_mcp_exchange
+        with tempfile.TemporaryDirectory() as td:
+            server, token = _make_server(td)
+            try:
+                root = Path(td)
+                source = root / 'source'
+                (source / 'catalogue').mkdir(parents=True)
+                (source / 'catalogue' / 'retrievalneedle.txt').write_text('not indexed file content')
+                client = ManureClient(server.effective_api_origin, token=token, cache_dir=root / 'cache')
+                wanted = client.upload_path(source, access='public', name='expression catalogue', fresh=True)
+                client.upload_path(source, access='internal', name='expression catalogue', fresh=True)
+                queries = [
+                    'access:public state:ready sort:name direction:asc text:"expression catalogue"',
+                    'mode:lexical access:public kind:dir owner:u-agent text:"catalogue/retrievalneedle.txt"',
+                    'unknown:private-secret',
+                ]
+                messages = [
+                    {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {
+                        'protocolVersion': '2025-11-25', 'capabilities': {}, 'clientInfo': {'name': 'query-test', 'version': '1'}}},
+                    {'jsonrpc': '2.0', 'method': 'notifications/initialized'},
+                ]
+                messages.extend({'jsonrpc': '2.0', 'id': index + 2, 'method': 'tools/call',
+                    'params': {'name': 'search', 'arguments': {'query': query, 'limit': 5}}}
+                    for index, query in enumerate(queries))
+                responses, stderr, code = run_mcp_exchange(messages, {
+                    'MANURE_URL': server.effective_api_origin, 'MANURE_TOKEN': token,
+                    'MANURE_CACHE_DIR': str(root / 'mcp-cache')})
+                self.assertEqual(code, 0, stderr)
+                replies = {reply['id']: reply for reply in responses}
+                for index in (2, 3):
+                    self.assertNotIn('isError', replies[index]['result'], replies[index])
+                catalogue = json.loads(replies[2]['result']['content'][0]['text'])
+                self.assertEqual([item['artifact_id'] for item in catalogue['artifacts']], [wanted['artifact_id']])
+                lexical = json.loads(replies[3]['result']['content'][0]['text'])
+                self.assertEqual([hit['artifact']['artifact_id'] for hit in lexical['hits']], [wanted['artifact_id']])
+                self.assertEqual(lexical['count_scope'], 'exactmatches')
+                self.assertIn('catalogue/retrievalneedle.txt', [e['path'] for hit in lexical['hits'] for e in hit['evidence']])
+                self.assertTrue(replies[4]['result']['isError'])
+                self.assertEqual(json.loads(replies[4]['result']['content'][0]['text'])['code'], 'bad-query')
+                self.assertNotIn('private-secret', json.dumps(responses))
+            finally:
+                server.close()
+
     def test_internal_roundtrip(self):
         from manure.client import ManureClient
         with tempfile.TemporaryDirectory() as td:
@@ -414,7 +459,7 @@ class TestRealServer(unittest.TestCase):
                 resps = [json.loads(ln) for ln in lines]
                 by_id = {r.get("id"): r for r in resps}
                 self.assertEqual(by_id[2]["result"], {})
-                self.assertEqual(len(by_id[3]["result"]["tools"]), 8)
+                self.assertEqual(len(by_id[3]["result"]["tools"]), 9)
                 self.assertNotIn("isError", by_id[4]["result"])
                 self.assertNotIn("isError", by_id[5]["result"],
                                  msg=by_id[5]["result"])
@@ -911,7 +956,7 @@ try {
                 self.assertEqual(proc.returncode, 0,
                     msg=f"A4 FAIL — official SDK lifecycle failed: {proc.stderr[:2000]}")
                 obj = json.loads(proc.stdout.strip().splitlines()[-1])
-                self.assertEqual(obj["toolCount"], 8)
+                self.assertEqual(obj["toolCount"], 9)
                 self.assertTrue(obj["successfulToolsCall"])
                 self.assertTrue(obj["domainErrorToolsCall"])
             finally:
