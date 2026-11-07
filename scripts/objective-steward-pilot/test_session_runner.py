@@ -1,6 +1,5 @@
 """Scripted transport controls; these never establish semantic maintenance quality."""
 import asyncio
-from dataclasses import asdict
 import hashlib
 from pathlib import Path
 import tempfile
@@ -113,6 +112,43 @@ class SessionRunnerTests(unittest.TestCase):
         self.change(self.out / "C01/request.json",request)
         self.refresh_checkpoint_receipt("C01")
         with self.assertRaisesRegex(Rejected,"request/model"):
+            score_result(self.args)
+
+    def test_failed_checkpoint_request_cannot_hide_oracle_leak(self):
+        self.run_session("invalid")
+        request = read_json(self.out / "C02/request.json")
+        request["input"]["oracle"] = "leaked expected classifications"
+        self.change(self.out / "C02/request.json",request)
+        self.refresh_checkpoint_receipt("C02")
+        with self.assertRaisesRegex(Rejected,"request/model"):
+            score_result(self.args)
+
+    def test_failed_checkpoint_cannot_forge_retained_graph(self):
+        self.run_session("invalid")
+        view = read_json(self.out / "C02/view.json")
+        view["graph"]["nodes"][0]["text"] = "Forged retained interpretation"
+        self.change(self.out / "C02/view.json",view)
+        self.refresh_checkpoint_receipt("C02")
+        with self.assertRaisesRegex(Rejected,"retained graph"):
+            score_result(self.args)
+
+    def test_snapshot_and_request_cannot_both_grow_hidden_fields(self):
+        self.run_session("none")
+        snapshot = read_json(self.out / "C01/snapshot.json")
+        snapshot["oracle"] = "leaked expected classifications"
+        self.change(self.out / "C01/snapshot.json",snapshot)
+        request = read_json(self.out / "C01/request.json")
+        request["input"] = snapshot
+        self.change(self.out / "C01/request.json",request)
+        self.refresh_checkpoint_receipt("C01")
+        with self.assertRaisesRegex(Rejected,"source prefix"):
+            score_result(self.args)
+
+    def test_truncated_inventory_cannot_hide_existing_checkpoint_outcomes(self):
+        self.run_session("none")
+        attempts = read_json(self.out / "attempts.json")
+        self.change(self.out / "attempts.json",attempts[:1])
+        with self.assertRaisesRegex(Rejected,"inventory"):
             score_result(self.args)
 
     def test_duplicate_attempt_inventory_rejected(self):

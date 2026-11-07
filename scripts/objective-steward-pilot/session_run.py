@@ -3,16 +3,15 @@
 import argparse
 import asyncio
 import hashlib
-from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 import time
 
-from profile import Rejected, canonical, decode, fields, items, text
+from profile import Rejected, canonical, decode, digest, fields, items, text
 from run import execution_identity, read_json, sha, write_json
 from session_model import SessionModel, SessionModelConfig
 from session_pilot import SessionPilot
-from session_profile import Graph, KINDS, RELATIONS, STATES, SYSTEM, parse_events, parse_graph
+from session_profile import Graph, KINDS, RELATIONS, STATES, SYSTEM, Snapshot, parse_events, parse_graph
 from store import SqliteStore
 
 HERE = Path(__file__).resolve().parent
@@ -155,9 +154,12 @@ def score_result(args):
     receipts = read_json(args.out / "attempts.json")
     if type(receipts) is not list or [item["checkpoint"] for item in receipts] != [item["id"] for item in session["checkpoints"][:len(receipts)]]:
         raise Rejected("attempt inventory order")
+    if {path.name for path in args.out.iterdir() if path.is_dir() and path.name.startswith("C")} != {item["checkpoint"] for item in receipts}:
+        raise Rejected("unreconciled checkpoint inventory")
     rows = []
     selected = {}
     previous = {"nodes": [], "relations": []}
+    valid_through = 0
     for index, checkpoint in enumerate(session["checkpoints"]):
         key = checkpoint["id"]
         receipt = next((item for item in receipts if item["checkpoint"] == key), None)
@@ -171,20 +173,34 @@ def score_result(args):
             if Path(name).name != name or sha(directory / name) != expected:
                 raise Rejected("checkpoint artifact mismatch")
         snapshot = read_json(directory / "snapshot.json")
-        if snapshot["session"] != session["session"] or snapshot["checkpoint"] != key or snapshot["previous_graph"] != previous or snapshot["events"] != [asdict(item) for item in events[:2*index+2]]:
-            raise Rejected("not one evolving graph/source prefix")
-        if receipt["status"] != "published":
-            rows.append({"checkpoint": key, "status": receipt["status"], "error": receipt["error"]})
-            continue
-        request = read_json(directory / "request.json")
-        response = fields(read_json(directory / "response.json"), {"text", "usage", "provider", "model", "thinking"})
-        if request != {"system": SYSTEM, "input": snapshot} or any(response[key] != manifest["model"][key] for key in ("provider", "model", "thinking")):
-            raise Rejected("participant request/model binding")
         prefix = events[:2*index+2]
         prior = parse_graph(previous, prefix, Graph((), ()))
-        graph = parse_graph(decode(response["text"].encode(), 32768), prefix, prior).wire()
+        if snapshot != Snapshot(session["session"],key,prefix,prior).wire():
+            raise Rejected("not one evolving graph/source prefix")
+        admission = read_json(directory / "admission.json")
+        if admission != {"checkpoint":key,"input_sha256":sha(directory / "snapshot.json"),"previous_graph_sha256":prior.fingerprint(),"event_count":len(prefix)}:
+            raise Rejected("admission binding")
+        request = read_json(directory / "request.json")
+        if request != {"system": SYSTEM, "input": snapshot}:
+            raise Rejected("participant request/model binding")
+        response = None
+        if (directory / "response.json").exists():
+            response = fields(read_json(directory / "response.json"), {"text", "usage", "provider", "model", "thinking"})
+            if any(response[field] != manifest["model"][field] for field in ("provider", "model", "thinking")):
+                raise Rejected("participant request/model binding")
         view = read_json(directory / "view.json")
-        if view["graph"] != graph or view["last_valid_through"] != len(prefix) or view["inflight_marker"] or view["events"] != snapshot["events"]:
+        attempt = view["attempts"][-1]
+        if [item["checkpoint"] for item in view["attempts"]] != [item["checkpoint"] for item in receipts[:index+1]] or view["inflight_marker"] or view["events"] != snapshot["events"] or attempt["input_digest"] != digest(snapshot) or attempt["previous_digest"] != prior.fingerprint():
+            raise Rejected("checkpoint state binding")
+        if receipt["status"] != "published":
+            if receipt["status"] not in ("failed","interrupted") or attempt["outcome"] != "failed" or attempt["error"] != receipt["error"] or view["graph"] != previous or view["last_valid_through"] != valid_through:
+                raise Rejected("failed checkpoint retained graph binding")
+            rows.append({"checkpoint": key, "status": receipt["status"], "error": receipt["error"]})
+            continue
+        if response is None or attempt["outcome"] != "published" or receipt["error"] is not None:
+            raise Rejected("published response binding")
+        graph = parse_graph(decode(response["text"].encode(), 32768), prefix, prior).wire()
+        if view["graph"] != graph or view["last_valid_through"] != len(prefix):
             raise Rejected("published graph differs from original model return")
         answer = oracle[key]
         chosen = {item["key"]: [node["id"] for node in graph["nodes"] if matches(node,item["selector"])] for item in answer["requirements"]}
@@ -205,6 +221,15 @@ def score_result(args):
         selected[key] = chosen
         rows.append({"checkpoint": key, "status": "published", "checks": checks, "nodes": len(graph["nodes"]), "relations": len(graph["relations"]), "same_graph_input_confirmed": True})
         previous = graph
+        valid_through = len(prefix)
+    if (args.out / "history.json").exists():
+        history = read_json(args.out / "history.json")
+        if history != [{"checkpoint":item["checkpoint"],"event_count":2*index+2,"graph":read_json(args.out / item["checkpoint"] / "view.json")["graph"]} for index,item in enumerate(receipts) if item["status"] == "published"]:
+            raise Rejected("history inventory binding")
+    if (args.out / "final-view.json").exists():
+        final = read_json(args.out / "final-view.json")
+        if final != read_json(args.out / receipts[-1]["checkpoint"] / "view.json"):
+            raise Rejected("final inventory binding")
     checks = [item for row in rows if row["status"] == "published" for item in row["checks"]]
     result = {"manifest_sha256": sha(args.out / "manifest.json"), "attempts_sha256": sha(args.out / "attempts.json"),
               "planned": 12, "attempted": len(receipts), "published": sum(row["status"] == "published" for row in rows),
