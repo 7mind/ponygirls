@@ -150,7 +150,7 @@ let
             by_id[json.loads(ln).get("id", "notify")] = json.loads(ln)
         assert by_id[1]["result"]["protocolVersion"] == "2025-11-25", by_id[1]
         names = {t["name"] for t in by_id[2]["result"]["tools"]}
-        for want in ("whoami", "list_artifacts", "get_artifact",
+        for want in ("whoami", "list_artifacts", "search", "get_artifact",
                      "get_manifest", "upload_artifact", "fetch_artifact",
                      "delete_artifact", "rotate_external_password"):
             assert want in names, names
@@ -158,7 +158,7 @@ let
         text = by_id[3]["result"]["content"][0]["text"]
         assert json.loads(text)["user_id"] == "check", text
         passed.append("manual-mcp-current-native-whoami-roundtrip")
-        print("manure-client: manual MCP exchange OK (8 tools, whoami)")
+        print("manure-client: manual MCP exchange OK (9 tools, whoami)")
 
         # Phase 2 — official SDK interop.
         import asyncio
@@ -176,7 +176,7 @@ let
                     return {t.name for t in tools.tools}
 
         sdk_names = asyncio.run(sdk_exchange())
-        assert "whoami" in sdk_names and len(sdk_names) == 8, sdk_names
+        assert "whoami" in sdk_names and "search" in sdk_names and len(sdk_names) == 9, sdk_names
         passed.append("official-python-sdk-stdio-initialize-list-tools")
         print("manure-client: SDK interop OK")
 

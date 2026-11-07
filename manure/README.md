@@ -229,10 +229,23 @@ artifacts appear first. The table loads batches of 25 while scrolling;
 Search, filters and sort persist in the URL fragment, never in web storage.
 Failed batches preserve loaded rows and offer an explicit retry.
 
-The search mode selector keeps catalogue (literal name/ID substring, nine sorts,
-state/expiry filters and keyset pages) as the default. Separate lexical,
-semantic and hybrid retrieval use the current typed Search API over artifact
-metadata and manifest **paths only**, not uploaded file bytes. Retrieval is
+One query field holds search text, mode and filters, with caret-aware completion
+and an in-field clear button. The same expression is accepted by the MCP `search`
+tool. Catalogue (literal name/ID substring, nine sorts, state/expiry filters and
+keyset pages) is the default. `mode:lexical`, `mode:semantic` and `mode:hybrid`
+select retrieval through the current typed Search API over artifact metadata and
+manifest **paths only**, not uploaded file bytes. For example:
+
+```text
+report access:internal state:ready
+mode:lexical kind:dir text:"release notes"
+mode:hybrid access:public owner:alice text:"deployment guide"
+```
+
+Metadata filters are conjunctive, not Boolean expressions; retrieval text keeps
+its existing search-engine semantics. Use `text:"..."` for literal colons or
+arbitrary retrieval syntax. Unknown, duplicate and incompatible fields are
+reported rather than ignored. See [the query contract](docs/query.md). Retrieval is
 explicit-submit only; no model call occurs on typing, filter changes or ordinary
 navigation. Availability comes from GetCapabilities: without a provider, lexical
 remains usable but semantic/hybrid remain visibly unavailable, never silently
@@ -246,11 +259,12 @@ whole corpus. Results show representative inert name/path evidence from a pinned
 source snapshot; opening details makes a fresh GetArtifact request. Catalogue
 sorts, state/expiry toggles and pagination do not apply to retrieval.
 
-Draft controls are marked distinct from the URL-applied query; Search applies
-them. The fragment carries search mode and filters through reload, detail and
-back, but semantic/hybrid results on a fresh deep link require Search. Ctrl/Meta+K
-focuses the input when the workspace list is visible; Escape or named Clear
-clears its draft. No suggestions or browser storage are used. Confirmed logout
+The draft is marked distinct from the URL-applied query; Search applies it.
+The fragment carries search mode and filters through reload, detail and back,
+but retrieval results on a fresh deep link require Search. Ctrl/Meta+K focuses
+the input when the workspace list is visible. Arrow keys select suggestions,
+Enter inserts one without submitting, and Escape dismisses suggestions before
+clearing the draft. Completion is local and provider-free. No browser storage is used. Confirmed logout
 or loss of an authenticated session removes the prior identity's URL query and
 creator filter. Incoming unauthenticated shared links survive login but do not
 auto-submit retrieval.
@@ -264,10 +278,12 @@ artifacts; the sidebar is an access filter, not an ownership boundary.
 **Quick upload:** after logging in, paste a screenshot (Ctrl+V), drop files
 onto the upload panel, or choose files (including PDFs). These actions only
 stage files; **Upload** explicitly publishes each file as a separate artifact.
-Choose access before clicking Upload: **Internal** (default) requires authenticated
-readers, including remote agents; **External** requires its once-shown password;
-**Public** permits anonymous reads by anyone who can reach the link. The selector
-applies to files that have not started initialization; retrying an existing
+The compact upload row contains the file picker, three adjacent access choices,
+and Upload/Dismiss buttons. Choose access before clicking Upload: **Internal**
+(default) requires authenticated readers, including remote agents; **External**
+requires its once-shown password; **Public** permits anonymous reads by anyone
+who can reach the link. The access choice applies to files that have not started
+initialization; retrying an existing
 artifact preserves its original access. Directories and cross-session resume
 remain CLI features. Server limits apply; hashing reads bounded slices and
 uploads use the server's chunk size.
@@ -316,8 +332,8 @@ oldest-first order and legacy cursors. See `CONTRACT.md` §7 for details.
 
 Real JSON-RPC 2.0 over stdio, one object per line, protocol
 `2025-11-25`: `initialize` → `notifications/initialized` → `ping` /
-`tools/list` / `tools/call`; same env auth as the CLI. Eight tools:
-`whoami`, `list_artifacts`, `get_artifact`, `get_manifest`,
+`tools/list` / `tools/call`; same env auth as the CLI. Nine tools:
+`whoami`, `list_artifacts`, `search`, `get_artifact`, `get_manifest`,
 `upload_artifact`, `fetch_artifact`, `delete_artifact`,
 `rotate_external_password` (`tools/list`-verified). Host entries use
 file-backed credentials only — never `MANURE_TOKEN` beside

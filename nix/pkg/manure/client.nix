@@ -5,7 +5,7 @@ let
     src = ../../../manure;
     filter = path: type:
       let relative = lib.removePrefix "${toString ../../../manure}/" (toString path);
-      in toString path == toString ../../../manure || builtins.elem relative [ "manure" "manure/__init__.py" "manure/client.py" "manure/current_protocol.py" "manure/cli.py" "manure/mcp.py" "skill" "skill/SKILL.md" ];
+      in toString path == toString ../../../manure || builtins.elem relative [ "manure" "manure/__init__.py" "manure/client.py" "manure/current_protocol.py" "manure/cli.py" "manure/mcp.py" "manure/query.py" "skill" "skill/SKILL.md" ];
   };
 in runCommand "manure-clients-0.2.0" {
   pname = "manure-clients";
@@ -23,6 +23,6 @@ in runCommand "manure-clients-0.2.0" {
       --prefix PYTHONPATH : "$out/lib/python" --add-flags "-m manure.$module"
   done
   ${lib.optionalString (builtins.pathExists ../../../manure/skill/SKILL.md) ''cp ${source}/skill/SKILL.md "$out/share/manure/SKILL.md"''}
-  PYTHONPATH="$out/lib/python" python3 -c 'import manure.client, manure.current_protocol, manure.cli, manure.mcp'
+  PYTHONPATH="$out/lib/python" python3 -c 'import manure.client, manure.current_protocol, manure.cli, manure.mcp; from manure.query import parse_expression; assert parse_expression("mode:lexical access:public report").visibility == "public"'
   test ! -e "$out/lib/python/manure/server.py"
 ''

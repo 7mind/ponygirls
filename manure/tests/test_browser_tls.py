@@ -326,6 +326,7 @@ class TlsSmokeCase(unittest.TestCase):
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
+            {"op": "waitForText", "selector": "#list-status", "contains": "shown"},
             {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
@@ -358,6 +359,7 @@ class TlsSmokeCase(unittest.TestCase):
         out = self._browser([
             {"op": "networkPhase", "phase": "setup"},
             {"op": "goto", "url": self.api + "/"},
+            {"op": "waitForEval", "fn": "() => !document.querySelector('#login-section').hidden"},
             {"op": "setCookies", "cookies": [{"url": self.api + "/", "name": SESSION,
                                                     "value": val, "sameSite": "None",
                                                     "secure": True, "httpOnly": True}]},

@@ -351,14 +351,16 @@ await check("query completion supports keyboard, caret insertion, and pointer se
     await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
     const options = page.getByRole("option");
     assert.ok(await options.count() > 1);
-    const first = await options.nth(0).textContent();
+    const second = await options.nth(1).textContent();
+    assert.match(second, /^type:.+/);
     const secondId = await options.nth(1).getAttribute("id");
     await query.press("ArrowDown");
     assert.equal(await query.getAttribute("aria-activedescendant"), secondId);
     await query.press("ArrowUp");
     assert.equal(await query.getAttribute("aria-activedescendant"), await options.nth(0).getAttribute("id"));
+    await query.press("ArrowDown");
     await query.press("Enter");
-    assert.equal(await query.inputValue(), `${first} `);
+    assert.equal(await query.inputValue(), `${second} `);
     assert.equal(await query.evaluate((element) => element === document.activeElement), true);
 
     await query.fill("(ty) AND importance:high");

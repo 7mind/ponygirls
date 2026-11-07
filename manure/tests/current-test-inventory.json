@@ -156,6 +156,19 @@
       ]
     },
     {
+      "module": "test_browser_query_expression",
+      "path": "manure/tests/test_browser_query_expression.py",
+      "classification": "current",
+      "requires": [
+        "target",
+        "browser"
+      ],
+      "tests": [
+        "test_browser_query_expression.QueryExpressionBrowserTests.test_over_limit_sort_preserves_applied_query_and_remains_usable",
+        "test_browser_query_expression.QueryExpressionBrowserTests.test_submitted_route_preserves_a_newer_draft"
+      ]
+    },
+    {
       "module": "test_browser_quick_upload",
       "path": "manure/tests/test_browser_quick_upload.py",
       "classification": "current",
@@ -385,6 +398,7 @@
         "test_client_realserver.TestRealServer.test_grant_revocation_real_server",
         "test_client_realserver.TestRealServer.test_internal_roundtrip",
         "test_client_realserver.TestRealServer.test_mcp_matrix_against_real_service",
+        "test_client_realserver.TestRealServer.test_mcp_search_expression_catalogue_and_lexical_path_real_server",
         "test_client_realserver.TestRealServer.test_mcp_stdio_management_calls_against_real_service",
         "test_client_realserver.TestRealServer.test_mcp_stdio_matrix_against_real_service",
         "test_client_realserver.TestRealServer.test_official_sdk_lifecycle_against_real_service",
@@ -546,7 +560,8 @@
         "test_dashboard_markup.DashboardMarkupTests.test_detail_offers_access_modes_and_live_feedback",
         "test_dashboard_markup.DashboardMarkupTests.test_infinite_scroll_has_keyboard_and_failure_controls",
         "test_dashboard_markup.DashboardMarkupTests.test_path_mode_notice_is_an_icon_with_a_tooltip",
-        "test_dashboard_markup.DashboardMarkupTests.test_quick_upload_has_explicit_publish_and_access_controls"
+        "test_dashboard_markup.DashboardMarkupTests.test_quick_upload_has_explicit_publish_and_access_controls",
+        "test_dashboard_markup.DashboardMarkupTests.test_single_expression_editor_has_completion_and_secondary_help"
       ]
     },
     {
@@ -638,6 +653,21 @@
         "test_offline_conversion.SnapshotContracts.test_wal_including_uncheckpointed_rows_is_archived_without_opening_source"
       ],
       "migrationOnlySourceImports": "ArtifactStore creates synthetic pre-port states and performs complementary historical source-format recovery on a disposable decoded copy. This is NOT target-backend evidence; actual test_target_migration is separately mandatory."
+    },
+    {
+      "module": "test_query",
+      "path": "manure/tests/test_query.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_query.QueryTests.test_catalogue_expression_uses_typed_protocol",
+        "test_query.QueryTests.test_invalid_expression_and_retrieval_cursor_never_start_transport",
+        "test_query.QueryTests.test_mcp_exposes_query_only_search_schema",
+        "test_query.QueryTests.test_query_error_positions_are_utf16_and_sanitized",
+        "test_query.QueryTests.test_real_mcp_lifecycle_calls_controlled_client",
+        "test_query.QueryTests.test_retrieval_expression_uses_typed_protocol",
+        "test_query.QueryTests.test_shared_fixtures"
+      ]
     },
     {
       "module": "test_retired_server_entrypoint",
@@ -844,6 +874,25 @@
         "redirect ID reuse preserves hops; next extras early=true",
         "redirect without ExtraInfo does not consume next hop extras",
         "current command label is captured without token, password or grant fields"
+      ],
+      "timeoutSeconds": 120
+    },
+    {
+      "id": "node-query-expression",
+      "path": "manure/tests/browser/query-expression.test.mjs",
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=tap",
+        "manure/tests/browser/query-expression.test.mjs"
+      ],
+      "tests": [
+        "expression defaults, metadata and raw retrieval phrases",
+        "invalid expressions never fall back to bare search",
+        "serializer round trips exact literal text including Unicode and escaping",
+        "completion replaces touched token including suffix and restores scalar-safe caret",
+        "closed values, mode applicability, and completed token boundaries guide hints",
+        "shared Python/browser expression contract fixtures"
       ],
       "timeoutSeconds": 120
     },

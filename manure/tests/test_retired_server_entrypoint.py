@@ -162,7 +162,7 @@ os.write(2, b"RETIREMENT_GUARD_READY\\n")
         responses = {r["id"]: r for r in map(json.loads, result.stdout.splitlines())}
         self.assertEqual(set(responses), {1, 2, 3})
         self.assertEqual(responses[1]["result"]["protocolVersion"], "2025-11-25")
-        self.assertEqual(len(responses[2]["result"]["tools"]), 8)
+        self.assertEqual(len(responses[2]["result"]["tools"]), 9)
         self.assertEqual(responses[3]["result"], {})
         self.assertEqual(self.inventory(), before)
 

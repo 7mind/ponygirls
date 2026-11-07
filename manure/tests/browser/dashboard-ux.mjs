@@ -140,6 +140,8 @@ await check("sortable table, global search, URL reload and responsive themes", a
 await check("expression length bound and delayed capabilities preserve draft", async (page) => {
   assert.equal(await page.locator("#filter-text").getAttribute("maxlength"), "4096");
   await page.locator("#filter-text").fill("x".repeat(4097));
+  assert.equal((await page.locator("#filter-text").inputValue()).length, 4096, "native input enforces its length limit");
+  await page.locator("#filter-text").evaluate((input) => { input.value = "x".repeat(4097); input.dispatchEvent(new Event("input", { bubbles: true })); });
   await page.locator("#search-submit").click();
   assert.match(await page.locator("#query-diagnostic").textContent(), /4096/);
   await page.evaluate(() => { location.hash = "#/artifacts?mode=semantic&q=ux-bundle"; });
@@ -186,7 +188,7 @@ await check("sort never submits draft and sidebar presets insert visible syntax 
   assert.equal(await page.evaluate(() => window.__ux.readCommands.length), before+1);
   assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("query"), "ux-record-");
   await page.locator("#search-submit").click();
-  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external");
+  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external" && document.querySelector("#filter-text").value === "access:external");
   assert.equal(await page.locator("#filter-text").inputValue(),"access:external");
 });
 
@@ -474,15 +476,18 @@ await check("caret-aware completion supports keyboard, pointer, dismissal and IM
 await check("latest unsent catalogue expression replaces queued reads", async (page) => {
   await recordSearch(page);
   await page.evaluate(()=>{window.__ux.holdList=true;});
-  await bottom(page); await page.waitForFunction(()=>window.__ux.releaseList!==null);
+  await bottom(page);
+  await page.waitForFunction(()=>window.__ux.releaseList!==null).catch(error=>{throw new Error('held append: '+error.message);});
   const before=await page.evaluate(()=>window.__ux.readCommands.length);
   for (const text of ['ux-protected','ux-public','ux-hostile']) {
     await page.locator('#filter-text').fill(text); await page.locator('#search-submit').click();
-    await page.waitForFunction(q=>new URLSearchParams(location.hash.split('?')[1]).get('query')===q,text);
+    await page.waitForFunction(q=>new URLSearchParams(location.hash.split('?')[1]).get('query')===q,text).catch(error=>{throw new Error('submitted '+text+': '+error.message);});
   }
   assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before);
   await page.evaluate(()=>window.__ux.releaseList());
-  await page.waitForFunction(()=>document.querySelector('#artifact-list').textContent.includes('ux-hostile'));
+  await page.waitForFunction(()=>document.querySelector('#artifact-list').textContent.includes('ux-hostile')).catch(async error=>{
+    throw new Error('latest read: '+JSON.stringify(await page.evaluate(()=>({hash:location.hash,query:document.querySelector('#filter-text').value,status:document.querySelector('#list-status').textContent,commands:window.__ux.readCommands})))+' '+error.message);
+  });
   assert.deepEqual(await page.evaluate(n=>window.__ux.readCommands.slice(n).map(c=>c.query),before),['ux-hostile']);
   assert.equal(await page.evaluate(()=>window.__ux.listPeak),1);
 });

@@ -260,19 +260,21 @@ function expressionInput(input, list, change, compositionChange) {
     hideRotateOutput();
   }
   function navigateList(next, submitted) {
+    var query = stateParams(next).toString();
+    var hash = "#/artifacts" + (query ? "?" + query : "");
     invalidateNavigation();
     loadedKey = "";
     submittedKey = submitted ? JSON.stringify(next) : null;
     state = next;
-    var hash = routeHash(null);
+    updateControls();
     if (window.location.hash === hash) { handleRoute(); }
     else { window.location.hash = hash; }
   }
   function handleRoute(keepDraft) {
     if (!authenticated) { return; }
     var route = readRoute();
-    var currentDraft = keepDraft === true ? $("filter-text").value : null;
     var changed = JSON.stringify(route.state) !== JSON.stringify(state);
+    var currentDraft = keepDraft === true || !changed ? $("filter-text").value : null;
     if (changed) {
       // Direct hash/history navigation bypasses navigateList. Fence both a held
       // result and any queued unsent intent before changing the owner of rows.
@@ -1010,7 +1012,12 @@ function expressionInput(input, list, change, compositionChange) {
     button.addEventListener("click", function () {
       var sort = button.dataset.sort;
       if (button.disabled) { return; }
-      navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }), false);
+      try {
+        navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }), false);
+      } catch (error) {
+        if (!(error instanceof current.ExpressionError)) { throw error; }
+        setText("draft-status", error.message + " Query and results unchanged; shorten the query before sorting.");
+      }
     });
   });
   document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {

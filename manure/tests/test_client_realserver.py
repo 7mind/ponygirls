@@ -929,7 +929,7 @@ try {
   const tools = await client.listTools();
   const good = await client.callTool({ name: 'whoami', arguments: {} });
   const bad = await client.callTool({ name: 'get_artifact', arguments: { artifact_id: '0'.repeat(32) } });
-  if (tools.tools.length !== 8 || good.isError || !bad.isError)
+  if (tools.tools.length !== 9 || good.isError || !bad.isError)
     throw new Error('official SDK lifecycle/tools/call invariant failed');
   const identity = JSON.parse(good.content.find(c => c.type === 'text').text);
   if (!identity.user_id)
