@@ -27,8 +27,8 @@ to 575 seconds plus a ten-second termination grace; individual assertion,
 heartbeat, concurrency and restart deadlines are unchanged. Use the parent's
 background execution lane rather than extending foreground tool timeouts.
 
-`inventory.json` is checked exactly against all 61 JUnit leaf cases (62 Node
-cases including the helper-mode group), 34 main browser checks, the HTTPS
+`inventory.json` is checked exactly against all 66 JUnit leaf cases (67 Node
+cases including the helper-mode group), 39 main browser checks, sixteen controlled layout checks, the HTTPS
 restart, preview restart, and markup case. The original 36 atomic cases remain.
 A fresh report records source and inventory hashes, dependency identities,
 JAR/ELF SHA256 before and after, complete logs, XML, and a zero-skip receipt.
@@ -106,3 +106,20 @@ listeners without sending requests. Backend health checks begin only after its
 own selected child emits the exact `haystack: ready` marker; an unrelated healthy
 service cannot satisfy fixture readiness. Private Nix-network fixed ports remain
 valid without changing the evaluated JSON.
+
+## Viewport layout regression
+
+The controlled-API layout fixture renders the actual App in pinned Chromium.
+It checks 1440, 1101, 1100, 1024, 801, 800, 390 and 320 pixel viewports in
+light/dark mode with long
+unbroken titles, identifiers, projects, types, tags and modifier identities.
+Page, results region and table must fit horizontally without clipping metadata;
+every sort control and the open-record action is exercised by keyboard.
+Accessibility snapshots retain the table, rows, column headers and cells. This is UI layout
+coverage, not backend/protocol acceptance. It also runs in `test:browser`.
+
+```sh
+HAYSTACK_CHROMIUM=/absolute/pinned/chromium \
+HAYSTACK_UI_ARTIFACTS=/absolute/fresh-screenshots \
+nix develop .#chronicle --command bash -c 'cd haystack/web && npm run test:layout'
+```
