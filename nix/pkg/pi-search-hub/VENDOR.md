@@ -78,6 +78,14 @@ resets observations. No search queries, credentials or raw provider errors are
 retained by the monitor.
 
 The pane has separate **Search engines**, **Fetchers**, and **Test search** tabs.
+Search engines groups the current main, fallback and native tiers separately from
+historical observations. Its policy explanation reflects automatic-search defaults:
+main selection and request budgets, always-included tiers, configured fallback
+caps/deadlines, native timing, caller overrides and equal-weight RRF aggregation.
+Configured preference is not presented as the next random, round-robin or scored
+selection. Reading/rendering the policy neither sends a search nor advances selection.
+Configuration still does not establish provider health or entitlement.
+
 Tab/Shift+Tab switches views; mouse tabs work in fullscreen or regular mode with
 Pi's `regularMouse` enabled. Default regular mode leaves mouse to the terminal.
 Only Test search accepts query input; Enter tests the same metasearch as `web_search`.

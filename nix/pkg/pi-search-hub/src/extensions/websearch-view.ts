@@ -24,6 +24,8 @@ const MAX_RESULT_CHARS = 16_000;
 const MAX_RESULT_LINES = 200;
 const MAX_WRAPPED_RESULT_LINES = 400;
 const MAX_ENGINES = 64;
+const MAX_ENGINE_NAME_CHARS = 64;
+const MAX_ENGINE_LABEL_CHARS = 80;
 const TAB_LABELS = ["Search engines", "Fetchers", "Test search"] as const;
 const TEST_TAB = 2;
 
@@ -32,7 +34,7 @@ function plain(text: string): string {
 	return stripVTControlCharacters(text).replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "").replace(/\t/g, "  ");
 }
 
-function plainName(text: string, limit = 64): string {
+function plainName(text: string, limit: number): string {
 	return plain(text).replace(/\n/g, " ").slice(0, limit);
 }
 
@@ -163,10 +165,10 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.repaint();
 	}
 
-	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined, historical = false): string[] {
+	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined, historical: boolean): string[] {
 		const t = this.deps.theme;
-		const label = plainName(engine.label, 80);
-		const name = plainName(engine.name);
+		const label = plainName(engine.label, MAX_ENGINE_LABEL_CHARS);
+		const name = plainName(engine.name, MAX_ENGINE_NAME_CHARS);
 		const title = `${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`;
 		if (!stats) return [t.bold(title), t.fg("dim", "  not attempted · health unknown")];
 		const last = stats.lastOutcome ?? "pending";
@@ -211,7 +213,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		if (strategy === "unrecognized") lines.push("Selection: unrecognized strategy; actual fallback is sequential (configured order).");
 		else if (strategy === "sequential") lines.push("Selection: sequential (configured order).");
 		else lines.push(`Selection: ${strategy}; configured preference below is not a prediction of the next wave/order.`);
-		const order = main.engineOrder.slice(0, MAX_ENGINES).map((name) => plainName(name)).join(" → ");
+		const order = main.engineOrder.slice(0, MAX_ENGINES).map((name) => plainName(name, MAX_ENGINE_NAME_CHARS)).join(" → ");
 		lines.push(`Configured preference (before strategy): ${order || "none"}${main.engineOrder.length > MAX_ENGINES ? " → [more omitted]" : ""}.`);
 		return lines.map((line) => this.deps.theme.fg("dim", line));
 	}
@@ -239,14 +241,14 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const historical = snapshots.filter((entry) => !engines.has(engineKey(entry)) && matchesTab(entry));
 		const shown = [...current, ...historical].slice(0, MAX_ENGINES);
 		const shownKeys = new Set(shown.map(engineKey));
-		const append = (engine: EngineDescriptor, history = false) => {
+		const append = (engine: EngineDescriptor, history: boolean) => {
 			if (shownKeys.has(engineKey(engine))) lines.push(...this.engineLines(engine, stats.get(engineKey(engine)), history));
 		};
 		let policy: SearchPolicy | undefined;
 		if (fetchers) {
 			lines.push(t.bold(`Current fetchers · ${current.length}`));
 			if (current.length === 0) lines.push(t.fg("dim", "No current fetchers configured; health unknown."));
-			for (const engine of current) append(engine);
+			for (const engine of current) append(engine, false);
 		} else {
 			policy = this.deps.policy();
 			lines.push(t.fg("accent", `Default auto: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode} · combine ${policy.main.combineForced ? "true (forced)" : "false"} · configured combine mode ${policy.main.combineMode}`));
@@ -263,7 +265,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests n results; deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
 				if (group.length === 0) lines.push(t.fg("dim", `No current ${title} engines configured.`));
 				for (const engine of group) {
-					append(engine);
+					append(engine, false);
 					if (tier === "fallback" && shownKeys.has(engineKey(engine))) {
 						const limits = policy.fallback.find((entry) => entry.backend === engine.name);
 						lines.push(t.fg("dim", limits ? `  default request/local cap ${limits.maxResults} results · deadline ${duration(limits.timeoutMs)}` : "  default cap/deadline unavailable"));

@@ -737,7 +737,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			const owner = service;
 			await pane.open(ctx.ui, (tui, theme, keys, done) => new WebSearchView({
-				monitor: owner.monitor, engines: () => owner.engines(),
+				monitor: owner.monitor, engines: () => owner.engines(), policy: () => owner.policy(),
 				search: async (query, signal) => {
 					const result = await owner.search({ query }, signal, ctx);
 					if (result.isError) throw new Error(result.content[0].text);

@@ -53,12 +53,14 @@ export function selectBackendsForFallback(
 // Targeted combine
 // ---------------------------------------------------------------------------
 
+export const TARGETED_MAIN_ENGINE_COUNT = 3;
+
 export async function runTargetedCombine({
 	orderedBackends,
 	query,
 	numResults,
 	signal,
-	targetUsableBackends = 3,
+	targetUsableBackends = TARGETED_MAIN_ENGINE_COUNT,
 	runBackend,
 }: {
 	orderedBackends: string[];
@@ -295,7 +297,7 @@ export async function runTieredTargetedCombine({
 // Reciprocal Rank Fusion (RRF)
 // ---------------------------------------------------------------------------
 
-const RRF_K = 60;
+export const RRF_K = 60;
 
 interface ScoredHit {
 	rrfScore: number;

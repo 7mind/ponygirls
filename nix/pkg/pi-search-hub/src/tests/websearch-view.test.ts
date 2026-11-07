@@ -23,7 +23,7 @@ const pageUp = "\x1b[5~";
 const end = "\x1b[1;5F";
 const home = "\x1b[1;5H";
 const engine: EngineDescriptor = { name: "fixture", label: "Fixture", tier: "main", availability: "configured" };
-function fakePolicy(main: Partial<SearchPolicy["main"]> = {}, rest: Partial<Omit<SearchPolicy, "main">> = {}): SearchPolicy {
+function fakePolicy(main: Partial<SearchPolicy["main"]>, rest: Partial<Omit<SearchPolicy, "main">>): SearchPolicy {
 	return {
 		defaultResultCount: 10, maximumResultCount: 20,
 		main: { mode: "first", combineForced: false, combineMode: "all", selectionStrategy: "sequential", engineOrder: ["fixture"], targetUsableEngines: 3, requestedPerEngine: 10, ...main },
@@ -32,7 +32,7 @@ function fakePolicy(main: Partial<SearchPolicy["main"]> = {}, rest: Partial<Omit
 }
 function setup(overrides: Partial<WebSearchViewDeps> = {}) {
 	const deps: WebSearchViewDeps = {
-		monitor: new SearchMonitor(() => 0), engines: () => [engine], policy: () => fakePolicy(), search: vi.fn(async () => "fixture result"),
+		monitor: new SearchMonitor(() => 0), engines: () => [engine], policy: () => fakePolicy({}, {}), search: vi.fn(async () => "fixture result"),
 		theme: PLAIN_THEME, keys: { matches: () => false }, rows: () => 20, requestRender: vi.fn(), close: vi.fn(), ...overrides,
 	};
 	return { deps, view: new WebSearchView(deps) };
@@ -45,8 +45,9 @@ function setupTest(overrides: Partial<WebSearchViewDeps> = {}) {
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 
 /** Reach content through public navigation, retaining actual layout/geometry assertions. */
-function scrollToText(view: WebSearchView, render: () => string[], text: string, direction = up): string[] {
-	for (let step = 0; step < 600; step++) {
+function scrollToText(view: WebSearchView, render: () => string[], text: string, direction: string): string[] {
+	const maximumSteps = 600;
+	for (let step = 0; step < maximumSteps; step++) {
 		const lines = render();
 		if (lines.join("\n").includes(text)) return lines;
 		view.handleInput(direction);
@@ -76,7 +77,7 @@ describe("WebSearchView", () => {
 	});
 
 	it("explains targeted non-empty slots, parallel initial wave and failure/empty top-ups", () => {
-		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "targeted", combineForced: true, combineMode: "targeted", requestedPerEngine: 4 }) });
+		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "targeted", combineForced: true, combineMode: "targeted", requestedPerEngine: 4 }, {}) });
 		const text = view.render(200).join("\n");
 		for (const rule of ["Main targeted", "up to 3 non-empty Main responses", "initial wave parallel", "top up failures/empty responses from remaining engines", "4 results per Main engine (ceil(n/3))"]) expect(text).toContain(rule);
 		expect(text).not.toContain("first successful response");
@@ -85,7 +86,7 @@ describe("WebSearchView", () => {
 
 	it("explains all-Main parallel querying and its default per-engine request", () => {
 		const engines: EngineDescriptor[] = ["one", "two", "three"].map((name) => ({ name, label: name, tier: "main" }));
-		const { view } = setup({ rows: () => 100, engines: () => engines, policy: () => fakePolicy({ mode: "all", combineForced: true, requestedPerEngine: 4, engineOrder: engines.map(({ name }) => name) }) });
+		const { view } = setup({ rows: () => 100, engines: () => engines, policy: () => fakePolicy({ mode: "all", combineForced: true, requestedPerEngine: 4, engineOrder: engines.map(({ name }) => name) }, {}) });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 3 current");
 		expect(text).toContain("All: every Main engine is queried in parallel");
@@ -95,7 +96,7 @@ describe("WebSearchView", () => {
 	});
 
 	it("states that configured combine is forced and cannot be disabled by a per-call override", () => {
-		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "all", combineForced: true }) });
+		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "all", combineForced: true }, {}) });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("combine true (forced)");
 		expect(text).toContain("Per-call count may override the default");
@@ -105,7 +106,7 @@ describe("WebSearchView", () => {
 	});
 
 	it("reports invalid configured mode as rejected auto, not a silently working first/all mode", () => {
-		const { deps, view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "invalid", combineMode: "invalid", requestedPerEngine: null }) });
+		const { deps, view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "invalid", combineMode: "invalid", requestedPerEngine: null }, {}) });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main invalid");
 		expect(text).toContain("configured combine mode invalid");
@@ -117,13 +118,13 @@ describe("WebSearchView", () => {
 	});
 
 	it("reports unrecognized strategy's actual sequential fallback", () => {
-		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ selectionStrategy: "unrecognized" }) });
+		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ selectionStrategy: "unrecognized" }, {}) });
 		expect(view.render(200).join("\n")).toContain("unrecognized strategy; actual fallback is sequential (configured order)");
 		view.dispose();
 	});
 
 	it.each(["random", "round-robin", "best-latency"] as const)("shows configured preference, not a predicted %s next-query order, without sampling/rotating", (selectionStrategy) => {
-		const policy = fakePolicy({ selectionStrategy, engineOrder: ["third", "first", "second"] });
+		const policy = fakePolicy({ selectionStrategy, engineOrder: ["third", "first", "second"] }, {});
 		const original = structuredClone(policy);
 		const { deps, view } = setup({ rows: () => 100, policy: () => policy });
 		const rng = vi.spyOn(Math, "random").mockImplementation(() => { throw new Error("render must not sample engine selection"); });
@@ -164,7 +165,7 @@ describe("WebSearchView", () => {
 	});
 
 	it("keeps no-Main defaults honest rather than inventing a per-engine request", () => {
-		const { view } = setup({ engines: () => [], rows: () => 100, policy: () => fakePolicy({ mode: "all", combineForced: true, engineOrder: [], requestedPerEngine: null }) });
+		const { view } = setup({ engines: () => [], rows: () => 100, policy: () => fakePolicy({ mode: "all", combineForced: true, engineOrder: [], requestedPerEngine: null }, {}) });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 0 current");
 		expect(text).toContain("No Main engines configured; no Main requests");
@@ -208,7 +209,7 @@ describe("WebSearchView", () => {
 	});
 
 	it("keeps policy explanations on Search engines, not Fetchers or Test search", () => {
-		const policy = vi.fn(() => fakePolicy());
+		const policy = vi.fn(() => fakePolicy({}, {}));
 		const { view } = setup({ rows: () => 100, policy });
 		const search = view.render(80).join("\n");
 		expect(search).toContain("Aggregation · automatic search, all tiers");
@@ -226,7 +227,7 @@ describe("WebSearchView", () => {
 
 	it("retains the 64-engine display bound and bounds configured preference independently", () => {
 		const engines: EngineDescriptor[] = Array.from({ length: 70 }, (_, n) => ({ name: `engine-${n}`, label: `Engine ${n}`, tier: "main" }));
-		const { deps, view } = setup({ engines: () => engines, rows: () => 500, policy: () => fakePolicy({ engineOrder: engines.map(({ name }) => name) }) });
+		const { deps, view } = setup({ engines: () => engines, rows: () => 500, policy: () => fakePolicy({ engineOrder: engines.map(({ name }) => name) }, {}) });
 		deps.monitor.begin({ name: "old", label: "Old", tier: "main" })({ status: "empty" });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 70 current");
@@ -323,7 +324,7 @@ describe("WebSearchView", () => {
 		view.handleInput(tab);
 		view.render(100); view.handleInput(end);
 		expect(view.render(100).join("\n")).toContain("Fuse first");
-		const statistics = scrollToText(view, () => view.render(100), "Engine 19").join("\n");
+		const statistics = scrollToText(view, () => view.render(100), "Engine 19", up).join("\n");
 		expect(search.mock.calls[0][1].aborted).toBe(false);
 		pending.resolve("background result"); await flush();
 		expect(view.render(100).join("\n")).toBe(statistics);
@@ -513,7 +514,7 @@ describe("WebSearchView", () => {
 		expect(view.render(100).join("\n")).not.toContain("Engine 0 ");
 		view.handleInput(end);
 		expect(view.render(100).join("\n")).toContain("Fuse first");
-		expect(scrollToText(view, () => view.render(100), "Engine 19 ").join("\n")).toContain("Engine 19 ");
+		expect(scrollToText(view, () => view.render(100), "Engine 19 ", up).join("\n")).toContain("Engine 19 ");
 		rows = 15;
 		expect(view.render(40).length).toBeLessThanOrEqual(rows);
 		view.handleInput(home); view.handleInput(pageUp);
@@ -551,7 +552,7 @@ describe("WebSearchView", () => {
 			view.handleInput(end);
 			lines = frame(width, height);
 			expect(lines.join("\n")).toContain("Fuse first");
-			lines = scrollToText(view, () => frame(width, height), "Engine 29");
+			lines = scrollToText(view, () => frame(width, height), "Engine 29", up);
 			expect(lines.join("\n")).toContain("Engine 29");
 			// Intrinsic measurement must not reset an allocated scroll position.
 			view.render(40);
@@ -569,7 +570,7 @@ describe("WebSearchView", () => {
 		const { view } = setup({ engines: () => engines, rows: () => 12, search: async () => Array.from({ length: 30 }, (_, n) => `result ${n}`).join("\n") });
 		view.render(100); view.handleInput(end);
 		expect(view.render(100).join("\n")).toContain("Fuse first");
-		const search = scrollToText(view, () => view.render(100), "main 19").join("\n");
+		const search = scrollToText(view, () => view.render(100), "main 19", up).join("\n");
 		view.handleInput(tab); view.render(100); view.handleInput(end);
 		const fetchers = view.render(100).join("\n");
 		expect(fetchers).toContain("reader 19");
@@ -605,7 +606,7 @@ describe("WebSearchView", () => {
 			expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
 			view.handleInput(tab); frame(width, height); view.handleInput(end);
 			expect(frame(width, height).join("\n")).toContain("Fuse first");
-			expect(scrollToText(view, () => frame(width, height), "Engine 29").join("\n")).toContain("Engine 29");
+			expect(scrollToText(view, () => frame(width, height), "Engine 29", up).join("\n")).toContain("Engine 29");
 			view.handleInput(backTab);
 			view.render(20); // Intrinsic sizing must not reset the allocated Test viewport.
 			lines = frame(width, height);

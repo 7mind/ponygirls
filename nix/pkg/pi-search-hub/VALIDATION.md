@@ -1,6 +1,62 @@
 # Validation — 2026-11-07
 
-## Current follow-up: fusion, live native search, and pane tabs
+## Current follow-up: tier groups and querying-policy explanation
+
+- Source Git tree (`src/`): `f808fd607e431ff6e1a1e953992407ad97d82a1d`.
+- All 66 tracked source files byte-match Nix input
+  `/nix/store/8c241mbv0j1kbj9hmmf33d64bd1qall3-source`.
+- Tested package: `/nix/store/247wn1nvvhjf6x28q78nj9xv0icqb0pb-pi-search-hub-2.8.0-ponygirls.1`.
+- Package NAR hash: `sha256-ozB1cvShxxtw4p39lIDposVov21Kz6825121e3tP5LA=`.
+
+Fresh command:
+
+```bash
+nix build .#pi-search-hub .#checks.x86_64-linux.pi-search-hub-eval \
+  .#checks.x86_64-linux.subagents-policy-shape .#checks.x86_64-linux.ponygirls-pi-ui \
+  --no-link --print-out-paths -L
+```
+
+Strict pinned-SDK typecheck and **18 Vitest files / 325 cases passed**, with
+0 failures/errors/skips (including 40 view cases and 19 service cases). The fresh
+evaluation check passed **37 Python cases**, reproduced both benchmark reports
+and verified installed RRF60 parity on all 10 frozen live pools. Current module
+assertions evaluated successfully; unchanged module/shared-UI artifacts were
+reused, not fresh executions of the shared UI's 32 cases. No ranking policy or
+native request/retrieval logic changed; native deadline constants are now shared
+with display metadata. No fresh live-provider acceptance is claimed.
+
+Service cases bind displayed defaults to actual first/targeted/all requests,
+fallback limits and caller overrides/forced combine. They check safe detached
+snapshots, invalid mode reporting, and no inference, random sampling or round-robin
+advancement on inspection. View cases cover tier/history separation, original
+deduplicated-rank RRF explanations, deadlines/caps, policy variants, sanitization,
+display bounds, scrolling, resizing, tab segregation and existing test interactions.
+
+Fresh controlled Pi 1.4.0 / tmux 3.8 PTY journeys passed in **regular and fullscreen**
+modes, at 120×40 → 80×24 → 120×40 for policy inspection and again for test results.
+An environment allowlist and disposable HOME excluded personal credentials. The
+three tiers used loopback fastCRW, loopback SearXNG and an in-memory native stream.
+Observed rules included the actual 4-result Main request, fallback cap/deadline,
+native deadline/settlement grace and RRF60; opening, scrolling and resizing made
+no search requests. Both journeys also checked completion counters for all three
+tiers, ignored statistics-tab input, preserved query/result/scroll positions,
+cancellation from statistics, redacted failure, Escape, no status-bar entries and
+normal exit 0. Fullscreen additionally checked mouse tab switching. Private tmux
+servers and owned scratch directories were removed; socket control then failed.
+These establish terminal-cell behavior, not font pixels, IME or live entitlement.
+
+One retained initial PTY run incorrectly expected the result heading after returning
+to a deliberately scrolled result. The capture showed correct viewport preservation;
+the harness was corrected, without application changes, and both final journeys
+used fresh reporting directories. A worker's first unisolated full test run also
+encountered two inherited-configuration failures; its clean-environment rerun and
+the parent's local/Nix runs passed without altering host configuration.
+
+Independent read-only source review found no actionable introduced defects; it did
+not execute tests or establish PTY acceptance. Evidence is retained under
+`debug/websearch-tiers-f808fd60/`. No activation, deployment or push was performed.
+
+## Historical follow-up: fusion, live native search, and pane tabs
 
 - Source Git tree (`src/`): `e97f68a6adf80c41b089d707f79ad57b4ad3f550`.
 - All 65 tracked source files byte-match final Nix source

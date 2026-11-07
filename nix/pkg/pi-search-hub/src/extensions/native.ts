@@ -53,8 +53,8 @@ const CANDIDATES: Record<NativeProviderId, readonly string[]> = {
 	xai: ["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"],
 	"grok-build": ["grok-4.6", "grok-4.5", "grok-4.3"],
 };
-const NATIVE_REQUEST_TIMEOUT_MS = 45_000;
-const NATIVE_ABORT_SETTLEMENT_GRACE_MS = 1000;
+export const NATIVE_REQUEST_TIMEOUT_MS = 45_000;
+export const NATIVE_ABORT_SETTLEMENT_GRACE_MS = 1000;
 const MAX_RESULTS = 20;
 const MAX_TITLE = 200;
 const MAX_SNIPPET = 1000;

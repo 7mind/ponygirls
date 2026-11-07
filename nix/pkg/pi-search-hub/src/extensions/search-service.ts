@@ -2,14 +2,16 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Usage } from "@earendil-works/pi-ai";
 import { config, refreshConfig, getActiveBackends, recordLatency } from "./config.js";
 import { BACKEND_DEFS, runBackend } from "./backends/registry.js";
-import { resolveAlwaysInclude, selectBackendsForFallback } from "./dispatch.js";
+import { resolveAlwaysInclude, selectBackendsForFallback, TARGETED_MAIN_ENGINE_COUNT, RRF_K, type AlwaysIncludeEntry } from "./dispatch.js";
 import { runMetasearch } from "./metasearch.js";
-import { discoverNativeEngines, NativeSearchError, NativeUsageUnavailableError, type NativeEngine } from "./native.js";
+import { discoverNativeEngines, NativeSearchError, NativeUsageUnavailableError, NATIVE_REQUEST_TIMEOUT_MS, NATIVE_ABORT_SETTLEMENT_GRACE_MS, type NativeEngine } from "./native.js";
 import { SearchMonitor, type EngineDescriptor } from "./search-monitor.js";
 import { formatCombinedResults, formatCombinedResultsCompact } from "./formatters.js";
-import type { SearchResult } from "./types.js";
+import type { SearchResult, SearchConfig } from "./types.js";
+import type { SearchPolicy } from "./search-policy.js";
 
-const NATIVE_DEADLINE_MS = 45_000;
+const DEFAULT_RESULT_COUNT = 10;
+const MAXIMUM_RESULT_COUNT = 20;
 export interface SearchParams { query: string; numResults?: number; backend?: string; combine?: boolean; compact?: boolean }
 
 function sumUsage(usages: Usage[]): Usage | undefined {
@@ -25,20 +27,50 @@ function sumUsage(usages: Usage[]): Usage | undefined {
   return total;
 }
 
+function describePolicy(settings: SearchConfig, active: string[], fallback: AlwaysIncludeEntry[], nativeCount: number): SearchPolicy {
+  const combineMode = settings.combineMode === undefined ? "all"
+    : settings.combineMode === "all" || settings.combineMode === "targeted" ? settings.combineMode : "invalid";
+  const mode = combineMode === "invalid" ? "invalid" : settings.combine === true ? combineMode : "first";
+  const fallbackNames = new Set(fallback.map(entry => entry.backend));
+  const engineOrder = active.filter(name => name !== "openai-codex" && !fallbackNames.has(name));
+  const configuredStrategy = settings.selectionStrategy ?? "sequential";
+  const selectionStrategy = configuredStrategy === "sequential" || configuredStrategy === "random"
+    || configuredStrategy === "round-robin" || configuredStrategy === "best-latency" ? configuredStrategy : "unrecognized";
+  return {
+    defaultResultCount: DEFAULT_RESULT_COUNT, maximumResultCount: MAXIMUM_RESULT_COUNT,
+    main: { mode, combineForced: settings.combine === true, combineMode, selectionStrategy, engineOrder,
+      targetUsableEngines: TARGETED_MAIN_ENGINE_COUNT,
+      requestedPerEngine: mode === "invalid" || engineOrder.length === 0 ? null
+        : mode === "first" ? DEFAULT_RESULT_COUNT
+        : Math.max(1, Math.ceil(DEFAULT_RESULT_COUNT / (mode === "targeted" ? TARGETED_MAIN_ENGINE_COUNT : engineOrder.length))) },
+    fallback: fallback.map(entry => ({ backend: entry.backend, timeoutMs: entry.timeoutMs, maxResults: entry.maxResults ?? DEFAULT_RESULT_COUNT })),
+    native: { engineCount: nativeCount, timeoutMs: NATIVE_REQUEST_TIMEOUT_MS, settlementGraceMs: NATIVE_ABORT_SETTLEMENT_GRACE_MS },
+    fusion: { rankConstant: RRF_K },
+  };
+}
+
 /** Session-owned discovery and counters shared by the tool and the interactive test pane. */
 export class SearchService {
   readonly monitor = new SearchMonitor();
   private native: NativeEngine[] = [];
   private descriptors: EngineDescriptor[] = [];
+  private policySnapshot: SearchPolicy | null = null;
 
   engines(): readonly EngineDescriptor[] { return this.descriptors; }
+  policy(): SearchPolicy {
+    if (this.policySnapshot === null) throw new Error("Search policy is unavailable before discovery");
+    return structuredClone(this.policySnapshot);
+  }
 
   async refresh(ctx: ExtensionContext, signal: AbortSignal | undefined): Promise<void> {
     refreshConfig(ctx.cwd);
     this.native = await discoverNativeEngines(ctx, signal);
-    const fallback = new Set(resolveAlwaysInclude(config.alwaysInclude, getActiveBackends()).map(entry => entry.backend));
+    const active = getActiveBackends();
+    const fallbackEntries = resolveAlwaysInclude(config.alwaysInclude, active);
+    const fallback = new Set(fallbackEntries.map(entry => entry.backend));
+    this.policySnapshot = describePolicy(config, active, fallbackEntries, this.native.length);
     this.descriptors = [
-      ...getActiveBackends().filter(name => name !== "openai-codex").map(name => ({ name,
+      ...active.filter(name => name !== "openai-codex").map(name => ({ name,
         label: BACKEND_DEFS[name]?.label ?? name, tier: fallback.has(name) ? "fallback" as const : "main" as const,
         availability: "configured" as const })),
       ...this.native.map(engine => ({ name: `native:${engine.id}`, label: engine.label, tier: "native" as const, availability: "configured" as const })),
@@ -54,7 +86,7 @@ export class SearchService {
     }
     await this.refresh(ctx, signal);
     const native = new Map(this.native.map(engine => [`native:${engine.id}`, engine]));
-    const numResults = Math.max(1, Math.min(params.numResults ?? 10, 20));
+    const numResults = Math.max(1, Math.min(params.numResults ?? DEFAULT_RESULT_COUNT, MAXIMUM_RESULT_COUNT));
     const compact = params.compact ?? config.compact ?? false;
     const usages: Usage[] = [];
     const usageUnavailableEngines = new Set<string>();
@@ -107,7 +139,7 @@ export class SearchService {
         mode: combine ? config.combineMode ?? "all" : "first",
         orderedBackends: selectBackendsForFallback(config.selectionStrategy ?? "sequential", getActiveBackends().filter(name => name !== "openai-codex")),
         fallback: resolveAlwaysInclude(config.alwaysInclude, getActiveBackends()),
-        native: [...native.keys()].map(backend => ({ backend, timeoutMs: NATIVE_DEADLINE_MS })),
+        native: [...native.keys()].map(backend => ({ backend, timeoutMs: NATIVE_REQUEST_TIMEOUT_MS })),
         query: params.query, numResults, signal, runBackend: run,
       }); } catch {
         return { content: [{ type: "text" as const, text: withUsageNote(signal?.aborted ? "Search cancelled" : "Metasearch failed") }],
