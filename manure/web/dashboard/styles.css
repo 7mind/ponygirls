@@ -312,3 +312,10 @@ th[aria-sort=ascending] .sort-indicator, th[aria-sort=descending] .sort-indicato
   .password-reveal { padding: 14px; }
 }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { scroll-behavior: auto !important; } }
+
+.quick-upload { margin-bottom: 1.5rem; padding: 1.25rem; }
+.quick-upload form { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
+.quick-upload form p { flex-basis: 100%; }
+.upload-result { margin: 1rem 0; overflow-wrap: anywhere; }
+.upload-result input { width: min(100%, 45rem); }
+.upload-result button { margin: .5rem; }

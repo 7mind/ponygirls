@@ -165,8 +165,8 @@ allow_insecure_http=True)`, CLI `manure --allow-insecure-http upload ...`, or
 rejection; other environment values fail closed. Public HTTP content URL fetch
 also needs this opt-in, even without credentials. This does not relax redirect,
 bearer-origin or artifact-grant scoping. Browsers need no flag: the dashboard
-uses same-origin fetch/forms and no secure-context-only crypto APIs. Uploads
-remain CLI-only; Python hashing/RNG are unchanged.
+uses same-origin fetch/forms and no secure-context-only crypto APIs. File uploads use bounded incremental SHA-256 without requiring HTTPS-only
+Web Crypto APIs; Python hashing/RNG are unchanged.
 
 **Production: `loopback_dev: false`, `https:` `api_origin`, proxy**
 (see “Security & deployment”). Cleanup: stop the server, then
@@ -232,8 +232,27 @@ Failed batches preserve loaded rows and offer an explicit retry.
 Details show metadata and the file manifest, with same-origin attachment
 Downloads. **Open** uses the configured content endpoint and one-time
 internal grant handoff (isolated origin in default subdomain mode only); when content hosting is unavailable, no working link
-is advertised. Uploads remain CLI-only. All configured users can manage all
+is advertised. All configured users can manage all
 artifacts; the sidebar is an access filter, not an ownership boundary.
+
+**Quick upload:** after logging in, paste a screenshot (Ctrl+V), drop files
+onto the upload panel, or choose files (including PDFs). These actions only
+stage files; **Upload** explicitly publishes each file as a separate artifact.
+Choose access before clicking Upload: **Internal** (default) requires authenticated
+readers, including remote agents; **External** requires its once-shown password;
+**Public** permits anonymous reads by anyone who can reach the link. The selector
+applies to files that have not started initialization; retrying an existing
+artifact preserves its original access. Directories and cross-session resume
+remain CLI features. Server limits apply; hashing reads bounded slices and
+uploads use the server's chunk size.
+
+Ready uploads show selectable content links and a Copy button (manual copy works
+on HTTP where clipboard permission is unavailable). External passwords remain
+transient, never in links or web storage; dismiss the password or sign out to
+clear it. Dismissing uploads does not delete server reservations. Retry resumes
+the same known artifact, including uncertain finalization. If initialization
+could not be confirmed, check the catalogue before starting a new upload:
+request correlation is not write deduplication and a reservation may exist.
 
 Ready artifacts have an **Access mode** selector in details. Any configured
 user can change Internal, External, or Public access; Public changes require

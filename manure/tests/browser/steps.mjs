@@ -89,6 +89,17 @@ async function runStep(ctx, step) {
       const res = await page.goto(step.url, { waitUntil: "load", timeout: 15000 });
       return { url: page.url(), status: res ? res.status() : null };
     }
+    case "addInitScript": {
+      const fn = eval(`(${step.fn})`);
+      await page.addInitScript(fn);
+      return {};
+    }
+    case "setInputFiles": {
+      await page.locator(step.selector).setInputFiles(step.files.map(file => ({
+        name: file.name, mimeType: file.mimeType, buffer: Buffer.from(file.base64, "base64"),
+      })), { timeout: 10000 });
+      return {};
+    }
     case "fill": {
       await page.locator(step.selector).fill(step.value, { timeout: 10000 });
       return {};

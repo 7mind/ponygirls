@@ -156,6 +156,20 @@
       ]
     },
     {
+      "module": "test_browser_quick_upload",
+      "path": "manure/tests/test_browser_quick_upload.py",
+      "classification": "current",
+      "requires": [
+        "target",
+        "browser"
+      ],
+      "tests": [
+        "test_browser_quick_upload.QuickUploadBrowserTests.test_http_paste_picker_drop_stage_then_publish_exact_bytes",
+        "test_browser_quick_upload.QuickUploadBrowserTests.test_lost_chunk_finish_retry_and_late_init_after_logout",
+        "test_browser_quick_upload.QuickUploadBrowserTests.test_public_multichunk_binary_link_is_anonymously_readable_on_http"
+      ]
+    },
+    {
       "module": "test_browser_tls",
       "path": "manure/tests/test_browser_tls.py",
       "classification": "current",
@@ -531,7 +545,8 @@
         "test_dashboard_markup.DashboardMarkupTests.test_detail_has_file_table_and_transient_password_actions",
         "test_dashboard_markup.DashboardMarkupTests.test_detail_offers_access_modes_and_live_feedback",
         "test_dashboard_markup.DashboardMarkupTests.test_infinite_scroll_has_keyboard_and_failure_controls",
-        "test_dashboard_markup.DashboardMarkupTests.test_path_mode_notice_is_an_icon_with_a_tooltip"
+        "test_dashboard_markup.DashboardMarkupTests.test_path_mode_notice_is_an_icon_with_a_tooltip",
+        "test_dashboard_markup.DashboardMarkupTests.test_quick_upload_has_explicit_publish_and_access_controls"
       ]
     },
     {
@@ -826,6 +841,27 @@
         "redirect ID reuse preserves hops; next extras early=true",
         "redirect without ExtraInfo does not consume next hop extras",
         "current command label is captured without token, password or grant fields"
+      ],
+      "timeoutSeconds": 120
+    },
+    {
+      "id": "node-quick-upload",
+      "path": "manure/tests/browser/quick-upload.test.mjs",
+      "argv": [
+        "node",
+        "--test",
+        "--test-reporter=tap",
+        "manure/tests/browser/quick-upload.test.mjs"
+      ],
+      "tests": [
+        "incremental SHA256 matches independent vectors across padding and block boundaries",
+        "blob hashing reads bounded slices and cancellation stops the next read",
+        "typed upload uses server chunks and retries failed bytes without a duplicate artifact",
+        "uncertain finish retries the same ID and duplicate concurrent submit is ignored",
+        "uncertain initialization never silently creates another reservation",
+        "capability admission and stale session check prevent writes",
+        "definitive quota and session admission rejection can retry initialization",
+        "malformed chunk receipts never advance offset and retries use the same artifact"
       ],
       "timeoutSeconds": 120
     }

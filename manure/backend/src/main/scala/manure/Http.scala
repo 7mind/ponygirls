@@ -253,14 +253,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         case Some(identity) => artifacts.info(identity,id).map(_ => ())
         case None => IO.unit
       eligibility *> serveFile(req,ctx,id,file,true,c.identity)
-    else if req.method == Method.GET && (path == "/" || Set("/app.js","/styles.css","/current-protocol.js","/current-schema.js")(path) || path.startsWith("/current/")) then
+    else if req.method == Method.GET && (path == "/" || Set("/app.js","/styles.css","/current-protocol.js","/current-schema.js","/quick-upload.js","/sha256.js")(path) || path.startsWith("/current/")) then
       c.identity.foreach(auth.human)
       asset(config.dashboardDir,if path == "/" then "index.html" else path.drop(1),ctx,true)
     else IO.raiseError(DomainError("not-found"))
   private def asset(directory: Option[Path],name: String,ctx: Context,dashboard: Boolean): IO[Response[IO]] = IO.blocking {
     val root = directory.getOrElse(throw DomainError(if dashboard then "dashboard-disabled" else "not-found"))
     val generated = name.matches("current/(?:manure/api/)?[A-Za-z][A-Za-z0-9_]*\\.js")
-    Require(Set("index.html","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js")(name) || dashboard && generated, "not-found")
+    Require(Set("index.html","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js")(name) || dashboard && generated, "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 2097152, "not-found")
     var bytes = Files.readAllBytes(file)

@@ -33,7 +33,7 @@ aria-describedby="token-note">
 </form>
 <p id="login-error" class="error" role="alert" hidden></p>
 <p id="token-note" class="auth-note">Your token is sent in the login request body, then cleared from the input and JavaScript reference. Your session uses a host-only HttpOnly cookie, not web storage or a URL.</p>
-<div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> Upload from your terminal. Manage here.</div>
+<div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> Paste files. Upload. Share links.</div>
 </div>
 </section>
 
@@ -52,7 +52,7 @@ aria-describedby="token-note">
 <p class="workspace-label">FROM YOUR TERMINAL</p>
 <p>Files in. Links out.</p>
 <code>manure upload ./path --access internal</code>
-<small>Uploads are handled by the CLI.</small>
+<small>Or paste, drop, or choose files here. Directories use the CLI.</small>
 </div>
 <div id="whoami" class="identity" hidden>
 <span class="avatar" aria-hidden="true">M</span>
@@ -64,12 +64,27 @@ aria-describedby="token-note">
 <main id="main" class="workspace-main" tabindex="-1">
 <header class="topbar"><span>Workspace<span class="breadcrumb-separator" aria-hidden="true">/</span><strong>Artifacts</strong></span><span class="service-label">Artifact management <span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span></span></header>
 <div class="workspace-content">
+<section id="quick-upload" class="detail-panel quick-upload" aria-labelledby="upload-heading">
+<h2 id="upload-heading">Quick upload</h2>
+<p id="upload-help">Paste a screenshot (Ctrl+V), drop files here, or choose files. Files are staged only: Upload explicitly publishes each as a separate artifact. Directories use the CLI.</p>
+<form id="upload-form">
+<label for="upload-files">Choose files</label>
+<input id="upload-files" type="file" multiple aria-describedby="upload-help">
+<label for="upload-visibility">Access for files not yet initialized</label>
+<select id="upload-visibility" aria-describedby="upload-access-help"><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select>
+<p id="upload-access-help">Internal: authenticated readers only (a remote agent needs Manure credentials). External: password required, shown once. Public: anyone who can reach the link can read it. Links never contain passwords.</p>
+<button id="upload-submit" type="submit" class="primary" disabled>Upload staged files / retry</button>
+<button id="upload-clear" type="button">Dismiss uploads &amp; passwords</button>
+</form>
+<p id="upload-status" role="status" aria-live="polite"></p>
+<ul id="upload-list" aria-label="Staged uploads"></ul>
+</section>
 <section id="dashboard-section" aria-labelledby="artifacts-heading" hidden>
 <div class="page-heading">
 <div><p class="eyebrow">YOUR WORKSPACE</p><h1 id="artifacts-heading">Artifacts</h1><p>Find, inspect, and manage files and directories.</p></div>
 <details class="upload-guide">
 <summary>Upload with the CLI</summary>
-<div class="upload-guide-body"><p>Uploads stay in your terminal. Choose an access mode when you publish.</p><pre><code>manure upload ./path --access internal</code></pre><p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p></div>
+<div class="upload-guide-body"><p>For directories, resumable uploads across sessions, and advanced options, use the CLI.</p><pre><code>manure upload ./path --access internal</code></pre><p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p></div>
 </details>
 </div>
 
@@ -101,7 +116,7 @@ aria-describedby="token-note">
 </tr></thead>
 <tbody id="artifact-list"></tbody>
 </table>
-<div id="empty-state" class="empty-state" hidden><span class="empty-mark" aria-hidden="true"></span><h3>No matching artifacts</h3><p>Try another search or access filter.<br>To add an artifact, upload with the <code>manure</code> CLI.</p></div>
+<div id="empty-state" class="empty-state" hidden><span class="empty-mark" aria-hidden="true"></span><h3>No matching artifacts</h3><p>Try another search or access filter.<br>To add an artifact, paste or choose files above, or use the <code>manure</code> CLI.</p></div>
 <div id="list-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
 </div>
 <div class="results-footer"><p id="list-status" role="status">Loading artifacts…</p><div class="results-actions"><button type="button" id="retry-list-button" hidden>Retry loading</button><button type="button" id="load-more-button" hidden>Load more</button></div></div>
@@ -146,7 +161,7 @@ aria-describedby="token-note">
 </div>
 </section>
 </div>
-<footer class="workspace-footer"><p>Uploads use the <code>manure</code> CLI. This workspace lists, opens, changes access, rotates passwords, and deletes artifacts.</p><p>All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p></footer>
+<footer class="workspace-footer"><p>Upload files here or use the <code>manure</code> CLI for directories and resumable uploads. This workspace also manages artifact access.</p><p>All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p></footer>
 </main>
 </div>
 <noscript><p class="noscript-note">This dashboard requires JavaScript; the API and <code>manure</code> CLI remain usable without it.</p></noscript>

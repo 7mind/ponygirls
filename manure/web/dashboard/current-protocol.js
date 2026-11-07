@@ -143,3 +143,30 @@ export const access = (id,visibility) => [new p.Command_PatchArtifact(id,new p.A
     const value=local(r.artifact);if(r.externalPassword !== null){value.external_password=r.externalPassword;}return value;
   }];
 export const rotate = id => [new p.Command_RotateExternalPassword(id),p.Result_PasswordRotated,r=>local(r)];
+
+export const capabilities = () => [new p.Command_GetCapabilities(),p.Result_CapabilityInfo,r=>local(r.capabilities)];
+export const initUpload = (file,visibility,sha256) => [new p.Command_InitUpload(file.name,p.ArtifactKind.File,
+  p.Visibility[visibility[0].toUpperCase()+visibility.slice(1)],null,
+  [new p.ManifestEntry_File(file.name,BigInt(file.size),sha256)]),p.Result_UploadInitialized,r=>{
+    const value=local(r);value.external_password=r.externalPassword === undefined ? null : r.externalPassword;return value;
+  }];
+export const finishUpload = id => [new p.Command_FinishUpload(id),p.Result_UploadFinished,r=>local(r)];
+export async function putChunk(fetch,id,path,offset,data,sha256,signal) {
+  const response=await fetch('/api/current/artifacts/'+id+'/chunks?'+new URLSearchParams({path,offset:String(offset)}),{
+    method:'PUT',credentials:'same-origin',signal,
+    headers:{Accept:'application/json','Content-Type':'application/octet-stream','X-Chunk-Sha256':sha256},body:data});
+  const text=await response.text();
+  if(text.length>4*1024*1024) bad();
+  const json=parseStrict(text);
+  if(!response.ok) {
+    validate('ServerEnvelope',json);
+    const decoded=p.ServerEnvelope_JsonCodec.instance.decode(ctx,json);
+    if(!(decoded.result instanceof p.Result_Error)) bad();
+    const error=new Error(decoded.result.failure.code.replace(/[A-Z]/g,(s,i)=>(i?'-':'')+s.toLowerCase()));
+    error.status=response.status;throw error;
+  }
+  validate('ChunkReceipt',json);
+  const receipt=p.ChunkReceipt_JsonCodec.instance.decode(ctx,json);
+  if(receipt.path!==path || receipt.offset!==BigInt(offset) || receipt.length!==data.size ||
+    receipt.receivedBytes<BigInt(offset+data.size)) bad();
+}

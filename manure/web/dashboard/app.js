@@ -2,6 +2,7 @@
  * Credentials and one-time passwords stay transient. No HTML injection or browser storage.
  */
 import * as current from "./current-protocol.js";
+import { FileUpload } from "./quick-upload.js";
 import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./current/manure/api/index.js";
 
 "use strict";
@@ -181,6 +182,7 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
   }
 
   function clearAccount() {
+    clearUploads();
     sessionEpoch++; invalidateNavigation(); authenticated = false;
     summaries = []; loadedKey = ""; nextCursor = null; listError = false;
     currentDetailId = null; currentDetailInfo = null;
@@ -249,6 +251,7 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
     }).finally(function () { button.disabled = false; });
   }
   function onLogout() {
+    clearUploads();
     openGeneration++;
     hideRotateOutput();
     var epoch = sessionEpoch;
@@ -663,6 +666,104 @@ import { Command_GetCapabilities, Result_CapabilityInfo, ContentMode } from "./c
       if (epoch === sessionEpoch && generation === detailGeneration) { setText(statusId, "Clipboard access was denied. Select the value and copy it manually."); }
     });
   }
+
+  var uploads = [];
+  var uploadGeneration = 0;
+  var uploadBusy = false;
+  var uploadAbort = null;
+  function clearUploads() {
+    uploadGeneration++;
+    if (uploadAbort !== null) { uploadAbort.abort(); uploadAbort = null; }
+    uploads.forEach(function (item) { item.clear(); });
+    uploads = []; uploadBusy = false;
+    $("upload-files").value = "";
+    $("upload-visibility").value = "internal";
+    setText("upload-status", ""); renderUploads();
+  }
+  function renderUploads() {
+    var list = $("upload-list"); list.textContent = "";
+    uploads.forEach(function (item) {
+      var row = element("li", null, "upload-result");
+      row.appendChild(element("strong", item.file.name + " · " + bytes(item.file.size) + " · " + item.visibility, null));
+      var phase = item.phase === "init-uncertain" ? "Initialization could not be confirmed. Do not retry as a new upload without checking the catalogue for an incomplete artifact." : item.phase;
+      row.appendChild(element("p", phase + " · " + bytes(item.offset) + " sent" + (item.id ? " · ID " + item.id : ""), null));
+      if (item.error) { row.appendChild(element("p", item.error, "error")); }
+      if (item.phase === "ready") {
+        var url = contentUrl({ artifact_id: item.id, content_url: item.link });
+        if (url !== null) {
+          var link = element("input", null, null); link.type = "text"; link.readOnly = true; link.value = url;
+          link.setAttribute("aria-label", "Content link for " + item.file.name);
+          link.addEventListener("click", function () { link.select(); }); row.appendChild(link);
+          var button = element("button", "Copy content link", null); button.type = "button";
+          button.addEventListener("click", function () { copy(url, "upload-status", "Content link copied."); }); row.appendChild(button);
+        } else { row.appendChild(element("p", "Ready, but no validated content link is configured. Open the artifact in the catalogue.", null)); }
+      }
+      if (item.password !== null) {
+        row.appendChild(element("p", "External password — shown once; save securely before dismissing:", null));
+        row.appendChild(element("code", item.password, "password-value"));
+        var dismiss = element("button", "Dismiss password", null); dismiss.type = "button";
+        dismiss.addEventListener("click", function () { item.password = null; renderUploads(); }); row.appendChild(dismiss);
+      }
+      list.appendChild(row);
+    });
+    $("upload-submit").disabled = uploadBusy || !uploads.some(function (item) { return item.phase !== "ready" && item.phase !== "init-uncertain"; });
+    $("upload-files").disabled = uploadBusy;
+    $("upload-visibility").disabled = uploadBusy;
+  }
+  function stageFiles(files) {
+    if (!authenticated || uploadBusy || $("logout-button").disabled) { return; }
+    Array.from(files).forEach(function (file) {
+      if (!file.name || /[\\/\x00-\x1f\x7f]/.test(file.name) || file.name === "." || file.name === "..") {
+        setText("upload-status", "Rejected an unsupported file name. Rename it before uploading."); return;
+      }
+      uploads.push(new FileUpload(file, $("upload-visibility").value));
+    });
+    $("upload-files").value = ""; renderUploads();
+  }
+  $("upload-files").addEventListener("change", function (event) { stageFiles(event.target.files); });
+  document.addEventListener("paste", function (event) {
+    if (authenticated && event.clipboardData && event.clipboardData.files.length) {
+      event.preventDefault(); stageFiles(event.clipboardData.files);
+    }
+  });
+  $("quick-upload").addEventListener("dragover", function (event) { if (authenticated) { event.preventDefault(); } });
+  $("quick-upload").addEventListener("drop", function (event) {
+    if (authenticated) { event.preventDefault(); stageFiles(event.dataTransfer.files); }
+  });
+  $("upload-clear").addEventListener("click", clearUploads);
+  $("upload-form").addEventListener("submit", async function (event) {
+    event.preventDefault();
+    if (!authenticated || uploadBusy || $("logout-button").disabled) { return; }
+    var generation = uploadGeneration, epoch = sessionEpoch;
+    uploads.forEach(function (item) {
+      if (item.id === null && item.phase !== "init-uncertain") { item.visibility = $("upload-visibility").value; }
+    });
+    var controller = new AbortController(); uploadAbort = controller; uploadBusy = true;
+    function check() { if (!authenticated || generation !== uploadGeneration || epoch !== sessionEpoch) { throw new Error("cancelled"); } }
+    renderUploads();
+    try {
+      for (var item of uploads) {
+        check(); item.error = null;
+        try {
+          await item.run(apiFetch, fetch, check, controller.signal, renderUploads);
+        } catch (error) {
+          check();
+          if (error.status === 401) { showLoggedOut(); return; }
+          item.error = "Upload failed (" + errorLabel(error) + "). " +
+            (item.phase === "finalizing" ? "Publication is uncertain. Retry checks the same artifact; do not start a duplicate." :
+              item.id ? "Retry continues the same artifact. Dismissing does not delete the incomplete upload." : "Check the status above before retrying.");
+          renderUploads(); break;
+        }
+      }
+      check(); setText("upload-status", "Finished this upload attempt. Ready links are shown below. Internal links require authenticated readers.");
+      loadedKey = "";
+      if (!$("dashboard-section").hidden) { loadPage(true); }
+    } catch (_error) {
+      // Logout/dismiss invalidates this operation; never restore its secrets or UI.
+    } finally {
+      if (generation === uploadGeneration && epoch === sessionEpoch) { uploadBusy = false; uploadAbort = null; renderUploads(); }
+    }
+  });
 
   $("login-form").addEventListener("submit", onLoginSubmit);
   $("logout-button").addEventListener("click", onLogout);
