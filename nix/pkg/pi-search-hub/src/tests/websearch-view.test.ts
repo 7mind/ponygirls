@@ -192,6 +192,17 @@ describe("WebSearchView", () => {
 		view.handleInput(esc);
 	});
 
+	it("supports Ctrl+Page keys not reserved by Pi's fullscreen transcript", () => {
+		const engines: EngineDescriptor[] = Array.from({ length: 20 }, (_, n) => ({ name: `engine-${n}`, label: `Engine ${n}`, tier: "main" }));
+		const { view } = setup({ engines: () => engines, rows: () => 10 });
+		const initial = view.render(100).join("\n");
+		view.handleInput("\x1b[6;5~");
+		expect(view.render(100).join("\n")).not.toBe(initial);
+		view.handleInput("\x1b[5;5~");
+		expect(view.render(100).join("\n")).toBe(initial);
+		view.dispose();
+	});
+
 	it("preserves input/chrome and scrolls all rows under structural allocation", () => {
 		const engines: EngineDescriptor[] = Array.from({ length: 30 }, (_, n) => ({ name: `engine-${n}`, label: `Engine ${n}`, tier: "fallback" }));
 		const { view } = setup({ engines: () => engines });

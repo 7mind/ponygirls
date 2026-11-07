@@ -49,10 +49,12 @@ export async function fetchWithFallback(
 	signal: AbortSignal | undefined,
 	config: SearchConfig,
 	onAttempt?: (reader: string, index: number, total: number) => void,
+	onOutcome?: (reader: string, status: "success" | "failed" | "cancelled") => void,
 ): Promise<FetchResult> {
 	const errors: Array<{ reader: string; error: string }> = [];
 
 	for (let i = 0; i < readers.length; i++) {
+		signal?.throwIfAborted();
 		const candidate = readers[i];
 		onAttempt?.(candidate, i, readers.length);
 
@@ -65,8 +67,12 @@ export async function fetchWithFallback(
 			if (result.content.trim().length === 0) {
 				throw new Error(`${candidate} returned no content for ${url}`);
 			}
+			signal?.throwIfAborted();
+			onOutcome?.(candidate, "success");
 			return result;
 		} catch (err) {
+			onOutcome?.(candidate, signal?.aborted ? "cancelled" : "failed");
+			signal?.throwIfAborted();
 			const errorMsg = (err as Error).message;
 			errors.push({ reader: candidate, error: errorMsg });
 

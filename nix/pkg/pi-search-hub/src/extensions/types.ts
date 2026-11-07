@@ -33,7 +33,7 @@ export interface BackendConfig {
 	topic?: "general" | "news";
 }
 
-/** One free backend queried beside targeted combine, not as a quality slot. */
+/** One fallback-tier backend queried beside the main tier, not as a main slot. */
 export interface AlwaysIncludeBackendConfig {
 	/** Deadline from query start, in milliseconds. A miss drops this backend only. */
 	timeoutMs: number;
@@ -49,8 +49,8 @@ export interface SearchConfig {
 	/**
 	 * Free backends queried in parallel with targeted combine and removed from
 	 * that walk. Their results join the combine fusion on equal footing with
-	 * quality results. Honored only when combineMode is "targeted". Keys must
-	 * name enabled backends. Each timeoutMs is a deadline from query start.
+	 * quality results in every automatic search mode. Keys must name enabled
+	 * backends. Each timeoutMs is a deadline from query start.
 	 */
 	alwaysInclude?: Record<string, AlwaysIncludeBackendConfig>;
 	selectionStrategy?: "sequential" | "random" | "round-robin" | "best-latency";
@@ -58,8 +58,6 @@ export interface SearchConfig {
 	reader?: "jina" | "sofya" | "firecrawl" | "exa" | "exa_mcp";
 	/** Reader fallback order for web_read. When the primary reader fails (422, 5xx, timeout), try the next in this list. Default: ["jina", "sofya", "firecrawl", "exa", "exa_mcp"]. */
 	readerFallback?: string[];
-	/** Show status line with enabled backends. Default: true. Set to false to hide. */
-	showStatus?: boolean;
 	/** Cache TTL in milliseconds. Default: 300000 (5 min). Set to 0 to disable. */
 	cacheTtl?: number;
 	/** Max cached queries. Default: 100. */

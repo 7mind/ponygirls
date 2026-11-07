@@ -19,7 +19,7 @@
  * Config: ~/.pi/agent/extensions/search.json + .pi/search.json (project wins)
  * Credentials: env var refs (ALL_CAPS), shell commands (!command), or literal keys
  *
- * Statusline activity: Shows "search" status during search operations
+ * /websearch opens the session statistics and interactive search panel.
  *
  * Example .pi/search.json:
  *   {
@@ -41,46 +41,55 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { CustomViewToggle } from "@ponygirls/pi-ui";
+import { SearchService } from "./search-service.js";
+import { WebSearchView } from "./websearch-view.js";
 import { StringEnum } from "@earendil-works/pi-ai";
 import { Type } from "typebox";
 
-import type { BackendConfig, SearchConfig, SearchResult, SearchResultWithBackend } from "./types.js";
+import type { BackendConfig, SearchConfig } from "./types.js";
 import { getAgentDir, clearCooldowns, validateUrl } from "./utils.js";
 import { getKeySource } from "./credentials.js";
-import { fetchWithReader, fetchWithFallback, readerLabel, DEFAULT_READER_FALLBACK } from "./readers/dispatch.js";
-import { config, refreshConfig, getActiveBackends, recordLatency, latencyMap } from "./config.js";
-import { BACKEND_DEFS, runBackend } from "./backends/registry.js";
-import { selectBackendsForFallback, reciprocalRankFusion, resolveAlwaysInclude, runTieredTargetedCombine } from "./dispatch.js";
-import { formatResults, formatCombinedResults, formatResultsCompact, formatCombinedResultsCompact } from "./formatters.js";
+import { fetchWithFallback, DEFAULT_READER_FALLBACK } from "./readers/dispatch.js";
+import { config, refreshConfig, getActiveBackends, latencyMap } from "./config.js";
+import { BACKEND_DEFS } from "./backends/registry.js";
 
 
+
+interface InputOptions { placeholder: string; validate?: (value: string) => string | undefined }
+async function setupInput(ctx: ExtensionContext, label: string, options: InputOptions): Promise<string | undefined> {
+	const value = await ctx.ui.input(label, options.placeholder);
+	if (value === undefined) return undefined;
+	const error = options.validate === undefined ? undefined : options.validate(value);
+	if (error !== undefined) { ctx.ui.notify(error, "error"); return undefined; }
+	return value;
+}
 
 // ---------------------------------------------------------------------------
 // Extension
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+	let service = new SearchService();
+	let pane = new CustomViewToggle();
 	// -----------------------------------------------------------------------
 	// Tool: web_search
 	// -----------------------------------------------------------------------
 
-	pi.registerTool({
+	const registerSearch = (names: string[]) => pi.registerTool(defineTool({
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web using one of several backend search engines. " +
-			"Supports DuckDuckGo (free, no key), " +
-			"Marginalia Search (free, shared public key), Serper, Tavily, Exa, Brave, " +
-			"LangSearch, Firecrawl, WebSearchAPI, Perplexity Sonar, and SearXNG (most need API keys). " +
-			"The best available backend is used automatically. " +
-			"Use combine=true to query all enabled backends in parallel for broader coverage. " +
-			"Use for fact-finding, research, documentation lookups, and current events.",
+			`Search the web. Configured engines: ${names.join(", ")}. ` +
+			"Automatic metasearch always queries the fallback and configured native-provider tiers, " +
+			"while the main tier follows its selection/combine rules. Results are fused with URL deduplication and source attribution. " +
+			"A named backend runs only that engine. Use combine=true for broader main-tier coverage.",
 		promptSnippet: "Search the web (supports multiple search backends)",
 		promptGuidelines: [
 			"Use web_search when you need up-to-date information, facts, or documentation from the web",
-			"Auto mode tries enabled backends in order (DuckDuckGo is the free fallback)",
-			"Set combine=true to query enabled backends in parallel and merge/deduplicate results",
+			"Auto mode always queries fallback and native-provider tiers beside the selected main engines",
+			"Set combine=true to query more main engines and merge/deduplicate all tier results",
 			"Set combineMode=targeted in search.json to cap combine fan-out while still using multiple backends",
 			"Configure additional backends in .pi/search.json for better quality results",
 		],
@@ -95,9 +104,7 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 			backend: Type.Optional(
-				StringEnum(["duckduckgo", "jina", "marginalia", "serper", "tavily", "exa", "exa_mcp",
-					"openai-codex", "brave", "brave-llm", "langsearch", "firecrawl", "websearchapi", "perplexity",
-					"searxng", "linkup", "youcom", "fastcrw", "sofya", "auto"] as const, {
+				StringEnum([...names, ...(names.includes("native:openai-codex") ? ["openai-codex"] : []), "auto"], {
 					description:
 						"Backend to use. 'auto' picks the best configured backend (default)",
 				}),
@@ -107,7 +114,7 @@ export default function (pi: ExtensionAPI) {
 					description:
 						"When true, queries enabled backends in parallel and merges/deduplicates results. " +
 						"Config combineMode controls whether this uses all backends or targeted fan-out. " +
-						"Default is false (fallback mode: uses first successful backend only). " +
+						"Default is false (first successful main engine, alongside fallback and native tiers). " +
 						"Ignored when a specific backend is requested (backend != 'auto').",
 					default: false,
 				}),
@@ -121,226 +128,22 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
-			refreshConfig(ctx.cwd);
-			const numResults = Math.max(1, Math.min(params.numResults ?? 10, 20));
-			const requestedBackend = params.backend || "auto";
-			const combine = params.combine ?? false;
-			const compact = params.compact ?? config.compact ?? false;
-			const combineMode = (() => {
-				const raw = config.combineMode;
-				if (raw === "all" || raw === "targeted") return raw;
-				if (raw !== undefined) {
-					console.warn(`search-hub: unrecognized combineMode "${raw}", falling back to "all"`);
-				}
-				return "all";
-			})();
-			// If config has combine:true, force combine mode regardless of LLM choice
-			const forceCombine = config.combine === true;
-			const effectiveCombine = forceCombine || combine;
-
-			// Helper to update statusline
-			const setStatus = (status: string) => {
-				ctx.ui.setStatus("search", status);
-				onUpdate?.({ content: [{ type: "text", text: `*${status}*` }] });
-			};
-
-			if (requestedBackend !== "auto") {
-				// Specific backend requested — try it directly
-				const backendLabel = BACKEND_DEFS[requestedBackend]?.label || requestedBackend;
-				setStatus(`🔍 ${backendLabel}: searching...`);
-				try {
-					const results = await runBackend(requestedBackend, params.query, numResults, signal);
-					setStatus(`🔍 ${backendLabel}: ${results.length} results`);
-					return {
-						content: [{ type: "text", text: compact ? formatResultsCompact(results) : formatResults(params.query, requestedBackend, results) }],
-						details: { backend: requestedBackend, resultCount: results.length },
-					};
-				} catch (err) {
-					setStatus(`❌ ${backendLabel}: failed`);
-					throw err;
-				}
-			}
-
-			// Auto mode
-			const activeBackends = getActiveBackends();
-
-			if (effectiveCombine) {
-				if (combineMode === "targeted") {
-					const alwaysInclude = resolveAlwaysInclude(config.alwaysInclude, activeBackends);
-					const orderedBackends = selectBackendsForFallback(
-						config.selectionStrategy ?? "sequential",
-						activeBackends,
-					);
-					const qualityCount = activeBackends.length - alwaysInclude.length;
-					const freeLabel = alwaysInclude.length > 0
-						? `, plus ${alwaysInclude.map((entry) => entry.backend).join(", ")}`
-						: "";
-					setStatus(`🔍 targeted combine: up to 3 of ${qualityCount} backends${freeLabel}...`);
-					const {
-						results: combined,
-						backendStats,
-						usableBackendCount,
-						qualityUsableCount,
-					} = await runTieredTargetedCombine({
-						orderedBackends,
-						alwaysInclude,
-						query: params.query,
-						numResults,
-						signal,
-						runBackend,
-					});
-
-					if (usableBackendCount === 0) {
-						setStatus(`❌ targeted combine: no usable backends`);
-						const errors = Array.from(backendStats.entries()).map(([backend, stats]) => (
-							stats.success
-								? `${backend}: 0 results`
-								: `${backend}: ${stats.error || "failed"}`
-						));
-						throw new Error(`Targeted combine found no usable backend results: ${errors.join("; ")}`);
-					}
-
-					const attemptedCount = backendStats.size;
-					const incomplete = qualityUsableCount < 3
-						? `, exhausted after ${qualityUsableCount}/3 quality`
-						: "";
-					setStatus(`🔍 targeted combined: ${combined.length} results (${usableBackendCount}/${attemptedCount} usable${incomplete})`);
-
-					return {
-						content: [
-							{
-								type: "text",
-								text: compact
-									? formatCombinedResultsCompact(combined)
-									: formatCombinedResults(params.query, combined, backendStats, BACKEND_DEFS),
-							},
-						],
-						details: {
-							backend: "combined-targeted",
-							resultCount: combined.length,
-							usableBackendCount,
-							backendStats: Object.fromEntries(backendStats),
-						},
-					};
-				}
-
-				// Combine mode: query all enabled backends in parallel
-				setStatus(`🔍 combine: ${activeBackends.length} backends...`);
-				const resultsPerBackend = await Promise.all(
-					activeBackends.map(async (backend) => {
-						try {
-							const results = await runBackend(
-								backend,
-								params.query,
-								Math.ceil(numResults / activeBackends.length),
-								signal,
-							);
-							return {
-								backend,
-								results: results.map((r) => ({ ...r, backend })) as SearchResultWithBackend[],
-								success: true,
-							};
-						} catch (err) {
-							return {
-								backend,
-								results: [] as SearchResultWithBackend[],
-								success: false,
-								error: (err as Error).message,
-							};
-						}
-					}),
-				);
-
-				// Build backend stats map
-				const backendStats = new Map<
-					string,
-					{ success: boolean; count: number; error?: string }
-				>();
-
-				for (const { backend, results, success, error } of resultsPerBackend) {
-					backendStats.set(backend, {
-						success,
-						count: results.length,
-						error,
-					});
-				}
-
-				// Merge and re-rank using Reciprocal Rank Fusion
-				const successfulBackends = resultsPerBackend
-					.filter(r => r.success && r.results.length > 0)
-					.map(r => ({ backend: r.backend, results: r.results }));
-
-				const combined = successfulBackends.length > 0
-					? reciprocalRankFusion(successfulBackends, numResults)
-					: [];
-
-				const successCount = successfulBackends.length;
-				const failCount = activeBackends.length - successCount;
-				setStatus(`🔍 combined: ${combined.length} results (${successCount} ok${failCount > 0 ? `, ${failCount} failed` : ""})`);
-
-				return {
-					content: [
-						{
-							type: "text",
-							text: compact
-								? formatCombinedResultsCompact(combined)
-							: formatCombinedResults(params.query, combined, backendStats, BACKEND_DEFS),
-						},
-					],
-					details: {
-						backend: "combined",
-						resultCount: combined.length,
-						backendStats: Object.fromEntries(backendStats),
-					},
-				};
-			} else {
-				// Fallback mode: select backends using configured strategy
-				const orderedBackends = selectBackendsForFallback(
-					config.selectionStrategy ?? "sequential",
-					activeBackends,
-				);
-				const errors: string[] = [];
-				for (const backend of orderedBackends) {
-					const backendLabel = BACKEND_DEFS[backend]?.label || backend;
-					const t0 = Date.now();
-					setStatus(`🔍 ${backendLabel}: searching...`);
-					try {
-						const results = await runBackend(backend, params.query, numResults, signal);
-						recordLatency(backend, Date.now() - t0);
-						setStatus(`🔍 ${backendLabel}: ${results.length} results`);
-						return {
-							content: [
-								{
-									type: "text",
-									text: errors.length > 0
-										? `${errors.join("; ")}\n\n${compact ? formatResultsCompact(results) : formatResults(params.query, backend, results)}`
-										: (compact ? formatResultsCompact(results) : formatResults(params.query, backend, results)),
-								},
-							],
-							details: {
-								backend: errors.length > 0 ? `${backend} (fallback)` : backend,
-								resultCount: results.length,
-								errors: errors.length > 0 ? errors : undefined,
-							},
-						};
-					} catch (err) {
-						errors.push(`${backend}: ${(err as Error).message}`);
-						setStatus(`❌ ${backendLabel}: failed, trying next...`);
-					}
-				}
-
-				setStatus(`❌ all backends failed`);
-				throw new Error(`All backends failed: ${errors.join("; ")}`);
-			}
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
+			return service.search(params, signal, ctx);
 		},
-	});
+	}));
+	registerSearch(["duckduckgo"]);
+	const refreshTool = () => {
+		const active = pi.getActiveTools();
+		registerSearch(service.engines().filter(engine => engine.tier !== "reader").map(engine => engine.name));
+		if (!active.includes("web_search")) pi.setActiveTools(pi.getActiveTools().filter(name => name !== "web_search"));
+	};
 
 	// -----------------------------------------------------------------------
 	// Tool: web_read — Read/extract content from a URL
 	// -----------------------------------------------------------------------
 
-	pi.registerTool({
+	pi.registerTool(defineTool({
 		name: "web_read",
 		label: "Read Web Page",
 		description:
@@ -390,22 +193,14 @@ export default function (pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate, ctx) {
+		async execute(_toolCallId, params, signal, _onUpdate, ctx) {
 			refreshConfig(ctx.cwd);
-
-			// Helper to update statusline for web_read
-			const setStatus = (status: string) => {
-				ctx.ui.setStatus("read", status);
-				onUpdate?.({ content: [{ type: "text", text: `*${status}*` }] });
-			};
 
 			const url = params.url.startsWith("https://") || params.url.startsWith("http://")
 				? params.url
 				: `https://${params.url}`;
 
 			const reader = params.reader ?? config.reader ?? "jina";
-			const label = readerLabel(reader);
-			setStatus(`📄 ${label}: fetching...`);
 
 			// SSRF guard — block private/internal addresses regardless of reader.
 			const ssrfError = validateUrl(url);
@@ -420,22 +215,22 @@ export default function (pi: ExtensionAPI) {
 				...readerFallback.filter(r => r !== reader),
 			];
 
+			const finishes = new Map<string, ReturnType<typeof service.monitor.begin>>();
 			const result = await fetchWithFallback(
 				url,
 				fallbackChain,
 				{ fresh: params.fresh, keywords: params.keywords, mode: params.mode, objective: params.objective },
 				signal,
 				config,
-				(candidate, _index, _total) => {
-					setStatus(`📄 ${readerLabel(candidate)}: fetching...`);
+				(candidate) => {
+					finishes.set(candidate, service.monitor.begin({ name: `reader:${candidate}`, label: candidate, tier: "reader", availability: "configured" }));
 				},
+				(candidate, status) => finishes.get(candidate)!({ status, resultCount: status === "success" ? 1 : 0 }),
 			);
 
 			if (result.warning) {
-				ctx.ui.notify(result.warning, "warn");
+				ctx.ui.notify(result.warning, "warning");
 			}
-
-			setStatus(`📄 ${readerLabel(result.reader)}: ${result.content.length} chars`);
 
 			const truncated = result.content.length > 10000
 				? result.content.slice(0, 10000) + `\n\n[... truncated, full length: ${result.content.length} chars]`
@@ -451,7 +246,7 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 		},
-	});
+	}));
 
 	// -----------------------------------------------------------------------
 	// Commands
@@ -538,7 +333,7 @@ export default function (pi: ExtensionAPI) {
 				// Handle backends needing instance URL (e.g. SearXNG)
 				let backendConfig: BackendConfig = { enabled: true };
 				if (def.needsInstanceUrl) {
-					const instanceUrl = await ctx.ui.input("Enter your instance URL (e.g. http://localhost:8888):", {
+					const instanceUrl = await setupInput(ctx, "Enter your instance URL (e.g. http://localhost:8888):", {
 						placeholder: "http://localhost:8888",
 						validate: (v: string) =>
 							v.trim().length > 0 ? undefined : "URL cannot be empty",
@@ -549,7 +344,7 @@ export default function (pi: ExtensionAPI) {
 					}
 					backendConfig.instanceUrl = instanceUrl.trim();
 					// Optionally ask for API key (some instances require auth)
-					const optKey = await ctx.ui.input("Optional API key (press Enter to skip):", {
+					const optKey = await setupInput(ctx, "Optional API key (press Enter to skip):", {
 						placeholder: "sk-... (optional)",
 				});
 					if (optKey && optKey.trim()) {
@@ -557,7 +352,7 @@ export default function (pi: ExtensionAPI) {
 					}
 				} else if (def.optionalKey) {
 					// Optionally ask for API key if optional
-					const optKey = await ctx.ui.input("Optional API key (press Enter to skip):", {
+					const optKey = await setupInput(ctx, "Optional API key (press Enter to skip):", {
 						placeholder: "sk-... (optional)",
 					});
 					if (optKey && optKey.trim()) {
@@ -574,11 +369,11 @@ export default function (pi: ExtensionAPI) {
 				};
 
 				writeFileSync(configPath, JSON.stringify(updated, null, 2) + "\n", { mode: 0o600 });
-				ctx.ui.notify(`${label} enabled. Run /reload to activate.`, "success");
+				ctx.ui.notify(`${label} enabled. Run /reload to activate.`, "info");
 				return;
 			}
 
-			const key = await ctx.ui.input(`Enter your ${label} API key:`, {
+			const key = await setupInput(ctx, `Enter your ${label} API key:`, {
 				placeholder: "sk-...",
 				validate: (v: string) =>
 					v.trim().length > 0 ? undefined : "Key cannot be empty",
@@ -606,7 +401,7 @@ export default function (pi: ExtensionAPI) {
 			// SearXNG setup needs both instance URL and optional API key
 			let backendConfig: BackendConfig = { enabled: true };
 			if (backend === "searxng") {
-				const url = await ctx.ui.input("Enter your SearXNG instance URL (e.g. http://localhost:8888):", {
+				const url = await setupInput(ctx, "Enter your SearXNG instance URL (e.g. http://localhost:8888):", {
 					placeholder: "http://localhost:8888",
 					validate: (v: string) =>
 						v.trim().length > 0 ? undefined : "URL cannot be empty",
@@ -617,7 +412,7 @@ export default function (pi: ExtensionAPI) {
 				}
 				backendConfig.instanceUrl = url.trim();
 				// Optionally ask for API key (some instances require auth)
-				const optionalKey = await ctx.ui.input("Optional API key (leave empty if none):", {
+				const optionalKey = await setupInput(ctx, "Optional API key (leave empty if none):", {
 					placeholder: "sk-... (optional)",
 				});
 				if (optionalKey && optionalKey.trim()) {
@@ -639,7 +434,7 @@ export default function (pi: ExtensionAPI) {
 
 			ctx.ui.notify(
 				`${label} API key saved to ${configPath}. Run /reload to activate.`,
-				"success",
+				"info",
 			);
 		},
 	});
@@ -684,7 +479,7 @@ export default function (pi: ExtensionAPI) {
 		writeFileSync(configPath, JSON.stringify(updated, null, 2) + "\n", { mode: 0o600 });
 		ctx.ui.notify(
 			`Enabled: DuckDuckGo, Jina, Marginalia, Exa MCP, SearXNG. Run /reload to activate.`,
-			"success",
+			"info",
 		);
 	}
 
@@ -708,7 +503,6 @@ export default function (pi: ExtensionAPI) {
 
 		const settings = [
 			["compact", "Compact output", existing.compact ? "On" : "Off"],
-			["showStatus", "Show status line", existing.showStatus !== false ? "On" : "Off"],
 			["combine", "Combine mode (parallel search)", existing.combine ? "On" : "Off"],
 			["combineMode", "Combine strategy", existing.combineMode ?? "all"],
 			["cacheTtl", "Cache TTL (ms)", String(existing.cacheTtl ?? 300000)],
@@ -739,7 +533,6 @@ export default function (pi: ExtensionAPI) {
 
 		switch (key) {
 			case "compact":
-			case "showStatus":
 			case "combine": {
 				const toggle = await ctx.ui.select(`${label} — current: ${selected.split(": ")[1]}`, ["On", "Off", "Cancel"]);
 				if (toggle === "Cancel" || !toggle) {
@@ -760,7 +553,7 @@ export default function (pi: ExtensionAPI) {
 			}
 			case "cacheTtl":
 			case "cacheMax": {
-				const input = await ctx.ui.input(`${label} — current: ${selected.split(": ")[1]}`, {
+				const input = await setupInput(ctx, `${label} — current: ${selected.split(": ")[1]}`, {
 					placeholder: selected.split(": ")[1],
 					validate: (v) => /\d+/.test(v) ? undefined : "Must be a number",
 				});
@@ -785,7 +578,7 @@ export default function (pi: ExtensionAPI) {
 				if (choice === "Default (jina, sofya, firecrawl, exa, exa_mcp)") {
 					value = undefined; // removes override, uses default
 				} else {
-					const input = await ctx.ui.input("Enter reader order (comma-separated, e.g. firecrawl, jina, sofya):", {
+					const input = await setupInput(ctx, "Enter reader order (comma-separated, e.g. firecrawl, jina, sofya):", {
 						placeholder: current.join(", "),
 						validate: (v: string) => {
 							const parts = v.split(",").map(s => s.trim()).filter(Boolean);
@@ -833,7 +626,7 @@ export default function (pi: ExtensionAPI) {
 
 		const updated: SearchConfig = { ...existing, [key]: value };
 		writeFileSync(configPath, JSON.stringify(updated, null, 2) + "\n", { mode: 0o600 });
-		ctx.ui.notify(`${label} set. Run /reload to apply.`, "success");
+		ctx.ui.notify(`${label} set. Run /reload to apply.`, "info");
 
 		// Allow configuring another setting
 		await configureGlobalSettings(ctx);
@@ -922,11 +715,36 @@ export default function (pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.on("session_start", async (_event, ctx) => {
+		pane.dispose();
+		pane = new CustomViewToggle();
+		service = new SearchService();
 		clearCooldowns();
-		refreshConfig(ctx.cwd);
-		if (config.showStatus !== false) {
-			const status = getActiveBackends().join(", ");
-			ctx.ui.setStatus("search", `search: ${status}`);
-		}
+		await service.refresh(ctx, undefined);
+		refreshTool();
+	});
+	pi.on("before_agent_start", async (_event, ctx) => {
+		await service.refresh(ctx, ctx.signal);
+		refreshTool();
+	});
+	pi.on("session_shutdown", () => pane.dispose());
+	pi.registerCommand("websearch", {
+		description: "Search engines, session statistics, and interactive search testing",
+		handler: async (_args, ctx) => {
+			await service.refresh(ctx, undefined);
+			if (ctx.mode !== "tui") {
+				ctx.ui.notify(JSON.stringify({ engines: service.engines(), statistics: service.monitor.snapshot() }), "info");
+				return;
+			}
+			const owner = service;
+			await pane.open(ctx.ui, (tui, theme, keys, done) => new WebSearchView({
+				monitor: owner.monitor, engines: () => owner.engines(),
+				search: async (query, signal) => {
+					const result = await owner.search({ query }, signal, ctx);
+					if (result.isError) throw new Error(result.content[0].text);
+					return result.content[0].text;
+				},
+				theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
+			}));
+		},
 	});
 }

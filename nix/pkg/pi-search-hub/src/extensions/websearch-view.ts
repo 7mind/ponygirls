@@ -140,7 +140,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const w = Math.max(1, Math.floor(width));
 		const t = this.deps.theme;
 		const lines: string[] = [];
-		if (this.state === "idle") lines.push(t.fg("dim", "Enter a query above to test search. No network probes run when opening this pane."));
+		if (this.state === "idle") lines.push(t.fg("dim", "Enter a query above to test search. Opening this pane does not issue search or fetch probes."));
 		else if (this.state === "searching") lines.push(t.fg("accent", "Searching… Ctrl+C cancels this test."));
 		else if (this.state === "failed") lines.push(t.fg("error", "Search failed. Provider error details are hidden to protect credentials."));
 		else if (this.state === "cancelled") lines.push(t.fg("warning", "Search cancelled."));
@@ -168,7 +168,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const w = Math.max(1, Math.floor(width));
 		const t = this.deps.theme;
 		const hints = w < 35 ? [{ key: "esc", action: "close" }] : [
-			{ key: "enter", action: "search" }, { key: "↑↓ PgUp PgDn", action: "scroll" },
+			{ key: "enter", action: "search" }, { key: "↑↓ Ctrl+PgUp/PgDn", action: "scroll" },
 			{ key: "Ctrl+C", action: "cancel" }, { key: "esc", action: "close" },
 		];
 		return {
@@ -200,8 +200,8 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const page = Math.max(1, this.scroll.viewportHeight - 1);
 		if (matchesKey(data, Key.up)) this.scroll.scrollBy(-1);
 		else if (matchesKey(data, Key.down)) this.scroll.scrollBy(1);
-		else if (matchesKey(data, Key.pageUp)) this.scroll.scrollBy(-page);
-		else if (matchesKey(data, Key.pageDown)) this.scroll.scrollBy(page);
+		else if (matchesKey(data, Key.pageUp) || matchesKey(data, Key.ctrl("pageUp"))) this.scroll.scrollBy(-page);
+		else if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("pageDown"))) this.scroll.scrollBy(page);
 		else if (matchesKey(data, Key.ctrl("home"))) this.scroll.scrollToStart();
 		else if (matchesKey(data, Key.ctrl("end"))) this.scroll.scrollToEnd();
 		else {

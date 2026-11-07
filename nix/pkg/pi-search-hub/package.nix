@@ -1,110 +1,52 @@
 { lib
-, stdenvNoCC
-, fetchFromGitHub
-, jq
+, buildNpmPackage
+, pi-coding-agent
+, ponygirls-pi-ui
 }:
 
-# pi-search-hub as a Pi LOCAL package with a corrected manifest, instead of
-# the `npm:pi-search-hub@<version>` managed install (see nix/hm/pi.nix).
-#
-# Defect (pi-search-hub package.json): the host-provided `typebox` package is
-# declared in `dependencies` instead of `peerDependencies` with a "*" range
-# (Pi's packaging contract, docs/packages.md "Declare dependencies"). Pi's
-# managed install therefore materialises a SECOND physical typebox copy under
-# ~/.pi/agent/npm/node_modules (at its own resolved version) and warns on
-# every startup: "Host-provided extension packages must be declared in
-# peerDependencies with a "*" range, not dependencies: typebox. Installed
-# copies can bypass the extension loader and create duplicate runtime
-# modules. Upstream: ronnieops/pi-search-hub#33 / PR #48.
-#
-# Source pin: GitHub main, NOT the npm tarball. The configurable web_read
-# reader-fallback feature (`readerFallback` config; web_read falls through an
-# ordered reader chain on 422/5xx/network errors, 401/403 stay fatal) is
-# merged on main as the intended v2.9.0, but the npm publish failed silently
-# and the registry still tops out at 2.8.0 — upstream issue
-# ronnieops/pi-search-hub#36 (open). When npm carries >= 2.9.0, switch src
-# back to the registry tarball and drop this paragraph.
-#
-# Pi loads local packages in place and never installs or modifies them ("their
-# dependency tree remains the package author's responsibility"), so nothing is
-# written to ~/.pi/agent/npm and no dependency copy can exist. Every external
-# import of the sources at this pin resolves through Pi's host module aliases
-# (dist/core/extensions/loader.js getAliases maps typebox and the
-# @earendil-works/* packages) — re-verified at this pin: the runtime import
-# surface is exactly @earendil-works/pi-ai, @earendil-works/pi-coding-agent
-# and typebox (all host-aliased) plus node:* builtins; `vitest` is imported
-# only by test files and the declared `wreq-js` dependency is never imported
-# at all. On a pin bump, RE-VERIFY that import surface (grep the tarball for
-# bare specifiers): a future revision importing a non-host package must vendor
-# it under $out/node_modules.
-#
-# The manifest rewrite is exactly the upstream fix from #33 (typebox moves to
-# peerDependencies). The source patch below is the only other delta from the
-# pinned revision.
-#
-# Empty reader content is not a successful web_read. Firecrawl /v2/scrape can
-# return `data` with blank markdown, and fetchWithFallback treated any resolved
-# reader call as success, so later readers never ran. Drop the patch when
-# ronnieops/pi-search-hub#45 / PR #42 are merged and this pin includes it.
-#
-# alwaysInclude queries named free backends beside targeted combine, with a
-# per-backend deadline and optional maxResults cap, and removes them from the
-# quality walk. Their results join the combine fusion on equal footing with
-# quality results. Drop the patch when ronnieops/pi-search-hub#46 / PR #43
-# are merged and this pin includes it.
-#
-# Multi-source provenance: combined results list every backend that returned
-# the URL (`sources`, primary label first) instead of just the copy that
-# survived URL dedup. Upstream twin: ronnieops/pi-search-hub#47 / PR #44
-# (against main). This local patch is STACKED on always-include-tier (both rewrite the
-# RRF emit path), so drop it together with #43's patch on a pin bump that
-# includes both PRs; if upstream merges only one, regenerate the other patch
-# against the then-current shape before dropping.
-stdenvNoCC.mkDerivation rec {
+let
+  sdk = "${pi-coding-agent}/lib/node_modules/pi-monorepo";
+in
+buildNpmPackage {
   pname = "pi-search-hub";
-  # Intended upstream v2.9.0, unreleased on npm (see header).
-  version = "2.8.0-unstable-2026-07-24";
-
-  src = fetchFromGitHub {
-    owner = "ronnieops";
-    repo = "pi-search-hub";
-    rev = "6dd5188";
-    hash = "sha256-3LcRegB1PkMjM9xEhZPk98h/2NrE0gFkgw0PaNMIwl0=";
+  version = "2.8.0-ponygirls.1";
+  src = lib.cleanSourceWith {
+    src = ./src;
+    filter = path: _type: !(lib.hasSuffix "/node_modules" path);
   };
+  npmDepsHash = "sha256-BUgw32DP8yq7vPK0JEbLyLBWgkU1SU7cNFP1+wPNd5A=";
+  npmFlags = [ "--legacy-peer-deps" "--ignore-scripts" ];
+  dontNpmBuild = true;
+  doCheck = true;
 
-  nativeBuildInputs = [ jq ];
-
-  patches = [
-    ./patches/empty-reader-content-falls-through.patch
-    ./patches/always-include-tier.patch
-    ./patches/source-provenance.patch
-  ];
-
-  dontBuild = true;
+  preCheck = ''
+    mkdir -p node_modules/@earendil-works node_modules/@ponygirls
+    ln -s ${sdk} node_modules/@earendil-works/pi-coding-agent
+    for package in pi-ai pi-agent-core pi-tui; do
+      ln -s ${sdk}/node_modules/@earendil-works/$package node_modules/@earendil-works/$package
+    done
+    ln -s ${sdk}/node_modules/typebox node_modules/typebox
+    ln -s ${ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+    export HOME=$TMPDIR/search-test-home
+    mkdir -p "$HOME"
+  '';
+  checkPhase = ''
+    runHook preCheck
+    npm run typecheck
+    npm test
+    runHook postCheck
+  '';
 
   installPhase = ''
     runHook preInstall
-
-    mkdir -p $out
-    cp -r . $out
-    chmod -R u+w $out
-
-    jq \
-      '.dependencies |= del(.typebox)
-       | .peerDependencies = ((.peerDependencies // {}) + { typebox: "*" })' \
-      $out/package.json > package.json.fixed
-    mv package.json.fixed $out/package.json
-
-    # Fail fast if a pin bump changes the manifest shape this fix assumes.
-    jq -e '.dependencies | has("typebox") | not' $out/package.json > /dev/null
-    jq -e '.peerDependencies.typebox == "*"' $out/package.json > /dev/null
-    jq -e '.pi.extensions == ["./extensions/search-hub.ts"]' $out/package.json > /dev/null
-
+    mkdir -p $out/node_modules/@ponygirls
+    cp -r extensions backends package.json CREDITS.md $out/
+    ln -s ${ponygirls-pi-ui} $out/node_modules/@ponygirls/pi-ui
     runHook postInstall
   '';
 
   meta = {
-    description = "Unified web search + content extraction extension for pi (main pin for reader fallback, ronnieops/pi-search-hub#36; vendored manifest fix for #33)";
+    description = "Vendored Pi metasearch with main, fallback and native-provider tiers and an interactive diagnostics pane";
     homepage = "https://github.com/ronnieops/pi-search-hub";
     license = lib.licenses.mit;
   };

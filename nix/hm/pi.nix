@@ -57,11 +57,11 @@ let
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
 
-  # pi-search-hub as a Pi LOCAL package with a corrected manifest (upstream
-  # declares the host-provided `typebox` in `dependencies`, which trips Pi's
-  # extension-package warning and installs a duplicate copy —
-  # ronnieops/pi-search-hub#33). See the derivation header for the full story.
-  piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix { };
+  # Maintained source, not an upstream patchset; see pkg/pi-search-hub/VENDOR.md.
+  piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix {
+    pi-coding-agent = piBase;
+    ponygirls-pi-ui = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; };
+  };
   # The ponygirls extensions as one tree, linking the shared UI/settings
   # libraries into its node_modules; see pkg/pi-extensions/package.nix.
   piExtensions = pkgs.callPackage ../pkg/pi-extensions/package.nix {
@@ -124,7 +124,9 @@ let
   # walk: a search spends the same credits as a scrape, and scrape is already
   # the second reader. SearXNG and LangSearch are alwaysInclude: queried beside
   # the quality wave, each with its own deadline from query start, and never a
-  # quality slot. Free results join the combine fusion on equal footing with
+  # quality slot. This fallback tier and configured native-provider search
+  # engines also run when main-tier combine is off. Free results join the
+  # combine fusion on equal footing with
   # quality results (full-weight RRF), each engine contributing at most its
   # `maxResults` hits. duckduckgo needs `ddgs` at runtime (ddgsPython, prefixed onto
   # pi's PATH in piWrapped above).
@@ -190,8 +192,7 @@ let
       };
     }
   ];
-  # web_read reader chain (pi-search-hub >= the reader-fallback feature,
-  # unreleased v2.9.0 — see nix/pkg/pi-search-hub/package.nix): the tool
+  # web_read reader chain (vendored in pkg/pi-search-hub/src): the tool
   # builds its chain as [ params.reader ?? reader, ...readerFallback minus the
   # head ], so `reader` must ALSO be "sofya" or the implicit "jina"
   # default would jump the queue. Sofya fetches first (clean markdown; a
@@ -801,22 +802,9 @@ in
           #   auto-fallback (https://pi.dev/packages/pi-search-hub). Keys via
           #   the sandbox secretSessionVariables; declaratively configured at
           #   ~/.pi/agent/extensions/search.json (see searchHubConfig).
-          #   Installed as a LOCAL package built from the npm tarball with a
-          #   corrected manifest (piSearchHub above, pkg/pi-search-hub), NOT as
-          #   `npm:pi-search-hub@…`: upstream declares the host-provided
-          #   `typebox` in `dependencies`, so Pi's managed install warns on
-          #   every startup and materialises a duplicate typebox copy
-          #   (ronnieops/pi-search-hub#33). Pi never installs local packages,
-          #   so the corrected manifest removes both effects (measured: the
-          #   package's whole import surface is host-aliased — see the
-          #   derivation header). PINNED to 2.8.0 (in
-          #   pkg/pi-search-hub/package.nix): ponygirls-quirk-search-hub-backends.ts
-          #   mirrors upstream's credentials.ts FALLBACK_ENV_MAP; a floating
-          #   install could drift ahead of the mirror and silently trim
-          #   env-enabled backends from the rewritten enum. Bump the pin (and
-          #   re-verify the import surface noted in the derivation header) and
-          #   the mirror together; go back to the npm: spec once #33 is fixed
-          #   upstream.
+          #   Vendored directly at pkg/pi-search-hub/src, including native
+          #   configured-provider metasearch. /websearch opens diagnostics and
+          #   interactive testing; search/read do not write status-bar entries.
           # - pi-anthropic-auth: Claude Pro/Max OAuth compat; activates only on
           #   Anthropic OAuth, passes everything else through (`/login anthropic`).
           # - pi-xai: xAI OAuth provider (`grok-build`) with Grok models/tools
@@ -859,14 +847,6 @@ in
             # is deliberately off; MCP tools use `deferred` / `direct`
             # exposure instead (see piMcpJson).
             "-builtin:codemode"
-            # pi-search-hub advertises a static all-backends list (19 in
-            # 2.8.0) in the web_search description + `backend` enum regardless
-            # of what's configured, so the model picks unconfigured backends
-            # (which fail). Upstream issue #13 was closed without fixing this.
-            # This rewrites the web_search tool definition per request to list
-            # only the backends actually active per the live search.json. See
-            # the extension header and the upstream bug-report draft.
-            "${piExtensions}/ponygirls-quirk-search-hub-backends.ts"
             "${piExtensions}/ponygirls-quirk-kimi-401-retry.ts"
             # /fast on|off|status: persistent OpenAI priority processing, without changing reasoning.
             "${piExtensions}/ponygirls-openai-fast.ts"

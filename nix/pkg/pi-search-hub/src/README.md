@@ -1,4 +1,9 @@
-# pi-search-hub
+# pi-search-hub (upstream baseline documentation)
+
+This is the imported upstream reference. The maintained local behavior, native
+provider catalog, `/websearch` pane and Nix installation are documented in
+[../VENDOR.md](../VENDOR.md); upstream installation/status-line instructions
+below do not describe the local package.
 
 Unified web search + content extraction extension for [pi](https://pi.dev) with **19 backend providers** (all working). One `web_search` tool, one `web_read` tool (5 reader backends with auto-fallback), RRF-ranked combine mode, and credential resolution via env/shell/literal. Firecrawl supports **keyless mode** (1,000 free credits/month, no API key required).
 

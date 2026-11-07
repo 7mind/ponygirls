@@ -59,7 +59,7 @@ const MAX_RESULTS = 20;
 const MAX_TITLE = 200;
 const MAX_SNIPPET = 1000;
 
-/** No credential files, token resolution, catalog network refresh, or inference. */
+/** Registry-owned availability checks only; no direct credential access or search inference. */
 export async function discoverNativeEngines(
 	ctx: NativeDiscoveryContext,
 	signal?: AbortSignal,

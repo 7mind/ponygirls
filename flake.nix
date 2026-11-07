@@ -341,7 +341,9 @@
           ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix {
             inherit (self.packages.${system}) ponygirls-pi-ui ponygirls-pi-settings;
           };
-          pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix { };
+          pi-search-hub = pkgs.callPackage ./nix/pkg/pi-search-hub/package.nix {
+            inherit (self.packages.${system}) pi-coding-agent ponygirls-pi-ui;
+          };
           codegraph = pkgs.callPackage ./nix/pkg/codegraph/package.nix { src = inputs.codegraph; };
           crawl4ai-mcp = pkgs.callPackage ./nix/pkg/crawl4ai/mcp.nix { };
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
@@ -809,6 +811,7 @@
             node --test ponygirls-model-stats-state.test.ts
             touch $out
           '';
+          pi-search-hub = self.packages.${system}.pi-search-hub;
           ponygirls-pi-ui = pkgs.runCommand "ponygirls-pi-ui-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";

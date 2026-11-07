@@ -41,6 +41,18 @@ describe("fetchWithFallback", () => {
 		mockFetchWithReader.mockClear();
 	});
 
+	it("does not try another reader after caller cancellation", async () => {
+		const controller = new AbortController();
+		mockFetchWithReader.mockImplementationOnce(async () => {
+			controller.abort(new Error("cancelled"));
+			throw new Error("cancelled");
+		}).mockResolvedValueOnce(makeResult("must not run", "sofya"));
+		const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
+		await expect(fetchWithFallback("https://example.com", ["jina", "sofya"], {}, controller.signal, MINIMAL_CONFIG)).rejects.toThrow("cancelled");
+		expect(mockFetchWithReader).toHaveBeenCalledTimes(1);
+		mockFetchWithReader.mockReset();
+	});
+
 	it("returns result from first reader on success", async () => {
 		mockFetchWithReader.mockResolvedValueOnce(makeResult("hello from jina", "jina"));
 

@@ -1,6 +1,6 @@
 {
   "name": "pi-search-hub",
-  "version": "2.8.0",
+  "version": "2.8.0-ponygirls.1",
   "description": "Unified web search + content extraction extension for pi with 19 backends (DuckDuckGo, Jina AI, Tavily, Brave, Brave LLM, Exa, Exa MCP, OpenAI Codex, Serper, Firecrawl [keyless], fastCRW, Marginalia, LangSearch, Linkup, Perplexity Sonar, SearXNG, WebSearchAPI, You.com, Sofya). Auto-fallback, RRF combine mode, pluggable web_read reader (Jina or Sofya), secure credential resolution.",
   "keywords": [
     "pi-package",
@@ -35,7 +35,8 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit"
   },
   "bugs": {
     "url": "https://github.com/ronnieops/pi-search-hub/issues"
@@ -54,6 +55,8 @@
   "peerDependencies": {
     "@earendil-works/pi-ai": "*",
     "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*",
+    "@ponygirls/pi-ui": "*",
     "typebox": "*"
   },
   "peerDependenciesMeta": {
@@ -64,12 +67,9 @@
       "optional": true
     }
   },
-  "dependencies": {
-    "wreq-js": "^2.3.1"
-  },
   "devDependencies": {
-    "@types/node": "^25.6.0",
-    "typescript": "^6.0.3",
-    "vitest": "^4.1.7"
+    "@types/node": "25.6.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.7"
   }
 }
