@@ -9,7 +9,7 @@ vi.mock("./native.js", () => ({ discoverNativeEngines: discoverNativeEnginesMock
 beforeEach(() => {
 	discoverNativeEnginesMock.mockReset();
 	nativeSearchMock.mockReset();
-	discoverNativeEnginesMock.mockResolvedValue([{ id: "openai", label: "configured OpenAI", search: nativeSearchMock }]);
+	discoverNativeEnginesMock.mockResolvedValue([{ id: "openai-codex", label: "configured OpenAI Codex", search: nativeSearchMock }]);
 	nativeSearchMock.mockResolvedValue({ results: [] });
 });
 

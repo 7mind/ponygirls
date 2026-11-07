@@ -129,6 +129,17 @@ describe("configured native search", () => {
 		await expect(engines[1].search("q", 3)).resolves.toHaveProperty("results");
 	});
 
+	it("keeps the compatibility Codex helper subscription-only with real configured providers", async () => {
+		const { searchOpenAICodex } = await import("../extensions/backends/openai-codex.js");
+		const apiOnly = await fixture({ providers: ["openai"] });
+		await expect(searchOpenAICodex("q", 3, undefined, undefined, apiOnly.ctx)).rejects.toThrow("No configured OpenAI Codex");
+		expect(apiOnly.dispatch).not.toHaveBeenCalled();
+		const codex = await fixture({ providers: ["openai-codex"], oauth: ["openai-codex"] });
+		await expect(searchOpenAICodex("q", 3, undefined, undefined, codex.ctx)).resolves.toMatchObject({ usage });
+		expect(codex.dispatch.mock.calls[0][0].model.provider).toBe("openai-codex");
+		expect(codex.dispatch.mock.calls[0][0].options.apiKey).toBe("dummy-oauth-never-sent");
+	});
+
 	it("uses registered pi-xai Grok Build OAuth with proxy headers and native citations", async () => {
 		const { ctx, dispatch } = await fixture({ providers: ["grok-build"], oauth: ["grok-build"] });
 		ctx.sessionManager = { getSessionId: () => "test-session" };
