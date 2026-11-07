@@ -191,3 +191,10 @@ Sources: [shared schema](cq4-node-schema.md),
 [experimental contract](experimental-contract-t1.md), and
 [concrete field definitions](/home/pavel/work/epistemics-pilots/runner/graph_t.py).
 This overview does not replace the detailed invariants or the exact wire schema.
+
+## Related design exploration
+
+[Objective steward: objectives and linked scratchpads](../20261107-1817-objective-steward.md)
+explores a Historian-style background reviewer and user objective view. It is a
+research proposal with explicit schema/integration gaps, not an adopted extension
+of this candidate or authorization to implement a background writer.
