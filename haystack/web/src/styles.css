@@ -130,7 +130,16 @@ nav { display: flex; flex-direction: column; gap: 5px; }
 .page-heading p:not(.eyebrow) { margin-bottom: 0; color: var(--muted); font-size: 13px; }
 .search-panel { display: grid; grid-template-columns: minmax(160px, 1fr) 160px auto; align-items: end; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 0; padding: 12px 14px; }
 .search-input { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 0; padding-left: 9px; color: var(--muted); }
-.search-input input { border: 0; background: transparent; }
+.search-input input { border: 0; background: transparent; min-width: 0; flex: 1; }
+.query-clear { border: 0; background: transparent; color: var(--muted); font-size: 20px; padding: 0 8px; cursor: pointer; }
+.query-clear:disabled { visibility: hidden; }
+.query-presets { display: flex; gap: 4px; flex-wrap: wrap; }
+.query-presets button { background: var(--surface); color: var(--muted); border: 1px solid var(--line); padding: 3px 6px; font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; cursor: pointer; }
+.query-help { font-size: 11px; color: var(--muted); }
+.query-help summary { cursor: pointer; width: fit-content; }
+.query-help p { margin: 5px 0; line-height: 1.5; }
+.query-edit-error { color: var(--danger); font-size: 11px; margin: 0; }
+.draft-status { margin: 5px 14px; font-size: 11px; color: var(--muted); }
 .query-control { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .query-field { position: relative; min-width: 0; }
 .query-popup { position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 6; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: 0 8px 24px var(--shadow); }

@@ -86,7 +86,7 @@ if mode=='browser':
     browser=(root/'browser.log').read_text();actual=[l.removeprefix('ok - ') for l in browser.splitlines() if l.startswith('ok - ')]
     markup=[l.removeprefix('ok - ') for l in (root/'markup.log').read_text().splitlines() if l.startswith('ok - ')]
     assert actual and sorted(actual)==sorted(inventory['browserCases'])
-    assert markup==inventory['markupCases'] and '# SKIP' not in browser and '# 34 checks; 0 failures; 0 skipped' in browser
+    assert markup==inventory['markupCases'] and '# SKIP' not in browser and '# 37 checks; 0 failures; 0 skipped' in browser
     receipt.update(browserCases=len(actual),markupCases=len(markup))
 (root/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
 assert cases and failures==skips==0 and all(s==0 for s in receipt['exitStatuses']) and status=='0',receipt

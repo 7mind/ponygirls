@@ -1,0 +1,31 @@
+# Haystack search editor UX — 2026-11-06
+
+Source: `fe2c6d12981b9003d59b617a44a8e144d35b0a23` + this worktree's uncommitted Haystack frontend edits. No Chronicle edits or backend/protocol changes.
+
+## Contract and plan
+
+Read `haystack/docs/query.md`, current Scala parser/completion and `haystack/web/src/{QueryInput,Browse}.tsx`; compare Chronicle's editor. Haystack keeps explicit Search, the existing URL-fragment browse state, project/tag/archive controls, and Boolean/JSON-string dialect. Completion API returns only suggestion strings for a submitted fragment, not edit spans; therefore perform conservative whole-token replacement only outside quoted/selected/JSON-path contexts. Restrict shortcuts to actual built-in fields, group the entire existing expression before conjoining, and refuse unfinished bodies instead of rewriting them. No provider or content scanning added.
+
+Tests: behavioral-active blackbox atomic query-edit fixtures (3), behavioral-active blackbox controlled-browser journeys (3 added, one modified); controlled server/browser is Good Communication rather than an API mock.
+
+## Red phase
+
+Before implementation, ran from dedicated worktree: `nix develop .#chronicle --command bash -c 'cd haystack/web && node --test tests/query-edit.test.ts'` (pinned Node 24.21.0). Failed 1/1 test file, `ERR_MODULE_NOT_FOUND` for newly specified `src/query-edit.ts`: missing conservative composition/whole-token helper. Existing editor additionally used Tab to accept, lacked reset/shortcuts, and permitted multiple simultaneous completion calls (source inspection). Browser regressions are specified in `tests-browser/run.mjs`; browser red phase was not run because a candidate server/runtime was not available locally. This missing-module red phase establishes feature absence, not a demonstrated behavioral failure of an existing implementation.
+
+## Changes
+
+`haystack/web/src/query-edit.ts`: bounded, conservative field insertion, JSON-string literal encoding, full-expression grouping, unfinished group/operator refusal, complete-token range analysis, quote/selection suppression, separator-aware completion and insertion budget checks. `QueryInput.tsx`: named clear/focus, Escape close-then-clear, Enter first-option acceptance, normal Tab traversal, Ctrl/Meta K (dialog-aware), inline field buttons and immediate field-value hints, secondary syntax disclosure, updated placeholder, one in-flight latest-only completion pump with stale-state checks, IME guards and focus/caret handling. `Browse.tsx`: visible unapplied draft status and composition-guarded explicit Search. `styles.css`: concise styling. Browser inventory updated for new checks.
+
+## Local validation
+
+Inside `nix develop .#chronicle` from this worktree, ran `cd haystack && npm ci --offline --no-audit --no-fund` (291 locked packages; also `cd haystack/web && npm ci --offline --no-audit --no-fund` first, 130 packages); no lockfiles changed. Final `cd haystack/web && npm run typecheck && npm test && npm run build`: typecheck pass; Node tests 65 pass/0 fail/0 skip (64 atomic inventory leaf cases, plus one helper-mode group), separate browse markup 1 pass; Vite build pass (existing large-bundle warning). `git diff --check` pass. Baseline inventory: 61 atomic leaves and 34 main browser cases; final inventory: 64 atomic leaves and 37 main browser cases (39 browser entries total including restart and markup).
+
+Reviewed regressions: before fixes, `appendField('type:todo OR ()','tag')` returned a malformed wrapped query rather than null (direct pinned-node assertion failed), and a new exported completion-edit contract failed at test import. Browser red via owned PostgreSQL, native `/nix/store/2i8za62fx57qmgkfl156vjfy0mf0cf79-haystack-native-artifact-0.1.0`, pinned Chromium and `timeout --signal=TERM --kill-after=10s 240s`: 37 checks, 6 failures/0 skips in `haystack/web/browser-red-bounded.log`; immediate field-value hints timed out as expected, four unrelated older checks failed because the newly named clear/preset labels made old substring `getByLabel('Query')` ambiguous, and one history check depended on an earlier failed check. All corrected without loosening interactions. Final same manual browser command: **37 checks, 0 failures, 0 skips**, `haystack/web/browser-green.log`. It verifies native runtime interactive UI in an owned local environment, not packaged proxy/asset acceptance. First unbounded red attempt was terminated by SIGTERM after diagnosing and repairing a test-held-request deadlock; preserved `browser-red.log`. Restart/preview/packaged proxy legs remain root-owned; initial root Nix run could not start browser because dirty flake source had blank `self.rev`, not an application failure. Real IME/screen reader remains unverified.
+
+## Final review corrections
+
+A second review found unfinished grouped fields/comparisons and missing separators after completed values. Root added regressions and ran `nix develop .#chronicle --command bash -c 'cd haystack/web && node --test tests/query-edit.test.ts'`: 1 pass, 2 expected assertion failures (malformed `(tag:)` accepted and missing trailing separator after `type:fact`). After correcting those paths, the complete pinned typecheck/Node/markup/build run passed again: 65 Node tests, zero failures/skips, one markup check. Browser acceptance now also types a following field after a completed value and asserts exact text. The composition callback and continuation argument are explicit required values.
+
+Local logs were preserved under the main checkout's ignored `debug/search-ux-20261106/`, including both red browser runs, the first green browser run, `final-review-red.log`, and `final-review-green.log`. Final packaged/proxy browser acceptance is a separate clean-commit gate; the previous manual browser run predates these last corrections. No deployment is authorized or claimed.
+
+Manure remains unchanged pending Q31 (catalogue-only UX versus separately exposed metadata/path retrieval). Retrieval does not read file contents. Linear lookup found no suitable issue within its bounded searches; the write destination is unconfirmed, so no tracker mutation was made. Delegated skill analysis found the reusable procedures already covered by `query-filters`; no new skill draft was warranted.

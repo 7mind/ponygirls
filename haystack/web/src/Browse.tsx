@@ -48,6 +48,8 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const sequence = useRef(0);
+  const composing = useRef(false);
+  const blockedSearchPointer = useRef(false);
   const pending = useRef<number | null>(null);
   const continuation = useRef<string | undefined>(undefined);
   const applied = useRef(initial);
@@ -157,10 +159,11 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
         className="search-panel"
         onSubmit={(e) => {
           e.preventDefault();
+          if (composing.current) return;
           apply({ query, project, archive, tag, sort });
         }}
       >
-        <QueryInput value={query} onChange={setQuery} onAuthLost={onAuthLost} />
+        <QueryInput value={query} onChange={setQuery} onAuthLost={onAuthLost} onCompositionChange={(state) => { composing.current = state; }} />
         <label>
           Project scope
           <input placeholder="All projects" value={project} onChange={(e) => setProject(e.target.value)} autoComplete="off" />
@@ -184,8 +187,11 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
             Only archived
           </label>
         </fieldset>
-        <div className="search-actions"><button className="primary" type="submit">Search</button></div>
+        <div className="search-actions"><button className="primary" type="submit"
+          onPointerDownCapture={(event) => { blockedSearchPointer.current = composing.current; if (composing.current) event.preventDefault(); }}
+          onClickCapture={(event) => { if (composing.current || blockedSearchPointer.current) { event.preventDefault(); event.stopPropagation(); } blockedSearchPointer.current = false; }}>Search</button></div>
       </form>
+      {(query !== applied.current.query || project !== applied.current.project || archive !== applied.current.archive || tag !== applied.current.tag) && <p className="draft-status" role="status">Draft changed · press Search to update results.</p>}
       {diagnostics.length > 0 && (
         <ul aria-label="Search errors">
           {diagnostics.map((d, i) => (

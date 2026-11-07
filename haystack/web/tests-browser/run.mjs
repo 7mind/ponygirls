@@ -340,9 +340,10 @@ await check("query completion supports keyboard, caret insertion, and pointer se
     const query = page.getByRole("combobox", { name: "Query", exact: true });
     await query.fill("type:f");
     await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
-    await query.press("ArrowDown");
     await query.press("Enter");
-    assert.equal(await query.inputValue(), "type:fact");
+    assert.equal(await query.inputValue(), "type:fact ");
+    await query.pressSequentially("status:actual");
+    assert.equal(await query.inputValue(), "type:fact status:actual", "a completed value separates the next term");
     assert.equal(new URL(page.url()).hash, "#/browse", "accepting a completion must not submit the query");
     assert.equal(await query.evaluate((element) => element === document.activeElement), true);
 
@@ -350,15 +351,19 @@ await check("query completion supports keyboard, caret insertion, and pointer se
     await query.evaluate((element) => element.setSelectionRange(3, 3));
     await query.press("Control+Space");
     await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    await query.press("ArrowDown");
-    await query.press("Tab");
+    await query.press("Enter");
     assert.equal(await query.inputValue(), "(type:) AND importance:high");
     assert.equal(await query.evaluate((element) => element.selectionStart), 6);
     assert.equal(await query.evaluate((element) => element === document.activeElement), true);
+    await query.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await query.press("Tab");
+    assert.equal(await query.inputValue(), "ty", "Tab must not accept a suggestion");
+    assert.equal(await page.getByRole("button", { name: "Clear search expression" }).evaluate((element) => element === document.activeElement), true);
 
     await query.fill("status:actual AND ui:no");
     await page.getByRole("option", { name: 'id:"ui:note"', exact: true }).click();
-    assert.equal(await query.inputValue(), 'status:actual AND id:"ui:note"');
+    assert.equal(await query.inputValue(), 'status:actual AND id:"ui:note" ');
     assert.equal(await query.evaluate((element) => element === document.activeElement), true);
     await query.fill("ty");
     await page.getByRole("option", { name: "type:", exact: true }).waitFor();
@@ -369,6 +374,94 @@ await check("query completion supports keyboard, caret insertion, and pointer se
     await query.press("Escape");
     assert.equal(await page.getByRole("listbox", { name: "Query suggestions" }).count(), 0);
   } finally { await ctx.close(); }
+});
+
+await check("query shortcuts, clear, keyboard focus and explicit Search keep draft separate", async () => {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    const query = page.getByRole("combobox", { name: "Query", exact: true });
+    const searches = [];
+    page.on("request", (request) => { if (request.url().endsWith("/api/v1/search")) searches.push(request.postDataJSON().query); });
+    await query.fill("type:todo OR type:fact");
+    await page.getByRole("button", { name: "tag:", exact: true }).click();
+    assert.equal(await query.inputValue(), "(type:todo OR type:fact) tag:");
+    assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === input.value.length), true);
+    assert.equal(await page.getByText("Draft changed · press Search to update results.").count(), 1);
+    await query.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await query.press("Escape");
+    assert.equal(await query.inputValue(), "ty");
+    await query.press("Escape");
+    assert.equal(await query.inputValue(), "");
+    assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === 0), true);
+    await query.fill("type:todo");
+    await page.getByRole("button", { name: "Clear search expression" }).click();
+    assert.equal(await query.inputValue(), "");
+    assert.equal(await query.evaluate((input) => input === document.activeElement), true);
+    await page.keyboard.press("Control+k");
+    assert.equal(await query.evaluate((input) => input === document.activeElement && input.selectionStart === 0), true);
+    assert.deepEqual(searches.filter((value) => value !== ""), [], "edits never search before explicit submit");
+    await query.fill("type:todo");
+    const applied = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "type:todo");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await applied;
+    assert.equal(await page.getByText("Draft changed · press Search to update results.").count(), 0);
+  } finally { await ctx.close(); }
+});
+
+await check("field shortcuts and accepted field prefixes immediately offer value hints", async () => {
+  const ctx = await browser.newContext();
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    const query = page.getByRole("combobox", { name: "Query", exact: true });
+    await query.fill("ty");
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await query.press("Enter");
+    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+    await query.fill("type:todo");
+    await page.getByRole("button", { name: "type:", exact: true }).click();
+    assert.equal(await query.inputValue(), "(type:todo) type:");
+    await page.getByRole("option", { name: "type:fact", exact: true }).waitFor();
+  } finally { await ctx.close(); }
+});
+
+await check("query completion coalesces in-flight requests and replaces a mid-token suffix", async () => {
+  const ctx = await browser.newContext();
+  let release;
+  try {
+    const page = await ctx.newPage();
+    await login(page, humanToken);
+    const query = page.getByRole("combobox", { name: "Query", exact: true });
+    const held = new Promise((resolve) => { release = resolve; });
+    let first, latest;
+    const firstSeen = new Promise((resolve) => { first = resolve; });
+    const latestSeen = new Promise((resolve) => { latest = resolve; });
+    const sent = [];
+    await page.route("**/api/v1/complete", async (route) => {
+      const fragment = route.request().postDataJSON().query;
+      sent.push(fragment);
+      if (sent.length === 1) { first(); await held; await route.fulfill({ json: { suggestions: ["type:"] } }); }
+      else { latest(); await route.continue(); }
+    });
+    await query.fill("ty");
+    await Promise.race([firstSeen, new Promise((_, reject) => setTimeout(() => reject(new Error("first hint request timed out")), 5000))]);
+    await query.fill("type:todo");
+    await query.fill("typEXTRA");
+    await query.evaluate((input) => input.setSelectionRange(2, 2));
+    await query.press("Control+Space");
+    await page.waitForTimeout(240);
+    assert.deepEqual(sent, ["ty"], "only one hint request may be in flight");
+    release();
+    await Promise.race([latestSeen, new Promise((_, reject) => setTimeout(() => reject(new Error("latest hint request timed out")), 5000))]);
+    await page.getByRole("option", { name: "type:", exact: true }).waitFor();
+    await query.press("Enter");
+    assert.equal(await query.inputValue(), "type:");
+    assert.equal(await query.evaluate((input) => input.selectionStart), 5);
+    assert.deepEqual(sent, ["ty", "ty"], "only the latest desired caret/text is requested");
+  } finally { release?.(); await ctx.close(); }
 });
 
 await check("dismissed query completions do not reopen after a delayed response", async () => {
