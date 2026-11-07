@@ -1,5 +1,8 @@
 # Brief — epistemics of LLM-accelerated development
 
+Primary structure/API reference: [Data structure and MCP API candidate](data-api-candidate.md).
+It distinguishes the production proposal from the concrete experimental contract.
+
 Status: through J37, including a separate agent-memory M1 candidate and ongoing Pilot U preparation, 2026-11-06.
 Historical Pilot T final regressions/publication checks passed; U is not yet registered or launched.
 The working schema is **one shared human–agent project graph**, correcting the earlier
@@ -186,7 +189,8 @@ new authorization, not automatic continuation from these findings.
 
 ## Handover and next boundary
 
-- Read: this brief → [Pilot U findings](pilot-u-findings.md)/J38 →
+- Read: this brief → [data/API candidate](data-api-candidate.md) →
+  [Pilot U findings](pilot-u-findings.md)/J38 →
   [shared schema](cq4-node-schema.md) →
   [semantics/worked trace](cq4-unified-graph-semantics.md) →
   [agent-memory M1 candidate](agent-memory-m1.md)/J37 →
