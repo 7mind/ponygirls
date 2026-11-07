@@ -16,6 +16,8 @@ test('invalid expressions never fall back to bare search', () => {
   }
 });
 test('serializer round trips exact literal text including Unicode and escaping', () => {
+  const reordered = Object.fromEntries(Object.entries({...defaults,q:'literal'}).reverse());
+  assert.deepEqual(parseExpression(serializeExpression(reordered)),{...defaults,q:'literal'});
   for (const mode of ['catalogue','lexical','semantic','hybrid']) for (const q of ['two  words','a:b "x"\\',' OR -not (word) ','🦄\nline']) {
     const value = {...defaults,mode,q,visibility:'external',...(mode === 'catalogue' ? {itemState:'ready',sort:'name',direction:'asc',includeExpired:true} : {kind:'dir',createdByUser:'A:B "C"'})};
     assert.deepEqual(parseExpression(serializeExpression(value)),value);

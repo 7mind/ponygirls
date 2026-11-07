@@ -291,7 +291,7 @@ export function serializeExpression(state) {
   const expected = {...state,visibility:state.visibility || null,itemState:state.itemState || null,kind:state.kind || null,createdByUser:state.createdByUser || null};
   for (const text of candidates) {
     const expression = [...parts,...(text ? [text] : [])].join(' ');
-    try { if (JSON.stringify(parseExpression(expression)) === JSON.stringify(expected)) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
+    try { if (Object.entries(parseExpression(expression)).every(([field,value])=>value === expected[field])) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
   }
   throw new ExpressionError('Query cannot be represented within the expression limit.',0,0);
 }
