@@ -3,7 +3,7 @@ import {
 	createAssistantMessageEventStream, createModels, createProvider, InMemoryCredentialStore,
 	type Api, type AssistantMessage, type Model, type SimpleStreamOptions, type TranscriptContext,
 } from "@earendil-works/pi-ai";
-import { discoverNativeEngines, injectNativeSearchPayload, NativeSearchError, type NativeDiscoveryContext, type NativeProviderId } from "../extensions/native.js";
+import { discoverNativeEngines, injectNativeSearchPayload, NativeSearchError, NativeUsageUnavailableError, type NativeDiscoveryContext, type NativeProviderId } from "../extensions/native.js";
 
 const usage = { input: 12, output: 7, cacheRead: 3, cacheWrite: 0, totalTokens: 22, cost: { input: 0.01, output: 0.02, cacheRead: 0, cacheWrite: 0, total: 0.03 } };
 const ids = { openai: "gpt-4.1", "openai-codex": "gpt-6.1-sol", anthropic: "claude-sonnet-4-6", xai: "grok-4.7", "grok-build": "grok-4.6" };
@@ -22,6 +22,7 @@ async function fixture(config: {
 	stopReason?: AssistantMessage["stopReason"];
 	rawStopReason?: string;
 	current?: NativeProviderId;
+	settleAfterAbortMs?: number | "never";
 } = {}) {
 	const credentials = new InMemoryCredentialStore();
 	const models = createModels({ credentials, authContext: { env: async () => undefined, fileExists: async () => false } });
@@ -45,9 +46,15 @@ async function fixture(config: {
 					errorMessage: config.stopReason === "error" ? "server search unavailable" : undefined,
 					usage, timestamp: Date.now(),
 				};
-				output.push({ type: "start", partial: message });
-				output.push({ type: "done", reason: "stop", message });
-				output.end();
+				const finish = () => {
+					output.push({ type: "start", partial: message });
+					output.push({ type: "done", reason: "stop", message });
+					output.end();
+				};
+				if (config.settleAfterAbortMs === "never") return;
+				if (typeof config.settleAfterAbortMs === "number") {
+					options?.signal?.addEventListener("abort", () => setTimeout(finish, config.settleAfterAbortMs as number), { once: true });
+				} else finish();
 			})();
 			return output;
 		};
@@ -229,6 +236,56 @@ describe("configured native search", () => {
 		const [engine] = await discoverNativeEngines(ctx);
 		await expect(engine.search("q", 1, controller.signal)).rejects.toThrow("cancelled");
 		expect(dispatch).not.toHaveBeenCalled();
+	});
+
+	it("bounds an abort-ignoring stream at the internal deadline plus usage-settlement grace", async () => {
+		vi.useFakeTimers();
+		vi.spyOn(AbortSignal, "timeout").mockImplementation((ms) => {
+			const controller = new AbortController();
+			setTimeout(() => controller.abort(new DOMException("timed out", "TimeoutError")), ms);
+			return controller.signal;
+		});
+		try {
+			const { ctx, dispatch } = await fixture({ providers: ["openai"], settleAfterAbortMs: "never" });
+			const [engine] = await discoverNativeEngines(ctx);
+			let outcome: unknown = "pending";
+			void engine.search("q", 3).then(() => { outcome = "resolved"; }, (error) => { outcome = error; });
+			await vi.advanceTimersByTimeAsync(45_999);
+			expect(dispatch).toHaveBeenCalledOnce();
+			expect(dispatch.mock.calls[0][0].options.signal.aborted).toBe(true);
+			expect(outcome).toBe("pending");
+			await vi.advanceTimersByTimeAsync(1);
+			expect(outcome).toMatchObject({ name: "NativeUsageUnavailableError", message: expect.stringContaining("usage unavailable") });
+			expect(outcome).toBeInstanceOf(NativeUsageUnavailableError);
+			expect(outcome).toBeInstanceOf(NativeSearchError);
+			expect((outcome as NativeSearchError).usage).toBeUndefined();
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.restoreAllMocks();
+			vi.useRealTimers();
+		}
+	});
+
+	it("waits briefly after caller abort for terminal usage instead of racing it away", async () => {
+		vi.useFakeTimers();
+		try {
+			const { ctx, dispatch } = await fixture({ providers: ["openai"], settleAfterAbortMs: 25 });
+			const [engine] = await discoverNativeEngines(ctx);
+			const controller = new AbortController();
+			let outcome: unknown = "pending";
+			void engine.search("q", 3, controller.signal).then(() => { outcome = "resolved"; }, (error) => { outcome = error; });
+			await vi.advanceTimersByTimeAsync(0);
+			expect(dispatch).toHaveBeenCalledOnce();
+			controller.abort(new Error("user stopped"));
+			await vi.advanceTimersByTimeAsync(24);
+			expect(outcome).toBe("pending");
+			await vi.advanceTimersByTimeAsync(1);
+			expect(outcome).toBeInstanceOf(NativeSearchError);
+			expect(outcome).toMatchObject({ usage, message: "openai native search cancelled" });
+			expect(vi.getTimerCount()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("preserves unrelated payload fields and tools without mutating Pi's payload", () => {

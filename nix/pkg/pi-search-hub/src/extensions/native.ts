@@ -20,6 +20,13 @@ export class NativeSearchError extends Error {
 		this.name = "NativeSearchError";
 	}
 }
+/** The provider ignored cancellation long enough that final usage is unknown. */
+export class NativeUsageUnavailableError extends NativeSearchError {
+	constructor(provider: NativeProviderId, cause?: unknown) {
+		super(`${provider} native search: usage unavailable; stream did not settle within ${NATIVE_ABORT_SETTLEMENT_GRACE_MS}ms after cancellation`, undefined, { cause });
+		this.name = "NativeUsageUnavailableError";
+	}
+}
 export interface NativeEngine {
 	id: NativeProviderId;
 	label: string;
@@ -46,6 +53,8 @@ const CANDIDATES: Record<NativeProviderId, readonly string[]> = {
 	xai: ["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"],
 	"grok-build": ["grok-4.6", "grok-4.5", "grok-4.3"],
 };
+const NATIVE_REQUEST_TIMEOUT_MS = 45_000;
+const NATIVE_ABORT_SETTLEMENT_GRACE_MS = 1000;
 const MAX_RESULTS = 20;
 const MAX_TITLE = 200;
 const MAX_SNIPPET = 1000;
@@ -107,8 +116,8 @@ async function searchNative(
 ): Promise<NativeSearchResponse> {
 	signal?.throwIfAborted();
 	// Also bound explicit engine calls; an orchestrator may supply a shorter
-	// deadline. An outer race cannot recover usage from an unsettled stream.
-	signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(45_000)]) : AbortSignal.timeout(45_000);
+	// deadline. Abort starts a short grace period for the real terminal usage.
+	signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(NATIVE_REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(NATIVE_REQUEST_TIMEOUT_MS);
 	const limit = Number.isFinite(count) ? Math.max(1, Math.min(MAX_RESULTS, Math.floor(count))) : 10;
 	const collector = new GroundedSources(limit);
 	const context: Context = {
@@ -119,17 +128,18 @@ async function searchNative(
 	const proxyConversation = id === "grok-build" && isGrokProxy(model.baseUrl) && sessionId;
 	// Registry dispatch preserves configured endpoint, model/provider headers,
 	// provider-scoped environment, request authentication, refresh and SDK hooks.
-	const message = await ctx.modelRegistry.streamSimple(model, context, {
+	const terminal = ctx.modelRegistry.streamSimple(model, context, {
 		signal,
 		maxTokens: 2048,
-		timeoutMs: 45_000,
+		timeoutMs: NATIVE_REQUEST_TIMEOUT_MS,
 		maxRetries: 0,
 		transport: "sse",
 		...(proxyConversation ? { headers: { "x-grok-conv-id": proxyConversation } } : {}),
 		onPayload: (payload) => injectNativeSearchPayload(id, payload, model.id),
 		onProviderStreamEvent: (event) => collector.observe(id, event),
 	}).result();
-	if (signal?.aborted) {
+	const message = await settleWithinAbortGrace(terminal, signal, () => new NativeUsageUnavailableError(id, signal?.reason));
+	if (signal.aborted) {
 		throw new NativeSearchError(`${id} native search cancelled`, message.usage, { cause: signal.reason });
 	}
 	if (message.stopReason === "error" || message.stopReason === "aborted") {
@@ -145,6 +155,42 @@ async function searchNative(
 		throw new NativeSearchError(`${id} native search: ${collector.error || "returned no grounded source URLs"}`, message.usage);
 	}
 	return { results, usage: message.usage };
+}
+
+/** Wait for real terminal usage after abort, but never indefinitely for a broken adapter. */
+function settleWithinAbortGrace<T>(terminal: Promise<T>, signal: AbortSignal, unavailable: () => Error): Promise<T> {
+	return new Promise<T>((resolve, reject) => {
+		let settled = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		const cleanup = () => {
+			signal.removeEventListener("abort", onAbort);
+			if (timer !== undefined) clearTimeout(timer);
+		};
+		const onAbort = () => {
+			if (settled || timer !== undefined) return;
+			timer = setTimeout(() => {
+				if (settled) return;
+				settled = true;
+				cleanup();
+				reject(unavailable());
+			}, NATIVE_ABORT_SETTLEMENT_GRACE_MS);
+		};
+		signal.addEventListener("abort", onAbort, { once: true });
+		// Both handlers stay attached after grace expiry: late rejection is
+		// consumed, late usage is not invented or retroactively reported.
+		terminal.then((value) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			resolve(value);
+		}, (error: unknown) => {
+			if (settled) return;
+			settled = true;
+			cleanup();
+			reject(error);
+		});
+		if (signal.aborted) onAbort();
+	});
 }
 
 /** Payload is Pi's adapter-owned wire/SDK shape, not a generic chat tool. */
