@@ -45,6 +45,8 @@ describe("paper monitoring", () => {
     const policy = service.policy();
     expect(policy.main).toMatchObject({ mode: "targeted", engineOrder: ["firecrawl"], targetUsableEngines: 3, requestedPerEngine: 20 });
     expect(policy.native.engineCount).toBe(0);
+    expect(policy.main.combineForced).toBeNull();
+    expect(policy.main.combineMode).toBeNull();
     expect(policy.fallback.map(p => p.backend)).toEqual(["searxng"]);
     expect(policy.sources.find(p => p.name === "firecrawl")).toEqual({ name: "firecrawl", timeoutMs: 700, maxResults: 7, boost: 2 });
     (policy.main.engineOrder as string[]).push("secret");

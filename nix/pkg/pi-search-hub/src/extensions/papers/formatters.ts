@@ -6,7 +6,7 @@ function describe(paper: PaperRecord, index: number): string {
   const lines = [`${index}. ${clean(paper.title, 400)}`, clean(paper.url, 2000)];
   if (paper.ids.length) lines.push(`IDs: ${paper.ids.slice(0, 20).map(id => `${clean(id.namespace, 30)}:${clean(id.value, 300)}`).join("; ")}`);
   if (paper.authors.length) lines.push(`Authors: ${paper.authors.slice(0, 20).map(author => clean(author, 100)).join(", ")}`);
-  if (paper.date) lines.push(`${paper.dateKind === "created" ? "Created" : "Published"}: ${clean(paper.date, 100)}`);
+  if (paper.date) lines.push(`${paper.dateKind === "created" ? "Created" : paper.dateKind === "published" ? "Published" : "Date"}: ${clean(paper.date, 100)}`);
   if (paper.abstract) lines.push(`Abstract: ${clean(paper.abstract)}`);
   else if (paper.snippet) lines.push(`Snippet: ${clean(paper.snippet, 600)}`);
   if ("sources" in paper) {

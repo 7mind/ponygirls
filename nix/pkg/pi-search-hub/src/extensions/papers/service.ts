@@ -106,7 +106,7 @@ export class PaperResearchService {
       maxResults: sourcePolicy(profile, name).maxResults ?? candidateCount(profile, 10), boost: sourcePolicy(profile, name).boost ?? 1 }));
     this.policySnapshot = {
       defaultResultCount: 10, maximumResultCount: 20,
-      main: { mode: profile.mode, combineForced: false, combineMode: "all", selectionStrategy: "sequential",
+      main: { mode: profile.mode, combineForced: null, combineMode: null, selectionStrategy: "sequential",
         engineOrder: active.filter(p => !(p.name in profile.alwaysInclude)).map(p => p.name),
         targetUsableEngines: profile.targetUsableSources, requestedPerEngine: candidateCount(profile, 10) },
       fallback: sources.filter(p => p.name in profile.alwaysInclude).map(p => ({ backend: p.name, timeoutMs: p.timeoutMs, maxResults: p.maxResults })),

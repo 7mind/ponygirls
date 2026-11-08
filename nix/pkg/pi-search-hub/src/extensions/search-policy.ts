@@ -4,8 +4,9 @@ export interface SearchPolicy {
   maximumResultCount: number;
   main: {
     mode: "first" | "targeted" | "all" | "invalid";
-    combineForced: boolean;
-    combineMode: "targeted" | "all" | "invalid";
+    /** Legacy web controls are not applicable to paper profiles. */
+    combineForced: boolean | null;
+    combineMode: "targeted" | "all" | "invalid" | null;
     selectionStrategy: "sequential" | "random" | "round-robin" | "best-latency" | "unrecognized";
     /** Configured preference, before random/round-robin/score selection; never a sampled next-query order. */
     engineOrder: readonly string[];

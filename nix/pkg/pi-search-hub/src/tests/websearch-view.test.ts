@@ -72,6 +72,17 @@ function scrollToText(view: WebSearchView, render: () => string[], text: string,
 }
 
 describe("WebSearchView", () => {
+	it("shows paper-specific policy without suggesting native model sources or discovery", () => {
+		const { view } = setup({ rows: () => 200 });
+		select(view, "Paper stats", 200);
+		const text = view.render(200).join("\n");
+		expect(text).toContain("Paper automatic search");
+		expect(text).toContain("Always include");
+		expect(text).not.toContain("Native ·");
+		expect(text).not.toContain("discovery 10s");
+		expect(text).not.toContain("combine mode");
+		view.dispose();
+	});
 	it("explains first-nonempty defaults, overrides, shared weighted fusion and configured reranking", () => {
 		const { deps, view } = setup({ rows: () => 100 });
 		const text = view.render(200).join("\n");
@@ -170,7 +181,7 @@ describe("WebSearchView", () => {
 			native: { engineCount: 2, timeoutMs: 45_000, settlementGraceMs: 1_000 },
 		}) });
 		const text = view.render(200).join("\n");
-		const main = text.indexOf("Main · 1 current"), fallback = text.indexOf("Fallback · 2 current"), native = text.indexOf("Native · 2 current");
+		const main = text.indexOf("Main · 1 current"), fallback = text.indexOf("Always include · 2 current"), native = text.indexOf("Native · 2 current");
 		expect(main).toBeGreaterThan(0); expect(fallback).toBeGreaterThan(main); expect(native).toBeGreaterThan(fallback);
 		expect(text.indexOf("Fixture (fixture)")).toBeGreaterThan(main);
 		expect(text.indexOf("Fixture (fixture)")).toBeLessThan(fallback);
@@ -200,7 +211,7 @@ describe("WebSearchView", () => {
 		deps.monitor.begin(moved)({ status: "empty" });
 		const text = view.render(200).join("\n");
 		const historical = text.indexOf("Previously observed · not currently configured in this tier");
-		expect(text.slice(0, historical)).toContain("Moved (moved) · fallback · configured");
+		expect(text.slice(0, historical)).toContain("Moved (moved) · alwaysInclude · configured");
 		expect(text.slice(0, historical)).toMatch(/0 +\| 0 +\| 1 +\|/);
 		expect(text.slice(0, historical)).not.toMatch(/7 +\| 7/);
 		expect(text.slice(historical)).toContain("Moved (moved) · main · historical (not current)");
@@ -285,7 +296,7 @@ describe("WebSearchView", () => {
 		deps.monitor.begin(reader)({ status: "failed" });
 		const search = view.render(120).join("\n");
 		expect(search).toContain("Search engine activity");
-		for (const title of ["Fixture (fixture) · main", "Native (native) · native", "Fallback (fallback) · fallback", "Historical search (shared) · main · historical (not current)"]) expect(search).toContain(title);
+		for (const title of ["Fixture (fixture) · main", "Native (native) · native", "Fallback (fallback) · alwaysInclude", "Historical search (shared) · main · historical (not current)"]) expect(search).toContain(title);
 		expect(search).toMatch(/3 +\| 3/);
 		expect(search).not.toMatch(/Reader \(shared\)|Historical reader|· reader|Enter a query|> /);
 		select(view, "Fetchers");
@@ -749,7 +760,7 @@ describe("WebSearchView", () => {
 		const text = view.render(80).join("\n");
 		expect(text).toContain("Paper automatic search");
 		expect(text).toContain("timeout");
-		expect(text).toContain("ArXiv 日本語 (arxiv) · fallback · historical (not current)");
+		expect(text).toContain("ArXiv 日本語 (arxiv) · alwaysInclude · historical (not current)");
 		expect(text).toMatch(/8 +\| 8/);
 		expect(text).not.toMatch(/combine|Fixture/);
 		expect(deps.search).not.toHaveBeenCalled();

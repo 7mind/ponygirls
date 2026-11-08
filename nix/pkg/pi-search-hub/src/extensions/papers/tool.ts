@@ -24,7 +24,7 @@ export function registerPaperResearch(pi: ExtensionAPI, getService: () => PaperR
     name: "paper_research",
     label: "Paper Research",
     description: "Research scholarly papers, separately from ordinary web search. Search fuses configured Firecrawl Research, Exa publication, SearXNG science and opt-in arXiv through the same main/alwaysInclude scheduler and ranking engine as web search, " +
-      "deduplicating scholarly identifiers before weighted RRF60 and optional bounded lexical reranking. Exact identifiers and complete title matches get priority. " +
+      "deduplicating scholarly identifiers before configured weighted rank fusion and optional bounded lexical reranking. Exact identifiers and complete title matches get priority. " +
       "Read retrieves metadata or question-relevant passages (Firecrawl); arXiv supports metadata only. Related expands similar papers, citers or references (Firecrawl). " +
       "Retains source IDs, abstracts versus snippets, dates, ranking evidence and partial failures. Does not establish peer review or factual correctness.",
     promptSnippet: "Search, inspect and follow related scholarly papers across configured research sources",

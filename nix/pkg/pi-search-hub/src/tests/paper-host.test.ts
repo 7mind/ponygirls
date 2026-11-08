@@ -56,7 +56,7 @@ it("loads the extension in real Pi and executes scholarly search with structured
       resourceLoader: loader, sessionManager: SessionManager.inMemory(), tools: ["paper_research"] }));
     const errors: unknown[] = [];
     const notices: string[] = [];
-    await session.bindExtensions({ mode: "rpc", onError: error => errors.push(error), uiContext: { notify: message => { notices.push(message); } } });
+    await session.bindExtensions({ mode: "rpc", onError: error => errors.push(error), uiContext: { ...session.extensionRunner.getUIContext(), notify: message => { notices.push(message); } } });
     expect(session.getActiveToolNames()).toContain("paper_research");
     expect(requests).toHaveLength(0);
     await session.prompt("/websearch");
