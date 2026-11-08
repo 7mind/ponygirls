@@ -118,6 +118,11 @@ export class SharedRuntime {
     if (request.signal?.aborted) onAbort();
     const stats: (SourceStats | undefined)[] = sources.map(() => undefined);
     const lists: (RankedList<T> | undefined)[] = sources.map(() => undefined);
+    const record = (index: number, stat: SourceStats) => {
+      if (stats[index] !== undefined) return;
+      stats[index] = stat;
+      try { sources[index].onOutcome?.({ ...stat }); } catch { /* Observers cannot alter execution outcomes. */ }
+    };
     let activeMain = 0, usable = 0, pending = 0, settled = false;
     const main = sources.map((s, i) => s.tier === 'main' ? i : -1).filter(i => i >= 0);
     let next = 0;
@@ -126,7 +131,7 @@ export class SharedRuntime {
       const finish = () => {
         if (settled || pending !== 0) return;
         settled = true; clearTimeout(timer); request.signal?.removeEventListener('abort', onAbort);
-        for (let i = 0; i < sources.length; i++) stats[i] ??= { source: sources[i].id, tier: sources[i].tier, status: 'not-started', count: 0, reason: cancelled ? 'caller-cancelled' : timedOut ? 'overall-deadline' : 'target-satisfied' };
+        for (let i = 0; i < sources.length; i++) if (stats[i] === undefined) record(i, { source: sources[i].id, tier: sources[i].tier, status: 'not-started', count: 0, reason: cancelled ? 'caller-cancelled' : timedOut ? 'overall-deadline' : 'target-satisfied' });
         resolve({ lists: lists.filter((x): x is RankedList<T> => x !== undefined), stats: stats as SourceStats[], cancelled, timedOut });
       };
       const topUp = () => {
@@ -143,15 +148,15 @@ export class SharedRuntime {
         }).then(results => {
           if (performance.now() >= deadline) overall();
           if (controller.signal.aborted) {
-            stats[index] = { source: source.id, tier: source.tier, status: dispatched ? (cancelled ? 'cancelled' : 'timeout') : 'not-started', count: 0, reason: cancelled ? 'caller-cancelled' : 'overall-deadline' }; return;
+            record(index, { source: source.id, tier: source.tier, status: dispatched ? (cancelled ? 'cancelled' : 'timeout') : 'not-started', count: 0, reason: cancelled ? 'caller-cancelled' : 'overall-deadline' }); return;
           }
           if (!Array.isArray(results)) throw new Error('Invalid source results');
           const admitted = results.slice(0, source.maxResults);
-          stats[index] = { source: source.id, tier: source.tier, status: admitted.length ? 'success' : 'empty', count: admitted.length };
+          record(index, { source: source.id, tier: source.tier, status: admitted.length ? 'success' : 'empty', count: admitted.length });
           if (admitted.length) { lists[index] = { source: source.id, weight: source.weight, redundantWith: source.redundantWith, results: admitted }; if (source.tier === 'main') usable++; }
         }).catch(error => {
           const reason = error instanceof OverallDeadline ? 'overall-deadline' : error instanceof CallerCancelled ? 'caller-cancelled' : error instanceof TimeoutError ? 'source-deadline' : undefined;
-          stats[index] = { source: source.id, tier: source.tier, status: !dispatched ? 'not-started' : reason === 'caller-cancelled' ? 'cancelled' : reason ? 'timeout' : 'failed', count: 0, ...(reason ? { reason } : { error: 'Source failed' }) };
+          record(index, { source: source.id, tier: source.tier, status: !dispatched ? 'not-started' : reason === 'caller-cancelled' ? 'cancelled' : reason ? 'timeout' : 'failed', count: 0, ...(reason ? { reason } : { error: 'Source failed' }) });
         }).finally(() => { pending--; if (source.tier === 'main') activeMain--; topUp(); });
       };
       // Auxiliary sources compete fairly with the initial main wave and are never gated by its target.

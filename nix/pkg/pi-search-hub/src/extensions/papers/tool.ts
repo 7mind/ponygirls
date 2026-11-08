@@ -2,8 +2,6 @@ import { defineTool, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { config, refreshConfig } from "../config.js";
 import { PaperResearchService } from "./service.js";
-import { createPaperProviders } from "./providers.js";
-import type { SharedRuntime } from "../engine/runtime.js";
 
 const provider = Type.Union([Type.Literal("firecrawl"), Type.Literal("exa"), Type.Literal("searxng"), Type.Literal("arxiv")]);
 const identifier = Type.Object({ namespace: Type.Union([Type.Literal("doi"), Type.Literal("arxiv"), Type.Literal("pmid"), Type.Literal("pmcid"), Type.Literal("firecrawl")]), value: Type.String() });
@@ -21,9 +19,7 @@ const id = Type.String({ minLength: 1, maxLength: 2000, description: "Source ide
 const mode = Type.Union([Type.Literal("first"), Type.Literal("targeted"), Type.Literal("all")]);
 const rerank = Type.Union([Type.Literal("rrf"), Type.Literal("lexical")]);
 
-export function registerPaperResearch(pi: ExtensionAPI, runtime: SharedRuntime): void {
-  let service = new PaperResearchService(createPaperProviders, runtime);
-  pi.on("session_start", () => { service = new PaperResearchService(createPaperProviders, runtime); });
+export function registerPaperResearch(pi: ExtensionAPI, getService: () => PaperResearchService): void {
   pi.registerTool(defineTool({
     name: "paper_research",
     label: "Paper Research",
@@ -55,7 +51,7 @@ export function registerPaperResearch(pi: ExtensionAPI, runtime: SharedRuntime):
     }),
     async execute(_toolCallId, params, signal, _onUpdate, ctx) {
       refreshConfig(ctx.cwd);
-      return service.execute(params, config, signal);
+      return getService().execute(params, config, signal);
     },
   }));
 }

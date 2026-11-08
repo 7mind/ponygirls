@@ -53,6 +53,8 @@ export interface EngineSource<T> {
   redundantWith: string[];
   settlementGraceMs: number;
   run(query: string, count: number, signal: AbortSignal): Promise<T[]>;
+  /** Safe observation of the authoritative logical outcome, exactly once, before fusion. */
+  onOutcome?(stat: SourceStats): void;
 }
 export type SourceStatus = "success" | "empty" | "failed" | "timeout" | "cancelled" | "not-started";
 export interface SourceStats {

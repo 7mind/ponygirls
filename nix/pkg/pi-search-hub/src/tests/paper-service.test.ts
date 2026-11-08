@@ -99,13 +99,25 @@ describe("paper research service", () => {
     const abort = new AbortController(); abort.abort();
     await expect(service.execute({ action: "search", query: "q" }, {}, abort.signal)).rejects.toThrow();
   });
-  it("registers a structured independent tool without causing provider requests", () => {
+  it("registers a structured tool using the observed service instance without eager creation or session handlers", async () => {
     const tools: { name: string; outputSchema?: unknown; execute?: unknown }[] = [];
     const api = { on: () => {}, registerTool: (tool: typeof tools[number]) => tools.push(tool) } as unknown as ExtensionAPI;
-    registerPaperResearch(api, new SharedRuntime(DEFAULT_CONCURRENCY));
+    let getters = 0;
+    const service = paperService(fixtures);
+    const on = vi.fn(); (api as unknown as { on: unknown }).on = on;
+    registerPaperResearch(api, () => { getters++; return service; });
+    expect(getters).toBe(0); expect(on).not.toHaveBeenCalled();
     expect(tools.map(tool => tool.name)).toEqual(["paper_research"]);
     expect(tools[0].outputSchema).toBeDefined();
     expect(typeof tools[0].execute).toBe("function");
+    const dir = mkdtempSync(join(tmpdir(), "paper-tool-"));
+    try {
+      vi.stubEnv("HOME", dir);
+      const execute = tools[0].execute as (id: string, params: PaperResearchParams, signal: undefined, update: undefined, ctx: { cwd: string }) => Promise<unknown>;
+      await execute("call", { action: "search", query: "attention" }, undefined, undefined, { cwd: dir });
+      expect(getters).toBe(1);
+      expect(service.monitor.snapshot().find(engine => engine.name === "firecrawl")).toMatchObject({ success: 1, ongoing: 0 });
+    } finally { rmSync(dir, { recursive: true }); }
   });
 });
 

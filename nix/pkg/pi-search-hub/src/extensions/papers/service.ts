@@ -3,9 +3,11 @@ import type { SearchConfig } from "../types.js";
 import { createPaperProviders } from "./providers.js";
 import { runPaperMetasearch, validatePaperConfig } from "./metasearch.js";
 import { rankPapers } from "./ranking.js";
-import { SharedRuntime } from "../engine/runtime.js";
+import { SearchMonitor, type EngineDescriptor, type SearchOutcome } from "../search-monitor.js";
+import type { SearchPolicy } from "../search-policy.js";
+import { SharedRuntime, TimeoutError } from "../engine/runtime.js";
 import { resolveConcurrency, resolveTimeouts } from "../engine/policy.js";
-import { paperProfile, sourcePolicy } from "../engine/profiles.js";
+import { candidateCount, paperProfile, sourcePolicy } from "../engine/profiles.js";
 import { PAPER_PROVIDERS, type PaperConfig, type PaperPassage, type PaperProvider, type PaperProviderName, type PaperProviderStats, type PaperReadResult, type PaperRecord, type RankedPaper } from "./types.js";
 
 export type PaperResearchParams =
@@ -66,13 +68,20 @@ function resultCount(value: number | undefined, fallback: number): number {
 
 /** Session-owned providers retain direct-source rate limiting across tool calls. */
 export class PaperResearchService {
+  readonly monitor = new SearchMonitor();
+  private descriptors: EngineDescriptor[] = [];
+  private policySnapshot: SearchPolicy | undefined;
+  engines(): readonly EngineDescriptor[] { return this.descriptors.map(engine => ({ ...engine })); }
+  policy(): SearchPolicy {
+    if (!this.policySnapshot) throw new Error("Paper policy is unavailable before refresh");
+    return structuredClone(this.policySnapshot);
+  }
   private signature: string | undefined;
   private providers: PaperProvider[] = [];
   private arxiv: PaperProvider | undefined;
   constructor(private readonly factory: typeof createPaperProviders, private readonly runtime: SharedRuntime) {}
 
-  async execute(params: PaperResearchParams, settings: SearchConfig, signal: AbortSignal | undefined) {
-    signal?.throwIfAborted();
+  refresh(settings: SearchConfig): void {
     const paperSettings = settings.papers === undefined ? {} : settings.papers;
     validatePaperConfig(paperSettings);
     this.runtime.configure(resolveConcurrency(settings.concurrency));
@@ -89,8 +98,49 @@ export class PaperResearchService {
       });
       this.signature = signature;
     }
-    if (this.providers.length === 0) throw new Error("No paper sources configured. Enable Firecrawl, Exa, SearXNG or papers.sources.arxiv in search.json.");
     const profile = paperProfile(settings, this.providers.map(provider => provider.name));
+    const active = this.providers.filter(provider => sourcePolicy(profile, provider.name).enabled !== false);
+    this.descriptors = active.map(provider => this.descriptor(provider.name, profile));
+    const sources = active.map(({ name }) => ({ name,
+      timeoutMs: sourcePolicy(profile, name).timeoutMs ?? (name in profile.alwaysInclude ? timeouts.alwaysIncludeMs : timeouts.sourceMs),
+      maxResults: sourcePolicy(profile, name).maxResults ?? candidateCount(profile, 10), boost: sourcePolicy(profile, name).boost ?? 1 }));
+    this.policySnapshot = {
+      defaultResultCount: 10, maximumResultCount: 20,
+      main: { mode: profile.mode, combineForced: false, combineMode: "all", selectionStrategy: "sequential",
+        engineOrder: active.filter(p => !(p.name in profile.alwaysInclude)).map(p => p.name),
+        targetUsableEngines: profile.targetUsableSources, requestedPerEngine: candidateCount(profile, 10) },
+      fallback: sources.filter(p => p.name in profile.alwaysInclude).map(p => ({ backend: p.name, timeoutMs: p.timeoutMs, maxResults: p.maxResults })),
+      native: { engineCount: 0, timeoutMs: timeouts.nativeMs, settlementGraceMs: timeouts.nativeGraceMs },
+      fusion: { rankConstant: profile.ranking.rankConstant, rerank: profile.ranking.rerank, titleWeight: profile.ranking.titleWeight, bodyWeight: profile.ranking.bodyWeight, exactTitle: profile.ranking.exactTitle },
+      execution: { ...resolveConcurrency(settings.concurrency), overallTimeoutMs: timeouts.overallMs, sourceTimeoutMs: timeouts.sourceMs, discoveryTimeoutMs: timeouts.discoveryMs }, sources,
+    };
+  }
+  private descriptor(name: string, profile: ReturnType<typeof paperProfile>): EngineDescriptor {
+    return { name, label: name, tier: name in profile.alwaysInclude ? "fallback" : "main", availability: "configured" };
+  }
+  private async operation<T>(name: string, profile: ReturnType<typeof paperProfile>, timeout: number, signal: AbortSignal | undefined,
+    run: (signal: AbortSignal) => Promise<T>, count: (value: T) => number): Promise<T> {
+    let finish: ((outcome: SearchOutcome) => void) | undefined;
+    try {
+      const result = await this.runtime.operation(name, timeout, signal, 0, child => {
+        finish = this.monitor.begin(this.descriptor(name, profile));
+        return run(child);
+      });
+      const observed = count(result);
+      finish?.({ status: observed ? "success" : "empty", resultCount: observed });
+      return result;
+    } catch (error) {
+      finish?.({ status: error instanceof TimeoutError ? "timeout" : signal?.aborted ? "cancelled" : "failed" });
+      throw error;
+    }
+  }
+  async execute(params: PaperResearchParams, settings: SearchConfig, signal: AbortSignal | undefined) {
+    signal?.throwIfAborted();
+    this.refresh(settings);
+    const paperSettings = settings.papers ?? {};
+    const timeouts = resolveTimeouts(settings.timeouts);
+    const profile = paperProfile(settings, this.providers.map(provider => provider.name));
+    if (this.providers.filter(provider => sourcePolicy(profile, provider.name).enabled !== false).length === 0) throw new Error("No paper sources configured. Enable Firecrawl, Exa, SearXNG or papers.sources.arxiv in search.json.");
     const output: PaperResearchOutput = { action: params.action, results: [], passages: [], providers: [], notices: [POLICY_NOTICE], truncated: false, cancelled: false, timedOut: false };
     if (params.action === "search") {
       requiredText(params.query, "query");
@@ -101,7 +151,14 @@ export class PaperResearchService {
         ...(params.mode === undefined ? {} : { mode: params.mode }), ...(params.rerank === undefined ? {} : { ranking: { ...paperSettings.ranking, rerank: params.rerank } }) };
       const resolved = { ...profile, mode: params.mode ?? profile.mode, ranking: { ...profile.ranking, rerank: params.rerank ?? profile.ranking.rerank },
         alwaysInclude: params.source === undefined ? profile.alwaysInclude : {} };
-      const result = await runPaperMetasearch(providers, policy, { query: params.query, numResults: count }, signal, this.runtime, timeouts, resolved);
+      const finishers = new Map<string, (outcome: SearchOutcome) => void>();
+      const observed = providers.map(provider => ({ ...provider, search: (request: Parameters<PaperProvider["search"]>[0], child: AbortSignal) => {
+        finishers.set(provider.name, this.monitor.begin(this.descriptor(provider.name, profile)));
+        return provider.search(request, child);
+      } }));
+      const result = await runPaperMetasearch(observed, policy, { query: params.query, numResults: count }, signal, this.runtime, timeouts, resolved, stat => {
+        if (stat.status !== "not-started") finishers.get(stat.provider)?.({ status: stat.status, resultCount: stat.count });
+      });
       output.results = result.results;
       output.providers = result.providers;
       output.cancelled = result.cancelled === true;
@@ -110,7 +167,7 @@ export class PaperResearchService {
     } else if (params.action === "read" || params.action === "related") {
       requiredText(params.id, "id");
       const name = params.action === "read" ? params.source ?? "firecrawl" : "firecrawl";
-      const provider = this.providers.find(candidate => candidate.name === name);
+      const provider = this.providers.find(candidate => candidate.name === name && sourcePolicy(profile, name).enabled !== false);
       if (provider === undefined) throw new Error(`Paper source ${name} is not enabled`);
       const timeout = Math.min(sourcePolicy(profile, name).timeoutMs ?? timeouts.sourceMs, timeouts.overallMs);
       const count = resultCount(params.numResults, params.action === "read" ? 4 : 10);
@@ -122,7 +179,7 @@ export class PaperResearchService {
         const read = provider.read;
         if (read === undefined) throw new Error("This source does not support paper reads");
         let result: PaperReadResult;
-        try { result = await this.runtime.operation(name, timeout, signal, 0, operationSignal => read({ id: params.id, query: params.query, numResults: count }, operationSignal)); }
+        try { result = await this.operation(name, profile, timeout, signal, operationSignal => read({ id: params.id, query: params.query, numResults: count }, operationSignal), () => 1); }
         catch { signal?.throwIfAborted(); throw new Error(`Paper read failed (${name}); source unavailable or paper/passages not found`); }
         output.paper = result.paper;
         output.passages = result.passages.slice(0, count);
@@ -136,8 +193,8 @@ export class PaperResearchService {
         const related = provider.related;
         if (related === undefined) throw new Error("This source does not support related papers");
         let papers: PaperRecord[];
-        try { papers = await this.runtime.operation(name, timeout, signal, 0, operationSignal => related({ id: params.id, intent: params.intent,
-          mode: params.mode ?? "similar", numResults: count }, operationSignal)); }
+        try { papers = await this.operation(name, profile, timeout, signal, operationSignal => related({ id: params.id, intent: params.intent,
+          mode: params.mode ?? "similar", numResults: count }, operationSignal), papers => Math.min(papers.length, count)); }
         catch { signal?.throwIfAborted(); throw new Error("Related-paper retrieval failed (firecrawl)"); }
         output.results = rankPapers([{ source: name, weight: sourcePolicy(profile, name).boost ?? 1,
           redundantWith: sourcePolicy(profile, name).redundantWith ?? [], results: papers }], params.intent, count, profile.ranking);
