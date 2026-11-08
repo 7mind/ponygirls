@@ -129,9 +129,14 @@ that the remaining indexes are statistically independent.
 Source `boost` is an explicit positive multiplier (maximum 4, default 1).
 `rerank: "lexical"` multiplies the fused score by
 `1 + 0.2 * title-token-coverage + 0.1 * abstract-or-snippet-token-coverage`.
-`"rrf"` disables that text multiplier. Exact normalized identifier matches get
-priority. Each returned paper includes its RRF contributions, multiplier and
-final score. No citation-popularity, venue-prestige or unverified peer-review
+`"rrf"` disables that text multiplier. Both modes prioritize exact normalized
+identifiers, then complete normalized title matches, then fused/boosted score.
+Title equality preserves word order, ignoring case, Unicode compatibility,
+punctuation and whitespace; it requires at least three query tokens or an
+explicitly quoted short title. Topical substring matches get no lookup priority.
+This avoids cross-source agreement drowning out the exact paper requested by
+title. Each returned paper includes `exactId`, `exactTitle`, RRF contributions,
+text multiplier and final score (lookup priority is a separate ordering key). No citation-popularity, venue-prestige or unverified peer-review
 boost is applied. These are transparent, uncalibrated heuristics; deterministic
 tests do not establish semantic improvement over the web-search baseline.
 

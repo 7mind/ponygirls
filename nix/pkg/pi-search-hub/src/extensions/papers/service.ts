@@ -21,7 +21,7 @@ export interface PaperResearchOutput {
 const MAX_OUTPUT_BYTES = 60_000;
 const MAX_QUERY_LENGTH = 2000;
 const DEFAULT_TIMEOUT_MS = 15_000;
-const POLICY_NOTICE = "Paper metadata and passages are source evidence, not independent confirmation or proof of peer review. Ranking uses weighted RRF60, optional bounded lexical boosts, and exact-identifier priority; semantic quality has not been benchmarked.";
+const POLICY_NOTICE = "Paper metadata and passages are source evidence, not independent confirmation or proof of peer review. Ranking uses weighted RRF60, optional bounded lexical boosts, and exact-identifier/full-title priority; semantic quality has not been benchmarked.";
 
 function text(value: string, limit: number): string {
   const clean = value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");

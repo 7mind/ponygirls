@@ -13,7 +13,7 @@ const paperFields = {
 };
 const rankedPaper = Type.Object({ ...paperFields, sources: Type.Array(provider),
   contributions: Type.Array(Type.Object({ provider, rank: Type.Number(), weight: Type.Number(), term: Type.Number() })),
-  score: Type.Number(), rrfScore: Type.Number(), textBoost: Type.Number(), exactId: Type.Boolean() });
+  score: Type.Number(), rrfScore: Type.Number(), textBoost: Type.Number(), exactId: Type.Boolean(), exactTitle: Type.Boolean() });
 const count = Type.Optional(Type.Integer({ minimum: 1, maximum: 20, description: "Maximum results, or passages for read (default 10 results / 4 passages)." }));
 const query = Type.String({ minLength: 1, maxLength: 2000 });
 const id = Type.String({ minLength: 1, maxLength: 2000, description: "Source identifier: arxiv:1706.03762, doi:10.…, pmid:…, pmcid:…, or Firecrawl canonical paper ID." });
@@ -27,7 +27,7 @@ export function registerPaperResearch(pi: ExtensionAPI): void {
     name: "paper_research",
     label: "Paper Research",
     description: "Research scholarly papers, separately from ordinary web search. Search fuses configured Firecrawl Research, Exa publication, SearXNG science and opt-in arXiv in main/fallback tiers, " +
-      "deduplicating scholarly identifiers before weighted RRF60 and optional bounded lexical reranking. Exact identifiers get priority. " +
+      "deduplicating scholarly identifiers before weighted RRF60 and optional bounded lexical reranking. Exact identifiers and complete title matches get priority. " +
       "Read retrieves metadata or question-relevant passages (Firecrawl); arXiv supports metadata only. Related expands similar papers, citers or references (Firecrawl). " +
       "Retains source IDs, abstracts versus snippets, dates, ranking evidence and partial failures. Does not establish peer review or factual correctness.",
     promptSnippet: "Search, inspect and follow related scholarly papers across configured research sources",
