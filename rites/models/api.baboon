@@ -1,0 +1,43 @@
+model rites.api
+version "0.1.0"
+
+root data VersionInfo { current: str minimum: str supported: lst[str] }
+data UserInfo { id: str login: str }
+root data LoginRequest { login: str password: str }
+root data LoginResponse { user: UserInfo versions: VersionInfo sessionTtlSeconds: i64 }
+root data Ack { ok: bit }
+root data Failure { code: str }
+
+enum ForgeKind { Github Gitlab }
+enum GrantRole { Owner Editor Viewer }
+data CredentialInfo { id: uid name: str forge: ForgeKind host: str revision: i32 createdAt: str updatedAt: str }
+root data CredentialsResult { items: lst[CredentialInfo] }
+root data SaveCredentialRequest { id: opt[uid] name: str forge: ForgeKind host: str secret: str expectedRevision: i32 }
+root data CredentialResult { credential: CredentialInfo }
+root data DeleteCredentialRequest { id: uid expectedRevision: i32 }
+
+data GrantInfo { userId: str login: str role: GrantRole }
+data RepositoryInfo { id: str owner: str forge: ForgeKind host: str project: str baseBranch: str credentialId: uid revision: i32 grants: lst[GrantInfo] }
+root data RepositoriesResult { items: lst[RepositoryInfo] }
+root data SaveRepositoryRequest { id: str forge: ForgeKind host: str project: str baseBranch: str credentialId: uid expectedRevision: i32 }
+root data RepositoryResult { repository: RepositoryInfo }
+root data DeleteRepositoryRequest { id: str expectedRevision: i32 }
+root data SetGrantRequest { repositoryId: str userId: str role: opt[GrantRole] expectedRevision: i32 }
+
+data RiteInfo { repositoryId: str id: str schedule: str promptPath: str modelId: str enabled: bit revision: i32 }
+root data RitesResult { items: lst[RiteInfo] }
+root data SaveRiteRequest { repositoryId: str id: str schedule: str promptPath: str modelId: str enabled: bit expectedRevision: i32 }
+root data RiteResult { rite: RiteInfo }
+root data DeleteRiteRequest { repositoryId: str id: str expectedRevision: i32 }
+
+data ModelInfo { id: str provider: str model: str thinkingLevel: str }
+root data ModelsResult { items: lst[ModelInfo] }
+root data UsersResult { items: lst[UserInfo] }
+root data StatusInfo { queuedRuns: i64 activeRuns: i64 schedulerEnabled: bit }
+
+enum RunTrigger { Schedule Manual }
+enum RunState { Queued Running NoChange Published Failed PublicationUncertain SupersessionPending Cancelled }
+data RunInfo { id: uid repositoryId: str riteId: str trigger: RunTrigger scheduledFor: str createdAt: str startedAt: opt[str] finishedAt: opt[str] state: RunState failureCode: opt[str] baseRevision: opt[str] promptDigest: opt[str] branch: opt[str] proposalUrl: opt[str] }
+root data RunsResult { items: lst[RunInfo] }
+root data RunResult { run: RunInfo }
+root data ManualRunRequest { repositoryId: str riteId: str requestId: uid }
