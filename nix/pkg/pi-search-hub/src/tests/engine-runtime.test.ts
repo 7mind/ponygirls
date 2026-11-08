@@ -7,8 +7,42 @@ const req = (extra: Partial<EngineSearchRequest> = {}): EngineSearchRequest => (
 function source(id: string, run: EngineSource<string>['run'], extra: Partial<EngineSource<string>> = {}): EngineSource<string> { return { id, provider: id, tier: 'main', timeoutMs: 100, maxResults: 10, weight: 1, redundantWith: [], settlementGraceMs: 0, run, ...extra }; }
 // Specified BA: controllable promises stand in for adapters; no network or internal state assertions.
 describe('session scheduler', () => {
-  beforeEach(() => { vi.useFakeTimers(); vi.setSystemTime(0); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => { vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date', 'performance'] }); vi.setSystemTime(0); });
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); });
+  // Regression: candidate request budgets must not collapse to the final presentation limit.
+  it('requests the resolved candidate budget rather than the final result count', async () => {
+    let count = 0;
+    const result = await new SharedRuntime({ maxConcurrent: 1, perProvider: 1 }).search([
+      source('candidates', async (_query, requested) => { count = requested; return Array.from({ length: requested }, (_, i) => String(i)); }, { maxResults: 20 }),
+    ], req({ numResults: 2 }));
+    expect(count).toBe(20); expect(result.lists[0].results).toHaveLength(20);
+  });
+  // Regression: a wall-clock correction is not elapsed monotonic time.
+  it('admits completion after a wall-clock jump when no deadline has elapsed', async () => {
+    const hold = deferred<string[]>();
+    const pending = new SharedRuntime({ maxConcurrent: 1, perProvider: 1 }).search([source('clock', () => hold.promise)], req());
+    await flush(); vi.setSystemTime(1000000); hold.resolve(['valid']);
+    const result = await pending;
+    expect(result.timedOut).toBe(false); expect(result.stats[0].status).toBe('success'); expect(result.lists[0].results).toEqual(['valid']);
+  });
+  it.each([{ query: '' }, { query: '   ' }, { query: 'x'.repeat(2001) }, { query: null }, { numResults: 21 }, { numResults: 0 }])('rejects invalid common query/count boundaries: %j', async invalid => {
+    const runtime = new SharedRuntime({ maxConcurrent: 1, perProvider: 1 });
+    await expect(runtime.search([source('a', async () => [])], req(invalid as Partial<EngineSearchRequest>))).rejects.toThrow();
+  });
+  it('accepts inclusive common query/count and source candidate boundaries', async () => {
+    let count = 0;
+    const result = await new SharedRuntime({ maxConcurrent: 1, perProvider: 1 }).search([
+      source('max', async (_query, requested) => { count = requested; return ['valid']; }, { maxResults: 50 }),
+    ], req({ query: 'x'.repeat(2000), numResults: 20 }));
+    expect(count).toBe(50); expect(result.stats[0].status).toBe('success');
+  });
+  it('does not expire queued work merely because the wall clock jumps', async () => {
+    const runtime = new SharedRuntime({ maxConcurrent: 1, perProvider: 1 }); const hold = deferred<string>();
+    const first = runtime.operation('a', 100, undefined, 0, () => hold.promise);
+    const queued = runtime.operation('b', 100, undefined, 0, async () => 'queued result');
+    await flush(); vi.setSystemTime(1000000); hold.resolve('first result');
+    expect(await first).toBe('first result'); expect(await queued).toBe('queued result');
+  });
   it('tops up empty/failed slots without waiting for slow peers and never overfills target', async () => {
     const slow = deferred<string[]>(), started: string[] = [];
     const run = (id: string, result: string[]) => async () => { started.push(id); return result; };
@@ -106,7 +140,7 @@ describe('session scheduler', () => {
   });
   it('treats an exact deadline settlement as timeout', async () => {
     const hold = deferred<string>(); const r = boundedOperation(() => hold.promise, 10, undefined, 0); const assertion = expect(r).rejects.toBeInstanceOf(TimeoutError);
-    await flush(); vi.setSystemTime(10); hold.resolve('late'); await assertion; expect(vi.getTimerCount()).toBe(0);
+    await flush(); vi.spyOn(performance, 'now').mockReturnValue(performance.now() + 10); hold.resolve('late'); await assertion; expect(vi.getTimerCount()).toBe(0);
   });
   it('rejects duplicate ids, tiers and invalid timers before dispatch', async () => {
     const runtime = new SharedRuntime({ maxConcurrent: 1, perProvider: 1 }); const s = source('a', async () => []);

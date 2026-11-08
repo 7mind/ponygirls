@@ -13,7 +13,7 @@ export function boundedOperation<T>(run: (signal: AbortSignal) => Promise<T>, ti
   if (signal?.aborted) return Promise.reject(signal.reason instanceof Error ? signal.reason : new CancelledError());
   return new Promise<T>((resolve, reject) => {
     const controller = new AbortController();
-    const deadline = Date.now() + timeoutMs;
+    const deadline = performance.now() + timeoutMs;
     let done = false;
     let failure: Error | undefined;
     let grace: ReturnType<typeof setTimeout> | undefined;
@@ -40,10 +40,10 @@ export function boundedOperation<T>(run: (signal: AbortSignal) => Promise<T>, ti
       if (controller.signal.aborted) throw controller.signal.reason;
       return run(controller.signal);
     }).then(value => {
-      if (!failure && Date.now() >= deadline) stop(new TimeoutError());
+      if (!failure && performance.now() >= deadline) stop(new TimeoutError());
       finish(value);
     }, error => {
-      if (!failure && Date.now() >= deadline) stop(new TimeoutError());
+      if (!failure && performance.now() >= deadline) stop(new TimeoutError());
       // A promise can reject with undefined: preserve rejection rather than resolve it.
       finish(undefined, error ?? new Error('Operation failed'));
     });
@@ -78,7 +78,7 @@ export class SharedRuntime {
         start: () => {
           signal.removeEventListener('abort', entry.cancel);
           if (signal.aborted) { reject(signal.reason ?? new CancelledError()); return; }
-          if (Date.now() >= deadline) { reject(new TimeoutError()); return; }
+          if (performance.now() >= deadline) { reject(new TimeoutError()); return; }
           this.active++; this.providers.set(provider, (this.providers.get(provider) ?? 0) + 1);
           let physical: Promise<T>;
           try { physical = Promise.resolve(run(signal)); } catch (error) { physical = Promise.reject(error); }
@@ -93,12 +93,12 @@ export class SharedRuntime {
   }
   operation<T>(provider: string, timeoutMs: number, signal: AbortSignal | undefined, settlementGraceMs: number, run: (signal: AbortSignal) => Promise<T>): Promise<T> {
     if (typeof provider !== 'string' || !provider.trim()) throw new Error('Invalid provider');
-    const deadline = Date.now() + timeoutMs;
+    const deadline = performance.now() + timeoutMs;
     return boundedOperation(inner => this.pooled(provider, inner, deadline, run), timeoutMs, signal, settlementGraceMs);
   }
   async search<T>(sources: EngineSource<T>[], request: EngineSearchRequest): Promise<EngineSearchResult<T>> {
     validateTimeout(request.overallTimeoutMs);
-    if (!['first', 'targeted', 'all'].includes(request.mode) || !Number.isInteger(request.numResults) || request.numResults < 1 || !Number.isInteger(request.targetUsableSources) || request.targetUsableSources < 1) throw new Error('Invalid search request');
+    if (typeof request.query !== 'string' || !request.query.trim() || request.query.length > 2000 || !['first', 'targeted', 'all'].includes(request.mode) || !Number.isInteger(request.numResults) || request.numResults < 1 || request.numResults > 20 || !Number.isInteger(request.targetUsableSources) || request.targetUsableSources < 1) throw new Error('Invalid search request');
     const ids = new Set<string>();
     for (const source of sources) {
       if (typeof source.id !== 'string' || !source.id.trim() || ids.has(source.id)) throw new Error('Invalid or duplicate source id');
@@ -107,7 +107,7 @@ export class SharedRuntime {
       validateTimeout(source.timeoutMs); validateTimeout(source.settlementGraceMs, true);
     }
     const controller = new AbortController();
-    const deadline = Date.now() + request.overallTimeoutMs;
+    const deadline = performance.now() + request.overallTimeoutMs;
     let timedOut = false, cancelled = false;
     class OverallDeadline extends Error {}
     class CallerCancelled extends Error {}
@@ -130,7 +130,7 @@ export class SharedRuntime {
         resolve({ lists: lists.filter((x): x is RankedList<T> => x !== undefined), stats: stats as SourceStats[], cancelled, timedOut });
       };
       const topUp = () => {
-        if (Date.now() >= deadline) overall();
+        if (performance.now() >= deadline) overall();
         while (!controller.signal.aborted && next < main.length && usable + activeMain < target) launch(main[next++]);
         finish();
       };
@@ -139,9 +139,9 @@ export class SharedRuntime {
         pending++; if (source.tier === 'main') activeMain++;
         let dispatched = false;
         this.operation(source.provider, source.timeoutMs, controller.signal, source.settlementGraceMs, signal => {
-          dispatched = true; return source.run(request.query, Math.min(request.numResults, source.maxResults), signal);
+          dispatched = true; return source.run(request.query, source.maxResults, signal);
         }).then(results => {
-          if (Date.now() >= deadline) overall();
+          if (performance.now() >= deadline) overall();
           if (controller.signal.aborted) {
             stats[index] = { source: source.id, tier: source.tier, status: dispatched ? (cancelled ? 'cancelled' : 'timeout') : 'not-started', count: 0, reason: cancelled ? 'caller-cancelled' : 'overall-deadline' }; return;
           }

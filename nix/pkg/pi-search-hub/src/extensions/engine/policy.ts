@@ -46,7 +46,7 @@ export function resolveProfile(base?: SearchProfileConfig, override?: SearchProf
     if (p.ranking !== undefined) keys(p.ranking, Object.keys(DEFAULT_RANKING), 'ranking');
   }
   const candidates = { ...DEFAULT_CANDIDATES, ...base?.candidates, ...override?.candidates };
-  positive(candidates.multiplier, 'multiplier'); integer(candidates.minimum, 'minimum'); integer(candidates.maximum, 'maximum');
+  positive(candidates.multiplier, 'multiplier'); integer(candidates.minimum, 'minimum', 1, 50); integer(candidates.maximum, 'maximum', 1, 50);
   if (candidates.minimum > candidates.maximum) throw new Error('Invalid candidate range');
   const ranking = { ...DEFAULT_RANKING, ...base?.ranking, ...override?.ranking };
   positive(ranking.rankConstant, 'rankConstant'); positive(ranking.titleWeight, 'titleWeight', true); positive(ranking.bodyWeight, 'bodyWeight', true);

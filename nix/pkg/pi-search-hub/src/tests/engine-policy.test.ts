@@ -7,6 +7,7 @@ describe('engine policy', () => {
     expect(resolveConcurrency()).toEqual(DEFAULT_CONCURRENCY);
     expect(resolveProfile()).toEqual({ mode: 'targeted', targetUsableSources: 3, candidates: DEFAULT_CANDIDATES, ranking: DEFAULT_RANKING, sources: {}, alwaysInclude: {} });
     const p = resolveProfile(); p.candidates.minimum = 1; expect(resolveProfile().candidates.minimum).toBe(10);
+    expect(resolveProfile({ candidates: { minimum: 1, maximum: 50 } }).candidates).toMatchObject({ minimum: 1, maximum: 50 });
   });
   it('merges nested source fields and allows long platform-safe deadlines', () => {
     const base = { sources: { a: { boost: 2, timeoutMs: 90000, redundantWith: ['b'] } }, alwaysInclude: { x: { enabled: true, maxResults: 3 } } };
@@ -16,6 +17,9 @@ describe('engine policy', () => {
     expect(resolveTimeouts({ sourceMs: 2147483647, nativeGraceMs: 0 }).sourceMs).toBe(2147483647);
   });
   it.each([0, -1, 1.5, NaN, Infinity, 2147483648])('rejects invalid deadlines %s', sourceMs => expect(() => resolveTimeouts({ sourceMs })).toThrow());
+  it.each([{ minimum: 51, maximum: 100 }, { maximum: 100 }])('rejects unsupported candidate budgets %j', candidates => {
+    expect(() => resolveProfile({ candidates })).toThrow();
+  });
   it('rejects unknown keys, modes, caps, weights, lists and invalid policies', () => {
     for (const bad of [{ typo: 1 }, { mode: 'fast' }, { sources: { a: { boost: 0 } } }, { sources: { a: { maxResults: 51 } } }, { sources: { a: { redundantWith: [2] } } }, { ranking: { titleWeight: NaN } }, { candidates: { minimum: 12, maximum: 2 } }, { alwaysInclude: { a: { typo: true } } }]) expect(() => resolveProfile(bad as never)).toThrow();
     expect(() => resolveConcurrency({ perProvider: 0 })).toThrow();
