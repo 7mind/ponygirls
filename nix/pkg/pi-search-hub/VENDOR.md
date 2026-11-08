@@ -67,6 +67,109 @@ and cancellation. SDK token-cost estimates do not include separate search-tool
 fees. Query testing from the command pane is not a transcript tool execution and
 does not add tool-result usage to session totals.
 
+## Paper research
+
+`paper_research` is independent of `web_search` and `/websearch`. It supports:
+
+```json
+{"action":"search","query":"retrieval augmented generation evaluation","mode":"all","numResults":10}
+{"action":"read","id":"arxiv:1706.03762","query":"How does scaled dot-product attention work?"}
+{"action":"related","id":"arxiv:1706.03762","intent":"efficient attention","mode":"citers"}
+```
+
+| Source | Default tier | Search | Read | Related |
+|---|---|---|---|---|
+| Firecrawl Research Index | Main | Dedicated paper abstracts index | Metadata / question-relevant passages | Similar, citers, references |
+| Exa `publication` | Main | Scholarly publication retrieval | — | — |
+| SearXNG `science` | Fallback, always included | Instance-configured science engines | — | — |
+| Direct arXiv | Fallback, opt-in | Atom API preprints | Metadata only | — |
+
+Existing enabled Firecrawl/Exa/SearXNG backend settings and credential references
+are reused. Explicit `papers.sources.NAME.enabled` overrides participation without
+changing web search. Direct arXiv requires explicit opt-in. No inference from
+native web-search models is used as bibliographic metadata. Available SearXNG
+science engines and JSON access depend on the configured instance; it can return
+non-paper science pages. A snippet remains a snippet, not a fabricated abstract.
+
+Configure the independent policy in the existing `search.json`:
+
+```json
+{
+  "papers": {
+    "mode": "targeted",
+    "rerank": "lexical",
+    "sources": {
+      "firecrawl": { "enabled": true, "tier": "main", "timeoutMs": 15000, "maxResults": 20, "boost": 1 },
+      "exa": { "tier": "main", "boost": 1 },
+      "searxng": { "tier": "fallback", "timeoutMs": 8000 },
+      "arxiv": { "enabled": true, "tier": "fallback", "timeoutMs": 15000 }
+    }
+  }
+}
+```
+
+Project policy overlays global policy, merging per-source fields. `targeted`
+queries up to two nonempty main lists with failed/empty top-ups; `first` stops at
+the first nonempty main list; `all` queries every main source. Fallback sources
+run alongside every automatic mode and never consume main slots. Each source
+gets a complete bounded candidate list (default twice the requested count,
+minimum 10, maximum 40), not a fraction of the final page. Final truncation occurs
+only after union/deduplication/ranking. Optional `source` selects just that enabled
+source. Search-call `mode` and `rerank` override paper defaults only.
+
+Ranking preserves normalized DOI/arXiv/PubMed identifiers, explicit crosswalks,
+original distinct-document ranks and all retrieval paths. It does not merge
+unrelated works merely because titles match. arXiv versions share work identity;
+this is not a claim that versions or preprint/published text are identical.
+RRF uses `sum(weight / (60 + rank))`, one vote per source/work. A SearXNG hit on a
+work found by another source retains provenance but contributes no extra term:
+its upstream engine lineage may overlap. This conservative rule is not a claim
+that the remaining indexes are statistically independent.
+
+Source `boost` is an explicit positive multiplier (maximum 4, default 1).
+`rerank: "lexical"` multiplies the fused score by
+`1 + 0.2 * title-token-coverage + 0.1 * abstract-or-snippet-token-coverage`.
+`"rrf"` disables that text multiplier. Exact normalized identifier matches get
+priority. Each returned paper includes its RRF contributions, multiplier and
+final score. No citation-popularity, venue-prestige or unverified peer-review
+boost is applied. These are transparent, uncalibrated heuristics; deterministic
+tests do not establish semantic improvement over the web-search baseline.
+
+Read defaults to Firecrawl; `source: "arxiv"` supports metadata inspection only,
+not passage questions. Related-paper expansion currently requires Firecrawl and
+uses its structural mode/intent ranking before the local ranking step. No silent
+fallback to web snippets is presented as a successful passage read. A successful
+empty search is distinguished from all-source failure; partial failures and
+available provider notices remain visible. Metadata dates retain `dateKind`
+(`created` for Firecrawl, `published` where supplied), rather than implying an
+index creation timestamp is publication time. Structured results and model text
+are bounded and disclose truncation. Search results are untrusted source data,
+not instructions, verified facts or proof of peer review.
+
+Direct arXiv obeys single-host serialization and three-second request spacing.
+Operators must also coordinate independent clients on other machines; its API
+limits apply across all machines under their control. A retained lock after a
+crash blocks new access rather than guessing recovery. No PDF redistribution or
+full-text scraping is added.
+
+### Additional source candidates
+
+- **OpenAlex:** broad works/author/DOI metadata and works search; a useful next
+  independent adapter (https://docs.openalex.org/how-to-use-the-api/api-overview).
+- **Semantic Scholar:** paper search and citation/recommendation graph; access,
+  fields and rate policy need a dedicated adapter acceptance check
+  (https://api.semanticscholar.org/api-docs/).
+- **Crossref:** DOI/bibliographic lookup, publisher metadata and update information;
+  better justified first as enrichment than as a highly weighted topical source
+  (https://www.crossref.org/documentation/retrieve-metadata/rest-api/).
+- **PubMed:** direct biomedical retrieval would complement arXiv's domain coverage.
+- **Serper Scholar:** not implemented without a verified current endpoint contract;
+  ordinary Google results are not relabelled as a scholarly index.
+
+These candidates are not advertised as implemented adapters. A scholarly
+held-out relevance corpus is still needed to calibrate boosts and measure
+candidate recall separately from final ranking.
+
 ## `/websearch`
 
 The pane uses the shared `@ponygirls/pi-ui` layout/toggle components. It shows

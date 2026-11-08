@@ -54,6 +54,7 @@ import { getKeySource } from "./credentials.js";
 import { fetchWithFallback, DEFAULT_READER_FALLBACK } from "./readers/dispatch.js";
 import { config, refreshConfig, getActiveBackends, latencyMap } from "./config.js";
 import { BACKEND_DEFS } from "./backends/registry.js";
+import { registerPaperResearch } from "./papers/tool.js";
 
 
 
@@ -71,6 +72,7 @@ async function setupInput(ctx: ExtensionContext, label: string, options: InputOp
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
+	registerPaperResearch(pi);
 	let service = new SearchService();
 	let pane = new CustomViewToggle();
 	// -----------------------------------------------------------------------

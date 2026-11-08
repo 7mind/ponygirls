@@ -67,12 +67,15 @@ export function loadConfig(cwd: string): SearchConfig {
 			const globalPapers = config.papers;
 			config = { ...config, ...project };
 			if (globalPapers && project.papers && typeof project.papers === "object" && !Array.isArray(project.papers)) {
-				config.papers = { ...globalPapers, ...project.papers,
-					sources: { ...globalPapers.sources, ...project.papers.sources } };
-				for (const name of PAPER_PROVIDERS) {
-					const source = project.papers.sources?.[name];
-					if (source && typeof source === "object" && !Array.isArray(source) && config.papers && config.papers.sources) {
-						config.papers.sources[name] = { ...globalPapers.sources?.[name], ...source };
+				config.papers = { ...globalPapers, ...project.papers };
+				const sources = project.papers.sources;
+				if (sources && typeof sources === "object" && !Array.isArray(sources)) {
+					config.papers.sources = { ...globalPapers.sources, ...sources };
+					for (const name of PAPER_PROVIDERS) {
+						const source = sources[name];
+						if (source && typeof source === "object" && !Array.isArray(source)) {
+							config.papers.sources[name] = { ...globalPapers.sources?.[name], ...source };
+						}
 					}
 				}
 			}
