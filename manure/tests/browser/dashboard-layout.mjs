@@ -17,7 +17,11 @@ const artifacts = [0, 1].map(index => ({ artifactId: String(index).repeat(32), n
 const commands = [];
 const server = createServer(async (req, res) => {
   try {
-    if (req.url === '/api/current') {
+    if (req.method === 'PUT') {
+      let size = 0; for await (const chunk of req) size += chunk.length;
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify({ path: 'clipboard.txt', offset: '0', length: size, receivedBytes: String(size) }));
+    } else if (req.url === '/api/current') {
       let raw = ''; for await (const chunk of req) raw += chunk;
       const { requestId, command } = JSON.parse(raw); commands.push(command);
       let result;
@@ -27,6 +31,9 @@ const server = createServer(async (req, res) => {
         maxListLimit: 100, maxRequestBodyBytes: '1048576', maxFileBytes: '99999999999999', maxArtifactBytes: '99999999999999',
         maxFilesPerArtifact: 2000000, maxTtlSeconds: 86400, cataloguePolicy: 'layout-fixture' } } };
       else if (command.ListArtifacts) result = { Catalogue: { page: { artifacts, nextCursor: null } } };
+      else if (command.InitUpload) result = { UploadInitialized: { artifactId: 'a'.repeat(32), chunkBytes: 1048576,
+        contentUrl: 'http://example.invalid/', externalPassword: 'A'.repeat(43) } };
+      else if (command.FinishUpload) result = { UploadFinished: { artifactId: 'a'.repeat(32), state: 'Ready', contentUrl: 'http://example.invalid/' } };
       else if (command.GetArtifact) result = { ArtifactInfo: { artifact: artifacts[0] } };
       else if (command.GetManifest) result = { ArtifactManifest: { manifest: { artifactId: artifacts[0].artifactId, state: 'Ready',
         files: [{ File: { path: long + '/file.txt', size: '9876543210123', sha256: 'a'.repeat(64) } }] } } };
@@ -45,6 +52,36 @@ const browser = await chromium.launch({ executablePath: process.env.MANURE_CHROM
 const out = process.env.MANURE_UX_ARTIFACTS;
 if (out) await mkdir(out, { recursive: true });
 try {
+  // Specified Behavioral-Active / Blackbox-Group: clipboard boundary is controlled.
+  const context = await browser.newContext();
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(() => {
+      window.copied = [];
+      Object.defineProperty(navigator, 'clipboard', { value: { writeText: async value => {
+        if (window.denyClipboard) throw new Error('controlled denial');
+        window.copied.push(value);
+      } } });
+    });
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await page.locator('#artifact-list > tr').first().waitFor();
+    await page.locator('#upload-external').check();
+    await page.locator('#upload-files').setInputFiles({ name: 'clipboard.txt', mimeType: 'text/plain', buffer: Buffer.from('copy me') });
+    await page.locator('#upload-submit').click();
+    await page.waitForFunction(() => document.querySelector('#upload-list').textContent.includes('ready'));
+    const copy = page.locator('#upload-list').getByRole('button', { name: 'Copy password', exact: true });
+    assert.equal(await copy.count(), 1, 'issued upload password has an explicit Copy button');
+    await copy.click();
+    await page.waitForFunction(() => document.querySelector('#upload-status').textContent.includes('Password copied'));
+    assert.equal(await page.evaluate(() => window.copied.length === 1 && window.copied[0] === 'A'.repeat(43)), true, 'copies password, not URL');
+    await page.evaluate(() => { window.denyClipboard = true; });
+    await copy.click();
+    await page.waitForFunction(() => document.querySelector('#upload-status').textContent.includes('denied'));
+    await page.locator('#upload-list').getByRole('button', { name: 'Dismiss password', exact: true }).click();
+    assert.equal(await copy.count(), 0);
+    assert.equal(await page.locator('#upload-list code').count(), 0);
+    console.log('ok - upload password copying, clipboard denial and dismissal');
+  } finally { await context.close(); }
   for (const width of [1440, 1351, 1350, 1024, 801, 800, 571, 570, 390, 320]) for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme });
     const page = await context.newPage();

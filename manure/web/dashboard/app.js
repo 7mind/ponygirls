@@ -902,6 +902,8 @@ function expressionInput(input, list, change, compositionChange) {
       if (item.password !== null) {
         row.appendChild(element("p", "External password — shown once; save securely before dismissing:", null));
         row.appendChild(element("code", item.password, "password-value"));
+        var copyPassword = element("button", "Copy password", null); copyPassword.type = "button";
+        copyPassword.addEventListener("click", function () { copy(item.password, "upload-status", "Password copied. Dismiss the reveal when finished."); }); row.appendChild(copyPassword);
         var dismiss = element("button", "Dismiss password", null); dismiss.type = "button";
         dismiss.addEventListener("click", function () { item.password = null; renderUploads(); }); row.appendChild(dismiss);
       }
