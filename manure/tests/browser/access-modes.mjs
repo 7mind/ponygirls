@@ -236,6 +236,11 @@ await check("all six access transitions preserve metadata and enforce real acces
       assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest(),{Cookie:unlocked.cookie})).status, 200);
       assert.equal(await page.locator("#rotate-button").isVisible(), true);
       await page.locator("#rotate-dismiss-button").click();
+      await hiddenPassword(page);
+      await page.getByRole("button", { name: "Copy current password", exact: true }).click();
+      assert.equal(await password(page), currentPassword, "retrieval returns the existing password without rotation");
+      assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest(),{Cookie:unlocked.cookie})).status, 200, "retrieval must not revoke an existing grant");
+      await page.locator("#rotate-dismiss-button").click();
     } else assert.equal(await page.locator("#rotate-button").isVisible(), false);
     await hiddenPassword(page);
     await page.locator("#detail-back-button").click();

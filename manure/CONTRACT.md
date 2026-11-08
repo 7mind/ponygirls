@@ -14,6 +14,20 @@
 > This amendment is NOT a live activation/migration/rotation authorization or
 > a claim that required target/native/browser/recovery acceptance has passed.
 
+> **2026-11-08 password retrieval amendment (Q38):** New external passwords
+> are stored recoverably in a dedicated PostgreSQL table as well as hashed for
+> unlock verification. Every registered user may explicitly retrieve the current
+> password through management `GetExternalPassword`; the result is
+> `ExternalPasswordRetrieved { externalPassword: opt[str] }`. A historical
+> hash-only password returns null until a user explicitly rotates it. Retrieval
+> never rotates passwords, revokes grants or changes activity. Cookie requests
+> require the exact management Origin. Ordinary listings, metadata, manifests,
+> search, payload sidecars, logs and errors remain secret-free. Clearing external
+> access or deleting the artifact removes its recoverable password. The secret
+> table and backups require credential-grade protection; no separate encryption
+> key is configured. This explicitly supersedes hash-only storage, one-time-only
+> disclosure and rotate-only recovery below, not any other authorization rule.
+
 # manure — file & directory hosting (v0.2.0, amended)
 
 Original implementation freeze, with the explicit §0.1 amendment below.
@@ -908,12 +922,15 @@ principal/token LABELS, artifact id, byte counts only).
 
 ### 7.5 Password/hash non-leak rule (normative)
 
-Password PLAINTEXT appears ONLY in the response that generated it
-(init-with-external, rotate, patch-to-external) and in the unlock POST
-body. It NEVER appears in listings, info, manifest, publish, errors, or
-logs. Hashes appear only in authorized manifest reads (API `files`,
-content `/__manure/manifest`) and server-side. Retry-after-loss =
-`rotate` (any authenticated user). Tests assert the negative.
+Password PLAINTEXT appears ONLY in generating responses (init-with-external,
+rotate, patch-to-external), the explicit authenticated `GetExternalPassword`
+response and the unlock POST body. It NEVER appears in listings, info,
+manifest, publish, search, payload sidecars, errors or logs. The recoverable
+server-side table is secret-bearing; artifact metadata remains secret-free.
+Retrieval returns null for historical hash-only passwords, which require an
+explicit rotation before retrieval is possible. File-content hashes appear in
+authorized manifests; external password hashes remain server-side. Tests assert
+these boundaries.
 
 ## 8. Upload protocol (mandatory chunked, bounded, resumable)
 

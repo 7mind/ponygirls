@@ -91,8 +91,12 @@ server has been upgraded; verify the deployed instance when that matters.
 - `internal`: authenticated reads only (API bearer or grant handoff).
 - `external`: password-protected link. The generating call
   (`upload --access external`, `rotate-password`, patch-to-external)
-  returns `external_password` exactly once; it never appears in listings,
-  info, manifests, errors, or logs. Lost it? Run `rotate-password`.
+  returns `external_password`. Every registered user can retrieve the current
+  password with the dashboard's **Copy current password** or management
+  `GetExternalPassword`. It never appears in listings, info, manifests, search,
+  payload sidecars, errors or logs. Historical hash-only passwords require one
+  explicit `rotate-password` before retrieval is available. Retrieval itself
+  does not rotate or revoke grants. Passwords and database backups are secret-bearing.
 - `public`: anonymous reads allowed.
 
 ## TTL

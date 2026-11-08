@@ -77,9 +77,9 @@ aria-describedby="token-note">
 <label title="Anyone with the link can read"><input id="upload-public" type="radio" name="upload-access" value="public"><span>Public</span></label>
 </fieldset>
 <button id="upload-submit" type="submit" class="primary" title="Publish staged files or retry the same uploads" disabled>Upload</button>
-<button id="upload-clear" type="button" title="Dismiss staged files, outcomes and one-time passwords">Dismiss</button>
+<button id="upload-clear" type="button" title="Dismiss staged files, outcomes and displayed passwords">Dismiss</button>
 </form>
-<p id="upload-access-help" role="status" hidden>External passwords are shown once after upload. Save them before dismissing; links never include passwords.</p>
+<p id="upload-access-help" role="status" hidden>External passwords appear after upload and remain retrievable by signed-in users. Share them securely; links never include passwords.</p>
 <p id="upload-status" role="status" aria-live="polite"></p>
 <ul id="upload-list" aria-label="Staged uploads"></ul>
 </section>
@@ -141,8 +141,8 @@ aria-describedby="token-note">
 <div class="detail-actions"><button type="button" id="copy-id-button">Copy ID</button><button type="button" id="copy-link-button">Copy content link</button></div>
 </div>
 <p id="detail-status" class="detail-status" role="status"></p>
-<div id="rotate-output" class="password-reveal" role="region" aria-label="New external password" hidden>
-<div><p class="eyebrow">SHOWN ONCE</p><h2>Save your new external password</h2><p>Copy it now and share it securely. Dismissing this panel clears the password; it cannot be retrieved again.</p></div>
+<div id="rotate-output" class="password-reveal" role="region" aria-label="External password" hidden>
+<div><p class="eyebrow">KEEP PRIVATE</p><h2>External password</h2><p>Share it securely. Dismissing this panel clears it from this page; signed-in users can retrieve the current password again.</p></div>
 <p class="password-value"><code id="rotate-password"></code></p>
 <div class="reveal-actions"><button type="button" id="rotate-copy-button">Copy password</button><button type="button" id="rotate-dismiss-button" class="primary">Dismiss password</button></div>
 </div>
@@ -167,6 +167,7 @@ aria-describedby="token-note">
 <button type="button" id="access-refresh-button" hidden>Reload access status</button>
 </form>
 <p>All configured users can change access for ready artifacts. Changes revoke existing content grants. Rotating an external password also replaces the current password.</p>
+<button type="button" id="get-password-button" hidden>Copy current password</button>
 <button type="button" id="rotate-button" hidden>Rotate external password</button></section>
 <section class="detail-panel action-panel danger-panel"><h2>Delete artifact</h2><p>Permanently remove this artifact and its content. This action cannot be undone.</p><button type="button" id="delete-button" class="danger">Delete artifact</button></section>
 </aside>

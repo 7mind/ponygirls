@@ -150,6 +150,8 @@ export const access = (id,visibility) => [new p.Command_PatchArtifact(id,new p.A
     const value=local(r.artifact);if(r.externalPassword !== null){value.external_password=r.externalPassword;}return value;
   }];
 export const rotate = id => [new p.Command_RotateExternalPassword(id),p.Result_PasswordRotated,r=>local(r)];
+export const externalPassword = id => [new p.Command_GetExternalPassword(id),p.Result_ExternalPasswordRetrieved,
+  r=>({external_password:r.externalPassword === undefined ? null : r.externalPassword})];
 
 export const capabilities = () => [new p.Command_GetCapabilities(),p.Result_CapabilityInfo,r=>{
   const value=local(r.capabilities);

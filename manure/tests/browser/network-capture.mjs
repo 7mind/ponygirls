@@ -63,7 +63,7 @@ export function captureNetwork(cdp, ctx) {
       try {
         const parsed = JSON.parse(req.postData || "null");
         const name = parsed?.command && Object.keys(parsed.command).length === 1 ? Object.keys(parsed.command)[0] : null;
-        if (["Version","GetCapabilities","Login","Logout","Whoami","ListArtifacts","InitUpload","GetArtifact","PatchArtifact","DeleteArtifact","RotateExternalPassword","GetManifest","GetUploadStatus","FinishUpload","CreateGrant","Search","Unlock","RedeemGrant"].includes(name)) entry.command = name;
+        if (["Version","GetCapabilities","Login","Logout","Whoami","ListArtifacts","InitUpload","GetArtifact","PatchArtifact","DeleteArtifact","RotateExternalPassword","GetExternalPassword","GetManifest","GetUploadStatus","FinishUpload","CreateGrant","Search","Unlock","RedeemGrant"].includes(name)) entry.command = name;
       } catch (_) { /* Non-JSON forms carry no command label. */ }
       delete entry.blockedCookieNames;
       // CDP flags identify redirect/cache hops without ExtraInfo. Queues

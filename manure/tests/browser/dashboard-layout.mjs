@@ -11,10 +11,13 @@ const require = createRequire(path.join(process.env.MANURE_PLAYWRIGHT_CORE_PATH,
 const { chromium } = require('playwright-core');
 const long = 'long-unbroken-metadata-'.repeat(18);
 const artifacts = [0, 1].map(index => ({ artifactId: String(index).repeat(32), name: long + index,
-  kind: 'Directory', visibility: 'Public', state: 'Ready', createdByUser: long,
+  kind: 'Directory', visibility: index === 0 ? 'External' : 'Public', state: 'Ready', createdByUser: long,
   createdAt: '2026-01-01T00:00:00Z', expiresAt: null, totalBytes: '9876543210123', fileCount: 1234567,
   contentUrl: 'http://' + String(index).repeat(32) + '.example.invalid/' }));
 const commands = [];
+let passwordMode = 'current';
+let passwordRequested;
+let releasePassword;
 const server = createServer(async (req, res) => {
   try {
     if (req.method === 'PUT') {
@@ -34,6 +37,13 @@ const server = createServer(async (req, res) => {
       else if (command.InitUpload) result = { UploadInitialized: { artifactId: 'a'.repeat(32), chunkBytes: 1048576,
         contentUrl: 'http://example.invalid/', externalPassword: 'A'.repeat(43) } };
       else if (command.FinishUpload) result = { UploadFinished: { artifactId: 'a'.repeat(32), state: 'Ready', contentUrl: 'http://example.invalid/' } };
+      else if (command.GetExternalPassword) {
+        if (passwordMode === 'held') {
+          passwordRequested();
+          await new Promise(resolve => { releasePassword = resolve; });
+        }
+        result = { ExternalPasswordRetrieved: { externalPassword: passwordMode === 'legacy' ? null : 'B'.repeat(42) + 'A' } };
+      }
       else if (command.GetArtifact) result = { ArtifactInfo: { artifact: artifacts[0] } };
       else if (command.GetManifest) result = { ArtifactManifest: { manifest: { artifactId: artifacts[0].artifactId, state: 'Ready',
         files: [{ File: { path: long + '/file.txt', size: '9876543210123', sha256: 'a'.repeat(64) } }] } } };
@@ -81,6 +91,34 @@ try {
     assert.equal(await copy.count(), 0);
     assert.equal(await page.locator('#upload-list code').count(), 0);
     console.log('ok - upload password copying, clipboard denial and dismissal');
+    await page.evaluate(() => { window.denyClipboard = false; });
+    await page.locator('#artifact-list [data-action=details]').first().click();
+    await page.locator('#file-list tr').waitFor();
+    const currentPassword = page.getByRole('button', { name: 'Copy current password', exact: true });
+    assert.equal(await currentPassword.count(), 1, 'external artifact exposes authenticated current-password copy');
+    await currentPassword.click();
+    await page.waitForFunction(() => window.copied.length === 2);
+    assert.equal(await page.evaluate(() => window.copied[1] === 'B'.repeat(42) + 'A'), true);
+    assert.equal(commands.some(command => command.RotateExternalPassword), false, 'copy must not rotate');
+    await page.locator('#rotate-dismiss-button').click();
+    assert.equal(await page.locator('#rotate-password').textContent(), '');
+    passwordMode = 'legacy';
+    await currentPassword.click();
+    await page.waitForFunction(() => !document.querySelector('#get-password-button').disabled);
+    assert.match(await page.locator('#detail-status').textContent(), /Rotate once/, 'legacy password requires explicit rotation');
+    assert.equal(await page.locator('#rotate-output').isVisible(), false, 'legacy password is not invented');
+    passwordMode = 'held';
+    const requested = new Promise(resolve => { passwordRequested = resolve; });
+    await Promise.all([requested, currentPassword.click()]);
+    await page.locator('#detail-back-button').click();
+    const delivered = page.waitForResponse(response => response.url().endsWith('/api/current') && response.request().postDataJSON().command.GetExternalPassword);
+    releasePassword();
+    await (await delivered).finished();
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.waitForFunction(() => !document.querySelector('#dashboard-section').hidden);
+    assert.equal(await page.locator('#rotate-password').textContent(), '', 'stale response cannot reveal another detail password');
+    assert.equal(await page.evaluate(() => window.copied.length), 2, 'stale response cannot copy password');
+    console.log('ok - current password copy without rotation, legacy recovery and stale response fence');
   } finally { await context.close(); }
   for (const width of [1440, 1351, 1350, 1024, 801, 800, 571, 570, 390, 320]) for (const colorScheme of ['light', 'dark']) {
     const context = await browser.newContext({ viewport: { width, height: 1000 }, colorScheme });

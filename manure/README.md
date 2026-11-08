@@ -27,7 +27,8 @@ summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
   deletes anything (only in-progress-upload mutation is owner-checked).
   No per-artifact ACLs, no versioning (re-upload = new artifact).
 - `internal` (authed reads) / `external` (password link, password
-  returned **once**, hash stored; lost it → `rotate-password`) /
+  returned at issuance and retrievable by every registered user; older
+  hash-only passwords need one explicit rotation first) /
   `public` (anonymous reads); optional TTL on upload.
 
 ## Convenient file viewers
@@ -291,7 +292,7 @@ stage files; **Upload** explicitly publishes each file as a separate artifact.
 The compact upload row contains the file picker, three adjacent access choices,
 and Upload/Dismiss buttons. Choose access before clicking Upload: **Internal**
 (default) requires authenticated readers, including remote agents; **External**
-requires its once-shown password; **Public** permits anonymous reads by anyone
+requires its password; **Public** permits anonymous reads by anyone
 who can reach the link. The access choice applies to files that have not started
 initialization; retrying an existing
 artifact preserves its original access. Directories and cross-session resume
@@ -309,12 +310,19 @@ request correlation is not write deduplication and a reservation may exist.
 Ready artifacts have an **Access mode** selector in details. Any configured
 user can change Internal, External, or Public access; Public changes require
 confirmation. Changes revoke existing content grants. Switching to External
-generates a password shown once. Failed or ambiguous changes refresh metadata
-without retrying the mutation; rotate the external password if it was lost.
+generates a password. Failed or ambiguous changes refresh metadata
+without retrying the mutation; use **Copy current password** to retrieve it.
 Incomplete uploads cannot change access in the dashboard.
 
-External passwords are shown once after switching to External or rotation. Dismissal, navigation and
-logout clear the reveal. Login input is cleared after submission; the session
+External artifacts offer **Copy current password**, which explicitly retrieves
+and copies the password without rotating it or revoking grants. Clipboard denial
+leaves a transient reveal with a manual Copy button. Older hash-only artifacts
+require one explicit rotation first; the dashboard never rotates automatically.
+All registered users can retrieve these passwords. The separate PostgreSQL
+secret table and its backups require credential-grade protection; passwords
+are stored recoverably without a separate encryption key, never in artifact
+metadata, search or payload sidecars. Dismissal, navigation and logout clear
+the reveal. Login input is cleared after submission; the session
 uses the existing host-only HttpOnly cookie. Tokens, passwords and grants
 never enter URLs or web storage. A connection failure is distinguished from
 an expired session, with an explicit recovery action.

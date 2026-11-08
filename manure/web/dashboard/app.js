@@ -82,6 +82,7 @@ function expressionInput(input, list, change, compositionChange) {
   var listGeneration = 0;
   var detailGeneration = 0;
   var revealGeneration = 0;
+  var passwordRead = null;
   var openGeneration = 0;
   var pendingPage = null;
   var readBusy = false;
@@ -576,16 +577,19 @@ function expressionInput(input, list, change, compositionChange) {
   }
   function updateDetailActions() {
     var info = currentDetailInfo;
-    var busy = currentDetailId !== null && (accessMutations.has(currentDetailId) || deleting.has(currentDetailId));
+    var busy = currentDetailId !== null && (accessMutations.has(currentDetailId) || deleting.has(currentDetailId) ||
+      passwordRead !== null && passwordRead.id === currentDetailId);
     var ready = info !== null && info.state === "ready";
     var selected = $("access-mode").value;
     $("access-mode").disabled = info === null || !ready || busy;
     $("access-save-button").disabled = info === null || !ready || busy || selected === info.visibility;
     $("rotate-button").hidden = info === null || info.visibility !== "external";
     $("rotate-button").disabled = info === null || busy;
+    $("get-password-button").hidden = info === null || info.visibility !== "external";
+    $("get-password-button").disabled = info === null || busy;
     $("delete-button").disabled = info === null || busy;
     $("open-button").disabled = info === null || !ready || busy || contentUrl(info) === null;
-    var description = selected === "internal" ? "Only authenticated users can read this artifact, through the API or an internal access grant." : selected === "external" ? "Readers need the external password. Changing to External generates a password shown once. If it is lost, rotate to issue another." : "No Manure authentication is required for anyone who can reach the content URL.";
+    var description = selected === "internal" ? "Only authenticated users can read this artifact, through the API or an internal access grant." : selected === "external" ? "Readers need the external password. All signed-in users can copy the current password. Older hash-only passwords require one rotation first." : "No Manure authentication is required for anyone who can reach the content URL.";
     setText("access-description", info !== null && !ready ? "Access changes are available after the upload is ready. " + description : description);
   }
   function renderDetail(info, id) {
@@ -738,6 +742,7 @@ function expressionInput(input, list, change, compositionChange) {
   }
   function hideRotateOutput() {
     revealGeneration++;
+    passwordRead = null;
     $("rotate-output").hidden = true;
     setText("rotate-password", "");
     $("rotate-copy-button").disabled = true;
@@ -786,7 +791,7 @@ function expressionInput(input, list, change, compositionChange) {
       return Promise.resolve();
     }
     var generation = ++detailGeneration;
-    if (epoch !== mutation.epoch) { message = "A previous access request finished. If an external password was not shown, rotate to issue another."; }
+    if (epoch !== mutation.epoch) { message = "A previous access request finished. Use Copy current password if the external password was not shown."; }
     $("access-refresh-button").hidden = true;
     setText("access-status", message + " Refreshing current metadata…");
     return apiFetch(current.artifact(id)).then(function (info) {
@@ -797,7 +802,7 @@ function expressionInput(input, list, change, compositionChange) {
       if (epoch !== sessionEpoch || generation !== detailGeneration || readRoute().id !== id) { return; }
       currentDetailInfo = null; updateDetailActions();
       $("access-refresh-button").hidden = false;
-      var failure = message + " Current metadata could not be refreshed (" + errorLabel(error) + "). Reload access status before changing access again. If External is enabled and its password was not saved, rotate to recover access.";
+      var failure = message + " Current metadata could not be refreshed (" + errorLabel(error) + "). Reload access status before changing access again. If External is enabled, use Copy current password to retrieve it.";
       setText("access-status", failure); setText("detail-status", failure);
     });
   }
@@ -814,7 +819,7 @@ function expressionInput(input, list, change, compositionChange) {
     if (id === null || info === null || info.state !== "ready" || accessMutations.has(id) || deleting.has(id) ||
         ["internal", "external", "public"].indexOf(visibility) === -1 || visibility === info.visibility) { return; }
     if (visibility === "public" && !window.confirm("Make artifact " + id + " public? No Manure authentication will be required for anyone who can reach its content URL. Existing content grants will be revoked.")) { return; }
-    var mutation = beginAccessMutation(id, "Saving access mode… If you leave before a generated password appears, rotate it to issue another.");
+    var mutation = beginAccessMutation(id, "Saving access mode… You can retrieve the generated password later with Copy current password.");
     apiFetch(current.access(id, visibility)).then(function (body) {
       var password = takeExternalPassword(body, visibility === "external");
       if (body.artifact_id !== id || body.visibility !== visibility || body.state !== "ready") { throw new Error("bad-response"); }
@@ -826,13 +831,38 @@ function expressionInput(input, list, change, compositionChange) {
       }
       password = null;
       mutation.refreshNeeded = !sameView;
-      return visibility === "external" ? showPassword ? "Access changed to External. Save the shown password; it cannot be retrieved again. If it is no longer displayed, rotate to issue another." : "Access changed to External. The password was not displayed in this view; rotate to issue another." : "Access changed to " + visibility + ". Existing content grants were revoked.";
+      return visibility === "external" ? showPassword ? "Access changed to External. Share the password securely; all signed-in users can retrieve it later." : "Access changed to External. Use Copy current password to retrieve its password." : "Access changed to " + visibility + ". Existing content grants were revoked.";
     }).catch(function (error) {
       mutation.refreshNeeded = true;
-      return "Access change could not be confirmed (" + errorLabel(error) + "). It may have been applied; no change was retried. If External is enabled and its password was not shown, rotate to issue another.";
+      return "Access change could not be confirmed (" + errorLabel(error) + "). It may have been applied; no change was retried. If External is enabled, use Copy current password to retrieve it.";
     }).then(function (message) {
       return settleAccessMutation(id, mutation, message);
     }).finally(function () { releaseAccessMutation(id, mutation); });
+  }
+  function onCopyCurrentPassword() {
+    var id = currentDetailId;
+    if (id === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external" ||
+        accessMutations.has(id) || deleting.has(id) || passwordRead !== null) { return; }
+    hideRotateOutput();
+    var request = { id: id, epoch: sessionEpoch, generation: detailGeneration, reveal: revealGeneration };
+    passwordRead = request; updateDetailActions();
+    setText("detail-status", "Loading current external password…");
+    apiFetch(current.externalPassword(id)).then(function (body) {
+      var password = takeExternalPassword(body, body.external_password !== null);
+      if (!canReveal(id, request)) { return; }
+      if (password === null) {
+        setText("detail-status", "This older password was stored as a hash only. Rotate once to make the new password available for copying.");
+        return;
+      }
+      revealPassword(password);
+      setText("detail-status", "Current password loaded. Copying does not rotate it or revoke existing grants.");
+      copy(password, "detail-status", "Password copied. Dismiss the reveal when finished.");
+      password = null;
+    }).catch(function (error) {
+      if (canReveal(id, request)) { setText("detail-status", "Current password could not be loaded (" + errorLabel(error) + "). No password was rotated."); }
+    }).finally(function () {
+      if (passwordRead === request) { passwordRead = null; updateDetailActions(); }
+    });
   }
   function onRotate() {
     if (currentDetailId === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external" ||
@@ -845,10 +875,10 @@ function expressionInput(input, list, change, compositionChange) {
       if (showPassword) { revealPassword(password); }
       password = null;
       mutation.refreshNeeded = !isMutationView(id, mutation);
-      return showPassword ? "Password rotated. Save the shown password; it cannot be retrieved again. If it is no longer displayed, rotate again to issue another." : "Password rotated, but it was not displayed in this view. Rotate again to issue another.";
+      return showPassword ? "Password rotated. Share it securely; all signed-in users can retrieve it later." : "Password rotated, but it was not displayed in this view. Use Copy current password to retrieve it.";
     }).catch(function (error) {
       mutation.refreshNeeded = true;
-      return "Rotation could not be confirmed (" + errorLabel(error) + "). The old password may have been revoked. Refresh status, then rotate again if the new password was not saved.";
+      return "Rotation could not be confirmed (" + errorLabel(error) + "). The old password may have been revoked. Refresh status, then use Copy current password to retrieve the current value.";
     }).then(function (message) {
       return settleAccessMutation(id, mutation, message);
     }).finally(function () { releaseAccessMutation(id, mutation); });
@@ -900,7 +930,7 @@ function expressionInput(input, list, change, compositionChange) {
         } else { row.appendChild(element("p", "Ready, but no validated content link is configured. Open the artifact in the catalogue.", null)); }
       }
       if (item.password !== null) {
-        row.appendChild(element("p", "External password — shown once; save securely before dismissing:", null));
+        row.appendChild(element("p", "External password — share securely; signed-in users can retrieve it later:", null));
         row.appendChild(element("code", item.password, "password-value"));
         var copyPassword = element("button", "Copy password", null); copyPassword.type = "button";
         copyPassword.addEventListener("click", function () { copy(item.password, "upload-status", "Password copied. Dismiss the reveal when finished."); }); row.appendChild(copyPassword);
@@ -1046,6 +1076,7 @@ function expressionInput(input, list, change, compositionChange) {
   });
   $("rotate-button").addEventListener("click", onRotate);
   $("rotate-dismiss-button").addEventListener("click", function () { hideRotateOutput(); setText("detail-status", ""); });
+  $("get-password-button").addEventListener("click", onCopyCurrentPassword);
   $("rotate-copy-button").addEventListener("click", function () { copy($("rotate-password").textContent, "detail-status", "Password copied. Dismiss the reveal when finished."); });
   $("copy-id-button").addEventListener("click", function () { copy(currentDetailId, "detail-status", "Artifact ID copied."); });
   $("copy-link-button").addEventListener("click", function () { if (currentDetailInfo !== null) { copy(contentUrl(currentDetailInfo), "detail-status", "Content link copied."); } });
