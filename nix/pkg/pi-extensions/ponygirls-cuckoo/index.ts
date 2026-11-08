@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft, type TurnEndEvent } from '@earendil-works/pi-coding-agent';
 import { parseToggleCommand, sessionEnabledData, TOGGLE_ARGUMENTS } from '@ponygirls/pi-settings';
-import { ENABLED_TYPE, THRESHOLD_TYPE, FilePreferenceStore, effectivePreferences, validateThresholdPercent, type PreferenceStore } from './src/preferences.ts';
+import { ENABLED_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences, type PreferenceStore } from './src/preferences.ts';
+import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, checkpoint, checkpoints, reportText } from './src/report.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, observe, stateOnBranch, type State } from './src/state.ts';
 import { CuckooView, terminalText } from './src/view.ts';
@@ -27,9 +28,11 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
   function status(ctx: ExtensionContext): string {
     const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
     const state = stateOnBranch(ctx.sessionManager.getBranch());
-    const next = state === null ? 'waiting for first known context usage' : `${state.baseline + Math.ceil(state.baseline * config.thresholdPercent / 100)} tokens (baseline ${state.baseline})`;
+    const usage = ctx.getContextUsage();
+    const growth = state === null ? null : growthTokens(config.policy, state.baseline, usage === undefined ? null : usage.contextWindow);
+    const next = state === null ? 'waiting for first known context usage' : growth === null ? 'waiting for known context-window capacity' : `${state.baseline + growth} tokens (baseline ${state.baseline})`;
     return `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
-      `Relative context growth: ${config.thresholdPercent}% (${config.thresholdSource}); next inquiry: ${next}.\n` +
+      `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
       `Global defaults: ${preferences.path}\n\n${reportText(checkpoints(ctx.sessionManager.getBranch()))}`;
   }
@@ -42,8 +45,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     pi.appendEntry(STATE_TYPE, { ...state, pending: null, resuming: false });
   }
   pi.registerCommand('cuckoo', {
-    description: 'Show objectives/progress; on|off|inherit|default on|default off|threshold PERCENT|threshold inherit|default threshold PERCENT|status',
-    getArgumentCompletions: prefix => [...TOGGLE_ARGUMENTS, 'threshold 15', 'threshold inherit', 'default threshold 15'].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
+    description: 'Show objectives/progress; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
+    getArgumentCompletions: prefix => [...TOGGLE_ARGUMENTS, 'policy window 15', 'policy relative 15', 'policy tokens 10000', 'policy inherit', 'default policy window 15', 'default policy relative 15', 'default policy tokens 10000', 'threshold 15', 'threshold inherit', 'default threshold 15'].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
         const trimmed = args.trim();
@@ -55,14 +58,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
         } else {
           const words = trimmed.split(/\s+/); const global = words[0] === 'default';
           if (global) words.shift();
-          if (words.length !== 2 || words[0] !== 'threshold') throw new Error('Usage: /cuckoo [on|off|inherit|default on|default off|[default] threshold PERCENT|threshold inherit|status]');
-          const value = words[1];
-          if (value === 'inherit' && !global) pi.appendEntry(THRESHOLD_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholdPercent: null });
+          if (words[0] === 'threshold' && words.length === 2) words.splice(0, words.length, 'policy', ...(words[1] === 'inherit' ? ['inherit'] : ['relative', words[1]]));
+          if (!global && words.length === 2 && words[0] === 'policy' && words[1] === 'inherit') pi.appendEntry(POLICY_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), policy: null });
           else {
-            if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value)) throw new Error('Expected a numeric relative-growth percentage');
-            const thresholdPercent = validateThresholdPercent(Number(value));
-            if (global) preferences.write({ ...preferences.read(), thresholdPercent });
-            else pi.appendEntry(THRESHOLD_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholdPercent });
+            if (words.length !== 3 || words[0] !== 'policy' || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(words[2])) throw new Error('Usage: /cuckoo [default] policy relative PERCENT|window PERCENT|tokens COUNT, or policy inherit');
+            const policy = validatePolicy({ kind: words[1], value: Number(words[2]) });
+            if (global) preferences.write({ ...preferences.read(), policy });
+            else pi.appendEntry(POLICY_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), policy });
           }
         }
         refresh(ctx); ctx.ui.notify(terminalText(status(ctx)), 'info');
@@ -134,7 +136,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       if (usage === undefined || usage.tokens === null || !Number.isFinite(usage.tokens) || usage.tokens <= 0) return;
       const model = `${ctx.model === undefined ? 'unknown' : `${ctx.model.provider}:${ctx.model.id}`}:${usage.contextWindow}`;
       const state = observe(previous, usage.tokens, model);
-      if (!inquiryDue(state, config.thresholdPercent)) return { entries: [...event.entries, stateDraft(state)] };
+      if (!inquiryDue(state, config.policy, usage.contextWindow)) return { entries: [...event.entries, stateDraft(state)] };
       const requestId = randomUUID();
       const resume = (event.message.role === 'assistant' && (event.message.stopReason === 'toolUse' || event.message.content.some(part => part.type === 'toolCall'))) || event.continue;
       return { entries: [...event.entries,

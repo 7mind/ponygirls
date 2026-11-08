@@ -2,7 +2,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { registerCuckoo } from '../index.ts';
-import { DEFAULT_PREFERENCES } from '../src/preferences.ts';
 import { checkpoints } from '../src/report.ts';
 import { STATE_TYPE, INQUIRY_TYPE, RESUME_TYPE, stateOnBranch } from '../src/state.ts';
 
@@ -10,7 +9,7 @@ const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2
 const assistant = (text, stopReason = 'stop') => ({ role: 'assistant', content: [{ type: 'text', text }], stopReason, usage, api: 'openai-completions', provider: 'fixture', model: 'fixture', timestamp: 1 });
 function fixture() {
   const manager = SessionManager.inMemory(); const handlers = new Map(); const commands = new Map(); const shortcuts = new Map(); const notifications = []; const widgets = [];
-  let defaults = { ...DEFAULT_PREFERENCES }; let tokens = 20000;
+  let defaults = { enabled: false, policy: { kind: 'relative', value: 15 } }; let tokens = 20000;
   const preferences = { path: 'memory:cuckoo', read: () => ({ ...defaults }), write: value => { defaults = { ...value }; } };
   const pi = { on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
   const ctx = { sessionManager: manager, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
@@ -25,7 +24,7 @@ function fixture() {
     }
     return result;
   }
-  return { manager, ctx, handlers, shortcuts, notifications, widgets, preferences, boundary, tokens: value => { tokens = value; }, command: value => commands.get('cuckoo').handler(value, ctx) };
+  return { manager, ctx, handlers, shortcuts, notifications, widgets, preferences, boundary, completions: prefix => commands.get('cuckoo').getArgumentCompletions(prefix), tokens: value => { tokens = value; }, command: value => commands.get('cuckoo').handler(value, ctx) };
 }
 
 // Specified Behavioral-Active / Blackbox-Group through public extension events and real session projection.
@@ -138,9 +137,38 @@ test('configuration notifications do not render model-supplied terminal control 
 
 test('commands independently layer thresholds and enablement, reject invalid syntax, and shortcut views reports', async () => {
   const f = fixture(); await f.command('default on'); await f.command('off'); await f.command('threshold 5');
-  assert.deepEqual(f.preferences.read(), { enabled: true, thresholdPercent: 15 });
+  assert.deepEqual(f.preferences.read(), { enabled: true, policy: { kind: 'relative', value: 15 } });
   await f.command('default threshold 20'); await f.command('threshold inherit');
-  await f.command('status'); assert.match(f.notifications.at(-1)[0], /OFF \(session\).*\nRelative context growth: 20% \(global\)/);
+  await f.command('status'); assert.match(f.notifications.at(-1)[0], /OFF \(session\).*\nGrowth policy: 20% relative token growth \(global\)/);
   for (const command of ['on extra', 'threshold 0', 'threshold NaN', 'default threshold inherit']) { await f.command(command); assert.equal(f.notifications.at(-1)[1], 'error'); }
   await f.shortcuts.get('ctrl+alt+c').handler(f.ctx); assert.match(f.notifications.at(-1)[0], /No Cuckoo reports/);
 });
+
+test('policy commands configure units atomically, inherit independently, expose completions and show exact next token threshold', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  for (const [command, threshold, description] of [['policy relative 15', 23000, /15% relative token growth/], ['policy window 15', 50000, /15% of context-window capacity/], ['policy tokens 10000', 30000, /10000 additional tokens/]]) {
+    await f.command(command); await f.command('status');
+    const status = f.notifications.at(-1)[0]; assert.match(status, description); assert.match(status, new RegExp(`next inquiry: ${threshold} tokens`));
+    assert.deepEqual(f.preferences.read(), { enabled: false, policy: { kind: 'relative', value: 15 } }, 'session policy does not write global defaults');
+  }
+  await f.command('default policy window 20'); await f.command('status');
+  assert.match(f.notifications.at(-1)[0], /10000 additional tokens \(session\)/);
+  await f.command('policy inherit'); await f.command('status');
+  assert.match(f.notifications.at(-1)[0], /20% of context-window capacity.*\(global\).*next inquiry: 60000 tokens/);
+  assert.match(f.notifications.at(-1)[0], /ON \(session\)/);
+  assert.ok(f.completions('policy ').some(value => value.value === 'policy tokens 10000'));
+  assert.ok(f.completions('default policy w').some(value => value.value === 'default policy window 15'));
+  const entries = f.manager.getEntries().length; const defaults = structuredClone(f.preferences.read());
+  for (const command of ['policy', 'policy unknown 15', 'policy tokens 0', 'policy tokens 1.5', 'policy window 101', 'policy relative NaN', 'default policy inherit', 'policy tokens 10 extra', 'policy window 0x10', 'policy window -1']) {
+    await f.command(command); assert.equal(f.notifications.at(-1)[1], 'error', command);
+    assert.equal(f.manager.getEntries().length, entries, command); assert.deepEqual(f.preferences.read(), defaults, command);
+  }
+});
+
+for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000, 30000]]) {
+  test(`${kind} command drives actual scheduling rather than just status text`, async () => {
+    const f = fixture(); await f.command('on'); await f.command(`policy ${kind} ${value}`); f.boundary();
+    f.tokens(threshold - 1); assert.equal(f.boundary().continue, undefined);
+    f.tokens(threshold); assert.equal(f.boundary().continue, true);
+  });
+}

@@ -43,12 +43,35 @@ async function fixture(t) {
 }
 const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime"}]}';
 
+for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000, 30000]]) {
+  test(`real Pi ${kind} growth policy schedules at the exact token delta and persists through reload`, { timeout: 20000 }, async t => {
+    const f = await fixture(t); await f.session.prompt('/cuckoo on'); await f.session.prompt(`/cuckoo policy ${kind} ${value}`);
+    f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+    await f.session.reload();
+    f.replies.push({ text: 'Below threshold', tokens: threshold - 1 }); await f.session.prompt('Continue');
+    assert.equal(f.contexts.length, 2); assert.equal(checkpoints(f.manager.getBranch()).length, 0);
+    f.replies.push({ text: 'At threshold', tokens: threshold }, { text: report, tokens: threshold + 100 }); await f.session.prompt('Continue');
+    assert.equal(f.contexts.length, 4); assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+    assert.match(JSON.stringify(f.contexts.at(-1)), /Restate me your objectives/);
+    assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+  });
+}
+
+test('real Pi fresh defaults use 15% of context window, not 15% relative growth', { timeout: 20000 }, async t => {
+  const f = await fixture(t); await f.session.prompt('/cuckoo on');
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: 'Relative threshold is not enough', tokens: 23000 }); await f.session.prompt('Continue');
+  assert.equal(checkpoints(f.manager.getBranch()).length, 0);
+  f.replies.push({ text: 'Window threshold', tokens: 50000 }, { text: report, tokens: 50100 }); await f.session.prompt('Continue');
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.equal(f.contexts.length, 4); assert.deepEqual(f.errors, []);
+});
+
 // Specified Behavioral-Active / Effectual-GoodCommunication: real Pi loader, model loop, JSONL, commands and reload; scripted provider is not a semantic-quality test.
 test('real Pi relative cadence, JSON persistence, no idle inference, view while off and reload', { timeout: 20000 }, async t => {
   const f = await fixture(t);
   f.replies.push({ text: 'Default off', tokens: 20000 }); await f.session.prompt('Work');
   assert.equal(f.contexts.length, 1); assert.equal(stateOnBranch(f.manager.getBranch()), null);
-  await f.session.prompt('/cuckoo on');
+  await f.session.prompt('/cuckoo on'); await f.session.prompt('/cuckoo policy relative 15');
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Continue');
   assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 20000);
   f.replies.push({ text: 'Below threshold', tokens: 22999 }); await f.session.prompt('Continue');
@@ -66,7 +89,7 @@ test('real Pi relative cadence, JSON persistence, no idle inference, view while 
 });
 
 test('real Pi checkpoint interrupts tool loop, blocks checkpoint tools, then resumes exactly once', { timeout: 20000 }, async t => {
-  const f = await fixture(t); await f.session.prompt('/cuckoo on');
+  const f = await fixture(t); await f.session.prompt('/cuckoo on'); await f.session.prompt('/cuckoo policy relative 15');
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
   const marker = join(f.dir, 'must-not-exist');
   f.replies.push({ content: [{ type: 'toolCall', id: 'source', name: 'bash', arguments: { command: 'printf source' } }], tokens: 23000 },
@@ -81,7 +104,7 @@ test('real Pi checkpoint interrupts tool loop, blocks checkpoint tools, then res
 });
 
 test('real Pi abort preserves partial response and does not mistake the next user response for a checkpoint', { timeout: 20000 }, async t => {
-  const f = await fixture(t); await f.session.prompt('/cuckoo on');
+  const f = await fixture(t); await f.session.prompt('/cuckoo on'); await f.session.prompt('/cuckoo policy relative 15');
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
   f.replies.push({ text: 'Threshold reached', tokens: 23000 }, { text: '{"objectives":[', tokens: 23001, wait: true });
   f.onRequest(n => { if (n === 3) setTimeout(() => void f.session.abort(), 5); });

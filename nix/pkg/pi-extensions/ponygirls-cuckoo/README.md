@@ -11,26 +11,44 @@ Opt-in objective/progress checkpoints from the **main conversation model**. Uses
   mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
 - `/cuckoo on|off|inherit`: session override, or inherit the global default.
 - `/cuckoo default on|off`: global default for sessions without an override.
-- `/cuckoo threshold 15`: session relative-growth threshold in percent.
-- `/cuckoo threshold inherit`: inherit the global threshold independently of enablement.
-- `/cuckoo default threshold 15`: change the global threshold.
+- `/cuckoo policy relative 15`: grow 15% relative to the checkpoint's token count.
+- `/cuckoo policy window 15`: grow by tokens equal to 15% of context-window capacity.
+- `/cuckoo policy tokens 10000`: grow by 10,000 tokens.
+- `/cuckoo policy inherit`: inherit the global policy independently of enablement.
+- `/cuckoo default policy window 15` (or `relative 15`, `tokens 10000`): global policy.
 
-Defaults: **OFF**, **15% relative token growth**. Global preferences are mutable
-`<agentDir>/cuckoo.json`; session settings persist in session entries and span
-branches, but do not configure a different fork/session ID. Home Manager loads
+Policy kind and value are one setting, so changing units cannot inherit a value
+from a different mode. Existing `threshold PERCENT`, `threshold inherit`, and
+`default threshold PERCENT` commands remain aliases for the relative policy.
+
+Defaults: **OFF**, **growth equal to 15% of context-window capacity** (`window 15`). Global preferences are mutable
+`<agentDir>/cuckoo.json` (version 2, `policy: {kind, value}`); existing version-1
+percentages and session threshold records retain their relative meaning.
+Reading old defaults does not rewrite them; the next explicit global write
+stores version 2. Session settings persist in session entries and span branches,
+but do not configure a different fork/session ID. Home Manager loads
 the extension without managing or overwriting that preferences file. Reports
 follow the active branch and remain readable when automatic inquiries are OFF.
 
 ## Cadence and output
 
 At completed model-turn boundaries, Cuckoo observes Pi's context token usage
-(including cached tokens), not a percentage of context-window capacity. The
-first eligible observation establishes a baseline. A baseline of **20,000**
-tokens triggers at **23,000** with a 15% threshold. Subsequent baselines are the
-usage observed when an inquiry is issued. There is no timer or idle wakeup.
-Thresholds are finite numbers greater than zero and at most 100.
+(including cached tokens). The first eligible observation establishes a
+baseline. All policies measure additional tokens since that baseline:
 
-Unknown usage defers scheduling. A context decrease or model/capacity change
+| Policy | Baseline 20k, context window 200k: next inquiry |
+|---|---|
+| `relative 15` | 23k (3k additional tokens) |
+| `window 15` | 50k (30k additional tokens) |
+| `tokens 10000` | 30k (10k additional tokens) |
+
+Subsequent baselines are the usage observed when an inquiry is issued.
+Percentage policies accept finite values `0 < value <= 100`, rounding fractional
+token increments upward. Token policies require positive safe integers.
+Policy changes use the existing baseline. There is no timer or idle wakeup.
+
+Unknown usage defers scheduling; the window policy also requires known positive
+context-window capacity (no substitution of a token percentage). A context decrease or model/capacity change
 establishes a fresh baseline. Pending compaction/context edits, other extensions'
 model-facing drafts, and queued user input defer scheduling. Inquiry and resume
 responses cannot themselves trigger another inquiry at that same boundary.

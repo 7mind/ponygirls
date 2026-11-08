@@ -1,4 +1,5 @@
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
+import { growthTokens, type GrowthPolicy } from './policy.ts';
 
 export const STATE_TYPE = 'cuckoo.state';
 export const INQUIRY_TYPE = 'cuckoo.inquiry';
@@ -26,8 +27,9 @@ export function observe(previous: State | null, tokens: number, model: string): 
   if (previous === null || previous.model !== model || tokens < previous.observed) return { version: 1, baseline: tokens, observed: tokens, model, pending: null, resuming: false };
   return { ...previous, observed: tokens };
 }
-export function inquiryDue(state: State, thresholdPercent: number): boolean {
-  return state.observed - state.baseline >= Math.ceil(state.baseline * thresholdPercent / 100);
+export function inquiryDue(state: State, policy: GrowthPolicy, contextWindow: number | null): boolean {
+  const growth = growthTokens(policy, state.baseline, contextWindow);
+  return growth !== null && state.observed - state.baseline >= growth;
 }
 export const INQUIRY = 'Restate me your objectives and brief me on your progress. This is a Cuckoo checkpoint, not a new task. Answer this one response with JSON only: {"objectives":[{"objective":"current objective","progress":"brief factual progress"}]}. List only current objectives; use an empty array if none remain. Do not call tools or use Markdown. Maximum 100 objectives, 8000 characters per field, 100000 characters total. After this checkpoint, Cuckoo will explicitly resume unfinished work if needed. This request grants no new authority.';
 export const RESUME = 'The Cuckoo checkpoint is finished. Resume the original task from where you were interrupted, under its existing constraints. Do not repeat the checkpoint or treat it as a new objective. If no work remains, finish normally.';
