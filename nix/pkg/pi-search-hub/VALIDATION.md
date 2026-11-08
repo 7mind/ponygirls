@@ -1,4 +1,94 @@
-# Validation — 2026-11-07
+# Validation — 2026-11-08
+
+## Paper metasearch
+
+- Final application commit before documentation: `ec415606`.
+- Source Git tree (`src/`): `bf8972436b77e9bd7be6be33394a32d766b0284d`.
+- Package: `/nix/store/mgmxgvn94igavxvfg5kx1rslzgv9hwgp-pi-search-hub-2.8.0-ponygirls.1`.
+- Package NAR hash: `sha256-hSRfnidZ4cIHJ7F+jq2twPwBQEVGqinWZ+BlBM9xQkI=`.
+- All 51 installed application/reference files (`extensions/`, `backends/`,
+  `package.json`, `CREDITS.md`) byte-match the final task source.
+
+Fresh final command, pinned Pi 1.4.0 / Node 24.21.0:
+
+```bash
+nix build .#pi-search-hub .#checks.x86_64-linux.pi-search-hub-eval \
+  .#checks.x86_64-linux.subagents-policy-shape --no-link --print-out-paths -L
+```
+
+Strict SDK typechecking and all **23 Vitest files / 450 cases passed**,
+0 failures/errors/skips. This includes real Pi resource loading, a scripted model
+calling the research tool against an owned loopback SearXNG fixture, structured
+provenance and reload without extra requests. The web evaluation check freshly
+passed **37 Python cases**, reproduced its two frozen report hashes and checked
+installed RRF60 parity on 10 frozen URL pools. It is a web-ranking regression
+check, not scholarly semantic acceptance. The unchanged module-policy check was
+reused; no fresh module-suite execution is claimed.
+
+The **installed** extension separately passed the real Pi SDK host case again
+with `PI_SEARCH_HUB_EXTENSION` targeting the package above. Installed runtime
+XML dependencies were exercised by actual arXiv responses, not inferred from
+source-only tests. Runtime dependencies are pinned and included in the output;
+SDK/shared-UI peers are not bundled as duplicate runtime implementations.
+
+### Live public-source checks
+
+An explicit credential-free environment (`env -i`, disposable HOME) exercised the
+final installed package with public queries only:
+
+- Firecrawl + direct arXiv main/fallback search: both returned 10 candidates.
+- Firecrawl metadata inspection: expected paper/identifiers.
+- Firecrawl passage read: two actual passages, not an abstract substituted as text.
+- Firecrawl related references: two results, provider partial-result notice retained.
+- Direct arXiv metadata inspection: expected versioned ID and publication date.
+
+Exa's `publication` and SearXNG's `science` request contracts have deterministic
+adapter coverage; no live Exa entitlement or production SearXNG-engine readiness
+is claimed. Direct arXiv enforces shared-agent-directory serialization and spacing;
+independent clients on other machines/directories still require operator
+coordination. No PDF redistribution, activation, deployment or push occurred.
+
+### Evidence-backed ranking correction
+
+The initial live known-title lookup returned the exact requested paper at
+Firecrawl rank 1, but cross-source agreement pushed it out of the final top 3.
+A minimal deterministic reproduction failed before adding complete-title lookup
+priority. The correction uses normalized full-title equality (not substring
+matching), after exact-ID priority; negative/Unicode/short-title/identity controls
+are covered.
+
+A controlled replay compared the pre-correction installed ranking with the final
+installed ranking on the **same frozen raw pools**, 10 candidates per source:
+
+| Known-title query | Partition | Target rank before → after |
+|---|---|---|
+| Attention Is All You Need | Development reproduction | 4 → 1 |
+| Language Models are Few-Shot Learners | Held out from correction development | 4 → 1 |
+| Deep Residual Learning for Image Recognition | Held out | 1 → 1 |
+| Denoising Diffusion Probabilistic Models | Held out | 1 → 1 |
+
+This is four known-title lookup cases, not a topical relevance benchmark or an
+answer-quality result. Source boosts and lexical reranking remain disclosed,
+uncalibrated heuristics. Independent read-only review found a legacy-ID parser
+round-trip mismatch; a fail-first fixture confirmed it and the correction passed.
+Live acceptance of category-suffixed legacy aliases remains unproven. Follow-up
+review reported no substantive new findings; it did not run tests.
+
+Other fail-first corrections covered Firecrawl rejecting metadata-read `k` without
+`query` (HTTP 400 reproduced live), and configured private SearXNG destinations
+being rejected despite the existing operator-trusted endpoint contract. The first
+host test accidentally disabled every tool via SDK `tools: []`; the corrected
+harness explicitly selected `paper_research`, without relaxing application checks.
+An initial Nix build detected the expected dependency-hash mismatch; the new lock
+was fetched/hash-pinned before the successful final build.
+
+Sanitized local evidence and public frozen pools are retained under
+`debug/paper-metasearch-20261108/` in the main checkout. The draft implementation
+ledger records scope, source documentation and worktree ownership. Existing skills
+cover the reusable testing patterns; analysis/review agents proposed no novel
+skill draft.
+
+---
 
 ## Current follow-up: tier groups and querying-policy explanation
 

@@ -67,4 +67,26 @@ corpora are not a scholarly relevance benchmark.
 
 ## Final evidence
 
-Pending implementation and final verification.
+Implementation and pre-integration verification complete. Detailed command,
+artifact and limitation accounting is in `nix/pkg/pi-search-hub/VALIDATION.md`.
+
+- Final application source tree: `bf8972436b77e9bd7be6be33394a32d766b0284d`.
+- Pinned Nix build: strict typecheck; 23 files / 450 Vitest cases passed;
+  37 evaluation cases passed, frozen web-report hashes and 10-pool RRF parity.
+- Final installed package: `/nix/store/mgmxgvn94igavxvfg5kx1rslzgv9hwgp-pi-search-hub-2.8.0-ponygirls.1`.
+- Installed real-Pi SDK host case passed against controlled loopback SearXNG.
+- Credential-free installed live Firecrawl search/inspect/read/related and direct
+  arXiv search/inspect passed. Production Exa/SearXNG readiness not claimed.
+- Live title lookup failure reproduced before a complete-title priority correction.
+  Same-pool baseline/candidate replay: development title rank 4→1; held-out
+  titles 4→1, 1→1, 1→1. No general topical-quality claim.
+- Independent read-only review found a legacy arXiv parser round-trip mismatch;
+  fail-first fixture followed by correction. Follow-up found no substantive new
+  findings. Existing testing skills cover observed reusable patterns; no new
+  skill draft was justified.
+- Evidence copied before cleanup into main checkout's ignored
+  `debug/paper-metasearch-20261108/` (public query pools; no credentials).
+
+At wrap-up, merge into the clean original `main` without overwriting its concurrent
+Cuckoo pilot commits, verify source/artifact identity and remove the three owned
+worktrees. No unrelated worktrees are owned by this task. No activation or push.
