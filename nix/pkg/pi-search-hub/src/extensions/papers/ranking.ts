@@ -1,90 +1,66 @@
+import { rankDocuments } from "../engine/ranking.js";
+import { DEFAULT_RANKING } from "../engine/policy.js";
+import type { DocumentAdapter, RankedList, RankingPolicy } from "../engine/types.js";
 import { normalizePaper, paperAliases, parsePaperId } from "./identity.js";
-import type { PaperProviderName, PaperRecord, RankedPaper } from "./types.js";
+import { PAPER_PROVIDERS, type PaperProviderName, type PaperRecord, type RankedPaper } from "./types.js";
 
-interface List { provider: PaperProviderName; weight: number; results: PaperRecord[] }
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
-const tokens = (s: string) => new Set(s.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
-const normalizedTitle = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[\p{P}\s]+/gu, " ").trim();
 const richest = (values: (string | undefined)[]) => values.filter((v): v is string => !!v).sort((a, b) => b.length - a.length || compare(a, b))[0];
 
-/** Single cross-tier weighted RRF. textBoost is the multiplier (1 through 1.3).
- * Exact ID, then full-title lookup priority precede score in both rerank modes.
- * Title lookup requires at least three query tokens, or explicit full quotes;
- * it never changes identity grouping or treats substring/token-set overlap as exact.
- */
-export function fusePapers(lists: List[], query: string, count: number, rerank: "rrf" | "lexical"): RankedPaper[] {
-  const ordered = [...lists].sort((a, b) => compare(a.provider, b.provider));
-  const records = ordered.flatMap(list => list.results.map(normalizePaper));
-  const parents = records.map((_, i) => i);
-  const root = (i: number): number => { while (parents[i] !== i) { parents[i] = parents[parents[i]]; i = parents[i]; } return i; };
-  const seen = new Map<string, number>();
-  records.forEach((record, i) => {
-    for (const alias of paperAliases(record)) {
-      const previous = seen.get(alias);
-      if (previous !== undefined) parents[root(i)] = root(previous);
-      seen.set(alias, i);
-    }
-  });
-  const groups = new Map<number, PaperRecord[]>();
-  records.forEach((record, i) => { const key = root(i); groups.set(key, [...(groups.get(key) ?? []), record]); });
-  const votes = new Map<number, Map<PaperProviderName, { rank: number; weight: number }>>();
-  let offset = 0;
-  for (const list of ordered) {
-    const distinct = new Set<number>();
-    for (let i = 0; i < list.results.length; i++) {
-      const key = root(offset + i);
-      if (distinct.has(key)) continue;
-      distinct.add(key);
-      const providers = votes.get(key) ?? new Map();
-      const vote = { rank: distinct.size, weight: list.weight };
-      const prior = providers.get(list.provider);
-      if (!prior || prior.rank > vote.rank) providers.set(list.provider, vote);
-      votes.set(key, providers);
-    }
-    offset += list.results.length;
-  }
-  const queryId = parsePaperId(query);
-  const queryTokens = tokens(query);
-  const titleQuery = normalizedTitle(query);
-  const quotedTitleQuery = /^\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’)\s*$/u.test(query);
-  const titleLookup = !!titleQuery && (quotedTitleQuery || (query.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) ?? []).length >= 3);
-  const coverage = (text: string) => {
-    const words = tokens(text);
-    return queryTokens.size ? [...queryTokens].filter(token => words.has(token)).length / queryTokens.size : 0;
-  };
-  const ranked = [...groups].map(([key, members]) => {
+/** Papers supply identity and metadata semantics only; ranking lives in the shared engine. */
+export const PAPER_DOCUMENT_ADAPTER: DocumentAdapter<PaperRecord> = {
+  normalize: normalizePaper,
+  aliases: paperAliases,
+  merge: members => {
     const ids = [...new Map(members.flatMap(record => record.ids).map(id => [`${id.namespace}:${id.value}`, id])).values()]
       .sort((a, b) => compare(`${a.namespace}:${a.value}`, `${b.namespace}:${b.value}`));
-    const providers = votes.get(key)!;
-    const sources = [...providers.keys()].sort(compare);
-    const contributions = sources.map(provider => {
-      const { rank, weight } = providers.get(provider)!;
-      return { provider, rank, weight, term: provider === "searxng" && sources.some(source => source !== "searxng") ? 0 : weight / (60 + rank) };
-    });
-    const title = richest(members.map(record => record.title)) ?? "";
     const abstract = richest(members.map(record => record.abstract));
     const snippet = richest(members.map(record => record.snippet));
-    const textBoost = rerank === "lexical" ? 1 + 0.2 * coverage(title) + 0.1 * coverage(`${abstract ?? ""} ${snippet ?? ""}`) : 1;
-    const rrfScore = contributions.reduce((sum, item) => sum + item.term, 0);
     const dateRecord = members.find(record => record.date);
     const urls = members.map(record => record.url).filter(url => {
-      try { const parsed = new URL(url); return parsed.protocol === "https:" || parsed.protocol === "http:"; }
+      try { return ["https:", "http:"].includes(new URL(url).protocol); }
       catch { return false; }
     }).sort(compare);
-    const paper: RankedPaper = {
-      title, url: urls[0] ?? "", ids,
+    const notices = [...new Set(members.flatMap(record => record.notices ?? []))].sort(compare);
+    return {
+      title: richest(members.map(record => record.title)) ?? "", url: urls[0] ?? "", ids,
       authors: [...members.map(record => record.authors)].sort((a, b) => b.length - a.length || compare(a.join("\0"), b.join("\0")))[0],
       categories: [...new Set(members.flatMap(record => record.categories))].sort(compare),
       ...(abstract ? { abstract } : {}), ...(snippet ? { snippet } : {}),
       ...(dateRecord ? { date: dateRecord.date, dateKind: dateRecord.dateKind } : {}),
-      sources, contributions, rrfScore, textBoost, score: rrfScore * textBoost,
-      exactId: !!queryId && ids.some(id => id.namespace === queryId.namespace && id.value === queryId.value),
-      exactTitle: titleLookup && members.some(record => normalizedTitle(record.title) === titleQuery),
+      ...(notices.length ? { notices } : {}),
     };
-    const notices = [...new Set(members.flatMap(record => record.notices ?? []))].sort(compare);
-    if (notices.length) paper.notices = notices;
-    return { paper, tie: paperAliases(paper).sort(compare)[0] ?? `${title}\0${paper.url}` };
-  });
-  return ranked.sort((a, b) => Number(b.paper.exactId) - Number(a.paper.exactId) || Number(b.paper.exactTitle) - Number(a.paper.exactTitle) || b.paper.score - a.paper.score || compare(a.tie, b.tie))
-    .slice(0, count).map(item => item.paper);
+  },
+  title: document => document.title,
+  body: document => `${document.abstract ?? ""} ${document.snippet ?? ""}`,
+  exactIdentifier: (document, query) => {
+    const id = parsePaperId(query);
+    return !!id && document.ids.some(candidate => candidate.namespace === id.namespace && candidate.value === id.value);
+  },
+};
+
+function providerName(source: string): PaperProviderName {
+  if (!(PAPER_PROVIDERS as readonly string[]).includes(source)) throw new Error(`Unsupported paper source: ${source}`);
+  return source as PaperProviderName;
+}
+
+export function rankPapers(lists: RankedList<PaperRecord>[], query: string, count: number, policy: RankingPolicy): RankedPaper[] {
+  lists.forEach(list => providerName(list.source));
+  return rankDocuments(lists, query, count, policy, PAPER_DOCUMENT_ADAPTER).map(({ document, ranking }) => ({
+    ...document, ...ranking,
+    sources: ranking.sources.map(providerName).sort(compare),
+    contributions: ranking.contributions.map(({ source, ...contribution }) => ({ provider: providerName(source), ...contribution }))
+      .sort((a, b) => compare(a.provider, b.provider)),
+  }));
+}
+
+/** Compatibility boundary for older paper callers. */
+export function fusePapers(
+  lists: { provider: PaperProviderName; weight: number; results: PaperRecord[]; redundantWith?: string[] }[],
+  query: string, count: number, rerank: "rrf" | "lexical",
+): RankedPaper[] {
+  return rankPapers([...lists].sort((a, b) => compare(a.provider, b.provider)).map(list => ({
+    source: list.provider, weight: list.weight, results: list.results,
+    redundantWith: list.redundantWith ?? (list.provider === "searxng" ? ["*"] : []),
+  })), query, count, { ...DEFAULT_RANKING, rerank });
 }
