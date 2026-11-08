@@ -46,7 +46,7 @@ package rites.api {
       }
     }
   
-    def baboonDomainVersion: String = "0.1.0"
+    def baboonDomainVersion: String = "0.2.0"
     
     def baboonDomainIdentifier: String = "rites.api"
     

@@ -29,14 +29,14 @@ package rites.api {
   }
   
   object RunInfo {
-    def baboonDomainVersion: String = "0.1.0"
+    def baboonDomainVersion: String = "0.2.0"
     def baboonDomainIdentifier: String = "rites.api"
     def baboonTypeIdentifier: String = "rites.api/:#RunInfo"
-    private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+    private lazy val _baboonSameInVersions: List[String] = List("0.2.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("0.2.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.2.0", "prefix-compact" -> "0.2.0", "prefix-any-mode" -> "0.2.0", "identical" -> "0.2.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[RunInfo] = RunInfo_JsonCodec.instance
   }

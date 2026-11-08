@@ -78,7 +78,7 @@ export class SaveRiteRequest implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '0.1.0'
+    public static readonly BaboonDomainVersion = '0.2.0'
     public baboonDomainVersion() {
         return SaveRiteRequest.BaboonDomainVersion
     }
@@ -90,15 +90,15 @@ export class SaveRiteRequest implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return SaveRiteRequest.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public static readonly BaboonSameInVersions = ["0.2.0"]
     public baboonSameInVersions() {
         return SaveRiteRequest.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.2.0": "identical" }
     public baboonForwardReadable() {
         return SaveRiteRequest.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.2.0", "prefix-compact": "0.2.0", "prefix-any-mode": "0.2.0", "identical": "0.2.0" }
     public baboonMinReaderVersions() {
         return SaveRiteRequest.BaboonMinReaderVersions
     }
@@ -140,7 +140,7 @@ export class SaveRiteRequest_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '0.1.0'
+    public static readonly BaboonDomainVersion = '0.2.0'
     public baboonDomainVersion() {
         return SaveRiteRequest_JsonCodec.BaboonDomainVersion
     }

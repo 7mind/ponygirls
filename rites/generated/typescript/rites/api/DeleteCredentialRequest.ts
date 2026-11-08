@@ -38,7 +38,7 @@ export class DeleteCredentialRequest implements BaboonGeneratedLatest {
         );
     }
 
-    public static readonly BaboonDomainVersion = '0.1.0'
+    public static readonly BaboonDomainVersion = '0.2.0'
     public baboonDomainVersion() {
         return DeleteCredentialRequest.BaboonDomainVersion
     }
@@ -50,15 +50,15 @@ export class DeleteCredentialRequest implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return DeleteCredentialRequest.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public static readonly BaboonSameInVersions = ["0.2.0"]
     public baboonSameInVersions() {
         return DeleteCredentialRequest.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.2.0": "identical" }
     public baboonForwardReadable() {
         return DeleteCredentialRequest.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.2.0", "prefix-compact": "0.2.0", "prefix-any-mode": "0.2.0", "identical": "0.2.0" }
     public baboonMinReaderVersions() {
         return DeleteCredentialRequest.BaboonMinReaderVersions
     }
@@ -90,7 +90,7 @@ export class DeleteCredentialRequest_JsonCodec {
         )
     }
 
-    public static readonly BaboonDomainVersion = '0.1.0'
+    public static readonly BaboonDomainVersion = '0.2.0'
     public baboonDomainVersion() {
         return DeleteCredentialRequest_JsonCodec.BaboonDomainVersion
     }

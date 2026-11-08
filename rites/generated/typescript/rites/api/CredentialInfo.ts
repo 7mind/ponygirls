@@ -1,6 +1,8 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {CredentialMode, CredentialMode_JsonCodec} from './CredentialMode.js'
 import {ForgeKind, ForgeKind_JsonCodec} from './ForgeKind.js'
+import {RefreshHealth, RefreshHealth_JsonCodec} from './RefreshHealth.js'
 
 export class CredentialInfo implements BaboonGeneratedLatest {
     private readonly _id: string;
@@ -10,8 +12,12 @@ export class CredentialInfo implements BaboonGeneratedLatest {
     private readonly _revision: number;
     private readonly _createdAt: string;
     private readonly _updatedAt: string;
+    private readonly _mode: CredentialMode;
+    private readonly _oauthClientId: string | undefined;
+    private readonly _expiresAt: string | undefined;
+    private readonly _refreshHealth: RefreshHealth | undefined;
 
-    constructor(id: string, name: string, forge: ForgeKind, host: string, revision: number, createdAt: string, updatedAt: string) {
+    constructor(id: string, name: string, forge: ForgeKind, host: string, revision: number, createdAt: string, updatedAt: string, mode: CredentialMode, oauthClientId: string | undefined, expiresAt: string | undefined, refreshHealth: RefreshHealth | undefined) {
         this._id = id
         this._name = name
         this._forge = forge
@@ -19,6 +25,10 @@ export class CredentialInfo implements BaboonGeneratedLatest {
         this._revision = revision
         this._createdAt = createdAt
         this._updatedAt = updatedAt
+        this._mode = mode
+        this._oauthClientId = oauthClientId
+        this._expiresAt = expiresAt
+        this._refreshHealth = refreshHealth
     }
 
     public get id(): string {
@@ -42,6 +52,18 @@ export class CredentialInfo implements BaboonGeneratedLatest {
     public get updatedAt(): string {
         return this._updatedAt;
     }
+    public get mode(): CredentialMode {
+        return this._mode;
+    }
+    public get oauthClientId(): string | undefined {
+        return this._oauthClientId;
+    }
+    public get expiresAt(): string | undefined {
+        return this._expiresAt;
+    }
+    public get refreshHealth(): RefreshHealth | undefined {
+        return this._refreshHealth;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -51,11 +73,15 @@ export class CredentialInfo implements BaboonGeneratedLatest {
             host: this._host,
             revision: this._revision,
             createdAt: this._createdAt,
-            updatedAt: this._updatedAt
+            updatedAt: this._updatedAt,
+            mode: this._mode,
+            oauthClientId: this._oauthClientId !== undefined ? this._oauthClientId : undefined,
+            expiresAt: this._expiresAt !== undefined ? this._expiresAt : undefined,
+            refreshHealth: this._refreshHealth !== undefined ? this._refreshHealth : undefined
         };
     }
 
-    public with(overrides: {id?: string; name?: string; forge?: ForgeKind; host?: string; revision?: number; createdAt?: string; updatedAt?: string}): CredentialInfo {
+    public with(overrides: {id?: string; name?: string; forge?: ForgeKind; host?: string; revision?: number; createdAt?: string; updatedAt?: string; mode?: CredentialMode; oauthClientId?: string | undefined; expiresAt?: string | undefined; refreshHealth?: RefreshHealth | undefined}): CredentialInfo {
         return new CredentialInfo(
             'id' in overrides ? overrides.id! : this._id,
             'name' in overrides ? overrides.name! : this._name,
@@ -63,11 +89,15 @@ export class CredentialInfo implements BaboonGeneratedLatest {
             'host' in overrides ? overrides.host! : this._host,
             'revision' in overrides ? overrides.revision! : this._revision,
             'createdAt' in overrides ? overrides.createdAt! : this._createdAt,
-            'updatedAt' in overrides ? overrides.updatedAt! : this._updatedAt
+            'updatedAt' in overrides ? overrides.updatedAt! : this._updatedAt,
+            'mode' in overrides ? overrides.mode! : this._mode,
+            'oauthClientId' in overrides ? overrides.oauthClientId! : this._oauthClientId,
+            'expiresAt' in overrides ? overrides.expiresAt! : this._expiresAt,
+            'refreshHealth' in overrides ? overrides.refreshHealth! : this._refreshHealth
         );
     }
 
-    public static fromPlain(obj: {id: string; name: string; forge: ForgeKind; host: string; revision: number; createdAt: string; updatedAt: string}): CredentialInfo {
+    public static fromPlain(obj: {id: string; name: string; forge: ForgeKind; host: string; revision: number; createdAt: string; updatedAt: string; mode: CredentialMode; oauthClientId: string | undefined; expiresAt: string | undefined; refreshHealth: RefreshHealth | undefined}): CredentialInfo {
         return new CredentialInfo(
             obj.id,
             obj.name,
@@ -75,11 +105,15 @@ export class CredentialInfo implements BaboonGeneratedLatest {
             obj.host,
             obj.revision,
             obj.createdAt,
-            obj.updatedAt
+            obj.updatedAt,
+            obj.mode,
+            obj.oauthClientId,
+            obj.expiresAt,
+            obj.refreshHealth
         );
     }
 
-    public static readonly BaboonDomainVersion = '0.1.0'
+    public static readonly BaboonDomainVersion = '0.2.0'
     public baboonDomainVersion() {
         return CredentialInfo.BaboonDomainVersion
     }
@@ -91,15 +125,15 @@ export class CredentialInfo implements BaboonGeneratedLatest {
     public baboonTypeIdentifier() {
         return CredentialInfo.BaboonTypeIdentifier
     }
-    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public static readonly BaboonSameInVersions = ["0.2.0"]
     public baboonSameInVersions() {
         return CredentialInfo.BaboonSameInVersions
     }
-    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.2.0": "identical" }
     public baboonForwardReadable() {
         return CredentialInfo.BaboonForwardReadable
     }
-    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.2.0", "prefix-compact": "0.2.0", "prefix-any-mode": "0.2.0", "identical": "0.2.0" }
     public baboonMinReaderVersions() {
         return CredentialInfo.BaboonMinReaderVersions
     }
@@ -122,6 +156,10 @@ export class CredentialInfo_JsonCodec {
             "revision": value.revision,
             "createdAt": value.createdAt,
             "updatedAt": value.updatedAt,
+            "mode": CredentialMode_JsonCodec.instance.encode(BaboonCodecContext.Default, value.mode),
+            "oauthClientId": value.oauthClientId === undefined ? null : value.oauthClientId,
+            "expiresAt": value.expiresAt === undefined ? null : value.expiresAt,
+            "refreshHealth": value.refreshHealth === undefined ? null : RefreshHealth_JsonCodec.instance.encode(BaboonCodecContext.Default, value.refreshHealth),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): CredentialInfo {
@@ -138,10 +176,14 @@ export class CredentialInfo_JsonCodec {
             obj["revision"] as number,
             obj["createdAt"] as string,
             obj["updatedAt"] as string,
+            CredentialMode_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["mode"]),
+            obj["oauthClientId"] === undefined || obj["oauthClientId"] === null ? undefined : obj["oauthClientId"] === undefined || obj["oauthClientId"] === null ? undefined : obj["oauthClientId"] as string,
+            obj["expiresAt"] === undefined || obj["expiresAt"] === null ? undefined : obj["expiresAt"] === undefined || obj["expiresAt"] === null ? undefined : obj["expiresAt"] as string,
+            obj["refreshHealth"] === undefined || obj["refreshHealth"] === null ? undefined : obj["refreshHealth"] === undefined || obj["refreshHealth"] === null ? undefined : RefreshHealth_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["refreshHealth"]),
         )
     }
 
-    public static readonly BaboonDomainVersion = '0.1.0'
+    public static readonly BaboonDomainVersion = '0.2.0'
     public baboonDomainVersion() {
         return CredentialInfo_JsonCodec.BaboonDomainVersion
     }

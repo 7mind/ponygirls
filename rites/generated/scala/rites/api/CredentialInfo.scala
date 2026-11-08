@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeString, decodeUUID}
+import io.circe.Decoder.{decodeOption, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -11,7 +11,11 @@ package rites.api {
     host: String,
     revision: Int,
     createdAt: String,
-    updatedAt: String
+    updatedAt: String,
+    mode: CredentialMode,
+    oauthClientId: Option[String],
+    expiresAt: Option[String],
+    refreshHealth: Option[RefreshHealth]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CredentialInfo.baboonDomainVersion
     override def baboonDomainIdentifier: String = CredentialInfo.baboonDomainIdentifier
@@ -22,14 +26,14 @@ package rites.api {
   }
   
   object CredentialInfo {
-    def baboonDomainVersion: String = "0.1.0"
+    def baboonDomainVersion: String = "0.2.0"
     def baboonDomainIdentifier: String = "rites.api"
     def baboonTypeIdentifier: String = "rites.api/:#CredentialInfo"
-    private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+    private lazy val _baboonSameInVersions: List[String] = List("0.2.0")
     def baboonSameInVersions: List[String] = _baboonSameInVersions
-    private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+    private lazy val _baboonForwardReadable: Map[String, String] = Map("0.2.0" -> "identical")
     def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
-    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+    private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.2.0", "prefix-compact" -> "0.2.0", "prefix-any-mode" -> "0.2.0", "identical" -> "0.2.0")
     def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
     def codecJson: BaboonJsonCodec[CredentialInfo] = CredentialInfo_JsonCodec.instance
   }
@@ -47,7 +51,11 @@ package rites.api {
         "host" -> Json.fromString(value.host),
         "revision" -> Json.fromInt(value.revision),
         "createdAt" -> Json.fromString(value.createdAt),
-        "updatedAt" -> Json.fromString(value.updatedAt)
+        "updatedAt" -> Json.fromString(value.updatedAt),
+        "mode" -> CredentialMode_JsonCodec.instance.encode(ctx, value.mode),
+        "oauthClientId" -> value.oauthClientId.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "expiresAt" -> value.expiresAt.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "refreshHealth" -> value.refreshHealth.map(v => RefreshHealth_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -65,7 +73,11 @@ package rites.api {
             revision <- getField(jsonObject, "revision").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
             createdAt <- getField(jsonObject, "createdAt").flatMap(v => decodeString(v.hcursor))
             updatedAt <- getField(jsonObject, "updatedAt").flatMap(v => decodeString(v.hcursor))
-          } yield CredentialInfo(id,name,forge,host,revision,createdAt,updatedAt)
+            mode <- getField(jsonObject, "mode").flatMap(v => CredentialMode_JsonCodec.circeDecoder(v.hcursor))
+            oauthClientId <- getField(jsonObject, "oauthClientId").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            expiresAt <- getField(jsonObject, "expiresAt").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            refreshHealth <- getField(jsonObject, "refreshHealth").flatMap(v => decodeOption(RefreshHealth_JsonCodec.circeDecoder)(v.hcursor))
+          } yield CredentialInfo(id,name,forge,host,revision,createdAt,updatedAt,mode,oauthClientId,expiresAt,refreshHealth)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CredentialInfo: object expected"))
       }
     }

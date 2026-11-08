@@ -1,5 +1,5 @@
 model rites.api
-version "0.1.0"
+version "0.2.0"
 
 root data VersionInfo { current: str minimum: str supported: lst[str] }
 data UserInfo { id: str login: str }
@@ -9,10 +9,14 @@ root data Ack { ok: bit }
 root data Failure { code: str }
 
 enum ForgeKind { Github Gitlab }
+enum CredentialMode { Token Oauth }
+enum RefreshHealth { Healthy Due Uncertain Failed }
 enum GrantRole { Owner Editor Viewer }
-data CredentialInfo { id: uid name: str forge: ForgeKind host: str revision: i32 createdAt: str updatedAt: str }
+data CredentialInfo { id: uid name: str forge: ForgeKind host: str revision: i32 createdAt: str updatedAt: str mode: CredentialMode oauthClientId: opt[str] expiresAt: opt[str] refreshHealth: opt[RefreshHealth] }
 root data CredentialsResult { items: lst[CredentialInfo] }
-root data SaveCredentialRequest { id: opt[uid] name: str forge: ForgeKind host: str secret: str expectedRevision: i32 }
+root data SaveCredentialRequest { id: opt[uid] name: str forge: ForgeKind host: str secret: str expectedRevision: i32 mode: CredentialMode oauthClientId: opt[str] refreshToken: opt[str] expiresAt: opt[str] }
+data OAuthClientInfo { id: str forge: ForgeKind host: str label: str expiryLeadSeconds: i32 }
+root data OAuthClientsResult { items: lst[OAuthClientInfo] }
 root data CredentialResult { credential: CredentialInfo }
 root data DeleteCredentialRequest { id: uid expectedRevision: i32 }
 

@@ -2,6 +2,7 @@
 
 export * from './Ack.js';
 export * from './CredentialInfo.js';
+export * from './CredentialMode.js';
 export * from './CredentialResult.js';
 export * from './CredentialsResult.js';
 export * from './DeleteCredentialRequest.js';
@@ -17,6 +18,9 @@ export * from './LoginResponse.js';
 export * from './ManualRunRequest.js';
 export * from './ModelInfo.js';
 export * from './ModelsResult.js';
+export * from './OAuthClientInfo.js';
+export * from './OAuthClientsResult.js';
+export * from './RefreshHealth.js';
 export * from './RepositoriesResult.js';
 export * from './RepositoryInfo.js';
 export * from './RepositoryResult.js';
