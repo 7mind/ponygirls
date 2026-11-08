@@ -79,6 +79,22 @@ export function parseModelConfig(bytes: Uint8Array): ModelConfig {
   if (providerFragment === null || typeof providerFragment !== "object" || Array.isArray(providerFragment)) {
     fail();
   }
+  // The provider fragment must explicitly list its models: a Rites run may
+  // only use a model the operator named, never an implicit builtin catalog
+  // entry of the same provider.
+  const models = (providerFragment as Record<string, unknown>).models;
+  if (!Array.isArray(models) || models.length === 0) {
+    fail();
+  }
+  for (const entry of models) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) {
+      fail();
+    }
+    const id = (entry as Record<string, unknown>).id;
+    if (typeof id !== "string" || id.length === 0 || !id.isWellFormed() || id.trim() !== id) {
+      fail();
+    }
+  }
   const credential = object(root.credential, ["type", "key"]);
   if (credential.type !== "api_key") {
     fail();
@@ -89,6 +105,25 @@ export function parseModelConfig(bytes: Uint8Array): ModelConfig {
     modelsJson: modelsJson as Record<string, unknown>,
     credential: { type: "api_key", key },
   };
+}
+
+/**
+ * The explicitly configured model ids of the selected provider. The worker
+ * only ever runs a request whose model id appears here: the Pi builtin
+ * catalog must never serve a Rites request implicitly.
+ */
+export function configuredModelIds(config: ModelConfig): ReadonlySet<string> {
+  const providers = config.modelsJson.providers as Record<string, unknown>;
+  const fragment = providers[config.provider] as Record<string, unknown>;
+  const models = fragment.models as readonly Record<string, unknown>[];
+  const ids = new Set<string>();
+  for (const entry of models) {
+    const id = entry.id;
+    if (typeof id === "string") {
+      ids.add(id);
+    }
+  }
+  return ids;
 }
 
 /**

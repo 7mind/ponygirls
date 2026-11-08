@@ -73,6 +73,7 @@ export class ToolBroker {
       label: metadata.label,
       description: metadata.description,
       parameters: metadata.parameters,
+      constrainedSampling: metadata.constrainedSampling,
       promptSnippet: textProperty(metadata, "promptSnippet"),
       promptGuidelines: stringListProperty(metadata, "promptGuidelines"),
       outputSchema: metadata.outputSchema,

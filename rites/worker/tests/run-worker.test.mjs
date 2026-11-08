@@ -9,7 +9,7 @@ import test from "node:test";
 import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 
 function requireBubblewrap() {
   const result = spawnSync("bwrap", ["--version"], { encoding: "utf8" });
@@ -35,6 +35,27 @@ import {
 } from "./helpers.mjs";
 
 const MARKER_SECONDS = 200 + 57; // assembled so this file never matches itself
+
+/** Kill any leftover probe sleeps of a given duration (test hygiene only). */
+function pgrepSleepKill(seconds) {
+  try {
+    const out = execFileSync("pgrep", ["-x", "sleep", "-a"], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }).trim();
+    for (const line of out.split("\n")) {
+      if (line.trim().endsWith(`sleep ${seconds}`)) {
+        const pid = Number.parseInt(line.trim().split(" ")[0], 10);
+        if (Number.isInteger(pid)) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // Already gone.
+          }
+        }
+      }
+    }
+  } catch {
+    // pgrep exits nonzero when nothing matches.
+  }
+}
 
 const hostHomeDir = () => {
   const home = process.env.HOME;
@@ -409,11 +430,18 @@ test("SIGTERM to the supervisor cancels the sandbox and reports aborted", async 
 });
 
 test("detached grandchildren cannot survive a completed run", async () => {
+  // Unique marker for this case only (other cases use different durations),
+  // with every stream of the background child detached from the tool's
+  // pipes so the bash tool can finish while the child really runs.
+  const markerSeconds = 200 + 53;
+  const proofMarker = `grandchild-proof-${RUN_ID}`;
   const provider = await startScriptedProvider([
     {
       type: "tool",
-      name: "bash",
-      args: { command: `sleep ${MARKER_SECONDS} >/dev/null 2>&1 & disown; echo detached` },
+      name: "rites_bash",
+      args: {
+        command: `sleep ${markerSeconds} </dev/null >/dev/null 2>&1 & disown; echo ${proofMarker} > /workspace/grandchild-proof.txt; echo ${proofMarker}`,
+      },
     },
     { type: "text", text: "detached child spawned" },
   ]);
@@ -429,8 +457,21 @@ test("detached grandchildren cannot survive a completed run", async () => {
     assert.equal(result.code, 0, `stderr: ${result.stderr.toString("utf8")}`);
     const frame = parseResultLine(result.stdout);
     assert.equal(frame.outcome, "Completed", JSON.stringify(frame));
-    assert.equal(hostProcessExists(["sleep", String(MARKER_SECONDS)]), false, "no sandbox child may survive a completed run");
+    // Execution proof: the brokered bash tool really ran and its result
+    // reached the provider; without it this test would be vacuous.
+    const proof = readFileSync(join(workspace, "grandchild-proof.txt"), "utf8");
+    assert.equal(proof.trim(), proofMarker, "the bash tool must have executed in the workspace");
+    const toolResultSeen = provider.requests.some(request =>
+      JSON.stringify(request.body).includes(proofMarker),
+    );
+    assert.equal(toolResultSeen, true, "the tool result must reach the provider");
+    assert.equal(
+      hostProcessExists(["sleep", String(markerSeconds)]),
+      false,
+      "no sandbox child may survive a completed run",
+    );
   } finally {
+    pgrepSleepKill(markerSeconds);
     await provider.close();
   }
 });

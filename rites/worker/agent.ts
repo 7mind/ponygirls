@@ -27,6 +27,7 @@ import { RunOutcome } from "../generated/typescript/rites/worker/RunOutcome.js";
 import type { RunRequest } from "../generated/typescript/rites/worker/RunRequest.js";
 import { ToolBroker, brokeredToolNames } from "./broker.js";
 import type { ApiKeyModelCredential, ModelConfig } from "./model-config.js";
+import { configuredModelIds } from "./model-config.js";
 import { loadRunEnvironment, validateToolRunnerEntry } from "./run-env.js";
 import { isolatedResourceLoader } from "./resources.js";
 
@@ -127,6 +128,15 @@ function toThinkingLevel(value: string): ThinkingLevel {
 export async function runAgent(options: RunAgentOptions): Promise<AgentRunOutcome> {
   if (options.cancel.aborted) {
     return cancelled("aborted");
+  }
+  // Bind the request to the selected provider BEFORE anything else: the Pi
+  // builtin catalog could otherwise resolve a foreign provider or an
+  // unlisted same-provider model and fall through to ambient credentials.
+  if (options.request.model.provider !== options.modelConfig.provider) {
+    return failed("model-unavailable");
+  }
+  if (!configuredModelIds(options.modelConfig).has(options.request.model.model)) {
+    return failed("model-unavailable");
   }
   let environment: ReturnType<typeof loadRunEnvironment> | undefined;
   try {
