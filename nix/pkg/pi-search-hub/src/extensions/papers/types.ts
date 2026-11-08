@@ -53,6 +53,7 @@ export interface RankedPaper extends PaperRecord {
   rrfScore: number;
   textBoost: number;
   exactId: boolean;
+  exactTitle: boolean;
 }
 export interface PaperProviderStats {
   provider: PaperProviderName;

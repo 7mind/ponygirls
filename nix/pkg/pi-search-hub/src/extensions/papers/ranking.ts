@@ -4,9 +4,14 @@ import type { PaperProviderName, PaperRecord, RankedPaper } from "./types.js";
 interface List { provider: PaperProviderName; weight: number; results: PaperRecord[] }
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
 const tokens = (s: string) => new Set(s.normalize("NFKC").toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []);
+const normalizedTitle = (s: string) => s.normalize("NFKC").toLowerCase().replace(/[\p{P}\s]+/gu, " ").trim();
 const richest = (values: (string | undefined)[]) => values.filter((v): v is string => !!v).sort((a, b) => b.length - a.length || compare(a, b))[0];
 
-/** Single cross-tier weighted RRF. textBoost is the multiplier (1 through 1.3). */
+/** Single cross-tier weighted RRF. textBoost is the multiplier (1 through 1.3).
+ * Exact ID, then full-title lookup priority precede score in both rerank modes.
+ * Title lookup requires at least three query tokens, or explicit full quotes;
+ * it never changes identity grouping or treats substring/token-set overlap as exact.
+ */
 export function fusePapers(lists: List[], query: string, count: number, rerank: "rrf" | "lexical"): RankedPaper[] {
   const ordered = [...lists].sort((a, b) => compare(a.provider, b.provider));
   const records = ordered.flatMap(list => list.results.map(normalizePaper));
@@ -40,6 +45,9 @@ export function fusePapers(lists: List[], query: string, count: number, rerank: 
   }
   const queryId = parsePaperId(query);
   const queryTokens = tokens(query);
+  const titleQuery = normalizedTitle(query);
+  const quotedTitleQuery = /^\s*(?:"[^"]+"|'[^']+'|“[^”]+”|‘[^’]+’)\s*$/u.test(query);
+  const titleLookup = !!titleQuery && (quotedTitleQuery || (query.normalize("NFKC").match(/[\p{L}\p{N}]+/gu) ?? []).length >= 3);
   const coverage = (text: string) => {
     const words = tokens(text);
     return queryTokens.size ? [...queryTokens].filter(token => words.has(token)).length / queryTokens.size : 0;
@@ -71,11 +79,12 @@ export function fusePapers(lists: List[], query: string, count: number, rerank: 
       ...(dateRecord ? { date: dateRecord.date, dateKind: dateRecord.dateKind } : {}),
       sources, contributions, rrfScore, textBoost, score: rrfScore * textBoost,
       exactId: !!queryId && ids.some(id => id.namespace === queryId.namespace && id.value === queryId.value),
+      exactTitle: titleLookup && members.some(record => normalizedTitle(record.title) === titleQuery),
     };
     const notices = [...new Set(members.flatMap(record => record.notices ?? []))].sort(compare);
     if (notices.length) paper.notices = notices;
     return { paper, tie: paperAliases(paper).sort(compare)[0] ?? `${title}\0${paper.url}` };
   });
-  return ranked.sort((a, b) => Number(b.paper.exactId) - Number(a.paper.exactId) || b.paper.score - a.paper.score || compare(a.tie, b.tie))
+  return ranked.sort((a, b) => Number(b.paper.exactId) - Number(a.paper.exactId) || Number(b.paper.exactTitle) - Number(a.paper.exactTitle) || b.paper.score - a.paper.score || compare(a.tie, b.tie))
     .slice(0, count).map(item => item.paper);
 }

@@ -80,3 +80,71 @@ describe("paper fusion", () => {
     expect(fusePapers(lists, "étude нейрон", 10, "rrf").every(r => r.textBoost === 1)).toBe(true);
   });
 });
+
+// Regression BG: frozen minimal shape of parent-observed live title-lookup failure.
+// This fixture establishes ordering behavior, not semantic relevance quality.
+describe("exact full-title lookup priority", () => {
+  // Specified BA/BG: held-out synthetic titles and negative controls.
+  it.each(["rrf", "lexical"] as const)("prioritizes held-out full title in %s mode without inflating textBoost", rerank => {
+    const exact = paper("Language Models Are Few Shot Learners");
+    const topical = paper("Why Language Models Are Few Shot Learners Is a Popular Phrase");
+    const result = fusePapers([
+      { provider: "firecrawl", weight: 1, results: [topical, exact] },
+      { provider: "arxiv", weight: 1, results: [topical] },
+    ], exact.title, 3, rerank);
+    expect(result[0]).toMatchObject({ title: exact.title, exactTitle: true });
+    expect(result[0].score).toBeLessThan(result[1].score);
+    expect(result[1].exactTitle).toBe(false);
+    expect(result.every(p => p.textBoost >= 1 && p.textBoost <= 1.3)).toBe(true);
+  });
+  it("normalizes full Unicode/case/whitespace/punctuation title sequences", () => {
+    const result = fusePapers([{ provider: "exa", weight: 1, results: [paper("ÉTUDE: Нейрон — ＭＯＤＥＬＳ!")] }], "  étude  нейрон models ", 1, "lexical");
+    expect(result[0].exactTitle).toBe(true);
+  });
+  it.each([
+    ["Graph Networks", false], ["Networks", false], ['"Graph Networks"', true], ["‘Graph Networks’", true], ['"Networks"', true],
+  ])("requires quotes for short full-title lookup %s", (query, expected) => {
+    const title = query.includes("Graph") ? "Graph Networks" : "Networks";
+    const result = fusePapers([{ provider: "exa", weight: 1, results: [paper(title)] }], query, 1, "rrf");
+    expect(result[0].exactTitle).toBe(expected);
+  });
+  it.each(["Models Language Are Few Shot Learners", "Language Models Are Few Shot Learners and Readers", "Language Models Are Few Shot", '"Language Models" explained'])
+    ("does not flag topical substrings, reordered words, or partial quotes: %s", query => {
+      const result = fusePapers([{ provider: "exa", weight: 1, results: [paper("Language Models Are Few Shot Learners")] }], query, 1, "lexical");
+      expect(result[0].exactTitle).toBe(false);
+    });
+  it("checks every crosswalk member title, not just the richest display title", () => {
+    const title = "Language Models Are Few Shot Learners";
+    const result = fusePapers([
+      { provider: "exa", weight: 1, results: [paper(title, [doi("10.1234/a")])] },
+      { provider: "firecrawl", weight: 1, results: [paper(`${title}: Extended Source Metadata`, [doi("10.1234/a")])] },
+    ], title, 2, "rrf");
+    expect(result).toHaveLength(1);
+    expect(result[0]).toMatchObject({ title: `${title}: Extended Source Metadata`, exactTitle: true });
+  });
+  it("does not merge unrelated same-title works even when both are exact lookups", () => {
+    const title = "Language Models Are Few Shot Learners";
+    const result = fusePapers([{ provider: "exa", weight: 1, results: [paper(title, [], { url: "https://example.test/one" }), paper(title, [], { url: "https://example.test/two" })] }], title, 2, "lexical");
+    expect(result).toHaveLength(2);
+    expect(result.every(p => p.exactTitle)).toBe(true);
+    expect(result[0].ids).toEqual([]);
+  });
+  it("keeps exact identifier priority above exact title priority", () => {
+    const query = "doi:10.1234/target";
+    const result = fusePapers([
+      { provider: "exa", weight: 1, results: [paper(query), paper("Different Source Title", [doi("10.1234/target")])] },
+      { provider: "arxiv", weight: 1, results: [paper(query)] },
+    ], query, 2, "lexical");
+    expect(result[0]).toMatchObject({ title: "Different Source Title", exactId: true, exactTitle: false });
+    expect(result[1]).toMatchObject({ title: query, exactId: false, exactTitle: true });
+  });
+  it("ranks the exact requested title above spurious cross-provider consensus", () => {
+    const target = paper("Attention Is All You Need");
+    const meme = paper('"All You Need" is Not All You Need for a Paper Title: On the Origins of a Scientific Meme');
+    const results = fusePapers([
+      { provider: "firecrawl", weight: 1, results: [target, paper("Distinct filler one"), paper("Distinct filler two"), paper("Distinct filler three"), meme] },
+      { provider: "arxiv", weight: 1, results: [meme, paper("Another filler one"), paper("Another filler two")] },
+    ], "Attention Is All You Need", 3, "lexical");
+    expect(results[0].title).toBe(target.title);
+  });
+});
