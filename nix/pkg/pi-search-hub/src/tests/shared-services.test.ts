@@ -64,6 +64,21 @@ it("uses identical boosts, reranking, candidate budgets and alwaysInclude polici
   ]));
   expect(paper.details.providers.find(provider => provider.provider === "searxng")?.tier).toBe("alwaysInclude");
 });
+it("does not report a successful paper search when alwaysInclude disables its only source", async () => {
+  const service = new PaperResearchService(settings => settings.papers?.sources?.firecrawl?.enabled === false ? [] : [{ name: "firecrawl", search: async () => [paperRow("firecrawl")] }], new SharedRuntime(DEFAULT_CONCURRENCY));
+  await expect(service.execute({ action: "search", query: "q" }, { backends: { firecrawl: { enabled: true } },
+    papers: { alwaysInclude: { firecrawl: { enabled: false } } } }, undefined)).rejects.toThrow("No paper sources configured");
+});
+
+it("does not count disabled native sources as current engines", async () => {
+  configure({ backends: { firecrawl: { enabled: true } }, sources: { "native:openai": { enabled: false } } });
+  state.discover = async () => [{ id: "openai", label: "fixture", search: async () => ({ results: [] }) }];
+  const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
+  await service.refresh(ctx, undefined);
+  expect(service.engines().filter(engine => engine.tier === "native")).toHaveLength(0);
+  expect(service.policy().native.engineCount).toBe(0);
+});
+
 it("does not describe unstarted sources as failed requests", async () => {
   configure({ mode: "first", backends: { firecrawl: { enabled: true }, exa: { enabled: true } } });
   const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);

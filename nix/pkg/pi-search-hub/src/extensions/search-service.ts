@@ -74,13 +74,13 @@ export class SearchService {
         requestedPerEngine: candidateCount(profile, DEFAULT_RESULT_COUNT) },
       fallback: fallback.map(backend => ({ backend, timeoutMs: sourcePolicy(profile, backend).timeoutMs ?? timeouts.alwaysIncludeMs,
         maxResults: sourcePolicy(profile, backend).maxResults ?? candidateCount(profile, DEFAULT_RESULT_COUNT) })),
-      native: { engineCount: this.native.length, timeoutMs: timeouts.nativeMs, settlementGraceMs: timeouts.nativeGraceMs },
+      native: { engineCount: this.native.filter(engine => sourcePolicy(profile, `native:${engine.id}`).enabled !== false).length, timeoutMs: timeouts.nativeMs, settlementGraceMs: timeouts.nativeGraceMs },
       fusion: { rankConstant: profile.ranking.rankConstant, rerank: profile.ranking.rerank, titleWeight: profile.ranking.titleWeight, bodyWeight: profile.ranking.bodyWeight, exactTitle: profile.ranking.exactTitle },
       execution: { ...limits, overallTimeoutMs: timeouts.overallMs, sourceTimeoutMs: timeouts.sourceMs, discoveryTimeoutMs: timeouts.discoveryMs },
     };
     this.descriptors = [
       ...active.map(name => ({ name, label: BACKEND_DEFS[name]?.label ?? name, tier: fallback.includes(name) ? "fallback" as const : "main" as const, availability: "configured" as const })),
-      ...this.native.filter(engine => sourcePolicy(profile, `native:${engine.id}`).enabled !== false).map(engine => ({ name: `native:${engine.id}`, label: engine.label, tier: "native" as const, availability: this.discoveryFailed ? "unknown" as const : "configured" as const })), 
+      ...this.native.filter(engine => sourcePolicy(profile, `native:${engine.id}`).enabled !== false).map(engine => ({ name: `native:${engine.id}`, label: engine.label, tier: "native" as const, availability: this.discoveryFailed ? "unknown" as const : "configured" as const })),
       ...[...new Set([config.reader ?? "jina", ...(config.readerFallback ?? ["jina", "sofya", "firecrawl", "exa", "exa_mcp"])])]
         .map(name => ({ name: `reader:${name}`, label: name, tier: "reader" as const, availability: "configured" as const })),
     ];

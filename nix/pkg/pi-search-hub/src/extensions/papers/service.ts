@@ -6,7 +6,7 @@ import { rankPapers } from "./ranking.js";
 import { SharedRuntime } from "../engine/runtime.js";
 import { resolveConcurrency, resolveTimeouts } from "../engine/policy.js";
 import { paperProfile, sourcePolicy } from "../engine/profiles.js";
-import type { PaperConfig, PaperPassage, PaperProvider, PaperProviderName, PaperProviderStats, PaperReadResult, PaperRecord, RankedPaper } from "./types.js";
+import { PAPER_PROVIDERS, type PaperConfig, type PaperPassage, type PaperProvider, type PaperProviderName, type PaperProviderStats, type PaperReadResult, type PaperRecord, type RankedPaper } from "./types.js";
 
 export type PaperResearchParams =
   | { action: "search"; query: string; numResults?: number; source?: PaperProviderName; mode?: PaperConfig["mode"]; rerank?: "rrf" | "lexical" }
@@ -78,7 +78,8 @@ export class PaperResearchService {
     this.runtime.configure(resolveConcurrency(settings.concurrency));
     const timeouts = resolveTimeouts(settings.timeouts);
     const inherited = paperProfile(settings, []);
-    const effective = { ...settings, papers: { ...paperSettings, sources: inherited.sources } };
+    const effective = { ...settings, papers: { ...paperSettings,
+      sources: Object.fromEntries(PAPER_PROVIDERS.map(name => [name, sourcePolicy(inherited, name)])) } };
     const signature = JSON.stringify({ backends: settings.backends, papers: effective.papers, timeouts });
     if (signature !== this.signature) {
       this.providers = this.factory(effective).map(provider => {
