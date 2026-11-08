@@ -13,9 +13,9 @@ import { fileURLToPath } from "node:url";
  * scripts/run-worker.sh dev defaults; skips when already prepared.
  */
 export function ensureRunEnvironment() {
-  if (process.env.RITES_NODE !== undefined) {
-    return;
-  }
+  const requiredNames = ["RITES_NODE", "RITES_BWRAP", "RITES_WORKER_RUNTIME", "RITES_NIX_STORE", "RITES_TOOLCHAIN_PATH"];
+  const missing = name => process.env[name] === undefined || process.env[name].length === 0;
+  if (requiredNames.every(name => !missing(name))) return;
   const resolve = tool => {
     const result = spawnSync("bash", ["-c", `readlink -f "$(command -v ${tool})"`], { encoding: "utf8" });
     const path = result.stdout.trim();
@@ -27,12 +27,13 @@ export function ensureRunEnvironment() {
   const toolchain = ["node", "bash", "git", "rg", "fd", "ls", "grep", "find"]
     .map(resolve)
     .map(path => spawnSync("bash", ["-c", `dirname "${path}"`], { encoding: "utf8" }).stdout.trim());
-  process.env.RITES_NODE = resolve("node");
-  process.env.RITES_BWRAP = resolve("bwrap");
-  process.env.RITES_WORKER_RUNTIME = spawnSync("bash", ["-c", `readlink -f "${join(RITES_DIR, "target", "worker")}"`], { encoding: "utf8" }).stdout.trim();
-  process.env.RITES_NIX_STORE = "/nix/store";
-  process.env.RITES_TOOLCHAIN_PATH = [...new Set(toolchain)].join(":");
+  if (missing("RITES_NODE")) process.env.RITES_NODE = resolve("node");
+  if (missing("RITES_BWRAP")) process.env.RITES_BWRAP = resolve("bwrap");
+  if (missing("RITES_WORKER_RUNTIME")) process.env.RITES_WORKER_RUNTIME = spawnSync("bash", ["-c", `readlink -f "${join(RITES_DIR, "target", "worker")}"`], { encoding: "utf8" }).stdout.trim();
+  if (missing("RITES_NIX_STORE")) process.env.RITES_NIX_STORE = "/nix/store";
+  if (missing("RITES_TOOLCHAIN_PATH")) process.env.RITES_TOOLCHAIN_PATH = [...new Set(toolchain)].join(":");
   const optional = (name, path) => {
+    if (!missing(name)) return;
     const result = spawnSync("bash", ["-c", `readlink -f "${path}"`], { encoding: "utf8" });
     if (result.status === 0 && result.stdout.trim().length > 0) {
       process.env[name] = result.stdout.trim();

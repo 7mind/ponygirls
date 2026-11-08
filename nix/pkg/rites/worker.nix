@@ -22,15 +22,18 @@ let
   # Keep only the rites sources the build consumes.
   ritesSrc = lib.cleanSourceWith {
     src = ./../../..;
-    filter = path: _type:
+    filter = path: type:
       let
-        rel = lib.removePrefix (toString ./../../.. + "/") (toString path);
-      in
-      (lib.hasPrefix "rites/" rel || rel == "rites")
-      && !(lib.hasInfix "node_modules" rel)
-      && !(lib.hasPrefix "rites/target" rel)
-      && !(lib.hasPrefix "rites/scripts" rel)
-      && !(lib.hasPrefix "rites/worker/tests" rel);
+        root = toString ./../../..;
+        rel = lib.removePrefix (root + "/") (toString path);
+        entries = [ "rites/package.json" "rites/tsconfig.json" "rites/protocol/protocol.ts" "rites/generated/typescript" "rites/worker" ];
+        selected = entry: rel == entry || lib.hasPrefix "${entry}/" rel
+          || (type == "directory" && lib.hasPrefix "${rel}/" entry);
+        workerInput = !(lib.hasPrefix "rites/worker/" rel) || type == "directory"
+          || lib.hasSuffix ".ts" rel || rel == "rites/worker/tsconfig.json";
+      in toString path == root || (lib.cleanSourceFilter path type
+        && !(builtins.elem (baseNameOf path) [ "node_modules" "target" "tests" ".cache" ".local" ])
+        && workerInput && lib.any selected entries);
   };
 in
 stdenvNoCC.mkDerivation {
