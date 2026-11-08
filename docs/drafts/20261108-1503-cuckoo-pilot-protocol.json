@@ -1,0 +1,105 @@
+{
+  "startedAt": "2026-11-08T15:03:35.811Z",
+  "sourceCommit": "1cda2856bd5599a787287bd37a17328655ca7237",
+  "sourceHashes": {
+    "scripts/cuckoo-pilot/pilot.mjs": "0a6412e93bfa232fe8cf66a887909d5c88cc086be7e866a44537df7ccf33a0c9",
+    "scripts/cuckoo-pilot/corpus.mjs": "9b6a0a328255c865484840fecf3a2b64312c8f23377c9ca5f705251c24a749d7",
+    "scripts/cuckoo-pilot/grade.mjs": "ae662cdab818f6a522f0816990aeed6d131a2bf2456b9aef305f46ee41a6d6bd",
+    "scripts/cuckoo-pilot/grade.test.mjs": "20665308ed52b8ce1c5467fff5eb4546e32ed198c506e77f2048350c03ba58a3",
+    "scripts/cuckoo-pilot/support.mjs": "afa7081d0cdd23cb05ece42585b5baf3fbe6ad913748b3107b0d1240d2ad79d5",
+    "scripts/cuckoo-pilot/support.test.mjs": "15e570978e3b7f5b689d61e931371282d03eb2fed32195d6a446d847aa437441",
+    "scripts/cuckoo-pilot/analyze.mjs": "a17aab7f665c57b9d7cf851199a798b508fa0e6af4657e3b88fc633874dce229",
+    "scripts/cuckoo-pilot/analyze.test.mjs": "dc126b965c8075451c42ba69be8d920d8143a248ea42455497059e75e3a3081e",
+    "scripts/cuckoo-pilot/run.sh": "42c289577ef8942b464cb3bb33c2f6b9f09e4a687588f649f2e76b5544919097",
+    "scripts/cuckoo-pilot/README.md": "79ce75a409f1ec0139f0c078bdd80a75ac67ecbb3a671337d671cb99ac32ae6c",
+    "nix/pkg/pi-extensions/ponygirls-cuckoo/index.ts": "e9321d09ed4c7a813480994ed101ec0a65d87ed569fcbb2638d02ebc2b224c19",
+    "nix/pkg/pi-extensions/ponygirls-cuckoo/src/policy.ts": "4e0811bc6e7863d3856e0d83d9bbade4907ff009042d0c476e57b5ec6e319a5e",
+    "nix/pkg/pi-extensions/ponygirls-cuckoo/src/preferences.ts": "4b257192c4d4d9013d07fdcc18e9d3a160edb030f13ddd7112d99d28edb92fd3",
+    "nix/pkg/pi-extensions/ponygirls-cuckoo/src/state.ts": "e09023919e5c01f0ae7fa6dc0d4700d092917553212ba088565e67320aed1788",
+    "nix/pkg/pi-extensions/ponygirls-cuckoo/src/report.ts": "0649c67db3d87005658b0c186e08cda76ebef044af2ec69851dd01301c816157",
+    "nix/pkg/pi-extensions/ponygirls-cuckoo/src/view.ts": "67c4ef36f08c12711d747da5a1fcd2abca796e482f42a51b7c71e95f0ea3c868"
+  },
+  "config": {
+    "provider": "openai-codex",
+    "model": "gpt-6.1-sol",
+    "thinking": "medium",
+    "policy": {
+      "kind": "window",
+      "value": 15
+    },
+    "repetitions": 1,
+    "longRows": 2000,
+    "shortRows": 20,
+    "maxRequestsPerSession": 12,
+    "maxResponseChars": 24000,
+    "maxPayloadChars": 4000000,
+    "requestDeadlineMs": 180000,
+    "sessionDeadlineMs": 900000,
+    "pilotDeadlineMs": 3600000,
+    "retries": 0,
+    "compaction": false,
+    "systemPrompt": "You are an assistant performing a synthetic evaluation. Follow the user task. No external tools are available. Do not invent evidence."
+  },
+  "model": {
+    "provider": "openai-codex",
+    "id": "gpt-6.1-sol",
+    "api": "openai-codex-responses",
+    "contextWindow": 500000
+  },
+  "plan": [
+    {
+      "task": "triage",
+      "heldOut": false,
+      "length": "short",
+      "arms": [
+        false,
+        true
+      ]
+    },
+    {
+      "task": "triage",
+      "heldOut": false,
+      "length": "long",
+      "arms": [
+        true,
+        false
+      ]
+    },
+    {
+      "task": "migration",
+      "heldOut": false,
+      "length": "short",
+      "arms": [
+        true,
+        false
+      ]
+    },
+    {
+      "task": "migration",
+      "heldOut": false,
+      "length": "long",
+      "arms": [
+        false,
+        true
+      ]
+    },
+    {
+      "task": "release",
+      "heldOut": true,
+      "length": "short",
+      "arms": [
+        true,
+        false
+      ]
+    },
+    {
+      "task": "release",
+      "heldOut": true,
+      "length": "long",
+      "arms": [
+        false,
+        true
+      ]
+    }
+  ]
+}

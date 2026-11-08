@@ -1,0 +1,519 @@
+{
+  "protocolCommit": "1cda2856bd5599a787287bd37a17328655ca7237",
+  "faults": [],
+  "missing": [],
+  "extra": [],
+  "validCompletedPilot": true,
+  "arms": [
+    {
+      "length": "short",
+      "enabled": false,
+      "planned": 3,
+      "runs": 3,
+      "completed": 3,
+      "perfect": 3,
+      "passed": 18,
+      "checks": 18,
+      "checkpoints": 0,
+      "elapsedMs": 46380,
+      "primaryUsage": {
+        "input": 12950,
+        "output": 385,
+        "cacheRead": 5120,
+        "cacheWrite": 0,
+        "totalTokens": 18455,
+        "accountedTokens": 18455,
+        "modelResponses": 12,
+        "unknownUsageResponses": 0
+      },
+      "entireUsage": {
+        "input": 13582,
+        "output": 910,
+        "cacheRead": 11904,
+        "cacheWrite": 0,
+        "totalTokens": 26396,
+        "accountedTokens": 26396,
+        "modelResponses": 15,
+        "unknownUsageResponses": 0
+      },
+      "components": {
+        "jsonSchema": {
+          "passed": 3,
+          "total": 3
+        },
+        "scope": {
+          "passed": 1,
+          "total": 1
+        },
+        "coverage": {
+          "passed": 2,
+          "total": 2
+        },
+        "order": {
+          "passed": 1,
+          "total": 1
+        },
+        "owners": {
+          "passed": 1,
+          "total": 1
+        },
+        "redaction": {
+          "passed": 1,
+          "total": 1
+        },
+        "environment": {
+          "passed": 1,
+          "total": 1
+        },
+        "protected": {
+          "passed": 1,
+          "total": 1
+        },
+        "operations": {
+          "passed": 1,
+          "total": 1
+        },
+        "rollbacks": {
+          "passed": 1,
+          "total": 1
+        },
+        "purpose": {
+          "passed": 1,
+          "total": 1
+        },
+        "eligibility": {
+          "passed": 1,
+          "total": 1
+        },
+        "dependencies": {
+          "passed": 1,
+          "total": 1
+        },
+        "budgetAndTotals": {
+          "passed": 1,
+          "total": 1
+        },
+        "optimalSelection": {
+          "passed": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "length": "short",
+      "enabled": true,
+      "planned": 3,
+      "runs": 3,
+      "completed": 3,
+      "perfect": 3,
+      "passed": 18,
+      "checks": 18,
+      "checkpoints": 0,
+      "elapsedMs": 55749,
+      "primaryUsage": {
+        "input": 8857,
+        "output": 385,
+        "cacheRead": 9216,
+        "cacheWrite": 0,
+        "totalTokens": 18458,
+        "accountedTokens": 18458,
+        "modelResponses": 12,
+        "unknownUsageResponses": 0
+      },
+      "entireUsage": {
+        "input": 9489,
+        "output": 870,
+        "cacheRead": 16000,
+        "cacheWrite": 0,
+        "totalTokens": 26359,
+        "accountedTokens": 26359,
+        "modelResponses": 15,
+        "unknownUsageResponses": 0
+      },
+      "components": {
+        "jsonSchema": {
+          "passed": 3,
+          "total": 3
+        },
+        "scope": {
+          "passed": 1,
+          "total": 1
+        },
+        "coverage": {
+          "passed": 2,
+          "total": 2
+        },
+        "order": {
+          "passed": 1,
+          "total": 1
+        },
+        "owners": {
+          "passed": 1,
+          "total": 1
+        },
+        "redaction": {
+          "passed": 1,
+          "total": 1
+        },
+        "environment": {
+          "passed": 1,
+          "total": 1
+        },
+        "protected": {
+          "passed": 1,
+          "total": 1
+        },
+        "operations": {
+          "passed": 1,
+          "total": 1
+        },
+        "rollbacks": {
+          "passed": 1,
+          "total": 1
+        },
+        "purpose": {
+          "passed": 1,
+          "total": 1
+        },
+        "eligibility": {
+          "passed": 1,
+          "total": 1
+        },
+        "dependencies": {
+          "passed": 1,
+          "total": 1
+        },
+        "budgetAndTotals": {
+          "passed": 1,
+          "total": 1
+        },
+        "optimalSelection": {
+          "passed": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "length": "long",
+      "enabled": false,
+      "planned": 3,
+      "runs": 3,
+      "completed": 3,
+      "perfect": 3,
+      "passed": 18,
+      "checks": 18,
+      "checkpoints": 0,
+      "elapsedMs": 68675,
+      "primaryUsage": {
+        "input": 557770,
+        "output": 633,
+        "cacheRead": 833280,
+        "cacheWrite": 0,
+        "totalTokens": 1391683,
+        "accountedTokens": 1391683,
+        "modelResponses": 12,
+        "unknownUsageResponses": 0
+      },
+      "entireUsage": {
+        "input": 558427,
+        "output": 1072,
+        "cacheRead": 1389312,
+        "cacheWrite": 0,
+        "totalTokens": 1948811,
+        "accountedTokens": 1948811,
+        "modelResponses": 15,
+        "unknownUsageResponses": 0
+      },
+      "components": {
+        "jsonSchema": {
+          "passed": 3,
+          "total": 3
+        },
+        "scope": {
+          "passed": 1,
+          "total": 1
+        },
+        "coverage": {
+          "passed": 2,
+          "total": 2
+        },
+        "order": {
+          "passed": 1,
+          "total": 1
+        },
+        "owners": {
+          "passed": 1,
+          "total": 1
+        },
+        "redaction": {
+          "passed": 1,
+          "total": 1
+        },
+        "environment": {
+          "passed": 1,
+          "total": 1
+        },
+        "protected": {
+          "passed": 1,
+          "total": 1
+        },
+        "operations": {
+          "passed": 1,
+          "total": 1
+        },
+        "rollbacks": {
+          "passed": 1,
+          "total": 1
+        },
+        "purpose": {
+          "passed": 1,
+          "total": 1
+        },
+        "eligibility": {
+          "passed": 1,
+          "total": 1
+        },
+        "dependencies": {
+          "passed": 1,
+          "total": 1
+        },
+        "budgetAndTotals": {
+          "passed": 1,
+          "total": 1
+        },
+        "optimalSelection": {
+          "passed": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "length": "long",
+      "enabled": true,
+      "planned": 3,
+      "runs": 3,
+      "completed": 3,
+      "perfect": 3,
+      "passed": 18,
+      "checks": 18,
+      "checkpoints": 6,
+      "elapsedMs": 83986,
+      "primaryUsage": {
+        "input": 560544,
+        "output": 1306,
+        "cacheRead": 1667072,
+        "cacheWrite": 0,
+        "totalTokens": 2228922,
+        "accountedTokens": 2228922,
+        "modelResponses": 18,
+        "unknownUsageResponses": 0
+      },
+      "entireUsage": {
+        "input": 561030,
+        "output": 1782,
+        "cacheRead": 2224128,
+        "cacheWrite": 0,
+        "totalTokens": 2786940,
+        "accountedTokens": 2786940,
+        "modelResponses": 21,
+        "unknownUsageResponses": 0
+      },
+      "components": {
+        "jsonSchema": {
+          "passed": 3,
+          "total": 3
+        },
+        "scope": {
+          "passed": 1,
+          "total": 1
+        },
+        "coverage": {
+          "passed": 2,
+          "total": 2
+        },
+        "order": {
+          "passed": 1,
+          "total": 1
+        },
+        "owners": {
+          "passed": 1,
+          "total": 1
+        },
+        "redaction": {
+          "passed": 1,
+          "total": 1
+        },
+        "environment": {
+          "passed": 1,
+          "total": 1
+        },
+        "protected": {
+          "passed": 1,
+          "total": 1
+        },
+        "operations": {
+          "passed": 1,
+          "total": 1
+        },
+        "rollbacks": {
+          "passed": 1,
+          "total": 1
+        },
+        "purpose": {
+          "passed": 1,
+          "total": 1
+        },
+        "eligibility": {
+          "passed": 1,
+          "total": 1
+        },
+        "dependencies": {
+          "passed": 1,
+          "total": 1
+        },
+        "budgetAndTotals": {
+          "passed": 1,
+          "total": 1
+        },
+        "optimalSelection": {
+          "passed": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "pairs": [
+    {
+      "task": "triage",
+      "heldOut": false,
+      "length": "short",
+      "offPerfect": true,
+      "onPerfect": true,
+      "offScore": 6,
+      "onScore": 6,
+      "offViolations": [],
+      "onViolations": [],
+      "onCheckpoints": 0,
+      "offRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      },
+      "onRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      }
+    },
+    {
+      "task": "triage",
+      "heldOut": false,
+      "length": "long",
+      "offPerfect": true,
+      "onPerfect": true,
+      "offScore": 6,
+      "onScore": 6,
+      "offViolations": [],
+      "onViolations": [],
+      "onCheckpoints": 2,
+      "offRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      },
+      "onRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      }
+    },
+    {
+      "task": "migration",
+      "heldOut": false,
+      "length": "short",
+      "offPerfect": true,
+      "onPerfect": true,
+      "offScore": 6,
+      "onScore": 6,
+      "offViolations": [],
+      "onViolations": [],
+      "onCheckpoints": 0,
+      "offRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      },
+      "onRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      }
+    },
+    {
+      "task": "migration",
+      "heldOut": false,
+      "length": "long",
+      "offPerfect": true,
+      "onPerfect": true,
+      "offScore": 6,
+      "onScore": 6,
+      "offViolations": [],
+      "onViolations": [],
+      "onCheckpoints": 2,
+      "offRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      },
+      "onRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      }
+    },
+    {
+      "task": "release",
+      "heldOut": true,
+      "length": "short",
+      "offPerfect": true,
+      "onPerfect": true,
+      "offScore": 6,
+      "onScore": 6,
+      "offViolations": [],
+      "onViolations": [],
+      "onCheckpoints": 0,
+      "offRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      },
+      "onRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      }
+    },
+    {
+      "task": "release",
+      "heldOut": true,
+      "length": "long",
+      "offPerfect": true,
+      "onPerfect": true,
+      "offScore": 6,
+      "onScore": 6,
+      "offViolations": [],
+      "onViolations": [],
+      "onCheckpoints": 2,
+      "offRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      },
+      "onRecall": {
+        "matched": 6,
+        "total": 6,
+        "interpretation": "lexical recall coverage only, not semantic correctness"
+      }
+    }
+  ]
+}

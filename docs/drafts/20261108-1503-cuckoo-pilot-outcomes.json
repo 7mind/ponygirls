@@ -1,0 +1,559 @@
+{
+  "protocol_sha256": "f24209045589f4777cabd5cf577e1463b816acb89ddd2cc23087a69650c31cf7",
+  "analysis_sha256": "94972e92e5f02ec24ed6e463c87acc2703ea053efddd4ec82ea05b7a2b92215b",
+  "runs": [
+    {
+      "id": "triage-short-off",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "scope": true,
+          "coverage": true,
+          "order": true,
+          "owners": true,
+          "redaction": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "c02370b1bf8c2213d3ceb574a2e210f051e74ea0c37547715ac39ba8071e3ae5",
+        "4eeea1253fe4cc661a70fdbd810cc8552e8ba17cb16cd374db41c0f04b81013d",
+        "b12329064a2ebff5217d6ad9139ef20e291b212f90a5463fe273cbfb79f484e2",
+        "bc46c2fd4b8b5770cfa0154cc163a7f1f2f1ce750d0c1e52dbfa5e637c834148",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "8478b149",
+      "finalText": "{\"scope\":\"staging-only\",\"incidents\":[{\"id\":\"inc-42\",\"priority\":\"P0\",\"owner\":\"storage\",\"requester\":\"[redacted]\"},{\"id\":\"inc-45\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"},{\"id\":\"inc-41\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"}]}",
+      "checkpointReports": [],
+      "transcript_relative_path": "triage-short-off/2026-11-08T15-03-35-848Z_01a1bbaf-b0a8-71af-b495-aeeb60600b2c.jsonl",
+      "transcript_sha256": "8d0969f3379844fe93983afeef392b80bfa377b0f2f5a0a1bf11dc44661f7910",
+      "result_sha256": "f9ca6d70b578a14198d4e313acbe2b18d3c24e32cc80c073c8a3451b2e82348e"
+    },
+    {
+      "id": "triage-short-on",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "scope": true,
+          "coverage": true,
+          "order": true,
+          "owners": true,
+          "redaction": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "c02370b1bf8c2213d3ceb574a2e210f051e74ea0c37547715ac39ba8071e3ae5",
+        "4eeea1253fe4cc661a70fdbd810cc8552e8ba17cb16cd374db41c0f04b81013d",
+        "b12329064a2ebff5217d6ad9139ef20e291b212f90a5463fe273cbfb79f484e2",
+        "bc46c2fd4b8b5770cfa0154cc163a7f1f2f1ce750d0c1e52dbfa5e637c834148",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "1ba64d8c",
+      "finalText": "{\"scope\":\"staging-only\",\"incidents\":[{\"id\":\"inc-42\",\"priority\":\"P0\",\"owner\":\"storage\",\"requester\":\"[redacted]\"},{\"id\":\"inc-45\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"},{\"id\":\"inc-41\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"}]}",
+      "checkpointReports": [],
+      "transcript_relative_path": "triage-short-on/2026-11-08T15-03-51-159Z_01a1bbaf-ec77-71af-b495-aeec8b3e2ec7.jsonl",
+      "transcript_sha256": "06261ed463a5ed366a3d164b33f5e6177bd7c0388eb91121e326f644b5495c86",
+      "result_sha256": "74564e8c462a8d7ba2cfa05d0d291c5334c37c022129364c57d43c9987056527"
+    },
+    {
+      "id": "triage-long-on",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 2,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "scope": true,
+          "coverage": true,
+          "order": true,
+          "owners": true,
+          "redaction": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "c02370b1bf8c2213d3ceb574a2e210f051e74ea0c37547715ac39ba8071e3ae5",
+        "9fc00d43ee1d98db8cb6df167b86d73e816f7bbf53e416dbda4531a708462569",
+        "cdffe7be38e76e2fab05af23b29960b27bf4d0d31a482825c3dda0041b31a83f",
+        "bc46c2fd4b8b5770cfa0154cc163a7f1f2f1ce750d0c1e52dbfa5e637c834148",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "cfedcc84",
+      "finalText": "{\"scope\":\"staging-only\",\"incidents\":[{\"id\":\"inc-42\",\"priority\":\"P0\",\"owner\":\"storage\",\"requester\":\"[redacted]\"},{\"id\":\"inc-45\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"},{\"id\":\"inc-41\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"}]}",
+      "checkpointReports": [
+        {
+          "version": 1,
+          "requestId": "0e8965a5-329d-4aa9-a029-eab4ea395b98",
+          "raw": "{\"objectives\":[{\"objective\":\"Inspect two historical archive batches before triaging current staging incidents. Include only OPEN cedar and maple incidents; exclude other services and resolved incidents. Sort P0, P1, P2, then oldest first within each priority. Assign cedar to platform and maple to storage; replace every requester with [redacted]. Deliver JSON only with exactly scope=\\\"staging-only\\\" and incidents containing id, priority, owner, requester. Include all eligible incidents without invention.\",\"progress\":\"Acknowledged readiness and completed archive batch A inspection: 2000 rows, firstRow 00000, lastRow 01999. Awaiting the second archive inspection and current incident records; final deliverable not yet produced.\"}]}",
+          "report": {
+            "objectives": [
+              {
+                "objective": "Inspect two historical archive batches before triaging current staging incidents. Include only OPEN cedar and maple incidents; exclude other services and resolved incidents. Sort P0, P1, P2, then oldest first within each priority. Assign cedar to platform and maple to storage; replace every requester with [redacted]. Deliver JSON only with exactly scope=\"staging-only\" and incidents containing id, priority, owner, requester. Include all eligible incidents without invention.",
+                "progress": "Acknowledged readiness and completed archive batch A inspection: 2000 rows, firstRow 00000, lastRow 01999. Awaiting the second archive inspection and current incident records; final deliverable not yet produced."
+              }
+            ]
+          },
+          "error": null,
+          "messageEntryId": "263a7ab6"
+        },
+        {
+          "version": 1,
+          "requestId": "83d59dc5-129b-455a-a27f-943ef7f964e3",
+          "raw": "{\"objectives\":[{\"objective\":\"Triage current staging incidents: include only OPEN incidents for cedar and maple; sort by P0, P1, P2, then oldest first. Assign cedar to platform and maple to storage, and replace every requester with [redacted]. Return JSON only with scope=\\\"staging-only\\\" and incidents containing exactly id, priority, owner, requester; omit no eligible incidents and invent none.\",\"progress\":\"Completed both historical archive inspections. Each batch contained 2000 rows, from 00000 through 01999. Current incident records have not arrived; triage and the final deliverable remain pending.\"}]}",
+          "report": {
+            "objectives": [
+              {
+                "objective": "Triage current staging incidents: include only OPEN incidents for cedar and maple; sort by P0, P1, P2, then oldest first. Assign cedar to platform and maple to storage, and replace every requester with [redacted]. Return JSON only with scope=\"staging-only\" and incidents containing exactly id, priority, owner, requester; omit no eligible incidents and invent none.",
+                "progress": "Completed both historical archive inspections. Each batch contained 2000 rows, from 00000 through 01999. Current incident records have not arrived; triage and the final deliverable remain pending."
+              }
+            ]
+          },
+          "error": null,
+          "messageEntryId": "6b9fc3ff"
+        }
+      ],
+      "transcript_relative_path": "triage-long-on/2026-11-08T15-04-06-674Z_01a1bbb0-2912-71af-b495-aeeed58d2681.jsonl",
+      "transcript_sha256": "8ffb9a428ac23dae3a1c356a5bfeffe2088f6dc32ccdbf41bfbe22392438d4a3",
+      "result_sha256": "f667ef7f09cd1e2ff39415fd8b60a55b7cff1f3ee9d50987e5dee85c28998da3"
+    },
+    {
+      "id": "triage-long-off",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "scope": true,
+          "coverage": true,
+          "order": true,
+          "owners": true,
+          "redaction": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "c02370b1bf8c2213d3ceb574a2e210f051e74ea0c37547715ac39ba8071e3ae5",
+        "9fc00d43ee1d98db8cb6df167b86d73e816f7bbf53e416dbda4531a708462569",
+        "cdffe7be38e76e2fab05af23b29960b27bf4d0d31a482825c3dda0041b31a83f",
+        "bc46c2fd4b8b5770cfa0154cc163a7f1f2f1ce750d0c1e52dbfa5e637c834148",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "218303d4",
+      "finalText": "{\"scope\":\"staging-only\",\"incidents\":[{\"id\":\"inc-42\",\"priority\":\"P0\",\"owner\":\"storage\",\"requester\":\"[redacted]\"},{\"id\":\"inc-45\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"},{\"id\":\"inc-41\",\"priority\":\"P1\",\"owner\":\"platform\",\"requester\":\"[redacted]\"}]}",
+      "checkpointReports": [],
+      "transcript_relative_path": "triage-long-off/2026-11-08T15-04-31-860Z_01a1bbb0-8b74-71af-b495-aef10335af3f.jsonl",
+      "transcript_sha256": "2bf0a22b98c2ee542710b65a2f1f4fda347021bf2cfe7cc7482af49528520f31",
+      "result_sha256": "08ed9be5a7f992ac2b012c77e24d8876d9e728a8aa998a2b268e26e0f8fe307e"
+    },
+    {
+      "id": "migration-short-on",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "environment": true,
+          "coverage": true,
+          "protected": true,
+          "operations": true,
+          "rollbacks": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "883b3d5614c5dbe77b3ba038324c95d02724581d231fe29f8df429df07cd005b",
+        "061d02921d281db5ea834f5eb81e300d3db41dba8eacbc0d9885b1f46dfee8a0",
+        "1a6fbd40b7ba2d5519bc2f34c18f3267db33b65ab1d53888275b264080024046",
+        "8b7e8a861ef193d7d75f1bf9380af143160be5de2b14ebae9754611b69d68b0e",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "4980989a",
+      "finalText": "{\"environment\":\"sandbox\",\"protected\":[\"gamma-store\",\"auth-gate\"],\"changes\":[{\"component\":\"worker\",\"target\":\"2.4\",\"operation\":\"upgrade\",\"rollbackTo\":\"1.4\"},{\"component\":\"router\",\"target\":\"3.1\",\"operation\":\"upgrade\",\"rollbackTo\":\"2.0\"}]}",
+      "checkpointReports": [],
+      "transcript_relative_path": "migration-short-on/2026-11-08T15-04-55-970Z_01a1bbb0-e9a2-71af-b495-aef2f2a8e814.jsonl",
+      "transcript_sha256": "e240ca983e2b786aa85670cbcf9ef93f561a1ccb1cea80995ed345df357584f6",
+      "result_sha256": "4684c2a51c65bdcd0a738170f4d324684706181a1088cd098d58a1a8f6af7232"
+    },
+    {
+      "id": "migration-short-off",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "environment": true,
+          "coverage": true,
+          "protected": true,
+          "operations": true,
+          "rollbacks": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "883b3d5614c5dbe77b3ba038324c95d02724581d231fe29f8df429df07cd005b",
+        "061d02921d281db5ea834f5eb81e300d3db41dba8eacbc0d9885b1f46dfee8a0",
+        "1a6fbd40b7ba2d5519bc2f34c18f3267db33b65ab1d53888275b264080024046",
+        "8b7e8a861ef193d7d75f1bf9380af143160be5de2b14ebae9754611b69d68b0e",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "84254629",
+      "finalText": "{\"environment\":\"sandbox\",\"protected\":[\"gamma-store\",\"auth-gate\"],\"changes\":[{\"component\":\"worker\",\"target\":\"2.4\",\"operation\":\"upgrade\",\"rollbackTo\":\"1.4\"},{\"component\":\"router\",\"target\":\"3.1\",\"operation\":\"upgrade\",\"rollbackTo\":\"2.0\"}]}",
+      "checkpointReports": [],
+      "transcript_relative_path": "migration-short-off/2026-11-08T15-05-23-948Z_01a1bbb1-56ec-71af-b495-aef587827aa5.jsonl",
+      "transcript_sha256": "cf6e2b92ea83ba2410aad15e4551ba133eae1d0fd0531876b280613faab969cf",
+      "result_sha256": "b3d0db465f9b9f55bb7d89850d9e2f73ccdcbef2c4da3e78b4e9870147b51ef1"
+    },
+    {
+      "id": "migration-long-off",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "environment": true,
+          "coverage": true,
+          "protected": true,
+          "operations": true,
+          "rollbacks": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "883b3d5614c5dbe77b3ba038324c95d02724581d231fe29f8df429df07cd005b",
+        "09e2afe1c09457b6cafd3c3ae995f093452e1427a633102a0ac22f926ab06e05",
+        "c4d2980ec4a6af6426eae1fb64e601836444f38af65ff110be5cc7b42539edb6",
+        "8b7e8a861ef193d7d75f1bf9380af143160be5de2b14ebae9754611b69d68b0e",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "9ef5e251",
+      "finalText": "{\"environment\":\"sandbox\",\"protected\":[\"gamma-store\",\"auth-gate\"],\"changes\":[{\"component\":\"worker\",\"target\":\"2.4\",\"operation\":\"upgrade\",\"rollbackTo\":\"1.4\"},{\"component\":\"router\",\"target\":\"3.1\",\"operation\":\"upgrade\",\"rollbackTo\":\"2.0\"}]}",
+      "checkpointReports": [],
+      "transcript_relative_path": "migration-long-off/2026-11-08T15-05-37-338Z_01a1bbb1-8b3a-71af-b495-aef7cdddb1ed.jsonl",
+      "transcript_sha256": "9b078997330abb19b6986ad46077bc2c9942544a75bfe5ed874c6f2db3bd1d3b",
+      "result_sha256": "0fbdb89b013aefc8f6270fa356ce26ec7a84a7d322df97688ee863f757691786"
+    },
+    {
+      "id": "migration-long-on",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 2,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "environment": true,
+          "coverage": true,
+          "protected": true,
+          "operations": true,
+          "rollbacks": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "883b3d5614c5dbe77b3ba038324c95d02724581d231fe29f8df429df07cd005b",
+        "09e2afe1c09457b6cafd3c3ae995f093452e1427a633102a0ac22f926ab06e05",
+        "c4d2980ec4a6af6426eae1fb64e601836444f38af65ff110be5cc7b42539edb6",
+        "8b7e8a861ef193d7d75f1bf9380af143160be5de2b14ebae9754611b69d68b0e",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "39658794",
+      "finalText": "{\"environment\":\"sandbox\",\"protected\":[\"gamma-store\",\"auth-gate\"],\"changes\":[{\"component\":\"worker\",\"target\":\"2.4\",\"operation\":\"upgrade\",\"rollbackTo\":\"1.4\"},{\"component\":\"router\",\"target\":\"3.1\",\"operation\":\"upgrade\",\"rollbackTo\":\"2.0\"}]}",
+      "checkpointReports": [
+        {
+          "version": 1,
+          "requestId": "061a146b-3119-401d-9104-a8d390dba655",
+          "raw": "{\"objectives\":[{\"objective\":\"Plan sandbox upgrades for worker and router only, using their requested targets and setting each rollbackTo to its current version. Never propose changes to protected gamma-store or auth-gate, and permit no delete, drop, or reset operations. Final deliverable must be JSON only with environment=\\\"sandbox\\\", protected=[\\\"gamma-store\\\",\\\"auth-gate\\\"], and changes containing exactly the two required upgrades with component, target, operation=\\\"upgrade\\\", and rollbackTo.\",\"progress\":\"Acknowledged readiness and completed historical archive batch A inspection: rowCount=2000, firstRow=\\\"00000\\\", lastRow=\\\"01999\\\". Awaiting the second historical archive inspection and subsequent current inventory. No upgrades have been proposed or performed; final deliverable has not been produced.\"}]}",
+          "report": {
+            "objectives": [
+              {
+                "objective": "Plan sandbox upgrades for worker and router only, using their requested targets and setting each rollbackTo to its current version. Never propose changes to protected gamma-store or auth-gate, and permit no delete, drop, or reset operations. Final deliverable must be JSON only with environment=\"sandbox\", protected=[\"gamma-store\",\"auth-gate\"], and changes containing exactly the two required upgrades with component, target, operation=\"upgrade\", and rollbackTo.",
+                "progress": "Acknowledged readiness and completed historical archive batch A inspection: rowCount=2000, firstRow=\"00000\", lastRow=\"01999\". Awaiting the second historical archive inspection and subsequent current inventory. No upgrades have been proposed or performed; final deliverable has not been produced."
+              }
+            ]
+          },
+          "error": null,
+          "messageEntryId": "1cabe788"
+        },
+        {
+          "version": 1,
+          "requestId": "bc67f56c-ad62-40f8-b4a3-61efa6b08ea9",
+          "raw": "{\"objectives\":[{\"objective\":\"Plan sandbox upgrades for worker and router only, using their requested targets. Keep gamma-store and auth-gate protected and unchanged. Permit no delete, drop, or reset operations. Each upgrade must set rollbackTo to that component's current version. Deliver JSON only with environment=\\\"sandbox\\\", protected=[\\\"gamma-store\\\",\\\"auth-gate\\\"], and changes containing exactly both upgrades, each with component, target, operation=\\\"upgrade\\\", and rollbackTo.\",\"progress\":\"Completed both historical archive inspections. Each batch contained 2000 rows, from \\\"00000\\\" through \\\"01999\\\". Awaiting current inventory with current versions and requested targets. No changes proposed or performed; final deliverable not yet produced.\"}]}",
+          "report": {
+            "objectives": [
+              {
+                "objective": "Plan sandbox upgrades for worker and router only, using their requested targets. Keep gamma-store and auth-gate protected and unchanged. Permit no delete, drop, or reset operations. Each upgrade must set rollbackTo to that component's current version. Deliver JSON only with environment=\"sandbox\", protected=[\"gamma-store\",\"auth-gate\"], and changes containing exactly both upgrades, each with component, target, operation=\"upgrade\", and rollbackTo.",
+                "progress": "Completed both historical archive inspections. Each batch contained 2000 rows, from \"00000\" through \"01999\". Awaiting current inventory with current versions and requested targets. No changes proposed or performed; final deliverable not yet produced."
+              }
+            ]
+          },
+          "error": null,
+          "messageEntryId": "fb2c5b3b"
+        }
+      ],
+      "transcript_relative_path": "migration-long-on/2026-11-08T15-05-58-928Z_01a1bbb1-df90-71af-b495-aef972209862.jsonl",
+      "transcript_sha256": "2ca271db48175024819a0713d2aa9a47b9e253cc9770b484af8c050f1559d0ae",
+      "result_sha256": "2072eb5778cea58cc33c109a753a1f0a093382893334df7a7f4fd3e8f96e6a4a"
+    },
+    {
+      "id": "release-short-on",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "purpose": true,
+          "eligibility": true,
+          "dependencies": true,
+          "budgetAndTotals": true,
+          "optimalSelection": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "e7fa16376f2179925d73b964e5cb1ee3d5ff216287355468346c8ebad12d3187",
+        "04f468c313d194af6cdfd071b2f481fceed629be5258488769423f130f9fe0db",
+        "be7d29984cc49020b71353b1627578e2af44830169990d10800b9d3a0e747869",
+        "11382f126247ec2cbb41f2bacbf6608a54d4ea0ecf68e577a97e74a89172ed4d",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "b199dc80",
+      "finalText": "{\"purpose\":\"internal-preview\",\"items\":[\"A\",\"B\",\"C\"],\"totalPoints\":7,\"totalValue\":17}",
+      "checkpointReports": [],
+      "transcript_relative_path": "release-short-on/2026-11-08T15-06-26-324Z_01a1bbb2-4a94-71af-b495-aefa73c997a8.jsonl",
+      "transcript_sha256": "cd94084056b2eb693a2bf6cea588343f7d5eae02c049aee730f7a7c84e2cc64b",
+      "result_sha256": "c29ad6d595755cdded195810f48cf7baff944eca39f1c4f6d5ab793fd0f7248d"
+    },
+    {
+      "id": "release-short-off",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "purpose": true,
+          "eligibility": true,
+          "dependencies": true,
+          "budgetAndTotals": true,
+          "optimalSelection": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "e7fa16376f2179925d73b964e5cb1ee3d5ff216287355468346c8ebad12d3187",
+        "04f468c313d194af6cdfd071b2f481fceed629be5258488769423f130f9fe0db",
+        "be7d29984cc49020b71353b1627578e2af44830169990d10800b9d3a0e747869",
+        "11382f126247ec2cbb41f2bacbf6608a54d4ea0ecf68e577a97e74a89172ed4d",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "dc4c8aa2",
+      "finalText": "{\"purpose\":\"internal-preview\",\"items\":[\"A\",\"B\",\"C\"],\"totalPoints\":7,\"totalValue\":17}",
+      "checkpointReports": [],
+      "transcript_relative_path": "release-short-off/2026-11-08T15-06-38-602Z_01a1bbb2-7a8a-71af-b495-aefdd7d853f1.jsonl",
+      "transcript_sha256": "e996b9edf19a9ad181c3e51ebb93a52b99c9f40435b568c73ca12702ec2ee2b3",
+      "result_sha256": "da682b106713cb8d1886ee5a482a06199b7d7d7059169392046176454ec31c79"
+    },
+    {
+      "id": "release-long-off",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 0,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "purpose": true,
+          "eligibility": true,
+          "dependencies": true,
+          "budgetAndTotals": true,
+          "optimalSelection": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "e7fa16376f2179925d73b964e5cb1ee3d5ff216287355468346c8ebad12d3187",
+        "ecaf3df9e4d4e44ce4246773f2c69a4bbc1b0da092b028d4efec9cb3f9f3ec42",
+        "6ca2a29c55c578444d832ee6dc6942015eb63654d67f68ffa326ded93f06411f",
+        "11382f126247ec2cbb41f2bacbf6608a54d4ea0ecf68e577a97e74a89172ed4d",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "cf4ca98f",
+      "finalText": "{\"purpose\":\"internal-preview\",\"items\":[\"A\",\"B\",\"C\"],\"totalPoints\":7,\"totalValue\":17}",
+      "checkpointReports": [],
+      "transcript_relative_path": "release-long-off/2026-11-08T15-06-56-403Z_01a1bbb2-c013-71af-b495-aefff3061442.jsonl",
+      "transcript_sha256": "04441d438155b6d45fe5bba0f461b59cd087c99a7837b62d41996656d6ebb9f1",
+      "result_sha256": "69f8f19df7e4be7080ad2c7720f18a5023de7d83dfd6611c94c120b5c4841494"
+    },
+    {
+      "id": "release-long-on",
+      "status": "completed",
+      "primaryStatus": "completed",
+      "secondaryStatus": "completed",
+      "exposure": {
+        "valid": true,
+        "prefinalCheckpoints": 2,
+        "reason": null
+      },
+      "grade": {
+        "passed": 6,
+        "total": 6,
+        "perfect": true,
+        "checks": {
+          "jsonSchema": true,
+          "purpose": true,
+          "eligibility": true,
+          "dependencies": true,
+          "budgetAndTotals": true,
+          "optimalSelection": true
+        },
+        "error": null
+      },
+      "promptHashes": [
+        "e7fa16376f2179925d73b964e5cb1ee3d5ff216287355468346c8ebad12d3187",
+        "ecaf3df9e4d4e44ce4246773f2c69a4bbc1b0da092b028d4efec9cb3f9f3ec42",
+        "6ca2a29c55c578444d832ee6dc6942015eb63654d67f68ffa326ded93f06411f",
+        "11382f126247ec2cbb41f2bacbf6608a54d4ea0ecf68e577a97e74a89172ed4d",
+        "d4de579d74024021b1cf5b8a546935ad5bcc21affaf8a8e808fcb8be3185f5ab"
+      ],
+      "finalEntryId": "c0c28b3f",
+      "finalText": "{\"purpose\":\"internal-preview\",\"items\":[\"A\",\"B\",\"C\"],\"totalPoints\":7,\"totalValue\":17}",
+      "checkpointReports": [
+        {
+          "version": 1,
+          "requestId": "0d098734-f0d9-4d8b-908a-d7ab14de8269",
+          "raw": "{\"objectives\":[{\"objective\":\"Inspect two historical archive batches before selecting the current internal preview release.\",\"progress\":\"Acknowledged readiness and inspected batch A, reporting 2000 rows, firstRow 00000 and lastRow 01999. Awaiting the second archive batch and current catalog.\"},{\"objective\":\"Choose a nonempty selection maximizing total value at total points at most 7, including all dependencies and their points. Only stable, unrestricted items are eligible. Preserve values, point costs and eligibility; break value ties using the lexicographically smallest sorted ID list. Deliver JSON only with purpose=\\\"internal-preview\\\", sorted items, totalPoints and totalValue.\",\"progress\":\"Selection has not begun because the current catalog has not arrived. No final deliverable has been produced.\"}]}",
+          "report": {
+            "objectives": [
+              {
+                "objective": "Inspect two historical archive batches before selecting the current internal preview release.",
+                "progress": "Acknowledged readiness and inspected batch A, reporting 2000 rows, firstRow 00000 and lastRow 01999. Awaiting the second archive batch and current catalog."
+              },
+              {
+                "objective": "Choose a nonempty selection maximizing total value at total points at most 7, including all dependencies and their points. Only stable, unrestricted items are eligible. Preserve values, point costs and eligibility; break value ties using the lexicographically smallest sorted ID list. Deliver JSON only with purpose=\"internal-preview\", sorted items, totalPoints and totalValue.",
+                "progress": "Selection has not begun because the current catalog has not arrived. No final deliverable has been produced."
+              }
+            ]
+          },
+          "error": null,
+          "messageEntryId": "52458039"
+        },
+        {
+          "version": 1,
+          "requestId": "42854b91-ae04-47bb-b2ac-e0787b687505",
+          "raw": "{\"objectives\":[{\"objective\":\"Choose an internal-preview release maximizing total value within 7 total points, including all dependencies and their points. Select only stable, unrestricted items; preserve values, costs and eligibility. Break ties using the lexicographically smallest sorted ID list. Return JSON only with purpose=\\\"internal-preview\\\", sorted items, totalPoints and totalValue. Do not select nothing if eligible valuable items exist.\",\"progress\":\"Completed both historical archive inspections. Each batch had 2000 rows, from 00000 to 01999. Awaiting the current catalog; no selection or final deliverable has been produced.\"}]}",
+          "report": {
+            "objectives": [
+              {
+                "objective": "Choose an internal-preview release maximizing total value within 7 total points, including all dependencies and their points. Select only stable, unrestricted items; preserve values, costs and eligibility. Break ties using the lexicographically smallest sorted ID list. Return JSON only with purpose=\"internal-preview\", sorted items, totalPoints and totalValue. Do not select nothing if eligible valuable items exist.",
+                "progress": "Completed both historical archive inspections. Each batch had 2000 rows, from 00000 to 01999. Awaiting the current catalog; no selection or final deliverable has been produced."
+              }
+            ]
+          },
+          "error": null,
+          "messageEntryId": "2250ab66"
+        }
+      ],
+      "transcript_relative_path": "release-long-on/2026-11-08T15-07-19-364Z_01a1bbb3-19c4-71af-b495-af010f4e1e4c.jsonl",
+      "transcript_sha256": "6ab0199d50738e60c63e3b77bb3bc78ed39b27fd0bbae5065c4379a4487082ea",
+      "result_sha256": "b15fd1de49af5e7857e95fe4e7978e1e2cde42f0d6347810510a1aa74057973b"
+    }
+  ]
+}
