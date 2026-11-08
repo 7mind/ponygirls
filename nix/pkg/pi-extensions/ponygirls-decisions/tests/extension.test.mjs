@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { registerDecisions } from "../index.ts";
 import { SqliteDecisionStore } from "../src/store.ts";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 function fixture(t) {
   const preferences = { path: "memory:decisions", value: { enabled: true }, failure: null,
@@ -84,7 +85,11 @@ test("nonblocking ask creates project questions and a bottom-left badge, list/ge
   assert.equal(f.shortcuts.get("ctrl+alt+d").description, "Open decisions inbox");
   assert.equal(f.shortcuts.has("ctrl+shift+d"), false, "Pi reserves Ctrl+Shift+D for its global debug handler");
   const tagged = { bg: (color, s) => `[${color}]${s}[/${color}]`, fg: (color, s) => `<${color}>${s}</${color}>` };
-  assert.equal(factory({ requestRender() {} }, tagged).renderCompact(10), "[toolPendingBg] <warning>📥</warning><text>1+0</text> [/toolPendingBg]");
+  assert.equal(factory({ requestRender() {} }, tagged).renderCompact(200), "[toolPendingBg] <warning>📥</warning><text>1+0</text> [/toolPendingBg]");
+  const compact = factory({ requestRender() {} }, theme);
+  assert.equal(truncateToWidth(compact.renderCompact(5), 5, ""), "📥1+0");
+  for (const width of [0, 1, 2, 3, 4, 5, 6, 12]) assert.ok(visibleWidth(compact.renderCompact(width)) <= width);
+  assert.equal(compact.renderCompact(4), "📥…");
   assert.equal((await f.call({ action: "list" }, "list")).details.total, 1);
   assert.equal((await f.call({ action: "get", id: "q1" }, "get")).details.context, "Concurrent sessions");
   assert.equal(f.messages.length, 0);

@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, type TogglePreferenceStore } from "@ponygirls/pi-settings";
-import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
+import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { completeArgument, compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
@@ -164,7 +164,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
             badge.requestRender = () => tui.requestRender();
             return {
               render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ${BADGE_GLYPH} ${badge.here}+${badge.other} · ${INBOX_SHORTCUT.label} `)), width)],
-              renderCompact: () => compactChip(theme, BADGE_GLYPH, "attention", `${badge.here}+${badge.other}`),
+              renderCompact: (width) => {
+                const counts = `${badge.here}+${badge.other}`;
+                const padded = compactChip(theme, BADGE_GLYPH, "attention", counts);
+                if (visibleWidth(padded) <= width) return padded;
+                const label = visibleWidth(`${BADGE_GLYPH}${counts}`) <= width ? counts : "…";
+                return truncateToWidth(theme.bg("toolPendingBg", `${theme.fg("warning", BADGE_GLYPH)}${theme.fg("text", label)}`), width);
+              },
               invalidate() {},
               dispose() {
                 badge.active = false;
