@@ -5,7 +5,7 @@
  * The single-reader logic lives in single.ts; this module adds retry/fallback.
  */
 
-import { boundedOperation, type SharedRuntime } from "../engine/runtime.js";
+import { boundedOperation, TimeoutError, type SharedRuntime } from "../engine/runtime.js";
 import { resolveTimeouts } from "../engine/policy.js";
 import type { SearchConfig } from "../types.js";
 import { fetchWithReader, readerLabel } from "./single.js";
@@ -41,7 +41,7 @@ function isRetryableError(err: Error): boolean {
  * @param params    - Additional parameters (fresh, keywords, mode, objective).
  * @param signal    - Optional abort signal.
  * @param config    - Search config for credential resolution.
- * @param onAttempt - Optional callback fired before each attempt (for status updates).
+ * @param onAttempt - Optional callback fired when an attempt is dispatched (not while queued).
  * @returns The fetched content and the reader that served it.
  */
 export async function fetchWithFallback(
@@ -51,7 +51,7 @@ export async function fetchWithFallback(
 	signal: AbortSignal | undefined,
 	config: SearchConfig,
 	onAttempt?: (reader: string, index: number, total: number) => void,
-	onOutcome?: (reader: string, status: "success" | "failed" | "cancelled") => void,
+	onOutcome?: (reader: string, status: "success" | "failed" | "cancelled" | "timeout") => void,
 	runtime?: SharedRuntime,
 ): Promise<FetchResult> {
 	if (!signal) return boundedOperation(inner => fetchWithFallback(url, readers, params, inner, config, onAttempt, onOutcome, runtime), resolveTimeouts(config.timeouts).overallMs, undefined, 0);
@@ -60,11 +60,27 @@ export async function fetchWithFallback(
 	for (let i = 0; i < readers.length; i++) {
 		signal?.throwIfAborted();
 		const candidate = readers[i];
-		onAttempt?.(candidate, i, readers.length);
+		let attempted = false, outcomeReported = false;
+		let cleanupAbort: (() => void) | undefined;
+		const outcome = (status: "success" | "failed" | "cancelled" | "timeout") => {
+			if (!attempted || outcomeReported) return;
+			outcomeReported = true;
+			onOutcome?.(candidate, status);
+		};
+		const isTimeout = (error: unknown) => error instanceof TimeoutError || (error instanceof Error && error.name === "TimeoutError");
 
 		try {
 			const timeoutMs = config.sources?.[candidate]?.timeoutMs ?? config.backends?.[candidate]?.timeout ?? resolveTimeouts(config.timeouts).readerMs;
-			const read = (attemptSignal: AbortSignal) => fetchWithReader(url, candidate, params, attemptSignal, config);
+			const read = (attemptSignal: AbortSignal) => {
+				attempted = true;
+				// Report logical cancellation synchronously, even if the transport
+				// ignores it and the outer overall operation returns before catch runs.
+				const abort = () => outcome(isTimeout(attemptSignal.reason) ? "timeout" : "cancelled");
+				attemptSignal.addEventListener("abort", abort, { once: true });
+				cleanupAbort = () => attemptSignal.removeEventListener("abort", abort);
+				onAttempt?.(candidate, i, readers.length);
+				return fetchWithReader(url, candidate, params, attemptSignal, config);
+			};
 			const result = runtime
 				? await runtime.operation(candidate, timeoutMs, signal, 0, read)
 				: await boundedOperation(read, timeoutMs, signal, 0);
@@ -76,10 +92,10 @@ export async function fetchWithFallback(
 				throw new Error(`${candidate} returned no content for ${url}`);
 			}
 			signal?.throwIfAborted();
-			onOutcome?.(candidate, "success");
+			outcome("success");
 			return result;
 		} catch (err) {
-			onOutcome?.(candidate, signal?.aborted ? "cancelled" : "failed");
+			outcome(isTimeout(err) || isTimeout(signal?.reason) ? "timeout" : signal?.aborted ? "cancelled" : "failed");
 			signal?.throwIfAborted();
 			const errorMsg = (err as Error).message;
 			errors.push({ reader: candidate, error: errorMsg });
@@ -96,6 +112,8 @@ export async function fetchWithFallback(
 					.join("; ");
 				throw new Error(`All readers failed: ${summary}`);
 			}
+		} finally {
+			cleanupAbort?.();
 		}
 	}
 

@@ -6,6 +6,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { SharedRuntime } from "../extensions/engine/runtime.js";
 import type { SearchConfig } from "../extensions/types.js";
 import type { FetchResult } from "../extensions/readers/single.js";
 
@@ -68,6 +69,49 @@ describe("fetchWithFallback", () => {
 		await expect(fetchWithFallback("https://example.com", ["firecrawl", "jina"], {}, undefined,
 			{ ...MINIMAL_CONFIG, timeouts: { readerMs: 1000, overallMs: 10 } })).rejects.toThrow("deadline");
 		mockFetchWithReader.mockReset();
+	});
+
+	it("does not report an attempt or outcome for a reader that expires in the provider queue", async () => {
+		vi.useFakeTimers();
+		let release!: () => void;
+		const runtime = new SharedRuntime({ maxConcurrent: 2, perProvider: 1 });
+		const blocker = runtime.operation("exa", 1000, undefined, 0, () => new Promise<void>(resolve => { release = resolve; }));
+		try {
+			await vi.advanceTimersByTimeAsync(0);
+			const onAttempt = vi.fn(), onOutcome = vi.fn();
+			const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
+			const pending = fetchWithFallback("https://example.com", ["exa"], {}, undefined,
+				{ ...MINIMAL_CONFIG, timeouts: { readerMs: 10, overallMs: 1000 } }, onAttempt, onOutcome, runtime);
+			const rejected = expect(pending).rejects.toThrow("deadline");
+			await vi.advanceTimersByTimeAsync(10);
+			await rejected;
+			expect(mockFetchWithReader).not.toHaveBeenCalled();
+			expect(onAttempt).not.toHaveBeenCalled();
+			expect(onOutcome).not.toHaveBeenCalled();
+		} finally { release(); await blocker; vi.useRealTimers(); }
+	});
+
+	it.each(["reader deadline", "overall deadline", "caller cancellation"])("reports one terminal outcome for a started reader on %s", async kind => {
+		vi.useFakeTimers();
+		let settle!: (result: FetchResult) => void;
+		mockFetchWithReader.mockImplementationOnce(() => new Promise(resolve => { settle = resolve; }));
+		const onAttempt = vi.fn(), onOutcome = vi.fn();
+		const controller = new AbortController();
+		try {
+			const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
+			const pending = fetchWithFallback("https://example.com", ["exa"], {}, kind === "caller cancellation" ? controller.signal : undefined,
+				{ ...MINIMAL_CONFIG, timeouts: { readerMs: kind === "reader deadline" ? 10 : 1000, overallMs: kind === "overall deadline" ? 10 : 1000 } }, onAttempt, onOutcome);
+			const rejected = expect(pending).rejects.toThrow(kind === "caller cancellation" ? "user stopped" : "deadline");
+			await vi.advanceTimersByTimeAsync(0);
+			expect(onAttempt).toHaveBeenCalledExactlyOnceWith("exa", 0, 1);
+			if (kind === "caller cancellation") controller.abort(new Error("user stopped"));
+			else await vi.advanceTimersByTimeAsync(10);
+			await rejected;
+			expect(onOutcome).toHaveBeenCalledExactlyOnceWith("exa", kind === "caller cancellation" ? "cancelled" : "timeout");
+			settle(makeResult("late physical success", "exa"));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(onOutcome).toHaveBeenCalledTimes(1);
+		} finally { vi.useRealTimers(); }
 	});
 
 	it("returns result from first reader on success", async () => {
