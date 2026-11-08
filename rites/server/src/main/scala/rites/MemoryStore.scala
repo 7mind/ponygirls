@@ -133,7 +133,8 @@ final class MemoryStore(config: Config, clock: () => Instant) extends RitesStore
   }
   def deleteRite(identity: Identity, request: DeleteRiteRequest): Unit = synchronized {
     requireCurrent(identity); repo(identity, request.repositoryId, GrantRole.Editor); val key = (request.repositoryId, request.id)
-    ritesMap.get(key).foreach(r => RitesStore.requireRevision(request.expectedRevision, r.public.revision)); ritesMap.remove(key); ()
+    ritesMap.get(key).foreach(r => RitesStore.requireRevision(request.expectedRevision, r.public.revision)); ritesMap.remove(key)
+    runsMap.keys.filter(id => runsMap(id).public.repositoryId == request.repositoryId && runsMap(id).public.riteId == request.id).toList.foreach { id => runsMap.remove(id); publicationStages.remove(id); runMarkers.remove(id); runTargets.remove(id) }; ()
   }
   def manualRun(identity: Identity, request: ManualRunRequest): RunAdmission = synchronized {
     requireCurrent(identity); repo(identity, request.repositoryId, GrantRole.Viewer)

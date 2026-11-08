@@ -12,11 +12,12 @@ CREATE TABLE rt_credentials (
   name text NOT NULL, forge text NOT NULL, host text NOT NULL,
   revision integer NOT NULL, created_at timestamptz NOT NULL, updated_at timestamptz NOT NULL,
   key_id text NOT NULL, nonce bytea NOT NULL, ciphertext bytea NOT NULL,
-  mode text NOT NULL DEFAULT 'Token', oauth_client_id text, expires_at timestamptz,
-  refresh_health text NOT NULL DEFAULT 'Healthy', generation bigint NOT NULL DEFAULT 1,
+  mode text NOT NULL DEFAULT 'Token' CHECK(mode IN('Token','Oauth')), oauth_client_id text, expires_at timestamptz,
+  refresh_health text NOT NULL DEFAULT 'Healthy' CHECK(refresh_health IN('Healthy','Due','Uncertain','Failed')), generation bigint NOT NULL DEFAULT 1,
   refresh_key_id text, refresh_nonce bytea, refresh_ciphertext bytea,
   refresh_intent boolean NOT NULL DEFAULT false,
-  CHECK((mode='Token' AND oauth_client_id IS NULL) OR (mode='Oauth' AND oauth_client_id IS NULL OR mode='Oauth')),
+  CHECK((mode='Token' AND oauth_client_id IS NULL AND expires_at IS NULL AND refresh_ciphertext IS NULL)
+    OR (mode='Oauth' AND oauth_client_id IS NOT NULL AND expires_at IS NOT NULL AND refresh_key_id IS NOT NULL AND refresh_nonce IS NOT NULL AND refresh_ciphertext IS NOT NULL)),
   UNIQUE(owner,id)
 );
 CREATE INDEX rt_credentials_owner ON rt_credentials(owner);

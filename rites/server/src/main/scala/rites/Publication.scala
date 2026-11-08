@@ -34,7 +34,7 @@ final class PublicationService(store: RitesStore, git: GitRepository, forge: For
     val user = tokens.withToken(authority)(token => forge.user(authority, token))
     var proposal = list(id).find(p => p.source == branch && p.marker.linesIterator.contains(marker) && p.target == authority.baseBranch && p.author == user.id)
     if (proposal.isEmpty) {
-      Check(stage != "CreateDispatched" && delta.nonEmpty, "publication-uncertain", "remote create outcome cannot be proven")
+      Check(stage != "CreateDispatched" && (delta.nonEmpty || stage == "Pushed"), "publication-uncertain", "remote create outcome cannot be proven")
       store.markCreateDispatched(id)
       val fresh = current(id)
       proposal = Some(tokens.withToken(fresh)(token => forge.create(fresh, token, virtualDelta)))

@@ -65,6 +65,13 @@ final class PublicationTest extends munit.FunSuite {
       assertEquals(forge.createCalls, 0); assertEquals(store.run(owner, current.run.id).state, RunState.Published)
     } finally store.close()
   }
+  test("durable pushed stage can recover pre-dispatch create after restart") {
+    val (store, config, owner, forge, git) = setup(); try {
+      val current = run(store, owner); val value = delta(current); store.persistIntent(current.run.id, value.branch, value.marker); store.markPushed(current.run.id)
+      new PublicationService(store, git, forge, tokens, config).reconcile(current.run.id, None)
+      assertEquals(forge.createCalls, 1); assertEquals(store.run(owner, current.run.id).state, RunState.Published)
+    } finally store.close()
+  }
   test("empty observation after dispatched create remains uncertain and creates nothing") {
     val (store, config, owner, forge, git) = setup(); try {
       val current = run(store, owner); val value = delta(current); store.persistIntent(current.run.id, value.branch, value.marker); store.markCreateDispatched(current.run.id)

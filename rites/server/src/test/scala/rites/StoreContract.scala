@@ -111,6 +111,14 @@ abstract class StoreContract extends munit.FunSuite {
     val admitted = store.manualRun(editor, ManualRunRequest(repo.id, "site", UUID.randomUUID()))
     assert(admitted.admitted); assertEquals(store.run(owner, admitted.run.id).state, RunState.Queued)
   } }
+  test("deleting a rite revokes queued work and makes its history inaccessible") { configured { store =>
+    val owner = identity(store, "owner"); val cred = credential(store, owner); val repo = repository(store, owner, "repo-delete-rite", cred.id); val site = rite(store, owner, "site", repo.id)
+    val queued = store.manualRun(owner, ManualRunRequest(repo.id, "site", UUID.randomUUID())).run
+    store.deleteRite(owner, DeleteRiteRequest(repo.id, "site", site.revision))
+    assertEquals(intercept[DomainError](store.run(owner, queued.id)).code, "not-found")
+    rite(store, owner, "site", repo.id)
+    assert(store.manualRun(owner, ManualRunRequest(repo.id, "site", UUID.randomUUID())).admitted)
+  } }
   test("long downtime coalesces to one latest occurrence without minute iteration exhaustion") { configured { store =>
     val owner = identity(store, "owner"); val cred = credential(store, owner); repository(store, owner, "repo-catchup", cred.id); rite(store, owner, "site", "repo-catchup", schedule = "* * * * *")
     val now = Instant.now().plusSeconds(150L * 86400L)
