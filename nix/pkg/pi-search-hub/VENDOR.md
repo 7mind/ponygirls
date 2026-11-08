@@ -22,8 +22,8 @@ and exact-identifier matching; provider adapters supply retrieval.
   web `combine`/`combineMode` controls are used when root `mode` is absent.
 - **Always include:** sources named in `alwaysInclude` are scheduled alongside
   main in every automatic mode, not only after failures. They do not consume the
-  main nonempty-source target, but do consume concurrency slots. The pane's
-  historical "Fallback" heading refers to this tier.
+  main nonempty-source target, but do consume concurrency slots. The pane labels
+  this tier "Always include"; older internal monitor records use `fallback`.
 - **Native:** supported provider-hosted web search runs alongside both tiers;
   it uses the same pool/deadlines and does not consume the main target. It is not
   inserted into paper results as invented bibliographic metadata.
@@ -195,7 +195,7 @@ Ranking preserves normalized DOI/arXiv/PubMed identifiers, explicit crosswalks,
 original distinct-document ranks and all retrieval paths. It does not merge
 unrelated works merely because titles match. arXiv versions share work identity;
 this is not a claim that versions or preprint/published text are identical.
-RRF uses `sum(weight / (60 + rank))`, one vote per source/work. A SearXNG hit on a
+RRF uses `sum(weight / (rankConstant + rank))` (default constant 60), one vote per source/work. A SearXNG hit on a
 work found by another source retains provenance but contributes no extra term:
 its upstream engine lineage may overlap. This conservative rule is not a claim
 that the remaining indexes are statistically independent.
@@ -256,33 +256,58 @@ candidate recall separately from final ranking.
 
 ## `/websearch`
 
-The pane uses the shared `@ponygirls/pi-ui` layout/toggle components. It shows
-configured engines and in-memory, per-extension-instance observations: active,
-nonempty success, empty, failed, timed-out and cancelled operations, result counts and
-latency. Unattempted engines have unknown health; configuration is not a probe.
-Reader counts represent successful page fetches. Session replacement/reload
-resets observations. No search queries, credentials or raw provider errors are
-retained by the monitor.
+The pane uses the shared `@ponygirls/pi-ui` layout/toggle components. Five tabs
+are available: **Web stats**, **Paper stats**, **Fetchers**, **Test web**, and
+**Test papers**. Paper testing dispatches scholarly search, not ordinary web
+search with an academic query. Its readable results include paper titles, source
+URLs/identifiers, authors/dates when supplied, abstract or snippet, sources and
+ranking/lookup evidence; unqualified dates are not labelled publication dates.
 
-The pane has separate **Search engines**, **Fetchers**, and **Test search** tabs.
-Search engines groups the current main, fallback and native tiers separately from
-historical observations. Its policy explanation reflects automatic-search defaults:
-main selection and request budgets, always-included tiers, configured fallback
-caps/deadlines, shared pool limits, overall/discovery budgets, native grace,
-caller overrides and weighted fusion/reranking policy.
-Configured preference is not presented as the next random, round-robin or scored
-selection. Reading/rendering the policy neither sends a search nor advances selection.
-Configuration still does not establish provider health or entitlement.
+Both statistics profiles use comparative tables, with sources as rows and one
+header per tier group: active/nonempty-success/empty/failed/timeout/cancelled/last
+outcome, observed last/total results and latency, plus resolved default source
+deadlines/candidate caps/boosts. At narrower widths headers are abbreviated with
+legends; tables that cannot fit become metric rows without silently clipping
+scalar values. Current main and alwaysInclude sources (plus native web sources)
+are distinguished from historical observations in their original tiers. Paper
+statistics do not suggest that native web models or web combine controls are
+paper-source capabilities. Never-attempted sources show unknown health, not
+invented successful/failed requests. Configuration is not proof of entitlement.
 
-Tab/Shift+Tab switches views; mouse tabs work in fullscreen or regular mode with
-Pi's `regularMouse` enabled. Default regular mode leaves mouse to the terminal.
-Only Test search accepts query input; Enter tests the same metasearch as `web_search`.
-Query/results and per-tab scrolling survive tab switches; an in-flight test may
-finish while viewing statistics. Arrow keys and Ctrl+PageUp/PageDown scroll;
-Ctrl+C cancels the owned test from any tab; Escape closes the pane and its work. Bare PageUp/PageDown also work in regular
-mode, but Pi reserves them for transcript scrolling in fullscreen mode. Closing
-or replacing a pane prevents late results from repainting it. Search output is
-bounded and terminal-control sequences are removed before pane display.
+The actual paper tool and pane share one paper service/monitor; source activity
+from model tool calls and explicit panel tests therefore appears in the same
+paper tables. Search, metadata-read and related-paper operations are observed;
+reads count one retrieved paper, related/search calls count admitted paper hits.
+Reader counts represent successful fetched pages. Counts are logical dispatched
+operations, not queued work or physical connection occupancy. Authoritative
+source outcomes update immediately, independently of slower peers and before
+fusion; ranking failures cannot leave completed retrievals marked active.
+Session replacement/reload resets these in-memory observations. Queries,
+credentials, raw upstream errors and response bodies are not retained by monitors.
+
+Policy explanations retain main selection and candidate budgets, alwaysInclude
+limits, the shared pool, source/overall budgets, web discovery/native grace and
+configured fusion/reranking. Default caps are not the last caller's count.
+Configured preference is not presented as the next random/round-robin/scored
+selection. Viewing metadata sends no search/read probes or nested inference,
+resolves no paper credentials and acquires no arXiv lock; web registry discovery
+still refreshes configured availability when the command opens.
+
+Tab/Shift+Tab switches views; fullscreen mouse tabs work, while regular mode uses
+mouse only when Pi's `regularMouse` is enabled. Test web and Test papers each have
+an independent editor, query, result, scroll position and cancellation owner;
+switching profiles preserves them and both may run concurrently through the
+shared pool. Enter submits the active profile using the same service as its
+corresponding tool. Background completions cannot overwrite the other result.
+Arrow keys and Ctrl+PageUp/PageDown scroll. Ctrl+C cancels **all pane-owned tests**
+from any tab; Escape/dispose closes the pane and cancels its tests, not unrelated
+tool calls. Bare PageUp/PageDown work in regular mode; fullscreen reserves them
+for transcript scrolling. Unsubscribed monitors and generation checks prevent
+late completions from repainting disposed views. Output is bounded and terminal
+control sequences are removed before display.
+
+In non-TUI modes, `/websearch` returns separate `web` and `papers` snapshots with
+safe engines, policy and statistics. These are observations, not provider probes.
 
 Search and fetch no longer write status-bar entries, including at startup.
 The former `showStatus` setting has no effect. `/search-setup` and the textual

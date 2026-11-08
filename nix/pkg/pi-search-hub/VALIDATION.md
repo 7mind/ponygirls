@@ -1,4 +1,103 @@
-# Validation — unified engine, 2026-11-08
+# Validation — web/paper diagnostics panel, 2026-11-08
+
+## Source and installed artifact
+
+- Application commit: `d7d5ac94` (later tracked changes are documentation only).
+- Source Git tree (`src/`): `b36b4e4ed9c74b7afbf90826080c0b65d424f2d5`.
+- Package: `/nix/store/4w05wqrk58lm5mjzpipa3kagqdmr887v-pi-search-hub-2.8.0-ponygirls.1`.
+- NAR: `sha256-9yqWxzUr46g7bGjK9zZmdnFbzyLUe9d+Y4r35n/hHQw=`.
+- Parent compared all 59 installed application/reference files byte-for-byte to
+  the task source. No activation or push occurred.
+
+## Automated acceptance
+
+```bash
+nix build .#pi-search-hub .#checks.x86_64-linux.pi-search-hub-eval \
+  .#checks.x86_64-linux.subagents-policy-shape --no-link --print-out-paths -L
+```
+
+Fresh pinned strict Pi 1.4.0 / Node 24.21.0 typecheck and **33 Vitest files /
+568 cases passed**, zero failures/errors/skips. The evaluation check freshly
+passed **37 Python cases**, reproduced both fixed report hashes and verified
+installed pure RRF60 ordering on 10 frozen pools. The unchanged policy-shape
+output was reused, not freshly executed. Ranking parity is not a new semantic
+quality result.
+
+The final **installed** artifact separately passed the SDK/model-loop host case:
+actual `paper_research` invocation updates the same paper service observed by
+`/websearch`; before/after command snapshots show paper success 1, web attempts 0,
+no extra source requests or model turns from inspection, no query/credential/URL
+leak in metadata, and empty observations after reload. It uses a scripted model
+and owned loopback SearXNG fixture, not live inference.
+
+New controls verify both-domain independent query/result/scroll/cancellation,
+dual monitor subscriptions and cleanup, comparative multi-source alignment at
+80/120 columns, unknown versus observed-zero counters, historical tier identity,
+safe source labels, large-value/narrow fallbacks, default caps/deadlines/boosts,
+and metadata refresh without key resolution, probes or arXiv locks.
+
+Fail-first source-monitor tests exposed fast completed sources remaining active
+until a slow peer finished, and completed retrievals left active when fusion
+threw. Shared authoritative outcome hooks now notify once before aggregation;
+observer exceptions/mutation cannot change execution outcomes. Web uses the same
+hook, with separate regressions. Paper search/read/related operations retain
+canonical timeout/cancel classification and ignore late physical completions.
+A formatter regression confirmed that dates lacking a kind must not be labelled
+publication; unsupported web combine controls are explicitly inapplicable in
+paper policy.
+
+Independent review found a prior arXiv abort race: logical rejection released
+its global permit while the actual transport/lock promise remained pending.
+Caller-abort and configured-deadline reproductions failed before removing the
+redundant local queue/race. The actual host-lock operation now owns the promise;
+a third negative control confirms that cancelling a lock waiter cannot release
+another operation's lock. Original adapter/rate-limit tests remain unfiltered.
+
+## Installed real-PTY acceptance
+
+A dedicated worker exercised the final installed artifact in **regular and
+fullscreen** Pi through private `tui-tmux` 3.8 servers. Parent reviewed artifact
+manifests, rendered wide paper-stat and wide/narrow paper-result captures,
+request/alignment audit and exit/cleanup receipts. The source identity supplied
+to the worker is the source **tree** above, not a Git commit.
+
+Both modes passed all five tabs, initial unknown health without source/model
+requests, concurrent web/paper submissions, readable paper metadata rather than
+raw JSON, independent query/results/scroll across switches, and actual
+120×40 → 80×24 → 120×40 statistics/results resizing. The audit checked 290 retained
+screen states and 757 complete captured table excerpts for matching pipe columns
+and bounds (these are repeated excerpts, not 757 distinct tables). Both profiles
+showed inherited SearXNG deadline 3000 ms, candidate cap 3 and boost 1; paper policy
+showed no native-model/discovery tier. Fullscreen mouse selected Paper stats;
+keyboard navigation was tested in both modes.
+
+Per mode, four submissions per profile generated **12 HTTP requests** (8 web,
+4 science-category paper) and **4 scripted native-web requests**, 2 aborted.
+Paper tests generated no fastCRW/native/web-category calls. Ctrl+C from Fetchers
+and Escape/close cancelled concurrent tests only after actual dispatch; reopening
+showed every source active 0, success 1, failed 1, cancelled 2, with independent
+web/paper SearXNG counters. Failures were redacted; late completions could not
+change counters or reopen the view. Both Pi processes exited 0; owned tmux sockets
+were unavailable and the loopback port refused connections after teardown.
+
+Two isolated earlier harness attempts assumed the top scroll position and used
+Ctrl+Home, which Pi intercepts for transcript navigation. The harness switched to
+bounded Ctrl+PageUp; those failures are retained separately, not reclassified as
+application passes. No application interactions or deadline assertions were
+weakened. This is terminal-cell behavior, not fonts/pixels/IME/clipboard/physical
+mouse or live external-provider relevance acceptance. Actual tool-to-service
+identity is established by the separate SDK case, not inferred from pane-only
+submissions.
+
+Sanitized fixture evidence, manifests, original byte streams, screen captures,
+request/native logs and harness retries are retained in main checkout's ignored
+`debug/search-panel-20261108/`. Follow-up read-only review found no remaining
+actionable defects; it did not claim test execution. No novel skill candidate
+was identified beyond existing resource-ownership/testing patterns.
+
+---
+
+# Prior unified-engine delivery — 2026-11-08
 
 ## Final source and artifact
 
