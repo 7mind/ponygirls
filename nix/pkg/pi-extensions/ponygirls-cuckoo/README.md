@@ -11,7 +11,7 @@ Opt-in objective/progress checkpoints from the **main conversation model**. Uses
   invalid or interrupted answers and remains available while Cuckoo is OFF.
 - `/cuckoo reports`: view current-branch reports and effective settings.
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
-- Click the **Cuckoo N** border badge to toggle reports (fullscreen, or regular
+- Click the **🐦 N** border badge to toggle reports (fullscreen, or regular
   mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
 - `/cuckoo on|off|inherit`: session override, or inherit the global default.
 - `/cuckoo default on|off`: global default for sessions without an override.
