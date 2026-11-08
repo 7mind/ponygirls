@@ -127,13 +127,56 @@ try {
     try {
       await page.goto(`http://127.0.0.1:${server.address().port}/`);
       await page.locator('#artifact-list > tr').first().waitFor();
+      // Specified: a full-width workspace with session controls in the shared topbar.
+      const mainBox = await page.locator('#main').boundingBox();
+      assert.equal(mainBox.x, 0, 'workspace has no reserved left rail');
+      assert.equal(mainBox.width, width, 'workspace uses the viewport width');
+      assert.equal(await page.locator('.sidebar, .service-label').count(), 0, 'no obsolete sidebar or service label');
+      for (const id of ['whoami', 'whoami-text', 'logout-button']) {
+        assert.equal(await page.locator(`#${id}`).count(), 1, 'session control is not duplicated');
+        assert.equal(await page.locator(`.topbar #${id}`).isVisible(), true, 'session control lives in topbar');
+      }
+      assert.equal(await page.locator('#whoami-text').textContent(), long, 'long identity retained');
+      const identityBox = await page.locator('#whoami').boundingBox();
+      const brandBox = await page.locator('.topbar .brand').boundingBox();
+      assert(identityBox.x >= brandBox.x + brandBox.width, 'identity is right of brand');
+      const presets = page.getByRole('group', { name: 'Access query presets' });
+      assert.equal(await presets.locator('button').count(), 4);
+      assert.equal(await page.locator('[data-visibility-preset]').count(), 4, 'no hidden duplicate presets');
+      const presetBox = await presets.boundingBox();
+      const searchBox = await page.locator('.search-actions').boundingBox();
+      assert(presetBox.y >= searchBox.y + searchBox.height, 'presets are under search row');
+      assert(presetBox.y - searchBox.y - searchBox.height <= 16, 'presets directly follow search row');
+      const listCount = commands.filter(command => command.ListArtifacts).length;
+      for (const value of ['internal', 'external', 'public', '']) {
+        const preset = presets.locator(`[data-visibility-preset="${value}"]`);
+        await preset.focus();
+        await page.keyboard.press('Enter');
+        assert.equal(await presets.locator('[data-visibility-preset=""]').getAttribute('aria-pressed'), 'true', 'pressed preset continues to describe applied query');
+        assert.equal(await presets.locator('[aria-pressed=true]').count(), 1);
+        assert.equal(await page.locator('#filter-text').inputValue(), value ? `access:${value} ` : '');
+        assert.equal(commands.filter(command => command.ListArtifacts).length, listCount, 'presets only edit draft');
+        const box = await preset.boundingBox();
+        assert(box.height <= 36 && box.x >= 0 && box.x + box.width <= width, 'compact visible preset');
+      }
+      await page.locator('#logout-button').focus();
+      assert(await page.locator('#logout-button').evaluate(node => node === document.activeElement));
+      // The fixture uses Subdomain; also exercise the fixed Path-mode safety notice.
+      await page.locator('#path-mode-warning').evaluate(node => { node.hidden = false; });
+      const warningBox = await page.locator('#path-mode-warning').boundingBox();
+      for (const selector of ['.topbar .brand', '#whoami', '#logout-button']) {
+        const box = await page.locator(selector).boundingBox();
+        assert(box.x + box.width <= warningBox.x, `${width}/${colorScheme}: ${selector} leaves room for hosting warning`);
+      }
+      await page.locator('#path-mode-warning').focus();
+      assert(await page.locator('#path-mode-warning').evaluate(node => node === document.activeElement), 'hosting warning remains keyboard accessible');
       assert.equal(await page.locator('#results-help').textContent(), 'Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width.', 'runtime catalogue help describes wrapping, not horizontal scrolling');
       if (out) await page.screenshot({ path: path.join(out, `catalogue-${width}-${colorScheme}.png`), fullPage: true });
       const noOverflow = async selector => {
         const measurements = await page.locator(selector).evaluateAll(nodes => nodes.map(node => ({ width: node.clientWidth, scroll: node.scrollWidth })));
         for (const value of measurements) assert(value.scroll <= value.width + 1, `${width}/${colorScheme} ${selector}: ${JSON.stringify(value)}`);
       };
-      await noOverflow('html, #results-panel, .artifacts, .artifacts th, .artifacts td');
+      await noOverflow('html, .topbar, #whoami, #results-panel, .artifacts, .artifacts th, .artifacts td');
       assert.equal(await page.getByRole('table').count(), 1, 'responsive layout retains table semantics');
       assert.equal(await page.getByRole('columnheader').count(), 10, 'all accessible column headers retained');
       assert.equal(await page.getByRole('cell').count(), 20, 'all accessible metadata cells retained');
@@ -174,6 +217,9 @@ try {
       await page.locator('#file-list tr').waitFor();
       if (out) await page.screenshot({ path: path.join(out, `manifest-${width}-${colorScheme}.png`), fullPage: true });
       await noOverflow('html, .manifest-panel, .manifest-panel table, .manifest-panel td');
+      assert.equal(await page.locator('.topbar #whoami').isVisible(), true, 'detail keeps session identity');
+      assert.equal(await page.locator('.topbar #logout-button').isVisible(), true, 'detail keeps logout');
+      assert.equal(await presets.isVisible(), false, 'catalogue presets do not become detail navigation');
       assert.match(await page.locator('#file-list').textContent(), /file.txt/);
       const download = page.locator('#file-list a, #file-list button').first();
       await download.focus(); assert(await download.evaluate(node => node === document.activeElement));

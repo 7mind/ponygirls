@@ -41,30 +41,14 @@ aria-describedby="token-note">
 
 <div id="workspace-shell" class="app-shell" hidden>
 <a class="skip" href="#main">Skip to main content</a>
-<aside class="sidebar" aria-label="Workspace navigation">
-<a class="brand" href="#main"><span class="brand-mark" aria-hidden="true"></span><span>manure<small>artifact workspace</small></span></a>
-<p class="workspace-label">LIBRARY</p>
-<nav aria-label="Artifact access">
-<button type="button" class="nav-entry selected" data-visibility-preset="" aria-pressed="true"><span class="nav-mark mark-all" aria-hidden="true"></span>All artifacts</button>
-<button type="button" class="nav-entry" data-visibility-preset="internal" aria-pressed="false"><span class="nav-mark mark-internal" aria-hidden="true"></span>Internal</button>
-<button type="button" class="nav-entry" data-visibility-preset="external" aria-pressed="false"><span class="nav-mark mark-external" aria-hidden="true"></span>External</button>
-<button type="button" class="nav-entry" data-visibility-preset="public" aria-pressed="false"><span class="nav-mark mark-public" aria-hidden="true"></span>Public</button>
-</nav>
-<div class="sidebar-note">
-<p class="workspace-label">FROM YOUR TERMINAL</p>
-<p>Upload with the CLI.</p>
-<code>manure upload ./path --access internal</code>
-<small>Or paste, drop, or choose files here. Directories use the CLI.</small>
-</div>
+<main id="main" class="workspace-main" tabindex="-1">
+<header class="topbar">
+<span class="brand"><span class="brand-mark" aria-hidden="true"></span>manure</span>
 <div id="whoami" class="identity" hidden>
-<span class="avatar" aria-hidden="true">M</span>
-<div class="identity-copy"><small>Workspace session</small><span id="whoami-text"></span></div>
+<span id="whoami-text"></span>
 <button type="button" id="logout-button" class="quiet">Log out</button>
 </div>
-</aside>
-
-<main id="main" class="workspace-main" tabindex="-1">
-<header class="topbar"><span>Workspace<span class="breadcrumb-separator" aria-hidden="true">/</span><strong>Artifacts</strong></span><span class="service-label">Artifact management</span></header>
+</header>
 <div class="workspace-content">
 <section id="quick-upload" class="detail-panel quick-upload" aria-label="Quick upload" title="Paste or drop files to stage; Upload publishes each file. Directories use the CLI.">
 <form id="upload-form">
@@ -97,6 +81,12 @@ aria-describedby="token-note">
 <div class="expression-composer"><div class="query-input"><input type="text" id="filter-text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="query-suggestions" aria-describedby="query-diagnostic draft-status" maxlength="4096" placeholder="Search or filter · access:public" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear draft · Escape after closing suggestions">×</button></div>
 <div id="query-suggestions" class="expression-hints" role="listbox" aria-label="Expression suggestions" hidden></div></div></div>
 <div class="search-actions"><button type="submit" id="search-submit" class="primary">Search</button><button type="button" id="refresh-button" title="Refresh applied query, not the draft">Refresh</button></div>
+<div class="visibility-presets" role="group" aria-label="Access query presets">
+<button type="button" data-visibility-preset="" aria-pressed="true">All</button>
+<button type="button" data-visibility-preset="internal" aria-pressed="false">Internal</button>
+<button type="button" data-visibility-preset="external" aria-pressed="false">External</button>
+<button type="button" data-visibility-preset="public" aria-pressed="false">Public</button>
+</div>
 <p id="query-diagnostic" class="query-diagnostic" role="status" hidden></p>
 <p id="draft-status" class="search-help" role="status">Draft matches applied query.</p>
 <details id="query-syntax" class="search-help"><summary>Query syntax</summary>

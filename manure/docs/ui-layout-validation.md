@@ -80,3 +80,55 @@ Red/green logs are `runtime-help-red.log`, `runtime-help-green.log`, and
 and stress screenshots are in `runtime-help-final-screenshots/`; these supersede
 original screenshots for helper-copy validation. Normal desktop examples remain
 `catalogue-light.png` and `catalogue-dark.png` within that new directory.
+
+
+## Full-width shell (2026-11-08)
+
+Removed the left rail and its reserved margin. The retained manure brand and
+unique `whoami`/`whoami-text`/`logout-button` controls share the topbar, including
+in artifact details. Long identities truncate visually without changing their
+accessible text or displacing logout. Right padding reserves the fixed hosting
+warning. All/Internal/External/Public are compact buttons immediately below the
+search row, not navigation. `app.js` is unchanged: presets insert the draft
+(including its trailing space), never submit; `aria-pressed` describes the
+applied query, not an unapplied draft. CLI guidance remains in the catalogue and
+footer.
+
+The maintained controlled layout test reproduced the old controls before the
+fix (two obsolete sidebar/service-label nodes), then the old geometry (main
+left edge 224px rather than zero). Final checks pass at all ten existing widths
+from 320–1440px in light/dark: full-width main, unique topbar auth, long identity,
+compact preset placement, keyboard insertion without a list request, original
+pressed-state semantics, detail auth availability, table accessibility and no
+document overflow. The normally hidden Path-mode warning is explicitly shown
+and focused in this Subdomain fixture; its rectangle is separated from brand,
+identity and logout at every width/theme. This isolates the collision contract
+without replacing the real Path-mode capability/security tests.
+
+Fresh pinned `nix develop .#chronicle` checks:
+
+- `bash scripts/backend-sbt.sh 'manureServer/assembly'`: passed; local assembly
+  SHA-256 `21ade3db1ca84e86825f9733a78fd1e0f864b650acc8bcc2fe07f852fcc7a0c2`.
+- Owned PostgreSQL `python3 -m unittest discover -s manure/tests -p
+  test_browser_dashboard_ux.py -v`: 2 passed, no skips (105.479s), including
+  23 real-JVM-server scenarios and the controlled layout matrix. Explicit
+  unchanged viewer assets: main checkout `manure/web/viewer/dist`. The runner
+  reads only the public provider/tools descriptors, not live credentials.
+- Final controlled `node manure/tests/browser/dashboard-layout.mjs`: all 20
+  width/theme combinations passed, including the additional shown-warning
+  collision checks and two existing clipboard/password scenarios.
+- `node --test manure/tests/browser/*.test.mjs`: 32 passed, no skips.
+- `python3 -m unittest discover -s manure/tests -p test_dashboard_markup.py -v`:
+  9 passed. `git diff --check`: passed.
+
+Sanitized local evidence (not published) is under
+`debug/manure-dashboard-shell-202611/` in the main checkout: `layout-red.log`,
+`geometry-red.log`, `layout-final.log`, `focused.log`, the explicit
+`run-focused.sh`, and assembly/source hashes. Synthetic catalogue/manifest
+screenshots have no revealed passwords or tokens; desktop/mobile examples are
+`screenshots/catalogue-1440-light.png`, `screenshots/catalogue-1440-dark.png`,
+`screenshots/catalogue-390-light.png`, and `screenshots/catalogue-390-dark.png`.
+The complete 40 screenshots include both views at all widths/themes. This is
+focused frontend evidence, not a fresh full backend/full-target run or deployment.
+Source identity is the commit containing this section. No distinct reusable
+skill pattern was identified beyond the installed constructive test taxonomy.

@@ -177,7 +177,7 @@ await check("direct route fences held retrieval and never replays unsent URL que
   } finally { await page.evaluate(() => window.__ux.releaseSearch?.()); }
 });
 
-await check("sort never submits draft and sidebar presets insert visible syntax only", async (page) => {
+await check("sort never submits draft and access presets insert visible syntax only", async (page) => {
   await recordSearch(page);
   const before = await page.evaluate(() => window.__ux.readCommands.length);
   await page.locator("#filter-text").fill("mode:lexical kind:dir owner:unsent-owner unsent draft");
