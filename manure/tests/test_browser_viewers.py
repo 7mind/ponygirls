@@ -96,9 +96,9 @@ class ViewerBrowserTests(unittest.TestCase):
         self.addCleanup(fix.close)
         records = {}
 
-        def upload(key, files, *, visibility="public", kind="file"):
+        def upload(key, files, *, visibility="public", kind="file", empty_dirs=None):
             record = bf.upload_fixture(fix, name="viewer-" + key, kind=kind,
-                                       visibility=visibility, files=files)
+                                       visibility=visibility, files=files, empty_dirs=empty_dirs)
             record["content_url"] = bf.content_url_for(fix, record["artifact_id"])
             # Password/token only transit stdin; never argv or browser artifacts.
             record["files"] = {name: base64.b64encode(blob).decode() for name, blob in files.items()}
@@ -116,6 +116,10 @@ class ViewerBrowserTests(unittest.TestCase):
         upload("directory", {"index.html": b"<!doctype html><h1>Original directory index</h1>",
                              "docs/guide ü.md": MARKDOWN + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture(),
                              "assets/data.bin": b"\x00raw\xff\r\n"}, kind="dir")
+        upload("browse", {"README.md": MARKDOWN,
+                          "nested/README.md": b"# Nested directory preview\n",
+                          "nested/a & <b> + ü.md": b"# Encoded child preview\n",
+                          "original.bin": b"\x00original\xff"}, kind="dir", empty_dirs=["empty"])
         upload("external", {"index.html": b"<h1>Protected directory index</h1>",
                             "docs/guide ü.md": MARKDOWN + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture()},
                kind="dir", visibility="external")
@@ -132,7 +136,7 @@ class ViewerBrowserTests(unittest.TestCase):
             output = output.replace(secret, "[REDACTED]")
         self.assertEqual(result.returncode, 0, output[-12000:])
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 8, report)
+        self.assertEqual(len(report), 9, report)
         self.assertTrue(all(item["ok"] for item in report), report)
         for item in report:
             print("ok - " + mode + " viewer: " + item["name"])

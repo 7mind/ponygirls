@@ -29,6 +29,16 @@ nix build --impure --no-link --print-out-paths --expr \
 The installation is `$out/share/manure/web/viewer/`. Never commit `node_modules`
 or `dist`. The source directory is not directly browser-usable; build first.
 
+## Directory browsing
+
+Directories without `index.html`/`index.htm` show an escaped, manifest-backed
+immediate-child listing. If an exact `README.md` exists and viewers are enabled,
+the backend inserts the listing before the preview in the existing shell; the
+same Markdown metadata, local renderer and safety rules apply. No iframe or
+additional renderer is used. Static-site index paths and ordinary file URLs
+remain byte-exact. Disabling viewers preserves listing/raw navigation without
+a README preview.
+
 ## Backend integration
 
 Replace these placeholders with **HTML attribute escaped** strings (including

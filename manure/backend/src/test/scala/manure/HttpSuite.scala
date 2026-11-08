@@ -390,3 +390,75 @@ final class HttpSuite extends FunSuite:
       _ <- IO(assertEquals(deleted.status.code,404))
     yield ()
   }}
+
+  // Regression: directories without an index were inaccessible, including empty uploads.
+  // Behavioral-Active / Blackbox / Good Communication (owned PostgreSQL + filesystem).
+  test("no-index directories browse immediate children, nested and empty directories") { run { (f,h) =>
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("directory",ArtifactKind.Directory,Visibility.Public,
+        Vector(ManifestEntry("nested",true,0,""),ManifestEntry("empty",true,0,""),
+          ManifestEntry("nested/leaf",true,0,""),ManifestEntry("a & <b>.md",false,0,SecretCodec.sha256(Array.emptyByteArray))),None))
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      base = s"/view/${a.artifact.id}"
+      root <- h.app.run(request(Method.GET,base + "/"))
+      html <- root.as[String]
+      _ <- IO {
+        assertEquals(root.status.code,200)
+        assert(html.contains("a &amp; &lt;b&gt;.md"))
+        assert(html.contains(base + "/__manure/view/a%20%26%20%3Cb%3E.md"))
+        assert(html.contains(base + "/nested/"))
+        assert(!html.contains("nested/leaf"))
+      }
+      redirect <- h.app.run(request(Method.GET,base + "/nested"))
+      _ <- IO(assertEquals(redirect.status.code,303))
+      _ <- Vector("nested/","nested/leaf/","empty/").traverse_ { path =>
+        h.app.run(request(Method.GET,base + "/" + path)).flatMap { r =>
+          r.as[String].map { body => assertEquals(r.status.code,200); assert(body.contains("Parent directory")) }
+        }
+      }
+      absent <- h.app.run(request(Method.GET,base + "/absent/"))
+      _ <- IO(assertEquals(absent.status.code,404))
+    yield ()
+  }}
+  test("directory README uses local Markdown preview; html then htm indices retain original bytes") { run { (f,_) =>
+    val files = Vector("README.md" -> "# Read me", "site/index.htm" -> "htm site",
+      "both/index.html" -> "html wins", "both/index.htm" -> "htm loses", "site/README.md" -> "not a preview",
+      "nested/README.md" -> "# Nested")
+    val h = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))))
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("<directory>",ArtifactKind.Directory,Visibility.Public,
+        files.map { (p,b) => ManifestEntry(p,false,Exact.utf8(b).length,SecretCodec.sha256(Exact.utf8(b))) },None))
+      _ <- files.traverse_ { (p,b) => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,Exact.utf8(b),SecretCodec.sha256(Exact.utf8(b))) }
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      base = s"/view/${a.artifact.id}"
+      _ <- Vector("" -> "README.md", "nested/" -> "nested/README.md").traverse_ { (dir,readme) =>
+        h.app.run(request(Method.GET,base + "/" + dir)).flatMap { r => r.as[String].map { html =>
+          assertEquals(r.status.code,200)
+          assert(html.contains("aria-label=\"Directory contents\""))
+          assert(html.contains("data-kind=\"markdown\""))
+          assert(html.contains("data-raw-url=\"" + base + "/__manure/raw/" + readme + "\""))
+          assert(html.contains("&lt;directory&gt;"))
+          assert(!html.contains("# Read me"),"README bytes are rendered by the existing local viewer, not inserted as HTML")
+          assert(r.headers.headers.exists(x => x.name == CIString("Content-Security-Policy") && x.value.contains("frame-src 'none'")))
+        }}
+      }
+      _ <- Vector("site/" -> "htm site","both/" -> "html wins").traverse_ { (dir,expected) =>
+        h.app.run(request(Method.GET,base + "/" + dir)).flatMap(r => r.as[String].map(b => assertEquals(b,expected)))
+      }
+      raw <- h.app.run(request(Method.GET,base + "/README.md"))
+      text <- raw.as[String]
+      _ <- IO(assertEquals(text,"# Read me"))
+      disabled <- app(f,_.copy(viewerDir=None)).app.run(request(Method.GET,base + "/"))
+      html <- disabled.as[String]
+      _ <- IO { assertEquals(disabled.status.code,200); assert(html.contains("Directory contents")); assert(!html.contains("data-kind")) }
+      sub = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer")),contentMode="subdomain",contentSuffix="localhost"))
+      response <- sub.app.run(request(Method.GET,"/").putHeaders(Header.Raw(CIString("Host"),a.artifact.id+".localhost:47329")))
+      subHtml <- response.as[String]
+      _ <- IO { assertEquals(response.status.code,200); assert(subHtml.contains("href=\"/site/\"")); assert(subHtml.contains("data-raw-url=\"/__manure/raw/README.md\"")) }
+      empty <- f.artifacts.init(f.identity,InitUpload("empty",ArtifactKind.Directory,Visibility.Public,Vector.empty,None))
+      _ <- f.artifacts.finish(f.identity,empty.artifact.id)
+      emptyResponse <- h.app.run(request(Method.GET,s"/view/${empty.artifact.id}/"))
+      emptyHtml <- emptyResponse.as[String]
+      _ <- IO { assertEquals(emptyResponse.status.code,200); assert(emptyHtml.contains("Empty directory")) }
+    yield ()
+  }}

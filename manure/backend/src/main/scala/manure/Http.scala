@@ -362,7 +362,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       bytes
     finally input.close()
   }
-  private def viewerShell(ctx: Context,path: String): IO[Response[IO]] =
+  private def viewerShell(ctx: Context,path: String,directory: String = ""): IO[Response[IO]] =
     val kind = viewerKind(path).getOrElse(throw DomainError("not-found"))
     viewerBytes("index.html").map { bytes =>
       val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),
@@ -371,9 +371,38 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       // A single pass prevents filenames containing placeholder text from being re-expanded.
       val html = "__MANURE_(?:ASSET_BASE|PATH|RAW_URL|DOWNLOAD_URL|KIND)__".r.replaceAllIn(Exact.string(bytes),
         m => java.util.regex.Matcher.quoteReplacement(htmlAttribute(values(m.matched))))
-      Response[IO](Status.Ok).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
+      val page = if directory.isEmpty then html else html.replace("<main>","<main>" + directory)
+      Response[IO](Status.Ok).withEntity(page).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
         raw("Content-Security-Policy","default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
     }
+  /** Manifest-only immediate children: no filesystem traversal and no hidden recursive listing. */
+  private def directoryPage(ctx: Context,a: Artifact,path: String): IO[Response[IO]] =
+    val prefix = if path.isEmpty then "" else path + "/"
+    val children = a.manifest.filter(_.path.startsWith(prefix)).flatMap { entry =>
+      val rest = entry.path.stripPrefix(prefix)
+      if rest.isEmpty then None
+      else Some((rest.takeWhile(_ != '/'),entry.directory || rest.contains('/')))
+    }.groupMapReduce(_._1)(_._2)(_ || _).toVector.sortBy((name,dir) => (if dir then 0 else 1,name))
+    def link(url: String,label: String): String = "<a href=\"" + htmlAttribute(url) + "\">" + htmlAttribute(label) + "</a>"
+    val parent = if path.isEmpty then "" else
+      val up = path.split("/").dropRight(1).mkString("/")
+      "<p>" + link(ctx.mount + "/" + (if up.isEmpty then "" else encoded(up) + "/"),"Parent directory") + "</p>"
+    val rows = children.map { (name,dir) =>
+      val full = prefix + name
+      val href = if dir then ctx.mount + "/" + encoded(full) + "/"
+        else if config.viewerDir.nonEmpty && viewerKind(full).nonEmpty then ctx.mount + "/__manure/view/" + encoded(full)
+        else ctx.mount + "/" + encoded(full)
+      val download = if dir then "" else " · " + link(ctx.mount + "/__manure/files/" + encoded(full) + "/content","Download")
+      "<li>" + link(href,name + (if dir then "/" else "")) + download + "</li>"
+    }.mkString
+    val listing = "<section aria-label=\"Directory contents\"><h1>" + htmlAttribute(a.name) + " /" + htmlAttribute(path) +
+      "</h1>" + parent + (if children.isEmpty then "<p>Empty directory</p>" else "<ul>" + rows + "</ul>") + "</section>"
+    val readme = prefix + "README.md"
+    if config.viewerDir.nonEmpty && a.manifest.exists(e => !e.directory && e.path == readme) then viewerShell(ctx,readme,listing)
+    else IO.pure(Response[IO](Status.Ok).withEntity(
+      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Manure · Directory</title></head><body><main>" +
+        listing + "</main></body></html>").putHeaders(raw("Content-Type","text/html; charset=utf-8"),
+        raw("Content-Security-Policy","default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
   private def form(req: Request[IO]): IO[Map[String,String]] =
     IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/x-www-form-urlencoded"), "bad-envelope")) *>
       body(req,config.limits.maxRequestBodyBytes).map { bytes =>
@@ -461,17 +490,23 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     else if req.method == Method.GET && !path.startsWith("/__manure/") then
       val (file,trailing) = decoded(if path.isEmpty then "/" else path)
       artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap { a =>
-        val target = if file.isEmpty then
-          if a.kind == ArtifactKind.File then a.manifest.find(!_.directory).map(_.path).getOrElse("") else "index.html"
-        else if trailing then file + "/index.html" else file
-        val isDirectory = file.nonEmpty && a.manifest.exists(e => e.path.startsWith(file + "/") || e.directory && e.path == file)
-        if isDirectory && !trailing then IO.pure(Response[IO](Status.SeeOther).putHeaders(raw("Location",ctx.mount + "/" + encoded(file) + "/")))
+        val isDirectory = a.kind == ArtifactKind.Directory && (file.isEmpty ||
+          a.manifest.exists(e => e.path.startsWith(file + "/") || e.directory && e.path == file))
+        if isDirectory && file.nonEmpty && !trailing then
+          IO.pure(Response[IO](Status.SeeOther).putHeaders(raw("Location",ctx.mount + "/" + encoded(file) + "/")))
         else
-          val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
-          val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
-            viewerShell(ctx,target)
-          else serveFile(req,ctx,id,target,false,None)
-          response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
+          val prefix = if file.isEmpty then "" else file + "/"
+          val index = Vector("index.html","index.htm").map(prefix + _).find(p => a.manifest.exists(e => !e.directory && e.path == p))
+          if isDirectory && index.isEmpty then directoryPage(ctx,a,file)
+          else
+            val target = if isDirectory then index.get
+              else if file.isEmpty && a.kind == ArtifactKind.File then a.manifest.find(!_.directory).map(_.path).getOrElse("")
+              else if trailing then file + "/index.html" else file
+            val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
+            val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
+              viewerShell(ctx,target)
+            else serveFile(req,ctx,id,target,false,None)
+            response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
       }.handleErrorWith {
         case d: DomainError if d.code == "password-required" =>
           // Only the external entry point is a password page. Preserve the

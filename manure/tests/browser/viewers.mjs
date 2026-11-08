@@ -229,6 +229,33 @@ await check("directory index remains original while explicit nested viewer and r
   }
 }, true);
 
+await check("no-index directory browsing renders README and safely navigates nested and empty children", async (page) => {
+  await page.goto(root("browse") + "/", { waitUntil: "domcontentloaded" });
+  await shell(page, "browse", "README.md");
+  await markdownRendered(page);
+  const listing = page.getByRole("region", { name: "Directory contents", exact: true });
+  assert.equal(await listing.locator("li").count(), 4, "only immediate children are listed");
+  assert.equal(await listing.getByRole("link", { name: "Parent directory", exact: true }).count(), 0);
+  await listing.getByRole("link", { name: "nested/", exact: true }).click();
+  await page.getByRole("heading", { name: "Nested directory preview", exact: true }).waitFor();
+  await shell(page, "browse", "nested/README.md");
+  await page.getByRole("link", { name: "a & <b> + ü.md", exact: true }).click();
+  await page.getByRole("heading", { name: "Encoded child preview", exact: true }).waitFor();
+  await shell(page, "browse", "nested/a & <b> + ü.md");
+  await rawEqual(page, "browse", "nested/a & <b> + ü.md");
+  await page.goto(root("browse") + "/nested/", { waitUntil: "domcontentloaded" });
+  await page.getByRole("link", { name: "Parent directory", exact: true }).click();
+  await page.getByRole("link", { name: "empty/", exact: true }).click();
+  await page.getByText("Empty directory", { exact: true }).waitFor();
+  assert.equal(await page.locator("meta#manure-viewer").count(), 0);
+  await page.getByRole("link", { name: "Parent directory", exact: true }).click();
+  await page.getByRole("heading", { name: "Viewer specification", exact: true }).waitFor();
+  const original = page.getByRole("link", { name: "original.bin", exact: true });
+  assert.equal(await original.getAttribute("href"), new URL(root("browse")).pathname.replace(/\/$/, "") + "/original.bin");
+  await downloadEqual(page, "browse", "original.bin");
+  await capture(page, "directory-readme");
+}, true);
+
 await check("invalid and oversized Graphviz sources fail visibly within a bounded time", async (page) => {
   for (const key of ["malformed", "graph-limit", "oversized"]) {
     const started = Date.now();

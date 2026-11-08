@@ -158,13 +158,14 @@ precedence for path mode.
 ## 1. Scope, non-goals, ownership
 
 In scope: authenticated human/agent file & directory hosting; directory
-artifacts served as static sites when `index.html`/`index.htm` present;
+artifacts served as static sites when `index.html`/`index.htm` present, otherwise
+manifest-backed directory browsing with optional local `README.md` rendering;
 visibilities internal / external(password) / public; optional TTL; bounded
 resumable chunked uploads with atomic publish; CLI; stdio MCP tools +
 skill; dashboard UI shell; NixOS/HM storage configuration.
 
 Non-goals: no archive upload/extraction (manifest per-file chunks only),
-no auto-index listings, no per-artifact ACLs beyond visibility (every
+no filesystem-backed listings outside the artifact manifest, no per-artifact ACLs beyond visibility (every
 authenticated user lists/inspects/deletes all artifacts), no versioning
 inside an artifact (re-upload = new artifact), no server-side search,
 no OAuth server, no non-stdio MCP transport.
@@ -823,7 +824,14 @@ UTF-8, reserved top segment → 400 `invalid-path`
 uses the decoded path against the manifest (exact match).
 
 - `GET /` — `kind: file` → serve the single file; `kind: dir` →
-  `<dir>/index.html` then `<dir>/index.htm` else 404 (never a listing).
+  `<dir>/index.html` then `<dir>/index.htm`, otherwise a directory page listing
+  only immediate manifest files/subdirectories, including empty directories.
+  Names are HTML-escaped, links segment-encoded. Parent/nested navigation stays
+  within the artifact; supported files link to the explicit viewer route when
+  enabled, with original-file attachment links. Exact `README.md`, if present
+  and viewers enabled, renders below the listing using the bundled Markdown
+  viewer and its existing safety rules. Explicitly disabled viewers leave a
+  usable listing with raw-file links, without a README preview.
   Auth: public anon; internal/external need grant cookie (external
   without → password form 200; internal without → 401
   `grant-required` hint page, no secrets).
@@ -1126,7 +1134,7 @@ release. M1 MUST NOT survive past the skeleton stage.
 | # | Check | Owner | How |
 |---|---|---|---|
 | F1 | upload file + fetch round-trip (bytes+sha identical) | S/C | unittest offline |
-| F2 | upload dir incl. EMPTY dirs recreated; `index.html` over `index.htm`; dir without index → 404, never listing; uploaded `manifest.json` served as plain user file | S/C/U | unittest + browser |
+| F2 | upload dir incl. EMPTY dirs recreated; `index.html` over `index.htm`; dir without index → immediate-child listing, empty/nested navigation and local README preview; uploaded `manifest.json` served as plain user file | S/C/U | unittest + browser |
 | F2b | topology: duplicate paths, file/descendant conflicts, reserved `__manure`/`api` prefixes rejected; empty-root dir artifact; single-file `/` and `/<name>` both serve; encoded `..`/`%2F`/NUL rejected | S | unittest |
 | F3 | visibilities: internal (authed ok, anon denied), external (password unlock, no URL secret), public (anon ok) | S/C/U | unittest + browser |
 | F4 | every user lists/inspects/deletes all artifacts; incomplete mutation owner-only (403 `session-not-owned` cross-user), delete/rotate-anyone | S | unittest |

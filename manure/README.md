@@ -20,7 +20,8 @@ summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
   symlinks rejected). **Chunked** (server-dictated, default 1 MiB),
   resumable, atomically published: readers never see partial artifacts.
 - Dirs with `index.html` (preferred) or `index.htm` serve as static
-  sites; without an index → 404, never an auto-index listing.
+  sites unchanged; without an index, browse immediate files/subdirectories
+  (including empty directories), with a local Markdown preview of `README.md`.
 - All **registered users** (human/agent `type` is attribution only)
   **share all artifacts**: anyone authenticated lists, inspects, and
   deletes anything (only in-progress-upload mutation is owner-checked).
@@ -39,7 +40,12 @@ there are no CDN or external rendering-service requests. External resources in
 Markdown are not loaded automatically.
 
 Non-HTML requests, range requests and existing attachment routes still return
-original bytes. Directory uploads remain unchanged static sites; an explicit
+original bytes. Directory paths with an index remain unchanged static sites. Without an index,
+a directory page lists immediate children with parent/nested navigation, viewer
+links for supported files and original-file downloads. An exact `README.md` in
+that directory renders below the listing through the same local Markdown viewer.
+With viewers explicitly disabled, listing and raw-file links remain available
+without a README preview. An explicit
 `<content-base>/__manure/view/<segment-encoded-file-path>` opens a supported
 file in a viewer without changing its static asset URL. The inline raw route
 is `<content-base>/__manure/raw/<segment-encoded-file-path>`; the attachment
