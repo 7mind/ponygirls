@@ -362,7 +362,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       bytes
     finally input.close()
   }
-  private def viewerShell(ctx: Context,path: String,directory: String = ""): IO[Response[IO]] =
+  private def viewerShell(ctx: Context,path: String,directory: String): IO[Response[IO]] =
     val kind = viewerKind(path).getOrElse(throw DomainError("not-found"))
     viewerBytes("index.html").map { bytes =>
       val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),
@@ -480,7 +480,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { a =>
         Require(!trailing && a.manifest.exists(e => !e.directory && e.path == file) && viewerKind(file).nonEmpty, "not-found")
         if header(req,"Range").nonEmpty || config.viewerDir.isEmpty then serveFile(req,ctx,id,file,false,None)
-        else viewerShell(ctx,file)
+        else viewerShell(ctx,file,"")
       }
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
@@ -504,7 +504,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
               else if trailing then file + "/index.html" else file
             val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
             val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
-              viewerShell(ctx,target)
+              viewerShell(ctx,target,"")
             else serveFile(req,ctx,id,target,false,None)
             response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
       }.handleErrorWith {
