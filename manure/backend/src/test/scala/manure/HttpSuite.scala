@@ -108,6 +108,76 @@ final class HttpSuite extends FunSuite:
         _ <- IO { assert(cookies(rejected).isEmpty,"rejected browser login must not set cookies"); assertEquals(rejected.status.code,403) }
       yield ()
     }}
+  // Regression: direct path-mode navigation previously ignored the dashboard session.
+  // Behavioral/blackbox with controlled PostgreSQL and filesystem dependencies.
+  test("internal document navigation exchanges a human session for a scoped grant, never raw management access") { run { (f,h) =>
+    val bytes = Exact.utf8("internal navigation fixture")
+    def navigate(path: String,cookie: Option[String]): Request[IO] =
+      val r = request(Method.GET,path).putHeaders(Header.Raw(CIString("Sec-Fetch-Mode"),"navigate"),
+        Header.Raw(CIString("Sec-Fetch-Dest"),"document"),Header.Raw(CIString("Accept"),"text/html"))
+      cookie.fold(r)(v => r.putHeaders(Header.Raw(CIString("Cookie"),v)))
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("navigation",ArtifactKind.Directory,Visibility.Internal,
+        Vector(ManifestEntry("index.html",false,bytes.length,SecretCodec.sha256(bytes)),ManifestEntry("nested/secret.md",false,bytes.length,SecretCodec.sha256(bytes))),None))
+      id = a.artifact.id
+      _ <- f.artifacts.putChunk(f.identity,id,"nested/secret.md",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.putChunk(f.identity,id,"index.html",0,bytes,SecretCodec.sha256(bytes))
+      _ <- f.artifacts.finish(f.identity,id)
+      login <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
+      session = login.headers.headers.find(_.name == CIString("Set-Cookie")).get.value.takeWhile(_ != ';')
+      _ <- Vector(s"/view/$id",s"/view/$id/nested/",s"/view/$id/nested/secret.md",s"/view/$id/__manure/view/nested/secret.md").traverse_ { path =>
+        h.app.run(navigate(path,Some(session))).flatMap { r => IO {
+          assertEquals(r.status.code,303)
+          assertEquals(r.headers.headers.find(_.name == CIString("Location")).map(_.value),Some(if path == s"/view/$id" then path+"/" else path))
+          assert(r.headers.headers.exists(_.name == CIString("Set-Cookie")))
+        }}
+      }
+      handoff <- h.app.run(navigate(s"/view/$id/",Some(session)))
+      grant <- IO {
+        assertEquals(handoff.status.code,303)
+        assertEquals(handoff.headers.headers.find(_.name == CIString("Location")).map(_.value),Some(s"/view/$id/"))
+        val cookie = handoff.headers.headers.find(_.name == CIString("Set-Cookie")).get.value
+        assert(cookie.startsWith("mgrant-dev-"+id+"=")); assert(cookie.contains(s"Path=/view/$id/; HttpOnly; SameSite=Lax"))
+        assert(!cookie.contains(f.token)); cookie.takeWhile(_ != ';')
+      }
+      opened <- h.app.run(navigate(s"/view/$id/",Some(session+"; "+grant)))
+      text <- opened.as[String]
+      _ <- IO { assertEquals(opened.status.code,200); assertEquals(text,Exact.string(bytes)); assert(!opened.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      _ <- Vector(
+        request(Method.GET,s"/view/$id/").putHeaders(Header.Raw(CIString("Cookie"),session)),
+        navigate(s"/view/$id/__manure/raw/nested/secret.md",Some(session)),
+        navigate(s"/view/$id/__manure/files/nested/secret.md/content",Some(session)),
+        navigate(s"/view/$id/",None),
+        navigate(s"/view/$id/",None).putHeaders(Header.Raw(CIString("Authorization"),"Bearer "+f.token))
+      ).traverse_ { req => h.app.run(req).flatMap(r => IO { assertEquals(r.status.code,401); assert(!r.headers.headers.exists(_.name == CIString("Set-Cookie"))) }) }
+      hostile <- h.app.run(navigate(s"/view/$id/",Some(session)).putHeaders(Header.Raw(CIString("Origin"),"http://attacker.test")))
+      _ <- IO { assertEquals(hostile.status.code,403); assert(!hostile.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      deep <- h.app.run(navigate(s"/view/$id/nested/secret.md",Some(grant)))
+      deepText <- deep.as[String]
+      _ <- IO { assertEquals(deep.status.code,200); assertEquals(deepText,Exact.string(bytes)) }
+      viewer <- app(f,_.copy(viewerDir=None)).app.run(navigate(s"/view/$id/__manure/view/nested/secret.md",Some(grant)))
+      viewerText <- viewer.as[String]
+      _ <- IO { assertEquals(viewer.status.code,200); assertEquals(viewerText,Exact.string(bytes)) }
+      invalid <- h.app.run(navigate(s"/view/$id/%2Fattacker.test",Some(session)))
+      _ <- IO { assertEquals(invalid.status.code,400); assert(!invalid.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      ambiguous <- h.app.run(navigate(s"/view/$id/",Some(session)).putHeaders(Header.Raw(CIString("Authorization"),"Bearer "+f.token)))
+      _ <- IO { assertEquals(ambiguous.status.code,400); assert(!ambiguous.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      sub = app(f,_.copy(contentMode="subdomain",contentSuffix="localhost"))
+      isolated <- sub.app.run(navigate("/",Some(session)).putHeaders(Header.Raw(CIString("Host"),id+".localhost:47329")))
+      _ <- IO { assertEquals(isolated.status.code,401); assert(!isolated.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      other <- f.artifacts.init(f.identity,InitUpload("other internal",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
+      _ <- f.artifacts.finish(f.identity,other.artifact.id)
+      wrongArtifact <- h.app.run(navigate(s"/view/${other.artifact.id}/",Some(grant)))
+      _ <- IO { assertEquals(wrongArtifact.status.code,401); assert(!wrongArtifact.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      agentToken = SecretCodec.token()
+      _ <- IO.blocking(java.nio.file.Files.writeString(f.config.users.find(_.userType == "agent").get.tokens.head.hashFile,SecretCodec.sha256(agentToken)+"\n"))
+      agent <- h.app.run(navigate(s"/view/$id/",Some("manure-dev="+agentToken)))
+      _ <- IO { assertEquals(agent.status.code,403); assert(!agent.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      _ <- f.artifacts.logout(f.identity)
+      revoked <- h.app.run(request(Method.GET,s"/view/$id/nested/secret.md").putHeaders(Header.Raw(CIString("Cookie"),grant)))
+      _ <- IO(assertEquals(revoked.status.code,401))
+    yield ()
+  }}
   test("bounded body, duplicate JSON and framing fail before initialization effects") { run { (f,h) => for
     dup <- h.app.run(command(wire.Command.Version(),None).withEntity("{\"apiVersion\":\"1.0.0\",\"apiVersion\":\"1.0.0\"}").putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
     _ <- IO(assertEquals(dup.status.code,400))

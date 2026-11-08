@@ -110,6 +110,21 @@ Every content route above receives the path-mode prefix when selected.
 Strict single-pass segment decoding, reserved namespaces, symlink containment,
 MIME, headers, grant separation and low-security path-mode warning remain.
 
+In opt-in **low-security path mode only**, direct internal document navigation
+(`GET`, `Sec-Fetch-Mode: navigate`, `Sec-Fetch-Dest: document`) can exchange a
+valid human dashboard session cookie for the ordinary artifact-scoped content
+grant. This covers root, nested document and `/__manure/view/...` bookmarks.
+The server validates the local path, issues/redeems the credential-bound grant,
+and sends an empty 303 to the same canonical path with an HttpOnly grant cookie;
+no bearer/grant is put in a URL or HTML. Query data is not copied to Location.
+An already valid content grant needs no exchange. Missing Fetch Metadata does
+not opt in; fetches, raw/file endpoints, content APIs and management bearers do
+not gain this session fallback. A supplied Origin must exactly match the API
+origin; existing human/session, rate, visibility and revocation checks apply.
+This does not restore path-mode origin isolation. Subdomain mode is unchanged:
+its host-only dashboard cookie is not shared with content hosts; use dashboard
+Open's one-time POST handoff (or an existing content grant).
+
 ## Catalogue requirements and open matching regression
 
 One catalogue, default `CreatedAt Desc`, limit 50 clamped 1..maxListLimit.

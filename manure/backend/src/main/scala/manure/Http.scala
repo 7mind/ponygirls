@@ -483,12 +483,50 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         case error => IO.raiseError(error)
       }
     else IO.raiseError(DomainError("not-found"))
+  /** Path hosting shares the management host by explicit low-security opt-in.
+    * Exchange a human browser session only for document navigation, never let
+    * management credentials authorize raw bytes or content API requests. The
+    * resulting grant retains ordinary credential binding/revocation checks.
+    * Subdomain content deliberately cannot see the host-only session cookie.
+    */
+  private def contentNavigation(req: Request[IO],ctx: Context,id: String): IO[Response[IO]] =
+    val path = req.uri.path.renderString.stripPrefix(ctx.mount)
+    val document = req.method == Method.GET && header(req,"Sec-Fetch-Mode").contains("navigate") &&
+      header(req,"Sec-Fetch-Dest").contains("document")
+    val target = !path.startsWith("/api/") && (!path.startsWith("/__manure/") || path.startsWith("/__manure/view/"))
+    if config.contentMode != "path" || !document || !target then content(req,ctx,id)
+    else
+      artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap(_ => content(req,ctx,id)).handleErrorWith {
+        case d: DomainError if d.code == "grant-required" =>
+          val c = credentials(req,ctx)
+          if c.kind != "cookie" then content(req,ctx,id)
+          else
+            IO {
+              Require(originHeader(req).forall(_ == ctx.origin.value), "forbidden")
+              val identity = required(c)
+              auth.human(identity)
+              Require(throttle.allow("navigation:" + identity.userId,config.rateLimitPerMinute), "rate-limited")
+              // Canonical local path only: never accept a redirect URL or copy
+              // query/fragment data into Location. Validate before grant effects.
+              val viewerPrefix = if path.startsWith("/__manure/view/") then "/__manure/view" else ""
+              val localPath = path.stripPrefix(viewerPrefix)
+              val (file,trailing) = decoded(if localPath.isEmpty then "/" else localPath)
+              val location = ctx.mount + viewerPrefix + "/" + encoded(file) + (if file.nonEmpty && trailing then "/" else "")
+              (identity,location)
+            }.flatMap { (identity,location) =>
+              artifacts.createGrant(identity,id).flatMap(artifacts.redeem(id,_)).map { (value,expiry) =>
+                Response[IO](Status.SeeOther).putHeaders(raw("Location",location),raw("Content-Length","0"),
+                  raw("Set-Cookie",contentCookie(ctx,id,value,expiry,false)))
+              }
+            }
+        case error => IO.raiseError(error)
+      }
   val app: HttpApp[IO] = org.http4s.HttpApp[IO] { req =>
     IO(context(req)).attempt.flatMap {
       case Left(error) => IO.pure(secure(failure(new UUID(0L,0L),error),false))
       case Right(ctx) =>
         val action = IO.defer(ctx.contentId match
-          case Some(id) => content(req,ctx,id)
+          case Some(id) => contentNavigation(req,ctx,id)
           case None => api(req,ctx))
         action.timeoutTo(config.requestTimeout,IO.raiseError(DomainError("unavailable")))
           .handleError(e => failure(new UUID(0L,0L),e)).map(secure(_,ctx.content))
