@@ -5,7 +5,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BackendConfig, SearchConfig } from "./types.js";
-import { PAPER_PROVIDERS } from "./papers/types.js";
 import { getAgentDir } from "./utils.js";
 import { clearCredentialCache, FALLBACK_ENV_MAP } from "./credentials.js";
 
@@ -44,6 +43,15 @@ export function recordLatency(backend: string, ms: number): void {
 // Config loading
 // ---------------------------------------------------------------------------
 
+function mergeSettings(base: unknown, override: unknown, nested: boolean): unknown {
+	if (base === null || override === null || typeof base !== "object" || typeof override !== "object" || Array.isArray(base) || Array.isArray(override)) return override;
+	const previous = base as Record<string, unknown>;
+	const incoming = override as Record<string, unknown>;
+	const merged = { ...previous, ...incoming };
+	if (nested) for (const key of Object.keys(incoming)) merged[key] = mergeSettings(previous[key], incoming[key], false);
+	return merged;
+}
+
 export function loadConfig(cwd: string): SearchConfig {
 	const globalPath = join(getAgentDir(), "extensions", "search.json");
 	const projectPath = join(cwd, ".pi", "search.json");
@@ -64,22 +72,18 @@ export function loadConfig(cwd: string): SearchConfig {
 	if (existsSync(projectPath)) {
 		try {
 			const project = JSON.parse(readFileSync(projectPath, "utf-8"));
-			const globalPapers = config.papers;
+			const inherited = config;
 			config = { ...config, ...project };
-			if (globalPapers && project.papers && typeof project.papers === "object" && !Array.isArray(project.papers)) {
-				const mergedPapers: NonNullable<SearchConfig["papers"]> = { ...globalPapers, ...project.papers };
-				const sources = project.papers.sources;
-				if (sources && typeof sources === "object" && !Array.isArray(sources)) {
-					const mergedSources = { ...globalPapers.sources, ...sources };
-					mergedPapers.sources = mergedSources;
-					for (const name of PAPER_PROVIDERS) {
-						const source = sources[name];
-						if (source && typeof source === "object" && !Array.isArray(source)) {
-							mergedSources[name] = { ...globalPapers.sources?.[name], ...source };
-						}
+			for (const key of ["timeouts", "concurrency", "ranking", "candidates", "sources", "alwaysInclude"] as const) {
+				if (project[key] !== undefined) Object.assign(config, { [key]: mergeSettings(inherited[key], project[key], key === "sources" || key === "alwaysInclude") });
+			}
+			if (project.papers !== undefined) {
+				config.papers = mergeSettings(inherited.papers, project.papers, false) as SearchConfig["papers"];
+				if (config.papers && typeof config.papers === "object" && !Array.isArray(config.papers)) {
+					for (const key of ["ranking", "candidates", "sources", "alwaysInclude"] as const) {
+						if (project.papers[key] !== undefined) Object.assign(config.papers, { [key]: mergeSettings(inherited.papers?.[key], project.papers[key], key === "sources" || key === "alwaysInclude") });
 					}
 				}
-				config.papers = mergedPapers;
 			}
 			// Guard: if project config set backends to null/undefined, restore global backends
 			if (config.backends == null) {

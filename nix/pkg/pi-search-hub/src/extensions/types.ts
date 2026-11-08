@@ -2,6 +2,8 @@
  * Shared types for pi-search-hub extension.
  */
 
+import type { ConcurrencyLimits, SearchProfileConfig, SearchTimeouts, SourcePolicy, RankingEvidence } from "./engine/types.js";
+
 export interface BackendConfig {
 	enabled?: boolean;
 	apiKey?: string;
@@ -34,27 +36,18 @@ export interface BackendConfig {
 }
 
 /** One fallback-tier backend queried beside the main tier, not as a main slot. */
-export interface AlwaysIncludeBackendConfig {
-	/** Deadline from query start, in milliseconds. A miss drops this backend only. */
-	timeoutMs: number;
-	/** Cap on results contributed to the fusion pool. Unbounded when omitted. */
-	maxResults?: number;
-}
+export type AlwaysIncludeBackendConfig = SourcePolicy;
 
-export interface SearchConfig {
-	/** Independent scholarly metasearch policy; ordinary web search is unchanged. */
+export interface SearchConfig extends SearchProfileConfig {
+	/** Shared execution budgets; paper profiles use the same resolved defaults. */
+	timeouts?: Partial<SearchTimeouts>;
+	concurrency?: Partial<ConcurrencyLimits>;
+	/** Scholarly profile overrides; credentials remain in backends. */
 	papers?: import("./papers/types.js").PaperConfig;
 	defaultBackend?: string;
 	combine?: boolean;
 	/** Combine strategy when combine is enabled. "all" queries every active backend; "targeted" queries only enough ordered backends to collect up to 3 usable result sets. */
 	combineMode?: "all" | "targeted";
-	/**
-	 * Free backends queried in parallel with targeted combine and removed from
-	 * that walk. Their results join the combine fusion on equal footing with
-	 * quality results in every automatic search mode. Keys must name enabled
-	 * backends. Each timeoutMs is a deadline from query start.
-	 */
-	alwaysInclude?: Record<string, AlwaysIncludeBackendConfig>;
 	selectionStrategy?: "sequential" | "random" | "round-robin" | "best-latency";
 	/** Reader backend for web_read. "jina" (default, free), "sofya" (250+ site parsers, needs key), "firecrawl" (keyless, 1000 credits/mo), "exa" (needs key, 1000 req/mo), or "exa_mcp" (zero-config, rate-limited). */
 	reader?: "jina" | "sofya" | "firecrawl" | "exa" | "exa_mcp";
@@ -102,6 +95,7 @@ export interface SearchResultWithBackend extends SearchResult {
 	backend?: string;
 	/** Every backend that returned this URL, primary first, deduplicated. */
 	sources?: string[];
+	ranking?: RankingEvidence;
 }
 
 export interface BackendRunner {

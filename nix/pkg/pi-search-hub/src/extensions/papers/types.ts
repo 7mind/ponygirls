@@ -1,3 +1,5 @@
+import type { SearchProfileConfig, SourcePolicy, SourceStatus, SourceTier, SourceStats } from "../engine/types.js";
+
 export const PAPER_PROVIDERS = ["firecrawl", "exa", "searxng", "arxiv"] as const;
 export type PaperProviderName = typeof PAPER_PROVIDERS[number];
 export type PaperNamespace = "doi" | "arxiv" | "pmid" | "pmcid" | "firecrawl";
@@ -28,18 +30,8 @@ export interface PaperProvider {
   read?: (request: PaperReadRequest, signal: AbortSignal) => Promise<PaperReadResult>;
   related?: (request: PaperRelatedRequest, signal: AbortSignal) => Promise<PaperRecord[]>;
 }
-export interface PaperSourceConfig {
-  enabled?: boolean;
-  tier?: "main" | "fallback";
-  timeoutMs?: number;
-  maxResults?: number;
-  boost?: number;
-}
-export interface PaperConfig {
-  mode?: "first" | "targeted" | "all";
-  rerank?: "rrf" | "lexical";
-  sources?: Partial<Record<PaperProviderName, PaperSourceConfig>>;
-}
+export type PaperSourceConfig = SourcePolicy;
+export interface PaperConfig extends SearchProfileConfig {}
 export interface PaperContribution {
   provider: PaperProviderName;
   rank: number;
@@ -57,9 +49,10 @@ export interface RankedPaper extends PaperRecord {
 }
 export interface PaperProviderStats {
   provider: PaperProviderName;
-  tier: "main" | "fallback";
-  status: "success" | "empty" | "failed" | "timeout";
+  tier: SourceTier;
+  status: SourceStatus;
   count: number;
+  reason?: SourceStats["reason"];
   error?: string;
 }
-export interface PaperSearchResult { results: RankedPaper[]; providers: PaperProviderStats[] }
+export interface PaperSearchResult { results: RankedPaper[]; providers: PaperProviderStats[]; cancelled?: boolean; timedOut?: boolean }
