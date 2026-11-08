@@ -495,3 +495,32 @@ final class HttpSuite extends FunSuite:
       _ <- IO { assertEquals(emptyResponse.status.code,200); assert(emptyHtml.contains("Empty directory")) }
     yield ()
   }}
+  // Regression: a lowercase readme.md was listed but not rendered.
+  // Behavioral-Active / Blackbox / Good Communication (owned PG + filesystem).
+  test("directory README matching is immediate, case-insensitive and deterministically preferred") { run { (f,_) =>
+    val files = Vector("lower/readme.md", "upper/README.md", "upper/readme.md", "upper/ReadMe.md",
+      "prefer-lower/readme.md", "prefer-lower/ReadMe.md", "mixed/Readme.MD", "mixed/ReadMe.md",
+      "not-immediate/deeper/readme.md", "directory/README.md/child.txt")
+    val bytes = Exact.utf8("# Readme variant")
+    val h = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))))
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("readme cases",ArtifactKind.Directory,Visibility.Public,
+        files.map(p => ManifestEntry(p,false,bytes.length,SecretCodec.sha256(bytes))),None))
+      _ <- files.traverse_(p => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,bytes,SecretCodec.sha256(bytes)))
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      base = s"/view/${a.artifact.id}"
+      _ <- Vector("lower" -> "readme.md", "upper" -> "README.md", "prefer-lower" -> "readme.md", "mixed" -> "ReadMe.md").traverse_ { (dir,name) =>
+        h.app.run(request(Method.GET,base + "/" + dir + "/")).flatMap { response => response.as[String].map { html =>
+          assertEquals(response.status.code,200)
+          assert(html.contains("data-kind=\"markdown\""),s"missing Markdown preview for $dir/$name")
+          assert(html.contains("data-path=\"" + dir + "/" + name + "\""),s"wrong README preference for $dir")
+        }}
+      }
+      _ <- Vector("not-immediate", "directory").traverse_ { dir =>
+        h.app.run(request(Method.GET,base + "/" + dir + "/")).flatMap { response => response.as[String].map { html =>
+          assertEquals(response.status.code,200)
+          assert(!html.contains("data-kind="),"only immediate regular README files may render")
+        }}
+      }
+    yield ()
+  }}

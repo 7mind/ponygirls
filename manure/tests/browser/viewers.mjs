@@ -238,7 +238,7 @@ await check("no-index directory browsing renders README and safely navigates nes
   assert.equal(await listing.getByRole("link", { name: "Parent directory", exact: true }).count(), 0);
   await listing.getByRole("link", { name: "nested/", exact: true }).click();
   await page.getByRole("heading", { name: "Nested directory preview", exact: true }).waitFor();
-  await shell(page, "browse", "nested/README.md");
+  await shell(page, "browse", "nested/readme.md");
   await page.getByRole("link", { name: "a & <b> + ü.md", exact: true }).click();
   await page.getByRole("heading", { name: "Encoded child preview", exact: true }).waitFor();
   await shell(page, "browse", "nested/a & <b> + ü.md");

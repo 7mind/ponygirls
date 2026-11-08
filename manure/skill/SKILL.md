@@ -73,7 +73,9 @@ Viewers provide original-file download links. CLI/MCP fetch remains byte-exact;
 non-HTML requests and byte ranges are not replaced with viewer HTML.
 Directory paths with `index.html` (preferred) or `index.htm` serve static sites
 unchanged. Without an index, browse immediate children and empty/nested directories;
-`README.md` renders below the listing using the local Markdown viewer when enabled.
+An immediate regular `readme.md` (case-insensitive) renders below the listing
+using the local Markdown viewer when enabled. Preference: `README.md`, then
+`readme.md`, then lexicographic order for other case variants.
 To view a supported file
 inside a directory, append `/__manure/view/<segment-encoded-file-path>` to its
 content base (e.g. `/__manure/view/reports/summary.md`). Use relative paths for

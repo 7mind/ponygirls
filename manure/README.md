@@ -42,8 +42,9 @@ Markdown are not loaded automatically.
 Non-HTML requests, range requests and existing attachment routes still return
 original bytes. Directory paths with an index remain unchanged static sites. Without an index,
 a directory page lists immediate children with parent/nested navigation, viewer
-links for supported files and original-file downloads. An exact `README.md` in
-that directory renders below the listing through the same local Markdown viewer.
+links for supported files and original-file downloads. An immediate `readme.md` file
+(case-insensitive) renders below the listing through the same local Markdown viewer.
+Preference is `README.md`, then `readme.md`, then lexicographic case-variant order.
 With viewers explicitly disabled, listing and raw-file links remain available
 without a README preview. An explicit
 `<content-base>/__manure/view/<segment-encoded-file-path>` opens a supported

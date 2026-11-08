@@ -828,9 +828,10 @@ uses the decoded path against the manifest (exact match).
   only immediate manifest files/subdirectories, including empty directories.
   Names are HTML-escaped, links segment-encoded. Parent/nested navigation stays
   within the artifact; supported files link to the explicit viewer route when
-  enabled, with original-file attachment links. Exact `README.md`, if present
+  enabled, with original-file attachment links. A regular immediate child named `readme.md` (case-insensitive), if present
   and viewers enabled, renders below the listing using the bundled Markdown
-  viewer and its existing safety rules. Explicitly disabled viewers leave a
+  viewer and its existing safety rules. Prefer `README.md`, then `readme.md`,
+  then lexicographic filename order for other case variants. Explicitly disabled viewers leave a
   usable listing with raw-file links, without a README preview.
   Auth: public anon; internal/external need grant cookie (external
   without → password form 200; internal without → 401

@@ -397,8 +397,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     }.mkString
     val listing = "<section aria-label=\"Directory contents\"><h1>" + htmlAttribute(a.name) + " /" + htmlAttribute(path) +
       "</h1>" + parent + (if children.isEmpty then "<p>Empty directory</p>" else "<ul>" + rows + "</ul>") + "</section>"
-    val readme = prefix + "README.md"
-    if config.viewerDir.nonEmpty && a.manifest.exists(e => !e.directory && e.path == readme) then viewerShell(ctx,readme,listing)
+    val readme = a.manifest.filter(e => !e.directory && e.path.startsWith(prefix)).map(_.path.stripPrefix(prefix))
+      .filter(name => !name.contains('/') && name.equalsIgnoreCase("readme.md"))
+      .sortBy(name => (if name == "README.md" then 0 else if name == "readme.md" then 1 else 2,name))
+      .headOption.map(prefix + _)
+    if config.viewerDir.nonEmpty && readme.nonEmpty then viewerShell(ctx,readme.get,listing)
     else IO.pure(Response[IO](Status.Ok).withEntity(
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Manure · Directory</title></head><body><main>" +
         listing + "</main></body></html>").putHeaders(raw("Content-Type","text/html; charset=utf-8"),

@@ -117,7 +117,7 @@ class ViewerBrowserTests(unittest.TestCase):
                              "docs/guide ü.md": MARKDOWN + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture(),
                              "assets/data.bin": b"\x00raw\xff\r\n"}, kind="dir")
         upload("browse", {"README.md": MARKDOWN,
-                          "nested/README.md": b"# Nested directory preview\n",
+                          "nested/readme.md": b"# Nested directory preview\n",
                           "nested/a & <b> + ü.md": b"# Encoded child preview\n",
                           "original.bin": b"\x00original\xff"}, kind="dir", empty_dirs=["empty"])
         upload("external", {"index.html": b"<h1>Protected directory index</h1>",
