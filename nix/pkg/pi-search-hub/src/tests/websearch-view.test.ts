@@ -1,3 +1,4 @@
+import { stripVTControlCharacters } from "node:util";
 import { describe, expect, it, vi } from "vitest";
 import { CURSOR_MARKER, Text, VStack, visibleWidth, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
@@ -88,19 +89,19 @@ describe("WebSearchView", () => {
 		const text = view.render(200).join("\n");
 		for (const rule of [
 			"Default auto: n=10 (max 20) · Main first · combine false · configured combine mode all",
-			"first non-empty response; errors and empty responses advance",
-			"Default request: 20 candidates per Main engine; final n is applied only after fusion/reranking.",
-			"Per-call count/combine may override these defaults", "combine=true uses the configured combine mode",
-			"viewing this snapshot runs no provider probes",
+			"first non-empty response; errors/empty advance",
+			"Default: 20 candidates per Main engine; final n after fusion/reranking.",
+			"Per-call count/combine may override", "combine=true uses configured mode",
+			"Snapshot: no provider probes",
 			"score = Σ weight/(k + rank), k=60", "original unique-document ranks, one contribution per source/page",
-			"Shared weighted RRF", "Source boosts and overlap policies apply before the final cut", "Attempts may use cached results",
-			"URL/identifier lookup priority and provenance are preserved",
+			"Shared weighted RRF", "Boosts/overlap before final cut", "attempts may be cached",
+			"URL/identifier lookup priority and provenance preserved",
 			"Reranking: rrf; lexical weights title=0.2, body=0.1; exact-title priority on",
 			"no inherent tier bonus", "Fuse first, then cut to final n results",
-			"Shared web/paper pool: max 6 requests, 2 per provider. Overall 60s; default source 30s; discovery 10s.",
-			"Source deadlines include queue/rate waits",
-			"Named backend calls isolate one engine but retain shared dedup/ranking and deadlines; no other tiers are added",
-		]) expect(text).toContain(rule);
+			"Pool web+paper: 6 concurrent/2 per provider; overall 60s; default source 30s; discovery 10s.",
+			"Deadlines include queue/rate waits",
+			"Named calls: one engine, shared dedup/ranking/deadlines; no other tiers",
+		]) expect(text.replace(/\s+/g, " ")).toContain(rule);
 		expect(deps.search).not.toHaveBeenCalled();
 		expect(deps.monitor.snapshot()).toEqual([]);
 		view.dispose();
@@ -109,7 +110,7 @@ describe("WebSearchView", () => {
 	it("explains targeted non-empty slots and immediate failure/empty top-ups", () => {
 		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "targeted", combineForced: true, combineMode: "targeted", requestedPerEngine: 20 }, {}) });
 		const text = view.render(200).join("\n");
-		for (const rule of ["Main targeted", "up to 3 non-empty Main responses", "replace failed/empty slots immediately without waiting for the slowest peer", "20 candidates per Main engine"]) expect(text).toContain(rule);
+		for (const rule of ["Main targeted", "up to 3 non-empty Main responses", "replace failed/empty slots immediately without waiting for the slowest peer", "20 candidates per Main engine"]) expect(text.replace(/\s+/g, " ")).toContain(rule);
 		expect(text).not.toContain("first successful response");
 		view.dispose();
 	});
@@ -129,8 +130,8 @@ describe("WebSearchView", () => {
 		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "all", combineForced: true }, {}) });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("combine true (forced)");
-		expect(text).toContain("Per-call count may override the default");
-		expect(text).toContain("configured combine=true cannot be disabled by a call");
+		expect(text).toContain("Per-call count may override");
+		expect(text).toContain("forced combine=true cannot be disabled");
 		expect(text).not.toContain("Per-call count/combine may override");
 		view.dispose();
 	});
@@ -160,8 +161,8 @@ describe("WebSearchView", () => {
 		const rng = vi.spyOn(Math, "random").mockImplementation(() => { throw new Error("render must not sample engine selection"); });
 		try {
 			const text = view.render(200).join("\n");
-			expect(text).toContain(`Selection: ${selectionStrategy}; configured preference below is not a prediction of the next wave/order`);
-			expect(text).toContain("Configured preference (before strategy): third → first → second");
+			expect(text).toContain(`Selection: ${selectionStrategy}; preference is not a prediction of next wave/order`);
+			expect(text).toContain("Preference (before strategy): third → first → second");
 			expect(view.render(200).join("\n")).toBe(text);
 			expect(policy).toEqual(original);
 			expect(rng).not.toHaveBeenCalled();
@@ -171,9 +172,9 @@ describe("WebSearchView", () => {
 
 	it("groups current tiers with per-Fallback caps/deadlines and Native deadline/usage grace", () => {
 		const engines: EngineDescriptor[] = [
-			{ name: "fast", label: "Fast fallback", tier: "fallback" }, engine,
+			{ name: "fast", label: "fast", tier: "fallback" }, engine,
 			{ name: "native:one", label: "Native one", tier: "native" },
-			{ name: "broad", label: "Broad fallback", tier: "fallback" },
+			{ name: "broad", label: "broad", tier: "fallback" },
 			{ name: "native:two", label: "Native two", tier: "native" },
 		];
 		const { view } = setup({ engines: () => engines, rows: () => 100, policy: () => fakePolicy({}, {
@@ -183,13 +184,13 @@ describe("WebSearchView", () => {
 		const text = view.render(200).join("\n");
 		const main = text.indexOf("Main · 1 current"), fallback = text.indexOf("Always include · 2 current"), native = text.indexOf("Native · 2 current");
 		expect(main).toBeGreaterThan(0); expect(fallback).toBeGreaterThan(main); expect(native).toBeGreaterThan(fallback);
-		expect(text.indexOf("Fixture (fixture)")).toBeGreaterThan(main);
-		expect(text.indexOf("Fixture (fixture)")).toBeLessThan(fallback);
-		const fast = text.slice(text.indexOf("Fast fallback"), text.indexOf("Broad fallback"));
-		expect(fast).toContain("default request/local cap 2 results · deadline 7s");
-		expect(text.slice(text.indexOf("Broad fallback"), native)).toContain("default request/local cap 14 results · deadline 2.5s");
-		expect(text).toContain("Always attempted alongside valid automatic search; does not wait for Main failure or consume Main slots");
-		expect(text).toContain("Always attempted alongside valid automatic search; no Main slots");
+		expect(text.indexOf("fixture")).toBeGreaterThan(main);
+		expect(text.indexOf("fixture")).toBeLessThan(fallback);
+		const fast = text.slice(text.indexOf("fast"), text.indexOf("broad"));
+		expect(fast).toContain("7000/2/—");
+		expect(text.slice(text.indexOf("broad"), native)).toContain("2500/14/—");
+		expect(text).toContain("Always alongside valid auto; no Main-failure wait or Main slots");
+		expect(text).toContain("Always alongside valid auto; no Main slots");
 		expect(text).toContain("deadline 45s + 1s cancellation/usage-settlement grace");
 		view.dispose();
 	});
@@ -199,7 +200,7 @@ describe("WebSearchView", () => {
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 0 current");
 		expect(text).toContain("No Main engines configured; no Main requests");
-		expect(text).toContain("Configured preference (before strategy): none");
+		expect(text).toContain("Preference (before strategy): none");
 		expect(text).not.toMatch(/Default request:|NaN|Infinity/);
 		view.dispose();
 	});
@@ -211,12 +212,12 @@ describe("WebSearchView", () => {
 		deps.monitor.begin(moved)({ status: "empty" });
 		const text = view.render(200).join("\n");
 		const historical = text.indexOf("Previously observed · not currently configured in this tier");
-		expect(text.slice(0, historical)).toContain("Moved (moved) · alwaysInclude · configured");
-		expect(text.slice(0, historical)).toMatch(/0 +\| 0 +\| 1 +\|/);
-		expect(text.slice(0, historical)).not.toMatch(/7 +\| 7/);
-		expect(text.slice(historical)).toContain("Moved (moved) · main · historical (not current)");
-		expect(text.slice(historical)).toMatch(/0 +\| 1 +\| 0 +\|/);
-		expect(text.slice(historical)).toMatch(/7 +\| 7/);
+		expect(text.slice(0, historical)).toContain("moved");
+		expect(text.slice(0, historical)).toMatch(/0(?: +\| |\/)0(?: +\| |\/)1/);
+		expect(text.slice(0, historical)).not.toMatch(/7\/7/);
+		expect(text.slice(historical)).toMatch(/moved · main · historical \(not current\)/);
+		expect(text.slice(historical)).toMatch(/0(?: +\| |\/)1(?: +\| |\/)0/);
+		expect(text.slice(historical)).toMatch(/7\/7/);
 		view.dispose();
 	});
 
@@ -228,7 +229,7 @@ describe("WebSearchView", () => {
 		deps.monitor.begin({ ...unsafe, name: "old" + name, tier: "main" })({ status: "empty" });
 		const text = view.render(80).join("\n");
 		expect(text).toContain("Visiblered");
-		expect(text).toContain("default request/local cap 3 results · deadline 4s");
+		expect(text).toContain("4000/3/—");
 		expect(text).not.toMatch(/\x1b|PAYLOAD|https:\/\/fixture\.invalid|X{65}|Y{81}/);
 		for (const width of [1, 4, 20, 40]) {
 			const lines = view.render(width);
@@ -263,9 +264,9 @@ describe("WebSearchView", () => {
 		deps.monitor.begin({ name: "old", label: "Old", tier: "main" })({ status: "empty" });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 70 current");
-		expect(text).toContain("Engine 63 (engine-63)");
-		expect(text).not.toContain("Engine 64 (engine-64)");
-		expect(text).not.toContain("Old (old)");
+		expect(text).toContain("engine-63");
+		expect(text).not.toContain("engine-64");
+		expect(text).not.toContain("old");
 		expect(text).toContain("[7 more engines omitted]");
 		expect(text).toContain("[more omitted]");
 		view.dispose();
@@ -275,14 +276,14 @@ describe("WebSearchView", () => {
 		const { deps, view } = setup({ engines: () => [engine, { name: "unused", label: "Unavailable", tier: "fallback", availability: "unavailable" }], rows: () => 60 });
 		const initial = view.render(100).join("\n");
 		expect(deps.search).not.toHaveBeenCalled();
-		expect(initial).toContain("Fixture (fixture) · main · configured");
+		expect(initial).toContain("fixture");
 		expect(initial).toContain("not attempted · health unknown");
 		expect(initial).toContain("unavailable");
 		const finish = deps.monitor.begin(engine);
 		expect(deps.requestRender).toHaveBeenCalled();
-		expect(view.render(100).join("\n")).toMatch(/1 +\| 0 +\| 0/);
+		expect(view.render(100).join("\n")).toMatch(/1(?: +\| |\/)0(?: +\| |\/)0/);
 		finish({ status: "empty" });
-		expect(view.render(100).join("\n")).toMatch(/0 +\| 0 +\| 1/);
+		expect(view.render(100).join("\n")).toMatch(/0(?: +\| |\/)0(?: +\| |\/)1/);
 		view.dispose();
 	});
 
@@ -296,21 +297,22 @@ describe("WebSearchView", () => {
 		deps.monitor.begin(reader)({ status: "failed" });
 		const search = view.render(120).join("\n");
 		expect(search).toContain("Search engine activity");
-		for (const title of ["Fixture (fixture) · main", "Native (native) · native", "Fallback (fallback) · alwaysInclude", "Historical search (shared) · main · historical (not current)"]) expect(search).toContain(title);
-		expect(search).toMatch(/3 +\| 3/);
-		expect(search).not.toMatch(/Reader \(shared\)|Historical reader|· reader|Enter a query|> /);
+		for (const title of ["fixture", "native", "fallback", "shared · main"]) expect(search).toContain(title);
+		expect(search).toMatch(/3\/3/);
+		expect(search).not.toMatch(/removed|· reader|Enter a query|> /);
 		select(view, "Fetchers");
 		const fetchers = view.render(120).join("\n");
 		expect(fetchers).toContain("Fetcher activity");
-		expect(fetchers).toContain("Reader (shared) · reader");
-		expect(fetchers).toContain("Historical reader (removed) · reader · historical (not current)");
-		expect(fetchers).toMatch(/0 +\| 0 +\| 0 +\| 1/);
-		expect(fetchers).toMatch(/0 +\| 0 +\| 1/);
-		expect(fetchers).not.toMatch(/Fixture \(fixture\)|Native \(native\)|Fallback \(fallback\)|Historical search|· main|· fallback|· native/);
+		expect(fetchers).toContain("shared");
+		expect(fetchers).toContain("removed · reader");
+		expect(fetchers).toContain("historical (not current)");
+		expect(fetchers).toMatch(/0(?: +\| |\/)0(?: +\| |\/)0(?: +\| |\/)1/);
+		expect(fetchers).toMatch(/0(?: +\| |\/)0(?: +\| |\/)1/);
+		expect(fetchers).not.toMatch(/fixture|· main|· fallback|· native/);
 		select(view, "Test web");
 		const test = view.render(120).join("\n");
 		expect(test).toContain("Enter a query above");
-		expect(test).not.toMatch(/activity|Reader \(shared\)|Fixture \(fixture\)|Historical reader|Historical search/);
+		expect(test).not.toMatch(/activity|fixture|removed|shared/);
 		expect(deps.search).not.toHaveBeenCalled();
 		view.dispose();
 	});
@@ -346,7 +348,7 @@ describe("WebSearchView", () => {
 		select(view, "Web stats");
 		view.render(100); view.handleInput(end);
 		expect(view.render(100).join("\n")).toContain("Fuse first");
-		const statistics = scrollToText(view, () => view.render(100), "Engine 19", up).join("\n");
+		const statistics = scrollToText(view, () => view.render(100), "engine-19", up).join("\n");
 		expect(search.mock.calls[0][1].aborted).toBe(false);
 		pending.resolve("background result"); await flush();
 		expect(view.render(100).join("\n")).toBe(statistics);
@@ -531,20 +533,20 @@ describe("WebSearchView", () => {
 		expect(view.render(100).join("\n")).not.toBe(initial);
 		view.handleInput(pageDown);
 		expect(view.render(100).join("\n")).not.toBe(initial);
-		const firstEngineAtViewportEdge = scrollToText(view, () => view.render(100), "Engine 0 ", down).join("\n");
+		const firstEngineAtViewportEdge = scrollToText(view, () => view.render(100), "engine-0", down).join("\n");
 		view.handleInput(pageDown);
 		expect(view.render(100).join("\n")).not.toBe(firstEngineAtViewportEdge);
 		// A row first visible at the bottom can remain at the top after one page.
 		view.handleInput(pageDown);
-		expect(view.render(100).join("\n")).not.toContain("Engine 0 ");
+		expect(view.render(100).join("\n")).not.toContain("engine-0");
 		view.handleInput(end);
 		expect(view.render(100).join("\n")).toContain("Fuse first");
-		expect(scrollToText(view, () => view.render(100), "Engine 19 ", up).join("\n")).toContain("Engine 19 ");
+		expect(scrollToText(view, () => view.render(100), "engine-19", up).join("\n")).toContain("engine-19");
 		rows = 15;
 		expect(view.render(40).length).toBeLessThanOrEqual(rows);
 		view.handleInput(home); view.handleInput(pageUp);
 		expect(view.render(100).join("\n")).toContain("Default auto");
-		expect(scrollToText(view, () => view.render(100), "Engine 0 ", down).join("\n")).toContain("Engine 0 ");
+		expect(scrollToText(view, () => view.render(100), "engine-0", down).join("\n")).toContain("engine-0");
 		view.handleInput(esc);
 	});
 
@@ -577,16 +579,16 @@ describe("WebSearchView", () => {
 			view.handleInput(end);
 			lines = frame(width, height);
 			expect(lines.join("\n")).toContain("Fuse first");
-			lines = scrollToText(view, () => frame(width, height), "Engine 29", up);
-			expect(lines.join("\n")).toContain("Engine 29");
+			lines = scrollToText(view, () => frame(width, height), "engine-29", up);
+			expect(lines.join("\n")).toContain("engine-29");
 			// Intrinsic measurement must not reset an allocated scroll position.
 			view.render(40);
-			expect(frame(width, height).join("\n")).toContain("Engine 29");
+			expect(frame(width, height).join("\n")).toContain("engine-29");
 			expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
 		}
 		view.handleInput(home);
 		expect(frame(80, 16).join("\n")).toContain("Default auto");
-		expect(scrollToText(view, () => frame(80, 16), "Engine 0", down).join("\n")).toContain("Engine 0");
+		expect(scrollToText(view, () => frame(80, 16), "engine-0", down).join("\n")).toContain("engine-0");
 		view.dispose();
 	});
 
@@ -600,9 +602,9 @@ describe("WebSearchView", () => {
 		for (let index = 0; index < 5; index++) {
 			if (index >= 3) { view.handleInput(`query ${index}`); view.handleInput("\r"); await flush(); }
 			view.render(100); view.handleInput(end);
-			if (index < 2) scrollToText(view, () => view.render(100), "main 19", up);
+			if (index < 2) scrollToText(view, () => view.render(100), "main-19", up);
 			const text = view.render(100).join("\n");
-			expect(text).toContain(index === 0 ? "main 19" : index === 1 ? "Paper main 19" : index === 2 ? "reader 19" : index === 3 ? "web result 29" : "paper result 29");
+			expect(text).toContain(index === 0 ? "main-19" : index === 1 ? "paper-main-19" : index === 2 ? "reader-19" : index === 3 ? "web result 29" : "paper result 29");
 			snapshots.push(text);
 			view.handleInput(tab);
 		}
@@ -629,7 +631,7 @@ describe("WebSearchView", () => {
 			expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
 			view.handleInput(tab); view.handleInput(tab); frame(width, height); view.handleInput(end);
 			expect(frame(width, height).join("\n")).toContain("Fuse first");
-			expect(scrollToText(view, () => frame(width, height), "Engine 29", up).join("\n")).toContain("Engine 29");
+			expect(scrollToText(view, () => frame(width, height), "engine-29", up).join("\n")).toContain("engine-29");
 			view.handleInput(backTab); view.handleInput(backTab);
 			view.render(20); // Intrinsic sizing must not reset the allocated Test viewport.
 			lines = frame(width, height);
@@ -686,10 +688,10 @@ describe("WebSearchView", () => {
 		const { deps, view } = setup({ engines: () => [], rows: () => 100 });
 		deps.monitor.begin(engine)({ status: "success" });
 		const text = view.render(100).join("\n");
-		expect(text).toContain("Fixture (fixture) · main · historical (not current)");
+		expect(text).toContain("fixture · main · historical (not current)");
 		expect(text).toContain("Previously observed · not currently configured in this tier");
-		expect(text).not.toContain("Fixture (fixture) · main · configured");
-		expect(text).toMatch(/unknown +\| 0 +\|/);
+		expect(text).not.toMatch(/fixture.*configured/);
+		expect(text).toMatch(/unknown\/0/);
 		view.dispose();
 	});
 	it("runs web and paper independently, preserves queries, and ignores duplicate submissions per domain", async () => {
@@ -760,8 +762,8 @@ describe("WebSearchView", () => {
 		const text = view.render(80).join("\n");
 		expect(text).toContain("Paper automatic search");
 		expect(text).toContain("timeout");
-		expect(text).toContain("ArXiv 日本語 (arxiv) · alwaysInclude · historical (not current)");
-		expect(text).toMatch(/8 +\| 8/);
+		expect(text).toContain("arxiv · alwaysInclude · historical (not current)");
+		expect(text).toMatch(/8\/8/);
 		expect(text).not.toMatch(/combine|Fixture/);
 		expect(deps.search).not.toHaveBeenCalled();
 		expect(deps.profiles.papers.search).not.toHaveBeenCalled();
@@ -779,7 +781,7 @@ describe("WebSearchView", () => {
 		deps.monitor.begin(engine)({ status: "timeout" });
 		const lines = view.render(width);
 		const text = lines.join("\n");
-		for (const key of ["active", "ok", "empty", "failed", "timeout", "cancelled", "last", "results last", "results total", "latency last", "latency total", "deadline ms", "candidate cap", "boost"]) expect(text).toContain(key);
+		for (const key of ["active", "ok", "empty", "failed", "timeout", "cancelled", "last/total", "Res l/Σ", "ms l/Σ", "deadline ms", "candidate cap", "boost"]) expect(text).toContain(key);
 		expect(text).toContain("not attempted · health unknown");
 		expect(text).toContain("—");
 		expect(text).toContain("30000");
@@ -796,7 +798,7 @@ describe("WebSearchView", () => {
 	it("uses narrow metric rows without silently dropping counters or truncating scalar policy values", () => {
 		const { view } = setup({ rows: () => 500, policy: () => fakePolicy({}, { sources: [{ name: "fixture", timeoutMs: 123456789, maxResults: 987654321, boost: 12.3456789 }] }) });
 		const text = view.render(40).join("\n");
-		for (const key of ["active", "ok", "empty", "failed", "timeout", "cancelled", "last", "results last", "results total", "latency last", "latency total", "123456789", "987654321", "12.3456789"]) expect(text).toContain(key);
+		for (const key of ["active", "ok", "empty", "failed", "timeout", "cancelled", "last/total", "Res l/Σ", "ms l/Σ", "123456789", "987654321", "12.3456789"]) expect(text).toContain(key);
 		for (let width = 1; width <= 45; width++) expect(view.render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
 		view.dispose();
 	});
@@ -809,7 +811,7 @@ describe("WebSearchView", () => {
 		expect(initial.length).toBeLessThanOrEqual(height);
 		view.handleInput(end);
 		expect(view.render(width).join("\n")).toContain("Fuse first");
-		expect(scrollToText(view, () => view.render(width), "Engine 63", up).join("\n")).toContain("Engine 63");
+		expect(scrollToText(view, () => view.render(width), "engine-63", up).join("\n")).toContain("engine-63");
 		expect(view.render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
 		view.dispose();
 	});
@@ -846,26 +848,100 @@ describe("WebSearchView", () => {
 		view.dispose();
 	});
 
-	it.each([80, 120])("compares three sources as aligned rows with one outcome header per group at %s cells", (width) => {
+	it("keeps ANSI tables aligned, colors semantic states, and refreshes the injected palette", () => {
+		let code = 31;
+		const fg = vi.fn((_color: Parameters<typeof PLAIN_THEME.fg>[0], text: string) => `\x1b[${code}m${text}\x1b[0m`);
+		const { deps, view } = setup({ rows: () => 200, theme: { ...PLAIN_THEME, fg } });
+		deps.monitor.begin(engine)({ status: "failed" });
+		const colored = view.render(120);
+		const plain = colored.map(stripVTControlCharacters);
+		expect(colored.every((line) => visibleWidth(line) <= 120)).toBe(true);
+		const header = plain.findIndex((line) => line.includes("Source") && line.includes("Act"));
+		expect(header).toBeGreaterThan(0);
+		const boundaries = (line: string) => [...line.matchAll(/\|/g)].map((match) => visibleWidth(line.slice(0, match.index)));
+		expect(boundaries(plain[header + 2])).toEqual(boundaries(plain[header]));
+		expect(fg.mock.calls).toContainEqual(["error", "failed"]);
+		expect(fg.mock.calls).toContainEqual(["error", "failed"]);
+		code = 32;
+		view.invalidate();
+		expect(view.render(120).join("\n")).not.toContain("\x1b[31m");
+		expect(view.render(120).map(stripVTControlCharacters)).toEqual(plain);
+		view.dispose();
+	});
+
+	it.each([1, 4, 20, 40, 80, 120])("retains entire huge scalar values across wrapping at %s columns", (width) => {
+		const { deps, view } = setup({ rows: () => 10000, policy: () => fakePolicy({}, { sources: [{ name: "fixture", timeoutMs: 123456789, maxResults: 987654321, boost: 12.3456789 }] }) });
+		deps.monitor.begin(engine)({ status: "success", resultCount: Number.MAX_SAFE_INTEGER });
+		const lines = view.render(width);
+		const unwrapped = lines.join("").replace(/\s/g, "");
+		for (const value of ["123456789", "987654321", "12.3456789", "9007199254740991/9007199254740991"]) expect(unwrapped).toContain(value);
+		expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+		view.dispose();
+	});
+
+	it("shows source data before detailed policy in an 80x24 viewport", () => {
+		const { view } = setup({ rows: () => 24 });
+		const text = view.render(80).join("\n");
+		expect(text).toContain("fixture");
+		expect(text).toContain("Res l/Σ —/—");
+		expect(text).not.toContain("Main policy");
+		view.dispose();
+	});
+
+	it("compares seven canonical source rows with individual counters at 120 columns", () => {
+		const names = ["exa", "brave", "tavily", "searxng", "duckduckgo", "jina", "serper"];
+		const engines: EngineDescriptor[] = names.map((name) => ({ name, label: name.toUpperCase(), tier: "main", availability: "configured" }));
+		const { deps, view } = setup({ rows: () => 200, engines: () => engines, policy: () => fakePolicy({ engineOrder: names }, { sources: names.map((name) => ({ name, timeoutMs: 30000, maxResults: 20, boost: 1 })) }) });
+		for (const engine of engines) deps.monitor.begin(engine)({ status: "success", resultCount: 9 });
+		const lines = view.render(120);
+		const header = lines.findIndex((line) => line.startsWith("Source") && line.includes("| Act"));
+		expect(header).toBeGreaterThan(0);
+		for (const column of ["Act", "OK", "Ø", "Fail", "T/O", "Cxl", "Res l/Σ", "ms l/Σ", "ms/cap/×"]) expect(lines[header]).toContain(column);
+		for (let i = 0; i < names.length; i++) {
+			expect(lines[header + 2 + i]).toMatch(new RegExp(`^${names[i]} +\\|`));
+			expect(lines[header + 2 + i]).toContain("30000/20/1");
+		}
+		expect(lines.filter((line) => line.startsWith("Observations"))).toHaveLength(1);
+		expect(lines.every((line) => visibleWidth(line) <= 120)).toBe(true);
+		view.dispose();
+	});
+
+	it.each([80, 120])("joins stats and limits with one source identity at %s columns", (width) => {
+		const fg = vi.fn(PLAIN_THEME.fg);
+		const { deps, view } = setup({ rows: () => 200, theme: { ...PLAIN_THEME, fg } });
+		deps.monitor.begin(engine)({ status: "success", resultCount: 9 });
+		const all = view.render(width);
+		const lines = all.slice(all.findIndex((line) => line.includes("Main · 1 current")), all.findIndex((line) => line.includes("Always include ·")));
+		const text = lines.join("\n");
+		expect(lines.filter((line) => line.startsWith("fixture"))).toHaveLength(1);
+		expect(text).toContain("9/9");
+		expect(text).toContain("30000");
+		expect(text).not.toContain("Observed results and latency");
+		if (width === 120) {
+			expect(lines.filter((line) => line.includes("Source") && line.includes("|"))).toHaveLength(1);
+			expect(lines.find((line) => line.startsWith("fixture"))).toContain("30000");
+		} else {
+			const start = lines.findIndex((line) => line.startsWith("fixture"));
+			expect(lines.length - start).toBeLessThanOrEqual(5);
+		}
+		expect(fg.mock.calls.some(([color]) => color === "success")).toBe(true);
+		view.dispose();
+	});
+
+	it.each([80, 120])("keeps three long Unicode source records compact at %s cells", (width) => {
 		const engines: EngineDescriptor[] = ["native:model-alpha", "native:日本語モデル", "native:model-third"].map((name) => ({ name, label: `${name} 日本語`, tier: "native", availability: "configured" }));
-		const { deps, view } = setup({ engines: () => engines, rows: () => 100, policy: () => fakePolicy({ engineOrder: [] }, { native: { engineCount: 3, timeoutMs: 45000, settlementGraceMs: 1000 } }) });
+		const { deps, view } = setup({ engines: () => engines, rows: () => 200 });
 		deps.monitor.begin(engines[0])({ status: "success", resultCount: 9 });
 		deps.monitor.begin(engines[1])({ status: "timeout" });
 		const all = view.render(width);
-		const lines = all.slice(all.findIndex((line) => line.includes("Native · 3 current")), all.findIndex((line) => line.includes("Aggregation ·")));
-		const headers = lines.filter((line) => line.startsWith("Source") && line.includes(width === 80 ? "| Run" : "| active"));
-		expect(headers).toHaveLength(1);
-		const at = lines.indexOf(headers[0]);
-		const rows = lines.slice(at + 2, at + 5);
-		const boundaries = (line: string) => [...line.matchAll(/\|/g)].map((match) => visibleWidth(line.slice(0, match.index)));
-		for (let n = 0; n < 3; n++) {
-			expect(rows[n]).toContain(engines[n].name);
-			expect(boundaries(rows[n])).toEqual(boundaries(headers[0]));
-		}
-		expect(rows[0]).toMatch(/0 +\| 1 +\| 0/);
-		expect(rows[1]).toContain("timeout");
-		expect(rows[2]).toContain("—");
-		expect(lines.join("\n")).toContain("not attempted · health unknown");
+		const lines = all.slice(all.findIndex((line) => line.includes("Native ·")), all.findIndex((line) => line.includes("Legend · policy")));
+		const text = lines.join("\n");
+		for (const source of engines) expect(text).toContain(source.name);
+		expect(text).toContain("9/9");
+		expect(text).toContain("timeout");
+		expect(text).toContain("—/—");
+		expect(lines.length).toBeLessThanOrEqual(18);
+		expect(all.every((line) => visibleWidth(line) <= width)).toBe(true);
 		view.dispose();
 	});
 
@@ -876,7 +952,7 @@ describe("WebSearchView", () => {
 		vi.spyOn(deps.monitor, "snapshot").mockReturnValue([{ ...snapshot, ongoing: Number.MAX_SAFE_INTEGER, success: Number.MAX_SAFE_INTEGER, empty: Number.MAX_SAFE_INTEGER, failed: Number.MAX_SAFE_INTEGER, timeout: Number.MAX_SAFE_INTEGER, cancelled: Number.MAX_SAFE_INTEGER }]);
 		const lines = view.render(80);
 		const text = lines.join("\n");
-		expect(text).toContain("Source: fixture");
+		expect(text).toContain("fixture");
 		expect(text.match(/9007199254740991/g)?.length).toBeGreaterThanOrEqual(6);
 		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
 		view.dispose();

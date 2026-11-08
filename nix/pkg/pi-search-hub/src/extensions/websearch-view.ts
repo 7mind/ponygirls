@@ -20,7 +20,6 @@ const MAX_RESULT_LINES = 200;
 const MAX_WRAPPED_RESULT_LINES = 400;
 const MAX_ENGINES = 64;
 const MAX_ENGINE_NAME_CHARS = 64;
-const MAX_ENGINE_LABEL_CHARS = 80;
 const TAB_LABELS = ["Web stats", "Paper stats", "Fetchers", "Test web", "Test papers"] as const;
 const DOMAINS = ["web", "papers"] as const;
 
@@ -180,57 +179,35 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.repaint();
 	}
 
-	/** Compare sources without clipping scalar values; oversized tables become metric rows. */
-	private table(headers: string[], rows: string[][], width: number): string[] {
-		if (rows.length === 0) return [];
-		const widths = headers.map((header, i) => Math.max(visibleWidth(header), ...rows.map((cells) => visibleWidth(cells[i]))));
-		const row = (cells: string[]) => cells.map((cell, i) => truncateToWidth(cell, widths[i], "") + " ".repeat(Math.max(0, widths[i] - visibleWidth(cell)))).join(" | ");
-		if (widths.reduce((a, b) => a + b, 0) + 3 * (headers.length - 1) <= width) {
-			return [row(headers), widths.map((n) => "-".repeat(n)).join("-+-"), ...rows.map(row)];
-		}
-		const labelWidth = Math.max(...headers.slice(1).map(visibleWidth));
-		return rows.flatMap((cells) => [
-			`${headers[0]}: ${cells[0]}`,
-			...headers.slice(1).map((header, i) => `${header.padEnd(labelWidth)} | ${cells[i + 1]}`),
-		]);
-	}
-
+	/** One comparative table per tier; compact records retain every scalar when it cannot fit. */
 	private engineGroup(engines: EngineDescriptor[], stats: Map<string, EngineSnapshot>, historical: boolean, width: number, policy?: SearchPolicy): string[] {
 		if (engines.length === 0) return [];
-		const compact = width >= 60 && width < 110;
-		const sourceName = (engine: EngineDescriptor) => `${historical ? `${displayTier(engine.tier)}/` : ""}${plainName(engine.name, MAX_ENGINE_NAME_CHARS)}`;
-		const outcomes = engines.map((engine) => {
+		const t = this.deps.theme;
+		const headers = ["Source", "Act", "OK", "Ø", "Fail", "T/O", "Cxl", "Last", "Res l/Σ", "ms l/Σ", "ms/cap/×"];
+		const rows = engines.map((engine) => {
 			const entry = stats.get(engineKey(engine));
-			return [sourceName(engine), ...(entry ? [entry.ongoing, entry.success, entry.empty, entry.failed, entry.timeout, entry.cancelled, entry.lastOutcome ?? "pending"].map(String) : Array(7).fill("—"))];
-		});
-		const timing = engines.map((engine) => {
-			const entry = stats.get(engineKey(engine));
-			return [sourceName(engine), ...(entry ? [entry.resultCountLast ?? "unknown", entry.resultCountTotal, entry.latencyLastMs === null ? "unknown" : Math.round(entry.latencyLastMs), Math.round(entry.latencyTotalMs)].map(String) : Array(4).fill("—"))];
-		});
-		const lines = [
-			...(engines.some((engine) => !stats.has(engineKey(engine))) ? ["— = not attempted · health unknown"] : []),
-			...(compact ? ["Run=active · OK=ok · Ø=empty · Fail=failed · T/O=timeout · Cxl=cancelled"] : []),
-			...this.table(compact ? ["Source", "Run", "OK", "Ø", "Fail", "T/O", "Cxl", "Last"] : ["Source", "active", "ok", "empty", "failed", "timeout", "cancelled", "last"], outcomes, width),
-			"Observed results and latency (ms)",
-			...(compact ? ["Res last/Res total = results last/results total", "ms last/ms total = latency last/latency total (ms)"] : []),
-			...this.table(compact ? ["Source", "Res last", "Res total", "ms last", "ms total"] : ["Source", "results last", "results total", "latency last", "latency total"], timing, width),
-		];
-		const limits = historical ? [] : engines.flatMap((engine) => {
-			const source = policy?.sources.find((entry) => entry.name === engine.name);
-			return source ? [[sourceName(engine), ...[source.timeoutMs, source.maxResults, source.boost].map(String)]] : [];
-		});
-		if (limits.length) lines.push(...this.table(["Source", "deadline ms", "candidate cap", "boost"], limits, width));
-		// Safe descriptive metadata is a separate legend, not repeated statistic cards.
-		for (const engine of engines) {
-			const label = plainName(engine.label, MAX_ENGINE_LABEL_CHARS);
 			const name = plainName(engine.name, MAX_ENGINE_NAME_CHARS);
-			lines.push(`${label}${label === name ? "" : ` (${name})`} · ${displayTier(engine.tier)} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`);
-			if (!historical && engine.tier === "fallback") {
-				const limit = policy?.fallback.find((entry) => entry.backend === engine.name);
-				lines.push(limit ? `  default request/local cap ${limit.maxResults} results · deadline ${duration(limit.timeoutMs)}` : "  default cap/deadline unavailable");
-			}
+			const availability = engine.availability ?? "unknown";
+			const suffix = historical ? ` · ${displayTier(engine.tier)} · historical (not current)` : availability === "configured" ? "" : ` [${availability}]`;
+			const count = (value: number, color: "accent" | "success" | "warning" | "error") => t.fg(value ? color : "dim", String(value));
+			const outcome = entry?.lastOutcome ?? (entry ? "pending" : "—");
+			const outcomeColor = outcome === "success" ? "success" : outcome === "failed" ? "error" : outcome === "timeout" || outcome === "cancelled" || outcome === "empty" ? "warning" : "dim";
+			const source = historical ? undefined : policy?.sources.find((source) => source.name === engine.name);
+			const fallback = !historical && engine.tier === "fallback" ? policy?.fallback.find((source) => source.backend === engine.name) : undefined;
+			const limits = fallback ? `${fallback.timeoutMs}/${fallback.maxResults}/${source?.boost ?? "—"}` : source ? `${source.timeoutMs}/${source.maxResults}/${source.boost}` : "—/—/—";
+			return [t.fg("accent", name) + t.fg(availability === "unavailable" ? "error" : "dim", suffix),
+				...(entry ? [count(entry.ongoing, "accent"), count(entry.success, "success"), count(entry.empty, "warning"), count(entry.failed, "error"), count(entry.timeout, "warning"), count(entry.cancelled, "warning")] : Array(6).fill(t.fg("dim", "—"))),
+				t.fg(outcomeColor, outcome), entry ? `${entry.resultCountLast ?? "unknown"}/${entry.resultCountTotal}` : "—/—",
+				entry ? `${entry.latencyLastMs === null ? "unknown" : Math.round(entry.latencyLastMs)}/${Math.round(entry.latencyTotalMs)}` : "—/—", limits];
+		});
+		const widths = headers.map((header, i) => Math.max(visibleWidth(header), ...rows.map((row) => visibleWidth(row[i]))));
+		const row = (cells: string[]) => cells.map((cell, i) => cell + " ".repeat(widths[i] - visibleWidth(cell))).join(t.fg("dim", " | "));
+		if (width >= 100 && widths.reduce((a, b) => a + b, 0) + 3 * (headers.length - 1) <= width) {
+			return [t.fg("accent", row(headers)), t.fg("dim", widths.map((n) => "-".repeat(n)).join("-+-")), ...rows.map(row)];
 		}
-		return lines;
+		return rows.flatMap((cells) => [cells[0],
+			`  Act/OK/Ø/Fail/T/O/Cxl ${cells.slice(1, 7).join("/")} · Last ${cells[7]}`,
+			`  Res l/Σ ${cells[8]} · ms l/Σ ${cells[9]} · ms/cap/× ${cells[10]}`]);
 	}
 
 	private testLines(width: number): string[] {
@@ -257,27 +234,26 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		if (main.mode === "invalid") lines.push(`${domain === "web" ? "Invalid configured combine mode" : "Invalid automatic search mode"}: automatic search is rejected before any tier is launched.`);
 		else if (main.mode === "targeted") lines.push(`Targeted: up to ${main.targetUsableEngines} non-empty Main responses; replace failed/empty slots immediately without waiting for the slowest peer.`);
 		else if (main.mode === "all") lines.push("All: schedule every Main engine through the shared concurrency pool.");
-		else lines.push("First: walk Main engines until the first non-empty response; errors and empty responses advance to the next engine.");
+		else lines.push("First: stop at first non-empty response; errors/empty advance.");
 		if (main.requestedPerEngine !== null) {
-			lines.push(`Default request: ${main.requestedPerEngine} candidates per Main engine; final n is applied only after fusion/reranking.`);
+			lines.push(`Default: ${main.requestedPerEngine} candidates per Main engine; final n after fusion/reranking.`);
 		} else if (mainCount === 0) lines.push("No Main engines configured; no Main requests.");
 		else lines.push("Default Main request unavailable while the mode is invalid.");
 		const strategy = main.selectionStrategy;
 		if (strategy === "unrecognized") lines.push("Selection: unrecognized strategy; actual fallback is sequential (configured order).");
 		else if (strategy === "sequential") lines.push("Selection: sequential (configured order).");
-		else lines.push(`Selection: ${strategy}; configured preference below is not a prediction of the next wave/order.`);
+		else lines.push(`Selection: ${strategy}; preference is not a prediction of next wave/order.`);
 		const order = main.engineOrder.slice(0, MAX_ENGINES).map((name) => plainName(name, MAX_ENGINE_NAME_CHARS)).join(" → ");
-		lines.push(`Configured preference (before strategy): ${order || "none"}${main.engineOrder.length > MAX_ENGINES ? " → [more omitted]" : ""}.`);
-		return lines.map((line) => this.deps.theme.fg("dim", line));
+		lines.push(`Preference (before strategy): ${order || "none"}${main.engineOrder.length > MAX_ENGINES ? " → [more omitted]" : ""}.`);
+		return [this.deps.theme.fg("dim", lines.slice(0, 2).join(" ")), this.deps.theme.fg("dim", lines.slice(2).join(" "))];
 	}
 
 	private aggregationRules(policy: SearchPolicy): string[] {
 		const t = this.deps.theme;
 		return [
 			t.bold("Aggregation · automatic search, all tiers"),
-			t.fg("dim", `Shared weighted RRF: score = Σ weight/(k + rank), k=${policy.fusion.rankConstant}; original unique-document ranks, one contribution per source/page. Source boosts and overlap policies apply before the final cut.`),
-			t.fg("dim", `Reranking: ${policy.fusion.rerank}; lexical weights title=${policy.fusion.titleWeight}, body=${policy.fusion.bodyWeight}; exact-title priority ${policy.fusion.exactTitle ? "on" : "off"}. URL/identifier lookup priority and provenance are preserved; no inherent tier bonus.`),
-			t.fg("dim", `Fuse first, then cut to final n results (default n=${policy.defaultResultCount}). Named backend calls isolate one engine but retain shared dedup/ranking and deadlines; no other tiers are added.`),
+			t.fg("dim", `Shared weighted RRF: score = Σ weight/(k + rank), k=${policy.fusion.rankConstant}; original unique-document ranks, one contribution per source/page. Boosts/overlap before final cut; no inherent tier bonus. Reranking: ${policy.fusion.rerank}; lexical weights title=${policy.fusion.titleWeight}, body=${policy.fusion.bodyWeight}; exact-title priority ${policy.fusion.exactTitle ? "on" : "off"}. URL/identifier lookup priority and provenance preserved.`),
+			t.fg("dim", `Fuse first, then cut to final n results (default n=${policy.defaultResultCount}). Named calls: one engine, shared dedup/ranking/deadlines; no other tiers.`),
 		];
 	}
 
@@ -286,8 +262,11 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const profile = this.deps.profiles[domain];
 		const t = this.deps.theme;
 		const fetchers = this.tab === 2;
-		const lines = [t.bold(`${fetchers ? "Fetcher" : "Search engine"} activity (this extension instance)`),
-			t.fg("dim", "Active counts track dispatched logical operations, not queued work or physical connections.")];
+		const lines = [t.bold(`${fetchers ? "Fetcher" : "Search engine"} activity (this extension instance)`)];
+		const details = [t.bold("Legend · policy"),
+			t.fg("dim", "Configured unless marked [unknown/unavailable]. Active = dispatched logical ops, not queue/connections."),
+			t.fg("dim", "Act/OK/Ø/Fail/T/O/Cxl = active/ok/empty/failed/timeout/cancelled; Res, ms = last/total."),
+			t.fg("dim", "Observations — = not attempted · health unknown; limits — = unavailable. ms/cap/× = deadline ms/candidate cap/boost.")];
 		const snapshots = profile.monitor.snapshot();
 		const stats = new Map(snapshots.map((entry) => [engineKey(entry), entry]));
 		const engines = new Map(profile.engines().map((entry) => [engineKey(entry), entry]));
@@ -309,19 +288,19 @@ export class WebSearchView extends PanelLayout implements Focusable {
 			policy = profile.policy();
 			if (domain === "web") {
 				lines.push(t.fg("accent", `Default auto: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode} · combine ${policy.main.combineForced ? "true (forced)" : "false"} · configured combine mode ${policy.main.combineMode}`));
-				lines.push(t.fg("dim", policy.main.combineForced
-				? "Per-call count may override the default; configured combine=true cannot be disabled by a call."
-				: "Per-call count/combine may override these defaults; combine=true uses the configured combine mode."));
+				details.push(t.fg("dim", policy.main.combineForced
+				? "Per-call count may override; forced combine=true cannot be disabled."
+				: "Per-call count/combine may override; combine=true uses configured mode."));
 			} else lines.push(t.fg("accent", `Paper automatic search: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode}`));
-			lines.push(t.fg("dim", `Shared web/paper pool: max ${policy.execution.maxConcurrent} requests, ${policy.execution.perProvider} per provider. Overall ${duration(policy.execution.overallTimeoutMs)}; default source ${duration(policy.execution.sourceTimeoutMs)}${domain === "web" ? `; discovery ${duration(policy.execution.discoveryTimeoutMs)}` : ""}.`));
-			lines.push(t.fg("dim", "Source deadlines include queue/rate waits. Attempts may use cached results; viewing this snapshot runs no provider probes."));
+			lines.push(t.fg("dim", `Pool web+paper: ${policy.execution.maxConcurrent} concurrent/${policy.execution.perProvider} per provider; overall ${duration(policy.execution.overallTimeoutMs)}; default source ${duration(policy.execution.sourceTimeoutMs)}${domain === "web" ? `; discovery ${duration(policy.execution.discoveryTimeoutMs)}` : ""}.`));
+			details.push(t.fg("dim", "Deadlines include queue/rate waits; attempts may be cached. Snapshot: no provider probes."));
 			for (const tier of (domain === "papers" ? ["main", "fallback"] : ["main", "fallback", "native"]) as ("main" | "fallback" | "native")[]) {
 				const group = current.filter((engine) => engine.tier === tier);
 				const title = tier === "main" ? "Main" : tier === "fallback" ? "Always include" : "Native";
 				lines.push(t.bold(`${title} · ${tier === "native" ? policy.native.engineCount : group.length} current`));
-				if (tier === "main") lines.push(...this.mainRules(policy, group.length, domain));
-				else if (tier === "fallback") lines.push(t.fg("dim", "Always attempted alongside valid automatic search; does not wait for Main failure or consume Main slots."));
-				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests the configured candidate budget; default deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
+				if (tier === "main") details.push(t.bold("Main policy"), ...this.mainRules(policy, group.length, domain));
+				else if (tier === "fallback") details.push(t.bold("Always include policy"), t.fg("dim", "Always alongside valid auto; no Main-failure wait or Main slots. Cap = default request/local cap."));
+				else details.push(t.bold("Native policy"), t.fg("dim", `Always alongside valid auto; no Main slots. Configured candidate budget each; deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
 				if (group.length === 0) lines.push(t.fg("dim", `No current ${title} engines configured.`));
 				append(group, false);
 			}
@@ -331,6 +310,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 			append(historical, true);
 		}
 		if (current.length + historical.length > MAX_ENGINES) lines.push(t.fg("dim", `[${current.length + historical.length - MAX_ENGINES} more engines omitted]`));
+		lines.push(...details);
 		if (policy) lines.push(...this.aggregationRules(policy));
 		return lines;
 	}

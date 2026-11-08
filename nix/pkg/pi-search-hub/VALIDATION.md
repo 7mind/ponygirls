@@ -1,3 +1,15 @@
+# Validation — compact colored statistics, 2026-11-08
+
+- Final package: `/nix/store/d71k7k9ppaw01zc5b1z3dfqv4ii7rc6c-pi-search-hub-2.8.0-ponygirls.1`.
+- `websearch-view.ts` SHA-256: `59b67a772205dee6cec9328850592b0f57bec10c4f6e867eae22878ce0848e1c`; parent verified the installed file matches the task source.
+- `nix build .#pi-search-hub --no-link --print-out-paths -L`: pinned typecheck and all **33 files / 579 cases passed**, no failures or skips. Specified tests first failed against the old presentation; existing behavioral checks were retained with updated presentation assertions.
+- Delegated real-PTY acceptance passed in regular and fullscreen Pi 1.4.0 / tmux 3.8, at 120×40 → 80×24 → 120×40. Web/paper/fetcher inspection generated zero HTTP/native requests. Controlled web success, failure and cancellation verified separate outcome colors, scalar values, source uniqueness, alignment, scrolling, redaction and normal exit status 0. Both owned terminal servers were removed.
+- Source records now precede legends and detailed policy. Wide views combine outcomes, results, latency and limits; narrow views retain all fields in compact records. Seven-source comparison and extreme scalar widths have component tests.
+- Parent inspected build logs, wide/narrow rendered captures and styled failure output. Evidence and the adapted fixture harness are preserved in ignored `debug/search-stats-20261108/`. This is controlled terminal-cell acceptance, not live-provider quality, physical-terminal/IME verification, or a new paper-search outcome journey. No activation or deployment occurred.
+- Independent read-only review found no substantive defects. Reusable-procedure review found no standalone skill candidate beyond existing TUI testing guidance; Haystack draft lookup was unavailable to the delegated reader.
+
+---
+
 # Validation — web/paper diagnostics panel, 2026-11-08
 
 ## Source and installed artifact
