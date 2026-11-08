@@ -66,7 +66,7 @@ test("command grammar keeps target paths separate from flags and requires explic
 });
 
 test("directory completions preserve quoted and option-like paths as executable arguments", () => {
-  const names = ['--demo', '"demo', "it's here", 'app space'];
+  const names = ['--demo', '"demo', "it's here", 'app space', ' app'];
   const directories: DirectoryLister = directory => directory === "." ? names : directory === "app space/" ? ["child"] : [];
   for (const name of ["use", "status", "init --workspace"]) {
     const items = completeWith(`${name} `, directories)!;

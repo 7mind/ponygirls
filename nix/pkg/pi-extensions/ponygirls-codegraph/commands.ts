@@ -88,7 +88,7 @@ function directoryCompletions(head: string, path: string, directories: Directory
     .map((name) => {
       const target = `${parent}${name}/`;
       const encoded = quote === "'" && !target.includes("'") ? `'${target}'` :
-        quote !== null || /^["']/.test(target) || (!literal && target.startsWith("-")) ? JSON.stringify(target) : target;
+        quote !== null || /^[\s"']/.test(target) || (!literal && target.startsWith("-")) ? JSON.stringify(target) : target;
       return { value: `${head}${encoded}`, label: `${name}/`, description: "directory" };
     });
 }
