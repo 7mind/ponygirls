@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { Type } from "typebox";
 import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, TOGGLE_ARGUMENTS, type TogglePreferenceStore } from "@ponygirls/pi-settings";
+import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, type TogglePreferenceStore } from "@ponygirls/pi-settings";
 import { Box, Text, truncateToWidth } from "@earendil-works/pi-tui";
-import { compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
+import { completeArgument, compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
@@ -379,13 +379,20 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   pi.registerCommand("decisions", {
     description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn; automation: on|off|inherit|default on|default off|status",
     getArgumentCompletions: (prefix) => {
-      const toggles = TOGGLE_ARGUMENTS.filter((value) => value.startsWith(prefix.toLowerCase())).map((value) => ({ value, label: value }));
+      const toggles = completeArgument(prefix, (previous) => {
+        const choice = (token: string, description: string, continues: boolean) => ({ token, label: token, description, continues });
+        const switches = [choice("on", "Enable decision automation", false), choice("off", "Disable decision automation", false)];
+        if (previous.length === 0) return [...switches, choice("inherit", "Use global enablement", false), choice("default", "Change global defaults", true), choice("status", "Show automation status", false)];
+        return previous.length === 1 && previous[0]!.toLowerCase() === "default" ? switches : null;
+      }) ?? [];
       try {
         const questions = binding === null ? [] : storeFor(binding).list(binding.project);
-        return [...toggles, ...(completeDecisionArguments(prefix, questions, plain) ?? [])];
+        const items = [...toggles, ...(completeDecisionArguments(prefix, questions, plain) ?? [])];
+        return items.length === 0 ? null : items;
       } catch (error) {
         if (binding !== null) report(binding, error);
-        return toggles;
+        const items = [...toggles, ...(completeDecisionArguments(prefix, [], plain) ?? [])];
+        return items.length === 0 ? null : items;
       }
     },
     handler: async (args, ctx) => {

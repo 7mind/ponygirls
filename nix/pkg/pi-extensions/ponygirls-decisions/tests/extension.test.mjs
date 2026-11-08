@@ -667,3 +667,17 @@ test("a stale badge click stops its old owner without notifying through its UI",
   assert.equal(f.watching(), false);
   assert.deepEqual(f.notifications, [], "expired context cleanup must not call its UI");
 });
+
+// BG regression: toggle grammar must use the same full-prefix replacement as IDs.
+test('toggle completion preserves whitespace, nested defaults, and survives storage failure', (t) => {
+  const f = fixture(t); f.start();
+  const values = prefix => f.completions(prefix)?.map(item => item.value) ?? null;
+  assert.deepEqual(values('def'), ['default ']);
+  assert.deepEqual(values('  DEFAULT\to'), ['  DEFAULT\ton', '  DEFAULT\toff']);
+  f.setUnavailable(true);
+  assert.deepEqual(values('default  o'), ['default  on', 'default  off']);
+  assert.deepEqual(values('ans'), ['answer ']);
+  assert.equal(values('answer '), null, 'unavailable IDs must not be invented');
+  assert.equal(values('default on '), null);
+  assert.equal(values('answer Q1 free text '), null);
+});

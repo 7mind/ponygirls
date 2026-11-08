@@ -175,8 +175,8 @@ test('policy commands configure units atomically, inherit independently, expose 
   await f.command('policy inherit'); await f.command('status');
   assert.match(f.notifications.at(-1)[0], /20% of context-window capacity.*\(global\).*next inquiry: 60000 tokens/);
   assert.match(f.notifications.at(-1)[0], /ON \(session\)/);
-  assert.ok(f.completions('policy ').some(value => value.value === 'policy tokens 10000'));
-  assert.ok(f.completions('default policy w').some(value => value.value === 'default policy window 15'));
+  assert.ok(f.completions('policy ').some(value => value.value === 'policy tokens '));
+  assert.ok(f.completions('default policy w').some(value => value.value === 'default policy window '));
   const entries = f.manager.getEntries().length; const defaults = structuredClone(f.preferences.read());
   for (const command of ['policy', 'policy unknown 15', 'policy tokens 0', 'policy tokens 1.5', 'policy window 101', 'policy relative NaN', 'default policy inherit', 'policy tokens 10 extra', 'policy window 0x10', 'policy window -1']) {
     await f.command(command); assert.equal(f.notifications.at(-1)[1], 'error', command);
@@ -191,3 +191,15 @@ for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000,
     f.tokens(threshold); assert.equal(f.boundary().continue, true);
   });
 }
+
+// BG regression: complete grammar tokens, not fixed example command strings.
+test('argument completion walks policy grammar and preserves the full prefix', () => {
+  const f = fixture();
+  const values = prefix => f.completions(prefix)?.map(item => item.value) ?? null;
+  assert.deepEqual(values('pol'), ['policy ']);
+  assert.deepEqual(values('  default\tpol'), ['  default\tpolicy ']);
+  assert.deepEqual(values('policy '), ['policy relative ', 'policy window ', 'policy tokens ', 'policy inherit']);
+  assert.deepEqual(values('default policy '), ['default policy relative ', 'default policy window ', 'default policy tokens ']);
+  assert.deepEqual(values('threshold i'), ['threshold inherit']);
+  for (const prefix of ['policy tokens ', 'policy tokens 123', 'default threshold ', 'on ', 'unknown ', 'default policy inherit ']) assert.equal(values(prefix), null, prefix);
+});

@@ -1,7 +1,8 @@
+import { completeCuckooArguments } from './src/complete.ts';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft, type TurnEndEvent } from '@earendil-works/pi-coding-agent';
-import { parseToggleCommand, sessionEnabledData, TOGGLE_ARGUMENTS } from '@ponygirls/pi-settings';
+import { parseToggleCommand, sessionEnabledData } from '@ponygirls/pi-settings';
 import { ENABLED_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences, type PreferenceStore } from './src/preferences.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, checkpoint, checkpoints, historyText, reportText } from './src/report.ts';
@@ -47,7 +48,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
   }
   pi.registerCommand('cuckoo', {
     description: 'Show objectives/progress; history: saved answers across session branches; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
-    getArgumentCompletions: prefix => [...TOGGLE_ARGUMENTS, 'history', 'reports', 'policy window 15', 'policy relative 15', 'policy tokens 10000', 'policy inherit', 'default policy window 15', 'default policy relative 15', 'default policy tokens 10000', 'threshold 15', 'threshold inherit', 'default threshold 15'].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
+    getArgumentCompletions: completeCuckooArguments,
     handler: async (args, ctx) => {
       try {
         const trimmed = args.trim();

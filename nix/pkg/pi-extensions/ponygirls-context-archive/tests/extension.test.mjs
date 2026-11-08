@@ -405,3 +405,14 @@ test("badge toggles a read-only status view, supports keyboard close, and closes
   assert.equal(f.manager.getEntries().length, before, "view cannot write session preferences or archives");
   assert.deepEqual(f.preferences.read(), defaults);
 });
+
+// BG regression: complete one grammar token and never insert arbitrary thresholds.
+test('argument completion handles nested defaults and whitespace without numeric presets', (t) => {
+  const f = fixture(t, 'memory');
+  const values = prefix => f.commands.get('context-archive').getArgumentCompletions(prefix)?.map(item => item.value) ?? null;
+  assert.deepEqual(values('thr'), ['thresholds ']);
+  assert.deepEqual(values('  DEFAULT\tth'), ['  DEFAULT\tthresholds ']);
+  assert.deepEqual(values('default '), ['default on', 'default off', 'default thresholds ']);
+  assert.deepEqual(values('thresholds '), ['thresholds inherit']);
+  for (const prefix of ['default thresholds ', 'thresholds 85 ', 'thresholds 85 40 ', 'status ', 'bogus ']) assert.equal(values(prefix), null, prefix);
+});

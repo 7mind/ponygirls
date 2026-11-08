@@ -1,5 +1,6 @@
+import { completeArchiveArguments } from "./src/complete.ts";
 import { join } from "node:path";
-import { parseToggleCommand, sessionEnabledData, TOGGLE_ARGUMENTS } from "@ponygirls/pi-settings";
+import { parseToggleCommand, sessionEnabledData } from "@ponygirls/pi-settings";
 import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
@@ -159,7 +160,7 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
 
   pi.registerCommand("context-archive", {
     description: "Context archival: on|off|inherit and thresholds HIGH LOW|inherit for this session; default on|off or default thresholds HIGH LOW; status",
-    getArgumentCompletions: (prefix) => [...TOGGLE_ARGUMENTS.slice(0, -1), "thresholds 70 50", "thresholds inherit", "default thresholds 70 50", "status"].filter((a) => a.startsWith(prefix)).map((a) => ({ value: a, label: a })),
+    getArgumentCompletions: completeArchiveArguments,
     handler: async (args, ctx) => {
       const words = args.trim().toLowerCase().split(/\s+/);
       const action = words[0];
