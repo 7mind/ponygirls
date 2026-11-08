@@ -9,6 +9,8 @@ There are **two layers**: the proposed production contract and the concrete Pilo
 implementation. They are not identical. M1 remains an additional unimplemented
 design candidate; its proposed memory extensions are not silently included here.
 
+The [live-ontology synthesis](../20261108-1252-live-ontology-freshness.md) extends this candidate's protected provenance with explicit capture-session/branch lineage and proposes fresh scoped graph projections for worker re-anchoring. It preserves the distinction between source authority, automatic interpretation maintenance and execution permission; it is not a deployed API/schema migration.
+
 ## 1. MCP schema
 
 ### Proposed production surface

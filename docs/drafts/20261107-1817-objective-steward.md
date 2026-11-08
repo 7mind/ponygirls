@@ -2,6 +2,8 @@
 
 Status: research/design candidate, 2026-11-07. Not implemented, activated, or behaviorally validated. The user reports Historian is useful despite additional tokens. The goal here is better human understanding and informed control, not token minimization. This request authorizes research, not a new background writer, service deployment, or adoption of M1.
 
+Current synthesis: [live ontology freshness and objective re-anchoring](20261108-1252-live-ontology-freshness.md). It centers automatic maintenance of the evolving ontology, including current objectives/intent, and proposes feeding a fresh scoped graph projection back to the worker. The earlier design and historical pilot evidence below remain inspectable; the new feedback-loop pilot is prospective.
+
 ## Recommendation
 
 Build one bounded **epistemic steward** around the existing Historian pattern:
