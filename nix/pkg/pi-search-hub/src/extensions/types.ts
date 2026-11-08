@@ -42,6 +42,8 @@ export interface AlwaysIncludeBackendConfig {
 }
 
 export interface SearchConfig {
+	/** Independent scholarly metasearch policy; ordinary web search is unchanged. */
+	papers?: import("./papers/types.js").PaperConfig;
 	defaultBackend?: string;
 	combine?: boolean;
 	/** Combine strategy when combine is enabled. "all" queries every active backend; "targeted" queries only enough ordered backends to collect up to 3 usable result sets. */

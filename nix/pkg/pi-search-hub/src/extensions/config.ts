@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { BackendConfig, SearchConfig } from "./types.js";
+import { PAPER_PROVIDERS } from "./papers/types.js";
 import { getAgentDir } from "./utils.js";
 import { clearCredentialCache, FALLBACK_ENV_MAP } from "./credentials.js";
 
@@ -63,7 +64,18 @@ export function loadConfig(cwd: string): SearchConfig {
 	if (existsSync(projectPath)) {
 		try {
 			const project = JSON.parse(readFileSync(projectPath, "utf-8"));
+			const globalPapers = config.papers;
 			config = { ...config, ...project };
+			if (globalPapers && project.papers && typeof project.papers === "object" && !Array.isArray(project.papers)) {
+				config.papers = { ...globalPapers, ...project.papers,
+					sources: { ...globalPapers.sources, ...project.papers.sources } };
+				for (const name of PAPER_PROVIDERS) {
+					const source = project.papers.sources?.[name];
+					if (source && typeof source === "object" && !Array.isArray(source) && config.papers && config.papers.sources) {
+						config.papers.sources[name] = { ...globalPapers.sources?.[name], ...source };
+					}
+				}
+			}
 			// Guard: if project config set backends to null/undefined, restore global backends
 			if (config.backends == null) {
 				config.backends = preProjectBackends;

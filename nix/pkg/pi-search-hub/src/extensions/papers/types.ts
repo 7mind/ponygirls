@@ -12,6 +12,7 @@ export interface PaperRecord {
   date?: string;
   dateKind?: "published" | "created";
   categories: string[];
+  notices?: string[];
 }
 export interface PaperSearchRequest {
   query: string;
@@ -20,7 +21,7 @@ export interface PaperSearchRequest {
 export interface PaperReadRequest { id: string; query?: string; numResults: number }
 export interface PaperRelatedRequest { id: string; intent: string; mode: "similar" | "citers" | "references"; numResults: number }
 export interface PaperPassage { text: string; score: number }
-export interface PaperReadResult { paper: PaperRecord; passages: PaperPassage[] }
+export interface PaperReadResult { paper: PaperRecord; passages: PaperPassage[]; notices?: string[] }
 export interface PaperProvider {
   name: PaperProviderName;
   search(request: PaperSearchRequest, signal: AbortSignal): Promise<PaperRecord[]>;
