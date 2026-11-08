@@ -10,7 +10,7 @@ export default function (pi: ExtensionAPI): void {
       const inquiry = last !== undefined && JSON.stringify(last).includes('Restate me your objectives');
       const assistantCount = context.messages.filter(message => message.role === 'assistant').length;
       const tokens = assistantCount === 0 ? 20000 : 23000;
-      const text = inquiry ? JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Synthetic checkpoint preserved' }, { objective: 'Verify UI', progress: 'Badge and report under test' }] }) : 'Synthetic work response. No external provider contacted.';
+      const text = inquiry ? JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Synthetic checkpoint preserved', obstacles: 'None known', issues: 'None known', bottlenecks: 'Serial checks', eta: 'Unknown: checks pending' }, { objective: 'Verify UI', progress: 'Badge and report under test', obstacles: 'None known', issues: 'None known', bottlenecks: 'Manual validation', eta: 'Unknown: manual checks pending' }] }) : 'Synthetic work response. No external provider contacted.';
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
         const aborted = options !== undefined && options.signal !== undefined && options.signal.aborted;

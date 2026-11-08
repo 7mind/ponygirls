@@ -6,18 +6,58 @@ import { join } from 'node:path';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { DEFAULT_PREFERENCES, ENABLED_TYPE, THRESHOLD_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences } from '../src/preferences.ts';
 import { validatePolicy } from '../src/policy.ts';
-import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, parseReport, checkpoint, checkpoints, reportText } from '../src/report.ts';
+import { INQUIRY } from '../src/state.ts';
+import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, parseReport, checkpoint, checkpoints, reportText, historyText } from '../src/report.ts';
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
 test('strict JSON reports include zero objectives and reject malformed or unbounded output', () => {
   assert.deepEqual(parseReport('{"objectives":[]}'), { objectives: [] });
-  const raw = JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Tests pending' }] });
+  const raw = JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Tests pending', obstacles: 'None known', issues: 'None known', bottlenecks: 'Serial runtime tests', eta: 'Unknown: runtime validation has not started' }] });
   assert.equal(parseReport(raw).objectives[0].progress, 'Tests pending');
   for (const value of ['null', '[]', '{}', '```json\n' + raw + '\n```', '{"objectives":[],"extra":true}', '{"objectives":[{"objective":"x"}]}', JSON.stringify({ objectives: [{ objective: 'x', progress: '' }] }), JSON.stringify({ objectives: [{ objective: 'x'.repeat(MAX_FIELD_CHARS + 1), progress: 'x' }] }), ' '.repeat(MAX_REPORT_CHARS + 1)]) {
     assert.throws(() => parseReport(value), undefined, value.slice(0, 100));
     const saved = checkpoint('req-1', value);
     assert.equal(saved.raw, value); assert.equal(saved.report, null); assert.ok(saved.error);
   }
+});
+
+test('inquiry requests the current schema and evidence-qualified estimates', () => {
+  const example = INQUIRY.match(/JSON only: (\{"objectives":.*?\})\./)[1];
+  assert.equal(parseReport(example).objectives.length, 1);
+  for (const phrase of ['obstacles', 'issues', 'bottlenecks', 'ETA', 'Unknown', 'assumptions', 'Do not invent', 'Do not call tools', 'grants no new authority']) assert.ok(INQUIRY.includes(phrase), phrase);
+});
+
+// Specified: Behavioral-Active, Blackbox-Group.
+test('checkpoint details survive persistence and appear in reports and history', () => {
+  const item = { objective: 'Ship', progress: 'Tests running', obstacles: 'Waiting for access', issues: 'One failing case', bottlenecks: 'Serial tests', eta: 'Unknown: access pending' };
+  const raw = JSON.stringify({ objectives: [item] });
+  assert.deepEqual(parseReport(raw), { objectives: [item] });
+  const manager = SessionManager.inMemory();
+  manager.appendCustomEntry(REPORT_TYPE, checkpoint('details', raw));
+  assert.equal(checkpoints(manager.getBranch())[0].version, 2);
+  for (const text of [reportText(checkpoints(manager.getBranch())), historyText(manager.getEntries(), manager.getBranch())]) {
+    for (const [label, value] of [['Obstacles', item.obstacles], ['Issues', item.issues], ['Bottlenecks', item.bottlenecks], ['ETA', item.eta]]) assert.ok(text.includes(`${label}: ${value}`));
+  }
+  for (const name of ['obstacles', 'issues', 'bottlenecks', 'eta']) {
+    for (const invalid of [undefined, null, '', ' ', 3, [], 'x'.repeat(MAX_FIELD_CHARS + 1)]) {
+      assert.throws(() => parseReport(JSON.stringify({ objectives: [{ ...item, [name]: invalid }] })), undefined, name);
+    }
+  }
+  assert.throws(() => parseReport(JSON.stringify({ objectives: [{ ...item, extra: 'no' }] })));
+});
+
+test('legacy saved reports remain readable without inventing checkpoint details', () => {
+  const raw = '{"objectives":[{"objective":"Ship","progress":"Testing"}]}';
+  assert.throws(() => parseReport(raw));
+  const manager = SessionManager.inMemory();
+  manager.appendCustomEntry(REPORT_TYPE, { version: 1, requestId: 'legacy', raw, error: null });
+  const saved = checkpoints(manager.getBranch());
+  assert.equal(saved[0].version, 1);
+  assert.equal(saved[0].raw, raw);
+  assert.equal(saved[0].report.objectives[0].progress, 'Testing');
+  assert.match(reportText(saved), /ETA: Not recorded \(legacy report\)/);
+  manager.appendCustomEntry(REPORT_TYPE, { version: 2, requestId: 'missing-details', raw, error: null });
+  assert.equal(checkpoints(manager.getBranch())[1].report, null);
 });
 
 test('reports restore only the active branch and preserve invalid raw output', () => {

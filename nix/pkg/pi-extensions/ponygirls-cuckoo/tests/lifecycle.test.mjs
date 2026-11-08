@@ -35,7 +35,7 @@ test('default-off is inert; 20k to exactly 23k triggers JSON checkpoint at 15% a
   f.tokens(23000); const issue = f.boundary();
   assert.equal(issue.continue, true); assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
   assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 23000);
-  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing"}]}'));
+  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: tests pending"}]}'));
   assert.equal(reply.continue, undefined); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives.length, 1);
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
   assert.ok(!reply.entries.some(entry => entry.customType === INQUIRY_TYPE));

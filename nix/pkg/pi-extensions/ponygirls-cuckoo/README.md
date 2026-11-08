@@ -62,11 +62,23 @@ model-facing drafts, and queued user input defer scheduling. Inquiry and resume
 responses cannot themselves trigger another inquiry at that same boundary.
 
 The main model receives “Restate me your objectives and brief me on your
-progress” with a JSON-only schema:
+progress, obstacles, issues, bottlenecks, and ETA” with a JSON-only schema:
 
 ```json
-{"objectives":[{"objective":"Current objective","progress":"Brief factual progress"}]}
+{"objectives":[{"objective":"Current objective","progress":"Brief factual progress","obstacles":"None known","issues":"None known","bottlenecks":"Serial runtime validation","eta":"Unknown: validation has not started"}]}
 ```
+
+All six fields are required nonempty strings (at most 8000 characters each;
+100 objectives and 100000 characters total). Obstacles describe impediments or
+blocking dependencies, issues describe known defects or risks, and bottlenecks
+describe what limits progress or throughput. Use `None known` rather than imply
+independent verification. ETA is time to completion with its evidence, assumptions
+and uncertainty, or `Unknown` with the reason an estimate is unavailable; the
+inquiry explicitly prohibits invented deadlines or estimates.
+
+New checkpoints use metadata version 2. Version-1 saved reports remain readable;
+the additional fields display `Not recorded (legacy report)`, not invented values.
+Current replies missing these fields are invalid and retain their raw output.
 
 Only current objectives count; an empty list means zero. Reports are model
 self-reports, **not independently verified progress or new authorization**.

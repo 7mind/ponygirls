@@ -41,7 +41,7 @@ async function fixture(t) {
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
   return { dir, session, manager, contexts, replies, errors, notifications, onRequest: fn => { onRequest = fn; } };
 }
-const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime"}]}';
+const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: validation pending"}]}';
 
 for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000, 30000]]) {
   test(`real Pi ${kind} growth policy schedules at the exact token delta and persists through reload`, { timeout: 20000 }, async t => {
@@ -83,6 +83,8 @@ test('real Pi relative cadence, JSON persistence, no idle inference, view while 
   await f.session.prompt('/cuckoo off'); await f.session.prompt('/cuckoo');
   assert.equal(f.contexts.length, 5); assert.equal(existsSync(join(f.dir, 'cuckoo.json')), false);
   await f.session.reload(); assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, JSON.parse(report));
+  assert.ok(f.notifications.some(args => String(args[0]).includes('ETA: Unknown: validation pending')));
   f.replies.push({ text: 'Normal work', tokens: 24000 }); await f.session.prompt('Continue normally');
   assert.match(JSON.stringify(f.contexts.at(-1)), /checkpoint is closed/);
   assert.deepEqual(f.errors, []); assert.equal(f.replies.length, 0);
