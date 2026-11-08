@@ -127,6 +127,15 @@ describe("paper adapters (BG)", () => {
     expect(await provider.search({ query: "pmid:12345", numResults: 2 }, signal())).toEqual([]);
     expect(http.calls).toHaveLength(1);
   });
+  // Regression: identity normalization lowercases legacy archive class suffixes.
+  it("accepts normalized lowercase legacy arXiv IDs and preserves requested versions", async () => {
+    const http = new HttpDummy(xml); const provider = createPaperProviders(config("arxiv"), http.fetch)[0];
+    await provider.read!({ id: "math.gt/0309136v2", numResults: 1 }, signal());
+    expect(http.calls[0].url.searchParams.get("id_list")).toBe("math.gt/0309136v2");
+    await provider.search({ query: "math.gt/0309136v2", numResults: 1 }, signal());
+    expect(http.calls[1].url.searchParams.get("id_list")).toBe("math.gt/0309136v2");
+    expect(http.calls[1].url.searchParams.has("search_query")).toBe(false);
+  });
   it("fails closed on missing/corrupt arXiv state and never removes a foreign lock", async () => {
     const root = join(home, ".pi/agent/paper-arxiv"); await mkdir(root, { recursive: true });
     const http = new HttpDummy(xml);

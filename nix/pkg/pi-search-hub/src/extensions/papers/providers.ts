@@ -143,7 +143,7 @@ function arxivIdentifier(value: string): string | undefined {
   if (/^https?:\/\/(?:www\.)?arxiv.org\/(?:abs|pdf)\//i.test(id)) {
     const parsed = new URL(id); id = parsed.pathname.replace(/^\/(?:abs|pdf)\//, "").replace(/\.pdf$/i, "");
   }
-  return /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/.test(id) ? id : undefined;
+  return /^(?:\d{4}\.\d{4,5}|[a-z-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/i.test(id) ? id : undefined;
 }
 const atomParser = new XMLParser({ ignoreAttributes: false, attributeNamePrefix: "@_", parseTagValue: false, trimValues: true, processEntities: true });
 function many(v: unknown): unknown[] { return v == null ? [] : Array.isArray(v) ? v : [v]; }
