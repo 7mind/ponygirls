@@ -1,4 +1,109 @@
-# Validation — 2026-11-08
+# Validation — unified engine, 2026-11-08
+
+## Final source and artifact
+
+- Application commit: `32e098e7` (subsequent changes are documentation only).
+- Source Git tree (`src/`): `3bc8d4f4f25308606489819e0b33598ebd93f674`.
+- Installed package: `/nix/store/m2ml0v5s68vchsxrj9zisdyxzzkkjs6q-pi-search-hub-2.8.0-ponygirls.1`.
+- Package NAR: `sha256-bsmz8r6+K/QULRkdHMySa2yGP2igCDCRIbXRa2el7R4=`.
+- Parent byte-compared all 57 installed application/reference files against the
+  task source; all matched. No activation, deployment or push performed.
+
+## Automated acceptance
+
+```bash
+nix build .#pi-search-hub .#checks.x86_64-linux.pi-search-hub-eval \
+  .#checks.x86_64-linux.subagents-policy-shape \
+  .#checks.x86_64-linux.dev-llm-module-boundary \
+  .#checks.x86_64-linux.yolo-managed-config-eval \
+  --no-link --print-out-paths -L
+```
+
+Final fresh application build passed pinned Pi 1.4.0 / Node 24.21.0 strict
+TypeScript checking and **29 Vitest files / 531 cases**, 0 failures/errors/skips.
+The evaluation check freshly passed **37 Python cases**, reproduced its frozen
+development/held-out report hashes and verified installed pure RRF60 ordering on
+10 frozen URL pools. This preserves the fixed baseline, not arbitrary boosts or
+lexical semantic quality. Module-boundary and managed-config checks were freshly
+rebuilt on the earlier exact same module inputs; the final invocation reused
+those outputs. The unchanged subagent policy-shape output was also reused.
+
+The final **installed** extension separately passed the SDK loader/model-loop
+host case using `PI_SEARCH_HUB_EXTENSION` pointed at the package above. This case
+runs a scripted model and an owned loopback SearXNG server, including paper
+alwaysInclude provenance and reload without additional requests; it is not a
+live-model quality test.
+
+Behavioral controls cover one global/provider pool across web/paper calls,
+work-conserving top-ups, source budgets including queued work, monotonic overall
+budgets, cancellation, native usage grace, retained physical occupancy after
+logical timeout, configured timeouts above former hardcoded caps, asynchronous
+credential cancellation/cache invalidation, reader queued-versus-dispatched
+observations, common boosts/reranking and inherited alwaysInclude limits.
+
+Fail-first reproductions corrected candidate-depth truncation to final n,
+wall-clock jumps changing deadline outcomes, overall discovery overruns and
+post-expiry starts, fractional remaining budgets failing timer validation,
+lost paper alwaysInclude inheritance, native discovery timeout misreported as
+bad configuration, disabled-source admission/count errors, and unstarted sources
+shown as failed. Reader and Exa-MCP cancellation propagation regressions were
+also reproduced before correction. Existing full-suite assertions were updated
+to the requested new contracts, not skipped, filtered or deadline-relaxed.
+
+An initial Nix command referenced a nonexistent check attribute; that failed
+receipt was preserved separately, and the corrected command above passed.
+Workers reported host-global-settings contamination in intermediate non-isolated
+runs; final acceptance runs used disposable HOME/config. Those worker reports
+are not represented as independently replayed failures. No host configuration
+was changed to obtain a pass.
+
+## Installed public-source smoke
+
+Parent executed a credential-free (`env -i`, disposable HOME) installed-runtime
+smoke with public known-paper queries only. Simultaneous web Firecrawl and paper
+Firecrawl/arXiv searches used one runtime, returned successful source receipts,
+and placed arXiv in paper alwaysInclude. The known exact paper was returned first.
+Firecrawl passage read returned two actual passages; related references returned
+two results. This establishes transport/integration behavior, not a general
+retrieval-quality or external provider concurrency measurement. Exa entitlement,
+production SearXNG engines and live native-provider inference were not tested.
+
+## Real PTY acceptance
+
+A delegated worker exercised the **final installed artifact** in regular and
+fullscreen Pi, using private `tui-tmux` 3.8 servers, explicit environment
+allowlists, disposable roots, an owned loopback server and scripted native
+transport. Parent reviewed artifact/argv manifests, rendered policy and settled
+monitor captures, request summaries, successful `1:0` exit log and cleanup records.
+
+Both modes passed 120×40 → 80×24 → 120×40 policy/result resizing, tab/scroll/query
+preservation, query submission, cancellation after actual dispatch, controlled
+failure sanitization, Escape during a request and reopen with settled counters.
+Fullscreen mouse tabs were checked; regular mode retained its default keyboard
+interaction. Inspection caused zero requests. Per mode, four submitted queries
+produced eight HTTP requests (main candidate budget 20, alwaysInclude cap 3) and
+four scripted native requests at 20; all four native streams settled, including
+two abort settlements with fixture usage. All three sources ended active 0,
+failed 1, cancelled 2. Both Pi processes exited 0, owned tmux sockets were
+unavailable after shutdown, and owned HTTP ports refused connections.
+
+These are terminal-cell/interaction checks, not font/IME/physical-terminal mouse
+acceptance. They do not independently establish max-six saturation, real-provider
+ranking quality, paper UI or a 60-second elapsed deadline; those algorithmic
+properties have separate automated coverage. Scripted usage is not paid/live
+inference evidence.
+
+Evidence is preserved in the main checkout's ignored
+`debug/unified-search-20261108/`, including final and clearly separated interim
+runs. Independent read-only review found no substantive findings after the
+reproduced corrections; the reviewer did not claim test execution. Its reusable
+pattern proposal exactly overlaps Haystack
+`corporate-activity:skill-draft-caller-completion-resource-ownership` revision 3
+(root freshly read the full draft). No duplicate draft or installation was made.
+
+---
+
+# Prior paper-tool delivery — 2026-11-08
 
 ## Paper metasearch
 

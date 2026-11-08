@@ -32,8 +32,10 @@ A named web `backend` or paper `source` isolates one source, but still uses the
 shared scheduling/deadline/deduplication/ranking machinery. Candidate depth is
 `min(maximum, max(minimum, ceil(multiplier * n)))`, default twice n with bounds
 10–40, or a source's explicit `maxResults` (supported 1–50). This complete list is
-requested from each selected source; final n is applied only after shared fusion
-and reranking, not by fusing already-truncated tier pages.
+requested from each selected source; provider APIs may impose lower limits or
+return fewer candidates, whose actual counts remain observable. Final n is
+applied only after shared fusion and reranking, not by fusing already-truncated
+tier pages.
 
 ### Shared configuration
 
@@ -80,7 +82,8 @@ positive integer milliseconds through the platform timer range (2,147,483,647),
 not an arbitrary 60-second maximum; native grace additionally permits zero.
 
 The extension-owned pool is shared across simultaneous web, paper and reader
-calls. Sources using the same provider share its limit across domains. Source
+calls. Lowering limits does not kill already-running requests; new admissions
+wait until occupancy is below the new limits. Sources using the same provider share its limit across domains. Source
 budgets begin when scheduled, including pool, credential, cooldown and arXiv lock
 waits. The overall budget includes native discovery and bounds subsequent work;
 expired discovery cannot restart the clock or launch new retrieval. Native grace
