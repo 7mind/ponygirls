@@ -9,14 +9,23 @@ const BADGE_GLYPH = '🐦';
 export class CuckooView {
   private readonly pane = new CustomViewToggle();
   private active = true;
+  private readonly inquire: (ctx: ExtensionContext) => void;
+  constructor(inquire: (ctx: ExtensionContext) => void) { this.inquire = inquire; }
   async show(ctx: ExtensionContext, content: CuckooContent): Promise<void> {
     if (!this.active) return;
     const safe = terminalText(content.plain);
     if (ctx.mode !== 'tui' || !ctx.hasUI) { ctx.ui.notify(safe, 'info'); return; }
-    await this.pane.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({
-      title: content.title, text: () => content.render(theme), theme, keys,
+    let requested = false;
+    await this.pane.toggle(ctx.ui, (tui, theme, keys, done) => new class extends StatusView {
+      override handleInput(data: string): void {
+        if (data === 'i') { requested = true; done(); return; }
+        super.handleInput(data);
+      }
+    }({
+      title: content.title, text: () => `${theme.fg('dim', 'i: inquire now')}\n\n${content.render(theme)}`, theme, keys,
       rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
     }));
+    if (requested && this.active) this.inquire(ctx);
   }
   publish(ctx: ExtensionContext, reports: readonly Checkpoint[], enabled: boolean, fault: string | null): void {
     if (!this.active) return;

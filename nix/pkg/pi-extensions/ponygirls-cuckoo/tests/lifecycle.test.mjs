@@ -11,8 +11,9 @@ function fixture() {
   const manager = SessionManager.inMemory(); const handlers = new Map(); const commands = new Map(); const shortcuts = new Map(); const notifications = []; const widgets = [];
   let defaults = { enabled: false, policy: { kind: 'relative', value: 15 } }; let tokens = 20000;
   const preferences = { path: 'memory:cuckoo', read: () => ({ ...defaults }), write: value => { defaults = { ...value }; } };
-  const pi = { on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
-  const ctx = { sessionManager: manager, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
+  const sent = [];
+  const pi = { sendMessage: (...args) => sent.push(args), on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
+  const ctx = { sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
   registerCuckoo(pi, preferences); handlers.get('session_start')({}, ctx);
   function boundary(message = assistant('ordinary work'), overrides = {}) {
     const messageEntryId = manager.appendMessage(message);
@@ -24,7 +25,7 @@ function fixture() {
     }
     return result;
   }
-  return { manager, ctx, handlers, shortcuts, notifications, widgets, preferences, boundary, completions: prefix => commands.get('cuckoo').getArgumentCompletions(prefix), tokens: value => { tokens = value; }, command: value => commands.get('cuckoo').handler(value, ctx) };
+  return { manager, ctx, handlers, sent, shortcuts, notifications, widgets, preferences, boundary, completions: prefix => commands.get('cuckoo').getArgumentCompletions(prefix), tokens: value => { tokens = value; }, command: value => commands.get('cuckoo').handler(value, ctx) };
 }
 
 // Specified Behavioral-Active / Blackbox-Group through public extension events and real session projection.
@@ -202,4 +203,67 @@ test('argument completion walks policy grammar and preserves the full prefix', (
   assert.deepEqual(values('default policy '), ['default policy relative ', 'default policy window ', 'default policy tokens ']);
   assert.deepEqual(values('threshold i'), ['threshold inherit']);
   for (const prefix of ['policy tokens ', 'policy tokens 123', 'default threshold ', 'on ', 'unknown ', 'default policy inherit ']) assert.equal(values(prefix), null, prefix);
+});
+
+// Specified BG: manual requests share checkpoint capture and continuation semantics.
+test('inquire now completes both words and requests one checkpoint while automatic mode is off', async () => {
+  const f = fixture();
+  assert.deepEqual(f.completions('inq').map(item => item.value), ['inquire ']);
+  assert.deepEqual(f.completions('inquire n').map(item => item.value), ['inquire now']);
+  assert.equal(f.completions('inquire now '), null);
+  await f.command('inquire now');
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0][0].customType, INQUIRY_TYPE);
+  assert.equal(f.sent[0][1].triggerTurn, true);
+  assert.equal(f.preferences.read().enabled, false);
+  await f.command('inquire now'); assert.equal(f.sent.length, 1);
+  f.boundary(assistant('{"objectives":[]}'));
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+  assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
+});
+
+test('busy manual inquiry waits for a safe boundary and resumes unfinished work once', async () => {
+  const f = fixture(); f.ctx.isIdle = () => false;
+  await f.command('inquire now'); await f.command('inquire now');
+  assert.equal(f.sent.length, 0);
+  assert.equal(stateOnBranch(f.manager.getBranch()), null);
+  const issue = f.boundary(assistant('tool work', 'toolUse'));
+  assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
+  assert.equal(issue.continue, true);
+  const captured = f.boundary(assistant('{"objectives":[]}'));
+  assert.equal(captured.continue, true);
+  f.boundary(); assert.equal(f.sent.length, 0);
+});
+
+test('manual inquiry without known usage is explicit and does not invent cadence state', async () => {
+  const f = fixture(); f.tokens(null); await f.command('inquire now');
+  assert.equal(f.sent.length, 0); assert.equal(stateOnBranch(f.manager.getBranch()), null);
+  assert.match(f.notifications.at(-1)[0], /known context usage/i);
+});
+
+test('queued manual requests cancel on user input, navigation, reload, abort or an unusable final boundary', async () => {
+  for (const action of ['user', 'tree', 'reload', 'abort', 'unknown']) {
+    const f = fixture(); f.ctx.isIdle = () => false; await f.command('inquire now');
+    if (action === 'user') f.handlers.get('before_agent_start')({ messageType: 'user' }, f.ctx);
+    if (action === 'tree') f.handlers.get('session_tree')({}, f.ctx);
+    if (action === 'reload') f.handlers.get('session_start')({}, f.ctx);
+    if (action === 'abort') f.handlers.get('agent_settled')({ aborted: true }, f.ctx);
+    if (action === 'unknown') {
+      f.tokens(null); f.boundary(); f.handlers.get('agent_settled')({ aborted: false }, f.ctx);
+      assert.match(f.notifications.at(-1)[0], /no automatic retry/);
+    }
+    f.tokens(20000); assert.equal(f.boundary(), undefined, action);
+    assert.equal(f.sent.length, 0, action);
+  }
+});
+
+test('manual queue respects foreign drafts and pending messages before issuing once', async () => {
+  const f = fixture(); f.ctx.isIdle = () => false; await f.command('inquire now');
+  for (const overrides of [{ entries: [{ type: 'compaction' }] }, { entries: [{ type: 'custom_message' }] }, { context: { pendingMessages: [{}] } }]) {
+    assert.equal(f.boundary(undefined, overrides), undefined);
+    assert.equal(stateOnBranch(f.manager.getBranch()), null);
+  }
+  assert.equal(f.boundary().entries.at(-1).customType, INQUIRY_TYPE);
+  f.boundary(assistant('{"objectives":[]}'));
+  assert.equal(f.boundary(), undefined);
 });

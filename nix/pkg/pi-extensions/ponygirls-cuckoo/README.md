@@ -10,6 +10,9 @@ Opt-in objective/progress checkpoints from the **main conversation model**. Uses
   timestamps, checkpoint/entry IDs and current/other-branch labels. Includes
   invalid or interrupted answers and remains available while Cuckoo is OFF.
 - `/cuckoo reports`: view current-branch reports and effective settings.
+- `/cuckoo inquire now`: request a checkpoint even while automatic mode is OFF.
+  Command completion walks both words, as well as the existing settings grammar.
+- Press **`i`** in any Cuckoo panel to close it and request the same inquiry.
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
 - Click the **🐦 N** border badge to toggle reports (fullscreen, or regular
   mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
@@ -20,6 +23,14 @@ Opt-in objective/progress checkpoints from the **main conversation model**. Uses
 - `/cuckoo policy tokens 10000`: grow by 10,000 tokens.
 - `/cuckoo policy inherit`: inherit the global policy independently of enablement.
 - `/cuckoo default policy window 15` (or `relative 15`, `tokens 10000`): global policy.
+
+Manual inquiries do not change enablement or policy. When idle, they start a
+main-model response immediately; known context usage is required (send a task
+first in a fresh session). While busy, one request is queued for the next safe
+completed-turn boundary and unfinished work resumes afterward. Repeated requests
+are coalesced. Abort, new user input, reload and branch navigation cancel queued
+requests. Issuing a manual inquiry resets the cadence baseline just like an
+automatic checkpoint.
 
 Policy kind and value are one setting, so changing units cannot inherit a value
 from a different mode. Existing `threshold PERCENT`, `threshold inherit`, and
@@ -116,7 +127,7 @@ is retained. There is no automatic retry after cancellation.
 
 The badge shows the latest validated objective count. `?` means no validated
 report; `!` means the latest attempt/settings failed (the prior count is stale);
-`off` means automatic scheduling is disabled. The read-only view shows report
+`off` means automatic scheduling is disabled. The report view shows report
 history newest first, with raw invalid output and errors. Terminal control bytes
 are removed for presentation, not from stored raw output.
 

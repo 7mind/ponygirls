@@ -7,10 +7,11 @@ const toggles = [choice('on', 'Enable checkpoints', false), choice('off', 'Disab
 export function completeCuckooArguments(prefix: string): CompletionItem[] | null {
   return completeArgument(prefix, previous => {
     // Policy/history handlers are case-sensitive (unlike toggle handlers).
-    if (previous.length === 0) return [...toggles,
+    if (previous.length === 0) return [...toggles, choice('inquire', 'Request a checkpoint now', true),
       choice('inherit', 'Use global enablement', false), choice('default', 'Change global defaults', true),
       choice('status', 'Show status', false), choice('history', 'Show saved answers across branches', false), choice('reports', 'Show current reports', false),
       choice('policy', 'Set growth policy', true), choice('threshold', 'Set relative growth percentage (legacy alias)', true)];
+    if (previous.length === 1 && previous[0] === 'inquire') return [choice('now', 'Request a checkpoint now, even when automatic mode is off', false)];
     if (previous.length === 1 && previous[0]!.toLowerCase() === 'default') return [...toggles,
       ...(previous[0] === 'default' ? [choice('policy', 'Set global growth policy', true), choice('threshold', 'Set global relative growth percentage', true)] : [])];
     const global = previous[0] === 'default';

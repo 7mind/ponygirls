@@ -11,7 +11,8 @@ import { CuckooView } from './src/view.ts';
 import { historyContent, reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
 
 export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): void {
-  let view = new CuckooView();
+  let view = new CuckooView(inquire);
+  let manualRequested = false;
   let fault: string | null = null;
   const stateDraft = (state: State): SessionBoundaryDraft => ({ type: 'custom', customType: STATE_TYPE, data: state });
   function warn(ctx: ExtensionContext, error: unknown): void {
@@ -41,6 +42,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     return reportContent(checkpoints(ctx.sessionManager.getBranch()), intro);
   }
   function cancel(ctx: ExtensionContext, reason: string): void {
+    manualRequested = false;
     const state = stateOnBranch(ctx.sessionManager.getBranch());
     if (state === null || (state.pending === null && !state.resuming)) return;
     if (state.pending !== null) {
@@ -48,12 +50,35 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     }
     pi.appendEntry(STATE_TYPE, { ...state, pending: null, resuming: false });
   }
+  function inquire(ctx: ExtensionContext): void {
+    try {
+      const state = stateOnBranch(ctx.sessionManager.getBranch());
+      if (manualRequested || (state !== null && (state.pending !== null || state.resuming))) {
+        ctx.ui.notify('Cuckoo: an inquiry is already queued or running', 'info'); return;
+      }
+      if (!ctx.isIdle()) {
+        manualRequested = true;
+        ctx.ui.notify('Cuckoo: inquiry queued for the next safe turn boundary', 'info'); return;
+      }
+      const usage = ctx.getContextUsage();
+      if (usage === undefined || usage.tokens === null || !Number.isFinite(usage.tokens) || usage.tokens <= 0) throw new Error('Inquire now requires known context usage; send a task first');
+      const model = `${ctx.model === undefined ? 'unknown' : `${ctx.model.provider}:${ctx.model.id}`}:${usage.contextWindow}`;
+      const next = observe(state, usage.tokens, model);
+      const requestId = randomUUID();
+      pi.appendEntry(STATE_TYPE, { ...next, baseline: usage.tokens, pending: { requestId, resume: false }, resuming: false });
+      try {
+        pi.sendMessage({ customType: INQUIRY_TYPE, content: INQUIRY, display: false,
+          details: { version: 1, requestId, tokens: usage.tokens } }, { triggerTurn: true });
+      } catch (error) { cancel(ctx, 'Manual inquiry could not start; no automatic retry'); throw error; }
+    } catch (error) { ctx.ui.notify(terminalText(`Cuckoo: ${String(error)}`), 'error'); }
+  }
   pi.registerCommand('cuckoo', {
-    description: 'Show objectives/progress; history: saved answers across session branches; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
+    description: 'Show objectives/progress; inquire now: request a checkpoint; history: saved answers across session branches; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
     getArgumentCompletions: completeCuckooArguments,
     handler: async (args, ctx) => {
       try {
         const trimmed = args.trim();
+        if (trimmed.split(/\s+/).join(' ') === 'inquire now') { inquire(ctx); return; }
         if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') { await view.show(ctx, status(ctx)); return; }
         if (trimmed === 'history') { await view.show(ctx, historyContent(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch())); return; }
         const toggle = parseToggleCommand(trimmed);
@@ -80,7 +105,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     try { await view.show(ctx, status(ctx)); } catch (error) { warn(ctx, error); }
   } });
   pi.on('session_start', (_event, ctx) => {
-    view = new CuckooView();
+    manualRequested = false;
+    view = new CuckooView(inquire);
     try { cancel(ctx, 'Checkpoint interrupted by reload or session replacement; no automatic retry'); } catch (error) { warn(ctx, error); }
     refresh(ctx);
   });
@@ -135,13 +161,14 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       if (previous !== null && previous.resuming) return { entries: [...event.entries, stateDraft({ ...previous, resuming: false })] };
       if (!completed) return;
       const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
-      if (!config.enabled) { refresh(ctx); return; }
+      if (!config.enabled && !manualRequested) { refresh(ctx); return; }
       if (event.context.pendingMessages.length > 0 || event.entries.some(entry => entry.type === 'compaction' || entry.type === 'context_edit' || entry.type === 'custom_message')) return;
       const usage = ctx.getContextUsage();
       if (usage === undefined || usage.tokens === null || !Number.isFinite(usage.tokens) || usage.tokens <= 0) return;
       const model = `${ctx.model === undefined ? 'unknown' : `${ctx.model.provider}:${ctx.model.id}`}:${usage.contextWindow}`;
       const state = observe(previous, usage.tokens, model);
-      if (!inquiryDue(state, config.policy, usage.contextWindow)) return { entries: [...event.entries, stateDraft(state)] };
+      if (!manualRequested && !inquiryDue(state, config.policy, usage.contextWindow)) return { entries: [...event.entries, stateDraft(state)] };
+      manualRequested = false;
       const requestId = randomUUID();
       const resume = (event.message.role === 'assistant' && (event.message.stopReason === 'toolUse' || event.message.content.some(part => part.type === 'toolCall'))) || event.continue;
       return { entries: [...event.entries,
@@ -150,6 +177,10 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     } catch (error) { warn(ctx, error); }
   });
   pi.on('agent_settled', (event, ctx) => {
+    if (manualRequested) {
+      manualRequested = false;
+      ctx.ui.notify('Cuckoo: queued inquiry could not reach a safe boundary; no automatic retry', 'warning');
+    }
     if (event.aborted) { try { cancel(ctx, 'Checkpoint aborted; no automatic retry'); } catch (error) { warn(ctx, error); } }
     refresh(ctx);
   });

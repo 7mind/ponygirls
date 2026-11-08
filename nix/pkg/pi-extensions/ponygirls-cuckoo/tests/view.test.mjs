@@ -22,7 +22,7 @@ const click = { type: 'click', button: 'left' };
 const tick = () => new Promise(setImmediate);
 // Specified: Behavioral-Active, Blackbox-Group through the shared UI boundary.
 test('objective badge preserves zero/unknown/failure distinctions and bounds width', () => {
-  const f = fixture(theme); const view = new CuckooView();
+  const f = fixture(theme); const view = new CuckooView(() => {});
   view.publish(f.ctx, [], false, null); assert.equal(f.widgets.at(-1)[1], undefined);
   view.publish(f.ctx, [], true, null); assert.match(f.badge().render(80)[0], /🐦 \?/);
   const valid = checkpoint('one', '{"objectives":[]}');
@@ -37,7 +37,7 @@ test('objective badge preserves zero/unknown/failure distinctions and bounds wid
 });
 
 test('badge repeat-click, command-style toggle, keyboard close and disposal share one view', async () => {
-  const f = fixture(theme); const view = new CuckooView();
+  const f = fixture(theme); const view = new CuckooView(() => {});
   view.publish(f.ctx, [], true, null);
   const oldBadge = f.badge();
   assert.equal(oldBadge.handleMouse({ type: 'click', button: 'right' }), undefined);
@@ -54,7 +54,7 @@ test('badge repeat-click, command-style toggle, keyboard close and disposal shar
 
 test('report panel uses themed checkpoint/objective hierarchy and labeled fields without guessing status', async () => {
   const styled = { fg: (token, text) => `<${token}>${text}</${token}>`, bg: (_token, text) => text, bold: text => `<b>${text}</b>` };
-  const f = fixture(styled); f.resize(200); const view = new CuckooView();
+  const f = fixture(styled); f.resize(200); const view = new CuckooView(() => {});
   const report = checkpoint('request-one', JSON.stringify({ objectives: [{ objective: 'Audit UI', progress: 'Tests running; completion unknown',
     obstacles: 'None known', issues: 'Waiting for evidence', bottlenecks: 'None known', eta: 'Unknown' }] }));
   view.publish(f.ctx, [report], true, null); f.badge().handleMouse(click); await tick();
@@ -77,7 +77,7 @@ test('report panel uses themed checkpoint/objective hierarchy and labeled fields
 test('long Unicode reports wrap within width, scroll to the raw tail, and survive resize and theme invalidation', async () => {
   let color = '36';
   const ansi = { fg: (_token, text) => `\x1b[${color}m${text}\x1b[0m`, bg: (_token, text) => text, bold: text => `\x1b[1m${text}\x1b[22m` };
-  const f = fixture(ansi); f.resize(12); const view = new CuckooView();
+  const f = fixture(ansi); f.resize(12); const view = new CuckooView(() => {});
   const raw = checkpoint('old', 'invalid response\nRAW-END');
   const recent = checkpoint('latest', JSON.stringify({ objectives: [{ objective: 'Unicode 🐦 界 é', progress: 'Evidence 🐦 界 é '.repeat(80),
     obstacles: 'None known\nNo inferred status', issues: 'Awaiting verification', bottlenecks: 'Unknown', eta: 'Unknown' }] }));
@@ -101,7 +101,18 @@ test('long Unicode reports wrap within width, scroll to the raw tail, and surviv
 });
 
 test('non-terminal view notifies without opening a custom terminal screen', async () => {
-  const f = fixture(theme); f.ctx.mode = 'rpc'; const view = new CuckooView();
+  const f = fixture(theme); f.ctx.mode = 'rpc'; const view = new CuckooView(() => {});
   await view.show(f.ctx, { title: 'Fixture', plain: 'saved report\x1b\x07', render: () => { throw new Error('RPC must not render ANSI presentation'); } });
   assert.deepEqual(f.notifications, [['saved report', 'info']]); assert.equal(f.views.length, 0);
+});
+
+test('panel advertises i and closes before requesting exactly one manual inquiry', async () => {
+  const f = fixture(theme); const requests = [];
+  const view = new CuckooView(ctx => { assert.equal(f.views[0].closed, true); requests.push(ctx); });
+  view.publish(f.ctx, [], true, null); f.badge().handleMouse(click); await tick();
+  const panel = f.views[0].component;
+  assert.match(panel.render(80).join('\n'), /i: inquire now/);
+  panel.handleInput('i'); panel.handleInput('i'); await tick();
+  assert.equal(f.views[0].closed, true); assert.deepEqual(requests, [f.ctx]);
+  view.dispose(f.ctx); panel.handleInput('i'); await tick(); assert.equal(requests.length, 1);
 });

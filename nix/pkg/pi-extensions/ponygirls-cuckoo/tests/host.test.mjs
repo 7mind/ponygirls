@@ -140,3 +140,31 @@ test('real Pi abort preserves partial response and does not mistake the next use
   assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.match(JSON.stringify(f.contexts.at(-1)), /checkpoint is closed/);
   assert.deepEqual(f.errors, []);
 });
+
+test('real Pi manual inquiry runs while off, persists JSON and does not become a new user task', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: report, tokens: 20100 });
+  await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  assert.equal(f.contexts.length, 2); assert.equal(f.replies.length, 0);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, JSON.parse(report));
+  assert.match(JSON.stringify(f.contexts.at(-1)), /Restate me your objectives/);
+  assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
+  await f.session.reload(); await f.session.prompt('/cuckoo status');
+  assert.match(f.notifications.at(-1)[0], /Cuckoo: OFF/);
+  assert.match(f.notifications.at(-1)[0], /Validating the runtime/);
+  assert.deepEqual(f.errors, []);
+});
+
+test('real Pi busy manual request captures the checkpoint, not the ongoing response', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  let request;
+  f.onRequest(n => { if (n === 1) request = f.session.prompt('/cuckoo inquire now'); });
+  f.replies.push({ text: 'Original task response', tokens: 20000 }, { text: report, tokens: 20100 });
+  await f.session.prompt('Work'); await request; await f.session.waitForIdle();
+  assert.equal(f.contexts.length, 2);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+  assert.equal(checkpoints(f.manager.getBranch())[0].raw, report);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
