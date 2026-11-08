@@ -4,7 +4,7 @@ import { config, refreshConfig, getActiveBackends, recordLatency } from "./confi
 import { BACKEND_DEFS, runBackend } from "./backends/registry.js";
 import { selectBackendsForFallback, type AlwaysIncludeEntry } from "./dispatch.js";
 import { runMetasearch } from "./metasearch.js";
-import { discoverNativeEngines, NativeSearchError, NativeUsageUnavailableError, type NativeEngine } from "./native.js";
+import { discoverNativeEngines, NativeSearchError, NativeUsageUnavailableError, NATIVE_PROVIDERS, type NativeEngine } from "./native.js";
 import { SearchMonitor, type EngineDescriptor } from "./search-monitor.js";
 import { formatCombinedResults, formatCombinedResultsCompact } from "./formatters.js";
 import { SharedRuntime, boundedOperation } from "./engine/runtime.js";
@@ -58,6 +58,12 @@ export class SearchService {
       try { this.native = await boundedOperation(child => discoverNativeEngines(ctx, child, timeouts), discoveryBudget, signal, 0); }
       catch { signal?.throwIfAborted(); this.native = []; this.discoveryFailed = true; }
     }
+    if (this.discoveryFailed) {
+      for (const id of NATIVE_PROVIDERS) if (`native:${id}` in profile.alwaysInclude) {
+        this.native.push({ id, label: `${id} (discovery unavailable; availability unknown)`,
+          search: async () => { throw new NativeSearchError("Native discovery unavailable"); } });
+      }
+    }
     const active = getActiveBackends().filter(name => name !== "openai-codex" && sourcePolicy(profile, name).enabled !== false);
     validateAlwaysInclude(profile, [...active, ...this.native.map(engine => `native:${engine.id}`)]);
     const fallback = Object.keys(profile.alwaysInclude).filter(name => sourcePolicy(profile, name).enabled !== false);
@@ -74,7 +80,7 @@ export class SearchService {
     };
     this.descriptors = [
       ...active.map(name => ({ name, label: BACKEND_DEFS[name]?.label ?? name, tier: fallback.includes(name) ? "fallback" as const : "main" as const, availability: "configured" as const })),
-      ...this.native.filter(engine => sourcePolicy(profile, `native:${engine.id}`).enabled !== false).map(engine => ({ name: `native:${engine.id}`, label: engine.label, tier: "native" as const, availability: "configured" as const })),
+      ...this.native.filter(engine => sourcePolicy(profile, `native:${engine.id}`).enabled !== false).map(engine => ({ name: `native:${engine.id}`, label: engine.label, tier: "native" as const, availability: this.discoveryFailed ? "unknown" as const : "configured" as const })), 
       ...[...new Set([config.reader ?? "jina", ...(config.readerFallback ?? ["jina", "sofya", "firecrawl", "exa", "exa_mcp"])])]
         .map(name => ({ name: `reader:${name}`, label: name, tier: "reader" as const, availability: "configured" as const })),
     ];
@@ -132,13 +138,15 @@ export class SearchService {
       }
     };
     const requested = params.backend === "openai-codex" ? "native:openai-codex" : params.backend ?? "auto";
-    if (requested !== "auto" && !this.descriptors.some(engine => engine.name === requested && engine.tier !== "reader")) throw new Error("Requested search engine is not configured");
+    const remaining = Math.floor(timeouts.overallMs - (performance.now() - started));
+    const undiscoveredNative = this.discoveryFailed && NATIVE_PROVIDERS.some(id => requested === `native:${id}`);
+    if (requested !== "auto" && !undiscoveredNative && !this.descriptors.some(engine => engine.name === requested && engine.tier !== "reader")) throw new Error("Requested search engine is not configured");
+    if (undiscoveredNative && remaining > 0 && !native.has(requested)) throw new Error("Native source availability is unknown because discovery did not complete");
     const active = selectBackendsForFallback(config.selectionStrategy ?? "sequential", getActiveBackends().filter(name => name !== "openai-codex"));
     const fallback: AlwaysIncludeEntry[] = Object.keys(profile.alwaysInclude).map(backend => ({ backend, timeoutMs: sourcePolicy(profile, backend).timeoutMs ?? timeouts.alwaysIncludeMs, maxResults: sourcePolicy(profile, backend).maxResults }));
-    const remaining = Math.floor(timeouts.overallMs - (performance.now() - started));
     const result = remaining <= 0 ? {
       results: [], cancelled: false, timedOut: true,
-      backendStats: new Map([...new Set([...active, ...native.keys()])].filter(name => sourcePolicy(profile, name).enabled !== false).map(name => [name, {
+      backendStats: new Map([...new Set(requested === "auto" ? [...active, ...native.keys()] : [requested])].filter(name => sourcePolicy(profile, name).enabled !== false).map(name => [name, {
         success: false, count: 0, status: "not-started" as const, reason: "overall-deadline" as const,
         tier: native.has(name) ? "native" as const : name in profile.alwaysInclude ? "alwaysInclude" as const : "main" as const,
       }])),

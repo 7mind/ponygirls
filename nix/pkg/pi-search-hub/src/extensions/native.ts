@@ -46,7 +46,7 @@ export interface NativeDiscoveryContext {
 	modelRegistry: Pick<ModelRegistry, "getAvailableOfType" | "streamSimple" | "isUsingOAuth" | "getProvider">;
 }
 
-const PROVIDERS: readonly NativeProviderId[] = ["openai", "openai-codex", "anthropic", "xai", "grok-build"];
+export const NATIVE_PROVIDERS: readonly NativeProviderId[] = ["openai", "openai-codex", "anthropic", "xai", "grok-build"];
 const APIS: Record<NativeProviderId, string> = {
 	openai: "openai-responses", "openai-codex": "openai-codex-responses",
 	anthropic: "anthropic-messages", xai: "openai-responses", "grok-build": "openai-responses",
@@ -75,7 +75,7 @@ export async function discoverNativeEngines(
 ): Promise<NativeEngine[]> {
 	if (!signal) return boundedOperation(inner => discoverNativeEngines(ctx, inner, timeouts), timeouts.discoveryMs, undefined, 0);
 	const engines: NativeEngine[] = [];
-	for (const id of PROVIDERS) {
+	for (const id of NATIVE_PROVIDERS) {
 		signal?.throwIfAborted();
 		try {
 			const available = await ctx.modelRegistry.getAvailableOfType("chat", id, { signal });

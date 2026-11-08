@@ -208,6 +208,21 @@ let
       "selectionStrategy": "sequential",
       "combine": true,
       "combineMode": "targeted",
+      "targetUsableSources": 3,
+      "concurrency": { "maxConcurrent": 6, "perProvider": 2 },
+      "timeouts": {
+        "overallMs": 60000,
+        "sourceMs": 30000,
+        "alwaysIncludeMs": 8000,
+        "nativeMs": 45000,
+        "nativeGraceMs": 1000,
+        "discoveryMs": 10000,
+        "readerMs": 30000,
+        "credentialMs": 5000
+      },
+      "candidates": { "multiplier": 2, "minimum": 10, "maximum": 40 },
+      "ranking": { "rankConstant": 60, "rerank": "rrf", "titleWeight": 0.2, "bodyWeight": 0.1, "exactTitle": true },
+      "papers": { "alwaysInclude": { "searxng": {} } },
       "alwaysInclude": {
         "searxng": { "timeoutMs": 3000, "maxResults": 3 },
         "langsearch": { "timeoutMs": 5000, "maxResults": 3 }

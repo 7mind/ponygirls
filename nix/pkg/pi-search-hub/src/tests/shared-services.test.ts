@@ -87,6 +87,21 @@ it("counts stalled discovery against the overall deadline and starts no sources 
   expect(result.details.backendStats.firecrawl.reason).toBe("overall-deadline");
 });
 
+it.each([undefined, "native:openai"])("reports expired native discovery as a deadline, not bad configuration (%s)", async backend => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date", "performance"] });
+  configure({ backends: { firecrawl: { enabled: true } }, alwaysInclude: { "native:openai": {} }, timeouts: { overallMs: 100, discoveryMs: 10000 } });
+  state.discover = () => new Promise(() => {});
+  const pending = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend }, undefined, ctx);
+  let failure: unknown; void pending.catch(error => { failure = error; });
+  await vi.advanceTimersByTimeAsync(101);
+  expect(failure).toBeUndefined();
+  const result = await pending;
+  expect(result.details.timedOut).toBe(true);
+  expect(result.details.backendStats["native:openai"].status).toBe("not-started");
+  expect(result.details.backendStats["native:openai"].reason).toBe("overall-deadline");
+  expect(state.calls).toEqual([]);
+});
+
 it("enforces one provider slot across simultaneous web and paper tool calls", async () => {
   configure({ concurrency: { maxConcurrent: 1, perProvider: 1 }, backends: { firecrawl: { enabled: true } } });
   let release: (() => void) | undefined;
