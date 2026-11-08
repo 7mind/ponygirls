@@ -787,6 +787,24 @@
             node --test ponygirls-openai-fast.test.mjs
             touch $out
           '';
+          ponygirls-codex-limits = pkgs.runCommand "ponygirls-codex-limits-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_PACKAGE_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-codex-limits} codex-limits
+            chmod -R u+w codex-limits
+            cd codex-limits
+            mkdir -p node_modules/@earendil-works
+            ln -s "$PI_PACKAGE_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_PACKAGE_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
+            ln -s "$PI_PACKAGE_ROOT/node_modules/@types" node_modules/@types
+            tsc --strict --noEmit --skipLibCheck --target esnext --module esnext --moduleResolution bundler --allowImportingTsExtensions index.ts
+            node --test tests.mjs
+            test -f ${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-codex-limits/index.ts
+            touch $out
+          '';
           ponygirls-codex-risk-retry = pkgs.runCommand "ponygirls-codex-risk-retry-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_RETRY_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";

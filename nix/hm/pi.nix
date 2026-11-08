@@ -865,6 +865,8 @@ in
             "${piExtensions}/ponygirls-quirk-kimi-401-retry.ts"
             # /fast on|off|status: persistent OpenAI priority processing, without changing reasoning.
             "${piExtensions}/ponygirls-openai-fast.ts"
+            # Select Codex's advertised maximum context override through live discovery.
+            "${piExtensions}/ponygirls-codex-limits"
             # Visible scope clarification after Codex's cyber-risk flag, capped at two continuations.
             "${piExtensions}/ponygirls-codex-risk-retry.ts"
             # Footer model/thinking clicks (fullscreen) plus ctrl+shift+m / ctrl+shift+e.
