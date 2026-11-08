@@ -55,6 +55,8 @@ import { fetchWithFallback, DEFAULT_READER_FALLBACK } from "./readers/dispatch.j
 import { config, refreshConfig, getActiveBackends, latencyMap } from "./config.js";
 import { BACKEND_DEFS } from "./backends/registry.js";
 import { registerPaperResearch } from "./papers/tool.js";
+import { SharedRuntime, boundedOperation } from "./engine/runtime.js";
+import { DEFAULT_CONCURRENCY, resolveConcurrency, resolveTimeouts } from "./engine/policy.js";
 
 
 
@@ -72,8 +74,9 @@ async function setupInput(ctx: ExtensionContext, label: string, options: InputOp
 // ---------------------------------------------------------------------------
 
 export default function (pi: ExtensionAPI) {
-	registerPaperResearch(pi);
-	let service = new SearchService();
+	const runtime = new SharedRuntime(DEFAULT_CONCURRENCY);
+	registerPaperResearch(pi, runtime);
+	let service = new SearchService(runtime);
 	let pane = new CustomViewToggle();
 	// -----------------------------------------------------------------------
 	// Tool: web_search
@@ -121,6 +124,9 @@ export default function (pi: ExtensionAPI) {
 					default: false,
 				}),
 			),
+			rerank: Type.Optional(StringEnum(["rrf", "lexical"] as const, {
+				description: "Shared ranking mode: rank fusion only, or configurable lexical boosts after fusion.",
+			})),
 			compact: Type.Optional(
 				Type.Boolean({
 					description:
@@ -218,17 +224,20 @@ export default function (pi: ExtensionAPI) {
 			];
 
 			const finishes = new Map<string, ReturnType<typeof service.monitor.begin>>();
-			const result = await fetchWithFallback(
+			const timeouts = resolveTimeouts(config.timeouts);
+			runtime.configure(resolveConcurrency(config.concurrency));
+			const result = await boundedOperation(operationSignal => fetchWithFallback(
 				url,
 				fallbackChain,
 				{ fresh: params.fresh, keywords: params.keywords, mode: params.mode, objective: params.objective },
-				signal,
+				operationSignal,
 				config,
 				(candidate) => {
 					finishes.set(candidate, service.monitor.begin({ name: `reader:${candidate}`, label: candidate, tier: "reader", availability: "configured" }));
 				},
 				(candidate, status) => finishes.get(candidate)!({ status, resultCount: status === "success" ? 1 : 0 }),
-			);
+				runtime,
+			), timeouts.overallMs, signal, 0);
 
 			if (result.warning) {
 				ctx.ui.notify(result.warning, "warning");
@@ -719,7 +728,7 @@ export default function (pi: ExtensionAPI) {
 	pi.on("session_start", async (_event, ctx) => {
 		pane.dispose();
 		pane = new CustomViewToggle();
-		service = new SearchService();
+		service = new SearchService(runtime);
 		clearCooldowns();
 		await service.refresh(ctx, undefined);
 		refreshTool();

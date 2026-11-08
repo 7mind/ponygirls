@@ -19,5 +19,6 @@ export interface SearchPolicy {
     maxResults: number;
   }[];
   native: { engineCount: number; timeoutMs: number; settlementGraceMs: number };
-  fusion: { rankConstant: number };
+  fusion: { rankConstant: number; rerank: "rrf" | "lexical"; titleWeight: number; bodyWeight: number; exactTitle: boolean };
+  execution: { maxConcurrent: number; perProvider: number; overallTimeoutMs: number; sourceTimeoutMs: number; discoveryTimeoutMs: number };
 }

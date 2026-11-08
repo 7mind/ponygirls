@@ -1,8 +1,11 @@
 import type { JsonObject } from "@earendil-works/pi-ai";
 import type { SearchConfig } from "../types.js";
 import { createPaperProviders } from "./providers.js";
-import { boundedPaperOperation, runPaperMetasearch, validatePaperConfig } from "./metasearch.js";
-import { fusePapers } from "./ranking.js";
+import { runPaperMetasearch, validatePaperConfig } from "./metasearch.js";
+import { rankPapers } from "./ranking.js";
+import { SharedRuntime } from "../engine/runtime.js";
+import { resolveConcurrency, resolveTimeouts } from "../engine/policy.js";
+import { paperProfile, sourcePolicy } from "../engine/profiles.js";
 import type { PaperConfig, PaperPassage, PaperProvider, PaperProviderName, PaperProviderStats, PaperReadResult, PaperRecord, RankedPaper } from "./types.js";
 
 export type PaperResearchParams =
@@ -17,11 +20,12 @@ export interface PaperResearchOutput {
   providers: PaperProviderStats[];
   notices: string[];
   truncated: boolean;
+  cancelled: boolean;
+  timedOut: boolean;
 }
 const MAX_OUTPUT_BYTES = 60_000;
 const MAX_QUERY_LENGTH = 2000;
-const DEFAULT_TIMEOUT_MS = 15_000;
-const POLICY_NOTICE = "Paper metadata and passages are source evidence, not independent confirmation or proof of peer review. Ranking uses weighted RRF60, optional bounded lexical boosts, and exact-identifier/full-title priority; semantic quality has not been benchmarked.";
+const POLICY_NOTICE = "Paper metadata and passages are source evidence, not independent confirmation or proof of peer review. Web and paper search share tier scheduling, weighted rank fusion, configurable lexical boosts and exact-lookup priority; semantic quality has not been benchmarked.";
 
 function text(value: string, limit: number): string {
   const clean = value.replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
@@ -65,15 +69,19 @@ export class PaperResearchService {
   private signature: string | undefined;
   private providers: PaperProvider[] = [];
   private arxiv: PaperProvider | undefined;
-  constructor(private readonly factory: typeof createPaperProviders) {}
+  constructor(private readonly factory: typeof createPaperProviders, private readonly runtime: SharedRuntime) {}
 
   async execute(params: PaperResearchParams, settings: SearchConfig, signal: AbortSignal | undefined) {
     signal?.throwIfAborted();
     const paperSettings = settings.papers === undefined ? {} : settings.papers;
     validatePaperConfig(paperSettings);
-    const signature = JSON.stringify({ backends: settings.backends, papers: paperSettings });
+    this.runtime.configure(resolveConcurrency(settings.concurrency));
+    const timeouts = resolveTimeouts(settings.timeouts);
+    const inherited = paperProfile(settings, []);
+    const effective = { ...settings, papers: { ...paperSettings, sources: inherited.sources } };
+    const signature = JSON.stringify({ backends: settings.backends, papers: effective.papers, timeouts });
     if (signature !== this.signature) {
-      this.providers = this.factory(settings).map(provider => {
+      this.providers = this.factory(effective).map(provider => {
         if (provider.name !== "arxiv") return provider;
         if (this.arxiv === undefined) this.arxiv = provider;
         return this.arxiv;
@@ -81,23 +89,29 @@ export class PaperResearchService {
       this.signature = signature;
     }
     if (this.providers.length === 0) throw new Error("No paper sources configured. Enable Firecrawl, Exa, SearXNG or papers.sources.arxiv in search.json.");
-    const output: PaperResearchOutput = { action: params.action, results: [], passages: [], providers: [], notices: [POLICY_NOTICE], truncated: false };
+    const profile = paperProfile(settings, this.providers.map(provider => provider.name));
+    const output: PaperResearchOutput = { action: params.action, results: [], passages: [], providers: [], notices: [POLICY_NOTICE], truncated: false, cancelled: false, timedOut: false };
     if (params.action === "search") {
       requiredText(params.query, "query");
       const count = resultCount(params.numResults, 10);
       const providers = params.source === undefined ? this.providers : this.providers.filter(provider => provider.name === params.source);
       if (providers.length === 0) throw new Error("Requested paper source is not enabled");
       const policy = { ...paperSettings,
-        ...(params.mode === undefined ? {} : { mode: params.mode }), ...(params.rerank === undefined ? {} : { rerank: params.rerank }) };
-      const result = await runPaperMetasearch(providers, policy, { query: params.query, numResults: count }, signal);
+        ...(params.mode === undefined ? {} : { mode: params.mode }), ...(params.rerank === undefined ? {} : { ranking: { ...paperSettings.ranking, rerank: params.rerank } }) };
+      const resolved = { ...profile, mode: params.mode ?? profile.mode, ranking: { ...profile.ranking, rerank: params.rerank ?? profile.ranking.rerank },
+        alwaysInclude: params.source === undefined ? profile.alwaysInclude : {} };
+      const result = await runPaperMetasearch(providers, policy, { query: params.query, numResults: count }, signal, this.runtime, timeouts, resolved);
       output.results = result.results;
       output.providers = result.providers;
+      output.cancelled = result.cancelled === true;
+      output.timedOut = result.timedOut === true;
+      if (output.timedOut) output.notices.push("Overall search deadline reached; only completed results are included.");
     } else if (params.action === "read" || params.action === "related") {
       requiredText(params.id, "id");
       const name = params.action === "read" ? params.source ?? "firecrawl" : "firecrawl";
       const provider = this.providers.find(candidate => candidate.name === name);
       if (provider === undefined) throw new Error(`Paper source ${name} is not enabled`);
-      const timeout = paperSettings.sources?.[name]?.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+      const timeout = Math.min(sourcePolicy(profile, name).timeoutMs ?? timeouts.sourceMs, timeouts.overallMs);
       const count = resultCount(params.numResults, params.action === "read" ? 4 : 10);
       if (params.action === "read") {
         if (params.query !== undefined) {
@@ -107,7 +121,7 @@ export class PaperResearchService {
         const read = provider.read;
         if (read === undefined) throw new Error("This source does not support paper reads");
         let result: PaperReadResult;
-        try { result = await boundedPaperOperation(operationSignal => read({ id: params.id, query: params.query, numResults: count }, operationSignal), timeout, signal); }
+        try { result = await this.runtime.operation(name, timeout, signal, 0, operationSignal => read({ id: params.id, query: params.query, numResults: count }, operationSignal)); }
         catch { signal?.throwIfAborted(); throw new Error(`Paper read failed (${name}); source unavailable or paper/passages not found`); }
         output.paper = result.paper;
         output.passages = result.passages.slice(0, count);
@@ -121,12 +135,13 @@ export class PaperResearchService {
         const related = provider.related;
         if (related === undefined) throw new Error("This source does not support related papers");
         let papers: PaperRecord[];
-        try { papers = await boundedPaperOperation(operationSignal => related({ id: params.id, intent: params.intent,
-          mode: params.mode ?? "similar", numResults: count }, operationSignal), timeout, signal); }
+        try { papers = await this.runtime.operation(name, timeout, signal, 0, operationSignal => related({ id: params.id, intent: params.intent,
+          mode: params.mode ?? "similar", numResults: count }, operationSignal)); }
         catch { signal?.throwIfAborted(); throw new Error("Related-paper retrieval failed (firecrawl)"); }
-        output.results = fusePapers([{ provider: name, weight: paperSettings.sources?.[name]?.boost ?? 1, results: papers }], params.intent, count, paperSettings.rerank ?? "lexical");
+        output.results = rankPapers([{ source: name, weight: sourcePolicy(profile, name).boost ?? 1,
+          redundantWith: sourcePolicy(profile, name).redundantWith ?? [], results: papers }], params.intent, count, profile.ranking);
       }
-      output.providers = [{ provider: name, tier: paperSettings.sources?.[name]?.tier ?? (name === "arxiv" ? "fallback" : "main"),
+      output.providers = [{ provider: name, tier: name in profile.alwaysInclude ? "alwaysInclude" : "main",
         status: params.action === "related" && output.results.length === 0 ? "empty" : "success",
         count: params.action === "read" ? 1 : output.results.length }];
     } else throw new Error("Unknown paper research action");
@@ -135,6 +150,6 @@ export class PaperResearchService {
     const serialized = JSON.stringify(bounded);
     return { content: [{ type: "text" as const, text: serialized }],
       details: bounded, structuredContent: JSON.parse(serialized) as PaperResearchOutput & JsonObject,
-      isError: bounded.providers.length > 0 && bounded.providers.every(provider => provider.status === "failed" || provider.status === "timeout") };
+      isError: bounded.cancelled || (bounded.providers.length > 0 && bounded.providers.every(provider => provider.status !== "success" && provider.status !== "empty")) };
   }
 }

@@ -9,7 +9,7 @@ export interface EngineDescriptor {
 	availability?: "configured" | "unavailable" | "unknown";
 }
 
-export type SearchOutcomeStatus = "success" | "empty" | "failed" | "cancelled";
+export type SearchOutcomeStatus = "success" | "empty" | "failed" | "cancelled" | "timeout";
 export interface SearchOutcome {
 	status: SearchOutcomeStatus;
 	/** Omit when a successful operation has no observable result count (e.g. native search). */
@@ -26,6 +26,7 @@ export interface EngineSnapshot {
 	failed: number;
 	empty: number;
 	cancelled: number;
+	timeout: number;
 	/** Completion order, not start order; null means never completed. */
 	lastOutcome: SearchOutcomeStatus | null;
 	/** Null on failure/cancellation or when the backend did not expose a count. */
@@ -51,7 +52,7 @@ export class SearchMonitor {
 			// Copy only allowlisted metadata, never a caller's config object.
 			stats = {
 				name: engine.name, label: engine.label, tier: engine.tier,
-				ongoing: 0, success: 0, failed: 0, empty: 0, cancelled: 0,
+				ongoing: 0, success: 0, failed: 0, empty: 0, cancelled: 0, timeout: 0,
 				lastOutcome: null, resultCountLast: null, resultCountTotal: 0,
 				latencyLastMs: null, latencyTotalMs: 0,
 			};

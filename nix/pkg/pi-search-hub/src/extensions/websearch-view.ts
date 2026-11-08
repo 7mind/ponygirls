@@ -172,10 +172,10 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const title = `${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`;
 		if (!stats) return [t.bold(title), t.fg("dim", "  not attempted · health unknown")];
 		const last = stats.lastOutcome ?? "pending";
-		const stateColor = last === "failed" ? "error" : last === "success" ? "success" : last === "empty" || last === "cancelled" ? "warning" : "muted";
+		const stateColor = last === "failed" ? "error" : last === "success" ? "success" : last === "empty" || last === "cancelled" || last === "timeout" ? "warning" : "muted";
 		return [
 			t.bold(title),
-			t.fg(stateColor, `  active ${stats.ongoing} · ok ${stats.success} · empty ${stats.empty} · failed ${stats.failed} · cancelled ${stats.cancelled} · last ${last}`),
+			t.fg(stateColor, `  active ${stats.ongoing} · ok ${stats.success} · empty ${stats.empty} · failed ${stats.failed} · timeout ${stats.timeout} · cancelled ${stats.cancelled} · last ${last}`),
 			t.fg("dim", `  results last ${stats.resultCountLast ?? "unknown"} / total ${stats.resultCountTotal} observed · latency last ${stats.latencyLastMs === null ? "unknown" : `${Math.round(stats.latencyLastMs)}ms`} / total ${Math.round(stats.latencyTotalMs)}ms`),
 		];
 	}
@@ -201,12 +201,11 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const { main } = policy;
 		const lines: string[] = [];
 		if (main.mode === "invalid") lines.push("Invalid configured combine mode: automatic search is rejected before any tier is launched.");
-		else if (main.mode === "targeted") lines.push(`Targeted: up to ${main.targetUsableEngines} non-empty Main responses; initial wave parallel, then top up failures/empty responses from remaining engines.`);
-		else if (main.mode === "all") lines.push("All: every Main engine is queried in parallel.");
-		else lines.push("First: walk Main engines until the first successful response, even empty; errors advance to the next engine.");
+		else if (main.mode === "targeted") lines.push(`Targeted: up to ${main.targetUsableEngines} non-empty Main responses; replace failed/empty slots immediately without waiting for the slowest peer.`);
+		else if (main.mode === "all") lines.push("All: schedule every Main engine through the shared concurrency pool.");
+		else lines.push("First: walk Main engines until the first non-empty response; errors and empty responses advance to the next engine.");
 		if (main.requestedPerEngine !== null) {
-			const basis = main.mode === "targeted" ? `ceil(n/${main.targetUsableEngines})` : main.mode === "all" ? "ceil(n/Main count)" : "n";
-			lines.push(`Default request: ${main.requestedPerEngine} results per Main engine (${basis}).`);
+			lines.push(`Default request: ${main.requestedPerEngine} candidates per Main engine; final n is applied only after fusion/reranking.`);
 		} else if (mainCount === 0) lines.push("No Main engines configured; no Main requests.");
 		else lines.push("Default Main request unavailable while the mode is invalid.");
 		const strategy = main.selectionStrategy;
@@ -222,9 +221,9 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const t = this.deps.theme;
 		return [
 			t.bold("Aggregation · automatic search, all tiers"),
-			t.fg("dim", `Full-weight RRF: score = Σ 1/(k + rank), k=${policy.fusion.rankConstant}; original engine lists, unique-document ranks after within-engine URL dedup. One vote per named engine per distinct page.`),
-			t.fg("dim", "Cross-engine agreement boosts pages; URL deduplication preserves source attribution. No per-tier bonus or semantic reranker."),
-			t.fg("dim", `Fuse first, then cut to final n results (default n=${policy.defaultResultCount}). Named backend calls isolate one engine and bypass fusion/dedup; no other tiers are added.`),
+			t.fg("dim", `Shared weighted RRF: score = Σ weight/(k + rank), k=${policy.fusion.rankConstant}; original unique-document ranks, one contribution per source/page. Source boosts and overlap policies apply before the final cut.`),
+			t.fg("dim", `Reranking: ${policy.fusion.rerank}; lexical weights title=${policy.fusion.titleWeight}, body=${policy.fusion.bodyWeight}; exact-title priority ${policy.fusion.exactTitle ? "on" : "off"}. URL/identifier lookup priority and provenance are preserved; no inherent tier bonus.`),
+			t.fg("dim", `Fuse first, then cut to final n results (default n=${policy.defaultResultCount}). Named backend calls isolate one engine but retain shared dedup/ranking and deadlines; no other tiers are added.`),
 		];
 	}
 
@@ -255,14 +254,15 @@ export class WebSearchView extends PanelLayout implements Focusable {
 			lines.push(t.fg("dim", policy.main.combineForced
 				? "Per-call count may override the default; configured combine=true cannot be disabled by a call."
 				: "Per-call count/combine may override these defaults; combine=true uses the configured combine mode."));
-			lines.push(t.fg("dim", "Attempts may use cached results; viewing this snapshot runs no discovery or provider probes."));
+			lines.push(t.fg("dim", `Shared web/paper pool: max ${policy.execution.maxConcurrent} requests, ${policy.execution.perProvider} per provider. Overall ${duration(policy.execution.overallTimeoutMs)}; default source ${duration(policy.execution.sourceTimeoutMs)}; discovery ${duration(policy.execution.discoveryTimeoutMs)}.`));
+			lines.push(t.fg("dim", "Source deadlines include queue/rate waits. Attempts may use cached results; viewing this snapshot runs no provider probes."));
 			for (const tier of ["main", "fallback", "native"] as const) {
 				const group = current.filter((engine) => engine.tier === tier);
 				const title = tier === "main" ? "Main" : tier === "fallback" ? "Fallback" : "Native";
 				lines.push(t.bold(`${title} · ${tier === "native" ? policy.native.engineCount : group.length} current`));
 				if (tier === "main") lines.push(...this.mainRules(policy, group.length));
 				else if (tier === "fallback") lines.push(t.fg("dim", "Always attempted alongside valid automatic search; does not wait for Main failure or consume Main slots."));
-				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests n results; deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
+				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests the configured candidate budget; default deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
 				if (group.length === 0) lines.push(t.fg("dim", `No current ${title} engines configured.`));
 				for (const engine of group) {
 					append(engine, false);

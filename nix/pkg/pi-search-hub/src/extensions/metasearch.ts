@@ -1,11 +1,15 @@
-import type { SearchResult } from "./types.js";
-import { reciprocalRankFusion, runAlwaysInclude, runTargetedCombine,
-  type AlwaysIncludeEntry, type BackendStats, type RankedBackendList } from "./dispatch.js";
+import type { SearchResult, SearchResultWithBackend } from "./types.js";
+import type { AlwaysIncludeEntry, BackendStats } from "./dispatch.js";
+import { SharedRuntime } from "./engine/runtime.js";
+import { DEFAULT_CONCURRENCY, resolveProfile, resolveTimeouts } from "./engine/policy.js";
+import { candidateCount, sourcePolicy, validateAlwaysInclude } from "./engine/profiles.js";
+import { rankDocuments } from "./engine/ranking.js";
+import { WEB_DOCUMENT_ADAPTER } from "./engine/documents.js";
+import type { EngineSource, ResolvedProfile, SearchMode, SearchTimeouts } from "./engine/types.js";
 
 type SearchRunner = (backend: string, query: string, count: number, signal?: AbortSignal) => Promise<SearchResult[]>;
-
 export interface MetasearchRequest {
-  mode: "first" | "targeted" | "all";
+  mode: SearchMode;
   orderedBackends: string[];
   fallback: AlwaysIncludeEntry[];
   native: AlwaysIncludeEntry[];
@@ -13,80 +17,39 @@ export interface MetasearchRequest {
   numResults: number;
   signal?: AbortSignal;
   runBackend: SearchRunner;
+  runtime?: SharedRuntime;
+  profile?: ResolvedProfile;
+  timeouts?: SearchTimeouts;
+  overallTimeoutMs?: number;
 }
 
-/** Each tier contributes original ranks, never ranks of an already fused/truncated page. */
+/** Web adaptation only: scheduling, deadlines and document ranking are shared with papers. */
 export async function runMetasearch(request: MetasearchRequest) {
-  const { query, numResults, signal } = request;
-  signal?.throwIfAborted();
-  const runBackend: SearchRunner = async (...args) => {
-    signal?.throwIfAborted();
-    const results = await request.runBackend(...args);
-    signal?.throwIfAborted();
-    return results;
-  };
-  const excluded = new Set([...request.fallback, ...request.native].map(entry => entry.backend));
-  const main = request.orderedBackends.filter(backend => !excluded.has(backend));
-  const mainSearch = async (): Promise<{ lists: RankedBackendList[]; stats: Map<string, BackendStats> }> => {
-    if (request.mode === "targeted") {
-      const result = await runTargetedCombine({ orderedBackends: main, query, numResults, signal, runBackend });
-      return { lists: result.usableLists, stats: result.backendStats };
-    }
-    const stats = new Map<string, BackendStats>();
-    const search = async (backend: string, count: number): Promise<RankedBackendList> => {
-      try {
-        const results = await runBackend(backend, query, count, signal);
-        stats.set(backend, { success: true, count: results.length });
-        return { backend, results: results.map(result => ({ ...result, backend })) };
-      } catch (error) {
-        signal?.throwIfAborted();
-        stats.set(backend, { success: false, count: 0, error: (error as Error).message });
-        return { backend, results: [] };
-      }
-    };
-    if (request.mode === "all") {
-      return { lists: await Promise.all(main.map(backend => search(backend, Math.max(1, Math.ceil(numResults / main.length))))), stats };
-    }
-    for (const backend of main) {
-      const list = await search(backend, numResults);
-      if (stats.get(backend)!.success) return { lists: [list], stats };
-    }
-    return { lists: [], stats };
-  };
-
-  // Native adapters bound their own abort settlement. An immediate deadline race
-  // here would discard the terminal model usage while the transport is closing.
-  const nativePromise = (async () => {
-    const stats = new Map<string, BackendStats>();
-    const lists = await Promise.all(request.native.map(async entry => {
-      const deadline = AbortSignal.timeout(entry.timeoutMs);
-      const nativeSignal = signal ? AbortSignal.any([signal, deadline]) : deadline;
-      try {
-        const results = await runBackend(entry.backend, query, entry.maxResults ?? numResults, nativeSignal);
-        nativeSignal.throwIfAborted();
-        const capped = results.slice(0, entry.maxResults ?? numResults);
-        stats.set(entry.backend, { success: true, count: capped.length });
-        return { backend: entry.backend, results: capped.map(result => ({ ...result, backend: entry.backend })) };
-      } catch (error) {
-        stats.set(entry.backend, { success: false, count: 0, error: deadline.aborted
-          ? `timed out after ${entry.timeoutMs}ms` : (error as Error).message });
-        return { backend: entry.backend, results: [] };
-      }
-    }));
-    return { lists, stats };
-  })();
-  try {
-    const [quality, fallback, native] = await Promise.all([
-      mainSearch(),
-      runAlwaysInclude({ entries: request.fallback, query, numResults, signal, runBackend }),
-      nativePromise,
-    ]);
-    signal?.throwIfAborted();
-    const backendStats = new Map([...quality.stats, ...fallback.stats, ...native.stats]);
-    const lists = [...quality.lists, ...fallback.lists, ...native.lists].filter(list => list.results.length > 0);
-    return { results: reciprocalRankFusion(lists, numResults), backendStats, usableBackendCount: lists.length };
-  } catch (error) {
-    await nativePromise;
-    throw error;
-  }
+  const timeouts = request.timeouts ?? resolveTimeouts(undefined);
+  const runtime = request.runtime ?? new SharedRuntime(DEFAULT_CONCURRENCY);
+  const profile = request.profile ?? resolveProfile({ mode: request.mode,
+    alwaysInclude: Object.fromEntries(request.fallback.map(entry => [entry.backend, { timeoutMs: entry.timeoutMs, maxResults: entry.maxResults }])) }, undefined);
+  const native = new Map(request.native.map(entry => [entry.backend, entry]));
+  const names = [...new Set([...request.orderedBackends, ...request.fallback.map(entry => entry.backend), ...native.keys()])];
+  validateAlwaysInclude(profile, names);
+  const sources: EngineSource<SearchResult>[] = names.filter(name => sourcePolicy(profile, name).enabled !== false).map(name => {
+    const policy = sourcePolicy(profile, name);
+    const nativeEntry = native.get(name);
+    const tier = nativeEntry !== undefined ? "native" : name in profile.alwaysInclude ? "alwaysInclude" : "main";
+    return { id: name, provider: name.replace(/^native:/, ""), tier,
+      timeoutMs: policy.timeoutMs ?? nativeEntry?.timeoutMs ?? (tier === "alwaysInclude" ? timeouts.alwaysIncludeMs : timeouts.sourceMs),
+      settlementGraceMs: tier === "native" ? timeouts.nativeGraceMs : 0,
+      maxResults: policy.maxResults ?? nativeEntry?.maxResults ?? candidateCount(profile, request.numResults), weight: policy.boost ?? 1,
+      redundantWith: policy.redundantWith ?? [],
+      run: (query, count, signal) => request.runBackend(name, query, count, signal) };
+  });
+  const response = await runtime.search(sources, { query: request.query, numResults: request.numResults, mode: request.mode,
+    targetUsableSources: profile.targetUsableSources, overallTimeoutMs: request.overallTimeoutMs ?? timeouts.overallMs, signal: request.signal });
+  const results: SearchResultWithBackend[] = rankDocuments(response.lists, request.query, request.numResults, profile.ranking, WEB_DOCUMENT_ADAPTER).map(({ document, ranking }) => ({ ...document,
+    backend: ranking.sources[0], sources: ranking.sources, ranking }));
+  const backendStats = new Map<string, BackendStats>(response.stats.map(stat => [stat.source, {
+    success: stat.status === "success" || stat.status === "empty", count: stat.count, status: stat.status, reason: stat.reason, tier: stat.tier,
+    ...(stat.error === undefined ? {} : { error: stat.error }) }]));
+  return { results, backendStats, usableBackendCount: response.lists.filter(list => list.results.length > 0).length,
+    cancelled: response.cancelled, timedOut: response.timedOut };
 }
