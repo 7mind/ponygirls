@@ -1,17 +1,12 @@
 import { stripVTControlCharacters } from "node:util";
-import { Input, Key, matchesKey, ScrollView, truncateToWidth, wrapTextWithAnsi, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { Input, Key, matchesKey, ScrollView, visibleWidth, truncateToWidth, wrapTextWithAnsi, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { frameTitle, hintAt, keyHints, PanelLayout, type PanelParts, type Span, type UiTheme } from "@ponygirls/pi-ui";
-import { type EngineDescriptor, type EngineSnapshot, SearchMonitor } from "./search-monitor.js";
+import { type EngineDescriptor, type EngineSnapshot } from "./search-monitor.js";
 import type { SearchPolicy } from "./search-policy.js";
+import type { SearchDomain, SearchViewProfiles } from "./search-profile.js";
 
 export interface WebSearchViewDeps {
-	monitor: SearchMonitor;
-	/** Safe metadata only, refreshed by the command owner when opening the pane. */
-	engines(): readonly EngineDescriptor[];
-	/** Resolved defaults only; reading this snapshot must not select or discover engines. */
-	policy(): SearchPolicy;
-	/** Owns backend dispatch/formatting. Never return credentials or raw provider errors. */
-	search(query: string, signal: AbortSignal): Promise<string>;
+	profiles: SearchViewProfiles;
 	theme: UiTheme;
 	keys: { matches(data: string, action: "tui.select.cancel"): boolean };
 	rows(): number;
@@ -19,15 +14,15 @@ export interface WebSearchViewDeps {
 	close(): void;
 }
 
-const MAX_QUERY_CHARS = 2048;
+const MAX_QUERY_CHARS = 2000;
 const MAX_RESULT_CHARS = 16_000;
 const MAX_RESULT_LINES = 200;
 const MAX_WRAPPED_RESULT_LINES = 400;
 const MAX_ENGINES = 64;
 const MAX_ENGINE_NAME_CHARS = 64;
 const MAX_ENGINE_LABEL_CHARS = 80;
-const TAB_LABELS = ["Search engines", "Fetchers", "Test search"] as const;
-const TEST_TAB = 2;
+const TAB_LABELS = ["Web stats", "Paper stats", "Fetchers", "Test web", "Test papers"] as const;
+const DOMAINS = ["web", "papers"] as const;
 
 /** Untrusted search content is plain text, never executable terminal escapes or hyperlinks. */
 function plain(text: string): string {
@@ -35,7 +30,7 @@ function plain(text: string): string {
 }
 
 function plainName(text: string, limit: number): string {
-	return plain(text).replace(/\n/g, " ").slice(0, limit);
+	return plain(text).replace(/[\r\n]/g, " ").slice(0, limit);
 }
 
 function duration(ms: number): string { return `${ms / 1000}s`; }
@@ -51,53 +46,67 @@ function engineKey(engine: Pick<EngineDescriptor, "name" | "tier">): string {
 	return JSON.stringify([engine.tier, engine.name]);
 }
 
+interface TestState {
+	input: Input;
+	active: AbortController | null;
+	generation: number;
+	result: string;
+	state: "idle" | "searching" | "done" | "failed" | "cancelled";
+}
+
 /** Event-driven /websearch pane. Opening it never probes a provider or reads credentials. */
 export class WebSearchView extends PanelLayout implements Focusable {
 	private readonly deps: WebSearchViewDeps;
-	private readonly input: Input;
+	private readonly tests: Record<SearchDomain, TestState>;
 	private readonly regularScroll: ScrollView;
-	private readonly unsubscribe: () => void;
+	private readonly unsubscribe: (() => void)[];
 	private disposed = false;
-	private active: AbortController | null = null;
-	private generation = 0;
-	private result = "";
-	private state: "idle" | "searching" | "done" | "failed" | "cancelled" = "idle";
 	private tab = 0;
 	private paneFocused = false;
-	private readonly scrollTops = [0, 0, 0];
+	private readonly scrollTops = [0, 0, 0, 0, 0];
 	private renderedWidth = 80;
 	private tabSpans: Span[] = [];
 
 	constructor(deps: WebSearchViewDeps) {
 		super((width) => this.renderParts(width));
 		this.deps = deps;
-		this.input = new Input({ prompt: "> ", placeholder: "Test a web search", placeholderStyle: (text) => deps.theme.fg("dim", text) });
-		this.input.onSubmit = (query) => { void this.run(query); };
+		this.tests = Object.fromEntries(DOMAINS.map((domain) => {
+			const input = new Input({ prompt: "> ", placeholder: `Test a ${domain === "web" ? "web" : "paper"} search`, placeholderStyle: (text) => deps.theme.fg("dim", text) });
+			input.onSubmit = (query) => { void this.run(domain, query); };
+			return [domain, { input, active: null, generation: 0, result: "", state: "idle" }];
+		})) as typeof this.tests;
 		this.regularScroll = new ScrollView({ render: (width) => this.content(width), invalidate() {} }, { overscroll: "contain", scrollbar: "hidden" });
-		this.unsubscribe = deps.monitor.subscribe(() => this.repaint());
+		this.unsubscribe = DOMAINS.map((domain) => deps.profiles[domain].monitor.subscribe(() => this.repaint()));
 	}
 
 	get focused(): boolean { return this.paneFocused; }
 	set focused(value: boolean) {
 		this.paneFocused = value;
-		this.input.focused = value && this.tab === TEST_TAB;
+		this.focusInputs();
 	}
 
+	private get testDomain(): SearchDomain | undefined { return this.tab === 3 ? "web" : this.tab === 4 ? "papers" : undefined; }
+	private focusInputs(): void {
+		for (const domain of DOMAINS) this.tests[domain].input.focused = this.paneFocused && this.testDomain === domain;
+	}
 	private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
 
-	override invalidate(): void { this.input?.invalidate(); }
+	override invalidate(): void { if (this.tests) for (const domain of DOMAINS) this.tests[domain].input.invalidate(); }
 
 	/** Idempotent; even a backend that ignores abort cannot repaint or resurrect this pane. */
 	dispose(): void {
 		if (this.disposed) return;
 		this.disposed = true;
-		this.generation++;
-		this.unsubscribe();
-		const controller = this.active;
-		this.active = null;
-		controller?.abort();
-		this.result = "";
-		this.input.setValue("");
+		for (const unsubscribe of this.unsubscribe) unsubscribe();
+		for (const domain of DOMAINS) {
+			const test = this.tests[domain];
+			test.generation++;
+			const controller = test.active;
+			test.active = null;
+			controller?.abort();
+			test.result = "";
+			test.input.setValue("");
+		}
 	}
 
 	private repaint(): void {
@@ -112,7 +121,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 			? this.scroll.viewportHeight + previous.header.length + previous.footer.length
 			: Math.max(1, Math.floor(this.deps.rows()));
 		this.tab = index;
-		this.input.focused = this.paneFocused && index === TEST_TAB;
+		this.focusInputs();
 		const next = this.renderParts(this.renderedWidth);
 		// Refresh both content extent and chrome-adjusted viewport before restoring:
 		// a short previous tab or its smaller header must not clamp the saved offset.
@@ -122,85 +131,103 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.repaint();
 	}
 
-	private resetTestScroll(): void {
-		this.scrollTops[TEST_TAB] = 0;
-		if (this.tab === TEST_TAB) this.scroll.scrollToStart();
+	private resetTestScroll(domain: SearchDomain): void {
+		const index = domain === "web" ? 3 : 4;
+		this.scrollTops[index] = 0;
+		if (this.tab === index) this.scroll.scrollToStart();
 	}
 
-	private async run(value: string): Promise<void> {
-		const query = plain(value).replace(/\n/g, " ").slice(0, MAX_QUERY_CHARS).trim();
-		if (this.disposed || this.active || !query) return;
-		const generation = ++this.generation;
+	private async run(domain: SearchDomain, value: string): Promise<void> {
+		const test = this.tests[domain];
+		const query = plain(value).replace(/[\r\n]/g, " ").slice(0, MAX_QUERY_CHARS).trim();
+		if (this.disposed || test.active || !query) return;
+		const generation = ++test.generation;
 		const controller = new AbortController();
-		this.active = controller;
-		this.state = "searching";
-		this.result = "";
-		this.resetTestScroll();
+		test.active = controller;
+		test.state = "searching";
+		test.result = "";
+		this.resetTestScroll(domain);
 		this.repaint();
 		try {
-			const text = await this.deps.search(query, controller.signal);
-			if (this.disposed || generation !== this.generation) return;
-			this.result = boundedResult(text);
-			this.state = "done";
+			const text = await this.deps.profiles[domain].search(query, controller.signal);
+			if (this.disposed || generation !== test.generation) return;
+			test.result = boundedResult(text);
+			test.state = "done";
 		} catch {
-			if (this.disposed || generation !== this.generation) return;
+			if (this.disposed || generation !== test.generation) return;
 			// Native/provider errors can contain headers, URLs with API keys, or echoed config.
-			this.state = controller.signal.aborted ? "cancelled" : "failed";
+			test.state = controller.signal.aborted ? "cancelled" : "failed";
 		} finally {
-			if (!this.disposed && generation === this.generation) {
-				this.active = null;
-				this.resetTestScroll();
+			if (!this.disposed && generation === test.generation) {
+				test.active = null;
+				this.resetTestScroll(domain);
 				this.repaint();
 			}
 		}
 	}
 
 	private cancel(): void {
-		if (!this.active) return;
-		const controller = this.active;
-		this.active = null;
-		this.generation++;
-		this.state = "cancelled";
-		controller.abort();
+		for (const domain of DOMAINS) {
+			const test = this.tests[domain];
+			if (!test.active) continue;
+			const controller = test.active;
+			test.active = null;
+			test.generation++;
+			test.state = "cancelled";
+			controller.abort();
+		}
 		this.repaint();
 	}
 
-	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined, historical: boolean): string[] {
-		const t = this.deps.theme;
+	/** Tables preserve scalar values: narrow panes wrap metric/value rows, never clip numbers. */
+	private table(headers: string[], values: string[], width: number): string[] {
+		const widths = headers.map((header, i) => Math.max(visibleWidth(header), visibleWidth(values[i])));
+		const row = (cells: string[]) => cells.map((cell, i) => truncateToWidth(cell, widths[i], "") + " ".repeat(Math.max(0, widths[i] - visibleWidth(cell)))).join(" | ");
+		if (widths.reduce((a, b) => a + b, 0) + 3 * (headers.length - 1) <= width) {
+			return [row(headers), widths.map((n) => "-".repeat(n)).join("-+-"), row(values)];
+		}
+		const labelWidth = Math.max(...headers.map(visibleWidth));
+		return headers.map((header, i) => `${header.padEnd(labelWidth)} | ${values[i]}`);
+	}
+
+	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined, historical: boolean, width: number, policy?: SearchPolicy): string[] {
 		const label = plainName(engine.label, MAX_ENGINE_LABEL_CHARS);
 		const name = plainName(engine.name, MAX_ENGINE_NAME_CHARS);
 		const title = `${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`;
-		if (!stats) return [t.bold(title), t.fg("dim", "  not attempted · health unknown")];
-		const last = stats.lastOutcome ?? "pending";
-		const stateColor = last === "failed" ? "error" : last === "success" ? "success" : last === "empty" || last === "cancelled" || last === "timeout" ? "warning" : "muted";
-		return [
-			t.bold(title),
-			t.fg(stateColor, `  active ${stats.ongoing} · ok ${stats.success} · empty ${stats.empty} · failed ${stats.failed} · timeout ${stats.timeout} · cancelled ${stats.cancelled} · last ${last}`),
-			t.fg("dim", `  results last ${stats.resultCountLast ?? "unknown"} / total ${stats.resultCountTotal} observed · latency last ${stats.latencyLastMs === null ? "unknown" : `${Math.round(stats.latencyLastMs)}ms`} / total ${Math.round(stats.latencyTotalMs)}ms`),
-		];
+		const lines = [this.deps.theme.bold(title)];
+		if (!stats) lines.push("not attempted · health unknown");
+		lines.push(...this.table(
+			["active", "ok", "empty", "failed", "timeout", "cancelled", "last"],
+			stats ? [stats.ongoing, stats.success, stats.empty, stats.failed, stats.timeout, stats.cancelled, stats.lastOutcome ?? "pending"].map(String) : Array(7).fill("—"), width));
+		lines.push("Observed results and latency (ms)");
+		lines.push(...this.table(["results last", "results total", "latency last", "latency total"], stats ? [stats.resultCountLast ?? "unknown", stats.resultCountTotal, stats.latencyLastMs === null ? "unknown" : Math.round(stats.latencyLastMs), Math.round(stats.latencyTotalMs)].map(String) : Array(4).fill("—"), width));
+		const source = !historical ? policy?.sources?.find((entry) => entry.name === engine.name) : undefined;
+		if (source) lines.push(...this.table(["deadline ms", "candidate cap", "boost"], [source.timeoutMs, source.maxResults, source.boost].map(String), width));
+		return lines;
 	}
 
 	private testLines(width: number): string[] {
+		const test = this.tests[this.testDomain!];
 		const t = this.deps.theme;
 		const lines: string[] = [];
-		if (this.state === "idle") lines.push(t.fg("dim", "Enter a query above to test search. Opening this pane does not issue search or fetch probes."));
-		else if (this.state === "searching") lines.push(t.fg("accent", "Searching… Ctrl+C cancels this test."));
-		else if (this.state === "failed") lines.push(t.fg("error", "Search failed. Provider error details are hidden to protect credentials."));
-		else if (this.state === "cancelled") lines.push(t.fg("warning", "Search cancelled."));
+		if (test.state === "idle") lines.push(t.fg("dim", "Enter a query above to test search. Opening this pane does not issue search or fetch probes."));
+		else if (test.state === "searching") lines.push(t.fg("accent", "Searching… Ctrl+C cancels all tests."));
+		else if (test.state === "failed") lines.push(t.fg("error", "Search failed. Provider error details are hidden to protect credentials."));
+		else if (test.state === "cancelled") lines.push(t.fg("warning", "Search cancelled."));
 		else {
 			lines.push(t.bold("Search result"));
-			const wrapped = this.result.split("\n").flatMap((line) => wrapTextWithAnsi(line, width));
+			const wrapped = test.result.split("\n").flatMap((line) => wrapTextWithAnsi(line, width));
 			lines.push(...wrapped.slice(0, MAX_WRAPPED_RESULT_LINES));
 			if (wrapped.length > MAX_WRAPPED_RESULT_LINES) lines.push(t.fg("dim", "[Result truncated for display]"));
-			if (!this.result.trim()) lines.push(t.fg("dim", "No displayable results returned."));
+			if (!test.result.trim()) lines.push(t.fg("dim", "No displayable results returned."));
 		}
 		return lines;
 	}
 
-	private mainRules(policy: SearchPolicy, mainCount: number): string[] {
+	private mainRules(policy: SearchPolicy, mainCount: number, domain: SearchDomain): string[] {
 		const { main } = policy;
 		const lines: string[] = [];
-		if (main.mode === "invalid") lines.push("Invalid configured combine mode: automatic search is rejected before any tier is launched.");
+		if (main.mode === "invalid") lines.push(`${domain === "web" ? "Invalid configured combine mode" : "Invalid automatic search mode"}: automatic search is rejected before any tier is launched.`);
 		else if (main.mode === "targeted") lines.push(`Targeted: up to ${main.targetUsableEngines} non-empty Main responses; replace failed/empty slots immediately without waiting for the slowest peer.`);
 		else if (main.mode === "all") lines.push("All: schedule every Main engine through the shared concurrency pool.");
 		else lines.push("First: walk Main engines until the first non-empty response; errors and empty responses advance to the next engine.");
@@ -227,13 +254,15 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		];
 	}
 
-	private engineContent(): string[] {
+	private engineContent(width: number): string[] {
+		const domain: SearchDomain = this.tab === 1 ? "papers" : "web";
+		const profile = this.deps.profiles[domain];
 		const t = this.deps.theme;
-		const fetchers = this.tab === 1;
+		const fetchers = this.tab === 2;
 		const lines = [t.bold(`${fetchers ? "Fetcher" : "Search engine"} activity (this extension instance)`)];
-		const snapshots = this.deps.monitor.snapshot();
+		const snapshots = profile.monitor.snapshot();
 		const stats = new Map(snapshots.map((entry) => [engineKey(entry), entry]));
-		const engines = new Map(this.deps.engines().map((entry) => [engineKey(entry), entry]));
+		const engines = new Map(profile.engines().map((entry) => [engineKey(entry), entry]));
 		const matchesTab = (engine: EngineDescriptor) => (engine.tier === "reader") === fetchers;
 		const current = [...engines.values()].filter(matchesTab);
 		// Tier is part of the identity: moving an engine must not relabel its old observations.
@@ -241,7 +270,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const shown = [...current, ...historical].slice(0, MAX_ENGINES);
 		const shownKeys = new Set(shown.map(engineKey));
 		const append = (engine: EngineDescriptor, history: boolean) => {
-			if (shownKeys.has(engineKey(engine))) lines.push(...this.engineLines(engine, stats.get(engineKey(engine)), history));
+			if (shownKeys.has(engineKey(engine))) lines.push(...this.engineLines(engine, stats.get(engineKey(engine)), history, width, policy));
 		};
 		let policy: SearchPolicy | undefined;
 		if (fetchers) {
@@ -249,18 +278,20 @@ export class WebSearchView extends PanelLayout implements Focusable {
 			if (current.length === 0) lines.push(t.fg("dim", "No current fetchers configured; health unknown."));
 			for (const engine of current) append(engine, false);
 		} else {
-			policy = this.deps.policy();
-			lines.push(t.fg("accent", `Default auto: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode} · combine ${policy.main.combineForced ? "true (forced)" : "false"} · configured combine mode ${policy.main.combineMode}`));
-			lines.push(t.fg("dim", policy.main.combineForced
+			policy = profile.policy();
+			if (domain === "web") {
+				lines.push(t.fg("accent", `Default auto: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode} · combine ${policy.main.combineForced ? "true (forced)" : "false"} · configured combine mode ${policy.main.combineMode}`));
+				lines.push(t.fg("dim", policy.main.combineForced
 				? "Per-call count may override the default; configured combine=true cannot be disabled by a call."
 				: "Per-call count/combine may override these defaults; combine=true uses the configured combine mode."));
+			} else lines.push(t.fg("accent", `Paper automatic search: n=${policy.defaultResultCount} (max ${policy.maximumResultCount}) · Main ${policy.main.mode}`));
 			lines.push(t.fg("dim", `Shared web/paper pool: max ${policy.execution.maxConcurrent} requests, ${policy.execution.perProvider} per provider. Overall ${duration(policy.execution.overallTimeoutMs)}; default source ${duration(policy.execution.sourceTimeoutMs)}; discovery ${duration(policy.execution.discoveryTimeoutMs)}.`));
 			lines.push(t.fg("dim", "Source deadlines include queue/rate waits. Attempts may use cached results; viewing this snapshot runs no provider probes."));
 			for (const tier of ["main", "fallback", "native"] as const) {
 				const group = current.filter((engine) => engine.tier === tier);
 				const title = tier === "main" ? "Main" : tier === "fallback" ? "Fallback" : "Native";
 				lines.push(t.bold(`${title} · ${tier === "native" ? policy.native.engineCount : group.length} current`));
-				if (tier === "main") lines.push(...this.mainRules(policy, group.length));
+				if (tier === "main") lines.push(...this.mainRules(policy, group.length, domain));
 				else if (tier === "fallback") lines.push(t.fg("dim", "Always attempted alongside valid automatic search; does not wait for Main failure or consume Main slots."));
 				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests the configured candidate budget; default deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
 				if (group.length === 0) lines.push(t.fg("dim", `No current ${title} engines configured.`));
@@ -284,7 +315,7 @@ export class WebSearchView extends PanelLayout implements Focusable {
 
 	private content(width: number): string[] {
 		const w = Math.max(1, Math.floor(width));
-		const lines = this.tab === TEST_TAB ? this.testLines(w) : this.engineContent();
+		const lines = this.testDomain ? this.testLines(w) : this.engineContent(w);
 		return lines.flatMap((line) => wrapTextWithAnsi(line, w)).map((line) => truncateToWidth(line, w, ""));
 	}
 
@@ -294,14 +325,14 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.renderedWidth = w;
 		const hints = [
 			{ key: "Tab/Shift+Tab", action: "tabs" },
-			...(this.tab === TEST_TAB ? [{ key: "enter", action: "search" }] : []),
+			...(this.testDomain ? [{ key: "enter", action: "search" }] : []),
 			{ key: "↑↓ Ctrl+PgUp/PgDn", action: "scroll" },
-			{ key: "Ctrl+C", action: "cancel" }, { key: "esc", action: "close" },
+			{ key: "Ctrl+C", action: "cancel tests" }, { key: "esc", action: "close" },
 		];
 		const title = frameTitle(t, w, { title: "websearch", tabs: { labels: TAB_LABELS, active: this.tab } }, "none");
 		this.tabSpans = title.tabSpans;
 		return {
-			header: [title.line, ...(this.tab === TEST_TAB ? this.input.render(w) : [])],
+			header: [title.line, ...(this.testDomain ? this.tests[this.testDomain].input.render(w) : [])],
 			body: this.content(w),
 			footer: keyHints(t, w, hints).lines,
 		};
@@ -335,13 +366,14 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		else if (matchesKey(data, Key.pageDown) || matchesKey(data, Key.ctrl("pageDown"))) this.scroll.scrollBy(page);
 		else if (matchesKey(data, Key.ctrl("home"))) this.scroll.scrollToStart();
 		else if (matchesKey(data, Key.ctrl("end"))) this.scroll.scrollToEnd();
-		else if (this.tab === TEST_TAB) {
+		else if (this.testDomain) {
+			const input = this.tests[this.testDomain].input;
 			// Home/End and ordinary characters belong to the query editor, not pane commands.
-			this.input.handleInput(data);
-			const value = this.input.getValue();
+			input.handleInput(data);
+			const value = input.getValue();
 			// Input accepts raw bracketed paste; sanitize before it can reach the terminal.
-			const safe = plain(value).replace(/\n/g, " ").slice(0, MAX_QUERY_CHARS);
-			if (safe !== value) this.input.setValue(safe);
+			const safe = plain(value).replace(/[\r\n]/g, " ").slice(0, MAX_QUERY_CHARS);
+			if (safe !== value) input.setValue(safe);
 		}
 		this.repaint();
 	}

@@ -4,6 +4,7 @@ import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import { PLAIN_THEME } from "@ponygirls/pi-ui";
 import { SearchMonitor, type EngineDescriptor } from "../extensions/search-monitor.js";
 import { WebSearchView, type WebSearchViewDeps } from "../extensions/websearch-view.js";
+import type { SearchViewProfile } from "../extensions/search-profile.js";
 import type { SearchPolicy } from "../extensions/search-policy.js";
 
 // Specified Behavioral-Active × Blackbox × Group: real shared layout/Input, controlled search callback.
@@ -27,21 +28,35 @@ function fakePolicy(main: Partial<SearchPolicy["main"]>, rest: Partial<Omit<Sear
 	return {
 		defaultResultCount: 10, maximumResultCount: 20,
 		main: { mode: "first", combineForced: false, combineMode: "all", selectionStrategy: "sequential", engineOrder: ["fixture"], targetUsableEngines: 3, requestedPerEngine: 20, ...main },
-		fallback: [], native: { engineCount: 0, timeoutMs: 45_000, settlementGraceMs: 1_000 }, fusion: { rankConstant: 60, rerank: "rrf", titleWeight: .2, bodyWeight: .1, exactTitle: true },
+		sources: [{ name: "fixture", timeoutMs: 30000, maxResults: 20, boost: 1 }], fallback: [], native: { engineCount: 0, timeoutMs: 45_000, settlementGraceMs: 1_000 }, fusion: { rankConstant: 60, rerank: "rrf", titleWeight: .2, bodyWeight: .1, exactTitle: true },
 		execution: { maxConcurrent: 6, perProvider: 2, overallTimeoutMs: 60_000, sourceTimeoutMs: 30_000, discoveryTimeoutMs: 10_000 }, ...rest,
 	};
 }
-function setup(overrides: Partial<WebSearchViewDeps> = {}) {
-	const deps: WebSearchViewDeps = {
-		monitor: new SearchMonitor(() => 0), engines: () => [engine], policy: () => fakePolicy({}, {}), search: vi.fn(async () => "fixture result"),
-		theme: PLAIN_THEME, keys: { matches: () => false }, rows: () => 20, requestRender: vi.fn(), close: vi.fn(), ...overrides,
+type TestOverrides = Partial<WebSearchViewDeps & SearchViewProfile>;
+function setup(overrides: TestOverrides = {}) {
+	const web: SearchViewProfile = { monitor: new SearchMonitor(() => 0), engines: () => [engine], policy: () => fakePolicy({}, {}), search: vi.fn(async () => "fixture result") };
+	for (const key of ["monitor", "engines", "policy", "search"] as const) if (overrides[key]) Object.assign(web, { [key]: overrides[key] });
+	const papers: SearchViewProfile = { monitor: new SearchMonitor(() => 0), engines: () => [{ name: "arxiv", label: "ArXiv", tier: "main" }], policy: () => fakePolicy({}, {}), search: vi.fn(async () => "paper result") };
+	const deps = {
+		theme: PLAIN_THEME, keys: { matches: () => false }, rows: () => 20, requestRender: vi.fn(), close: vi.fn(), ...overrides, profiles: overrides.profiles ?? { web, papers }, ...web,
 	};
 	return { deps, view: new WebSearchView(deps) };
 }
-function setupTest(overrides: Partial<WebSearchViewDeps> = {}) {
+function setupTest(overrides: TestOverrides = {}) {
 	const fixture = setup(overrides);
-	fixture.view.handleInput(backTab); // Search tests deliberately select the Test search tab.
+	for (let n = 0; n < 3; n++) fixture.view.handleInput(tab);
 	return fixture;
+}
+/** Navigate real public tab events, without depending on old three-tab adjacency. */
+function select(view: WebSearchView, label: string, width = 100): void {
+	for (let n = 0; n < 5; n++) {
+		const title = view.render(width)[0];
+		// Mouse uses the rendered title's measured spans.
+		const x = title.indexOf(label);
+		if (x >= 0) { view.handleMouse({ type: "click", button: "left", x, y: 0, screenX: x, screenY: 0, width, height: 20, shift: false, alt: false, ctrl: false }); return; }
+		view.handleInput(tab);
+	}
+	throw new Error(`Tab missing: ${label}`);
 }
 const flush = async () => { await Promise.resolve(); await Promise.resolve(); };
 
@@ -186,11 +201,11 @@ describe("WebSearchView", () => {
 		const text = view.render(200).join("\n");
 		const historical = text.indexOf("Previously observed · not currently configured in this tier");
 		expect(text.slice(0, historical)).toContain("Moved (moved) · fallback · configured");
-		expect(text.slice(0, historical)).toContain("ok 0 · empty 1");
-		expect(text.slice(0, historical)).not.toContain("total 7 observed");
+		expect(text.slice(0, historical)).toMatch(/0 +\| 0 +\| 1 +\|/);
+		expect(text.slice(0, historical)).not.toMatch(/7 +\| 7/);
 		expect(text.slice(historical)).toContain("Moved (moved) · main · historical (not current)");
-		expect(text.slice(historical)).toContain("ok 1 · empty 0");
-		expect(text.slice(historical)).toContain("total 7 observed");
+		expect(text.slice(historical)).toMatch(/0 +\| 1 +\| 0 +\|/);
+		expect(text.slice(historical)).toMatch(/7 +\| 7/);
 		view.dispose();
 	});
 
@@ -218,8 +233,8 @@ describe("WebSearchView", () => {
 		const search = view.render(80).join("\n");
 		expect(search).toContain("Aggregation · automatic search, all tiers");
 		expect(search).toContain("Default auto");
-		for (const title of ["Fetcher activity", "Enter a query above"]) {
-			view.handleInput(tab);
+		for (const [label, title] of [["Fetchers", "Fetcher activity"], ["Test web", "Enter a query above"]]) {
+			select(view, label);
 			policy.mockClear(); // Switching away measures the previous tab once to preserve its viewport.
 			const text = view.render(80).join("\n");
 			expect(text).toContain(title);
@@ -231,7 +246,9 @@ describe("WebSearchView", () => {
 
 	it("retains the 64-engine display bound and bounds configured preference independently", () => {
 		const engines: EngineDescriptor[] = Array.from({ length: 70 }, (_, n) => ({ name: `engine-${n}`, label: `Engine ${n}`, tier: "main" }));
-		const { deps, view } = setup({ engines: () => engines, rows: () => 500, policy: () => fakePolicy({ engineOrder: engines.map(({ name }) => name) }, {}) });
+		// This inventory-bound assertion intentionally inspects the full 64-row model;
+		// separate 80x24/120x40 tests below verify normal viewport clipping and scrolling.
+		const { deps, view } = setup({ engines: () => engines, rows: () => 1000, policy: () => fakePolicy({ engineOrder: engines.map(({ name }) => name) }, {}) });
 		deps.monitor.begin({ name: "old", label: "Old", tier: "main" })({ status: "empty" });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 70 current");
@@ -252,9 +269,9 @@ describe("WebSearchView", () => {
 		expect(initial).toContain("unavailable");
 		const finish = deps.monitor.begin(engine);
 		expect(deps.requestRender).toHaveBeenCalled();
-		expect(view.render(100).join("\n")).toContain("active 1 · ok 0");
+		expect(view.render(100).join("\n")).toMatch(/1 +\| 0 +\| 0/);
 		finish({ status: "empty" });
-		expect(view.render(100).join("\n")).toContain("active 0 · ok 0 · empty 1");
+		expect(view.render(100).join("\n")).toMatch(/0 +\| 0 +\| 1/);
 		view.dispose();
 	});
 
@@ -269,17 +286,17 @@ describe("WebSearchView", () => {
 		const search = view.render(120).join("\n");
 		expect(search).toContain("Search engine activity");
 		for (const title of ["Fixture (fixture) · main", "Native (native) · native", "Fallback (fallback) · fallback", "Historical search (shared) · main · historical (not current)"]) expect(search).toContain(title);
-		expect(search).toContain("total 3 observed");
+		expect(search).toMatch(/3 +\| 3/);
 		expect(search).not.toMatch(/Reader \(shared\)|Historical reader|· reader|Enter a query|> /);
-		view.handleInput(tab);
+		select(view, "Fetchers");
 		const fetchers = view.render(120).join("\n");
 		expect(fetchers).toContain("Fetcher activity");
 		expect(fetchers).toContain("Reader (shared) · reader");
 		expect(fetchers).toContain("Historical reader (removed) · reader · historical (not current)");
-		expect(fetchers).toContain("failed 1");
-		expect(fetchers).toContain("empty 1");
+		expect(fetchers).toMatch(/0 +\| 0 +\| 0 +\| 1/);
+		expect(fetchers).toMatch(/0 +\| 0 +\| 1/);
 		expect(fetchers).not.toMatch(/Fixture \(fixture\)|Native \(native\)|Fallback \(fallback\)|Historical search|· main|· fallback|· native/);
-		view.handleInput(tab);
+		select(view, "Test web");
 		const test = view.render(120).join("\n");
 		expect(test).toContain("Enter a query above");
 		expect(test).not.toMatch(/activity|Reader \(shared\)|Fixture \(fixture\)|Historical reader|Historical search/);
@@ -287,33 +304,23 @@ describe("WebSearchView", () => {
 		view.dispose();
 	});
 
-	it("cycles all tabs in both directions and accepts/focuses query input only on Test search", async () => {
+	it("cycles all five tabs in both directions and focuses only test query inputs", async () => {
 		const { deps, view } = setup();
 		view.focused = true;
-		expect(view.focused).toBe(true);
-		expect(view.render(100).join("\n")).not.toContain(CURSOR_MARKER);
-		view.handleInput("ignored search text"); view.handleInput("\r");
-		view.handleInput(tab);
-		expect(view.render(100).join("\n")).toContain("Fetcher activity");
-		expect(view.render(100).join("\n")).not.toContain(CURSOR_MARKER);
-		view.handleInput("ignored fetcher text"); view.handleInput("\r");
-		expect(deps.search).not.toHaveBeenCalled();
-		view.handleInput(tab);
-		expect(view.render(100).join("\n")).toContain(CURSOR_MARKER);
-		view.handleInput("draft");
-		view.handleInput(tab);
-		expect(view.render(100).join("\n")).toContain("Search engine activity");
+		for (const label of ["Web stats", "Paper stats", "Fetchers", "Test web", "Test papers"]) {
+			const text = view.render(100).join("\n");
+			expect(text).toContain(label);
+			expect(text.includes(CURSOR_MARKER)).toBe(label.startsWith("Test"));
+			if (label === "Test web") view.handleInput("web draft");
+			if (label === "Test papers") view.handleInput("paper draft");
+			view.handleInput(tab);
+		}
 		view.handleInput(backTab);
-		expect(view.render(100).join("\n")).toContain("draft");
+		expect(view.render(100).join("\n")).toContain("paper draft");
 		view.handleInput(backTab);
-		expect(view.render(100).join("\n")).toContain("Fetcher activity");
-		view.handleInput(backTab);
-		expect(view.render(100).join("\n")).toContain("Search engine activity");
-		view.handleInput(backTab);
+		expect(view.render(100).join("\n")).toContain("web draft");
 		view.handleInput("\r"); await flush();
-		expect(deps.search).toHaveBeenCalledExactlyOnceWith("draft", expect.any(AbortSignal));
-		view.handleInput(tab); view.handleInput(backTab);
-		expect(view.render(100).join("\n")).toContain("fixture result");
+		expect(deps.search).toHaveBeenCalledExactlyOnceWith("web draft", expect.any(AbortSignal));
 		view.focused = false;
 		expect(view.render(100).join("\n")).not.toContain(CURSOR_MARKER);
 		view.dispose();
@@ -325,14 +332,14 @@ describe("WebSearchView", () => {
 		const search = vi.fn((_query: string, _signal: AbortSignal) => pending.promise);
 		const { deps, view } = setupTest({ search, engines: () => engines, rows: () => 10 });
 		view.handleInput("working query"); view.handleInput("\r");
-		view.handleInput(tab);
+		select(view, "Web stats");
 		view.render(100); view.handleInput(end);
 		expect(view.render(100).join("\n")).toContain("Fuse first");
 		const statistics = scrollToText(view, () => view.render(100), "Engine 19", up).join("\n");
 		expect(search.mock.calls[0][1].aborted).toBe(false);
 		pending.resolve("background result"); await flush();
 		expect(view.render(100).join("\n")).toBe(statistics);
-		view.handleInput(backTab);
+		select(view, "Test web");
 		expect(view.render(100).join("\n")).toContain("working query");
 		expect(view.render(100).join("\n")).toContain("background result");
 		expect(deps.close).not.toHaveBeenCalled();
@@ -356,12 +363,12 @@ describe("WebSearchView", () => {
 		view.dispose();
 	});
 
-	it.each([0, 1, 2])("Escape closes and disposes in-flight work on tab %s", async (selected) => {
+	it.each([0, 1, 2, 3, 4])("Escape closes and disposes in-flight work on tab %s", async (selected) => {
 		const pending = deferred<string>();
 		const search = vi.fn((_query: string, _signal: AbortSignal) => pending.promise);
 		const { deps, view } = setupTest({ search });
 		view.handleInput("test"); view.handleInput("\r");
-		for (let n = 0; n < (selected + 1) % 3; n++) view.handleInput(tab);
+		for (let n = 0; n < (selected + 5 - 3) % 5; n++) view.handleInput(tab);
 		view.handleInput(esc);
 		expect(search.mock.calls[0][1].aborted).toBe(true);
 		expect(deps.close).toHaveBeenCalledTimes(1);
@@ -427,7 +434,7 @@ describe("WebSearchView", () => {
 		view.handleInput("\x1b[200~" + "q".repeat(3000) + "\x1b[201~");
 		view.handleInput("\r"); await flush();
 		const query = vi.mocked(deps.search).mock.calls[0][0];
-		expect(query.length).toBe(2048);
+		expect(query.length).toBe(2000);
 		const lines = view.render(20);
 		expect(lines.join("\n")).not.toMatch(/PAYLOAD|https:\/\/fixture.invalid|\x1b\]8|\x1b\]52|\x1b\[31m/);
 		expect(lines.join("\n")).toContain("Result truncated");
@@ -507,7 +514,7 @@ describe("WebSearchView", () => {
 		for (const width of [1, 2, 3, 4, 5, 10]) {
 			expect(view.render(width).every((line) => visibleWidth(line) <= width), `query width ${width}`).toBe(true);
 		}
-		view.handleInput(tab);
+		select(view, "Web stats");
 		const initial = view.render(100).join("\n");
 		view.handleInput(down);
 		expect(view.render(100).join("\n")).not.toBe(initial);
@@ -572,25 +579,23 @@ describe("WebSearchView", () => {
 		view.dispose();
 	});
 
-	it("retains independent scroll positions on all three tabs", async () => {
+	it("retains independent scroll positions on all five tabs", async () => {
 		const engines: EngineDescriptor[] = ["main", "reader"].flatMap((tier) => Array.from({ length: 20 }, (_, n) => ({ name: `${tier}-${n}`, label: `${tier} ${n}`, tier: tier as "main" | "reader" })));
-		const { view } = setup({ engines: () => engines, rows: () => 12, search: async () => Array.from({ length: 30 }, (_, n) => `result ${n}`).join("\n") });
-		view.render(100); view.handleInput(end);
-		expect(view.render(100).join("\n")).toContain("Fuse first");
-		const search = scrollToText(view, () => view.render(100), "main 19", up).join("\n");
-		view.handleInput(tab); view.render(100); view.handleInput(end);
-		const fetchers = view.render(100).join("\n");
-		expect(fetchers).toContain("reader 19");
-		view.handleInput(tab); view.handleInput("query"); view.handleInput("\r"); await flush();
-		view.render(100); view.handleInput(end);
-		const test = view.render(100).join("\n");
-		expect(test).toContain("result 29");
-		view.handleInput(tab);
-		expect(view.render(100).join("\n")).toBe(search);
-		view.handleInput(tab);
-		expect(view.render(100).join("\n")).toBe(fetchers);
-		view.handleInput(tab);
-		expect(view.render(100).join("\n")).toBe(test);
+		const results = (domain: string) => Array.from({ length: 30 }, (_, n) => `${domain} result ${n}`).join("\n");
+		const { deps, view } = setup({ engines: () => engines, rows: () => 12, search: async () => results("web") });
+		deps.profiles.papers.engines = () => engines.filter(({ tier }) => tier === "main").map((entry) => ({ ...entry, name: `paper-${entry.name}`, label: `Paper ${entry.label}` }));
+		deps.profiles.papers.search = async () => results("paper");
+		const snapshots: string[] = [];
+		for (let index = 0; index < 5; index++) {
+			if (index >= 3) { view.handleInput(`query ${index}`); view.handleInput("\r"); await flush(); }
+			view.render(100); view.handleInput(end);
+			if (index < 2) scrollToText(view, () => view.render(100), "main 19", up);
+			const text = view.render(100).join("\n");
+			expect(text).toContain(index === 0 ? "main 19" : index === 1 ? "Paper main 19" : index === 2 ? "reader 19" : index === 3 ? "web result 29" : "paper result 29");
+			snapshots.push(text);
+			view.handleInput(tab);
+		}
+		for (const snapshot of snapshots) { expect(view.render(100).join("\n")).toBe(snapshot); view.handleInput(tab); }
 		view.dispose();
 	});
 
@@ -611,10 +616,10 @@ describe("WebSearchView", () => {
 			for (const text of ["draft query", "result 39", "Tab/Shift+Tab tabs", "Ctrl+PgUp/PgDn", "Ctrl+C cancel", "esc close"]) expect(lines.join("\n")).toContain(text);
 			expect(lines.at(-1)?.trimEnd()).toBe("Pi status");
 			expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
-			view.handleInput(tab); frame(width, height); view.handleInput(end);
+			view.handleInput(tab); view.handleInput(tab); frame(width, height); view.handleInput(end);
 			expect(frame(width, height).join("\n")).toContain("Fuse first");
 			expect(scrollToText(view, () => frame(width, height), "Engine 29", up).join("\n")).toContain("Engine 29");
-			view.handleInput(backTab);
+			view.handleInput(backTab); view.handleInput(backTab);
 			view.render(20); // Intrinsic sizing must not reset the allocated Test viewport.
 			lines = frame(width, height);
 			expect(lines.join("\n")).toContain("result 39");
@@ -625,7 +630,7 @@ describe("WebSearchView", () => {
 
 	it("bounds all tabs at narrow regular sizes without dropping navigation hints at practical widths", () => {
 		const { view } = setup({ engines: () => [engine, { name: "reader", label: "Reader 日本語", tier: "reader" }], rows: () => 12 });
-		for (let selected = 0; selected < 3; selected++) {
+		for (let selected = 0; selected < 5; selected++) {
 			for (const width of [1, 2, 4, 20, 40, 80]) {
 				const lines = view.render(width);
 				expect(lines.length).toBeLessThanOrEqual(12);
@@ -644,7 +649,7 @@ describe("WebSearchView", () => {
 		const mouse = (x: number, overrides: Partial<TuiMouseEvent> = {}): TuiMouseEvent => ({ type: "click", button: "left", x, y: 0, screenX: x, screenY: 0, width: 100, height: 20, shift: false, alt: false, ctrl: false, ...overrides });
 		const title = view.render(100)[0];
 		const fetcherX = title.indexOf("Fetchers");
-		const testX = title.indexOf("Test search");
+		const testX = title.indexOf("Test web");
 		expect(view.handleMouse(mouse(fetcherX))?.handled).toBe(true);
 		expect(view.render(100).join("\n")).toContain("Fetcher activity");
 		view.handleMouse(mouse(testX, { y: 1 }));
@@ -657,7 +662,7 @@ describe("WebSearchView", () => {
 		expect(view.render(100).join("\n")).toContain("Enter a query above");
 		view.handleInput("query");
 		view.render(100);
-		view.handleMouse(mouse(title.indexOf("Search engines")));
+		view.handleMouse(mouse(title.indexOf("Web stats")));
 		expect(view.render(100).join("\n")).toContain("Search engine activity");
 		view.handleMouse(mouse(testX));
 		expect(view.render(100).join("\n")).toContain("query");
@@ -673,7 +678,161 @@ describe("WebSearchView", () => {
 		expect(text).toContain("Fixture (fixture) · main · historical (not current)");
 		expect(text).toContain("Previously observed · not currently configured in this tier");
 		expect(text).not.toContain("Fixture (fixture) · main · configured");
-		expect(text).toContain("results last unknown");
+		expect(text).toMatch(/unknown +\| 0 +\|/);
 		view.dispose();
 	});
+	it("runs web and paper independently, preserves queries, and ignores duplicate submissions per domain", async () => {
+		const web = deferred<string>();
+		const paper = deferred<string>();
+		const { deps, view } = setupTest({ search: vi.fn(() => web.promise) });
+		const paperSearch = vi.fn((_query: string, _signal: AbortSignal) => paper.promise);
+		deps.profiles.papers.search = paperSearch;
+		view.focused = true;
+		view.handleInput("web draft"); view.handleInput("\r"); view.handleInput("\r");
+		view.handleInput(tab);
+		view.handleInput("paper draft"); view.handleInput("\r"); view.handleInput("\r");
+		expect(deps.search).toHaveBeenCalledTimes(1);
+		expect(paperSearch).toHaveBeenCalledExactlyOnceWith("paper draft", expect.any(AbortSignal));
+		web.resolve("web-only result"); await flush();
+		const papers = view.render(80).join("\n");
+		expect(papers).toContain("paper draft");
+		expect(papers).toContain("Searching…");
+		expect(papers).not.toContain("web-only result");
+		view.handleInput(backTab);
+		expect(view.render(80).join("\n")).toContain("web-only result");
+		expect(view.render(80).join("\n")).toContain("web draft");
+		paper.resolve("paper-only result"); await flush();
+		expect(view.render(80).join("\n")).not.toContain("paper-only result");
+		view.handleInput(tab);
+		expect(view.render(80).join("\n")).toContain("paper-only result");
+		expect(view.render(80).join("\n")).toContain("paper draft");
+		view.dispose();
+	});
+
+	it.each(["cancel", "escape", "dispose"])("%s aborts both tests, unsubscribes on close, and rejects late domain completions", async (action) => {
+		const web = deferred<string>();
+		const paper = deferred<string>();
+		const webSearch = vi.fn((_query: string, _signal: AbortSignal) => web.promise);
+		const { deps, view } = setupTest({ search: webSearch });
+		const paperSearch = vi.fn((_query: string, _signal: AbortSignal) => paper.promise);
+		deps.profiles.papers.search = paperSearch;
+		view.handleInput("web"); view.handleInput("\r");
+		view.handleInput(tab); view.handleInput("papers"); view.handleInput("\r");
+		select(view, "Paper stats");
+		if (action === "dispose") view.dispose();
+		else view.handleInput(action === "cancel" ? "\x03" : esc);
+		expect(webSearch.mock.calls[0][1].aborted).toBe(true);
+		expect(paperSearch.mock.calls[0][1].aborted).toBe(true);
+		vi.mocked(deps.requestRender).mockClear();
+		web.resolve("stale-web"); paper.reject(new Error("raw-secret")); await flush();
+		expect(deps.requestRender).not.toHaveBeenCalled();
+		if (action === "cancel") {
+			select(view, "Test web");
+			expect(view.render(80).join("\n")).toContain("Search cancelled.");
+			select(view, "Test papers");
+			expect(view.render(80).join("\n")).toContain("Search cancelled.");
+			view.dispose();
+		}
+		vi.mocked(deps.requestRender).mockClear();
+		deps.profiles.web.monitor.begin(engine)({ status: "success" });
+		deps.profiles.papers.monitor.begin({ name: "arxiv", label: "ArXiv", tier: "main" })({ status: "timeout" });
+		expect(deps.requestRender).not.toHaveBeenCalled();
+	});
+
+	it("shows paper monitor observations without issuing web or paper searches, and retains historical tiers", () => {
+		const { deps, view } = setup({ rows: () => 100 });
+		view.handleInput(tab);
+		const paperEngine: EngineDescriptor = { name: "arxiv", label: "ArXiv 日本語", tier: "main" };
+		deps.profiles.papers.monitor.begin(paperEngine)({ status: "timeout" });
+		deps.profiles.papers.monitor.begin({ ...paperEngine, tier: "fallback" })({ status: "success", resultCount: 8 });
+		expect(deps.requestRender).toHaveBeenCalled();
+		const text = view.render(80).join("\n");
+		expect(text).toContain("Paper automatic search");
+		expect(text).toContain("timeout");
+		expect(text).toContain("ArXiv 日本語 (arxiv) · fallback · historical (not current)");
+		expect(text).toMatch(/8 +\| 8/);
+		expect(text).not.toMatch(/combine|Fixture/);
+		expect(deps.search).not.toHaveBeenCalled();
+		expect(deps.profiles.papers.search).not.toHaveBeenCalled();
+		view.handleInput(backTab);
+		expect(view.render(80).join("\n")).not.toContain("ArXiv");
+		expect(deps.monitor.snapshot()).toEqual([]);
+		view.dispose();
+	});
+
+	it.each([80, 120])("aligns all counter/timing/config columns at %s cells with Unicode labels and honest unattempted values", (width) => {
+		const { deps, view } = setup({ rows: () => 100, engines: () => [
+			{ ...engine, label: "日本語 👩🏽‍💻 é" }, { name: "unused", label: "未使用", tier: "main" },
+		] });
+		deps.monitor.begin(engine)({ status: "success", resultCount: 7 });
+		deps.monitor.begin(engine)({ status: "timeout" });
+		const lines = view.render(width);
+		const text = lines.join("\n");
+		for (const key of ["active", "ok", "empty", "failed", "timeout", "cancelled", "last", "results last", "results total", "latency last", "latency total", "deadline ms", "candidate cap", "boost"]) expect(text).toContain(key);
+		expect(text).toContain("not attempted · health unknown");
+		expect(text).toContain("—");
+		expect(text).toContain("30000");
+		for (let index = 0; index < lines.length - 2; index++) {
+			if (!lines[index + 1].includes("-+-")) continue;
+			const boundaries = (line: string, separator: string) => [...line.matchAll(new RegExp(`\\${separator}`, "g"))].map((match) => visibleWidth(line.slice(0, match.index)));
+			expect(boundaries(lines[index], "|")).toEqual(boundaries(lines[index + 1], "+"));
+			expect(boundaries(lines[index], "|")).toEqual(boundaries(lines[index + 2], "|"));
+		}
+		expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
+		view.dispose();
+	});
+
+	it("uses narrow metric rows without silently dropping counters or truncating scalar policy values", () => {
+		const { view } = setup({ rows: () => 500, policy: () => fakePolicy({}, { sources: [{ name: "fixture", timeoutMs: 123456789, maxResults: 987654321, boost: 12.3456789 }] }) });
+		const text = view.render(40).join("\n");
+		for (const key of ["active", "ok", "empty", "failed", "timeout", "cancelled", "last", "results last", "results total", "latency last", "latency total", "123456789", "987654321", "12.3456789"]) expect(text).toContain(key);
+		for (let width = 1; width <= 45; width++) expect(view.render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
+		view.dispose();
+	});
+
+	it.each([[80, 24], [120, 40]])("retains all five tab labels, scrollable last rows and bounded chrome at %sx%s", (width, height) => {
+		const engines: EngineDescriptor[] = Array.from({ length: 64 }, (_, n) => ({ name: `engine-${n}`, label: `Engine ${n} 日本語`, tier: "main" }));
+		const { view } = setup({ engines: () => engines, rows: () => height });
+		const initial = view.render(width);
+		for (const label of ["Web stats", "Paper stats", "Fetchers", "Test web", "Test papers"]) expect(initial[0]).toContain(label);
+		expect(initial.length).toBeLessThanOrEqual(height);
+		view.handleInput(end);
+		expect(view.render(width).join("\n")).toContain("Fuse first");
+		expect(scrollToText(view, () => view.render(width), "Engine 63", up).join("\n")).toContain("Engine 63");
+		expect(view.render(width).every((line) => visibleWidth(line) <= width)).toBe(true);
+		view.dispose();
+	});
+
+	it("uses all five measured mouse hit targets under fullscreen allocation", () => {
+		const { view } = setup();
+		view.focused = true;
+		const root = new VStack([{ component: new Text("transcript", 0, 0), shrink: 0 }, { component: view, grow: 1, shrink: 1 }]);
+		for (const label of ["Paper stats", "Fetchers", "Test web", "Test papers", "Web stats"]) {
+			const lines = renderLayoutFrame(root, 80, 24, () => {}).lines;
+			const title = lines[1];
+			const x = visibleWidth(title.slice(0, title.indexOf(label)));
+			expect(view.handleMouse({ type: "click", button: "left", x, y: 0, screenX: x, screenY: 1, width: 80, height: 23, shift: false, alt: false, ctrl: false })?.handled).toBe(true);
+			const text = renderLayoutFrame(root, 80, 24, () => {}).lines.join("\n");
+			expect(text.includes(CURSOR_MARKER)).toBe(label.startsWith("Test"));
+			if (label === "Paper stats") expect(text).toContain("Paper automatic search");
+			if (label === "Fetchers") expect(text).toContain("Fetcher activity");
+		}
+		view.dispose();
+	});
+
+	it("fuzzes all five narrow tab widths including focused Unicode query editors", () => {
+		const { view } = setup({ rows: () => 24 });
+		view.focused = true;
+		for (let index = 0; index < 5; index++) {
+			if (index >= 3) view.handleInput("日本語 👩🏽‍💻 é");
+			for (let width = 1; width <= 80; width++) {
+				const lines = view.render(width);
+				expect(lines.length).toBeLessThanOrEqual(24);
+				expect(lines.every((line) => visibleWidth(line) <= width), `tab ${index}, width ${width}`).toBe(true);
+			}
+			view.handleInput(tab);
+		}
+		view.dispose();
+	});
+
 });
