@@ -1,3 +1,4 @@
+import { SharedRuntime } from "../extensions/engine/runtime.js";
 import { describe, expect, it, vi } from "vitest";
 import {
 	createAssistantMessageEventStream, createModels, createProvider, getCurrentTools, InMemoryCredentialStore,
@@ -166,6 +167,47 @@ describe("configured native search", () => {
 		expect(call.context.messages[1]).toMatchObject({ role: "user" });
 		expect(literalSearchQuery(call.context)).toBe("test query");
 		expect(call.payload).toMatchObject({ store: false, tools: [{ type: "web_search" }], include: ["reasoning.encrypted_content", "web_search_call.action.sources"] });
+	});
+
+	it("honors extended native deadlines and configured usage grace without hidden caps", async () => {
+		vi.useFakeTimers();
+		try {
+			const { ctx, dispatch } = await fixture({ providers: ["openai"], settleAfterAbortMs: "never" });
+			const [engine] = await discoverNativeEngines(ctx);
+			const controller = new AbortController();
+			let outcome: unknown = "pending";
+			void engine.search("q", 3, controller.signal, { nativeMs: 120000, nativeGraceMs: 2000 }).catch(error => { outcome = error; });
+			await vi.advanceTimersByTimeAsync(60001);
+			expect(outcome).toBe("pending");
+			expect(dispatch.mock.calls[0][0].options.timeoutMs).toBe(120000);
+			expect(dispatch.mock.calls[0][0].options.signal).toBe(controller.signal);
+			controller.abort();
+			await vi.advanceTimersByTimeAsync(1999);
+			expect(outcome).toBe("pending");
+			await vi.advanceTimersByTimeAsync(1);
+			expect(outcome).toBeInstanceOf(NativeUsageUnavailableError);
+			expect((outcome as Error).message).toContain("2000ms");
+		} finally { vi.useRealTimers(); }
+	});
+
+	it("retains the shared physical slot until a managed native stream actually settles", async () => {
+		vi.useFakeTimers();
+		try {
+			const { ctx } = await fixture({ providers: ["openai"], settleAfterAbortMs: 50 });
+			const [engine] = await discoverNativeEngines(ctx);
+			const runtime = new SharedRuntime({ maxConcurrent: 1, perProvider: 1 });
+			let first: unknown = "pending", secondStarted = false;
+			void runtime.operation("openai", 10, undefined, 10, signal => engine.search("q", 3, signal, { managedDeadline: true, nativeGraceMs: 10 })).catch(error => { first = error; });
+			const second = runtime.operation("openai", 1000, undefined, 0, async () => { secondStarted = true; return "next"; });
+			await vi.advanceTimersByTimeAsync(20);
+			expect((first as Error).name).toBe("TimeoutError");
+			expect(secondStarted).toBe(false);
+			await vi.advanceTimersByTimeAsync(39);
+			expect(secondStarted).toBe(false);
+			await vi.advanceTimersByTimeAsync(1);
+			expect(await second).toBe("next");
+			expect(secondStarted).toBe(true);
+		} finally { vi.useRealTimers(); }
 	});
 
 	it("uses the current compatible configured model without querying all models", async () => {

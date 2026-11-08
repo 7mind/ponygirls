@@ -50,6 +50,7 @@ let requestId = 0;
 async function callMCP(
 	method: string,
 	params?: Record<string, unknown>,
+	signal?: AbortSignal,
 	fetchFn: typeof fetch = fetch,
 ): Promise<{ results: SearchResult[] }> {
 	const id = ++requestId;
@@ -67,7 +68,7 @@ async function callMCP(
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(request),
-		signal: timeoutSignal(undefined, 30000),
+		signal: timeoutSignal(signal),
 	});
 
 	if (!response.ok) {
@@ -150,7 +151,7 @@ export async function searchExaMCP(
 			query,
 			numResults: Math.min(numResults, 20),
 		},
-	});
+	}, signal);
 }
 
 /**
@@ -165,7 +166,7 @@ export async function fetchExaMCP(
 	const result = await callMCP("tools/call", {
 		name: "web_fetch_exa",
 		arguments: { url },
-	});
+	}, signal);
 	const first = result.results[0];
 	if (!first) {
 		throw new Error(`Exa MCP fetch returned no content for ${url}`);

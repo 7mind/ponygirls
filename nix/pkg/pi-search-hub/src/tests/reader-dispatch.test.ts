@@ -53,6 +53,23 @@ describe("fetchWithFallback", () => {
 		mockFetchWithReader.mockReset();
 	});
 
+	it("uses configurable per-reader deadlines and proceeds after a hung reader", async () => {
+		mockFetchWithReader.mockImplementationOnce(() => new Promise(() => {}))
+			.mockResolvedValueOnce(makeResult("recovered", "jina"));
+		const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
+		const result = await fetchWithFallback("https://example.com", ["firecrawl", "jina"], {}, undefined,
+			{ ...MINIMAL_CONFIG, timeouts: { readerMs: 10, overallMs: 1000 } });
+		expect(result).toEqual(makeResult("recovered", "jina"));
+	});
+
+	it("enforces the standalone overall budget across the fallback chain", async () => {
+		mockFetchWithReader.mockImplementation(() => new Promise(() => {}));
+		const { fetchWithFallback } = await import("../extensions/readers/dispatch.js");
+		await expect(fetchWithFallback("https://example.com", ["firecrawl", "jina"], {}, undefined,
+			{ ...MINIMAL_CONFIG, timeouts: { readerMs: 1000, overallMs: 10 } })).rejects.toThrow("deadline");
+		mockFetchWithReader.mockReset();
+	});
+
 	it("returns result from first reader on success", async () => {
 		mockFetchWithReader.mockResolvedValueOnce(makeResult("hello from jina", "jina"));
 
@@ -287,8 +304,8 @@ describe("fetchWithFallback", () => {
 		expect(result.content).toBe("hello from jina");
 		expect(result.reader).toBe("jina");
 		expect(mockFetchWithReader).toHaveBeenCalledTimes(2);
-		expect(mockFetchWithReader).toHaveBeenNthCalledWith(1, "https://example.com", "firecrawl", {}, undefined, MINIMAL_CONFIG);
-		expect(mockFetchWithReader).toHaveBeenNthCalledWith(2, "https://example.com", "jina", {}, undefined, MINIMAL_CONFIG);
+		expect(mockFetchWithReader).toHaveBeenNthCalledWith(1, "https://example.com", "firecrawl", {}, expect.any(AbortSignal), MINIMAL_CONFIG);
+		expect(mockFetchWithReader).toHaveBeenNthCalledWith(2, "https://example.com", "jina", {}, expect.any(AbortSignal), MINIMAL_CONFIG);
 	});
 
 	it("single-entry fallback never falls through", async () => {

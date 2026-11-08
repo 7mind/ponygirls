@@ -3,6 +3,7 @@
  * Extracted so fetchWithFallback can import it and tests can mock it.
  */
 
+import { resolveTimeouts } from "../engine/policy.js";
 import type { SearchConfig } from "../types.js";
 import { timeoutSignal, sanitizeError, MISSING_KEY_HELP } from "../utils.js";
 import { resolveBackendKey } from "../credentials.js";
@@ -55,9 +56,11 @@ export async function fetchWithReader(
 	signal: AbortSignal | undefined,
 	config: SearchConfig,
 ): Promise<FetchResult> {
+	signal = timeoutSignal(signal, signal ? undefined : config.sources?.[reader]?.timeoutMs ?? config.backends?.[reader]?.timeout ?? resolveTimeouts(config.timeouts).readerMs);
+	signal?.throwIfAborted();
 	switch (reader) {
 		case "sofya": {
-			const sofyaKey = resolveBackendKey("sofya", config);
+			const sofyaKey = await resolveBackendKey("sofya", config, signal);
 			if (!sofyaKey) {
 				throw new Error(`Sofya reader selected but no API key configured. ${MISSING_KEY_HELP}`);
 			}
@@ -66,13 +69,13 @@ export async function fetchWithReader(
 		}
 
 		case "firecrawl": {
-			const firecrawlKey = resolveBackendKey("firecrawl", config);
+			const firecrawlKey = await resolveBackendKey("firecrawl", config, signal);
 			const result = await fetchFirecrawl(url, firecrawlKey, signal);
 			return { content: result.content, reader: "firecrawl" };
 		}
 
 		case "exa": {
-			const exaKey = resolveBackendKey("exa", config);
+			const exaKey = await resolveBackendKey("exa", config, signal);
 			if (!exaKey) {
 				throw new Error(`Exa reader selected but no API key configured. ${MISSING_KEY_HELP}`);
 			}
@@ -94,7 +97,7 @@ export async function fetchWithReader(
 			};
 
 			// Optional Jina API key for higher rate limits (fallback to no-auth)
-			const jinaKey = resolveBackendKey("jina", config);
+			const jinaKey = await resolveBackendKey("jina", config, signal);
 			if (jinaKey) {
 				headers["Authorization"] = `Bearer ${jinaKey}`;
 			}

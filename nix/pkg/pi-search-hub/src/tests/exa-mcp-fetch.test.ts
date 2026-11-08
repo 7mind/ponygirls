@@ -15,6 +15,22 @@ describe("fetchExaMCP", () => {
 		fetchSpy.mockRestore();
 	});
 
+	// BG regression: Exa previously discarded the scheduler signal entirely.
+	it("cancels an active request using the supplied signal", async () => {
+		let observed: AbortSignal | undefined;
+		fetchSpy.mockImplementationOnce(async (_url: string | URL | Request, init?: RequestInit) => {
+			observed = init?.signal as AbortSignal;
+			return await new Promise<Response>((_resolve, reject) => {
+				observed!.addEventListener("abort", () => reject(observed!.reason), { once: true });
+			});
+		});
+		const controller = new AbortController();
+		const pending = fetchExaMCP("https://example.com", controller.signal);
+		controller.abort(new Error("caller stopped"));
+		expect(observed).toBe(controller.signal);
+		await expect(pending).rejects.toThrow("caller stopped");
+	});
+
 	it("sends valid JSON-RPC 2.0 request with web_fetch_exa tool", async () => {
 		fetchSpy.mockResolvedValueOnce({
 			ok: true,

@@ -2,6 +2,7 @@
  * Shared utilities for pi-search-hub extension.
  */
 
+import { DEFAULT_TIMEOUTS, validateTimeout } from "./engine/policy.js";
 import { join } from "node:path";
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 
@@ -9,9 +10,9 @@ import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const HTTP_TIMEOUT_MS = 30_000;
+export const HTTP_TIMEOUT_MS = DEFAULT_TIMEOUTS.sourceMs;
 export const COOLDOWN_MS = 2_000;
-export const COMMAND_TIMEOUT_MS = 5_000;
+export const COMMAND_TIMEOUT_MS = DEFAULT_TIMEOUTS.credentialMs;
 
 export const MISSING_KEY_HELP =
 	"Set the API key via env var (SEARCH_<BACKEND>_API_KEY), " +
@@ -34,12 +35,17 @@ export function getAgentDir(): string {
 
 const backendCooldowns = new Map<string, number>();
 
-export function waitForCooldown(backend: string): Promise<void> {
+export function waitForCooldown(backend: string, signal?: AbortSignal): Promise<void> {
+	signal?.throwIfAborted();
 	const until = backendCooldowns.get(backend);
 	if (!until) return Promise.resolve();
 	const delay = until - Date.now();
 	if (delay <= 0) return Promise.resolve();
-	return new Promise(r => setTimeout(r, delay));
+	return new Promise((resolve, reject) => {
+		const abort = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); reject(signal?.reason); };
+		const timer = setTimeout(() => { signal?.removeEventListener("abort", abort); resolve(); }, delay);
+		signal?.addEventListener("abort", abort, { once: true });
+	});
 }
 
 export function markCooldown(backend: string) {
@@ -54,9 +60,11 @@ export function clearCooldowns() {
 // Signal helpers
 // ---------------------------------------------------------------------------
 
-/** Combine an optional caller signal with a timeout (default or custom). */
+/** Caller owns its deadline unless an explicit inner timeout is requested. */
 export function timeoutSignal(signal?: AbortSignal, timeoutMs?: number): AbortSignal | undefined {
+	if (signal && timeoutMs === undefined) return signal;
 	const effectiveTimeout = timeoutMs ?? HTTP_TIMEOUT_MS;
+	validateTimeout(effectiveTimeout);
 	if (!signal) return AbortSignal.timeout(effectiveTimeout);
 	return AbortSignal.any([signal, AbortSignal.timeout(effectiveTimeout)]);
 }

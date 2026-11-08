@@ -2,8 +2,9 @@
  * Backend registry and dispatcher for pi-search-hub extension.
  */
 
+import { resolveTimeouts } from "../engine/policy.js";
 import type { BackendRunner, BackendConfig, SearchResult } from "../types.js";
-import { MISSING_KEY_HELP, waitForCooldown, markCooldown, searchCache, cacheKey } from "../utils.js";
+import { MISSING_KEY_HELP, waitForCooldown, markCooldown, searchCache, cacheKey, timeoutSignal } from "../utils.js";
 import { resolveBackendKey } from "../credentials.js";
 import { config } from "../config.js";
 import { recordBackendSuccess, recordBackendFailure } from "../scoring.js";
@@ -286,29 +287,30 @@ export async function runBackend(
 	signal?: AbortSignal,
 	options?: { skipCache?: boolean },
 ): Promise<SearchResult[]> {
+	signal = timeoutSignal(signal, signal ? undefined : config.sources?.[backend]?.timeoutMs ?? config.backends?.[backend]?.timeout ?? resolveTimeouts(config.timeouts).sourceMs);
+	signal?.throwIfAborted();
 	// Check cache first (inline — no persistent key var needed here)
 	if (!options?.skipCache) {
 		const cached = searchCache.get(cacheKey(query, backend, numResults));
 		if (cached) return cached;
 	}
 
-	await waitForCooldown(backend);
+	await waitForCooldown(backend, signal);
 	const def = BACKEND_DEFS[backend];
 	if (!def) throw new Error(`Unknown backend: ${backend}`);
 
 	let key: string | undefined;
 	if (def.needsKeyFromConfig) {
-		const bc = (config.backends as Record<string, BackendConfig> | undefined)?.[backend];
-		key = bc?.apiKey;
+		key = await resolveBackendKey(backend, config, signal);
 	} else if (def.needsKey) {
-		key = resolveBackendKey(backend, config);
+		key = await resolveBackendKey(backend, config, signal);
 		if (!key) {
 			const label = def.label;
 			throw new Error(`${label} backend not configured. ${MISSING_KEY_HELP}`);
 		}
 	} else if (def.optionalKey) {
 		// Optionally resolve key — don't throw if missing
-		key = resolveBackendKey(backend, config);
+		key = await resolveBackendKey(backend, config, signal);
 	}
 
 	let instanceUrl: string | undefined;

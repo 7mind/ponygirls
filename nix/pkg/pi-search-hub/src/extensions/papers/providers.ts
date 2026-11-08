@@ -172,7 +172,7 @@ export function createPaperProviders(settings: SearchConfig, transport: typeof f
   const enabled = (name: PaperProviderName) => config.papers?.sources?.[name]?.enabled === true || (name !== "arxiv" && !!settings.backends?.[name]?.enabled && config.papers?.sources?.[name]?.enabled !== false);
   const json = async (name: PaperProviderName, endpoint: string, signal: AbortSignal, payload?: unknown) => {
     signal.throwIfAborted();
-    const key = resolveBackendKey(name, settings);
+    const key = await resolveBackendKey(name, settings, signal);
     const headers: Record<string, string> = { Accept: "application/json" };
     if (key) headers[name === "exa" ? "x-api-key" : "Authorization"] = name === "exa" ? key : `Bearer ${key}`;
     if (payload) headers["Content-Type"] = "application/json";

@@ -5,6 +5,8 @@
  * The single-reader logic lives in single.ts; this module adds retry/fallback.
  */
 
+import { boundedOperation, type SharedRuntime } from "../engine/runtime.js";
+import { resolveTimeouts } from "../engine/policy.js";
 import type { SearchConfig } from "../types.js";
 import { fetchWithReader, readerLabel } from "./single.js";
 import type { FetchParams, FetchResult } from "./single.js";
@@ -50,7 +52,9 @@ export async function fetchWithFallback(
 	config: SearchConfig,
 	onAttempt?: (reader: string, index: number, total: number) => void,
 	onOutcome?: (reader: string, status: "success" | "failed" | "cancelled") => void,
+	runtime?: SharedRuntime,
 ): Promise<FetchResult> {
+	if (!signal) return boundedOperation(inner => fetchWithFallback(url, readers, params, inner, config, onAttempt, onOutcome, runtime), resolveTimeouts(config.timeouts).overallMs, undefined, 0);
 	const errors: Array<{ reader: string; error: string }> = [];
 
 	for (let i = 0; i < readers.length; i++) {
@@ -59,7 +63,11 @@ export async function fetchWithFallback(
 		onAttempt?.(candidate, i, readers.length);
 
 		try {
-			const result = await fetchWithReader(url, candidate, params, signal, config);
+			const timeoutMs = config.sources?.[candidate]?.timeoutMs ?? config.backends?.[candidate]?.timeout ?? resolveTimeouts(config.timeouts).readerMs;
+			const read = (attemptSignal: AbortSignal) => fetchWithReader(url, candidate, params, attemptSignal, config);
+			const result = runtime
+				? await runtime.operation(candidate, timeoutMs, signal, 0, read)
+				: await boundedOperation(read, timeoutMs, signal, 0);
 			// A resolved call with no content did not read the page. Firecrawl
 			// /v2/scrape does this when `data` exists but `markdown` is empty;
 			// other readers can return a blank body too. Treat it as a retryable

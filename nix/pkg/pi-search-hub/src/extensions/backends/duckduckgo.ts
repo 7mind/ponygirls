@@ -22,6 +22,7 @@ export interface DuckDuckGoOptions {
 	timelimit?: string;
 	/** Safe search: "on", "moderate", "off". Default: "moderate" */
 	safesearch?: string;
+	timeoutMs?: number;
 }
 
 export async function searchDuckDuckGo(
@@ -102,10 +103,10 @@ print(json.dumps({"results": results}))
 		proc.stderr.on("data", (data: Buffer) => { stderr += data.toString(); });
 
 		// Timeout timer
-		const timeout = setTimeout(() => {
+		const timeout = !signal || options?.timeoutMs !== undefined ? setTimeout(() => {
 			proc.kill();
-			reject(new Error("DuckDuckGo search timed out (30s)"));
-		}, HTTP_TIMEOUT_MS);
+			reject(new Error("DuckDuckGo search timed out"));
+		}, options?.timeoutMs ?? HTTP_TIMEOUT_MS) : undefined;
 
 		// Abort signal handler
 		const onAbort = () => {
@@ -114,7 +115,7 @@ print(json.dumps({"results": results}))
 			reject(new Error("DuckDuckGo search aborted"));
 		};
 		if (signal) {
-			if (signal.aborted) { clearTimeout(timeout); reject(new Error("DuckDuckGo search aborted")); return; }
+			if (signal.aborted) { clearTimeout(timeout); proc.kill(); reject(new Error("DuckDuckGo search aborted")); return; }
 			signal.addEventListener("abort", onAbort, { once: true });
 		}
 

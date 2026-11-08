@@ -7,18 +7,20 @@
  *   • otherwise     → return as literal string (actual key)
  */
 
-import { execSync } from "node:child_process";
-import { COMMAND_TIMEOUT_MS } from "./utils.js";
-import type { BackendConfig, SearchConfig } from "./types.js";
+import { spawn } from "node:child_process";
+import { resolveTimeouts, validateTimeout } from "./engine/policy.js";
+import type { SearchConfig } from "./types.js";
 
 // ---------------------------------------------------------------------------
 // Credential cache
 // ---------------------------------------------------------------------------
 
-const commandValueCache = new Map<string, { value?: string; errorMessage?: string }>();
+let cacheEpoch = 0;
+const commandValueCache = new Map<string, { value?: string }>();
 
 /** Invalidate cached shell-command credentials so key rotation takes effect. */
 export function clearCredentialCache(): void {
+	cacheEpoch++;
 	commandValueCache.clear();
 }
 
@@ -32,31 +34,52 @@ export function clearCredentialCache(): void {
  *   • "ALL_CAPS"   → read process.env[ALL_CAPS]
  *   • otherwise     → return as literal string (actual key)
  */
-export function resolveConfigValue(reference: string | undefined): string | undefined {
+export async function resolveConfigValue(reference: string | undefined, signal?: AbortSignal, timeoutMs = resolveTimeouts(undefined).credentialMs): Promise<string | undefined> {
+	signal?.throwIfAborted();
+	validateTimeout(timeoutMs);
 	if (!reference) return undefined;
-
-	// !command — execute shell command, cache result
 	if (reference.startsWith("!")) {
 		const cached = commandValueCache.get(reference);
-		if (cached) {
-			if (cached.errorMessage) throw new Error(cached.errorMessage);
-			return cached.value;
-		}
-		try {
-			const output = execSync(reference.slice(1), {
-				encoding: "utf-8",
-				stdio: ["ignore", "pipe", "pipe"],
-				timeout: COMMAND_TIMEOUT_MS,
-			})
-				.trim();
-			const value = output.length > 0 ? output : undefined;
-			commandValueCache.set(reference, { value });
-			return value;
-		} catch (error) {
-			const errorMessage = (error as Error).message;
-			commandValueCache.set(reference, { errorMessage });
-			throw error;
-		}
+		if (cached) return cached.value;
+		// Do not share in-flight work: cancelling one caller must not cancel another.
+		const epoch = cacheEpoch;
+		const value = await new Promise<string | undefined>((resolve, reject) => {
+			const child = (() => {
+				try {
+					return spawn(reference.slice(1), [], {
+						shell: true, detached: process.platform !== "win32",
+						stdio: ["ignore", "pipe", "ignore"],
+					});
+				} catch { throw new Error("Credential command failed"); }
+			})();
+			let output = "";
+			let settled = false;
+			const kill = () => {
+				try {
+					if (process.platform !== "win32" && child.pid) process.kill(-child.pid, "SIGKILL");
+					else child.kill("SIGKILL");
+				} catch { /* Already exited. */ }
+			};
+			const finish = (error?: Error) => {
+				if (settled) return;
+				settled = true;
+				clearTimeout(timer); signal?.removeEventListener("abort", abort);
+				if (error) { kill(); reject(error); }
+				else resolve(output.trim() || undefined);
+			};
+			const abort = () => finish(new Error("Credential resolution cancelled"));
+			const timer = setTimeout(() => finish(new Error("Credential command timed out")), timeoutMs);
+			signal?.addEventListener("abort", abort, { once: true });
+			child.stdout.on("data", (chunk: Buffer) => {
+				output += chunk.toString();
+				if (output.length > 1024 * 1024) finish(new Error("Credential command output too large"));
+			});
+			child.on("error", () => finish(new Error("Credential command failed")));
+			child.on("close", code => finish(code === 0 ? undefined : new Error("Credential command failed")));
+			if (signal?.aborted) abort();
+		});
+		if (epoch === cacheEpoch) commandValueCache.set(reference, { value });
+		return value;
 	}
 
 	// ALL_CAPS → env var lookup
@@ -103,10 +126,11 @@ export const FALLBACK_ENV_MAP: Record<string, string> = {
 };
 
 /** Lazy resolution: config.apiKey → resolveConfigValue() → FALLBACK_ENV_MAP fallback. */
-export function resolveBackendKey(backend: string, config: SearchConfig): string | undefined {
+export async function resolveBackendKey(backend: string, config: SearchConfig, signal?: AbortSignal): Promise<string | undefined> {
+	signal?.throwIfAborted();
 	const bc = config.backends?.[backend as keyof typeof config.backends];
 	if (bc?.apiKey) {
-		const resolved = resolveConfigValue(bc.apiKey);
+		const resolved = await resolveConfigValue(bc.apiKey, signal, resolveTimeouts(config.timeouts).credentialMs);
 		if (resolved) return resolved;
 	}
 	const fallbackEnv = FALLBACK_ENV_MAP[backend];
@@ -129,7 +153,7 @@ export function getKeySource(backend: string, config: SearchConfig): { configure
 	}
 	const ref = bc.apiKey;
 	if (ref.startsWith("!")) {
-		return { configured: true, source: `shell:${ref.slice(0, 40)}...` };
+		return { configured: true, source: "shell command" };
 	}
 	if (/^[A-Z][A-Z0-9_]*$/.test(ref)) {
 		const envValue = process.env[ref];

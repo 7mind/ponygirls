@@ -355,7 +355,7 @@ describe("selectBackendsForFallback", () => {
 // Credential resolution tests
 // ---------------------------------------------------------------------------
 
-describe("resolveConfigValue", () => {
+describe("resolveConfigValue", async () => {
 	beforeEach(() => {
 		clearCredentialCache();
 	});
@@ -364,30 +364,30 @@ describe("resolveConfigValue", () => {
 		clearCredentialCache();
 	});
 
-	it("returns undefined for undefined input", () => {
-		expect(resolveConfigValue(undefined)).toBeUndefined();
+	it("returns undefined for undefined input", async () => {
+		expect(await resolveConfigValue(undefined)).toBeUndefined();
 	});
 
-	it("returns undefined for empty string", () => {
-		expect(resolveConfigValue("")).toBeUndefined();
+	it("returns undefined for empty string", async () => {
+		expect(await resolveConfigValue("")).toBeUndefined();
 	});
 
-	it("returns literal key for non-ALL_CAPS strings", () => {
-		expect(resolveConfigValue("sk-abc123")).toBe("sk-abc123");
+	it("returns literal key for non-ALL_CAPS strings", async () => {
+		expect(await resolveConfigValue("sk-abc123")).toBe("sk-abc123");
 	});
 
-	it("resolves ALL_CAPS from env var", () => {
+	it("resolves ALL_CAPS from env var", async () => {
 		process.env.TEST_SEARCH_KEY_123 = "secret-value";
 		try {
-			expect(resolveConfigValue("TEST_SEARCH_KEY_123")).toBe("secret-value");
+			expect(await resolveConfigValue("TEST_SEARCH_KEY_123")).toBe("secret-value");
 		} finally {
 			delete process.env.TEST_SEARCH_KEY_123;
 		}
 	});
 
-	it("warns for ALL_CAPS that is unset", () => {
+	it("warns for ALL_CAPS that is unset", async () => {
 		const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
-		const result = resolveConfigValue("DEFINITELY_NOT_SET_XYZ");
+		const result = await resolveConfigValue("DEFINITELY_NOT_SET_XYZ");
 		expect(result).toBeUndefined();
 		expect(warnSpy).toHaveBeenCalled();
 		warnSpy.mockRestore();

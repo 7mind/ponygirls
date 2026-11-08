@@ -5,6 +5,10 @@
 // https://docs.x.ai/developers/tools/citations
 import type { Api, Context, Model, Usage } from "@earendil-works/pi-ai";
 import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
+import { boundedOperation } from "./engine/runtime.js";
+import { DEFAULT_TIMEOUTS, resolveTimeouts } from "./engine/policy.js";
+import type { SearchTimeouts } from "./engine/types.js";
+import { timeoutSignal } from "./utils.js";
 import type { SearchResult } from "./types.js";
 
 export type NativeProviderId = "openai" | "openai-codex" | "anthropic" | "xai" | "grok-build";
@@ -22,15 +26,19 @@ export class NativeSearchError extends Error {
 }
 /** The provider ignored cancellation long enough that final usage is unknown. */
 export class NativeUsageUnavailableError extends NativeSearchError {
-	constructor(provider: NativeProviderId, cause?: unknown) {
-		super(`${provider} native search: usage unavailable; stream did not settle within ${NATIVE_ABORT_SETTLEMENT_GRACE_MS}ms after cancellation`, undefined, { cause });
+	constructor(provider: NativeProviderId, cause?: unknown, graceMs = DEFAULT_TIMEOUTS.nativeGraceMs) {
+		super(`${provider} native search: usage unavailable; stream did not settle within ${graceMs}ms after cancellation`, undefined, { cause });
 		this.name = "NativeUsageUnavailableError";
 	}
+}
+export interface NativeSearchOptions extends Partial<SearchTimeouts> {
+	/** Shared runtime owns logical deadlines/grace; retain the physical stream lifetime. */
+	managedDeadline?: boolean;
 }
 export interface NativeEngine {
 	id: NativeProviderId;
 	label: string;
-	search(query: string, count: number, signal?: AbortSignal): Promise<NativeSearchResponse>;
+	search(query: string, count: number, signal?: AbortSignal, timeouts?: NativeSearchOptions): Promise<NativeSearchResponse>;
 }
 export interface NativeDiscoveryContext {
 	model?: Model<Api>;
@@ -53,8 +61,8 @@ const CANDIDATES: Record<NativeProviderId, readonly string[]> = {
 	xai: ["grok-4.7", "grok-4.6", "grok-4.5", "grok-4.3"],
 	"grok-build": ["grok-4.6", "grok-4.5", "grok-4.3"],
 };
-export const NATIVE_REQUEST_TIMEOUT_MS = 45_000;
-export const NATIVE_ABORT_SETTLEMENT_GRACE_MS = 1000;
+export const NATIVE_REQUEST_TIMEOUT_MS = DEFAULT_TIMEOUTS.nativeMs;
+export const NATIVE_ABORT_SETTLEMENT_GRACE_MS = DEFAULT_TIMEOUTS.nativeGraceMs;
 const MAX_RESULTS = 20;
 const MAX_TITLE = 200;
 const MAX_SNIPPET = 1000;
@@ -63,7 +71,9 @@ const MAX_SNIPPET = 1000;
 export async function discoverNativeEngines(
 	ctx: NativeDiscoveryContext,
 	signal?: AbortSignal,
+	timeouts: SearchTimeouts = resolveTimeouts(undefined),
 ): Promise<NativeEngine[]> {
+	if (!signal) return boundedOperation(inner => discoverNativeEngines(ctx, inner, timeouts), timeouts.discoveryMs, undefined, 0);
 	const engines: NativeEngine[] = [];
 	for (const id of PROVIDERS) {
 		signal?.throwIfAborted();
@@ -90,7 +100,10 @@ export async function discoverNativeEngines(
 			engines.push({
 				id,
 				label: `${id === "grok-build" ? "Grok Build" : id === "xai" ? "xAI/Grok" : id === "openai-codex" ? "OpenAI Codex" : id === "openai" ? "OpenAI" : "Anthropic"} (${model.id}; ${mode})`,
-				search: (query, count, requestSignal) => searchNative(ctx, id, model, query, count, requestSignal),
+				search: (query, count, requestSignal, options) => {
+					const { managedDeadline, ...overrides } = options ?? {};
+					return searchNative(ctx, id, model, query, count, requestSignal, resolveTimeouts({ ...timeouts, ...overrides }), managedDeadline);
+				},
 			});
 		} catch (error) {
 			signal?.throwIfAborted();
@@ -113,11 +126,13 @@ async function searchNative(
 	query: string,
 	count: number,
 	signal?: AbortSignal,
+	timeouts: SearchTimeouts = resolveTimeouts(undefined),
+	managedDeadline = false,
 ): Promise<NativeSearchResponse> {
 	signal?.throwIfAborted();
 	// Also bound explicit engine calls; an orchestrator may supply a shorter
 	// deadline. Abort starts a short grace period for the real terminal usage.
-	signal = signal ? AbortSignal.any([signal, AbortSignal.timeout(NATIVE_REQUEST_TIMEOUT_MS)]) : AbortSignal.timeout(NATIVE_REQUEST_TIMEOUT_MS);
+	signal = timeoutSignal(signal, signal ? undefined : timeouts.nativeMs)!;
 	const limit = Number.isFinite(count) ? Math.max(1, Math.min(MAX_RESULTS, Math.floor(count))) : 10;
 	const collector = new GroundedSources(limit);
 	const context: Context = {
@@ -137,14 +152,16 @@ async function searchNative(
 	const terminal = ctx.modelRegistry.streamSimple(model, context, {
 		signal,
 		maxTokens: 2048,
-		timeoutMs: NATIVE_REQUEST_TIMEOUT_MS,
+		timeoutMs: timeouts.nativeMs,
 		maxRetries: 0,
 		transport: "sse",
 		...(proxyConversation ? { headers: { "x-grok-conv-id": proxyConversation } } : {}),
 		onPayload: (payload) => injectNativeSearchPayload(id, payload, model.id),
 		onProviderStreamEvent: (event) => collector.observe(id, event),
 	}).result();
-	const message = await settleWithinAbortGrace(terminal, signal, () => new NativeUsageUnavailableError(id, signal?.reason));
+	// Managed operations must remain pending for the actual stream lifetime so
+	// the shared physical-concurrency slot cannot be released by a logical timeout.
+	const message = managedDeadline ? await terminal : await settleWithinAbortGrace(terminal, signal, () => new NativeUsageUnavailableError(id, signal?.reason, timeouts.nativeGraceMs), timeouts.nativeGraceMs);
 	if (signal.aborted) {
 		throw new NativeSearchError(`${id} native search cancelled`, message.usage, { cause: signal.reason });
 	}
@@ -164,7 +181,7 @@ async function searchNative(
 }
 
 /** Wait for real terminal usage after abort, but never indefinitely for a broken adapter. */
-function settleWithinAbortGrace<T>(terminal: Promise<T>, signal: AbortSignal, unavailable: () => Error): Promise<T> {
+function settleWithinAbortGrace<T>(terminal: Promise<T>, signal: AbortSignal, unavailable: () => Error, graceMs: number): Promise<T> {
 	return new Promise<T>((resolve, reject) => {
 		let settled = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
@@ -179,7 +196,7 @@ function settleWithinAbortGrace<T>(terminal: Promise<T>, signal: AbortSignal, un
 				settled = true;
 				cleanup();
 				reject(unavailable());
-			}, NATIVE_ABORT_SETTLEMENT_GRACE_MS);
+			}, graceMs);
 		};
 		signal.addEventListener("abort", onAbort, { once: true });
 		// Both handlers stay attached after grace expiry: late rejection is
