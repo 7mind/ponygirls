@@ -15,7 +15,7 @@ export interface ParseError {
 
 const RESERVED = new Set(["edit", "pause", "resume", "clear"]);
 
-function parseBudgetToken(text: string): number | null {
+export function parseBudgetToken(text: string): number | null {
   const n = Number(text);
   if (!Number.isSafeInteger(n) || n <= 0) return null;
   return n;

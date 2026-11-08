@@ -18,6 +18,17 @@ test("/goal resume offers --tokens; /goal --tokens N offers -- and resume", () =
   assert.equal(values("--tokens nope "), null);
 });
 
+test("budget continuations use the parser's positive safe-integer domain", () => {
+  for (const budget of ["040000", "9007199254740991", "4e4", "0x10"]) {
+    assert.equal(parseGoalCommand(`--tokens ${budget} resume`).ok, true);
+    assert.deepEqual(values(`--tokens ${budget} `), [`--tokens ${budget} -- `, `--tokens ${budget} resume`]);
+  }
+  for (const budget of ["9007199254740992", "1e100", "0", "-1", "1.5", "nope"]) {
+    assert.equal(parseGoalCommand(`--tokens ${budget} resume`).ok, false);
+    assert.equal(values(`--tokens ${budget} `), null);
+  }
+});
+
 test("objectives, edits and completed forms get no suggestions", () => {
   for (const prefix of ["Polish the ", "edit ", "edit new obj", "pause ", "clear ", "-- obj", "resume --tokens ", "--tokens 40000 -- x"]) {
     assert.equal(values(prefix), null, prefix);

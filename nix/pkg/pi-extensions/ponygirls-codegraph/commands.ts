@@ -64,13 +64,18 @@ const ALL_FLAG = new Set(["status", "sync", "cancel"]);
 const ALL_COMPLETION = { label: "--all", description: "target all discovered projects" };
 const WORKSPACE_FLAG = "--workspace";
 
-/**
- * Directory completions for an unquoted path argument: `head` is the already
- * typed command text kept in front of the path (pi replaces the whole argument).
- * Hidden directories appear only once their leading dot is typed.
- */
+/** Pi replaces the whole argument; preserve quoting and any explicit option terminator. */
 function directoryCompletions(head: string, path: string, directories: DirectoryLister): CommandCompletion[] {
-  if (path.startsWith('"') || path.startsWith("'") || path.startsWith("-")) return [];
+  const literal = path.startsWith("-- ");
+  if (literal) { head += "-- "; path = path.slice(3).trimStart(); }
+  const quote = path.startsWith('"') ? '"' : path.startsWith("'") ? "'" : null;
+  if (quote === '"') {
+    try { path = JSON.parse(path.endsWith('"') && path.length > 1 ? path : `${path}"`) as string; }
+    catch { return []; }
+  } else if (quote === "'") {
+    path = path.slice(1);
+    if (path.endsWith("'")) path = path.slice(0, -1);
+  } else if (!literal && path.startsWith("-")) return [];
   const slash = path.lastIndexOf("/");
   const parent = path.slice(0, slash + 1);
   const base = path.slice(slash + 1);
@@ -80,7 +85,12 @@ function directoryCompletions(head: string, path: string, directories: Directory
     .filter((name) => name.startsWith(base) && (base.startsWith(".") || !name.startsWith(".")))
     .sort()
     .slice(0, MAX_DIRECTORY_COMPLETIONS)
-    .map((name) => ({ value: `${head}${parent}${name}/`, label: `${name}/`, description: "directory" }));
+    .map((name) => {
+      const target = `${parent}${name}/`;
+      const encoded = quote === "'" && !target.includes("'") ? `'${target}'` :
+        quote !== null || /^["']/.test(target) || (!literal && target.startsWith("-")) ? JSON.stringify(target) : target;
+      return { value: `${head}${encoded}`, label: `${name}/`, description: "directory" };
+    });
 }
 
 export function completeCommand(prefix: string, directories: DirectoryLister): CommandCompletion[] | null {

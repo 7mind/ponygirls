@@ -65,6 +65,25 @@ test("command grammar keeps target paths separate from flags and requires explic
   }
 });
 
+test("directory completions preserve quoted and option-like paths as executable arguments", () => {
+  const names = ['--demo', '"demo', "it's here", 'app space'];
+  const directories: DirectoryLister = directory => directory === "." ? names : directory === "app space/" ? ["child"] : [];
+  for (const name of ["use", "status", "init --workspace"]) {
+    const items = completeWith(`${name} `, directories)!;
+    for (const item of items.filter(item => item.description === "directory")) {
+      const parsed = parseCommand(item.value);
+      assert.ok("target" in parsed);
+      assert.ok(names.some(path => parsed.target === `${path}/`), item.value);
+    }
+  }
+  assert.equal(completeWith('use "app', directories)![0]!.value, 'use "app space/"');
+  assert.equal(completeWith("use 'app", directories)![0]!.value, "use 'app space/'");
+  assert.equal(completeWith('use "app space/"', directories)![0]!.value, 'use "app space/child/"');
+  assert.equal(completeWith("use -- --d", directories)![0]!.value, "use -- --demo/");
+  assert.equal(completeWith("init --workspace -- --d", directories)![0]!.value, "init --workspace -- --demo/");
+  assert.equal(completeWith('use "bad\\q', directories), null);
+});
+
 test("path arguments complete cwd-relative directories and keep the typed command", () => {
   const values = (prefix: string): string[] | null => completeWith(prefix, lister)?.map((item) => item.value) ?? null;
   assert.deepEqual(values("use "), ["use app/", "use apps/", "use lib/"]);
@@ -74,7 +93,7 @@ test("path arguments complete cwd-relative directories and keep the typed comman
   assert.deepEqual(values("use ../s"), ["use ../sibling/"]);
   assert.deepEqual(values("use ."), ["use .git/"]);
   assert.deepEqual(values("init --workspace a"), ["init --workspace app/", "init --workspace apps/"]);
-  for (const prefix of ["use missing/", "use 'app", 'use "app', "use --x", "help ", "use app/src/x"]) {
+  for (const prefix of ["use missing/", "use --x", "help ", "use app/src/x"]) {
     assert.equal(values(prefix), null, prefix);
   }
   for (const item of completeWith("use ", lister)!) {

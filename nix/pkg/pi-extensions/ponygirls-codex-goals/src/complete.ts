@@ -1,5 +1,6 @@
 /** /goal argument completion (subcommands and option forms; objectives are free text). */
 import { completeArgument, type ArgumentChoice, type CompletionItem } from "@ponygirls/pi-ui";
+import { parseBudgetToken } from "./commands.ts";
 
 const FIRST: readonly ArgumentChoice[] = [
   { token: "edit", label: "edit [objective]", description: "edit the objective (editor when no text is given)", continues: true },
@@ -17,12 +18,10 @@ const AFTER_BUDGET: readonly ArgumentChoice[] = [
   { token: "resume", label: "resume", description: "raise the cap to this value and resume", continues: false },
 ];
 
-const POSITIVE_INTEGER = /^[1-9]\d*$/;
-
 function choicesFor(previous: readonly string[]): readonly ArgumentChoice[] | null {
   if (previous.length === 0) return FIRST;
   if (previous.length === 1 && previous[0] === "resume") return RESUME_OPTIONS;
-  if (previous.length === 2 && previous[0] === "--tokens" && POSITIVE_INTEGER.test(previous[1]!)) return AFTER_BUDGET;
+  if (previous.length === 2 && previous[0] === "--tokens" && parseBudgetToken(previous[1]!) !== null) return AFTER_BUDGET;
   return null;
 }
 
