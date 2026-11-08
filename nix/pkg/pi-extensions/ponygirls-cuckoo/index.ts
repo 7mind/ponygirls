@@ -5,9 +5,10 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoun
 import { parseToggleCommand, sessionEnabledData } from '@ponygirls/pi-settings';
 import { ENABLED_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences, type PreferenceStore } from './src/preferences.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
-import { REPORT_TYPE, checkpoint, checkpoints, historyText, reportText } from './src/report.ts';
+import { REPORT_TYPE, checkpoint, checkpoints } from './src/report.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, observe, stateOnBranch, type State } from './src/state.ts';
-import { CuckooView, terminalText } from './src/view.ts';
+import { CuckooView } from './src/view.ts';
+import { historyContent, reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
 
 export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): void {
   let view = new CuckooView();
@@ -26,17 +27,18 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       fault = null; view.publish(ctx, reports, config.enabled, null);
     } catch (error) { warn(ctx, error); view.publish(ctx, [], false, fault); }
   }
-  function status(ctx: ExtensionContext): string {
+  function status(ctx: ExtensionContext): CuckooContent {
     const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
     const state = stateOnBranch(ctx.sessionManager.getBranch());
     const usage = ctx.getContextUsage();
     const growth = state === null ? null : growthTokens(config.policy, state.baseline, usage === undefined ? null : usage.contextWindow);
     const next = state === null ? 'waiting for first known context usage' : growth === null ? 'waiting for known context-window capacity' : `${state.baseline + growth} tokens (baseline ${state.baseline})`;
-    return `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
+    const intro = `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
       `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
       `Global defaults: ${preferences.path}\n` +
-      `Use /cuckoo history for saved answers across all session branches.\n\n${reportText(checkpoints(ctx.sessionManager.getBranch()))}`;
+      `Use /cuckoo history for saved answers across all session branches.`;
+    return reportContent(checkpoints(ctx.sessionManager.getBranch()), intro);
   }
   function cancel(ctx: ExtensionContext, reason: string): void {
     const state = stateOnBranch(ctx.sessionManager.getBranch());
@@ -53,7 +55,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       try {
         const trimmed = args.trim();
         if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') { await view.show(ctx, status(ctx)); return; }
-        if (trimmed === 'history') { await view.show(ctx, historyText(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch())); return; }
+        if (trimmed === 'history') { await view.show(ctx, historyContent(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch())); return; }
         const toggle = parseToggleCommand(trimmed);
         if (toggle !== null && toggle.kind !== 'status') {
           if (toggle.kind === 'session') pi.appendEntry(ENABLED_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), toggle.enabled));
@@ -70,7 +72,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
             else pi.appendEntry(POLICY_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), policy });
           }
         }
-        refresh(ctx); ctx.ui.notify(terminalText(status(ctx)), 'info');
+        refresh(ctx); ctx.ui.notify(terminalText(status(ctx).plain), 'info');
       } catch (error) { warn(ctx, error); }
     },
   });

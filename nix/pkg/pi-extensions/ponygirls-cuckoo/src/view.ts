@@ -1,22 +1,20 @@
 import type { ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth } from '@earendil-works/pi-tui';
 import { CustomViewToggle, StatusView } from '@ponygirls/pi-ui';
-import { reportText, type Checkpoint } from './report.ts';
+import type { Checkpoint } from './report.ts';
+import { reportContent, terminalText, type CuckooContent } from './presentation.ts';
 
 const BADGE_GLYPH = '🐦';
 
-export function terminalText(value: string): string {
-  return value.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, '');
-}
 export class CuckooView {
   private readonly pane = new CustomViewToggle();
   private active = true;
-  async show(ctx: ExtensionContext, text: string): Promise<void> {
+  async show(ctx: ExtensionContext, content: CuckooContent): Promise<void> {
     if (!this.active) return;
-    const safe = terminalText(text);
+    const safe = terminalText(content.plain);
     if (ctx.mode !== 'tui' || !ctx.hasUI) { ctx.ui.notify(safe, 'info'); return; }
     await this.pane.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({
-      title: 'Cuckoo objectives and progress', text: safe, theme, keys,
+      title: content.title, text: () => content.render(theme), theme, keys,
       rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
     }));
   }
@@ -34,7 +32,7 @@ export class CuckooView {
       invalidate() {},
       handleMouse: event => {
         if (!this.active || event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui' || !ctx.hasUI) return undefined;
-        void this.show(ctx, `${fault === null ? '' : `Error: ${fault}\n\n`}${reportText(reports)}`).catch((error: unknown) => ctx.ui.notify(terminalText(`Cuckoo: ${String(error)}`), 'error'));
+        void this.show(ctx, reportContent(reports, fault === null ? '' : `Error: ${fault}`)).catch((error: unknown) => ctx.ui.notify(terminalText(`Cuckoo: ${String(error)}`), 'error'));
         return { handled: true };
       },
     }), { placement: 'borderBottomLeft' });

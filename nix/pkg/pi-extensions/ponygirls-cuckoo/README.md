@@ -38,6 +38,23 @@ reopening that session restores its history without a separate global history
 file. A new session starts with no answers; a fork contains only entries Pi
 copies into that new session. Opening history does not request model inference.
 
+## Reading the panel
+
+The terminal panel puts the newest saved checkpoint and numbered objectives
+first, with effective settings below the reports. Runtime faults stay at the top.
+Checkpoint/objective headings are accented and bold; request IDs, timestamps,
+entry/branch attribution and saved-report qualifiers are muted. Progress and ETA
+have accent labels; obstacles, issues and bottlenecks have warning-colored labels.
+These colors identify field categories, not inferred completion or severity.
+
+Fields are separated into readable paragraphs and wrap to the available width.
+Arrow keys and Home/End scroll the panel; `q` or Escape closes it. In regular
+mode PgUp/PgDn also scroll it; Pi reserves those keys for transcript scrolling in
+fullscreen mode. The border badge remains available while the panel is open.
+Invalid/interrupted checkpoints have explicit error headings and literal raw
+output. Theme changes regenerate colors; RPC/plain-text output stays unstyled
+and retains its existing format.
+
 ## Cadence and output
 
 At completed model-turn boundaries, Cuckoo observes Pi's context token usage
