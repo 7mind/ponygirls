@@ -3,10 +3,17 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "npm run build && node --test protocol/tests/*.test.mjs"
+    "prepare-sdk": "bash scripts/prepare-sdk.sh",
+    "pretypecheck": "npm run prepare-sdk",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p worker/tsconfig.json --noEmit",
+    "prebuild": "npm run prepare-sdk",
+    "build": "tsc -p tsconfig.json && tsc -p worker/tsconfig.json",
+    "pretest": "npm run build",
+    "test": "node --test protocol/tests/*.test.mjs worker/tests/*.test.mjs"
   },
   "devDependencies": {
     "typescript": "7.0.2"
