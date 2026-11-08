@@ -134,6 +134,10 @@ class TargetMigrationTests(unittest.TestCase):
                     destination=root/'destination';M.prepare_destination(destination,pg,disposable=True)
                     M.import_bundle(bundle,destination,pg,identity)
                     database.grant_import_runtime(pg)
+                    runtime = "'" + database.user.replace("'", "''") + "'"
+                    for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+                        self.assertEqual(pg.run("SELECT has_table_privilege(" + runtime + ", 'manure.external_passwords', '" + privilege + "')"), 't',
+                            'import handoff must grant runtime access to the recoverable-password table')
                     self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
                     config['data_dir']=str(destination/'data');config['migration_receipt_dir']=str(destination)
                     # Before explicit boundary, serve refuses rather than mutating a

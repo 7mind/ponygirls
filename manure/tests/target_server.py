@@ -195,7 +195,7 @@ class OwnedDatabase:
     def grant_import_runtime(self,pg):
         if not self.helper:return
         user='"'+self.user.replace('"','""')+'"'
-        statements=['ALTER TABLE manure.'+name+' OWNER TO '+user for name in ('artifacts','receipts','one_time_grants','content_grants')]
+        statements=['ALTER TABLE manure.'+name+' OWNER TO '+user for name in ('artifacts','receipts','one_time_grants','content_grants','external_passwords')]
         statements+=['GRANT USAGE ON SCHEMA manure_offline TO '+user,'GRANT SELECT ON manure_offline.destination TO '+user]
         pg.run('BEGIN;'+(';'.join(statements))+';COMMIT;')
 

@@ -249,6 +249,15 @@ grants, or TTLs. Reconciliation runs only after all metadata+files are present.
 Reconciliation itself changes the destination; do it on a disposable rehearsal
 copy after the comparison/write boundary, not on the archive.
 
+When migration and runtime roles differ, the operator-controlled ownership
+handoff must include all current application tables: `artifacts`, `receipts`,
+`one_time_grants`, `content_grants` and `external_passwords`. The runtime needs
+application-table DML, not migration-administrator credentials or broad grants.
+The new password table is empty after historical import: existing hashes and
+password-bound grants remain unchanged, and password retrieval returns null
+until an explicit rotation. Migration control state remains read-only to the
+runtime. Owned acceptance fixtures exercise this same restricted handoff.
+
 ```sh
 # Explicit irreversible operational boundary, BEFORE target reconciliation or
 # admission of any new write. This does not start a service or permit activation.
