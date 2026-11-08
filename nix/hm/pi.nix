@@ -870,6 +870,7 @@ in
             "${piExtensions}/ponygirls-decisions"
             # Automatic reversible context archival; /context-archive on opts in (default off).
             "${piExtensions}/ponygirls-context-archive"
+            "${piExtensions}/ponygirls-cuckoo"
             # Supervisor/worker subagents: durable delegation, sandbox-brokered
             # tools, worktrees, gates, /agents inspector.
             # See nix/pkg/pi-extensions/ponygirls-subagents (optional policy

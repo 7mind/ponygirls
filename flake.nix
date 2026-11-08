@@ -291,6 +291,8 @@
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
+          assert builtins.elem "ponygirls-cuckoo" (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
+          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/cuckoo.json");
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian.json");
           assert builtins.fromJSON limitsDefault.home.file."/home/alice/.pi/agent/historian-defaults.json".text == { version = 1; journalRoot = null; model = historianDefaultModel; };
           assert !(historianUnconfigured.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
@@ -912,6 +914,29 @@
               ln -s "$sdk/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
             done
             ln -s "$sdk/node_modules/typebox" node_modules/typebox
+            ln -s "$sdk/node_modules/@types" node_modules/@types
+            tsc -p tsconfig.json
+            node --test tests/*.test.mjs
+            touch $out
+          '';
+          ponygirls-cuckoo = pkgs.runCommand "ponygirls-cuckoo-test" {
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
+            PI_CUCKOO_EXTENSION = "${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-cuckoo/index.ts";
+            PI_OFFLINE = "1";
+            PI_TELEMETRY = "0";
+          } ''
+            export HOME=$TMPDIR
+            sdk=${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo
+            cp -r ${./nix/pkg/pi-extensions/ponygirls-cuckoo} cuckoo
+            chmod -R u+w cuckoo
+            cd cuckoo
+            mkdir -p node_modules/@ponygirls node_modules/@earendil-works
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent
+            for package in pi-ai pi-agent-core pi-tui; do
+              ln -s "$sdk/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
+            done
             ln -s "$sdk/node_modules/@types" node_modules/@types
             tsc -p tsconfig.json
             node --test tests/*.test.mjs

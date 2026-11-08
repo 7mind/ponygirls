@@ -1,0 +1,146 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { SessionManager } from '@earendil-works/pi-coding-agent';
+import { registerCuckoo } from '../index.ts';
+import { DEFAULT_PREFERENCES } from '../src/preferences.ts';
+import { checkpoints } from '../src/report.ts';
+import { STATE_TYPE, INQUIRY_TYPE, RESUME_TYPE, stateOnBranch } from '../src/state.ts';
+
+const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+const assistant = (text, stopReason = 'stop') => ({ role: 'assistant', content: [{ type: 'text', text }], stopReason, usage, api: 'openai-completions', provider: 'fixture', model: 'fixture', timestamp: 1 });
+function fixture() {
+  const manager = SessionManager.inMemory(); const handlers = new Map(); const commands = new Map(); const shortcuts = new Map(); const notifications = []; const widgets = [];
+  let defaults = { ...DEFAULT_PREFERENCES }; let tokens = 20000;
+  const preferences = { path: 'memory:cuckoo', read: () => ({ ...defaults }), write: value => { defaults = { ...value }; } };
+  const pi = { on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
+  const ctx = { sessionManager: manager, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
+  registerCuckoo(pi, preferences); handlers.get('session_start')({}, ctx);
+  function boundary(message = assistant('ordinary work'), overrides = {}) {
+    const messageEntryId = manager.appendMessage(message);
+    const event = { message, messageEntryId, outcome: 'completed', entries: [], continue: false, context: { pendingMessages: [] }, ...overrides };
+    const result = handlers.get('turn_end')(event, ctx);
+    if (result?.entries) for (const entry of result.entries) {
+      if (entry.type === 'custom') manager.appendCustomEntry(entry.customType, entry.data);
+      else if (entry.type === 'custom_message') manager.appendCustomMessageEntry(entry.customType, entry.content, entry.display, entry.details);
+    }
+    return result;
+  }
+  return { manager, ctx, handlers, shortcuts, notifications, widgets, preferences, boundary, tokens: value => { tokens = value; }, command: value => commands.get('cuckoo').handler(value, ctx) };
+}
+
+// Specified Behavioral-Active / Blackbox-Group through public extension events and real session projection.
+test('default-off is inert; 20k to exactly 23k triggers JSON checkpoint at 15% and no extra inquiry', async () => {
+  const f = fixture(); assert.equal(f.boundary(), undefined);
+  await f.command('on'); f.boundary();
+  f.tokens(22999); assert.equal(f.boundary().continue, undefined);
+  f.tokens(23000); const issue = f.boundary();
+  assert.equal(issue.continue, true); assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
+  assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 23000);
+  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing"}]}'));
+  assert.equal(reply.continue, undefined); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives.length, 1);
+  assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
+  assert.ok(!reply.entries.some(entry => entry.customType === INQUIRY_TYPE));
+});
+
+test('unfinished tool turn resumes once; checkpoint tools blocked and malformed response preserved without retries', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary(assistant('tool completed', 'toolUse'));
+  assert.equal(f.handlers.get('tool_call')({}, f.ctx).block, true);
+  const reply = f.boundary(assistant('not JSON'));
+  assert.equal(reply.continue, true); assert.equal(reply.entries.at(-1).customType, RESUME_TYPE);
+  const saved = checkpoints(f.manager.getBranch())[0]; assert.equal(saved.raw, 'not JSON'); assert.equal(saved.report, null);
+  assert.equal(f.handlers.get('tool_call')({}, f.ctx), undefined);
+  f.tokens(90000); const resume = f.boundary();
+  assert.equal(resume.continue, undefined); assert.ok(!resume.entries.some(entry => entry.customType === INQUIRY_TYPE));
+});
+
+test('JSON accompanying tool calls is invalid and retains original response identity/content', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary();
+  const message = assistant('{"objectives":[]}', 'toolUse'); message.content.push({ type: 'toolCall', id: 'forbidden', name: 'bash', arguments: { command: 'exit 0' } });
+  f.boundary(message);
+  const saved = f.manager.getBranch().findLast(entry => entry.type === 'custom' && entry.customType === 'cuckoo.report');
+  assert.ok(saved.data.messageEntryId); assert.equal(saved.data.content.length, 2);
+  assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
+});
+
+test('length-truncated source tool turn resumes, and forbidden checkpoint tool turns get a bounded normal-task follow-up', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000);
+  const source = assistant('truncated', 'length'); source.content.push({ type: 'toolCall', id: 'source', name: 'bash', arguments: {} });
+  f.boundary(source);
+  assert.equal(stateOnBranch(f.manager.getBranch()).pending.resume, true);
+  const valid = f.boundary(assistant('{"objectives":[]}')); assert.equal(valid.continue, true);
+  f.boundary(); f.tokens(30000); f.boundary();
+  const invalid = assistant('{"objectives":[]}', 'toolUse'); invalid.content.push({ type: 'toolCall', id: 'blocked', name: 'bash', arguments: {} });
+  const captured = f.boundary(invalid);
+  assert.equal(captured.entries.at(-1).customType, RESUME_TYPE);
+  assert.equal(captured.continue, true);
+});
+
+test('unknown usage and foreign context edits defer; decreases and model changes rebaseline', async () => {
+  const f = fixture(); await f.command('on'); f.boundary();
+  f.tokens(null); assert.equal(f.boundary(), undefined);
+  f.tokens(25000); assert.equal(f.boundary(undefined, { entries: [{ type: 'compaction' }] }), undefined);
+  f.tokens(21000); f.boundary(); f.tokens(20500); f.boundary();
+  assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 20500);
+  f.ctx.model.id = 'new-model'; f.tokens(50000); f.boundary();
+  assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 50000);
+  assert.equal(f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === INQUIRY_TYPE).length, 0);
+});
+
+test('abort and reload cancel pending inquiry, never capture the next user answer', async () => {
+  for (const action of ['abort', 'reload', 'user', 'tree']) {
+    const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary();
+    if (action === 'abort') f.handlers.get('agent_settled')({ aborted: true }, f.ctx);
+    if (action === 'reload') f.handlers.get('session_start')({}, f.ctx);
+    if (action === 'user') f.handlers.get('before_agent_start')({ messageType: 'user' }, f.ctx);
+    if (action === 'tree') f.handlers.get('session_tree')({}, f.ctx);
+    assert.equal(stateOnBranch(f.manager.getBranch()).pending, null, action);
+    f.tokens(23000); f.boundary(assistant('ordinary answer'));
+    assert.equal(checkpoints(f.manager.getBranch()).length, 1, action);
+    assert.notEqual(checkpoints(f.manager.getBranch())[0].raw, 'ordinary answer', action);
+  }
+});
+
+test('aborted report retains partial output without continuation; aborted normal turn never issues', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000);
+  assert.equal(f.boundary(undefined, { outcome: 'aborted' }), undefined);
+  f.boundary(assistant('unfinished', 'toolUse'));
+  const result = f.boundary(assistant('{"objectives":['), { outcome: 'aborted' });
+  assert.equal(result.continue, undefined); assert.equal(checkpoints(f.manager.getBranch())[0].raw, '{"objectives":[');
+});
+
+test('prior drafts/continuation survive and queued user messages defer inquiries', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000);
+  assert.equal(f.boundary(undefined, { context: { pendingMessages: [{}] } }), undefined);
+  const prior = { type: 'custom', customType: 'foreign', data: { preserved: true } };
+  const result = f.boundary(undefined, { entries: [prior], continue: true });
+  assert.deepEqual(result.entries[0], prior); assert.equal(result.continue, true);
+  const capture = f.boundary(assistant('{"objectives":[]}'));
+  assert.equal(capture.continue, true, 'earlier continuation intent is resumed after checkpoint');
+});
+
+test('delivered steering cancels checkpoint before tools and neutralizes the stale inquiry in provider context', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary();
+  const inquiry = f.manager.buildSessionProjection().messages.findLast(message => message.role === 'custom' && message.customType === INQUIRY_TYPE);
+  f.handlers.get('message_start')?.({ message: { role: 'user', content: 'New instruction', timestamp: 2 } }, f.ctx);
+  assert.equal(f.handlers.get('tool_call')({}, f.ctx), undefined, 'new user turn must not be tool-blocked as a checkpoint');
+  const context = f.handlers.get('context')?.({ messages: [inquiry] }, f.ctx);
+  assert.ok(context, 'cancelled inquiry must be neutralized before provider dispatch');
+  assert.doesNotMatch(context.messages[0].content, /JSON only/);
+  assert.match(context.messages[0].content, /cancelled/i);
+});
+
+test('configuration notifications do not render model-supplied terminal control bytes', async () => {
+  const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary();
+  f.boundary(assistant('\x1b]52;c;p\x07'));
+  await f.command('off');
+  for (const [message] of f.notifications) assert.doesNotMatch(message, /[\x1b\x07]/);
+});
+
+test('commands independently layer thresholds and enablement, reject invalid syntax, and shortcut views reports', async () => {
+  const f = fixture(); await f.command('default on'); await f.command('off'); await f.command('threshold 5');
+  assert.deepEqual(f.preferences.read(), { enabled: true, thresholdPercent: 15 });
+  await f.command('default threshold 20'); await f.command('threshold inherit');
+  await f.command('status'); assert.match(f.notifications.at(-1)[0], /OFF \(session\).*\nRelative context growth: 20% \(global\)/);
+  for (const command of ['on extra', 'threshold 0', 'threshold NaN', 'default threshold inherit']) { await f.command(command); assert.equal(f.notifications.at(-1)[1], 'error'); }
+  await f.shortcuts.get('ctrl+alt+c').handler(f.ctx); assert.match(f.notifications.at(-1)[0], /No Cuckoo reports/);
+});
