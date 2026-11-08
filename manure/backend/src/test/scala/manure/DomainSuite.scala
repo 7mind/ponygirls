@@ -40,7 +40,7 @@ final class DomainSuite extends FunSuite:
     assertEquals(UploadRules.range("bytes=1-2",4),(1L,3L)); assertEquals(UploadRules.range("bytes=-100",4),(0L,4L))
     Vector("bytes=","bytes=0-0,2-2","bytes=-0","bytes=4-","bytes=2-1","bytes=0-9223372036854775807").foreach(h => intercept[DomainError](UploadRules.range(h,4)))
   }
-  test("current Baboon fixtures roundtrip all 74 Scala/TS/Python golden vectors") {
+  test("current Baboon fixtures roundtrip all 76 Scala/TS/Python golden vectors") {
     val fixtures = BackendFixture.source.resolve("manure/models/fixtures")
     var count = 0
     def check[A](file: String,codec: baboon.runtime.shared.BaboonJsonCodec[A]): Unit =
@@ -51,7 +51,7 @@ final class DomainSuite extends FunSuite:
       }
     check("commands.json",wire.ClientEnvelope.codecJson); check("results.json",wire.ServerEnvelope.codecJson)
     check("content.json",wire.ContentEnvelope.codecJson); check("chunks.json",wire.ChunkReceipt.codecJson)
-    assertEquals(count,74)
+    assertEquals(count,76)
   }
   test("duplicate keys, unknown fields, versions and non-string i64 rejected closed") {
     intercept[DomainError](CurrentWire.parse("{\"x\":1,\"x\":2}"))
