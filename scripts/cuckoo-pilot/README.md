@@ -31,8 +31,11 @@ benchmark of real-world task success. It does not alter Cuckoo or deploy it.
   recall coverage is reported as such, never semantic correctness.
 - Costs/exposure: record actual context usage, checkpoints/validation failures,
   model turns, input/output/cached tokens, elapsed time and execution failures.
-  Short controls should not trigger; long treatment activation must be observed.
-  Off runs must never produce checkpoints. Keep all planned runs in accounting.
+  Short controls must not trigger; long/on runs require a validated checkpoint
+  before the graded deliverable. Off runs must never produce checkpoints. Keep
+  all planned runs in accounting. A completed primary deliverable remains scored
+  if a later recall probe fails; execution/exposure validity is reported separately.
+  Failed-response usage is retained, with unavailable usage explicitly unknown.
 - One repetition and synthetic constraints cannot establish reliability or
   real-world drift reduction. A ceiling result means no demonstrated benefit,
   not proof of no benefit. Two arms measure the overall intervention, not whether
@@ -44,7 +47,8 @@ Run separate unscored feasibility material first, using the exact model and long
 corpus generator. It must complete with at least one validated actual checkpoint.
 No manually forced checkpoint or substituted context capacity is permitted.
 Freeze config, source hashes, source commit, task order and input hashes before
-scored inference. Do not change prompts, corpus, grading or exclusions after
+scored inference. The scored gate requires exact feasibility config, source hashes
+and actual model identity/capacity, not merely a successful earlier attempt. Do not change prompts, corpus, grading or exclusions after
 viewing scored outcomes. If execution code must change, retain the old attempt
 and identify the new attempt/protocol rather than silently replacing results.
 
@@ -83,5 +87,9 @@ The source extension must resolve its shared `@ponygirls/pi-ui` and
 startup refresh/discovery, not the deliberately authorized live inference.
 `protocol.json` is create-only; repeated scored execution into the same output
 directory is rejected. Result files are atomically replaced as each run advances.
+Analysis reloads planned per-run files, tolerates an absent aggregate summary
+with an explicit fault, checks source/input hashes, and regrades available primary
+responses independently of overall run success. It reports primary-workload token
+usage separately from usage including the retrospective recall probe.
 The process exits nonzero for feasibility/execution failures; semantic constraint
 failures are scored results, not harness crashes.

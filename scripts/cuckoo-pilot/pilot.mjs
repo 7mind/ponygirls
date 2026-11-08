@@ -17,7 +17,7 @@ const config = { provider: 'openai-codex', model: 'gpt-6.1-sol', thinking: 'medi
   retries: 0, compaction: false, systemPrompt: 'You are an assistant performing a synthetic evaluation. Follow the user task. No external tools are available. Do not invent evidence.' };
 const extension = join(root, 'nix/pkg/pi-extensions/ponygirls-cuckoo/index.ts');
 const hash = text => createHash('sha256').update(text).digest('hex');
-const sourcePaths = ['scripts/cuckoo-pilot/pilot.mjs', 'scripts/cuckoo-pilot/corpus.mjs', 'scripts/cuckoo-pilot/grade.mjs', 'scripts/cuckoo-pilot/grade.test.mjs', 'scripts/cuckoo-pilot/support.mjs', 'scripts/cuckoo-pilot/support.test.mjs', 'scripts/cuckoo-pilot/analyze.mjs', 'scripts/cuckoo-pilot/run.sh', 'scripts/cuckoo-pilot/README.md', 'nix/pkg/pi-extensions/ponygirls-cuckoo/index.ts', ...['policy', 'preferences', 'state', 'report', 'view'].map(name => `nix/pkg/pi-extensions/ponygirls-cuckoo/src/${name}.ts`)];
+const sourcePaths = ['scripts/cuckoo-pilot/pilot.mjs', 'scripts/cuckoo-pilot/corpus.mjs', 'scripts/cuckoo-pilot/grade.mjs', 'scripts/cuckoo-pilot/grade.test.mjs', 'scripts/cuckoo-pilot/support.mjs', 'scripts/cuckoo-pilot/support.test.mjs', 'scripts/cuckoo-pilot/analyze.mjs', 'scripts/cuckoo-pilot/analyze.test.mjs', 'scripts/cuckoo-pilot/run.sh', 'scripts/cuckoo-pilot/README.md', 'nix/pkg/pi-extensions/ponygirls-cuckoo/index.ts', ...['policy', 'preferences', 'state', 'report', 'view'].map(name => `nix/pkg/pi-extensions/ponygirls-cuckoo/src/${name}.ts`)];
 const sourceHashes = Object.fromEntries(sourcePaths.map(path => [path, hash(readFileSync(join(root, path)))]));
 const runtime = await sdk.ModelRuntime.create({ authPath: process.env.PI_PILOT_AUTH_PATH, modelsPath: null, refreshOnCreate: false });
 const model = runtime.getModel(config.provider, config.model);
@@ -32,7 +32,7 @@ async function run(task, length, enabled, id) {
   const agentDir = join(directory, 'agent'); const cwd = join(directory, 'work'); mkdirSync(agentDir); mkdirSync(cwd);
   writeFileSync(join(agentDir, 'cuckoo.json'), JSON.stringify({ version: 2, enabled, policy: config.policy }));
   const originalAgentDir = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = agentDir;
-  const result = { id, task: task.id, heldOut: task.heldOut, length, enabled, startedAt: new Date().toISOString(), status: 'running', requestCount: 0, phases: [], reports: [], errors: [], responses: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 } };
+  const result = { id, task: task.id, heldOut: task.heldOut, length, enabled, startedAt: new Date().toISOString(), status: 'running', primaryStatus: 'unavailable', secondaryStatus: 'unavailable', requestCount: 0, phases: [], reports: [], errors: [], responses: [], usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0 } };
   const inputPrompts = prompts(task, length); result.promptHashes = inputPrompts.map(hash);
   const sessionDeadline = Date.now() + config.sessionDeadlineMs;
   let session;
@@ -75,6 +75,8 @@ async function run(task, length, enabled, id) {
       if (promptError !== null) throw promptError;
       const ordinary = result.responses.filter(response => response.phase === i && !response.checkpoint).at(-1);
       if (ordinary === undefined) throw new Error('Missing ordinary task response');
+      if (task.id !== 'feasibility' && i === 3) { result.grade = grade(task, ordinary.text); result.primaryStatus = 'completed'; }
+      if (task.id !== 'feasibility' && i === 4) { result.recall = recallCoverage(task.id, ordinary.text); result.secondaryStatus = 'completed'; }
       const usage = session.getContextUsage();
       if (usage === undefined || usage.tokens === null || !Number.isFinite(usage.tokens)) throw new Error('Missing observed context usage');
       result.phases.push({ phase: i, contextTokens: usage.tokens, contextWindow: usage.contextWindow, checkpointCount: reports.length, ordinaryEntryId: ordinary.entryId });
@@ -85,12 +87,10 @@ async function run(task, length, enabled, id) {
     }
     result.exposure = exposure(result);
     if (!result.exposure.valid) throw new Error('Invalid treatment exposure');
-    if (task.id !== 'feasibility') {
-      result.grade = grade(task, result.responses.findLast(response => response.phase === 3 && !response.checkpoint).text);
-      result.recall = recallCoverage(task.id, result.responses.findLast(response => response.phase === 4 && !response.checkpoint).text);
-    }
     result.status = 'completed';
   } catch (error) {
+    const primary = result.responses.findLast(response => response.phase === 3 && !response.checkpoint && response.stopReason === 'stop');
+    if (task.id !== 'feasibility' && primary !== undefined) { result.grade = grade(task, primary.text); result.primaryStatus = 'completed'; }
     result.status = 'failed'; result.errors.push({ kind: 'run-failure', name: error instanceof Error ? error.name : 'unknown', message: error instanceof Error && /^(Pilot|Session|Provider|Missing|Invalid|Control|Extension)/.test(error.message) ? error.message : 'Runtime failure (details omitted to avoid credential-bearing diagnostics)' });
     save(join(directory, 'result.json'), result);
   } finally {

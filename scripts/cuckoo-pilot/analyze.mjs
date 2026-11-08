@@ -7,10 +7,11 @@ import { grade } from './grade.mjs';
 const directory = process.argv[2];
 if (directory === undefined) throw new Error('Usage: node analyze.mjs RESULTS_DIR');
 const protocol = JSON.parse(readFileSync(join(directory, 'protocol.json'), 'utf8'));
-const summary = JSON.parse(readFileSync(join(directory, 'summary.json'), 'utf8'));
+const hasSummary = existsSync(join(directory, 'summary.json'));
+const summary = hasSummary ? JSON.parse(readFileSync(join(directory, 'summary.json'), 'utf8')) : { results: [] };
 const hash = value => createHash('sha256').update(value).digest('hex');
 const plannedIds = protocol.plan.flatMap(pair => pair.arms.map(enabled => `${pair.task}-${pair.length}-${enabled ? 'on' : 'off'}`));
-const results = plannedIds.flatMap(id => existsSync(join(directory, id, 'result.json')) ? [JSON.parse(readFileSync(join(directory, id, 'result.json'), 'utf8'))] : []); const faults = [];
+const results = plannedIds.flatMap(id => existsSync(join(directory, id, 'result.json')) ? [JSON.parse(readFileSync(join(directory, id, 'result.json'), 'utf8'))] : []); const faults = hasSummary ? [] : ['summary-absent'];
 for (const [path, expected] of Object.entries(protocol.sourceHashes)) if (hash(readFileSync(resolve(import.meta.dirname, '../..', path))) !== expected) faults.push(`source-hash-mismatch:${path}`);
 if (new Set(results.map(run => run.id)).size !== results.length) faults.push('duplicate-run-id');
 const missing = plannedIds.filter(id => !results.some(run => run.id === id));
@@ -20,10 +21,13 @@ for (const run of results) {
   const task = CASES.find(task => task.id === run.task);
   if (task === undefined) { faults.push(`${run.id}:unknown-task`); continue; }
   if (JSON.stringify(run.promptHashes) !== JSON.stringify(prompts(task, run.length).map(hash))) faults.push(`${run.id}:prompt-hash-mismatch`);
-  if (run.status !== 'completed') { faults.push(`${run.id}:execution-failed`); continue; }
-  const final = run.responses.findLast(response => response.phase === 3 && !response.checkpoint);
-  const checked = grade(task, final.text);
-  if (JSON.stringify(checked) !== JSON.stringify(run.grade)) faults.push(`${run.id}:grade-mismatch`);
+  if (run.status !== 'completed') faults.push(`${run.id}:execution-failed`);
+  const final = run.responses.findLast(response => response.phase === 3 && !response.checkpoint && response.stopReason === 'stop');
+  if (final !== undefined) {
+    const checked = grade(task, final.text);
+    if (run.grade !== undefined && JSON.stringify(checked) !== JSON.stringify(run.grade)) faults.push(`${run.id}:grade-mismatch`);
+    run.grade = checked;
+  } else faults.push(`${run.id}:primary-unavailable`);
   if (run.phases.some(phase => phase.contextWindow !== protocol.model.contextWindow)) faults.push(`${run.id}:capacity-mismatch`);
   if (!run.enabled && run.reports.length !== 0) faults.push(`${run.id}:control-contaminated`);
   if (run.length === 'short' && run.reports.length !== 0) faults.push(`${run.id}:short-control-triggered`);
