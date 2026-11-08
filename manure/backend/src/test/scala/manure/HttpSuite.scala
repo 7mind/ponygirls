@@ -185,9 +185,46 @@ final class HttpSuite extends FunSuite:
         request(Method.GET,s"/view/$id/").putHeaders(Header.Raw(CIString("Cookie"),session)),
         navigate(s"/view/$id/__manure/raw/nested/secret.md",Some(session)),
         navigate(s"/view/$id/__manure/files/nested/secret.md/content",Some(session)),
-        navigate(s"/view/$id/",None),
         navigate(s"/view/$id/",None).putHeaders(Header.Raw(CIString("Authorization"),"Bearer "+f.token))
       ).traverse_ { req => h.app.run(req).flatMap(r => IO { assertEquals(r.status.code,401); assert(!r.headers.headers.exists(_.name == CIString("Set-Cookie"))) }) }
+      bridge <- h.app.run(navigate(s"/view/$id/nested/?untrusted=https://attacker.test",None))
+      bridgeHtml <- bridge.as[String]
+      _ <- IO {
+        assertEquals(bridge.status.code,200)
+        assert(bridgeHtml.contains(s"0;url=/view/$id/nested/?manure-continue=1"))
+        assert(!bridgeHtml.contains("attacker.test")); assert(!bridgeHtml.contains("<script"))
+        assert(bridge.headers.headers.exists(h => h.name == CIString("Content-Security-Policy") && h.value.contains("default-src 'none'")))
+        assert(!bridge.headers.headers.exists(_.name == CIString("Set-Cookie")))
+      }
+      _ <- Vector("1","unknown","1&manure-continue=1").traverse_ { marker =>
+        h.app.run(navigate(s"/view/$id/?manure-continue=$marker",None)).flatMap { r => r.as[String].flatMap { html => IO {
+          assertEquals(r.status.code,401); assert(html.contains(s"/#/artifact/$id"))
+          assert(!html.contains("http-equiv=\"refresh\"")); assert(!r.headers.headers.exists(_.name == CIString("Set-Cookie")))
+        }}}
+      }
+      resumed <- h.app.run(navigate(s"/view/$id/nested/?manure-continue=unknown&redirect=https://attacker.test",Some(session)))
+      _ <- IO { assertEquals(resumed.status.code,303); assertEquals(resumed.headers.headers.find(_.name == CIString("Location")).map(_.value),Some(s"/view/$id/nested/")) }
+      _ <- Vector(
+        navigate(s"/view/$id/?manure-continue=1",None).putHeaders(Header.Raw(CIString("Origin"),"http://attacker.test")),
+        navigate(s"/view/$id/",None).putHeaders(Header.Raw(CIString("Origin"),"null"))
+      ).traverse_ { req => h.app.run(req).flatMap(r => IO { assertEquals(r.status.code,403); assert(!r.headers.headers.exists(_.name == CIString("Set-Cookie"))) }) }
+      _ <- Vector(
+        request(Method.GET,s"/view/$id/?manure-continue=1"),
+        navigate(s"/view/$id/__manure/raw/nested/secret.md?manure-continue=1",None),
+        navigate(s"/view/$id/__manure/files/nested/secret.md/content?manure-continue=1",None),
+        navigate(s"/view/$id/?manure-continue=1",None).putHeaders(Header.Raw(CIString("Authorization"),"Bearer invalid"))
+      ).traverse_ { req => h.app.run(req).flatMap(r => IO { assertEquals(r.status.code,401); assert(!r.headers.headers.exists(_.name == CIString("Set-Cookie"))) }) }
+      apiMarker <- h.app.run(request(Method.POST,s"/view/$id/__manure/current?manure-continue=1").withEntity(
+        CurrentWire.encode(wire.ContentEnvelope.codecJson,wire.ContentEnvelope(new UUID(0L,0L),"1.0.0",wire.ContentCommand.GetManifest())).noSpaces)
+        .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cookie"),session)))
+      _ <- IO { assertEquals(apiMarker.status.code,401); assert(!apiMarker.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      escapedBridge <- h.app.run(navigate(s"/view/$id/a%22%3C%3E%26?manure-continue-fake=1",None))
+      escapedHtml <- escapedBridge.as[String]
+      _ <- IO { assertEquals(escapedBridge.status.code,200); assert(escapedHtml.contains(s"/view/$id/a%22%3C%3E%26?manure-continue=1")) }
+      unknown <- h.app.run(navigate("/view/00000000000000000000000000000000/?manure-continue=1",None))
+      _ <- IO(assertEquals(unknown.status.code,404))
+      invalidBridge <- h.app.run(navigate(s"/view/$id/%2Fattacker.test",None))
+      _ <- IO { assertEquals(invalidBridge.status.code,400); assert(!invalidBridge.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
       hostile <- h.app.run(navigate(s"/view/$id/",Some(session)).putHeaders(Header.Raw(CIString("Origin"),"http://attacker.test")))
       _ <- IO { assertEquals(hostile.status.code,403); assert(!hostile.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
       deep <- h.app.run(navigate(s"/view/$id/nested/secret.md",Some(grant)))
@@ -206,7 +243,7 @@ final class HttpSuite extends FunSuite:
       other <- f.artifacts.init(f.identity,InitUpload("other internal",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
       _ <- f.artifacts.finish(f.identity,other.artifact.id)
       wrongArtifact <- h.app.run(navigate(s"/view/${other.artifact.id}/",Some(grant)))
-      _ <- IO { assertEquals(wrongArtifact.status.code,401); assert(!wrongArtifact.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      _ <- IO { assertEquals(wrongArtifact.status.code,200); assert(!wrongArtifact.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
       agentToken = SecretCodec.token()
       _ <- IO.blocking(java.nio.file.Files.writeString(f.config.users.find(_.userType == "agent").get.tokens.head.hashFile,SecretCodec.sha256(agentToken)+"\n"))
       agent <- h.app.run(navigate(s"/view/$id/",Some("manure-dev="+agentToken)))

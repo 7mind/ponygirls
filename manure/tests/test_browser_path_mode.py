@@ -1,4 +1,7 @@
 """LOW-SECURITY path mode: real Chromium handoff/unlock and mounted-site URLs."""
+import json
+import os
+from pathlib import Path
 import unittest
 
 import browser_fixtures as bf
@@ -17,16 +20,55 @@ class PathBrowserCase(unittest.TestCase):
         return out
 
     def test_internal_handoff_two_grants_and_nested_relative_assets(self):
-        fix = bf.start_server(suffix_mode='path')
+        viewer_dir = os.environ.get('MANURE_TEST_VIEWER_DIR', str(Path(__file__).resolve().parents[1] / 'web/viewer/dist'))
+        fix = bf.start_server(suffix_mode='path', config_overrides={'viewer_dir': viewer_dir})
         self.addCleanup(fix.close)
         a, b = [bf.upload_fixture(fix, name='path-' + n, kind='dir', visibility='internal', files=FILES) for n in ('a', 'b')]
         direct = bf.upload_fixture(fix, name='path-bookmark', kind='dir', visibility='internal', files=FILES)
         steps = [
+            # No session: retry exactly once, then a stable explicit sign-in.
+            {'op': 'goto', 'url': direct['content_url'] + '/nested/?discard=1'},
+            {'op': 'waitForEval', 'fn': '() => location.search === "?manure-continue=1" && !document.querySelector("meta[http-equiv=refresh]") && document.body.textContent.includes("Sign in to open")'},
+            {'op': 'reload'},
+            {'op': 'waitForEval', 'fn': '() => !document.querySelector("meta[http-equiv=refresh]") && document.querySelector("a").getAttribute("href") === ' + json.dumps('/#/artifact/' + direct['artifact_id'])},
             {'op': 'goto', 'url': fix.api_base + '/'},
             {'op': 'fill', 'selector': '#token-input', 'value': fix.identity.token},
             {'op': 'click', 'selector': '#login-form button[type=submit]'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
         ]
+        # Regression (blackbox/controlled Chromium + server): Strict management
+        # cookies are withheld on a real anchor click from a different site.
+        # Each target is fresh: no scoped content grant can mask the defect.
+        cross_site_targets = []
+        for suffix in ('/', '/nested/', '/__manure/view/nested/note.md'):
+            fixture_files = dict(FILES, **{'nested/note.md': b'# Cross-site viewer'})
+            item = bf.upload_fixture(fix, name='cross-site-' + suffix, kind='dir', visibility='internal', files=fixture_files)
+            target = item['content_url'] + suffix
+            cross_site_targets.append(target)
+            if suffix == '/nested/':
+                # A legitimately issued, then server-revoked content cookie must
+                # not prevent rechecking the still-valid management session.
+                user = bf.TestHttp()
+                issued = fix.http.current(fix.api_base, bf.cp.Command_CreateGrant(item['artifact_id']),
+                                          headers={'Authorization': 'Bearer ' + fix.identity.token})
+                self.assertEqual(issued.status, 200)
+                redeemed = user.current(item['content_url'], bf.cp.ContentCommand_RedeemGrant(issued.json()['grant']),
+                                        headers={'Origin': fix.api_base})
+                self.assertEqual(redeemed.status, 200)
+                stale = redeemed.headers.get('Set-Cookie').split(';', 1)[0]
+                revoked = user.current(item['content_url'], bf.cp.ContentCommand_Logout(), headers={'Origin': fix.api_base})
+                self.assertEqual(revoked.status, 200)
+                name, value = stale.split('=', 1)
+                steps.append({'op': 'setCookies', 'cookies': [{'name': name, 'value': value,
+                    'domain': '127.0.0.1', 'path': '/view/' + item['artifact_id'] + '/',
+                    'sameSite': 'Lax', 'httpOnly': True}]})
+            steps.extend([
+                {'op': 'goto', 'url': fix.api_base.replace('127.0.0.1', 'localhost') + '/'},
+                {'op': 'eval', 'fn': 'url => { const a = document.createElement("a"); a.id = "cross-site-link"; a.href = url; a.textContent = "Open"; document.body.appendChild(a); return location.origin; }', 'arg': target},
+                {'op': 'click', 'selector': '#cross-site-link'},
+                {'op': 'waitForEval', 'fn': '() => location.pathname === ' + json.dumps('/view/' + item['artifact_id'] + suffix) + ' && ' + ('document.body.textContent.includes("Cross-site viewer")' if '/__manure/view/' in suffix else 'document.title === "PATH-OK"')},
+                {'op': 'cookies', 'urls': [target]},
+            ])
         steps.extend([
             {'op': 'goto', 'url': direct['content_url'] + '/nested/'},
             {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK" && location.pathname.endsWith("/nested/")'},
@@ -47,7 +89,20 @@ class PathBrowserCase(unittest.TestCase):
             {'op': 'cookies', 'urls': [a['content_url'] + '/', b['content_url'] + '/']},
         ])
         out = self.checked(steps)
-        cookies = next(x['cookies'] for x in out if x['op'] == 'cookies')
+        cookies = [x['cookies'] for x in out if x['op'] == 'cookies'][-1]
+        session = next(c for c in cookies if c['name'] == 'manure-dev')
+        self.assertEqual(session['sameSite'], 'Strict')
+        requests = next(x['requests'] for x in out if x['op'] == 'requests')
+        for target in cross_site_targets:
+            first = next(r for r in requests if r['url'] == target)
+            self.assertNotIn('manure-dev', first['cookieNames'])
+            artifact_id = target.split('/view/', 1)[1].split('/', 1)[0]
+            if target.endswith('/nested/'):
+                self.assertIn('mgrant-dev-' + artifact_id, first['cookieNames'])
+            else:
+                self.assertNotIn('mgrant-dev-' + artifact_id, first['cookieNames'])
+            resumed = next(r for r in requests if r['url'] == target + '?manure-continue=1')
+            self.assertIn('manure-dev', resumed['cookieNames'])
         for item in (a, b):
             aid = item['artifact_id']
             grant = next(c for c in cookies if c['name'] == 'mgrant-dev-' + aid)
@@ -121,7 +176,7 @@ class PathTlsBrowserCase(unittest.TestCase):
         ], ignore_https_errors=True, host_resolver_rules=bf.TLS_RESOLVER_RULES)
         self.assertTrue(all(x['ok'] for x in out), [x for x in out if not x['ok']])
         self.assertEqual(next(x['value'] for x in out if x['op'] == 'eval'), fix.identity.user_id)
-        cookies = next(x['cookies'] for x in out if x['op'] == 'cookies')
+        cookies = [x['cookies'] for x in out if x['op'] == 'cookies'][-1]
         for item in (internal, external):
             aid = item['artifact_id']
             grant = next(c for c in cookies if c['name'] == '__Secure-mgrant-' + aid)

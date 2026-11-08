@@ -307,6 +307,16 @@ the same known artifact, including uncertain finalization. If initialization
 could not be confirmed, check the catalogue before starting a new upload:
 request correlation is not write deduplication and a reservation may exist.
 
+In low-security **path mode**, opening an Internal artifact root, deep link or
+viewer bookmark uses an existing human dashboard session to obtain an
+artifact-scoped grant. Links from another site first display a trusted inert
+continuation page, then retry once locally so the unchanged `SameSite=Strict`
+management cookie can be sent. An expired/revoked content cookie does not block
+that exchange. Without a dashboard session the retry shows a sign-in link to
+the artifact details, not a loop. Raw/download and content API requests still
+require their own content authorization; External links still ask for a password.
+Subdomain hosting does not share the management session.
+
 Ready artifacts have an **Access mode** selector in details. Any configured
 user can change Internal, External, or Public access; Public changes require
 confirmation. Changes revoke existing content grants. Switching to External

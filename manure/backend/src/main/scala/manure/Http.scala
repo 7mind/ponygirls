@@ -540,27 +540,44 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         // not to the internal management-session exchange.
         case d: DomainError if d.code == "password-required" => content(req,ctx,id)
         case d: DomainError if d.code == "grant-required" =>
-          val c = credentials(req,ctx)
-          if c.kind != "cookie" then content(req,ctx,id)
-          else
-            IO {
-              Require(originHeader(req).forall(_ == ctx.origin.value), "forbidden")
-              val identity = required(c)
-              auth.human(identity)
-              Require(throttle.allow("navigation:" + identity.userId,config.rateLimitPerMinute), "rate-limited")
-              // Canonical local path only: never accept a redirect URL or copy
-              // query/fragment data into Location. Validate before grant effects.
-              val viewerPrefix = if path.startsWith("/__manure/view/") then "/__manure/view" else ""
-              val localPath = path.stripPrefix(viewerPrefix)
-              val (file,trailing) = decoded(if localPath.isEmpty then "/" else localPath)
-              val location = ctx.mount + viewerPrefix + "/" + encoded(file) + (if file.nonEmpty && trailing then "/" else "")
-              (identity,location)
-            }.flatMap { (identity,location) =>
-              artifacts.createGrant(identity,id).flatMap(artifacts.redeem(id,_)).map { (value,expiry) =>
-                Response[IO](Status.SeeOther).putHeaders(raw("Location",location),raw("Content-Length","0"),
-                  raw("Set-Cookie",contentCookie(ctx,id,value,expiry,false)))
+          IO {
+            // Validate before either the inert continuation or grant effects.
+            Require(originHeader(req).forall(_ == ctx.origin.value), "forbidden")
+            val viewerPrefix = if path.startsWith("/__manure/view/") then "/__manure/view" else ""
+            val localPath = path.stripPrefix(viewerPrefix)
+            val (file,trailing) = decoded(if localPath.isEmpty then "/" else localPath)
+            val location = ctx.mount + viewerPrefix + "/" + encoded(file) + (if file.nonEmpty && trailing then "/" else "")
+            (credentials(req,ctx),location)
+          }.flatMap { (c,location) =>
+            if c.kind.isEmpty then
+              // Strict cookies are withheld on cross-site links. An inert local
+              // document establishes the site before one browser-initiated retry.
+              // The marker is not authority; no cookie still means no grant.
+              val continued = req.uri.query.multiParams.contains("manure-continue")
+              val next = location + "?manure-continue=1"
+              val refresh = if continued then "" else "<meta http-equiv=\"refresh\" content=\"0;url=" + htmlAttribute(next) + "\">"
+              val message = if continued then "Sign in to open this internal artifact." else "Continuing to internal artifact…"
+              val link = if continued then "/#/artifact/" + id else next
+              IO.pure(Response[IO](if continued then Status.Unauthorized else Status.Ok).withEntity(
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Manure · Internal artifact</title>" + refresh +
+                  "</head><body><main><p>" + message + "</p><a href=\"" + htmlAttribute(link) + "\">" +
+                  (if continued then "Sign in on dashboard" else "Continue") + "</a></main></body></html>")
+                .putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Referrer-Policy","no-referrer"),
+                  raw("Content-Security-Policy","default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
+            else if c.kind != "cookie" then content(req,ctx,id)
+            else
+              IO {
+                val identity = required(c)
+                auth.human(identity)
+                Require(throttle.allow("navigation:" + identity.userId,config.rateLimitPerMinute), "rate-limited")
+                identity
+              }.flatMap { identity =>
+                artifacts.createGrant(identity,id).flatMap(artifacts.redeem(id,_)).map { (value,expiry) =>
+                  Response[IO](Status.SeeOther).putHeaders(raw("Location",location),raw("Content-Length","0"),
+                    raw("Set-Cookie",contentCookie(ctx,id,value,expiry,false)))
+                }
               }
-            }
+          }
         case error => IO.raiseError(error)
       }
   val app: HttpApp[IO] = org.http4s.HttpApp[IO] { req =>

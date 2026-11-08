@@ -902,6 +902,27 @@ viewer's restrictive CSP through final middleware. Explicit `viewer_dir: null`
 disables viewer presentation; it does not disable raw content. This amendment
 does not change the low-security trust warning for shared-origin path mode.
 
+#### Path-mode internal document continuation
+
+Only GET navigations with `Sec-Fetch-Mode: navigate` and
+`Sec-Fetch-Dest: document`, on ordinary content paths or explicit viewer paths,
+may exchange a live human management cookie for a scoped content grant in path
+mode. This is not management authorization for raw/download bytes or content
+API calls; bearer credentials do not enable the exchange. External/password
+entry and subdomain isolation retain their existing policies.
+
+When Internal content authorization fails and management credentials are absent
+(including a cross-site link withholding the Strict cookie), return trusted
+inert HTML with a meta refresh to the canonical same-origin local path and a
+nonsecret `manure-continue=1` query marker. Validate/segment-encode the target
+before any effects; do not carry caller query data into the retry or handoff.
+The page permits no scripts, subresources, forms, framing or base changes.
+This retry also covers stale/revoked content cookies. A marker of any value
+is only a loop bound, never authority: without a session it yields 401 HTML
+with a dashboard sign-in/artifact-detail link and no refresh or new grant.
+Explicit invalid/ambiguous credentials and hostile/null Origin remain denied.
+Raw/API 401s, unknown artifact 404s and content-grant revocation stay intact.
+
 ### 7.4 Error codes (stable codes)
 
 Error codes (stable; HTTP in parentheses): `bad-envelope` (400),
