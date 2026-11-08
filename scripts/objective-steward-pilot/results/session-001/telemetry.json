@@ -1,0 +1,13 @@
+{
+  "semantic_review_sha256": "64701edf108a33eca07039eab8cc79b68c853aede186f7b4645289407c142b30",
+  "scope": "Reduced after parent qualitative judgments; descriptive SDK telemetry, not independently verified usage/billing or a quality composite. Null is not zero.",
+  "responses_with_usage": 12,
+  "responses_unknown_usage": 0,
+  "reported_total_tokens_sum": 88696,
+  "elapsed_seconds": {
+    "min": 12.25185802881606,
+    "median": 69.43308361491654,
+    "max": 113.91830355487764,
+    "sum": 794.8836497485172
+  }
+}
