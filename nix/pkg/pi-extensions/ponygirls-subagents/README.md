@@ -306,7 +306,7 @@ the reviewer's own conversation inside a `┃` gate frame, headed
 while the review runs); the gate's repair requests are labeled. A
 reviewer's row shows the reviews it ran. Each review is a fresh
 conversation (never resumed); its file is kept for the transcript.
-The badge (`agents 3 · running 1 · questions 1`) shows on the editor's
+The badge (`👥 3 · running 1 · questions 1`; compact `👥3`) shows on the editor's
 bottom-left border, next to the background-tasks and goal badges. Clicking
 it opens `/agents`.
 

@@ -28,25 +28,25 @@ test("no goal or a complete goal clears the status", () => {
 });
 
 test("active and paused goals are indicated", () => {
-  assert.equal(goalStatusLine(goal("active")), "goal active");
-  assert.equal(goalStatusLine(goal("paused")), "goal paused");
+  assert.equal(goalStatusLine(goal("active")), "🎯 active");
+  assert.equal(goalStatusLine(goal("paused")), "🎯 paused");
 });
 
 test("other unfinished states are indicated too", () => {
-  assert.equal(goalStatusLine(goal("blocked")), "goal blocked");
-  assert.equal(goalStatusLine(goal("budget_limited")), "goal budget_limited");
-  assert.equal(goalStatusLine(goal("usage_limited")), "goal usage_limited");
+  assert.equal(goalStatusLine(goal("blocked")), "🎯 blocked");
+  assert.equal(goalStatusLine(goal("budget_limited")), "🎯 budget_limited");
+  assert.equal(goalStatusLine(goal("usage_limited")), "🎯 usage_limited");
 });
 
-test("the compact badge is the status glyph in its state colour on a neutral chip, without a label", () => {
+test("the compact badge identifies goals and preserves non-color paused/error distinctions", () => {
   const tags: UiTheme = {
     fg: (color, text) => `<${color}>${text}</${color}>`,
     bg: (color, text) => `[${color}]${text}[/${color}]`,
     bold: (text) => text,
   };
-  assert.equal(goalCompactBadge(tags, "active"), "[toolPendingBg] <success>◎</success> [/toolPendingBg]");
-  assert.equal(goalCompactBadge(tags, "paused"), "[toolPendingBg] <warning>◉</warning> [/toolPendingBg]");
+  assert.equal(goalCompactBadge(tags, "active"), "[toolPendingBg] <success>🎯</success> [/toolPendingBg]");
+  assert.equal(goalCompactBadge(tags, "paused"), "[toolPendingBg] <warning>🎯◉</warning> [/toolPendingBg]");
   for (const status of ["blocked", "usage_limited", "budget_limited"] as const) {
-    assert.equal(goalCompactBadge(tags, status), "[toolPendingBg] <error>✖</error> [/toolPendingBg]");
+    assert.equal(goalCompactBadge(tags, status), "[toolPendingBg] <error>🎯✖</error> [/toolPendingBg]");
   }
 });

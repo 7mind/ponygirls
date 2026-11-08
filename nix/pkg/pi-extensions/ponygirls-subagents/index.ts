@@ -25,7 +25,7 @@ import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/gove
 import { prepareThroughEventBus } from "./src/delegated-call.ts";
 import { DELEGATION_GUIDELINES, gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
-import { AgentsScreen, compactBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
+import { AgentsScreen, badgeLine, compactBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
 import { themeStyle } from "./src/display.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -174,7 +174,7 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
     ui.setWidget(STATUS_KEY, undefined);
     return;
   }
-  const label = ui.theme.bg("toolSuccessBg", ` ${widgetLine(views)} `);
+  const label = ui.theme.bg("toolSuccessBg", ` ${badgeLine(views)} `);
   const compact = compactBadge(ui.theme, views);
   ui.setWidget(
     STATUS_KEY,

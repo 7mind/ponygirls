@@ -102,11 +102,11 @@ get the notification). Expanded, each shows exactly the full text it
 always had; collapsing changes only drawing, never the persisted or sent
 content.
 
-While an unfinished goal exists the editor's bottom-left border shows `goal
+While an unfinished goal exists the editor's bottom-left border shows `🎯
 <status>` (active, paused, blocked, budget_limited, usage_limited) as a
 magenta badge, next to the background-tasks and subagents badges when they
-are present; when the border is too narrow it shows only the status glyph
-(`◎` active, `◉` paused, `✖` blocked/limited). The badge clears when the
+are present; when the border is too narrow it shows `🎯` active,
+`🎯◉` paused, or `🎯✖` blocked/limited, retaining non-color state distinctions. The badge clears when the
 goal completes or is cleared. Clicking the badge opens the `/goal` pane —
 the same pane `/goal` with no arguments opens: status and revision in the
 title, objective, token budget (bar against the cap, or `no cap`), active

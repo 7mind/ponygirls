@@ -61,13 +61,13 @@ test("border goal badge follows create, pause, resume, and complete", async (t) 
 
   const cmdCtx = { ...startCtx, abort: () => {} };
   await commands.get("goal")!.handler("status test objective" as never, cmdCtx as never);
-  assertBadge(statuses, " goal active ", " <success>◎</success> ");
+  assertBadge(statuses, " 🎯 active ", " <success>🎯</success> ");
 
   await commands.get("goal")!.handler("pause" as never, cmdCtx as never);
-  assertBadge(statuses, " goal paused ", " <warning>◉</warning> ");
+  assertBadge(statuses, " 🎯 paused ", " <warning>🎯◉</warning> ");
 
   await commands.get("goal")!.handler("resume" as never, cmdCtx as never);
-  assertBadge(statuses, " goal active ", " <success>◎</success> ");
+  assertBadge(statuses, " 🎯 active ", " <success>🎯</success> ");
 
   const done = await tools.get("update_goal")!.execute("u1" as never, { status: "complete" } as never, undefined as never, undefined as never, { sessionManager, ui } as never);
   assert.match(done.content[0]!.text, /complete/);

@@ -2,7 +2,7 @@ import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { VStack, visibleWidth } from "@earendil-works/pi-tui";
-import { AgentInspector, AgentsScreen, TranscriptView, badgeState, chatModeFor, compactBadge, countTree, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
+import { AgentInspector, AgentsScreen, TranscriptView, badgeLine, badgeState, chatModeFor, compactBadge, countTree, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
 import { PLAIN_STYLE } from "../src/display.ts";
 import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
 import type { AgentView, TranscriptSource } from "../src/supervisor.ts";
@@ -64,6 +64,8 @@ test("the footer status names the total and only nonzero states", () => {
   const views = [view(), view({ id: "a-2", path: "/root/b", observed: "queued", pendingIntent: "queued" })];
   assert.equal(widgetLine(views), "agents 2 · running 1 · queued 1");
   assert.equal(widgetLine([view({ observed: "settled", pendingIntent: "settled" })]), "agents 1");
+  assert.equal(badgeLine(views), "👥 2 · running 1 · queued 1");
+  assert.equal(badgeLine([view({ pendingIntent: "awaiting parent reply" })]), "👥 1 · running 1 · questions 1");
   assert.deepEqual(countTree(views), { running: 1, queued: 1, parked: 0, questions: 0 });
 });
 
@@ -342,8 +344,8 @@ test("the border short form is the agent glyph in the tree's state colour and th
   assert.equal(badgeState([settled]), "settled");
   assert.equal(badgeState([settled, view({ id: "a-2", observed: "queued", pendingIntent: "queued" })]), "running");
   assert.equal(badgeState([view(), view({ id: "a-2", openQuestion: { messageId: "q", to: "/root/a", text: "?", deadlineAt: "" } })]), "attention");
-  assert.equal(compactBadge(PLAIN_THEME, [settled, settled]), " ◈2 ");
-  assert.equal(tags(compactBadge(TAG_THEME, [view()])), "<bg:toolPendingBg> <accent>◈</><text>1</> </>");
+  assert.equal(compactBadge(PLAIN_THEME, [settled, settled]), " 👥2 ");
+  assert.equal(tags(compactBadge(TAG_THEME, [view()])), "<bg:toolPendingBg> <accent>👥</><text>1</> </>");
 });
 
 test("the transcript is framed with the agent path, kind and model, and its state and outcome on the right", () => {

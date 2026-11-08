@@ -20,11 +20,12 @@ export const GOAL_STATUS_KEY = "goal";
 export function goalStatusLine(goal: GoalRecord | null): string | null {
   if (!goal) return null;
   if (goal.status === "complete") return null;
-  return `goal ${goal.status}`;
+  return `🎯 ${goal.status}`;
 }
 
-/** Short border form for narrow widths: the status glyph in its state colour, no label. */
+/** Goal identity in its state colour; paused/error retain a non-color status marker. */
 export function goalCompactBadge(theme: UiTheme, status: GoalStatus): string {
   const look = GOAL_STATUS_LOOK[status];
-  return compactChip(theme, look.glyph, look.state, "");
+  const marker = status === "active" || status === "complete" ? "" : look.glyph;
+  return compactChip(theme, `🎯${marker}`, look.state, "");
 }

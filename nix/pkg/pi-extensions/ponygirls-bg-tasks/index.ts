@@ -45,7 +45,7 @@ async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
 }
 
 /** Glyph of the short border form. */
-const BADGE_GLYPH = "⚙";
+const BADGE_GLYPH = "🛠️";
 
 /** Publish (or clear) the bottom-left badge; a click opens the /bg inspector. */
 function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {

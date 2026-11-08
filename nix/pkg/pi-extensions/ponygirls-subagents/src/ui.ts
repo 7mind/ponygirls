@@ -58,6 +58,11 @@ export function widgetLine(views: AgentView[]): string {
   return parts.join(" · ");
 }
 
+/** Badge-only identity; inspector and headless summaries keep their textual label. */
+export function badgeLine(views: AgentView[]): string {
+  return widgetLine(views).replace(/^agents /, "👥 ");
+}
+
 /** Border short form state: a question needs the user, live work runs, otherwise settled. */
 export function badgeState(views: AgentView[]): UiState {
   if (views.some((v) => v.openQuestion !== null)) return "attention";
@@ -67,7 +72,7 @@ export function badgeState(views: AgentView[]): UiState {
 
 /** Border short form: the agent glyph in the tree's state colour and the total. */
 export function compactBadge(theme: UiTheme, views: AgentView[]): string {
-  return compactChip(theme, AGENT_GLYPH, badgeState(views), String(views.length));
+  return compactChip(theme, "👥", badgeState(views), String(views.length));
 }
 
 /** Headless projection: structured text, no terminal escapes. */
