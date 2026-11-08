@@ -221,18 +221,11 @@ export function createPaperProviders(settings: SearchConfig, transport: typeof f
     }).slice(0, count(r.numResults));
   }) });
   if (enabled("arxiv")) {
-    let queue = Promise.resolve();
-    const request = (params: URLSearchParams, signal: AbortSignal) => {
-      const task = queue.then(() => withArxivLock(signal, async () =>
-        atom(await body(await transport(`https://export.arxiv.org/api/query?${params}`, { signal, redirect: "error", headers: { Accept: "application/atom+xml" } }), signal))));
-      queue = task.then(() => {}, () => {});
-      // Reject a cancelled queued caller immediately, without releasing its queue slot.
-      return new Promise<PaperRecord[]>((resolve, reject) => {
-        const abort = () => reject(new DOMException("Cancelled", "AbortError")); signal.addEventListener("abort", abort, { once: true });
-        if (signal.aborted) abort();
-        task.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort));
-      });
-    };
+    // The host lock serializes all instances and its acquisition waits are abortable.
+    // Retain the physical operation promise after dispatch: racing it against abort
+    // would release the shared runtime's pool slot while transport still owns it.
+    const request = (params: URLSearchParams, signal: AbortSignal) => withArxivLock(signal, async () =>
+      atom(await body(await transport(`https://export.arxiv.org/api/query?${params}`, { signal, redirect: "error", headers: { Accept: "application/atom+xml" } }), signal)));
     providers.push({ name: "arxiv",
       search: (r, s) => safe("arxiv", s, () => {
         const exact = arxivIdentifier(r.query);
