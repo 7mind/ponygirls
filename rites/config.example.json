@@ -1,0 +1,74 @@
+{
+  "listenHost": "127.0.0.1",
+  "listenPort": 8449,
+  "allowedOrigin": "http://127.0.0.1:8449",
+  "secureCookies": false,
+  "allowInsecureHttp": false,
+  "jdbcUrl": "jdbc:postgresql://127.0.0.1:5432/rites",
+  "databaseUser": "rites",
+  "databasePasswordFile": "/run/credentials/rites/database",
+  "databaseLimits": {
+    "maxConnections": 8,
+    "maxQueued": 32,
+    "queueTimeoutMs": 5000,
+    "connectTimeoutMs": 5000,
+    "statementTimeoutMs": 30000,
+    "lockTimeoutMs": 35000,
+    "idleTransactionTimeoutMs": 60000,
+    "socketTimeoutMs": 35000
+  },
+  "users": [
+    {
+      "id": "example-account",
+      "login": "example-account",
+      "passwordHashFile": "/run/credentials/rites/account-password-hash",
+      "enabled": true
+    }
+  ],
+  "masterKeyFile": "/run/credentials/rites/vault.key",
+  "workerCommand": "rites-worker",
+  "webRoot": null,
+  "workspaceRoot": "/var/lib/rites/work",
+  "cacheRoot": "/var/lib/rites/cache",
+  "maxBodyBytes": 65536,
+  "sessionTtlSeconds": 86400,
+  "maxPromptBytes": 262144,
+  "maxFileBytes": 4194304,
+  "maxRunFiles": 10000,
+  "scheduler": {
+    "pollMilliseconds": 1000,
+    "queueBound": 128,
+    "concurrency": 4,
+    "runTimeoutSeconds": 1800
+  },
+  "forges": [
+    {
+      "kind": "Gitlab",
+      "host": "git.example.invalid",
+      "apiBase": "https://git.example.invalid/api/v4",
+      "cloneBase": "https://git.example.invalid"
+    }
+  ],
+  "oauthClients": [
+    {
+      "id": "example-oauth",
+      "host": "git.example.invalid",
+      "label": "Example OAuth client",
+      "tokenEndpoint": "https://git.example.invalid/oauth/token",
+      "clientId": "example-client-id",
+      "clientSecretFile": "/run/credentials/rites/oauth-client-secret",
+      "redirectUri": "https://app.example.invalid/oauth/callback",
+      "expiryLeadSeconds": 300
+    }
+  ],
+  "models": [
+    {
+      "id": "example-model",
+      "provider": "example-provider",
+      "model": "example-model",
+      "thinkingLevel": "medium",
+      "configFile": "/run/credentials/rites/model.json"
+    }
+  ],
+  "testMode": false
+}
