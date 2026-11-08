@@ -26,8 +26,9 @@ const engine: EngineDescriptor = { name: "fixture", label: "Fixture", tier: "mai
 function fakePolicy(main: Partial<SearchPolicy["main"]>, rest: Partial<Omit<SearchPolicy, "main">>): SearchPolicy {
 	return {
 		defaultResultCount: 10, maximumResultCount: 20,
-		main: { mode: "first", combineForced: false, combineMode: "all", selectionStrategy: "sequential", engineOrder: ["fixture"], targetUsableEngines: 3, requestedPerEngine: 10, ...main },
-		fallback: [], native: { engineCount: 0, timeoutMs: 45_000, settlementGraceMs: 1_000 }, fusion: { rankConstant: 60 }, ...rest,
+		main: { mode: "first", combineForced: false, combineMode: "all", selectionStrategy: "sequential", engineOrder: ["fixture"], targetUsableEngines: 3, requestedPerEngine: 20, ...main },
+		fallback: [], native: { engineCount: 0, timeoutMs: 45_000, settlementGraceMs: 1_000 }, fusion: { rankConstant: 60, rerank: "rrf", titleWeight: .2, bodyWeight: .1, exactTitle: true },
+		execution: { maxConcurrent: 6, perProvider: 2, overallTimeoutMs: 60_000, sourceTimeoutMs: 30_000, discoveryTimeoutMs: 10_000 }, ...rest,
 	};
 }
 function setup(overrides: Partial<WebSearchViewDeps> = {}) {
@@ -56,41 +57,44 @@ function scrollToText(view: WebSearchView, render: () => string[], text: string,
 }
 
 describe("WebSearchView", () => {
-	it("explains first-response defaults, overrides, and original-rank fusion rather than tier/semantic ranking", () => {
+	it("explains first-nonempty defaults, overrides, shared weighted fusion and configured reranking", () => {
 		const { deps, view } = setup({ rows: () => 100 });
 		const text = view.render(200).join("\n");
 		for (const rule of [
 			"Default auto: n=10 (max 20) · Main first · combine false · configured combine mode all",
-			"first successful response, even empty; errors advance",
-			"Default request: 10 results per Main engine (n)",
+			"first non-empty response; errors and empty responses advance",
+			"Default request: 20 candidates per Main engine; final n is applied only after fusion/reranking.",
 			"Per-call count/combine may override these defaults", "combine=true uses the configured combine mode",
-			"no discovery or provider probes",
-			"score = Σ 1/(k + rank), k=60", "original engine lists, unique-document ranks after within-engine URL dedup",
-			"Full-weight RRF", "One vote per named engine per distinct page", "Attempts may use cached results",
-			"Cross-engine agreement boosts pages", "URL deduplication preserves source attribution",
-			"No per-tier bonus or semantic reranker", "Fuse first, then cut to final n results",
-			"Named backend calls isolate one engine and bypass fusion/dedup; no other tiers are added",
+			"viewing this snapshot runs no provider probes",
+			"score = Σ weight/(k + rank), k=60", "original unique-document ranks, one contribution per source/page",
+			"Shared weighted RRF", "Source boosts and overlap policies apply before the final cut", "Attempts may use cached results",
+			"URL/identifier lookup priority and provenance are preserved",
+			"Reranking: rrf; lexical weights title=0.2, body=0.1; exact-title priority on",
+			"no inherent tier bonus", "Fuse first, then cut to final n results",
+			"Shared web/paper pool: max 6 requests, 2 per provider. Overall 60s; default source 30s; discovery 10s.",
+			"Source deadlines include queue/rate waits",
+			"Named backend calls isolate one engine but retain shared dedup/ranking and deadlines; no other tiers are added",
 		]) expect(text).toContain(rule);
 		expect(deps.search).not.toHaveBeenCalled();
 		expect(deps.monitor.snapshot()).toEqual([]);
 		view.dispose();
 	});
 
-	it("explains targeted non-empty slots, parallel initial wave and failure/empty top-ups", () => {
-		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "targeted", combineForced: true, combineMode: "targeted", requestedPerEngine: 4 }, {}) });
+	it("explains targeted non-empty slots and immediate failure/empty top-ups", () => {
+		const { view } = setup({ rows: () => 100, policy: () => fakePolicy({ mode: "targeted", combineForced: true, combineMode: "targeted", requestedPerEngine: 20 }, {}) });
 		const text = view.render(200).join("\n");
-		for (const rule of ["Main targeted", "up to 3 non-empty Main responses", "initial wave parallel", "top up failures/empty responses from remaining engines", "4 results per Main engine (ceil(n/3))"]) expect(text).toContain(rule);
+		for (const rule of ["Main targeted", "up to 3 non-empty Main responses", "replace failed/empty slots immediately without waiting for the slowest peer", "20 candidates per Main engine"]) expect(text).toContain(rule);
 		expect(text).not.toContain("first successful response");
 		view.dispose();
 	});
 
-	it("explains all-Main parallel querying and its default per-engine request", () => {
+	it("explains all-Main shared-pool scheduling and its default candidate request", () => {
 		const engines: EngineDescriptor[] = ["one", "two", "three"].map((name) => ({ name, label: name, tier: "main" }));
-		const { view } = setup({ rows: () => 100, engines: () => engines, policy: () => fakePolicy({ mode: "all", combineForced: true, requestedPerEngine: 4, engineOrder: engines.map(({ name }) => name) }, {}) });
+		const { view } = setup({ rows: () => 100, engines: () => engines, policy: () => fakePolicy({ mode: "all", combineForced: true, requestedPerEngine: 20, engineOrder: engines.map(({ name }) => name) }, {}) });
 		const text = view.render(200).join("\n");
 		expect(text).toContain("Main · 3 current");
-		expect(text).toContain("All: every Main engine is queried in parallel");
-		expect(text).toContain("4 results per Main engine (ceil(n/Main count))");
+		expect(text).toContain("All: schedule every Main engine through the shared concurrency pool");
+		expect(text).toContain("20 candidates per Main engine");
 		expect(text).not.toMatch(/first successful response|up to 3 non-empty/);
 		view.dispose();
 	});
@@ -509,7 +513,10 @@ describe("WebSearchView", () => {
 		expect(view.render(100).join("\n")).not.toBe(initial);
 		view.handleInput(pageDown);
 		expect(view.render(100).join("\n")).not.toBe(initial);
-		scrollToText(view, () => view.render(100), "Engine 0 ", down);
+		const firstEngineAtViewportEdge = scrollToText(view, () => view.render(100), "Engine 0 ", down).join("\n");
+		view.handleInput(pageDown);
+		expect(view.render(100).join("\n")).not.toBe(firstEngineAtViewportEdge);
+		// A row first visible at the bottom can remain at the top after one page.
 		view.handleInput(pageDown);
 		expect(view.render(100).join("\n")).not.toContain("Engine 0 ");
 		view.handleInput(end);

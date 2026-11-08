@@ -34,20 +34,20 @@ describe("resolveAlwaysInclude", () => {
 	it("rejects a backend that is missing or disabled", () => {
 		expect(() => resolveAlwaysInclude({
 			searxng: { timeoutMs: 3000 },
-		}, ["exa"])).toThrow(/not an enabled backend/);
+		}, ["exa"])).toThrow(/alwaysInclude source is not enabled/);
 	});
 
 	it("rejects a non-positive timeout", () => {
 		expect(() => resolveAlwaysInclude({
 			searxng: { timeoutMs: 0 },
-		}, active)).toThrow(/positive timeoutMs/);
+		}, active)).toThrow(/Invalid timeout/);
 	});
 
 	it("rejects a non-positive or fractional maxResults", () => {
 		for (const maxResults of [0, -1, 1.5]) {
 			expect(() => resolveAlwaysInclude({
 				searxng: { timeoutMs: 3000, maxResults },
-			}, active)).toThrow(/positive integer/);
+			}, active)).toThrow(/Invalid maxResults/);
 		}
 	});
 });
@@ -111,7 +111,10 @@ describe("runTieredTargetedCombine", () => {
 
 		expect(result.backendStats.get("langsearch")).toMatchObject({
 			success: false,
-			error: "timed out after 40ms",
+			count: 0,
+			status: "timeout",
+			reason: "source-deadline",
+			tier: "alwaysInclude",
 		});
 		expect(result.backendStats.get("searxng")?.success).toBe(true);
 		expect(result.results.map((r) => r.url)).toContain("https://s.example/a");

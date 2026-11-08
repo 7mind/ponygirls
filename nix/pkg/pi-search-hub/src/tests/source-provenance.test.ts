@@ -71,7 +71,7 @@ describe("combined formatting provenance", () => {
 	];
 
 	it("labels every source with its display name", () => {
-		const text = formatCombinedResults("q", results, new Map([["exa", { success: true, count: 1 }]]), defs);
+		const text = formatCombinedResults("q", results, new Map([["exa", { success: true, count: 1, status: "success" as const, tier: "main" as const }]]), defs);
 		expect(text).toContain("*Source: Exa, Tavily*");
 	});
 

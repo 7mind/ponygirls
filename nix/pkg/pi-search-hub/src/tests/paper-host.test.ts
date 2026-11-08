@@ -65,7 +65,7 @@ it("loads the extension in real Pi and executes scholarly search with structured
     const data = JSON.parse(result.content.filter(part => part.type === "text").map(part => part.text).join(""));
     expect(data.results[0].ids).toContainEqual({ namespace: "arxiv", value: "1706.03762" });
     expect(data.results[0].sources).toEqual(["searxng"]);
-    expect(data.providers[0].tier).toBe("fallback");
+    expect(data.providers[0].tier).toBe("alwaysInclude");
     expect(data.results[0].abstract).toBeUndefined();
     expect(JSON.stringify(observed.at(-1))).toContain("1706.03762");
     await session.reload(); expect(session.getActiveToolNames()).toContain("paper_research"); expect(requests).toHaveLength(1);

@@ -108,7 +108,7 @@ describe("fusion backend votes", () => {
 	it("rejects duplicate backend list IDs instead of treating them as independent votes", () => {
 		expect(() => reciprocalRankFusion([
 			list("a", [hit("first")]), list("a", [hit("second")]),
-		], 10)).toThrow('Duplicate ranked backend list: "a"');
+		], 10)).toThrow('Duplicate ranked source list: "a"');
 	});
 });
 

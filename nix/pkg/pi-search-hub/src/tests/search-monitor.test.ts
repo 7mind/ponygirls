@@ -25,7 +25,7 @@ describe("SearchMonitor", () => {
 		now = 50;
 		first({ status: "success", resultCount: 4 });
 		first({ status: "failed" });
-		expect(monitor.snapshot()[0]).toEqual({ name: "fixture", label: "Fixture search", tier: "main", ongoing: 0, success: 1, empty: 1, failed: 0, cancelled: 0, lastOutcome: "success", resultCountLast: 4, resultCountTotal: 4, latencyLastMs: 40, latencyTotalMs: 55 });
+		expect(monitor.snapshot()[0]).toEqual({ name: "fixture", label: "Fixture search", tier: "main", ongoing: 0, success: 1, empty: 1, failed: 0, timeout: 0, cancelled: 0, lastOutcome: "success", resultCountLast: 4, resultCountTotal: 4, latencyLastMs: 40, latencyTotalMs: 55 });
 		now = 60;
 		const fail = monitor.begin(main);
 		now = 65;

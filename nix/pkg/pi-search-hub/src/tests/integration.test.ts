@@ -151,13 +151,14 @@ describe("runTargetedCombine", () => {
 		});
 
 		expect(calls).toEqual([
-			{ backend: "a", numResults: 4 },
-			{ backend: "b", numResults: 4 },
-			{ backend: "c", numResults: 4 },
+			{ backend: "a", numResults: 20 },
+			{ backend: "b", numResults: 20 },
+			{ backend: "c", numResults: 20 },
 		]);
 		expect(result.usableBackendCount).toBe(3);
 		expect(result.results).toHaveLength(3);
-		expect(Array.from(result.backendStats.keys())).toEqual(["a", "b", "c"]);
+		expect(Array.from(result.backendStats.keys())).toEqual(["a", "b", "c", "d"]);
+		expect(result.backendStats.get("d")).toMatchObject({ success: false, count: 0, status: "not-started", reason: "target-satisfied" });
 	});
 
 	it("tops up only the missing usable backend count", async () => {
@@ -175,8 +176,8 @@ describe("runTargetedCombine", () => {
 
 		expect(calls).toEqual(["a", "b", "c", "d"]);
 		expect(result.usableBackendCount).toBe(3);
-		expect(result.backendStats.get("b")).toMatchObject({ success: false, count: 0, error: "b failed" });
-		expect(result.backendStats.has("e")).toBe(false);
+		expect(result.backendStats.get("b")).toMatchObject({ success: false, count: 0, error: "Source failed", status: "failed" });
+		expect(result.backendStats.get("e")).toMatchObject({ success: false, count: 0, status: "not-started", reason: "target-satisfied" });
 	});
 
 	it("runs the next three when the first three are not usable", async () => {
@@ -195,7 +196,7 @@ describe("runTargetedCombine", () => {
 		expect(calls).toEqual(["a", "b", "c", "d", "e", "f"]);
 		expect(result.usableBackendCount).toBe(3);
 		expect(result.backendStats.get("a")).toMatchObject({ success: true, count: 0 });
-		expect(result.backendStats.has("g")).toBe(false);
+		expect(result.backendStats.get("g")).toMatchObject({ success: false, count: 0, status: "not-started", reason: "target-satisfied" });
 	});
 
 	it("returns partial results when active backends are exhausted", async () => {
@@ -213,7 +214,7 @@ describe("runTargetedCombine", () => {
 		expect(result.usableBackendCount).toBe(1);
 		expect(result.results).toEqual([{ ...resultFor("a")[0], backend: "a", sources: ["a"] }]);
 		expect(result.backendStats.get("b")).toMatchObject({ success: true, count: 0 });
-		expect(result.backendStats.get("c")).toMatchObject({ success: false, count: 0, error: "c failed" });
+		expect(result.backendStats.get("c")).toMatchObject({ success: false, count: 0, error: "Source failed", status: "failed" });
 	});
 
 	it("returns empty when all backends fail", async () => {
@@ -240,7 +241,7 @@ describe("runTargetedCombine", () => {
 		expect(result.results).toEqual([]);
 	});
 
-	it("distributes numResults across targetUsableBackends", async () => {
+	it("requests full candidate depth from every targeted backend", async () => {
 		const calls: number[] = [];
 		await runTargetedCombine({
 			orderedBackends: ["a", "b", "c"],
@@ -253,7 +254,7 @@ describe("runTargetedCombine", () => {
 			},
 		});
 
-		expect(calls).toEqual([3, 3, 3]);
+		expect(calls).toEqual([18, 18, 18]);
 	});
 
 	it("returns results from the lone usable backend", async () => {

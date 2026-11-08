@@ -1,5 +1,6 @@
 import { afterEach, describe, it, expect, vi } from "vitest";
 import { boundedPaperOperation, PaperTimeoutError, runPaperMetasearch, validatePaperConfig } from "../extensions/papers/metasearch.js";
+import { DEFAULT_TIMEOUTS } from "../extensions/engine/policy.js";
 import type { PaperConfig, PaperProvider, PaperProviderName, PaperRecord } from "../extensions/papers/types.js";
 const hit = (name: string): PaperRecord => ({ title: name, url: `https://example.test/${name}`, ids: [], authors: [], categories: [] });
 const provider = (name: PaperProviderName, results: PaperRecord[] = [hit(name)]): PaperProvider => ({ name, search: vi.fn(async () => results) });
@@ -8,28 +9,33 @@ afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
 // Specified BG: real orchestration/identity/fusion with handwritten in-process ports.
 describe("paper metasearch", () => {
-  it.each(["first", "targeted", "all"] as const)("runs fallback alongside %s mains with full candidate depth", async mode => {
+  it.each(["first", "targeted", "all"] as const)("runs always-included sources alongside %s mains with full candidate depth", async mode => {
     const providers = [provider("firecrawl"), provider("exa"), provider("searxng"), provider("arxiv")];
     const result = await runPaperMetasearch(providers, { mode }, request, undefined);
-    expect(result.providers.map(p => p.provider)).toEqual(mode === "first" ? ["firecrawl", "searxng", "arxiv"] : ["firecrawl", "exa", "searxng", "arxiv"]);
+    expect(result.providers.map(p => p.provider)).toEqual(["firecrawl", "exa", "searxng", "arxiv"]);
+    if (mode === "first") {
+      expect(result.providers[1]).toMatchObject({ provider: "exa", status: "not-started", reason: "target-satisfied" });
+      expect(providers[1].search).not.toHaveBeenCalled();
+    }
     for (const p of providers.filter(p => mode !== "first" || p.name !== "exa")) expect(p.search).toHaveBeenCalledWith({ query: "q", numResults: 10 }, expect.any(AbortSignal));
   });
   it("first continues after both failed and successful-empty providers", async () => {
     const failed: PaperProvider = { name: "firecrawl", search: async () => { throw new Error("secret key=abc body"); } };
-    const result = await runPaperMetasearch([failed, provider("exa", []), provider("arxiv")], { mode: "first", sources: { arxiv: { tier: "main" } } }, request, undefined);
+    const result = await runPaperMetasearch([failed, provider("exa", []), provider("arxiv")], { mode: "first", alwaysInclude: {} }, request, undefined);
     expect(result.providers.map(p => p.status)).toEqual(["failed", "empty", "success"]);
     expect(result.results[0].title).toBe("arxiv");
     expect(JSON.stringify(result)).not.toContain("secret");
   });
-  it("targeted fills empty/failure slots until two usable main lists", async () => {
+  it("targeted fills empty/failure slots until three usable main lists", async () => {
     const p = [provider("firecrawl", []), provider("exa"), provider("searxng"), provider("arxiv")];
-    const result = await runPaperMetasearch(p, { sources: { searxng: { tier: "main" }, arxiv: { tier: "main" } } }, request, undefined);
-    expect(result.providers.map(p => p.provider)).toEqual(["firecrawl", "exa", "searxng"]);
-    expect(p[3].search).not.toHaveBeenCalled();
+    const result = await runPaperMetasearch(p, { alwaysInclude: {} }, request, undefined);
+    expect(result.providers.map(p => p.provider)).toEqual(["firecrawl", "exa", "searxng", "arxiv"]);
+    expect(result.providers.map(p => p.status)).toEqual(["empty", "success", "success", "success"]);
+    expect(p[3].search).toHaveBeenCalledWith({ query: "q", numResults: 10 }, expect.any(AbortSignal));
   });
   it("fuses raw candidates once across tiers before final truncation", async () => {
     const common = hit("agreement");
-    const result = await runPaperMetasearch([provider("exa", [hit("a"), common]), provider("arxiv", [hit("b"), common])], { mode: "all", rerank: "rrf" }, { query: "q", numResults: 1 }, undefined);
+    const result = await runPaperMetasearch([provider("exa", [hit("a"), common]), provider("arxiv", [hit("b"), common])], { mode: "all", ranking: { rerank: "rrf" } }, { query: "q", numResults: 1 }, undefined);
     expect(result.results).toHaveLength(1);
     expect(result.results[0]).toMatchObject({ title: "agreement", rrfScore: 2 / 62, sources: ["arxiv", "exa"] });
   });
@@ -56,16 +62,16 @@ describe("paper metasearch", () => {
     expect(JSON.stringify(result)).not.toContain("secret");
     expect(vi.getTimerCount()).toBe(0);
   });
-  it("defaults main and fallback deadlines separately", async () => {
+  it("defaults main and always-included deadlines separately", async () => {
     vi.useFakeTimers();
     const hung = (name: PaperProviderName): PaperProvider => ({ name, search: () => new Promise(() => {}) });
     const pending = runPaperMetasearch([hung("exa"), hung("arxiv")], {}, request, undefined);
-    await vi.advanceTimersByTimeAsync(8000);
+    await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUTS.alwaysIncludeMs);
     let settled = false;
     void pending.then(() => { settled = true; });
     await Promise.resolve();
     expect(settled).toBe(false);
-    await vi.advanceTimersByTimeAsync(7000);
+    await vi.advanceTimersByTimeAsync(DEFAULT_TIMEOUTS.sourceMs - DEFAULT_TIMEOUTS.alwaysIncludeMs);
     expect((await pending).providers.map(p => p.status)).toEqual(["timeout", "timeout"]);
   });
   it("propagates caller abort promptly even when every provider ignores signals", async () => {
@@ -73,16 +79,18 @@ describe("paper metasearch", () => {
     const controller = new AbortController();
     const hung: PaperProvider = { name: "exa", search: () => new Promise(() => {}) };
     const pending = runPaperMetasearch([hung], {}, request, controller.signal);
-    const rejected = expect(pending).rejects.toThrow("cancelled");
+    const cancelled = expect(pending).resolves.toMatchObject({ cancelled: true, timedOut: false, results: [],
+      providers: [{ provider: "exa", status: "cancelled", reason: "caller-cancelled" }] });
     await Promise.resolve();
     controller.abort(new Error("cancelled"));
-    await rejected;
+    await cancelled;
     expect(vi.getTimerCount()).toBe(0);
   });
   it("does not call any provider when already aborted", async () => {
     const p = provider("exa");
     const c = new AbortController(); c.abort();
-    await expect(runPaperMetasearch([p], {}, request, c.signal)).rejects.toMatchObject({ name: "AbortError" });
+    await expect(runPaperMetasearch([p], {}, request, c.signal)).resolves.toMatchObject({ cancelled: true, results: [],
+      providers: [{ provider: "exa", status: "not-started", reason: "caller-cancelled" }] });
     expect(p.search).not.toHaveBeenCalled();
   });
   it("returns successful all-empty and all-failed stats without inventing results", async () => {
@@ -90,7 +98,7 @@ describe("paper metasearch", () => {
     expect((await runPaperMetasearch([{ name: "exa", search: async () => { throw new Error("bad"); } }], {}, request, undefined)).providers[0].status).toBe("failed");
   });
   it.each([0, 21, 1.5, NaN, "2"])("rejects result count %s", async numResults => {
-    await expect(runPaperMetasearch([], {}, { query: "q", numResults } as never, undefined)).rejects.toThrow("Invalid paper search request");
+    await expect(runPaperMetasearch([], {}, { query: "q", numResults } as never, undefined)).rejects.toThrow("Invalid search request");
   });
   it.each(["", "  ", "x".repeat(2001), null])("rejects invalid query", async query => {
     await expect(runPaperMetasearch([], {}, { query, numResults: 2 } as never, undefined)).rejects.toThrow();
@@ -102,8 +110,11 @@ describe("paper metasearch", () => {
 
 // Specified BA: runtime configuration and reusable deadline boundary.
 describe("paper configuration and deadlines", () => {
-  it.each([null, [], { mode: "bad" }, { rerank: "bad" }, { sources: null }, { sources: { typo: {} } }, { sources: { exa: null } }, { sources: { exa: { typo: 1 } } }, { sources: { exa: { enabled: "true" } } }, { sources: { exa: { tier: "native" } } }, ...[0, -1, 60001, NaN, Infinity].map(timeoutMs => ({ sources: { exa: { timeoutMs } } })), ...[0, 51, 1.5, "10"].map(maxResults => ({ sources: { exa: { maxResults } } })), ...[0, -1, Infinity, NaN, 4.01, "2"].map(boost => ({ sources: { exa: { boost } } }))])("rejects invalid runtime configuration %#", config => {
+  it.each([null, [], { mode: "bad" }, { ranking: { rerank: "bad" } }, { sources: null }, { sources: { typo: {} } }, { sources: { exa: null } }, { sources: { exa: { typo: 1 } } }, { sources: { exa: { enabled: "true" } } }, { sources: { exa: { tier: "native" } } }, ...[0, -1, 2147483648, NaN, Infinity].map(timeoutMs => ({ sources: { exa: { timeoutMs } } })), ...[0, 51, 1.5, "10"].map(maxResults => ({ sources: { exa: { maxResults } } })), ...[0, -1, Infinity, NaN, "2"].map(boost => ({ sources: { exa: { boost } } }))])("rejects invalid runtime configuration %#", config => {
     expect(() => validatePaperConfig(config as PaperConfig)).toThrow();
+  });
+  it("accepts platform-bounded deadlines above sixty seconds and unrestricted positive boosts", () => {
+    expect(() => validatePaperConfig({ sources: { exa: { timeoutMs: 60001, boost: 4.01 } } })).not.toThrow();
   });
   it("cleans caller listener and deadline after successful completion", async () => {
     vi.useFakeTimers();

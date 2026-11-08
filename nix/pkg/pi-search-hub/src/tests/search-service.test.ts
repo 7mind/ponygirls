@@ -10,6 +10,9 @@ import { refreshConfig, roundRobinIndex } from "../extensions/config.js";
 import type { SearchConfig } from "../extensions/types.js";
 import { SearchService } from "../extensions/search-service.js";
 
+import { SharedRuntime } from "../extensions/engine/runtime.js";
+import { DEFAULT_CONCURRENCY } from "../extensions/engine/policy.js";
+
 interface EngineRequest { name: string; count: number }
 const state = vi.hoisted(() => ({ native: [] as NativeEngine[], calls: [] as string[], requests: [] as EngineRequest[], failMain: false }));
 vi.mock("../extensions/native.js", async importOriginal => ({ ...await importOriginal<typeof import("../extensions/native.js")>(), discoverNativeEngines: async () => state.native }));
@@ -42,7 +45,7 @@ afterEach(() => rmSync(cwd, { recursive: true }));
 // Behavioral-Active-Blackbox-Group: tool service and real tier/fusion/monitor composition.
 describe("search tool service", () => {
   it("exposes detached safe policy metadata without inference, random sampling, or rotation", async () => {
-    const service = new SearchService();
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
     expect(() => service.policy()).toThrow("before discovery");
     configure({ selectionStrategy: "round-robin", backends: { a: { enabled: true, apiKey: "fixture-private-key" }, free: { enabled: true } } });
     const rotation = roundRobinIndex;
@@ -50,9 +53,10 @@ describe("search tool service", () => {
     const policy = service.policy();
     expect(policy.main.engineOrder).toEqual(["a"]);
     expect(policy.native).toEqual({ engineCount: 1, timeoutMs: 45_000, settlementGraceMs: 1000 });
-    expect(policy.fusion.rankConstant).toBe(60);
+    expect(policy.fusion).toEqual({ rankConstant: 60, rerank: "rrf", titleWeight: .2, bodyWeight: .1, exactTitle: true });
+    expect(policy.execution).toEqual({ maxConcurrent: 6, perProvider: 2, overallTimeoutMs: 60_000, sourceTimeoutMs: 30_000, discoveryTimeoutMs: 10_000 });
     expect(policy.maximumResultCount).toBe(20);
-    expect(policy.fallback).toEqual([{ backend: "free", timeoutMs: 1000, maxResults: 10 }]);
+    expect(policy.fallback).toEqual([{ backend: "free", timeoutMs: 1000, maxResults: 20 }]);
     expect(JSON.stringify(policy)).not.toContain("fixture-private-key");
     Reflect.set(policy.main.engineOrder, 0, "changed");
     Reflect.set(policy.fallback[0], "timeoutMs", 9);
@@ -69,14 +73,14 @@ describe("search tool service", () => {
     expect(service.monitor.snapshot()).toEqual([]);
   });
   it.each([
-    { settings: { combine: false, combineMode: "targeted" as const }, mode: "first", engines: ["a"], count: 10 },
-    { settings: { combine: true, combineMode: "targeted" as const }, mode: "targeted", engines: ["a", "b", "c"], count: 4 },
-    { settings: { combine: true, combineMode: "all" as const }, mode: "all", engines: ["a", "b", "c", "d"], count: 3 },
-    { settings: { combine: true, combineMode: undefined }, mode: "all", engines: ["a", "b", "c", "d"], count: 3 },
-    { settings: { combine: undefined, combineMode: undefined }, mode: "first", engines: ["a"], count: 10 },
+    { settings: { combine: false, combineMode: "targeted" as const }, mode: "first", engines: ["a"], count: 20 },
+    { settings: { combine: true, combineMode: "targeted" as const }, mode: "targeted", engines: ["a", "b", "c"], count: 20 },
+    { settings: { combine: true, combineMode: "all" as const }, mode: "all", engines: ["a", "b", "c", "d"], count: 20 },
+    { settings: { combine: true, combineMode: undefined }, mode: "all", engines: ["a", "b", "c", "d"], count: 20 },
+    { settings: { combine: undefined, combineMode: undefined }, mode: "first", engines: ["a"], count: 20 },
   ])("binds displayed $mode defaults to actual engine requests ($settings)", async ({ settings, mode, engines, count }) => {
     configure({ ...settings, alwaysInclude: { free: { timeoutMs: 2500, maxResults: 2 } } });
-    const service = new SearchService();
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
     await service.search({ query: "q" }, undefined, ctx);
     const policy = service.policy();
     expect(policy.main.mode).toBe(mode);
@@ -85,63 +89,68 @@ describe("search tool service", () => {
     expect(policy.main.engineOrder).toEqual(["a", "b", "c", "d"]);
     expect(state.requests.filter(row => engines.includes(row.name))).toEqual(engines.map(name => ({ name, count })));
     expect(state.requests).toContainEqual({ name: "free", count: policy.fallback[0].maxResults });
-    expect(state.requests).toContainEqual({ name: "native:openai", count: policy.defaultResultCount });
+    expect(state.requests).toContainEqual({ name: "native:openai", count: policy.main.requestedPerEngine! });
     expect(state.requests).toHaveLength(engines.length + 2);
     expect(policy.fallback[0]).toEqual({ backend: "free", timeoutMs: 2500, maxResults: 2 });
   });
   it("keeps policy scoped to defaults when callers request a different count or combine mode", async () => {
     configure({ combine: false });
-    const service = new SearchService();
-    await service.search({ query: "q", numResults: 99, combine: true }, undefined, ctx);
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
+    await expect(service.search({ query: "q", numResults: 99, combine: true }, undefined, ctx)).rejects.toThrow("numResults");
+    expect(state.requests).toEqual([]);
+    await service.search({ query: "q", numResults: 20, combine: true }, undefined, ctx);
     const policy = service.policy();
     expect(policy.main.mode).toBe("first");
     expect(policy.main.combineMode).toBe("targeted");
-    expect(policy.main.requestedPerEngine).toBe(10);
-    expect(state.requests).toContainEqual({ name: "a", count: Math.ceil(policy.maximumResultCount / policy.main.targetUsableEngines) });
-    expect(state.requests).toContainEqual({ name: "native:openai", count: policy.maximumResultCount });
+    expect(policy.main.requestedPerEngine).toBe(20);
+    expect(state.requests).toContainEqual({ name: "a", count: 2 * policy.maximumResultCount });
+    expect(state.requests).toContainEqual({ name: "native:openai", count: 2 * policy.maximumResultCount });
     expect(state.requests).toHaveLength(5);
     configure({ combine: true }); state.requests = [];
     await service.search({ query: "q", combine: false }, undefined, ctx);
     expect(service.policy().main.combineForced).toBe(true);
     expect(state.requests).toHaveLength(5);
   });
-  it("shows malformed combine settings as invalid without claiming a working default plan", async () => {
-    writeFileSync(join(cwd, ".pi/search.json"), JSON.stringify({ combineMode: "unsupported", selectionStrategy: "fixture-private-value", backends: { a: { enabled: true } } }));
+  it("rejects malformed combine settings before discovery without exposing untrusted values", async () => {
+    writeFileSync(join(cwd, ".pi/search.json"), JSON.stringify({ combineMode: "fixture-private-value", backends: { a: { enabled: true } } }));
     refreshConfig(cwd, true);
-    const service = new SearchService(); await service.refresh(ctx, undefined);
-    expect(service.policy().main.mode).toBe("invalid");
-    expect(service.policy().main.requestedPerEngine).toBeNull();
-    expect(service.policy().main.selectionStrategy).toBe("unrecognized");
-    expect(JSON.stringify(service.policy())).not.toMatch(/unsupported|fixture-private-value/);
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
+    await expect(service.refresh(ctx, undefined)).rejects.toThrow("Invalid combineMode");
+    await expect(service.refresh(ctx, undefined)).rejects.not.toThrow("fixture-private-value");
+    expect(() => service.policy()).toThrow("before discovery");
     await expect(service.search({ query: "q" }, undefined, ctx)).rejects.toThrow("Invalid combineMode");
     expect(state.calls).toEqual([]);
   });
   it("uses all three tiers, preserves the main cap, records counters and nested usage", async () => {
-    const service = new SearchService(); const result = await service.search({ query: "public query" }, undefined, ctx);
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)); const result = await service.search({ query: "public query" }, undefined, ctx);
     expect(state.calls.sort()).toEqual(["a", "b", "c", "free", "native:openai"]);
     expect(result.details.resultCount).toBe(5); expect(result.usage).toEqual(usage);
+    for (const name of ["a", "b", "c"]) expect(result.details.backendStats[name]).toMatchObject({ status: "success", tier: "main", count: 1 });
+    expect(result.details.backendStats.d).toMatchObject({ status: "not-started", reason: "target-satisfied", count: 0 });
+    expect(result.details.backendStats.free).toMatchObject({ status: "success", tier: "alwaysInclude" });
+    expect(result.details.backendStats["native:openai"]).toMatchObject({ status: "success", tier: "native" });
     expect(service.monitor.snapshot()).toHaveLength(5);
     expect(service.monitor.snapshot().every(row => row.success === 1 && row.ongoing === 0)).toBe(true);
   });
   it("an explicit engine bypasses every other tier even with combine forced", async () => {
-    const service = new SearchService(); const result = await service.search({ query: "q", backend: "a" }, undefined, ctx);
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)); const result = await service.search({ query: "q", backend: "a" }, undefined, ctx);
     expect(state.calls).toEqual(["a"]); expect(result.details.resultCount).toBe(1); expect(result.usage).toBeUndefined();
   });
   it("includes settled inference usage even when a native engine fails", async () => {
     state.native[0].search = async () => { throw new NativeSearchError("no grounded sources", usage); };
-    const result = await new SearchService().search({ query: "q" }, undefined, ctx);
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);
     expect(result.details.resultCount).toBe(4); expect(result.usage).toEqual(usage);
-    expect(result.details.backendStats["native:openai"].success).toBe(false);
+    expect(result.details.backendStats["native:openai"]).toMatchObject({ success: false, status: "failed", tier: "native" });
   });
   it("does not expose raw provider error text inside partially successful search output", async () => {
     state.native[0].search = async () => { throw new NativeSearchError("Authorization: Bearer fixture-secret https://fixture/?key=credential", usage); };
-    const result = await new SearchService().search({ query: "q" }, undefined, ctx);
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);
     expect(result.details.resultCount).toBeGreaterThan(0);
     expect(result.content[0].text).not.toMatch(/fixture-secret|credential|Authorization/);
   });
   it("reports all-empty/failing searches as tool errors without dropping settled usage", async () => {
     state.failMain = true; state.native[0].search = async () => { throw new NativeSearchError("no grounded sources", usage); };
-    const result = await new SearchService().search({ query: "q" }, undefined, ctx);
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);
     expect(result.isError).toBe(true); expect(result.usage).toEqual(usage);
   });
   it("waits for native abort settlement before returning timeout usage", async () => {
@@ -153,14 +162,17 @@ describe("search tool service", () => {
       state.native[0].search = async (_query, _count, signal) => new Promise((_resolve, reject) => {
         signal!.addEventListener("abort", () => setTimeout(() => reject(new NativeSearchError("cancelled", usage)), 1), { once: true });
       });
-      const pending = new SearchService().search({ query: "q" }, undefined, ctx);
+      const pending = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);
       await vi.advanceTimersByTimeAsync(45_001);
-      expect((await pending).usage).toEqual(usage);
+      const result = await pending;
+      expect(result.usage).toEqual(usage);
+      expect(result.details.backendStats["native:openai"]).toMatchObject({ status: "timeout", reason: "source-deadline", tier: "native" });
+      expect(result.details.timedOut).toBe(false);
     } finally { vi.useRealTimers(); vi.restoreAllMocks(); }
   });
   it("reports unavailable usage explicitly instead of inventing zero", async () => {
     state.native[0].search = async () => { throw new NativeUsageUnavailableError("openai"); };
-    const result = await new SearchService().search({ query: "q" }, undefined, ctx);
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, undefined, ctx);
     expect(result.usage).toBeUndefined();
     expect(result.details.usageUnavailableEngines).toEqual(["native:openai"]);
     expect(result.content[0].text).toContain("Nested model usage unavailable");
@@ -169,13 +181,15 @@ describe("search tool service", () => {
   it("preserves settled native usage when the caller cancels", async () => {
     const controller = new AbortController();
     state.native[0].search = async () => { controller.abort(); throw new NativeSearchError("cancelled", usage); };
-    const result = await new SearchService().search({ query: "q" }, controller.signal, ctx);
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q" }, controller.signal, ctx);
     expect(result.isError).toBe(true); expect(result.usage).toEqual(usage);
     expect(result.content[0].text).toBe("Search cancelled");
+    expect(result.details.cancelled).toBe(true);
+    expect(result.details.backendStats["native:openai"]).toMatchObject({ status: "cancelled", reason: "caller-cancelled" });
   });
   it("keeps explicit native failures marked as errors with their usage", async () => {
     state.native[0].search = async () => { throw new NativeSearchError("hosted tool unavailable", usage); };
-    const result = await new SearchService().search({ query: "q", backend: "native:openai" }, undefined, ctx);
+    const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend: "native:openai" }, undefined, ctx);
     expect(result.isError).toBe(true); expect(result.usage).toEqual(usage);
   });
   it("never writes status-bar entries and preserves a disabled search tool on refresh", async () => {
@@ -200,7 +214,7 @@ describe("search tool service", () => {
   });
   it("rejects malformed boundary inputs before starting providers", async () => {
     for (const params of [{ query: " " }, { query: "q", numResults: NaN }, { query: "q", numResults: 1.5 }]) {
-      await expect(new SearchService().search(params, undefined, ctx)).rejects.toThrow();
+      await expect(new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search(params, undefined, ctx)).rejects.toThrow();
     }
     expect(state.calls).toEqual([]);
   });

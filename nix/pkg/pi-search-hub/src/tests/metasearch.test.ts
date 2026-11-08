@@ -52,7 +52,8 @@ describe("automatic metasearch", () => {
       }),
     });
     expect(result.results[0].url).toBe(hit("a").url);
-    expect(result.backendStats.get("native:xai")?.error).toContain("timed out");
+    expect(result.backendStats.get("native:xai")).toMatchObject({ success: false, count: 0, status: "timeout", reason: "source-deadline", tier: "native" });
+    expect(result.backendStats.get("native:xai")?.error).toBeUndefined();
   });
 
   it("does not turn cancellation into successful partial results or start more main backends", async () => {
@@ -61,6 +62,11 @@ describe("automatic metasearch", () => {
       query: "q", numResults: 3, signal: controller.signal,
       runBackend: async name => { calls.push(name); controller.abort(new Error("cancelled")); throw new Error("cancelled"); },
     });
-    await expect(pending).rejects.toThrow("cancelled"); expect(calls).toEqual(["a"]);
+    const result = await pending;
+    expect(result.cancelled).toBe(true);
+    expect(result.results).toEqual([]);
+    expect(result.backendStats.get("a")).toMatchObject({ success: false, count: 0, status: "cancelled", reason: "caller-cancelled" });
+    expect(result.backendStats.get("b")).toMatchObject({ success: false, count: 0, status: "not-started", reason: "caller-cancelled" });
+    expect(calls).toEqual(["a"]);
   });
 });
