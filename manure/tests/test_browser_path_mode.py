@@ -20,12 +20,19 @@ class PathBrowserCase(unittest.TestCase):
         fix = bf.start_server(suffix_mode='path')
         self.addCleanup(fix.close)
         a, b = [bf.upload_fixture(fix, name='path-' + n, kind='dir', visibility='internal', files=FILES) for n in ('a', 'b')]
+        direct = bf.upload_fixture(fix, name='path-bookmark', kind='dir', visibility='internal', files=FILES)
         steps = [
             {'op': 'goto', 'url': fix.api_base + '/'},
             {'op': 'fill', 'selector': '#token-input', 'value': fix.identity.token},
             {'op': 'click', 'selector': '#login-form button[type=submit]'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
         ]
+        steps.extend([
+            {'op': 'goto', 'url': direct['content_url'] + '/nested/'},
+            {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK" && location.pathname.endsWith("/nested/")'},
+            {'op': 'goto', 'url': fix.api_base + '/'},
+            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
+        ])
         for item in (a, b):
             steps.extend([
                 {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + item['artifact_id'] + '"]'},
@@ -99,7 +106,9 @@ class PathTlsBrowserCase(unittest.TestCase):
             {'op': 'click', 'selector': '#login-form button[type=submit]'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
             {'op': 'waitForEval', 'fn': '() => { const rect = document.getElementById("path-mode-warning").getBoundingClientRect(); return rect.width > 0 && rect.width <= 24 && rect.height > 0 && rect.height <= 24; }'},
-            {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + internal['artifact_id'] + '"]'},
+            # A bookmarked content URL must exchange the existing dashboard session
+            # for its own scoped grant, without first clicking dashboard Open.
+            {'op': 'goto', 'url': internal['content_url']},
             {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK"'},
             # This observed shared-session access is the reason path mode is LOW-SECURITY.
             {'op': 'eval', 'fn': 'async () => (await (await fetch("/api/current", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{Whoami:{}}})})).json()).result.Identity.principal.userId'},
