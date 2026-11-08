@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as sdk from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
-import { checkpoints } from '../src/report.ts';
+import { checkpoints, historyText } from '../src/report.ts';
 import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -86,6 +86,28 @@ test('real Pi relative cadence, JSON persistence, no idle inference, view while 
   f.replies.push({ text: 'Normal work', tokens: 24000 }); await f.session.prompt('Continue normally');
   assert.match(JSON.stringify(f.contexts.at(-1)), /checkpoint is closed/);
   assert.deepEqual(f.errors, []); assert.equal(f.replies.length, 0);
+});
+
+test('session history survives disk reopen and extension reload, including answers outside the active branch', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await f.session.prompt('/cuckoo on'); await f.session.prompt('/cuckoo policy tokens 10000');
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  const root = f.manager.getLeafId();
+  f.replies.push({ text: 'Checkpoint due', tokens: 30000 }, { text: report, tokens: 30100 }); await f.session.prompt('Continue');
+  f.manager.branch(root);
+  f.manager.appendCustomEntry('cuckoo.report', { version: 1, requestId: 'partial', raw: 'Interrupted answer', error: 'Interrupted' });
+  await f.session.reload();
+  const calls = f.contexts.length;
+  await f.session.prompt('/cuckoo history');
+  const text = f.notifications.at(-1)[0];
+  assert.match(text, /Validating the runtime/); assert.match(text, /Interrupted answer/);
+  assert.match(text, /other branch/); assert.match(text, /current branch/);
+  const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.equal(historyText(reopened.getEntries(), reopened.getBranch()), text);
+  const separate = sdk.SessionManager.create(f.dir, f.dir);
+  assert.match(historyText(separate.getEntries(), separate.getBranch()), /No Cuckoo answers/);
+  assert.equal(f.contexts.length, calls, 'reading history never calls the model');
+  assert.deepEqual(f.errors, []);
 });
 
 test('real Pi checkpoint interrupts tool loop, blocks checkpoint tools, then resumes exactly once', { timeout: 20000 }, async t => {

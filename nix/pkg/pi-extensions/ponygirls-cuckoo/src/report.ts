@@ -39,12 +39,25 @@ export function checkpoints(entries: readonly SessionEntry[]): Checkpoint[] {
     return [value.error === null ? parsed : { ...parsed, report: null, error: value.error }];
   });
 }
+function checkpointText(value: Checkpoint, header: string): string {
+  if (value.report === null) return `${header}\nInvalid report: ${value.error}\nRaw output:\n${value.raw}`;
+  if (value.report.objectives.length === 0) return `${header}\nNo current objectives.`;
+  return `${header}\n` + value.report.objectives.map((item, i) => `${i + 1}. ${item.objective}\n   Progress: ${item.progress}`).join('\n\n');
+}
+export function historyText(entries: readonly SessionEntry[], branch: readonly SessionEntry[]): string {
+  const current = new Set(branch.map(entry => entry.id));
+  const answers = entries.filter(entry => entry.type === 'custom' && entry.customType === REPORT_TYPE);
+  if (answers.length === 0) return 'No Cuckoo answers in this session yet.';
+  return 'Cuckoo answer history — this session, all branches, newest first\n\n' + [...answers].reverse().map(entry => {
+    const value = checkpoints([entry])[0];
+    const header = `${entry.timestamp} — ${value.requestId}\nEntry ${entry.id} (${current.has(entry.id) ? 'current branch' : 'other branch'})`;
+    return checkpointText(value, header);
+  }).join('\n\n');
+}
 export function reportText(reports: readonly Checkpoint[]): string {
   if (reports.length === 0) return 'No Cuckoo reports on this branch yet.';
   return [...reports].reverse().map((value, index) => {
     const header = `Checkpoint ${reports.length - index} (${value.requestId})`;
-    if (value.report === null) return `${header}\nInvalid report: ${value.error}\nRaw output:\n${value.raw}`;
-    if (value.report.objectives.length === 0) return `${header}\nNo current objectives.`;
-    return `${header}\n` + value.report.objectives.map((item, i) => `${i + 1}. ${item.objective}\n   Progress: ${item.progress}`).join('\n\n');
+    return checkpointText(value, header);
   }).join('\n\n');
 }

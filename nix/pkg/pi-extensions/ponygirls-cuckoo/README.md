@@ -5,7 +5,11 @@ Opt-in objective/progress checkpoints from the **main conversation model**. Uses
 
 ## Controls
 
-- `/cuckoo` or `/cuckoo status`: view saved reports and effective settings.
+- `/cuckoo` or `/cuckoo status`: view current-branch reports and effective settings.
+- `/cuckoo history`: view all saved answers in this session, newest first, with
+  timestamps, checkpoint/entry IDs and current/other-branch labels. Includes
+  invalid or interrupted answers and remains available while Cuckoo is OFF.
+- `/cuckoo reports`: view current-branch reports and effective settings.
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
 - Click the **Cuckoo N** border badge to toggle reports (fullscreen, or regular
   mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
@@ -29,6 +33,10 @@ stores version 2. Session settings persist in session entries and span branches,
 but do not configure a different fork/session ID. Home Manager loads
 the extension without managing or overwriting that preferences file. Reports
 follow the active branch and remain readable when automatic inquiries are OFF.
+The history command reads all branches of the current session's persisted log;
+reopening that session restores its history without a separate global history
+file. A new session starts with no answers; a fork contains only entries Pi
+copies into that new session. Opening history does not request model inference.
 
 ## Cadence and output
 

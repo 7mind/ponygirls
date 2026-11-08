@@ -4,7 +4,7 @@ import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoun
 import { parseToggleCommand, sessionEnabledData, TOGGLE_ARGUMENTS } from '@ponygirls/pi-settings';
 import { ENABLED_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences, type PreferenceStore } from './src/preferences.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
-import { REPORT_TYPE, checkpoint, checkpoints, reportText } from './src/report.ts';
+import { REPORT_TYPE, checkpoint, checkpoints, historyText, reportText } from './src/report.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, observe, stateOnBranch, type State } from './src/state.ts';
 import { CuckooView, terminalText } from './src/view.ts';
 
@@ -34,7 +34,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     return `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
       `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
-      `Global defaults: ${preferences.path}\n\n${reportText(checkpoints(ctx.sessionManager.getBranch()))}`;
+      `Global defaults: ${preferences.path}\n` +
+      `Use /cuckoo history for saved answers across all session branches.\n\n${reportText(checkpoints(ctx.sessionManager.getBranch()))}`;
   }
   function cancel(ctx: ExtensionContext, reason: string): void {
     const state = stateOnBranch(ctx.sessionManager.getBranch());
@@ -45,12 +46,13 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     pi.appendEntry(STATE_TYPE, { ...state, pending: null, resuming: false });
   }
   pi.registerCommand('cuckoo', {
-    description: 'Show objectives/progress; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
-    getArgumentCompletions: prefix => [...TOGGLE_ARGUMENTS, 'policy window 15', 'policy relative 15', 'policy tokens 10000', 'policy inherit', 'default policy window 15', 'default policy relative 15', 'default policy tokens 10000', 'threshold 15', 'threshold inherit', 'default threshold 15'].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
+    description: 'Show objectives/progress; history: saved answers across session branches; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
+    getArgumentCompletions: prefix => [...TOGGLE_ARGUMENTS, 'history', 'reports', 'policy window 15', 'policy relative 15', 'policy tokens 10000', 'policy inherit', 'default policy window 15', 'default policy relative 15', 'default policy tokens 10000', 'threshold 15', 'threshold inherit', 'default threshold 15'].filter(value => value.startsWith(prefix)).map(value => ({ value, label: value })),
     handler: async (args, ctx) => {
       try {
         const trimmed = args.trim();
         if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') { await view.show(ctx, status(ctx)); return; }
+        if (trimmed === 'history') { await view.show(ctx, historyText(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch())); return; }
         const toggle = parseToggleCommand(trimmed);
         if (toggle !== null && toggle.kind !== 'status') {
           if (toggle.kind === 'session') pi.appendEntry(ENABLED_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), toggle.enabled));

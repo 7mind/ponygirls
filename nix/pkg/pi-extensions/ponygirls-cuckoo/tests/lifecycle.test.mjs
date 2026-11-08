@@ -135,6 +135,25 @@ test('configuration notifications do not render model-supplied terminal control 
   for (const [message] of f.notifications) assert.doesNotMatch(message, /[\x1b\x07]/);
 });
 
+test('history shows persisted session answers across branches without changing active state or requesting inference', async () => {
+  const f = fixture();
+  await f.command('history');
+  assert.match(f.notifications.at(-1)[0], /No Cuckoo answers in this session yet/);
+  const root = f.manager.appendMessage(assistant('Work before branching'));
+  f.manager.appendCustomEntry('cuckoo.report', { version: 1, requestId: 'old-branch', raw: '{"objectives":[{"objective":"Earlier objective","progress":"Earlier answer"}]}', error: null });
+  f.manager.branch(root);
+  f.manager.appendCustomEntry('cuckoo.report', { version: 1, requestId: 'active-branch', raw: 'partial answer', error: 'Interrupted' });
+  const before = f.manager.getEntries();
+  await f.command('history');
+  const text = f.notifications.at(-1)[0];
+  assert.match(text, /Earlier answer/); assert.match(text, /partial answer/); assert.match(text, /Interrupted/);
+  assert.match(text, /other branch/); assert.match(text, /current branch/);
+  assert.ok(text.indexOf('active-branch') < text.indexOf('old-branch'), 'newest answer first');
+  assert.deepEqual(f.manager.getEntries(), before);
+  assert.ok(f.completions('hist').some(value => value.value === 'history'));
+  await f.command('reports'); assert.doesNotMatch(f.notifications.at(-1)[0], /Earlier answer/);
+});
+
 test('commands independently layer thresholds and enablement, reject invalid syntax, and shortcut views reports', async () => {
   const f = fixture(); await f.command('default on'); await f.command('off'); await f.command('threshold 5');
   assert.deepEqual(f.preferences.read(), { enabled: true, policy: { kind: 'relative', value: 15 } });
