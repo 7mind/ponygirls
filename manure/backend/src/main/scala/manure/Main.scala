@@ -56,7 +56,7 @@ object Main extends IOApp:
     // Enumerated stage/category ONLY. No stack/cause/SQL/path/provider detail.
     IO(System.err.println("manure failure stage=" + label + " code=" + safeCode(error))).as(ExitCode.Error)
   private def schema: String =
-    val input = getClass.getResourceAsStream("/manure-schema.sql")
+    val input = getClass.getResourceAsStream("/001_metadata.sql")
     Require(input != null, "unavailable")
     Using.resource(scala.io.Source.fromInputStream(input,"UTF-8"))(_.mkString)
   private def embedding(config: Config): Resource[IO,Option[EmbeddingClient]] = config.embedding match
@@ -113,7 +113,7 @@ object Main extends IOApp:
             Require(!unexpected,"migration-required")
           case _ => ()
     })
-    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"),CatalogueProjection.migration))))
+    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"),CatalogueProjection.migration,ExternalPasswords.migration))))
     _ <- Resource.eval(services.database.transaction { c =>
       if recover then
         // File/hash validation above ran without an open DB transaction. Both

@@ -15,12 +15,39 @@ final class RuntimeSuite extends FunSuite:
       def initialize = Main.resources(config).use { services => for
         _ <- IO(assert(services != null))
         versions <- services.database.transaction(c => Jdbc.rows(c,"SELECT version FROM ponygirls_runtime_migrations WHERE namespace='manure' ORDER BY version")(_.getInt(1)))
-        _ <- IO(assertEquals(versions,Vector(1,2,3)))
+        _ <- IO(assertEquals(versions,Vector(1,2,3,4)))
       yield () }
       initialize *> initialize *> IO.blocking {
         val root = ConfinedDirectory.open(config.dataDir,PosixNative.shared(sys.env("MANURE_POSIX_LIBRARY")))
         root.close()
       }
+    }.unsafeRunSync()
+  }
+  test("legacy migration ledger upgrades hash-only records without recovering or rotating historical values") {
+    BackendFixture.configuration.use { (config,token,_) =>
+      val identity = new Auth(config.users).authenticate(token).get
+      for
+        old <- Main.resources(config).use { services =>
+          services.artifacts.init(identity,InitUpload("legacy",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+        }
+        _ <- JdbcDatabase.resource(config.database).use(_.transaction { c =>
+          // Restore precisely the pre-feature schema/ledger. Migration1's SQL
+          // checksum must remain identical even though the canonical mirror grew.
+          Jdbc.exec(c,"DROP TABLE manure.external_passwords")
+          Jdbc.exec(c,"DELETE FROM ponygirls_runtime_migrations WHERE namespace='manure' AND version=4")
+        })
+        _ <- Main.resources(config).use { services => for
+          password <- services.artifacts.externalPassword(identity,old.artifact.id)
+          current <- services.artifacts.info(identity,old.artifact.id)
+          _ <- IO { assertEquals(password,None);assertEquals(current.externalPasswordHash,old.artifact.externalPasswordHash) }
+          rotated <- services.artifacts.rotate(identity,old.artifact.id)
+          copied <- services.artifacts.externalPassword(identity,old.artifact.id)
+          _ <- IO(assertEquals(copied,Some(rotated)))
+        yield () }
+        _ <- Main.resources(config).use { services =>
+          services.artifacts.externalPassword(identity,old.artifact.id).map(p => assert(p.nonEmpty))
+        }
+      yield ()
     }.unsafeRunSync()
   }
   test("production startup backfills ROOT-lower projection before the real bounded SQL catalogue query") {

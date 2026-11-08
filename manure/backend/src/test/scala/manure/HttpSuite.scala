@@ -30,6 +30,44 @@ final class HttpSuite extends FunSuite:
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
       .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
   private def run(body: (BackendFixture,Http) => IO[Unit]): Unit = BackendFixture.resource(true).use(f => body(f,app(f))).unsafeRunSync()
+  test("password retrieval is explicit, live-authenticated and strict cookie-Origin guarded") { run { (f,h) => for
+    a <- f.artifacts.init(f.identity,InitUpload("external",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+    c = wire.Command.GetExternalPassword(a.artifact.id)
+    anonymous <- h.app.run(command(c,None))
+    _ <- IO(assertEquals(anonymous.status.code,401))
+    cookie <- h.app.run(command(c,None).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+    _ <- IO(assertEquals(cookie.status.code,403))
+    hostile <- h.app.run(command(c,Some(f.token),Some("http://attacker.test")))
+    _ <- IO(assertEquals(hostile.status.code,403))
+    allowed <- h.app.run(command(c,None,Some("http://127.0.0.1:47329")).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+    response <- allowed.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
+    _ <- IO { assertEquals(allowed.status.code,200);assertEquals(response.result,wire.Result.ExternalPasswordRetrieved(a.externalPassword));assert(allowed.headers.headers.exists(x => x.name == CIString("Cache-Control") && x.value == "no-store")) }
+    _ <- f.metadata.transaction(_.putExternalPassword(a.artifact.id,None))
+    legacy <- h.app.run(command(c,Some(f.token)))
+    legacyBody <- legacy.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
+    _ <- IO(assertEquals(legacyBody.result,wire.Result.ExternalPasswordRetrieved(None)))
+    _ <- IO.blocking(java.nio.file.Files.writeString(f.config.users.find(_.id == f.identity.userId).get.tokens.head.hashFile,SecretCodec.sha256(SecretCodec.token())+"\n"))
+    revoked <- h.app.run(command(c,Some(f.token)))
+    _ <- IO(assertEquals(revoked.status.code,401))
+  yield () }}
+  test("recoverable password never enters ordinary management responses or sidecars") { run { (f,h) => for
+    a <- f.artifacts.init(f.identity,InitUpload("no secret metadata",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+    _ <- IO.blocking {
+      val sidecar=java.nio.file.Files.readString(f.rootPath.resolve("staging/"+a.artifact.id+".json"))
+      assert(!sidecar.contains(a.externalPassword.get))
+    }
+    _ <- f.artifacts.finish(f.identity,a.artifact.id)
+    _ <- Vector[wire.Command](wire.Command.GetArtifact(a.artifact.id),wire.Command.GetManifest(a.artifact.id),
+      wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None))).traverse_ { c =>
+      h.app.run(command(c,Some(f.token))).flatMap(r => r.as[String].map { text =>
+        assertEquals(r.status.code,200);assert(!text.contains(a.externalPassword.get));assert(!text.contains("externalPassword"))
+      })
+    }
+    _ <- f.metadata.transaction(_.putExternalPassword(a.artifact.id,Some(ExternalPasswordSecret("synthetic-integrity-mismatch"))))
+    response <- h.app.run(command(wire.Command.GetExternalPassword(a.artifact.id),Some(f.token)))
+    error <- response.as[String]
+    _ <- IO { assertEquals(response.status.code,503);assert(!error.contains(a.externalPassword.get));assert(!error.contains("synthetic-integrity-mismatch"));assert(error.contains("Unavailable")) }
+  yield () }}
   test("sole current generated route and unsupported version rejection; no old REST") { run { (f,h) => for
     version <- h.app.run(command(wire.Command.Version(),None))
     json <- version.as[String].map(CurrentWire.parse)

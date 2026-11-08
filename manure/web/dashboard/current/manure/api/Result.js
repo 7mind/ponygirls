@@ -841,6 +841,95 @@ export class Result_PasswordRotated_JsonCodec {
         return Result_PasswordRotated_JsonCodec.lazyInstance.value;
     }
 }
+export class Result_ExternalPasswordRetrieved {
+    $type = 'manure.api/[manure.api/:#Result]#ExternalPasswordRetrieved';
+    _externalPassword;
+    constructor(externalPassword) {
+        this._externalPassword = externalPassword;
+    }
+    get externalPassword() {
+        return this._externalPassword;
+    }
+    toJSON() {
+        return {
+            externalPassword: this._externalPassword !== undefined ? this._externalPassword : undefined
+        };
+    }
+    with(overrides) {
+        return new Result_ExternalPasswordRetrieved('externalPassword' in overrides ? overrides.externalPassword : this._externalPassword);
+    }
+    static fromPlain(obj) {
+        return new Result_ExternalPasswordRetrieved(obj.externalPassword);
+    }
+    static BaboonDomainVersion = '1.0.0';
+    baboonDomainVersion() {
+        return Result_ExternalPasswordRetrieved.BaboonDomainVersion;
+    }
+    static BaboonDomainIdentifier = 'manure.api';
+    baboonDomainIdentifier() {
+        return Result_ExternalPasswordRetrieved.BaboonDomainIdentifier;
+    }
+    static BaboonTypeIdentifier = 'manure.api/[manure.api/:#Result]#ExternalPasswordRetrieved';
+    baboonTypeIdentifier() {
+        return Result_ExternalPasswordRetrieved.BaboonTypeIdentifier;
+    }
+    static BaboonSameInVersions = ["1.0.0"];
+    baboonSameInVersions() {
+        return Result_ExternalPasswordRetrieved.BaboonSameInVersions;
+    }
+    static BaboonForwardReadable = { "1.0.0": "identical" };
+    baboonForwardReadable() {
+        return Result_ExternalPasswordRetrieved.BaboonForwardReadable;
+    }
+    static BaboonMinReaderVersions = { "json-additive": "1.0.0", "prefix-compact": "1.0.0", "prefix-any-mode": "1.0.0", "identical": "1.0.0" };
+    baboonMinReaderVersions() {
+        return Result_ExternalPasswordRetrieved.BaboonMinReaderVersions;
+    }
+    static BaboonAdtTypeIdentifier = 'manure.api/:#Result';
+    baboonAdtTypeIdentifier() {
+        return Result_ExternalPasswordRetrieved.BaboonAdtTypeIdentifier;
+    }
+    static jsonCodec() {
+        return Result_ExternalPasswordRetrieved_JsonCodec.instance;
+    }
+}
+export class Result_ExternalPasswordRetrieved_JsonCodec {
+    encode(ctx, value) {
+        if (this !== Result_ExternalPasswordRetrieved_JsonCodec.lazyInstance.value) {
+            return Result_ExternalPasswordRetrieved_JsonCodec.lazyInstance.value.encode(ctx, value);
+        }
+        return {
+            "externalPassword": value.externalPassword === undefined ? null : value.externalPassword,
+        };
+    }
+    decode(ctx, json) {
+        if (this !== Result_ExternalPasswordRetrieved_JsonCodec.lazyInstance.value) {
+            return Result_ExternalPasswordRetrieved_JsonCodec.lazyInstance.value.decode(ctx, json);
+        }
+        const obj = json;
+        return new Result_ExternalPasswordRetrieved(obj["externalPassword"] === undefined || obj["externalPassword"] === null ? undefined : obj["externalPassword"] === undefined || obj["externalPassword"] === null ? undefined : obj["externalPassword"]);
+    }
+    static BaboonDomainVersion = '1.0.0';
+    baboonDomainVersion() {
+        return Result_ExternalPasswordRetrieved_JsonCodec.BaboonDomainVersion;
+    }
+    static BaboonDomainIdentifier = 'manure.api';
+    baboonDomainIdentifier() {
+        return Result_ExternalPasswordRetrieved_JsonCodec.BaboonDomainIdentifier;
+    }
+    static BaboonTypeIdentifier = 'manure.api/[manure.api/:#Result]#ExternalPasswordRetrieved';
+    baboonTypeIdentifier() {
+        return Result_ExternalPasswordRetrieved_JsonCodec.BaboonTypeIdentifier;
+    }
+    static BaboonAdtTypeIdentifier = 'manure.api/:#Result';
+    baboonAdtTypeIdentifier() {
+        return Result_ExternalPasswordRetrieved_JsonCodec.BaboonAdtTypeIdentifier;
+    }
+    static lazyInstance = new Lazy(() => new Result_ExternalPasswordRetrieved_JsonCodec());
+    static get instance() {
+        return Result_ExternalPasswordRetrieved_JsonCodec.lazyInstance.value;
+    }
+}
 export class Result_ArtifactManifest {
     $type = 'manure.api/[manure.api/:#Result]#ArtifactManifest';
     _manifest;
@@ -1428,6 +1517,9 @@ export class Result_JsonCodec {
         if (value instanceof Result_PasswordRotated) {
             return { "PasswordRotated": Result_PasswordRotated_JsonCodec.instance.encode(BaboonCodecContext.Default, value) };
         }
+        if (value instanceof Result_ExternalPasswordRetrieved) {
+            return { "ExternalPasswordRetrieved": Result_ExternalPasswordRetrieved_JsonCodec.instance.encode(BaboonCodecContext.Default, value) };
+        }
         if (value instanceof Result_ArtifactManifest) {
             return { "ArtifactManifest": Result_ArtifactManifest_JsonCodec.instance.encode(BaboonCodecContext.Default, value) };
         }
@@ -1464,6 +1556,7 @@ export class Result_JsonCodec {
             case "ArtifactInfo": return Result_ArtifactInfo_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);
             case "ArtifactPatched": return Result_ArtifactPatched_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);
             case "PasswordRotated": return Result_PasswordRotated_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);
+            case "ExternalPasswordRetrieved": return Result_ExternalPasswordRetrieved_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);
             case "ArtifactManifest": return Result_ArtifactManifest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);
             case "UploadProgress": return Result_UploadProgress_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);
             case "UploadFinished": return Result_UploadFinished_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key]);

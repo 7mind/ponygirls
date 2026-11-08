@@ -68,6 +68,8 @@ final class PostgresAdmissionSuite extends FunSuite:
             def catalogue(s: CataloguePolicy.Selection): Vector[Artifact] = tx.catalogue(s)
             def put(a: Artifact): Unit = tx.put(a)
             def delete(id: String): Unit = tx.delete(id)
+            def externalPassword(id: String): Option[ExternalPasswordSecret] = tx.externalPassword(id)
+            def putExternalPassword(id: String,password: Option[ExternalPasswordSecret]): Unit = tx.putExternalPassword(id,password)
             def reservation: Long = tx.reservation
             def sessions(u: Option[String]): Long = tx.sessions(u)
             def receipts(id: String,path: String): Vector[Receipt] = tx.receipts(id,path)

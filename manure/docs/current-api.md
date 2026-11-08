@@ -53,16 +53,52 @@ source evidence until its replacement checks pass.
 | Logout | Ok | Origin/auth guards; revoke token-bound grants; clear session |
 | Whoami | Identity | live principal attribution, not role-based authorization |
 | ListArtifacts(query) | Catalogue(page) | all authenticated users; exact catalogue |
-| InitUpload(name,kind,visibility,expiresInSeconds,files) | UploadInitialized | atomic quota/session reservation; external password once |
+| InitUpload(name,kind,visibility,expiresInSeconds,files) | UploadInitialized | atomic quota/session reservation; initial external password |
 | GetArtifact(artifactId) | ArtifactInfo | any authenticated user; expired=410 |
 | PatchArtifact(artifactId,patch) | ArtifactPatched | owner while incomplete; everyone when ready; external password only on transition |
 | DeleteArtifact(artifactId) | Ok | everyone, any state, frees reservation and revokes grants |
 | RotateExternalPassword(artifactId) | PasswordRotated | everyone, any state; external only; revoke old grants |
+| GetExternalPassword(artifactId) | ExternalPasswordRetrieved | everyone, any state; external only; optional recoverable current password; strict cookie Origin |
 | GetManifest(artifactId) | ArtifactManifest | auth, or public anonymous only; hashes and empty directories |
 | GetUploadStatus(artifactId) | UploadProgress | any authenticated user; no activity refresh |
 | FinishUpload(artifactId) | UploadFinished | owner; ready retry idempotent; publishing=409 until recovery |
 | CreateGrant(artifactId) | GrantCreated | internal + ready, authenticated, single-use handoff |
 | Search(query) | SearchResults | authenticated only; ready/unexpired only |
+
+### Recoverable external passwords (Q38)
+
+The additive sole-current1.0.0 command `GetExternalPassword {artifactId: str}`
+returns `ExternalPasswordRetrieved {externalPassword: opt[str]}`. All registered
+human and agent managers may retrieve, regardless of artifact ownership. This
+sensitive read uses the same authentication, exact-cookie-Origin, bearer-Origin
+and rate guards as management mutations, and returns `Cache-Control: no-store`.
+Revoked credentials fail before artifact lookup. Anonymous/content-grant users
+cannot retrieve. Non-external artifacts return `InvalidVisibility`; unknown or
+deleted IDs return `NotFound`. Like existing rotation, retrieval is available for
+uploading/publishing/ready and expired-but-not-deleted records. It does not refresh
+idle activity, change the hash, revoke grants or automatically rotate anything.
+
+New external initialization, transitions to External and explicit rotations
+atomically write the hash and recoverable value. A metadata-only patch preserves
+both; switching away removes the recoverable value; deletion cascades. Historical
+hash-only records return null until an explicit rotation, even if their existing
+password still unlocks content. A stored value whose hash disagrees with the
+artifact fails sanitized `Unavailable`, never returns a possibly stale secret.
+
+Recoverable values live in a separate FK table, not `Artifact`, manifests,
+catalogue, search corpus/evidence, sidecars, errors or logs. Only dedicated
+password-bearing command responses disclose them (including the existing
+initialization, visibility-transition and rotation responses). The named storage
+wrapper redacts `toString`. PostgreSQL and its snapshots/backups are now
+secret-bearing like credential files; protect DB access and backup access
+accordingly. There is no separately configured encryption key or new key service.
+This feature grants no deployment, backup export or credential access authority.
+
+The exact current schema mirrors are `migration/schema.sql` and
+`backend/src/main/resources/manure-schema.sql`. Migration4 creates the separate
+table without backfill. Original migration1 SQL is frozen as `001_metadata.sql`
+to preserve existing checksum ledgers; startup applies migration4 to old databases
+without rewriting metadata or reconstructing historical passwords.
 
 Content Unlock and RedeemGrant return Ok and set a bound content cookie;
 Logout returns Ok and clears/revokes it. GetManifest returns ArtifactManifest,
@@ -292,3 +328,24 @@ schema is replaced in place as authorized; no historical version/codec retained.
 Goldens now contain74 vectors including distinct explicit published space/profile
 identities and a lexical HEAD hit with both null. Server constructors must pass
 `hit.embeddingSpace` after `hit.profile`, not duplicate the profile value.
+
+### Q38 focused component receipt (2026-11-08)
+
+On base `f347c282` plus the recoverable-storage slice: the new raw current codec
+behavior failed first (`GetExternalPassword` rejected; Python protocol10 methods,
+1 error). After implementation, `nix develop .#chronicle` pinned generation,
+fixture generation and web compilation reproduced identical generated-file
+SHA256 values on a second run. Compiler-generated trailing whitespace is retained;
+generated outputs were not manually patched.
+
+Focused owned-disposable-PG/real-FS JVM run: ArtifactsMemory20,
+ArtifactsPostgres20, Http20, Runtime8 =68 tests,0 failures/errors/skips. The runner
+uses `test-backend.sh` provisioning with only the final sbt command narrowed to
+`manureServer/testOnly manure.ArtifactsMemorySuite manure.ArtifactsPostgresSuite
+manure.HttpSuite manure.RuntimeSuite`. Full unfiltered acceptance is not claimed.
+Local receipt: `backend/target/validation-runs/20261108T224051Z.uwVh23/`;
+its compiled-input `source.sha256` digest is
+`fa6aa4bf7c0af268f35598ae03c6f7402fb14e34a92b565a4ab958438d710ddd`.
+Current Python component suites:35 methods; Node protocol boundary:9 cases;
+TypeScript goldens:76 vectors (21 commands,50 results,4 content,1 raw chunk), all
+passing without skips. These are not deployed/native/browser release acceptance.

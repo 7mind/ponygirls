@@ -202,6 +202,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         IO(mutation(req,ctx,c)) *> artifacts.patch(required(c),id,ArtifactPatch(patch.name,patch.visibility.map(CurrentWire.visibility),expiry))
           .map(a => wire.Result.ArtifactPatched(summary(ctx,a.artifact),a.externalPassword))
       case wire.Command.DeleteArtifact(id) => IO(mutation(req,ctx,c)) *> artifacts.delete(required(c),id).as(wire.Result.Ok())
+      case wire.Command.GetExternalPassword(id) => IO(mutation(req,ctx,c)) *> artifacts.externalPassword(required(c),id).map(wire.Result.ExternalPasswordRetrieved.apply)
       case wire.Command.RotateExternalPassword(id) => IO(mutation(req,ctx,c)) *> artifacts.rotate(required(c),id).map(wire.Result.PasswordRotated.apply)
       case wire.Command.FinishUpload(id) => IO(mutation(req,ctx,c)) *> artifacts.finish(required(c),id).map(a => wire.Result.UploadFinished(id,CurrentWire.state(a.state),url(ctx,id)))
       case wire.Command.CreateGrant(id) => IO(mutation(req,ctx,c)) *> artifacts.createGrant(required(c),id).map(g => wire.Result.GrantCreated(g,config.limits.oneTimeGrantTtl.toInt))

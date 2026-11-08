@@ -49,6 +49,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
         Require(total <= limits.storageQuotaBytes - tx.reservation, "quota-exceeded")
         Require(tx.sessions(None) < limits.maxSessionsGlobal && tx.sessions(Some(identity.userId)) < limits.maxSessionsPerUser, "session-limit")
         payloads.stage(a); payloads.sidecar(a); faults("before_init_commit"); tx.put(a)
+        tx.putExternalPassword(a.id,password.map(ExternalPasswordSecret.apply))
       }.as(Initialized(a,password))
       // Do not unlink on an uncertain PG commit response: committed state may own
       // these bytes. Startup/sweep cleans only freshly revalidated orphan trees.
@@ -82,7 +83,10 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       val updated = a.copy(name=patch.name.getOrElse(a.name),visibility=visibility,
         expiresAt=expiry.map(Exact.displayTime),expiresAtSeconds=expiry,externalPasswordHash=hash,lastActivityAt=clock.now)
       if visibility != a.visibility then tx.revokeArtifact(id)
-      tx.put(updated); Initialized(updated,password)
+      tx.put(updated)
+      if visibility != Visibility.External then tx.putExternalPassword(id,None)
+      else password.foreach(p => tx.putExternalPassword(id,Some(ExternalPasswordSecret(p))))
+      Initialized(updated,password)
     }
   }
   def rotate(identity: Identity,id: String): IO[String] = serialized {
@@ -91,7 +95,23 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       val a = get(tx,id)
       Require(a.visibility == Visibility.External, "invalid-visibility")
       val password = SecretCodec.token()
-      tx.put(a.copy(externalPasswordHash=Some(SecretCodec.sha256(password)))); tx.revokeArtifact(id); password
+      tx.put(a.copy(externalPasswordHash=Some(SecretCodec.sha256(password))))
+      tx.putExternalPassword(id,Some(ExternalPasswordSecret(password)))
+      tx.revokeArtifact(id); password
+    }
+  }
+  /** Like rotation, available in every state (including expired records) until
+    * deletion. This read does not refresh activity, rotate or revoke grants.
+    */
+  def externalPassword(identity: Identity,id: String): IO[Option[String]] = serialized {
+    metadata.transaction { tx =>
+      Require(auth.live(identity), "unauthorized")
+      val a = get(tx,id)
+      Require(a.visibility == Visibility.External, "invalid-visibility")
+      tx.externalPassword(id).map { secret =>
+        Require(a.externalPasswordHash.exists(SecretCodec.verify(secret.reveal,_)), "unavailable")
+        secret.reveal
+      }
     }
   }
   def delete(identity: Identity,id: String): IO[Unit] = serialized {

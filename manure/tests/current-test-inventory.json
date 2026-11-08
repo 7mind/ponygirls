@@ -506,6 +506,7 @@
         "test_current_protocol.CurrentProtocolTests.test_current_version_has_no_retained_chain",
         "test_current_protocol.CurrentProtocolTests.test_every_command_result_content_branch_and_error_code_has_vector",
         "test_current_protocol.CurrentProtocolTests.test_exact_i64_strings_and_bounds_not_lossy_numbers",
+        "test_current_protocol.CurrentProtocolTests.test_recoverable_password_command_and_explicit_optional_result",
         "test_current_protocol.CurrentProtocolTests.test_response_correlation_and_result_type_are_enforced",
         "test_current_protocol.CurrentProtocolTests.test_search_goldens_distinguish_published_space_from_lexical_head",
         "test_current_protocol.CurrentProtocolTests.test_strict_unknown_missing_duplicate_and_multiple_adt_keys",
@@ -844,7 +845,7 @@
         "manure/tests/browser/current-protocol.test.mjs"
       ],
       "tests": [
-        "all 74 Baboon codec vectors pass strict browser schema validation",
+        "all 76 Baboon codec vectors pass strict browser schema validation",
         "strict parser rejects duplicate escaped keys, nested duplicates and malformed JSON",
         "strict browser schema rejects i64 numbers, wrong enums, keys and surrogate strings",
         "dashboard builders use current generated commands with exact catalogue and tri-state patch",
@@ -928,7 +929,7 @@
       ],
       "timeoutSeconds": 120,
       "requiredOutputLines": [
-        "TypeScript generated codec goldens: 74 vectors passed; sole current API",
+        "TypeScript generated codec goldens: 76 vectors passed; sole current API",
         "Search source/generation/policy/profile/space/provenance goldens passed"
       ]
     }

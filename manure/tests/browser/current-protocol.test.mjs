@@ -9,13 +9,13 @@ const ctx=BaboonCodecContext.Default;
 const id='01234567-89ab-4def-8123-456789abcdef';
 const artifactId='a'.repeat(32);
 
-test('all 74 Baboon codec vectors pass strict browser schema validation',()=>{
+test('all 76 Baboon codec vectors pass strict browser schema validation',()=>{
   let count=0;
   for(const [name,type] of [['commands','ClientEnvelope'],['results','ServerEnvelope'],['content','ContentEnvelope'],['chunks','ChunkReceipt']]){
     const raw=readFileSync(new URL(`../../models/fixtures/${name}.json`,import.meta.url),'utf8');
     const vectors=boundary.parseStrict(raw);vectors.forEach(v=>boundary.validate(type,v));count+=vectors.length;
   }
-  assert.equal(count,74);
+  assert.equal(count,76);
 });
 
 test('strict parser rejects duplicate escaped keys, nested duplicates and malformed JSON',()=>{

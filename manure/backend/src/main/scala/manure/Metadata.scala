@@ -19,6 +19,8 @@ trait MetadataTxn:
   def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact]
   def put(artifact: Artifact): Unit
   def delete(id: String): Unit
+  def externalPassword(id: String): Option[ExternalPasswordSecret]
+  def putExternalPassword(id: String, password: Option[ExternalPasswordSecret]): Unit
   def reservation: Long
   def sessions(user: Option[String]): Long
   def receipts(id: String, path: String): Vector[Receipt]
@@ -169,6 +171,11 @@ private[manure] final class PostgresTxn(c: Connection,projection: SearchProjecti
     projection.put(c,a)
   def delete(id: String): Unit =
     projection.remove(c,id); revokeArtifact(id); clearReceipts(id); exec(c,"DELETE FROM manure.artifacts WHERE id=?",Exact.utf8(id))
+  def externalPassword(id: String): Option[ExternalPasswordSecret] =
+    rows(c,"SELECT password FROM manure.external_passwords WHERE artifact_id=?",Exact.utf8(id))(r => ExternalPasswordSecret(text(r,"password"))).headOption
+  def putExternalPassword(id: String, password: Option[ExternalPasswordSecret]): Unit = password match
+    case None => exec(c,"DELETE FROM manure.external_passwords WHERE artifact_id=?",Exact.utf8(id))
+    case Some(secret) => exec(c,"INSERT INTO manure.external_passwords(artifact_id,password) VALUES(?,?) ON CONFLICT(artifact_id) DO UPDATE SET password=excluded.password",Exact.utf8(id),Exact.utf8(secret.reveal))
   def reservation: Long = rows(c,"SELECT COALESCE(SUM(reserved_bytes),0) FROM manure.artifacts")(_.getLong(1)).head
   def sessions(user: Option[String]): Long =
     val sql = "SELECT COUNT(*) FROM manure.artifacts WHERE state IN (?,?)"

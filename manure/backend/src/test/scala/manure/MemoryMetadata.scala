@@ -8,8 +8,8 @@ import manure.storage.RootLease
   */
 final class MemoryMetadata(root: RootLease) extends Metadata:
   private case class State(artifacts: Map[String,Artifact],receipts: Map[(String,String,Long),Receipt],
-    oneTime: Map[String,OneTimeGrant],content: Map[String,ContentGrant])
-  private var committed = State(Map.empty,Map.empty,Map.empty,Map.empty)
+    oneTime: Map[String,OneTimeGrant],content: Map[String,ContentGrant],passwords: Map[String,ExternalPasswordSecret])
+  private var committed = State(Map.empty,Map.empty,Map.empty,Map.empty,Map.empty)
   def transaction[A](body: MetadataTxn => A): IO[A] = IO.blocking { synchronized { root.run {
     var s = committed
     val tx = new MetadataTxn:
@@ -18,7 +18,11 @@ final class MemoryMetadata(root: RootLease) extends Metadata:
       def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact] = CataloguePolicy.select(s.artifacts.values,selection)
       def put(a: Artifact): Unit = s = s.copy(artifacts=s.artifacts.updated(a.id,a))
       def delete(id: String): Unit =
-        revokeArtifact(id); clearReceipts(id); s = s.copy(artifacts=s.artifacts-id)
+        revokeArtifact(id); clearReceipts(id); s = s.copy(artifacts=s.artifacts-id,passwords=s.passwords-id)
+      def externalPassword(id: String): Option[ExternalPasswordSecret] = s.passwords.get(id)
+      def putExternalPassword(id: String,password: Option[ExternalPasswordSecret]): Unit =
+        if password.nonEmpty then Require(s.artifacts.contains(id), "not-found")
+        s = s.copy(passwords=password.fold(s.passwords-id)(p => s.passwords.updated(id,p)))
       def reservation: Long = s.artifacts.values.map(_.reservedBytes).sum
       def sessions(user: Option[String]): Long = s.artifacts.values.count(a => a.state != UploadState.Ready && user.forall(_ == a.createdByUser)).toLong
       def receipts(id: String,path: String): Vector[Receipt] = s.receipts.values.filter(r => r.artifactId == id && r.path == path).toVector.sortBy(_.offset)

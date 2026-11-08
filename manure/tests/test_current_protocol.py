@@ -12,6 +12,15 @@ RID = UUID('01234567-89ab-4def-8123-456789abcdef')
 
 
 class CurrentProtocolTests(unittest.TestCase):
+    def test_recoverable_password_command_and_explicit_optional_result(self):
+        command = {'requestId':str(RID), 'apiVersion':p.API_VERSION,
+                   'command':{'GetExternalPassword':{'artifactId':'a'*32}}}
+        self.assertEqual(p.encode(p.decode(p.ClientEnvelope,command)),command)
+        for password in [None, 'synthetic-current-password']:
+            result = {'requestId':str(RID),
+                      'result':{'ExternalPasswordRetrieved':{'externalPassword':password}}}
+            self.assertEqual(p.encode(p.decode(p.ServerEnvelope,result)),result)
+
     def test_all_golden_vectors_match_typed_bridge(self):
         count = 0
         for name, t in [('commands',p.ClientEnvelope),('results',p.ServerEnvelope),

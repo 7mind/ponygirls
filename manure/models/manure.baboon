@@ -64,6 +64,7 @@ root adt Command {
   data PatchArtifact { artifactId: str patch: ArtifactPatch }
   data DeleteArtifact { artifactId: str }
   data RotateExternalPassword { artifactId: str }
+  data GetExternalPassword { artifactId: str }
   data GetManifest { artifactId: str }
   data GetUploadStatus { artifactId: str }
   data FinishUpload { artifactId: str }
@@ -81,6 +82,7 @@ root adt Result {
   data ArtifactInfo { artifact: Artifact }
   data ArtifactPatched { artifact: Artifact externalPassword: opt[str] }
   data PasswordRotated { externalPassword: str }
+  data ExternalPasswordRetrieved { externalPassword: opt[str] }
   data ArtifactManifest { manifest: Manifest }
   data UploadProgress { status: UploadStatus }
   data UploadFinished { artifactId: str state: ArtifactState contentUrl: str }

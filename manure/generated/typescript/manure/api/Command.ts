@@ -7,7 +7,7 @@ import {ManifestEntry, ManifestEntry_JsonCodec} from './ManifestEntry.js'
 import {SearchQuery, SearchQuery_JsonCodec} from './SearchQuery.js'
 import {Visibility, Visibility_JsonCodec} from './Visibility.js'
 
-export type Command = Command_Version | Command_GetCapabilities | Command_Login | Command_Logout | Command_Whoami | Command_ListArtifacts | Command_InitUpload | Command_GetArtifact | Command_PatchArtifact | Command_DeleteArtifact | Command_RotateExternalPassword | Command_GetManifest | Command_GetUploadStatus | Command_FinishUpload | Command_CreateGrant | Command_Search
+export type Command = Command_Version | Command_GetCapabilities | Command_Login | Command_Logout | Command_Whoami | Command_ListArtifacts | Command_InitUpload | Command_GetArtifact | Command_PatchArtifact | Command_DeleteArtifact | Command_RotateExternalPassword | Command_GetExternalPassword | Command_GetManifest | Command_GetUploadStatus | Command_FinishUpload | Command_CreateGrant | Command_Search
 
 export const Command = {
     BaboonDomainVersion: '1.0.0',
@@ -1248,6 +1248,114 @@ export class Command_RotateExternalPassword_JsonCodec {
     }
 }
 
+export class Command_GetExternalPassword implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'manure.api/[manure.api/:#Command]#GetExternalPassword' as const;
+    private readonly _artifactId: string;
+
+    constructor(artifactId: string) {
+        this._artifactId = artifactId
+    }
+
+    public get artifactId(): string {
+        return this._artifactId;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            artifactId: this._artifactId
+        };
+    }
+
+    public with(overrides: {artifactId?: string}): Command_GetExternalPassword {
+        return new Command_GetExternalPassword(
+            'artifactId' in overrides ? overrides.artifactId! : this._artifactId
+        );
+    }
+
+    public static fromPlain(obj: {artifactId: string}): Command_GetExternalPassword {
+        return new Command_GetExternalPassword(
+            obj.artifactId
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '1.0.0'
+    public baboonDomainVersion() {
+        return Command_GetExternalPassword.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'manure.api'
+    public baboonDomainIdentifier() {
+        return Command_GetExternalPassword.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'manure.api/[manure.api/:#Command]#GetExternalPassword'
+    public baboonTypeIdentifier() {
+        return Command_GetExternalPassword.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["1.0.0"]
+    public baboonSameInVersions() {
+        return Command_GetExternalPassword.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "1.0.0": "identical" }
+    public baboonForwardReadable() {
+        return Command_GetExternalPassword.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "1.0.0", "prefix-compact": "1.0.0", "prefix-any-mode": "1.0.0", "identical": "1.0.0" }
+    public baboonMinReaderVersions() {
+        return Command_GetExternalPassword.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'manure.api/:#Command'
+    public baboonAdtTypeIdentifier() {
+        return Command_GetExternalPassword.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Command_GetExternalPassword_JsonCodec {
+        return Command_GetExternalPassword_JsonCodec.instance
+    }
+}
+
+export class Command_GetExternalPassword_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Command_GetExternalPassword): unknown {
+        if (this !== Command_GetExternalPassword_JsonCodec.lazyInstance.value) {
+          return Command_GetExternalPassword_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "artifactId": value.artifactId,
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Command_GetExternalPassword {
+        if (this !== Command_GetExternalPassword_JsonCodec .lazyInstance.value) {
+            return Command_GetExternalPassword_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Command_GetExternalPassword (
+            obj["artifactId"] as string,
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '1.0.0'
+    public baboonDomainVersion() {
+        return Command_GetExternalPassword_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'manure.api'
+    public baboonDomainIdentifier() {
+        return Command_GetExternalPassword_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'manure.api/[manure.api/:#Command]#GetExternalPassword'
+    public baboonTypeIdentifier() {
+        return Command_GetExternalPassword_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'manure.api/:#Command'
+    public baboonAdtTypeIdentifier() {
+        return Command_GetExternalPassword_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Command_GetExternalPassword_JsonCodec())
+    public static get instance(): Command_GetExternalPassword_JsonCodec {
+        return Command_GetExternalPassword_JsonCodec.lazyInstance.value
+    }
+}
+
 export class Command_GetManifest implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'manure.api/[manure.api/:#Command]#GetManifest' as const;
     private readonly _artifactId: string;
@@ -1828,6 +1936,9 @@ export class Command_JsonCodec {
             if (value instanceof Command_RotateExternalPassword) {
                 return { "RotateExternalPassword": Command_RotateExternalPassword_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Command_GetExternalPassword) {
+                return { "GetExternalPassword": Command_GetExternalPassword_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof Command_GetManifest) {
                 return { "GetManifest": Command_GetManifest_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -1864,6 +1975,7 @@ export class Command_JsonCodec {
                 case "PatchArtifact": return Command_PatchArtifact_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "DeleteArtifact": return Command_DeleteArtifact_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "RotateExternalPassword": return Command_RotateExternalPassword_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "GetExternalPassword": return Command_GetExternalPassword_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "GetManifest": return Command_GetManifest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "GetUploadStatus": return Command_GetUploadStatus_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "FinishUpload": return Command_FinishUpload_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])

@@ -769,6 +769,74 @@ package manure.api {
     }
     
     
+    final case class GetExternalPassword(
+      artifactId: String
+    ) extends Command with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Command.GetExternalPassword.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Command.GetExternalPassword.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Command.GetExternalPassword.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Command.GetExternalPassword.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Command.GetExternalPassword.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Command.GetExternalPassword.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Command.GetExternalPassword.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Command.GetExternalPassword.baboonAdtType
+    }
+    
+    object GetExternalPassword {
+      def baboonDomainVersion: String = "1.0.0"
+      def baboonDomainIdentifier: String = "manure.api"
+      def baboonTypeIdentifier: String = "manure.api/[manure.api/:#Command]#GetExternalPassword"
+      private lazy val _baboonSameInVersions: List[String] = List("1.0.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("1.0.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "1.0.0", "prefix-compact" -> "1.0.0", "prefix-any-mode" -> "1.0.0", "identical" -> "1.0.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "manure.api/:#Command"
+      def baboonAdtType: _root_.java.lang.Class[?] = Command.getClass
+      def codecJson: BaboonJsonCodec[Command.GetExternalPassword] = Command.GetExternalPassword_JsonCodec.instance
+    }
+    
+    object GetExternalPassword_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Command.GetExternalPassword, BaboonJsonCodec[Command.GetExternalPassword]] {
+      def encode(ctx: BaboonCodecContext, value: Command.GetExternalPassword): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "artifactId" -> Json.fromString(value.artifactId)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Command.GetExternalPassword] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              artifactId <- getField(jsonObject, "artifactId").flatMap(v => decodeString(v.hcursor))
+            } yield Command.GetExternalPassword(artifactId)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to GetExternalPassword: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Command.GetExternalPassword.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Command.GetExternalPassword.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Command.GetExternalPassword.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Command.GetExternalPassword.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Command.GetExternalPassword.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Command.GetExternalPassword]] = Lazy(Command.GetExternalPassword_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Command.GetExternalPassword]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Command.GetExternalPassword] = LazyInstance.value
+    }
+    
+    
     final case class GetManifest(
       artifactId: String
     ) extends Command with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -1148,6 +1216,8 @@ package manure.api {
         
         case rotateexternalpassword: Command.RotateExternalPassword => Json.obj("RotateExternalPassword" -> Command.RotateExternalPassword_JsonCodec.instance.encode(ctx, rotateexternalpassword))
         
+        case getexternalpassword: Command.GetExternalPassword => Json.obj("GetExternalPassword" -> Command.GetExternalPassword_JsonCodec.instance.encode(ctx, getexternalpassword))
+        
         case getmanifest: Command.GetManifest => Json.obj("GetManifest" -> Command.GetManifest_JsonCodec.instance.encode(ctx, getmanifest))
         
         case getuploadstatus: Command.GetUploadStatus => Json.obj("GetUploadStatus" -> Command.GetUploadStatus_JsonCodec.instance.encode(ctx, getuploadstatus))
@@ -1204,6 +1274,9 @@ package manure.api {
                 
                 case "RotateExternalPassword" =>
                   Command.RotateExternalPassword_JsonCodec.instance.decode(ctx, json)
+                
+                case "GetExternalPassword" =>
+                  Command.GetExternalPassword_JsonCodec.instance.decode(ctx, json)
                 
                 case "GetManifest" =>
                   Command.GetManifest_JsonCodec.instance.decode(ctx, json)

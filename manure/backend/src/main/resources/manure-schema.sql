@@ -46,3 +46,10 @@ CREATE INDEX IF NOT EXISTS artifacts_state ON manure.artifacts(state);
 CREATE INDEX IF NOT EXISTS artifacts_expiry ON manure.artifacts(expires_at_s_value);
 CREATE INDEX IF NOT EXISTS one_time_grants_expiry ON manure.one_time_grants(expires_at_value);
 CREATE INDEX IF NOT EXISTS content_grants_expiry ON manure.content_grants(expires_at_value);
+
+-- Recoverable values are deliberately separate from metadata/search projections.
+-- Database snapshots/backups now have the same sensitivity as credentials.
+CREATE TABLE IF NOT EXISTS manure.external_passwords (
+ artifact_id bytea PRIMARY KEY REFERENCES manure.artifacts(id) ON DELETE CASCADE,
+ password bytea NOT NULL
+);

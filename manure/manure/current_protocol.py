@@ -379,6 +379,12 @@ class Command_RotateExternalPassword(Command):
 
 
 @dataclass(frozen=True)
+class Command_GetExternalPassword(Command):
+    _variant: ClassVar[str] = 'GetExternalPassword'
+    artifactId: str
+
+
+@dataclass(frozen=True)
 class Command_GetManifest(Command):
     _variant: ClassVar[str] = 'GetManifest'
     artifactId: str
@@ -471,6 +477,12 @@ class Result_PasswordRotated(Result):
 
 
 @dataclass(frozen=True)
+class Result_ExternalPasswordRetrieved(Result):
+    _variant: ClassVar[str] = 'ExternalPasswordRetrieved'
+    externalPassword: str | None
+
+
+@dataclass(frozen=True)
 class Result_ArtifactManifest(Result):
     _variant: ClassVar[str] = 'ArtifactManifest'
     manifest: Manifest
@@ -558,8 +570,8 @@ class ContentEnvelope:
 _ADTS = {
     ManifestEntry: {ManifestEntry_File._variant: ManifestEntry_File, ManifestEntry_Directory._variant: ManifestEntry_Directory},
     ExpiryChange: {ExpiryChange_Keep._variant: ExpiryChange_Keep, ExpiryChange_Clear._variant: ExpiryChange_Clear, ExpiryChange_Set._variant: ExpiryChange_Set},
-    Command: {Command_Version._variant: Command_Version, Command_GetCapabilities._variant: Command_GetCapabilities, Command_Login._variant: Command_Login, Command_Logout._variant: Command_Logout, Command_Whoami._variant: Command_Whoami, Command_ListArtifacts._variant: Command_ListArtifacts, Command_InitUpload._variant: Command_InitUpload, Command_GetArtifact._variant: Command_GetArtifact, Command_PatchArtifact._variant: Command_PatchArtifact, Command_DeleteArtifact._variant: Command_DeleteArtifact, Command_RotateExternalPassword._variant: Command_RotateExternalPassword, Command_GetManifest._variant: Command_GetManifest, Command_GetUploadStatus._variant: Command_GetUploadStatus, Command_FinishUpload._variant: Command_FinishUpload, Command_CreateGrant._variant: Command_CreateGrant, Command_Search._variant: Command_Search},
-    Result: {Result_Version._variant: Result_Version, Result_CapabilityInfo._variant: Result_CapabilityInfo, Result_Identity._variant: Result_Identity, Result_Ok._variant: Result_Ok, Result_Catalogue._variant: Result_Catalogue, Result_UploadInitialized._variant: Result_UploadInitialized, Result_ArtifactInfo._variant: Result_ArtifactInfo, Result_ArtifactPatched._variant: Result_ArtifactPatched, Result_PasswordRotated._variant: Result_PasswordRotated, Result_ArtifactManifest._variant: Result_ArtifactManifest, Result_UploadProgress._variant: Result_UploadProgress, Result_UploadFinished._variant: Result_UploadFinished, Result_GrantCreated._variant: Result_GrantCreated, Result_SearchResults._variant: Result_SearchResults, Result_Error._variant: Result_Error},
+    Command: {Command_Version._variant: Command_Version, Command_GetCapabilities._variant: Command_GetCapabilities, Command_Login._variant: Command_Login, Command_Logout._variant: Command_Logout, Command_Whoami._variant: Command_Whoami, Command_ListArtifacts._variant: Command_ListArtifacts, Command_InitUpload._variant: Command_InitUpload, Command_GetArtifact._variant: Command_GetArtifact, Command_PatchArtifact._variant: Command_PatchArtifact, Command_DeleteArtifact._variant: Command_DeleteArtifact, Command_RotateExternalPassword._variant: Command_RotateExternalPassword, Command_GetExternalPassword._variant: Command_GetExternalPassword, Command_GetManifest._variant: Command_GetManifest, Command_GetUploadStatus._variant: Command_GetUploadStatus, Command_FinishUpload._variant: Command_FinishUpload, Command_CreateGrant._variant: Command_CreateGrant, Command_Search._variant: Command_Search},
+    Result: {Result_Version._variant: Result_Version, Result_CapabilityInfo._variant: Result_CapabilityInfo, Result_Identity._variant: Result_Identity, Result_Ok._variant: Result_Ok, Result_Catalogue._variant: Result_Catalogue, Result_UploadInitialized._variant: Result_UploadInitialized, Result_ArtifactInfo._variant: Result_ArtifactInfo, Result_ArtifactPatched._variant: Result_ArtifactPatched, Result_PasswordRotated._variant: Result_PasswordRotated, Result_ExternalPasswordRetrieved._variant: Result_ExternalPasswordRetrieved, Result_ArtifactManifest._variant: Result_ArtifactManifest, Result_UploadProgress._variant: Result_UploadProgress, Result_UploadFinished._variant: Result_UploadFinished, Result_GrantCreated._variant: Result_GrantCreated, Result_SearchResults._variant: Result_SearchResults, Result_Error._variant: Result_Error},
     ContentCommand: {ContentCommand_Unlock._variant: ContentCommand_Unlock, ContentCommand_RedeemGrant._variant: ContentCommand_RedeemGrant, ContentCommand_Logout._variant: ContentCommand_Logout, ContentCommand_GetManifest._variant: ContentCommand_GetManifest},
 }
 

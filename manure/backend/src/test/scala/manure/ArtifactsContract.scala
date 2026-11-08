@@ -24,6 +24,76 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     case Left(error: DomainError) => assertEquals(error.code,code)
     case result => fail("expected sanitized " + code + ", got " + result.map(_ => "success"))
   }
+  test("recoverable password lifecycle is shared and read-only across incomplete and expired states") { run { f => for
+    a <- f.artifacts.init(f.identity,request(Visibility.External))
+    copied <- f.artifacts.externalPassword(f.other,a.artifact.id)
+    _ <- IO(assertEquals(copied,a.externalPassword))
+    _ <- f.metadata.transaction(tx => tx.put(a.artifact.copy(state=UploadState.Publishing,expiresAtSeconds=Some(f.clock.now-1))))
+    expired <- f.artifacts.externalPassword(f.other,a.artifact.id)
+    _ <- IO(assertEquals(expired,copied))
+    rotated <- f.artifacts.rotate(f.other,a.artifact.id)
+    current <- f.artifacts.externalPassword(f.identity,a.artifact.id)
+    after <- f.metadata.transaction(_.artifact(a.artifact.id).get)
+    _ <- IO { assertEquals(current,Some(rotated));assert(current != copied);assertEquals(after.lastActivityAt,a.artifact.lastActivityAt) }
+    _ <- f.artifacts.delete(f.other,a.artifact.id)
+    absent <- f.metadata.transaction(_.externalPassword(a.artifact.id))
+    _ <- IO(assertEquals(absent,None))
+    _ <- fails("not-found",f.artifacts.externalPassword(f.identity,a.artifact.id))
+  yield () }}
+  test("password retrieval preserves existing content grants; rotation still revokes them") { run { f => for
+    ready <- uploaded(f,Visibility.External)
+    password <- f.artifacts.externalPassword(f.other,ready.id)
+    grant <- f.artifacts.unlock(ready.id,password.get)
+    _ <- f.artifacts.externalPassword(f.identity,ready.id)
+    _ <- f.artifacts.contentInfo(ready.id,Some(grant._1),None,None)
+    _ <- f.artifacts.rotate(f.other,ready.id)
+    _ <- fails("password-required",f.artifacts.contentInfo(ready.id,Some(grant._1),None,None))
+  yield () }}
+  test("legacy hash-only records return None until explicit rotation, never silently rotate") { run { f => for
+    a <- f.artifacts.init(f.identity,request(Visibility.External))
+    _ <- f.metadata.transaction(_.putExternalPassword(a.artifact.id,None))
+    legacy <- f.artifacts.externalPassword(f.other,a.artifact.id)
+    after <- f.metadata.transaction(_.artifact(a.artifact.id).get)
+    _ <- IO { assertEquals(legacy,None);assertEquals(after,a.artifact) }
+    password <- f.artifacts.rotate(f.other,a.artifact.id)
+    copied <- f.artifacts.externalPassword(f.identity,a.artifact.id)
+    _ <- IO(assertEquals(copied,Some(password)))
+  yield () }}
+  test("visibility transitions atomically store and remove separate passwords, metadata-only patch retains them") { run { f => for
+    a <- f.artifacts.init(f.identity,request())
+    _ <- fails("invalid-visibility",f.artifacts.externalPassword(f.other,a.artifact.id))
+    external <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(None,Some(Visibility.External),TtlPatch.Unchanged))
+    _ <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(Some("renamed"),None,TtlPatch.Unchanged))
+    copied <- f.artifacts.externalPassword(f.other,a.artifact.id)
+    _ <- IO(assertEquals(copied,external.externalPassword))
+    _ <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(None,Some(Visibility.Public),TtlPatch.Unchanged))
+    absent <- f.metadata.transaction(_.externalPassword(a.artifact.id))
+    _ <- IO(assertEquals(absent,None))
+    _ <- fails("invalid-visibility",f.artifacts.externalPassword(f.other,a.artifact.id))
+    again <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(None,Some(Visibility.External),TtlPatch.Unchanged))
+    newer <- f.artifacts.externalPassword(f.other,a.artifact.id)
+    _ <- IO { assertEquals(newer,again.externalPassword);assert(newer != copied) }
+  yield () }}
+  test("recoverable password integrity failure and revoked identity fail closed without secret diagnostics") { run { f => for
+    a <- f.artifacts.init(f.identity,request(Visibility.External))
+    _ <- f.metadata.transaction(_.putExternalPassword(a.artifact.id,Some(ExternalPasswordSecret("synthetic-corruption"))))
+    _ <- fails("unavailable",f.artifacts.externalPassword(f.other,a.artifact.id))
+    secret <- f.metadata.transaction(_.externalPassword(a.artifact.id).get)
+    _ <- IO { assertEquals(secret.toString,"ExternalPasswordSecret([REDACTED])");assert(!a.artifact.toString.contains(a.externalPassword.get)) }
+    _ <- IO.blocking(Files.writeString(f.config.users.find(_.id == f.other.userId).get.tokens.head.hashFile,SecretCodec.sha256(SecretCodec.token())+"\n"))
+    _ <- fails("unauthorized",f.artifacts.externalPassword(f.other,a.artifact.id))
+    _ <- fails("unauthorized",f.artifacts.externalPassword(f.other,"f"*32))
+  yield () }}
+  test("recoverable password writes rollback with the metadata transaction") { run { f => for
+    a <- f.artifacts.init(f.identity,request(Visibility.External))
+    failed <- f.metadata.transaction { tx =>
+      tx.putExternalPassword(a.artifact.id,Some(ExternalPasswordSecret("synthetic-uncommitted")))
+      tx.put(a.artifact.copy(externalPasswordHash=Some(SecretCodec.sha256("synthetic-uncommitted"))))
+      throw DomainError("unavailable")
+    }.attempt
+    copied <- f.artifacts.externalPassword(f.other,a.artifact.id)
+    _ <- IO { assert(failed.isLeft);assertEquals(copied,a.externalPassword) }
+  yield () }}
   test("NUL/Unicode metadata, exact reservations and complete upload/publish/read/delete") { run { f => for
     initialized <- f.artifacts.init(f.identity,request(Visibility.Public))
     _ <- IO { assertEquals(initialized.externalPassword,None); assertEquals(initialized.artifact.name,"name\u0000É") }
