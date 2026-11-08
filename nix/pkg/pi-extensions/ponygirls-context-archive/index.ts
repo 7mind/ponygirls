@@ -11,6 +11,7 @@ import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE, sessionOverrides, type S
 
 export const PREFERENCE_FILENAME = "context-archive.json";
 export const BADGE_KEY = "context-archive";
+const BADGE_GLYPH = "🗃️";
 const DEFAULT_READ_CHARS = 8000;
 const DEFAULT_LIST_ITEMS = 10;
 const PERCENT_DISPLAY_DIGITS = 15;
@@ -60,8 +61,8 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
     const fault = mode.kind === "fault";
     const controller = statusView;
     ctx.ui.setWidget(BADGE_KEY, (_tui, theme) => ({
-      render: (width) => [truncateToWidth(theme.fg(fault ? "warning" : "accent", fault ? " CTX ! " : " CTX archive "), width)],
-      renderCompact: (width) => truncateToWidth(theme.fg(fault ? "warning" : "accent", fault ? " ! " : " CTX "), width),
+      render: (width) => [truncateToWidth(theme.fg(fault ? "warning" : "accent", ` ${BADGE_GLYPH}${fault ? " !" : ""} `), width)],
+      renderCompact: (width) => truncateToWidth(theme.fg(fault ? "warning" : "accent", ` ${BADGE_GLYPH}${fault ? " !" : ""} `), width),
       invalidate() {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left" || ctx.mode !== "tui" || !ctx.hasUI) return undefined;

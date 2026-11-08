@@ -8,7 +8,7 @@ import { localCatalog } from "./projects.ts";
 import { CodegraphWorkspace } from "./workspace.ts";
 import { CG_HELP, completeCommand, parseCommand, type DirectoryLister } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
-import { renderCompactBadge, stateNotice } from "./presentation.ts";
+import { BADGE_GLYPH, renderCompactBadge, stateNotice } from "./presentation.ts";
 
 const WIDGET = "ponygirls-codegraph";
 /**
@@ -54,7 +54,7 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     const controller = statusView;
     const runtime = workspace;
     ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
-      render: () => [theme.bg("selectedBg", ` CG: ${label}${detail} `)],
+      render: () => [theme.bg("selectedBg", ` ${BADGE_GLYPH}: ${label}${detail} `)],
       renderCompact: () => renderCompactBadge(theme, state.phase, querying),
       invalidate: () => {},
       handleMouse: (event) => {

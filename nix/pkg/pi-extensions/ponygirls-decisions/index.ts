@@ -13,6 +13,7 @@ import { completeDecisionArguments } from "./src/complete.ts";
 const POLL_MS = 1000;
 const NOTICE_TYPE = "decisions-answer";
 const STATUS_KEY = "decisions";
+const BADGE_GLYPH = "📥";
 const PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 const PANE_CHROME_ROWS = 4;
@@ -162,8 +163,8 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           b.ctx.ui.setWidget(STATUS_KEY, (tui, theme) => {
             badge.requestRender = () => tui.requestRender();
             return {
-              render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ? ${badge.here}+${badge.other} · ${INBOX_SHORTCUT.label} `)), width)],
-              renderCompact: () => compactChip(theme, "?", "attention", `${badge.here}+${badge.other}`),
+              render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ${BADGE_GLYPH} ${badge.here}+${badge.other} · ${INBOX_SHORTCUT.label} `)), width)],
+              renderCompact: () => compactChip(theme, BADGE_GLYPH, "attention", `${badge.here}+${badge.other}`),
               invalidate() {},
               dispose() {
                 badge.active = false;

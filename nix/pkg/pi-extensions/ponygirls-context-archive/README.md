@@ -6,7 +6,7 @@
 ## Controls
 
 - `/context-archive on` / `off` — persist an override for **this session only**.
-  ON shows the **CTX archive** badge and enables selection at completed-turn boundaries;
+  ON shows the **🗃️** badge and enables selection at completed-turn boundaries;
   OFF removes the badge and stops new selection.
 - `/context-archive inherit` — clear this session's **enablement** override only.
   Threshold overrides remain unchanged.
@@ -54,7 +54,7 @@ or the reverse. Explicit overrides are unaffected by subsequent default changes.
 Changes cannot alter an already-sent request and never start inference themselves.
 
 Invalid/unreadable defaults or active session settings stop selection visibly
-(`CTX !`), not silently as a successful OFF. A later session on/off/inherit command
+(`🗃️ !`), not silently as a successful OFF. A later session on/off/inherit command
 can replace invalid enablement; thresholds/thresholds inherit commands replace invalid
 threshold state. Neither repairs the other setting or a corrupt global file:
 inspect the global file and replace it with a valid complete version-2 object above,

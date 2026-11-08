@@ -4,7 +4,7 @@ import type { State } from "./runtime.ts";
 const DETAILS_HINT = "/cg status for details";
 const EMPTY_NOTICE = `Codegraph: nothing indexed in this checkout yet · ${DETAILS_HINT}`;
 const ERROR_PREFIX = /^(?:Error: )+/;
-const COMPACT_LABEL = "cg";
+export const BADGE_GLYPH = "🕸️";
 
 export interface StateNotice {
   text: string;
@@ -38,5 +38,5 @@ function compactBadge(phase: State["phase"], querying: boolean): CompactBadge {
 /** The short border form: neutral chip, glyph coloured by state. */
 export function renderCompactBadge(theme: UiTheme, phase: State["phase"], querying: boolean): string {
   const badge = compactBadge(phase, querying);
-  return compactChip(theme, badge.glyph, badge.state, COMPACT_LABEL);
+  return compactChip(theme, BADGE_GLYPH, badge.state, badge.glyph);
 }

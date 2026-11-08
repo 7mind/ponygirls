@@ -91,7 +91,7 @@ fail rather than being ignored.
   extension-owned process groups, **not** independently managed MCP watchers.
 - Errors and non-UI command reports go to stderr, never JSON/RPC protocol stdout.
 
-The padded `CG` badge uses the theme's `selectedBg` background, evaluated during
+The padded `🕸️` badge uses the theme's `selectedBg` background, evaluated during
 rendering. It shows setup/sync state and parallel query count. `ready` is the last
 completed verification, not continuous freshness or proof of MCP connectivity.
 When the border is too narrow, the compact form `cg` shows a state glyph instead:
@@ -165,7 +165,7 @@ and symbols, and no pending changes/references or missing symbols. Files with
 parse errors are reported as warnings, not a readiness failure.
 A checkout with nothing indexable (complete, consistent index with zero files and
 symbols) is the non-error state `empty`: queries remain unavailable, the badge shows
-`CG: empty`, and one info notice says nothing is indexed yet. Any other unready
+`🕸️: empty`, and one info notice says nothing is indexed yet. Any other unready
 result (symbols without files, pending work, incomplete state) remains an error.
 Failure notices are one line; the full detail (CLI output, status JSON) is shown by
 `/cg status`, which also keeps the last failure until a later check succeeds.

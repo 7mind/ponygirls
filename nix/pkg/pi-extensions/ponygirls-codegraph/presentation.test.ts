@@ -25,7 +25,7 @@ test("state notices: empty is info, errors are one line without Error: prefixes 
 });
 
 test("compact badge: glyph and colour follow state; querying counts as running", () => {
-  const chip = (glyph: string, color: string) => `[toolPendingBg] <${color}>${glyph}</${color}><text>cg</text> [/toolPendingBg]`;
+  const chip = (glyph: string, color: string) => `[toolPendingBg] <${color}>🕸️</${color}><text>${glyph}</text> [/toolPendingBg]`;
   const cases: [State["phase"], boolean, string][] = [
     ["ready", false, chip("◇", "success")],
     ["working", false, chip("⚙", "accent")],

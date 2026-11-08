@@ -52,8 +52,12 @@ for (const backend of ["memory", "filesystem"]) {
     const [key, factory, placement] = f.widgets.at(-1);
     assert.equal(key, BADGE_KEY); assert.equal(placement.placement, "borderBottomLeft");
     const component = factory(null, { fg: (_token, text) => text });
-    assert.equal(component.render(80)[0], " CTX archive ");
-    assert.ok(visibleWidth(component.render(4)[0]) <= 4);
+    assert.equal(component.render(80)[0], " 🗃️ ");
+    assert.equal(component.renderCompact(80), " 🗃️ ");
+    for (const width of [0, 1, 2, 3, 4, 12]) {
+      assert.ok(visibleWidth(component.render(width)[0]) <= width);
+      assert.ok(visibleWidth(component.renderCompact(width)) <= width);
+    }
     f.start(); assert.equal(f.preferences.read().enabled, false, "session ON never changes the global default");
     const result = f.boundary(); assert.ok(result.entries.length > 0); assert.equal(result.continue, undefined);
     apply(f.manager, result.entries);
@@ -336,7 +340,9 @@ test("invalid session settings stop selection visibly and a later explicit overr
   f.manager.appendCustomEntry(SESSION_SETTING_TYPE, { version: 1, sessionId: f.manager.getSessionId(), enabled: "invalid" });
   assert.equal(f.boundary(), undefined);
   assert.match(f.notifications.at(-1).message, /session setting/);
-  assert.equal(f.widgets.at(-1)[1](null, { fg: (_token, text) => text }).render(80)[0], " CTX ! ");
+  const badge = f.widgets.at(-1)[1](null, { fg: (_token, text) => text });
+  assert.equal(badge.render(80)[0], " 🗃️ ! ");
+  assert.equal(badge.renderCompact(80), " 🗃️ ! ");
   await f.command("status");
   assert.match(f.notifications.at(-1).message, /Threshold status unavailable due to settings error/);
   await f.command("on");
