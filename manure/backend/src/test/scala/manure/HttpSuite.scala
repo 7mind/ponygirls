@@ -279,6 +279,39 @@ final class HttpSuite extends FunSuite:
       _ <- IO { assertEquals(revoked.status.code,404);assert(!revokedText.contains("<html"));assert(!revokedText.contains("private artifact bytes")) }
     yield ()
   }}
+  // Regression: document-navigation preflight must not bypass the external unlock handler.
+  test("locked external document navigation retains packaged and builtin password pages and missing-path controls") { run { (f,h) =>
+    def navigate(path: String): Request[IO] = request(Method.GET,path).putHeaders(
+      Header.Raw(CIString("Sec-Fetch-Mode"),"navigate"),Header.Raw(CIString("Sec-Fetch-Dest"),"document"))
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("external navigation",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+      id = a.artifact.id
+      _ <- f.artifacts.finish(f.identity,id)
+      _ <- Vector(h,app(f,_.copy(unlockShellDir=None))).zipWithIndex.traverse_ { (handler,index) =>
+        for
+          _ <- Vector(s"/view/$id/",s"/view/$id/__manure/password").traverse_ { path =>
+            handler.app.run(navigate(path)).flatMap { response => response.as[String].map { html =>
+              assertEquals(response.status.code,200)
+              assert(html.contains("<html")); assert(html.contains("password"))
+              assert(response.headers.headers.exists(x => x.name == CIString("Content-Type") && x.value.startsWith("text/html")))
+              assert(!response.headers.headers.exists(_.name == CIString("Set-Cookie")))
+            }}
+          }
+          bare <- handler.app.run(navigate(s"/view/$id"))
+          _ <- IO { assertEquals(bare.status.code,303); assert(bare.headers.headers.exists(x => x.name == CIString("Location") && x.value == s"/view/$id/")) }
+          _ <- Vector("unlock.js","styles.css").traverse_ { name =>
+            handler.app.run(navigate(s"/view/$id/$name")).flatMap { response => IO(assertEquals(response.status.code,if index == 0 then 200 else 404)) }
+          }
+          _ <- Vector("missing.txt","nested/","__manure/raw/missing.txt").traverse_ { name =>
+            handler.app.run(navigate(s"/view/$id/$name")).flatMap { response => response.as[String].map { body =>
+              assertEquals(response.status.code,if name.startsWith("__manure/raw/") then 401 else 404)
+              assert(!body.contains("<html")); assert(!response.headers.headers.exists(_.name == CIString("Set-Cookie")))
+            }}
+          }
+        yield ()
+      }
+    yield ()
+  }}
   test("metadata-only management retrieval filters ready/expiry and excludes payload secrets") { run { (f,h) =>
     val bytes = Exact.utf8("secret payload body no index")
     for

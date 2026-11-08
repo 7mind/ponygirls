@@ -532,6 +532,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     if config.contentMode != "path" || !document || !target then content(req,ctx,id)
     else
       artifacts.contentInfo(id,presented(req,ctx,id),None,None).flatMap(_ => content(req,ctx,id)).handleErrorWith {
+        // External navigation belongs to the existing unlock-page/path policy,
+        // not to the internal management-session exchange.
+        case d: DomainError if d.code == "password-required" => content(req,ctx,id)
         case d: DomainError if d.code == "grant-required" =>
           val c = credentials(req,ctx)
           if c.kind != "cookie" then content(req,ctx,id)
