@@ -835,4 +835,40 @@ describe("WebSearchView", () => {
 		view.dispose();
 	});
 
+	it.each([80, 120])("compares three sources as aligned rows with one outcome header per group at %s cells", (width) => {
+		const engines: EngineDescriptor[] = ["native:model-alpha", "native:日本語モデル", "native:model-third"].map((name) => ({ name, label: `${name} 日本語`, tier: "native", availability: "configured" }));
+		const { deps, view } = setup({ engines: () => engines, rows: () => 100, policy: () => fakePolicy({ engineOrder: [] }, { native: { engineCount: 3, timeoutMs: 45000, settlementGraceMs: 1000 } }) });
+		deps.monitor.begin(engines[0])({ status: "success", resultCount: 9 });
+		deps.monitor.begin(engines[1])({ status: "timeout" });
+		const all = view.render(width);
+		const lines = all.slice(all.findIndex((line) => line.includes("Native · 3 current")), all.findIndex((line) => line.includes("Aggregation ·")));
+		const headers = lines.filter((line) => line.startsWith("Source") && line.includes(width === 80 ? "| Run" : "| active"));
+		expect(headers).toHaveLength(1);
+		const at = lines.indexOf(headers[0]);
+		const rows = lines.slice(at + 2, at + 5);
+		const boundaries = (line: string) => [...line.matchAll(/\|/g)].map((match) => visibleWidth(line.slice(0, match.index)));
+		for (let n = 0; n < 3; n++) {
+			expect(rows[n]).toContain(engines[n].name);
+			expect(boundaries(rows[n])).toEqual(boundaries(headers[0]));
+		}
+		expect(rows[0]).toMatch(/0 +\| 1 +\| 0/);
+		expect(rows[1]).toContain("timeout");
+		expect(rows[2]).toContain("—");
+		expect(lines.join("\n")).toContain("not attempted · health unknown");
+		view.dispose();
+	});
+
+	it("falls back safely for oversized counters without clipping values or misaligning a comparative table", () => {
+		const { deps, view } = setup({ rows: () => 100 });
+		deps.monitor.begin(engine)({ status: "success", resultCount: Number.MAX_SAFE_INTEGER });
+		const snapshot = deps.monitor.snapshot()[0];
+		vi.spyOn(deps.monitor, "snapshot").mockReturnValue([{ ...snapshot, ongoing: Number.MAX_SAFE_INTEGER, success: Number.MAX_SAFE_INTEGER, empty: Number.MAX_SAFE_INTEGER, failed: Number.MAX_SAFE_INTEGER, timeout: Number.MAX_SAFE_INTEGER, cancelled: Number.MAX_SAFE_INTEGER }]);
+		const lines = view.render(80);
+		const text = lines.join("\n");
+		expect(text).toContain("Source: fixture");
+		expect(text.match(/9007199254740991/g)?.length).toBeGreaterThanOrEqual(6);
+		expect(lines.every((line) => visibleWidth(line) <= 80)).toBe(true);
+		view.dispose();
+	});
+
 });

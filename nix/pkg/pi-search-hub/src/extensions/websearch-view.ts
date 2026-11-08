@@ -179,30 +179,56 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		this.repaint();
 	}
 
-	/** Tables preserve scalar values: narrow panes wrap metric/value rows, never clip numbers. */
-	private table(headers: string[], values: string[], width: number): string[] {
-		const widths = headers.map((header, i) => Math.max(visibleWidth(header), visibleWidth(values[i])));
+	/** Compare sources without clipping scalar values; oversized tables become metric rows. */
+	private table(headers: string[], rows: string[][], width: number): string[] {
+		if (rows.length === 0) return [];
+		const widths = headers.map((header, i) => Math.max(visibleWidth(header), ...rows.map((cells) => visibleWidth(cells[i]))));
 		const row = (cells: string[]) => cells.map((cell, i) => truncateToWidth(cell, widths[i], "") + " ".repeat(Math.max(0, widths[i] - visibleWidth(cell)))).join(" | ");
 		if (widths.reduce((a, b) => a + b, 0) + 3 * (headers.length - 1) <= width) {
-			return [row(headers), widths.map((n) => "-".repeat(n)).join("-+-"), row(values)];
+			return [row(headers), widths.map((n) => "-".repeat(n)).join("-+-"), ...rows.map(row)];
 		}
-		const labelWidth = Math.max(...headers.map(visibleWidth));
-		return headers.map((header, i) => `${header.padEnd(labelWidth)} | ${values[i]}`);
+		const labelWidth = Math.max(...headers.slice(1).map(visibleWidth));
+		return rows.flatMap((cells) => [
+			`${headers[0]}: ${cells[0]}`,
+			...headers.slice(1).map((header, i) => `${header.padEnd(labelWidth)} | ${cells[i + 1]}`),
+		]);
 	}
 
-	private engineLines(engine: EngineDescriptor, stats: EngineSnapshot | undefined, historical: boolean, width: number, policy?: SearchPolicy): string[] {
-		const label = plainName(engine.label, MAX_ENGINE_LABEL_CHARS);
-		const name = plainName(engine.name, MAX_ENGINE_NAME_CHARS);
-		const title = `${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`;
-		const lines = [this.deps.theme.bold(title)];
-		if (!stats) lines.push("not attempted · health unknown");
-		lines.push(...this.table(
-			["active", "ok", "empty", "failed", "timeout", "cancelled", "last"],
-			stats ? [stats.ongoing, stats.success, stats.empty, stats.failed, stats.timeout, stats.cancelled, stats.lastOutcome ?? "pending"].map(String) : Array(7).fill("—"), width));
-		lines.push("Observed results and latency (ms)");
-		lines.push(...this.table(["results last", "results total", "latency last", "latency total"], stats ? [stats.resultCountLast ?? "unknown", stats.resultCountTotal, stats.latencyLastMs === null ? "unknown" : Math.round(stats.latencyLastMs), Math.round(stats.latencyTotalMs)].map(String) : Array(4).fill("—"), width));
-		const source = !historical ? policy?.sources?.find((entry) => entry.name === engine.name) : undefined;
-		if (source) lines.push(...this.table(["deadline ms", "candidate cap", "boost"], [source.timeoutMs, source.maxResults, source.boost].map(String), width));
+	private engineGroup(engines: EngineDescriptor[], stats: Map<string, EngineSnapshot>, historical: boolean, width: number, policy?: SearchPolicy): string[] {
+		if (engines.length === 0) return [];
+		const compact = width >= 60 && width < 110;
+		const sourceName = (engine: EngineDescriptor) => `${historical ? `${engine.tier}/` : ""}${plainName(engine.name, MAX_ENGINE_NAME_CHARS)}`;
+		const outcomes = engines.map((engine) => {
+			const entry = stats.get(engineKey(engine));
+			return [sourceName(engine), ...(entry ? [entry.ongoing, entry.success, entry.empty, entry.failed, entry.timeout, entry.cancelled, entry.lastOutcome ?? "pending"].map(String) : Array(7).fill("—"))];
+		});
+		const timing = engines.map((engine) => {
+			const entry = stats.get(engineKey(engine));
+			return [sourceName(engine), ...(entry ? [entry.resultCountLast ?? "unknown", entry.resultCountTotal, entry.latencyLastMs === null ? "unknown" : Math.round(entry.latencyLastMs), Math.round(entry.latencyTotalMs)].map(String) : Array(4).fill("—"))];
+		});
+		const lines = [
+			...(engines.some((engine) => !stats.has(engineKey(engine))) ? ["— = not attempted · health unknown"] : []),
+			...(compact ? ["Run=active · OK=ok · Ø=empty · Fail=failed · T/O=timeout · Cxl=cancelled"] : []),
+			...this.table(compact ? ["Source", "Run", "OK", "Ø", "Fail", "T/O", "Cxl", "Last"] : ["Source", "active", "ok", "empty", "failed", "timeout", "cancelled", "last"], outcomes, width),
+			"Observed results and latency (ms)",
+			...(compact ? ["Res last/Res total = results last/results total", "ms last/ms total = latency last/latency total (ms)"] : []),
+			...this.table(compact ? ["Source", "Res last", "Res total", "ms last", "ms total"] : ["Source", "results last", "results total", "latency last", "latency total"], timing, width),
+		];
+		const limits = historical ? [] : engines.flatMap((engine) => {
+			const source = policy?.sources.find((entry) => entry.name === engine.name);
+			return source ? [[sourceName(engine), ...[source.timeoutMs, source.maxResults, source.boost].map(String)]] : [];
+		});
+		if (limits.length) lines.push(...this.table(["Source", "deadline ms", "candidate cap", "boost"], limits, width));
+		// Safe descriptive metadata is a separate legend, not repeated statistic cards.
+		for (const engine of engines) {
+			const label = plainName(engine.label, MAX_ENGINE_LABEL_CHARS);
+			const name = plainName(engine.name, MAX_ENGINE_NAME_CHARS);
+			lines.push(`${label}${label === name ? "" : ` (${name})`} · ${engine.tier} · ${historical ? "historical (not current)" : engine.availability ?? "unknown"}`);
+			if (!historical && engine.tier === "fallback") {
+				const limit = policy?.fallback.find((entry) => entry.backend === engine.name);
+				lines.push(limit ? `  default request/local cap ${limit.maxResults} results · deadline ${duration(limit.timeoutMs)}` : "  default cap/deadline unavailable");
+			}
+		}
 		return lines;
 	}
 
@@ -269,14 +295,14 @@ export class WebSearchView extends PanelLayout implements Focusable {
 		const historical = snapshots.filter((entry) => !engines.has(engineKey(entry)) && matchesTab(entry));
 		const shown = [...current, ...historical].slice(0, MAX_ENGINES);
 		const shownKeys = new Set(shown.map(engineKey));
-		const append = (engine: EngineDescriptor, history: boolean) => {
-			if (shownKeys.has(engineKey(engine))) lines.push(...this.engineLines(engine, stats.get(engineKey(engine)), history, width, policy));
+		const append = (group: EngineDescriptor[], history: boolean) => {
+			lines.push(...this.engineGroup(group.filter((engine) => shownKeys.has(engineKey(engine))), stats, history, width, policy));
 		};
 		let policy: SearchPolicy | undefined;
 		if (fetchers) {
 			lines.push(t.bold(`Current fetchers · ${current.length}`));
 			if (current.length === 0) lines.push(t.fg("dim", "No current fetchers configured; health unknown."));
-			for (const engine of current) append(engine, false);
+			append(current, false);
 		} else {
 			policy = profile.policy();
 			if (domain === "web") {
@@ -295,18 +321,12 @@ export class WebSearchView extends PanelLayout implements Focusable {
 				else if (tier === "fallback") lines.push(t.fg("dim", "Always attempted alongside valid automatic search; does not wait for Main failure or consume Main slots."));
 				else lines.push(t.fg("dim", `Always attempted alongside valid automatic search; no Main slots. Each requests the configured candidate budget; default deadline ${duration(policy.native.timeoutMs)} + ${duration(policy.native.settlementGraceMs)} cancellation/usage-settlement grace.`));
 				if (group.length === 0) lines.push(t.fg("dim", `No current ${title} engines configured.`));
-				for (const engine of group) {
-					append(engine, false);
-					if (tier === "fallback" && shownKeys.has(engineKey(engine))) {
-						const limits = policy.fallback.find((entry) => entry.backend === engine.name);
-						lines.push(t.fg("dim", limits ? `  default request/local cap ${limits.maxResults} results · deadline ${duration(limits.timeoutMs)}` : "  default cap/deadline unavailable"));
-					}
-				}
+				append(group, false);
 			}
 		}
 		if (historical.length > 0) {
 			lines.push(t.bold("Previously observed · not currently configured in this tier"));
-			for (const engine of historical) append(engine, true);
+			append(historical, true);
 		}
 		if (current.length + historical.length > MAX_ENGINES) lines.push(t.fg("dim", `[${current.length + historical.length - MAX_ENGINES} more engines omitted]`));
 		if (policy) lines.push(...this.aggregationRules(policy));
