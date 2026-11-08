@@ -111,6 +111,9 @@ export class PaperResearchService {
         output.paper = result.paper;
         output.passages = result.passages.slice(0, count);
         output.notices.push(...(result.notices ?? []));
+        if (params.query !== undefined && output.passages.length === 0) {
+          output.notices.push("No full-text passages returned; metadata is not passage evidence.");
+        }
       } else {
         requiredText(params.intent, "intent");
         if (params.mode !== undefined && !["similar", "citers", "references"].includes(params.mode)) throw new Error("Invalid related-paper mode");
@@ -122,7 +125,8 @@ export class PaperResearchService {
         catch { signal?.throwIfAborted(); throw new Error("Related-paper retrieval failed (firecrawl)"); }
         output.results = fusePapers([{ provider: name, weight: paperSettings.sources?.[name]?.boost ?? 1, results: papers }], params.intent, count, paperSettings.rerank ?? "lexical");
       }
-      output.providers = [{ provider: name, tier: paperSettings.sources?.[name]?.tier ?? "main", status: "success",
+      output.providers = [{ provider: name, tier: paperSettings.sources?.[name]?.tier ?? (name === "arxiv" ? "fallback" : "main"),
+        status: params.action === "related" && output.results.length === 0 ? "empty" : "success",
         count: params.action === "read" ? 1 : output.results.length }];
     } else throw new Error("Unknown paper research action");
     output.notices.push(...output.results.flatMap(paper => paper.notices ?? []), ...(output.paper?.notices ?? []));
