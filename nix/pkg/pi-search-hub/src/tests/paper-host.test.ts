@@ -7,6 +7,9 @@ import { once } from "node:events";
 import { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 import { createAssistantMessageEventStream, type AssistantMessage, type Message } from "@earendil-works/pi-ai";
 import { FALLBACK_ENV_MAP } from "../extensions/credentials.js";
+import type { EngineSnapshot } from "../extensions/search-monitor.js";
+
+interface PanelStats { web: { statistics: EngineSnapshot[] }; papers: { statistics: EngineSnapshot[]; engines: { name: string }[] } }
 
 // Behavioral-Active-Effectual-GoodCommunication: real SDK loader/model loop + owned HTTP server.
 // Scripted model output establishes tool wiring, not semantic research quality.
@@ -52,9 +55,16 @@ it("loads the extension in real Pi and executes scholarly search with structured
     ({ session } = await createAgentSession({ cwd: dir, agentDir: dir, modelRuntime: runtime, model, thinkingLevel: "off", settingsManager: settings,
       resourceLoader: loader, sessionManager: SessionManager.inMemory(), tools: ["paper_research"] }));
     const errors: unknown[] = [];
-    await session.bindExtensions({ mode: "rpc", onError: error => errors.push(error) });
+    const notices: string[] = [];
+    await session.bindExtensions({ mode: "rpc", onError: error => errors.push(error), uiContext: { notify: message => { notices.push(message); } } });
     expect(session.getActiveToolNames()).toContain("paper_research");
     expect(requests).toHaveLength(0);
+    await session.prompt("/websearch");
+    const before = JSON.parse(notices.at(-1)!) as PanelStats;
+    expect(before.papers.engines).toContainEqual(expect.objectContaining({ name: "searxng" }));
+    expect(before.papers.statistics).toEqual([]);
+    expect(before.web.statistics).toEqual([]);
+    expect(turn).toBe(0); expect(requests).toHaveLength(0);
     await session.prompt("Exercise the paper fixture.");
     expect(errors).toEqual([]); expect(turn).toBe(2); expect(requests).toHaveLength(1);
     expect(requests[0].searchParams.get("categories")).toBe("science");
@@ -68,7 +78,17 @@ it("loads the extension in real Pi and executes scholarly search with structured
     expect(data.providers[0].tier).toBe("alwaysInclude");
     expect(data.results[0].abstract).toBeUndefined();
     expect(JSON.stringify(observed.at(-1))).toContain("1706.03762");
+    await session.prompt("/websearch");
+    const after = JSON.parse(notices.at(-1)!) as PanelStats;
+    expect(after.papers.statistics).toEqual([expect.objectContaining({ name: "searxng", success: 1, ongoing: 0, failed: 0, timeout: 0, cancelled: 0 })]);
+    expect(after.web.statistics).toEqual([]);
+    expect(JSON.stringify(after)).not.toMatch(/Transformer attention|127\.0\.0\.1|fixture-only/);
+    expect(turn).toBe(2); expect(requests).toHaveLength(1);
     await session.reload(); expect(session.getActiveToolNames()).toContain("paper_research"); expect(requests).toHaveLength(1);
+    await session.prompt("/websearch");
+    const reset = JSON.parse(notices.at(-1)!) as PanelStats;
+    expect(reset.papers.statistics).toEqual([]); expect(reset.web.statistics).toEqual([]);
+    expect(turn).toBe(2); expect(requests).toHaveLength(1);
   } finally {
     if (session !== undefined) { await session.abort(); session.dispose(); }
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

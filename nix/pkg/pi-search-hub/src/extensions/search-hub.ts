@@ -55,6 +55,10 @@ import { fetchWithFallback, DEFAULT_READER_FALLBACK } from "./readers/dispatch.j
 import { config, refreshConfig, getActiveBackends, latencyMap } from "./config.js";
 import { BACKEND_DEFS } from "./backends/registry.js";
 import { registerPaperResearch } from "./papers/tool.js";
+import { PaperResearchService } from "./papers/service.js";
+import { createPaperProviders } from "./papers/providers.js";
+import { formatPaperSearch } from "./papers/formatters.js";
+import type { SearchViewProfiles } from "./search-profile.js";
 import { SharedRuntime, boundedOperation } from "./engine/runtime.js";
 import { DEFAULT_CONCURRENCY, resolveConcurrency, resolveTimeouts } from "./engine/policy.js";
 
@@ -75,8 +79,9 @@ async function setupInput(ctx: ExtensionContext, label: string, options: InputOp
 
 export default function (pi: ExtensionAPI) {
 	const runtime = new SharedRuntime(DEFAULT_CONCURRENCY);
-	registerPaperResearch(pi, runtime);
 	let service = new SearchService(runtime);
+	let papers = new PaperResearchService(createPaperProviders, runtime);
+	registerPaperResearch(pi, () => papers);
 	let pane = new CustomViewToggle();
 	// -----------------------------------------------------------------------
 	// Tool: web_search
@@ -729,6 +734,7 @@ export default function (pi: ExtensionAPI) {
 		pane.dispose();
 		pane = new CustomViewToggle();
 		service = new SearchService(runtime);
+		papers = new PaperResearchService(createPaperProviders, runtime);
 		clearCooldowns();
 		await service.refresh(ctx, undefined);
 		refreshTool();
@@ -739,22 +745,34 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", () => pane.dispose());
 	pi.registerCommand("websearch", {
-		description: "Search engines, session statistics, and interactive search testing",
+		description: "Web/paper source statistics, fetchers, and interactive tests for both search profiles",
 		handler: async (_args, ctx) => {
 			await service.refresh(ctx, undefined);
+			papers.refresh(config);
+			const webOwner = service;
+			const paperOwner = papers;
+			const profiles: SearchViewProfiles = {
+				web: { monitor: webOwner.monitor, engines: () => webOwner.engines(), policy: () => webOwner.policy(),
+					search: async (query, signal) => {
+						const result = await webOwner.search({ query }, signal, ctx);
+						if (result.isError) throw new Error("Web search failed");
+						return result.content[0].text;
+					} },
+				papers: { monitor: paperOwner.monitor, engines: () => paperOwner.engines(), policy: () => paperOwner.policy(),
+					search: async (query, signal) => {
+						refreshConfig(ctx.cwd);
+						const result = await paperOwner.execute({ action: "search", query }, config, signal);
+						if (result.isError) throw new Error("Paper search failed");
+						return formatPaperSearch(result.details);
+					} },
+			};
 			if (ctx.mode !== "tui") {
-				ctx.ui.notify(JSON.stringify({ engines: service.engines(), statistics: service.monitor.snapshot() }), "info");
+				ctx.ui.notify(JSON.stringify(Object.fromEntries(Object.entries(profiles).map(([name, profile]) => [name,
+					{ engines: profile.engines(), policy: profile.policy(), statistics: profile.monitor.snapshot() }]))), "info");
 				return;
 			}
-			const owner = service;
 			await pane.open(ctx.ui, (tui, theme, keys, done) => new WebSearchView({
-				monitor: owner.monitor, engines: () => owner.engines(), policy: () => owner.policy(),
-				search: async (query, signal) => {
-					const result = await owner.search({ query }, signal, ctx);
-					if (result.isError) throw new Error(result.content[0].text);
-					return result.content[0].text;
-				},
-				theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
+				profiles, theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
 			}));
 		},
 	});

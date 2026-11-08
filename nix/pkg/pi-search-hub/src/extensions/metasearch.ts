@@ -5,7 +5,7 @@ import { DEFAULT_CONCURRENCY, resolveProfile, resolveTimeouts } from "./engine/p
 import { candidateCount, sourcePolicy, validateAlwaysInclude } from "./engine/profiles.js";
 import { rankDocuments } from "./engine/ranking.js";
 import { WEB_DOCUMENT_ADAPTER } from "./engine/documents.js";
-import type { EngineSource, ResolvedProfile, SearchMode, SearchTimeouts } from "./engine/types.js";
+import type { EngineSource, ResolvedProfile, SearchMode, SearchTimeouts, SourceStats } from "./engine/types.js";
 
 type SearchRunner = (backend: string, query: string, count: number, signal?: AbortSignal) => Promise<SearchResult[]>;
 export interface MetasearchRequest {
@@ -21,6 +21,7 @@ export interface MetasearchRequest {
   profile?: ResolvedProfile;
   timeouts?: SearchTimeouts;
   overallTimeoutMs?: number;
+  onOutcome?: (stats: SourceStats) => void;
 }
 
 /** Web adaptation only: scheduling, deadlines and document ranking are shared with papers. */
@@ -40,7 +41,7 @@ export async function runMetasearch(request: MetasearchRequest) {
       timeoutMs: policy.timeoutMs ?? nativeEntry?.timeoutMs ?? (tier === "alwaysInclude" ? timeouts.alwaysIncludeMs : timeouts.sourceMs),
       settlementGraceMs: tier === "native" ? timeouts.nativeGraceMs : 0,
       maxResults: policy.maxResults ?? nativeEntry?.maxResults ?? candidateCount(profile, request.numResults), weight: policy.boost ?? 1,
-      redundantWith: policy.redundantWith ?? [],
+      redundantWith: policy.redundantWith ?? [], onOutcome: request.onOutcome,
       run: (query, count, signal) => request.runBackend(name, query, count, signal) };
   });
   const response = await runtime.search(sources, { query: request.query, numResults: request.numResults, mode: request.mode,

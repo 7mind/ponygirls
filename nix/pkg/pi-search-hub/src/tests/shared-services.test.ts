@@ -117,6 +117,28 @@ it.each([undefined, "native:openai"])("reports expired native discovery as a dea
   expect(state.calls).toEqual([]);
 });
 
+it("settles web source statistics while another source is still pending", async () => {
+  configure({ mode: "all", backends: { firecrawl: { enabled: true }, exa: { enabled: true } } });
+  let release: (() => void) | undefined;
+  state.run = async name => name === "firecrawl" ? [webRow(name)] : new Promise(resolve => { release = () => resolve([webRow(name)]); });
+  const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
+  const pending = service.search({ query: "q" }, undefined, ctx);
+  await vi.waitFor(() => expect(service.monitor.snapshot().find(source => source.name === "firecrawl")?.success).toBe(1));
+  expect(service.monitor.snapshot().find(source => source.name === "exa")?.ongoing).toBe(1);
+  release!(); await pending;
+  expect(service.monitor.snapshot().every(source => source.ongoing === 0)).toBe(true);
+});
+
+it("does not leave web counters running when retrieval succeeds but ranking fails", async () => {
+  configure({ mode: "all", ranking: { rankConstant: Number.MIN_VALUE }, sources: { firecrawl: { boost: Number.MAX_VALUE }, exa: { boost: Number.MAX_VALUE } },
+    backends: { firecrawl: { enabled: true }, exa: { enabled: true } } });
+  state.run = async () => [webRow("same")];
+  const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
+  await expect(service.search({ query: "q" }, undefined, ctx)).rejects.toThrow("Non-finite ranking score");
+  expect(service.monitor.snapshot()).toHaveLength(2);
+  expect(service.monitor.snapshot().every(source => source.success === 1 && source.ongoing === 0)).toBe(true);
+});
+
 it("enforces one provider slot across simultaneous web and paper tool calls", async () => {
   configure({ concurrency: { maxConcurrent: 1, perProvider: 1 }, backends: { firecrawl: { enabled: true } } });
   let release: (() => void) | undefined;

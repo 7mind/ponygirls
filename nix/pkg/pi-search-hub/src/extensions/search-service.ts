@@ -10,7 +10,7 @@ import { formatCombinedResults, formatCombinedResultsCompact } from "./formatter
 import { SharedRuntime, boundedOperation } from "./engine/runtime.js";
 import { resolveConcurrency, resolveTimeouts, validateTimeout } from "./engine/policy.js";
 import { candidateCount, sourcePolicy, validateAlwaysInclude, webProfile } from "./engine/profiles.js";
-import type { ResolvedProfile, SourceStatus } from "./engine/types.js";
+import type { ResolvedProfile } from "./engine/types.js";
 import type { SearchResult } from "./types.js";
 import type { SearchPolicy } from "./search-policy.js";
 
@@ -77,6 +77,11 @@ export class SearchService {
       native: { engineCount: this.native.filter(engine => sourcePolicy(profile, `native:${engine.id}`).enabled !== false).length, timeoutMs: timeouts.nativeMs, settlementGraceMs: timeouts.nativeGraceMs },
       fusion: { rankConstant: profile.ranking.rankConstant, rerank: profile.ranking.rerank, titleWeight: profile.ranking.titleWeight, bodyWeight: profile.ranking.bodyWeight, exactTitle: profile.ranking.exactTitle },
       execution: { ...limits, overallTimeoutMs: timeouts.overallMs, sourceTimeoutMs: timeouts.sourceMs, discoveryTimeoutMs: timeouts.discoveryMs },
+      sources: [...active, ...this.native.map(engine => `native:${engine.id}`).filter(name => sourcePolicy(profile, name).enabled !== false)].map(name => {
+        const policy = sourcePolicy(profile, name);
+        return { name, timeoutMs: policy.timeoutMs ?? (name.startsWith("native:") ? timeouts.nativeMs : name in profile.alwaysInclude ? timeouts.alwaysIncludeMs : timeouts.sourceMs),
+          maxResults: policy.maxResults ?? candidateCount(profile, DEFAULT_RESULT_COUNT), boost: policy.boost ?? 1 };
+      }),
     };
     this.descriptors = [
       ...active.map(name => ({ name, label: BACKEND_DEFS[name]?.label ?? name, tier: fallback.includes(name) ? "fallback" as const : "main" as const, availability: "configured" as const })),
@@ -127,7 +132,6 @@ export class SearchService {
           results = response.results;
         } else results = await runBackend(name, query, count, child);
         child?.throwIfAborted(); recordLatency(name, performance.now() - attempt);
-        finish({ status: results.length ? "success" : "empty", resultCount: results.length });
         return results;
       } catch (error) {
         if (error instanceof NativeSearchError && error.usage !== undefined) usages.push(error.usage);
@@ -153,12 +157,11 @@ export class SearchService {
     } : await runMetasearch({ mode: requested === "auto" ? profile.mode : "first", orderedBackends: requested === "auto" ? active : [requested],
       fallback: requested === "auto" ? fallback : [], native: [...native.keys()].filter(name => requested === "auto" || name === requested).map(backend => ({ backend, timeoutMs: sourcePolicy(profile, backend).timeoutMs ?? timeouts.nativeMs })),
       query: params.query, numResults, signal, runBackend: run, runtime: this.runtime, timeouts, overallTimeoutMs: remaining,
-      profile: requested === "auto" ? profile : { ...profile, alwaysInclude: {} } });
-    for (const [name, stats] of result.backendStats) {
-      const status: SourceStatus = stats.status ?? (stats.success ? stats.count ? "success" : "empty" : "failed");
-      if (status !== "not-started") finalizers.get(name)?.({ status, resultCount: stats.count });
-      if (native.has(name) && (status === "timeout" || status === "cancelled") && !settledNative.has(name)) usageUnavailable.add(name);
-    }
+      profile: requested === "auto" ? profile : { ...profile, alwaysInclude: {} },
+      onOutcome: stats => {
+        if (stats.status !== "not-started") finalizers.get(stats.source)?.({ status: stats.status, resultCount: stats.count });
+        if (native.has(stats.source) && (stats.status === "timeout" || stats.status === "cancelled") && !settledNative.has(stats.source)) usageUnavailable.add(stats.source);
+      } });
     const notes = [this.discoveryFailed ? "Native discovery unavailable." : "", result.timedOut ? "Overall search deadline reached; only completed results are included." : "",
       usageUnavailable.size ? `Nested model usage unavailable for: ${[...usageUnavailable].join(", ")}.` : ""].filter(Boolean);
     const text = result.results.length ? (params.compact ?? config.compact ?? false) ? formatCombinedResultsCompact(result.results)

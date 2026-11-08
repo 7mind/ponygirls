@@ -121,6 +121,21 @@ describe("search tool service", () => {
     await expect(service.search({ query: "q" }, undefined, ctx)).rejects.toThrow("Invalid combineMode");
     expect(state.calls).toEqual([]);
   });
+  it("exposes detached effective source caps, timeouts and boosts without provider work", async () => {
+    configure({ sources: { a: { timeoutMs: 123, maxResults: 7, boost: 2.5 }, "native:openai": { timeoutMs: 456, maxResults: 4, boost: 0.5 } },
+      alwaysInclude: { free: { timeoutMs: 87, maxResults: 3, boost: 1.5 } } });
+    const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY));
+    await service.refresh(ctx, undefined);
+    const policy = service.policy();
+    expect(policy.sources).toEqual(expect.arrayContaining([
+      { name: "a", timeoutMs: 123, maxResults: 7, boost: 2.5 },
+      { name: "free", timeoutMs: 87, maxResults: 3, boost: 1.5 },
+      { name: "native:openai", timeoutMs: 456, maxResults: 4, boost: 0.5 },
+    ]));
+    Reflect.set(policy.sources[0], "timeoutMs", 1);
+    expect(service.policy().sources[0].timeoutMs).toBe(123);
+    expect(state.calls).toEqual([]); expect(service.monitor.snapshot()).toEqual([]);
+  });
   it("uses all three tiers, preserves the main cap, records counters and nested usage", async () => {
     const service = new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)); const result = await service.search({ query: "public query" }, undefined, ctx);
     expect(state.calls.sort()).toEqual(["a", "b", "c", "free", "native:openai"]);
