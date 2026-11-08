@@ -16,7 +16,7 @@ let
   };
   source = sourceAt chronicle;
   backendSource = sourceAt root;
-  common = [ "build.sbt" "deps.lock.json" "project" "lockfile-config.json" "scripts/backend-sbt.sh" ];
+  common = [ "build.sbt" "deps.lock.json" "project" "lockfile-config.json" "scripts/backend-sbt.sh" "rites/generated/scala" ];
   # Shared JVM inputs participate in consumer identities. Never include the full
   # repository: Manure/Haystack UIs, data and unrelated tooling are not inputs.
   shared = [ "shared/lossless-json/src/main" "shared/baboon-runtime/src/main"
@@ -32,6 +32,8 @@ in {
   # JVM derivations consume the active repository-root build. Non-JVM sources
   # deliberately retain their existing Chronicle-relative layouts and identities.
   server = backendSource "chronicle-server-source" runtime;
+  ritesServer = backendSource "rites-native-source" (common ++ shared ++ [ "rites/models" "rites/server/src/main" "rites/migrations" ]);
+  ritesTests = backendSource "rites-tests-source" (common ++ shared ++ [ "rites/server/src" "rites/migrations" "rites/models" "rites/tests" "rites/scripts" "rites/config.example.json" ]);
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
   haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/server/src" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
@@ -51,7 +53,7 @@ in {
   ];
   manureAcceptance = backendSource "manure-posix-acceptance-source" (common ++ manure ++ manureScripts);
   foundation = backendSource "backend-foundation-source" (common ++ shared ++ [ "shared/lossless-json/src/test" "manure/server/src" "scripts/backend-foundation-report.py" ]);
-  backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ [ "shared/lossless-json/src/test" "manure/server/src" ]);
+  backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ [ "shared/lossless-json/src/test" "manure/server/src" "rites/server/src" "rites/migrations" "rites/models" "rites/config.example.json" ]);
   protocol = source "chronicle-protocol-source" [ "package.json" "generated/typescript" "models" "server/src/test/fixtures" "scripts/codec-fixtures.mjs" "web/package.json" "web/package-lock.json" ];
   web = source "chronicle-web-source" [ "package.json" "web" "generated/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" "server/src/main/scala/chronicle/Http.scala" ];
   collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" ];

@@ -9,6 +9,16 @@ let
   manureInventory = builtins.fromJSON (builtins.readFile ../../manure/tests/current-test-inventory.json);
   manureWitnesses = pkgs.lib.concatMap (group: group.sourceRefs ++ group.targetRefs) manureInventory.invariantGroups;
 in
+assert selected sources.ritesServer "rites/generated/scala/rites/api/RunInfo.scala" "regular";
+assert selected sources.ritesServer "rites/server/src/main/scala/rites/Main.scala" "regular";
+assert !(selected sources.ritesServer "rites/server/src/test/scala/rites/ExampleTest.scala" "regular");
+assert !(selected sources.ritesServer "rites/web/app.ts" "regular");
+assert !(selected sources.ritesServer "rites/worker/main.ts" "regular");
+assert !(selected sources.ritesServer "rites/config.example.json" "regular");
+assert !(selected sources.ritesServer "rites/server/target/rites-server.jar" "regular");
+assert selected sources.ritesTests "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
+assert selected sources.backendDevelopment "rites/server/src/main/scala/rites/Main.scala" "regular";
+assert selected sources.backendDevelopment "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
 assert selected server "build.sbt" "regular";
 assert selected server "project/plugins.sbt" "regular";
 assert selected server "deps.lock.json" "regular";
