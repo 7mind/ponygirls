@@ -67,17 +67,19 @@ export function loadConfig(cwd: string): SearchConfig {
 			const globalPapers = config.papers;
 			config = { ...config, ...project };
 			if (globalPapers && project.papers && typeof project.papers === "object" && !Array.isArray(project.papers)) {
-				config.papers = { ...globalPapers, ...project.papers };
+				const mergedPapers: NonNullable<SearchConfig["papers"]> = { ...globalPapers, ...project.papers };
 				const sources = project.papers.sources;
 				if (sources && typeof sources === "object" && !Array.isArray(sources)) {
-					config.papers.sources = { ...globalPapers.sources, ...sources };
+					const mergedSources = { ...globalPapers.sources, ...sources };
+					mergedPapers.sources = mergedSources;
 					for (const name of PAPER_PROVIDERS) {
 						const source = sources[name];
 						if (source && typeof source === "object" && !Array.isArray(source)) {
-							config.papers.sources[name] = { ...globalPapers.sources?.[name], ...source };
+							mergedSources[name] = { ...globalPapers.sources?.[name], ...source };
 						}
 					}
 				}
+				config.papers = mergedPapers;
 			}
 			// Guard: if project config set backends to null/undefined, restore global backends
 			if (config.backends == null) {

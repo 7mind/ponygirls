@@ -146,11 +146,18 @@ index creation timestamp is publication time. Structured results and model text
 are bounded and disclose truncation. Search results are untrusted source data,
 not instructions, verified facts or proof of peer review.
 
-Direct arXiv obeys single-host serialization and three-second request spacing.
-Operators must also coordinate independent clients on other machines; its API
-limits apply across all machines under their control. A retained lock after a
-crash blocks new access rather than guessing recovery. No PDF redistribution or
-full-text scraping is added.
+Direct arXiv serializes Pi clients sharing `~/.pi/agent/paper-arxiv` and waits at
+least three seconds after the prior connection finishes. Operators must also
+coordinate clients using different agent directories or machines; API limits
+apply across all machines under their control. A retained `paper-arxiv/lock`
+after a crash blocks access rather than guessing recovery. Stop all such clients
+before operator recovery; do not delete `state.json` to reset the limiter. No PDF
+redistribution or full-text scraping is added.
+
+The configured SearXNG instance is an operator-trusted destination and may be
+private/loopback, as in ordinary web search. Redirects are refused and credentials
+are sent only to that configured endpoint. This does not permit arbitrary private
+URLs through paper IDs or returned citations.
 
 ### Additional source candidates
 

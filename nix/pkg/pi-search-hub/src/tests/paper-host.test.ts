@@ -30,7 +30,7 @@ it("loads the extension in real Pi and executes scholarly search with structured
     } }));
     const settings = SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
     const loader = new DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings,
-      additionalExtensionPaths: [resolve(import.meta.dirname, "../extensions/search-hub.ts")],
+      additionalExtensionPaths: [process.env.PI_SEARCH_HUB_EXTENSION === undefined ? resolve(import.meta.dirname, "../extensions/search-hub.ts") : process.env.PI_SEARCH_HUB_EXTENSION],
       noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
     await loader.reload(); expect(loader.getExtensions().errors).toEqual([]);
     const runtime = await ModelRuntime.create({ authPath: join(dir, "auth.json"), modelsPath: null, refreshOnCreate: false });
@@ -45,12 +45,12 @@ it("loads the extension in real Pi and executes scholarly search with structured
           content: turn++ === 0 ? [{ type: "toolCall", id: "paper-call", name: "paper_research", arguments: { action: "search", query: "Transformer attention", numResults: 2 } }] : [{ type: "text", text: "Tool receipt observed." }],
           usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
           stopReason: turn === 1 ? "toolUse" : "stop" };
-        queueMicrotask(() => { stream.push({ type: "start", partial: message }); stream.push({ type: "done", reason: message.stopReason, message }); stream.end(); });
+        queueMicrotask(() => { stream.push({ type: "start", partial: message }); stream.push({ type: "done", reason: turn === 1 ? "toolUse" : "stop", message }); stream.end(); });
         return stream;
       } });
     const model = runtime.getModel("paper-fixture", "scripted"); if (model === undefined) throw new Error("Fixture model absent");
     ({ session } = await createAgentSession({ cwd: dir, agentDir: dir, modelRuntime: runtime, model, thinkingLevel: "off", settingsManager: settings,
-      resourceLoader: loader, sessionManager: SessionManager.inMemory(), tools: [] }));
+      resourceLoader: loader, sessionManager: SessionManager.inMemory(), tools: ["paper_research"] }));
     const errors: unknown[] = [];
     await session.bindExtensions({ mode: "rpc", onError: error => errors.push(error) });
     expect(session.getActiveToolNames()).toContain("paper_research");

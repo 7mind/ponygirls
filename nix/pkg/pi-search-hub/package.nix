@@ -14,7 +14,7 @@ buildNpmPackage {
     src = ./src;
     filter = path: _type: !(lib.hasSuffix "/node_modules" path);
   };
-  npmDepsHash = "sha256-BUgw32DP8yq7vPK0JEbLyLBWgkU1SU7cNFP1+wPNd5A=";
+  npmDepsHash = "sha256-5elDMmTt+jh2rSvZ0VlwBshkFyFzmz9jfhS3C7kW5Cs=";
   npmFlags = [ "--legacy-peer-deps" "--ignore-scripts" ];
   dontNpmBuild = true;
   doCheck = true;
@@ -39,8 +39,10 @@ buildNpmPackage {
 
   installPhase = ''
     runHook preInstall
+    npm prune --omit=dev --ignore-scripts --legacy-peer-deps --offline
+    mkdir -p $out
+    cp -r extensions backends package.json CREDITS.md node_modules $out/
     mkdir -p $out/node_modules/@ponygirls
-    cp -r extensions backends package.json CREDITS.md $out/
     ln -s ${ponygirls-pi-ui} $out/node_modules/@ponygirls/pi-ui
     runHook postInstall
   '';

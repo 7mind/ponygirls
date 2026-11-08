@@ -1,3 +1,4 @@
+import type { JsonObject } from "@earendil-works/pi-ai";
 import type { SearchConfig } from "../types.js";
 import { createPaperProviders } from "./providers.js";
 import { boundedPaperOperation, runPaperMetasearch, validatePaperConfig } from "./metasearch.js";
@@ -131,8 +132,9 @@ export class PaperResearchService {
     } else throw new Error("Unknown paper research action");
     output.notices.push(...output.results.flatMap(paper => paper.notices ?? []), ...(output.paper?.notices ?? []));
     const bounded = boundedOutput(output);
-    return { content: [{ type: "text" as const, text: JSON.stringify(bounded) }],
-      details: bounded, structuredContent: bounded,
+    const serialized = JSON.stringify(bounded);
+    return { content: [{ type: "text" as const, text: serialized }],
+      details: bounded, structuredContent: JSON.parse(serialized) as PaperResearchOutput & JsonObject,
       isError: bounded.providers.length > 0 && bounded.providers.every(provider => provider.status === "failed" || provider.status === "timeout") };
   }
 }
