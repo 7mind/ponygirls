@@ -9,7 +9,7 @@ import { paperProfile, sourcePolicy } from "../engine/profiles.js";
 import type { PaperConfig, PaperPassage, PaperProvider, PaperProviderName, PaperProviderStats, PaperReadResult, PaperRecord, RankedPaper } from "./types.js";
 
 export type PaperResearchParams =
-  | { action: "search"; query: string; numResults?: number; source?: PaperProviderName; mode?: PaperConfig["mode"]; rerank?: PaperConfig["rerank"] }
+  | { action: "search"; query: string; numResults?: number; source?: PaperProviderName; mode?: PaperConfig["mode"]; rerank?: "rrf" | "lexical" }
   | { action: "read"; id: string; query?: string; numResults?: number; source?: "firecrawl" | "arxiv" }
   | { action: "related"; id: string; intent: string; mode?: "similar" | "citers" | "references"; numResults?: number };
 export interface PaperResearchOutput {

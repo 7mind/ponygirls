@@ -4,6 +4,7 @@
 
 import type { SearchResult, SearchResultWithBackend } from "./types.js";
 import type { BackendRunner } from "./types.js";
+import type { BackendStats } from "./dispatch.js";
 
 /** Every backend that returned this result, falling back to its primary label. */
 function sourceNames(r: SearchResultWithBackend): string[] {
@@ -78,7 +79,7 @@ export function formatResults(
 export function formatCombinedResults(
 	query: string,
 	results: SearchResultWithBackend[],
-	backendStats: Map<string, { success: boolean; count: number; error?: string }>,
+	backendStats: Map<string, BackendStats>,
 	backendDefs: Record<string, BackendRunner>,
 ): string {
 	const safeQuery = query.replace(/[\n\r]/g, " ").replace(/^#/gm, "\\#");
@@ -93,10 +94,12 @@ export function formatCombinedResults(
 		Object.entries(backendDefs).map(([k, v]) => [k, v.label])
 	) as Record<string, string>;
 
-	lines.push("**Backends queried:**");
+	lines.push("**Source outcomes:**");
 	for (const [backend, stats] of backendStats.entries()) {
 		const label = backendLabel[backend] || backend;
-		if (stats.success) {
+		if (stats.status === "not-started" || stats.status === "timeout" || stats.status === "cancelled") {
+			lines.push(`  - ${label}: ${stats.status}${stats.reason ? ` (${stats.reason})` : ""}`);
+		} else if (stats.success) {
 			lines.push(`  - ${label}: ${stats.count} results`);
 		} else {
 			lines.push(`  - ${label}: failed (${stats.error || "unknown error"})`);

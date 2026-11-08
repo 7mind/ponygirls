@@ -43,21 +43,27 @@ export class SearchService {
     if (this.policySnapshot === null) throw new Error("Search policy is unavailable before discovery");
     return structuredClone(this.policySnapshot);
   }
-  async refresh(ctx: ExtensionContext, signal: AbortSignal | undefined): Promise<void> {
+  async refresh(ctx: ExtensionContext, signal: AbortSignal | undefined, overallDeadline?: number): Promise<void> {
     refreshConfig(ctx.cwd);
     const timeouts = resolveTimeouts(config.timeouts);
     const limits = resolveConcurrency(config.concurrency);
     this.runtime.configure(limits);
     const profile = this.profile();
+    const strategy = config.selectionStrategy ?? "sequential";
+    if (!["sequential", "random", "round-robin", "best-latency"].includes(strategy)) throw new Error("Invalid selection strategy");
     this.discoveryFailed = false;
-    try { this.native = await boundedOperation(child => discoverNativeEngines(ctx, child, timeouts), timeouts.discoveryMs, signal, 0); }
-    catch { signal?.throwIfAborted(); this.native = []; this.discoveryFailed = true; }
+    const discoveryBudget = overallDeadline === undefined ? timeouts.discoveryMs : Math.min(timeouts.discoveryMs, Math.floor(overallDeadline - performance.now()));
+    if (discoveryBudget <= 0) { this.native = []; this.discoveryFailed = true; }
+    else {
+      try { this.native = await boundedOperation(child => discoverNativeEngines(ctx, child, timeouts), discoveryBudget, signal, 0); }
+      catch { signal?.throwIfAborted(); this.native = []; this.discoveryFailed = true; }
+    }
     const active = getActiveBackends().filter(name => name !== "openai-codex" && sourcePolicy(profile, name).enabled !== false);
     validateAlwaysInclude(profile, [...active, ...this.native.map(engine => `native:${engine.id}`)]);
     const fallback = Object.keys(profile.alwaysInclude).filter(name => sourcePolicy(profile, name).enabled !== false);
     this.policySnapshot = {
       defaultResultCount: DEFAULT_RESULT_COUNT, maximumResultCount: MAXIMUM_RESULT_COUNT,
-      main: { mode: profile.mode, combineForced: config.combine === true, combineMode: config.combineMode ?? "all", selectionStrategy: config.selectionStrategy ?? "sequential",
+      main: { mode: profile.mode, combineForced: config.combine === true, combineMode: config.combineMode ?? "all", selectionStrategy: strategy,
         engineOrder: active.filter(name => !fallback.includes(name)), targetUsableEngines: profile.targetUsableSources,
         requestedPerEngine: candidateCount(profile, DEFAULT_RESULT_COUNT) },
       fallback: fallback.map(backend => ({ backend, timeoutMs: sourcePolicy(profile, backend).timeoutMs ?? timeouts.alwaysIncludeMs,
@@ -87,9 +93,10 @@ export class SearchService {
     if (typeof params.query !== "string" || !params.query.trim() || params.query.length > 2000) throw new Error("Search query must contain 1–2000 characters");
     if (params.numResults !== undefined && (!Number.isInteger(params.numResults) || params.numResults < 1 || params.numResults > MAXIMUM_RESULT_COUNT)) throw new Error("numResults must be an integer from 1 to 20");
     if (params.rerank !== undefined && params.rerank !== "rrf" && params.rerank !== "lexical") throw new Error("Invalid rerank mode");
+    refreshConfig(ctx.cwd);
     const started = performance.now();
-    await this.refresh(ctx, signal);
     const timeouts = resolveTimeouts(config.timeouts);
+    await this.refresh(ctx, signal, started + timeouts.overallMs);
     const native = new Map(this.native.map(engine => [`native:${engine.id}`, engine]));
     const profile = this.profile();
     if (params.combine === true) profile.mode = config.combineMode ?? "all";
@@ -128,8 +135,14 @@ export class SearchService {
     if (requested !== "auto" && !this.descriptors.some(engine => engine.name === requested && engine.tier !== "reader")) throw new Error("Requested search engine is not configured");
     const active = selectBackendsForFallback(config.selectionStrategy ?? "sequential", getActiveBackends().filter(name => name !== "openai-codex"));
     const fallback: AlwaysIncludeEntry[] = Object.keys(profile.alwaysInclude).map(backend => ({ backend, timeoutMs: sourcePolicy(profile, backend).timeoutMs ?? timeouts.alwaysIncludeMs, maxResults: sourcePolicy(profile, backend).maxResults }));
-    const remaining = Math.max(1, timeouts.overallMs - (performance.now() - started));
-    const result = await runMetasearch({ mode: requested === "auto" ? profile.mode : "first", orderedBackends: requested === "auto" ? active : [requested],
+    const remaining = Math.floor(timeouts.overallMs - (performance.now() - started));
+    const result = remaining <= 0 ? {
+      results: [], cancelled: false, timedOut: true,
+      backendStats: new Map([...new Set([...active, ...native.keys()])].filter(name => sourcePolicy(profile, name).enabled !== false).map(name => [name, {
+        success: false, count: 0, status: "not-started" as const, reason: "overall-deadline" as const,
+        tier: native.has(name) ? "native" as const : name in profile.alwaysInclude ? "alwaysInclude" as const : "main" as const,
+      }])),
+    } : await runMetasearch({ mode: requested === "auto" ? profile.mode : "first", orderedBackends: requested === "auto" ? active : [requested],
       fallback: requested === "auto" ? fallback : [], native: [...native.keys()].filter(name => requested === "auto" || name === requested).map(backend => ({ backend, timeoutMs: sourcePolicy(profile, backend).timeoutMs ?? timeouts.nativeMs })),
       query: params.query, numResults, signal, runBackend: run, runtime: this.runtime, timeouts, overallTimeoutMs: remaining,
       profile: requested === "auto" ? profile : { ...profile, alwaysInclude: {} } });

@@ -50,6 +50,7 @@ export function reciprocalRankFusion(lists: RankedBackendList[], maxResults: num
 }
 function backendStats(stats: SourceStats[]): Map<string, BackendStats> {
   return new Map(stats.map(stat => [stat.source, { success: stat.status === "success" || stat.status === "empty", count: stat.count,
+    status: stat.status, reason: stat.reason, tier: stat.tier,
     ...(stat.error === undefined ? {} : { error: stat.error }) }]));
 }
 export async function runTargetedCombine(request: { orderedBackends: string[]; query: string; numResults: number; signal?: AbortSignal; targetUsableBackends?: number; runBackend: Runner }) {

@@ -11,13 +11,14 @@ export function webProfile(settings: SearchConfig): ResolvedProfile {
 }
 
 export function paperProfile(settings: SearchConfig, available: readonly PaperProviderName[]): ResolvedProfile {
-  const sources = Object.fromEntries(Object.entries(settings.sources ?? {}).filter(([name]) => PAPER_PROVIDERS.includes(name as PaperProviderName)));
-  const inherited: SearchProfileConfig = { mode: settings.mode ?? "targeted", targetUsableSources: settings.targetUsableSources,
-    candidates: settings.candidates, ranking: settings.ranking, sources };
+  const root = resolveProfile({ mode: settings.mode ?? "targeted", targetUsableSources: settings.targetUsableSources,
+    candidates: settings.candidates, ranking: settings.ranking, sources: settings.sources, alwaysInclude: settings.alwaysInclude }, undefined);
+  const compatible = (name: string) => PAPER_PROVIDERS.includes(name as PaperProviderName);
+  const sources = Object.fromEntries(Object.entries(root.sources).filter(([name]) => compatible(name)));
+  const alwaysInclude = { ...Object.fromEntries(available.filter(name => name === "searxng" || name === "arxiv").map(name => [name, {}])),
+    ...Object.fromEntries(Object.entries(root.alwaysInclude).filter(([name]) => compatible(name))) };
+  const inherited: SearchProfileConfig = { ...root, sources: { ...sources, searxng: { redundantWith: ["*"], ...sources.searxng } }, alwaysInclude };
   const profile = resolveProfile(inherited, settings.papers);
-  if (settings.papers?.alwaysInclude === undefined) {
-    profile.alwaysInclude = Object.fromEntries(available.filter(name => name === "searxng" || name === "arxiv").map(name => [name, {}]));
-  }
   for (const name of [...Object.keys(profile.sources), ...Object.keys(profile.alwaysInclude)]) {
     if (!PAPER_PROVIDERS.includes(name as PaperProviderName)) throw new Error("Unknown paper source policy");
   }
@@ -34,6 +35,6 @@ export function sourcePolicy(profile: ResolvedProfile, name: string): SourcePoli
 
 export function validateAlwaysInclude(profile: ResolvedProfile, active: readonly string[]): void {
   for (const name of Object.keys(profile.alwaysInclude)) {
-    if (!active.includes(name) && profile.alwaysInclude[name].enabled !== false) throw new Error("alwaysInclude source is not enabled");
+    if (!active.includes(name) && sourcePolicy(profile, name).enabled !== false) throw new Error("alwaysInclude source is not enabled");
   }
 }
