@@ -1,0 +1,34 @@
+model rites.worker
+version "0.1.0"
+
+data ModelSelection {
+  provider: str
+  model: str
+  thinkingLevel: str
+}
+
+root data VersionInfo {
+  current: str
+  minimum: str
+  supported: lst[str]
+}
+
+root data RunRequest {
+  protocolVersion: str
+  runId: uid
+  prompt: str
+  model: ModelSelection
+}
+
+enum RunOutcome {
+  Completed
+  Failed
+  Cancelled
+}
+
+root data RunResult {
+  protocolVersion: str
+  runId: uid
+  outcome: RunOutcome
+  failureCode: opt[str]
+}

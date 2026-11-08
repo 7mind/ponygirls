@@ -1,0 +1,11 @@
+{
+  "scheme" : 3,
+  "locks" : {
+    "rites.worker" : [
+      {
+        "version" : "0.1.0",
+        "sigId" : "5d36bf09ae201af02654724bea34922bd1f5846cd981f8aa9780f00793c2262f"
+      }
+    ]
+  }
+}
