@@ -101,7 +101,7 @@ def parse_case(raw: dict[str, Json]) -> PrivateCase:
             fields(expected, ('kind', 'type')); name = text(expected['type'])
             builtin = getattr(builtins, name, None)
             require(type(builtin) is type and issubclass(builtin, Exception), 'exception-type')
-            expectation = ExceptionExpectation(name)
+            expectation = ExceptionExpectation(builtin.__name__)
         else:
             raise PrivateCaseError('expectation-kind')
         return PrivateCase(identity, function, arguments, expectation)

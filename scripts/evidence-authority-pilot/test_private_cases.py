@@ -62,6 +62,13 @@ class InvocationContract:
         bad = self.invoker('raise ValueError("import failed")\n', {call_bytes(spec): b'{"kind":"candidate_error","code":"load"}'})
         self.assertFalse(evaluate_cases((spec,), bad).adequate)
 
+    def test_builtin_exception_aliases_match_their_actual_class(self):
+        for name in ('IOError', 'EnvironmentError'):
+            spec = case('alias-' + name, 'f', [], {'kind': 'exception', 'type': name})
+            port = self.invoker('def f():\n raise ' + name + '("ordinary")\n', {call_bytes(spec): b'{"kind":"exception","type":"OSError"}'})
+            with self.subTest(name=name):
+                self.assertTrue(evaluate_cases((spec,), port).adequate)
+
     def test_known_failure_is_preserved_when_another_case_is_unavailable(self):
         first = case('known-bad', 'f', [1], {'kind': 'value', 'value': 3})
         second = case('missing', 'f', [2], {'kind': 'value', 'value': 3})
@@ -123,6 +130,14 @@ class RealCases(InvocationContract, unittest.TestCase):
         self.assertEqual(json.loads(result.stdout), {'kind': 'candidate_error', 'code': 'non-json-return'})
         self.assertFalse(assess(spec, result).adequate)
 
+    def test_deep_raw_candidate_output_is_compared_as_data(self):
+        spec = case('deep-output', 'f', [], {'kind': 'value', 'value': None})
+        program = 'import os\ndef f():\n raw=b\'{"kind":"value","value":\'+b\'[\'*10000+b\'0\'+b\']\'*10000+b\'}\'\n os.write(1,raw)\n os._exit(0)\n'
+        port = self.invoker(program, {})
+        assessment = assess(spec, port.invoke(call_bytes(spec)))
+        self.assertFalse(assessment.adequate)
+        self.assertEqual(assessment.category, 'mismatch')
+
     def test_valid_dataclass_candidate_with_postponed_annotations_loads(self):
         spec = case('dataclass', 'f', [2], {'kind': 'value', 'value': 2})
         program = 'from __future__ import annotations\nfrom dataclasses import dataclass\n@dataclass\nclass Box:\n value:int\ndef f(x):\n return Box(x).value\n'
@@ -171,6 +186,28 @@ class ComparisonControls(unittest.TestCase):
         spec = case('exit', 'f', [], {'kind': 'value', 'value': 2})
         forged = replace(outcome(call_bytes(spec), b'{"kind":"value","value":2}'), exit_code=1)
         self.assertFalse(assess(spec, forged).adequate)
+
+    def test_valid_deep_response_preserves_previous_and_later_case_accounting(self):
+        first = case('bad', 'f', [1], {'kind': 'value', 'value': 2})
+        deep = case('deep', 'f', [2], {'kind': 'value', 'value': None})
+        later = case('later', 'f', [3], {'kind': 'value', 'value': 3})
+        raw = b'{"kind":"value","value":' + b'[' * 10000 + b'0' + b']' * 10000 + b'}'
+        port = MemoryInvocation({call_bytes(first): b'{"kind":"value","value":0}',
+                                 call_bytes(deep): raw,
+                                 call_bytes(later): b'{"kind":"value","value":3}'})
+        report = evaluate_cases((first, deep, later), port)
+        self.assertFalse(report.adequate); self.assertTrue(report.complete)
+        self.assertEqual(len(report.cases), 3)
+        self.assertFalse(report.cases[0].adequate)
+        self.assertFalse(report.cases[1].adequate)
+        self.assertEqual(report.cases[1].category, 'mismatch')
+        self.assertTrue(report.cases[2].adequate)
+        self.assertEqual(port.calls, [call_bytes(first), call_bytes(deep), call_bytes(later)])
+
+    def test_pinned_decoder_supports_deep_matching_values(self):
+        raw = b'{"kind":"value","value":' + b'[' * 10000 + b'0' + b']' * 10000 + b'}'
+        spec = case('deep-match', 'f', [], {'kind': 'value', 'value': json.loads(raw)['value']})
+        self.assertTrue(assess(spec, outcome(call_bytes(spec), raw)).adequate)
 
     def test_empty_case_set_and_duplicate_ids_do_not_manufacture_coverage(self):
         empty = evaluate_cases((), MemoryInvocation({}))
