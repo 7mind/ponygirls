@@ -96,5 +96,5 @@ Baboon integration, and native runtime acceptance remain separate work.
 MUnit 1.3.6, Scala 3.9.0. Tests are specified-origin Behavioral-Active /
 Blackbox-Atomic: only public boundary behavior, no mocks/external systems. The
 dual-tests adapter pattern is not applicable until a real external adapter is
-introduced. Root build command after integration: `sbt losslessJson/test` in the
+introduced. Root build command after integration: `sbt losslessJson/testFull` in the
 pinned Chronicle shell. This module has no production dependencies beyond JDK.

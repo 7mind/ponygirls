@@ -26,6 +26,9 @@ assert selected sources.backendDevelopment "rites/server/src/main/scala/rites/Ma
 assert selected sources.backendDevelopment "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
 assert selected server "build.sbt" "regular";
 assert selected server "project/plugins.sbt" "regular";
+assert selected server "project/BuildChecks.scala" "regular";
+assert !(selected server "project/project" "directory");
+assert !(selected server "project/project/build-cache.json" "regular");
 assert selected server "deps.lock.json" "regular";
 assert selected server "chronicle/generated/scala/chronicle/api" "directory";
 assert selected server "chronicle/server/src/main/resources/META-INF/native-image/chronicle" "directory";
@@ -85,6 +88,8 @@ pkgs.runCommand "backend-source-layout-test" {
   # Real source existence belongs to the builder. Pure no-build evaluation must
   # not dereference lazily realized filtered-store paths via builtins.pathExists.
   test -f "$serverSource/build.sbt"
+  test -f "$serverSource/project/plugins.sbt"
+  test ! -e "$serverSource/project/project"
   test -d "$serverSource/chronicle/server/src/main/resources/META-INF/native-image/chronicle"
   test -f "$testSource/chronicle/scripts/test-fast.sh"
   test -f "$testSource/chronicle/scripts/fast-suites.txt"

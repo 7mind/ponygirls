@@ -7,10 +7,11 @@ import scala.util.Using
 /** Explicit loader boundary, never a shared/static or provider fallback. Test scope only. */
 private[storage] final case class ProbeRuntime(bridge: PosixNative, childCommand: Vector[String])
 private[storage] object ProbeRuntime:
-  def shared(library: String): ProbeRuntime =
+  def shared(library: String, classpath: String): ProbeRuntime =
     require(Path.of(library).isAbsolute, "absolute shared library path required")
+    require(classpath.nonEmpty, "explicit child classpath required")
     val java = Path.of(System.getProperty("java.home"), "bin", "java").toString
-    ProbeRuntime(PosixNative.shared(library), Vector(java, "--enable-native-access=ALL-UNNAMED", "-cp", System.getProperty("java.class.path"),
+    ProbeRuntime(PosixNative.shared(library), Vector(java, "--enable-native-access=ALL-UNNAMED", "-cp", classpath,
       "manure.storage.FilesystemCapabilityProbe", "--shared", library))
 
   def linked(): ProbeRuntime =
@@ -24,7 +25,7 @@ private[storage] object ProbeRuntime:
 object FilesystemCapabilityProbe:
   def main(args: Array[String]): Unit =
     val (runtime, rest) = args.toVector match
-      case "--shared" +: library +: tail => (ProbeRuntime.shared(library), tail)
+      case "--shared" +: library +: tail => (ProbeRuntime.shared(library, System.getProperty("java.class.path")), tail)
       case "--linked" +: tail => (ProbeRuntime.linked(), tail)
       case _ => throw new IllegalArgumentException("explicit --shared /absolute/library or --linked required")
     rest match

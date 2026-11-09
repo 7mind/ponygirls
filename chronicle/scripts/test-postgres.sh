@@ -11,4 +11,4 @@ chmod 600 "$base/password"
 "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base" -w start
 export CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/postgres"
 export CHRONICLE_REQUIRE_POSTGRES=1
-./scripts/sbt.sh 'Test / validationInventory' test
+./scripts/sbt.sh 'Test / validationInventory' testFull

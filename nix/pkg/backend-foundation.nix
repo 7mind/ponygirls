@@ -16,8 +16,8 @@ in runCommand "backend-foundation-validation" {
   ${environment.setup}
   # Separate from Chronicle's fixed fast allowlist; these are complete module
   # suites. Fresh filtered source means no stale inventory or XML can survive.
-  bash scripts/backend-sbt.sh 'losslessJson / Test / validationInventory' 'losslessJson / test' \
-    'manureStorage / Test / validationInventory' 'manureStorage / test'
+  bash scripts/backend-sbt.sh 'losslessJson / Test / validationInventory' 'losslessJson / testFull' \
+    'manureStorage / Test / validationInventory' 'manureStorage / testFull'
   mkdir -p "$out"
   python3 scripts/backend-foundation-report.py --source ${source} --output "$out/foundation.json"
   printf '%s\n' "$MANURE_POSIX_LIBRARY" > "$out/posix-library"

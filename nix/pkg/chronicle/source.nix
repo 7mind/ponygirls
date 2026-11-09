@@ -12,7 +12,8 @@ let
         relative = lib.removePrefix "${toString base}/" (toString path);
         selected = entry: relative == entry || lib.hasPrefix "${entry}/" relative
           || (type == "directory" && lib.hasPrefix "${relative}/" entry);
-      in clean path type && (toString path == toString base || lib.any selected entries);
+        metaBuildOutput = relative == "project/project" || lib.hasPrefix "project/project/" relative;
+      in clean path type && !metaBuildOutput && (toString path == toString base || lib.any selected entries);
   };
   source = sourceAt chronicle;
   backendSource = sourceAt root;

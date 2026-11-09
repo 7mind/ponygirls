@@ -8,7 +8,20 @@ let
     [[ "$1" == --batch ]]
     shift
     export JAVA_TOOL_OPTIONS="$SBT_OPTS -Dsbt.ci=true -Dsbt.global.base=$SBT_GLOBAL_BASE -Dsbt.ivy.home=$HOME/.ivy2 -Dcoursier.cache=$COURSIER_CACHE"
-    exec ${tools.sbt}/bin/chronicle-sbt "$@"
+    log="$(mktemp)"
+    status=0
+    ${tools.sbt}/bin/chronicle-sbt "$@" >"$log" 2>&1 || status=$?
+    cat "$log"
+    if (( status != 0 )); then
+      exit "$status"
+    fi
+    ${python3}/bin/python3 - "$log" <<'PY'
+    import re, sys
+    from pathlib import Path
+    output = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', "", Path(sys.argv[1]).read_text())
+    if re.search(r'^\s*\[error\]', output, re.MULTILINE):
+        raise SystemExit('sbt emitted error diagnostics despite a successful exit; refusing dependency lock')
+    PY
   '';
   coursierRunner = writeShellScriptBin "cs" ''
     set -euo pipefail
@@ -57,6 +70,12 @@ writeShellApplication {
       timeout ${toString generationTimeoutSeconds} ${lockfileGenerator}/bin/squish-lockfile \
       lockfile-config.json --keep-temp --output "$work/deps.lock.json" \
       2>&1 >"$work/generator.stdout" | tee "$work/generator.log" >&2
+    for assembly in chronicle/target/chronicle-server.jar haystack/server/target/haystack-server.jar manure/backend/target/manure-server.jar rites/server/target/rites-server.jar; do
+      if [[ ! -s "$work/project/$assembly" ]]; then
+        echo "Missing or empty assembly $assembly; refusing to replace the lockfile" >&2
+        exit 1
+      fi
+    done
     if grep -q 'Warning: Failed' "$work/generator.log"; then
       echo 'Configured dependency fetch failed; refusing to replace the lockfile' >&2
       exit 1

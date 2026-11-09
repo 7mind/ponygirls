@@ -15,6 +15,8 @@ object CheckConfigProbe:
   * open any referenced secret, payload root, native library, model or database.
   */
 final class CheckConfigSuite extends FunSuite:
+  private val maximumChildOutputBytes = 16 * 1024
+
   test("check-config validates current config without referenced credential or external IO") {
     val directory=Files.createTempDirectory("manure-check-config-")
     val fifo=directory.resolve("credential-fifo")
@@ -41,14 +43,18 @@ final class CheckConfigSuite extends FunSuite:
       val path=directory.resolve("config.json")
       def run(json: Json,expected: Int): String =
         Files.writeString(path,json.noSpaces)
-        val builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",System.getProperty("java.class.path"),
+        val childClasspath=sys.props.getOrElse("manure.test.childClasspath",
+          throw new IllegalArgumentException("explicit manure.test.childClasspath required"))
+        val builder=new ProcessBuilder(Path.of(System.getProperty("java.home"),"bin","java").toString,"-cp",childClasspath,
           "manure.CheckConfigProbe","check-config",path.toString).redirectErrorStream(true)
         builder.environment().clear()
         val child=builder.start()
         try
           assert(child.waitFor(2,TimeUnit.SECONDS),"check-config touched a blocking reference or external endpoint")
-          val output=Using.resource(child.getInputStream)(s => Exact.string(s.readAllBytes()))
-          assertEquals(child.exitValue(),expected)
+          val outputBytes=Using.resource(child.getInputStream)(_.readNBytes(maximumChildOutputBytes+1))
+          assert(outputBytes.length<=maximumChildOutputBytes,"check-config child output bound exceeded")
+          val output=Exact.string(outputBytes)
+          assertEquals(child.exitValue(),expected,s"child classpath=$childClasspath\nchild output=$output")
           assert(!output.contains(fifo.toString));assert(!output.contains("127.0.0.1:1"));output
         finally
           child.destroyForcibly();child.waitFor(5,TimeUnit.SECONDS)

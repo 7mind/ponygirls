@@ -6,7 +6,7 @@ if [[ $# != 1 ]]; then echo "usage: $0 <output-classpath-file>" >&2; exit 2; fi
 log=$(mktemp)
 trap 'rm -f "$log"' EXIT
 bash scripts/backend-sbt.sh --error 'manureStorage / Test / compile' \
-  'export manureStorage / Test / fullClasspath' | tee "$log"
+  'export manureStorage / Test / testChildClasspath' | tee "$log"
 python3 - "$log" "$1" <<'PY'
 from pathlib import Path
 import sys

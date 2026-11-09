@@ -32,7 +32,7 @@ restore() {
   exit "$restored"
 }
 trap restore EXIT
-if bash scripts/backend-sbt.sh 'set contracts / Compile / unmanagedSources := (contracts / Compile / unmanagedSourceDirectories).value.flatMap(d => (d ** "*.scala").get)' 'chronicleServer/verifySingleBaboonRuntime' > "$report/duplicate.log" 2>&1; then
+if bash scripts/backend-sbt.sh 'set contracts / Compile / unmanagedSources := (contracts / Compile / unmanagedSourceDirectories).value.flatMap(d => (d ** "*.scala").get())' 'chronicleServer/verifySingleBaboonRuntime' > "$report/duplicate.log" 2>&1; then
   echo 'FAIL duplicate compiled runtime was accepted' >&2
   exit 1
 fi

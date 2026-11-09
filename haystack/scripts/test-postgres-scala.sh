@@ -44,7 +44,7 @@ sha256sum build.sbt project/build.properties project/plugins.sbt scripts/backend
 sha256sum "$report/source-files.sha256" >"$report/source-input-digest.sha256"
 printf 'Reports: %s\n' "$report"
 set +e
-bash scripts/backend-sbt.sh "$@" 'haystackServer/Test/validationInventory' 'haystackServer/test' 2>&1 | tee "$report/tests.log"
+bash scripts/backend-sbt.sh "$@" 'haystackServer/Test/validationInventory' 'haystackServer/testFull' 2>&1 | tee "$report/tests.log"
 status=${PIPESTATUS[0]}
 set -e
 cp haystack/server/target/validation-inventory.txt "$report/inventory.txt"

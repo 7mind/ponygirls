@@ -24,6 +24,10 @@ let
         done
         test -n "$output"
         cp ${content} "$output"
+        for assembly in chronicle/target/chronicle-server.jar haystack/server/target/haystack-server.jar manure/backend/target/manure-server.jar rites/server/target/rites-server.jar; do
+          mkdir -p "$(dirname "$assembly")"
+          printf 'fixture jar' > "$assembly"
+        done
         ${pkgs.lib.optionalString (fixture.replaceDestination != "") ''
           target="$(dirname "$(dirname "$output")")/destination.json"
           echo 'Replacing only the synthetic test destination to reproduce a publication race' >&2

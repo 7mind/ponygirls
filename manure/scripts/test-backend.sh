@@ -27,7 +27,7 @@ cc -std=c11 -Wall -Wextra -Werror -Wconversion -Wsign-conversion -Wshadow -Wform
 export MANURE_POSIX_LIBRARY="$base/libmanure_posix.so"
 cmp manure/migration/schema.sql manure/backend/src/main/resources/manure-schema.sql
 set +e
-bash scripts/backend-sbt.sh 'manureStorage/Test/validationInventory' 'manureStorage/test' 'manureServer/Test/validationInventory' 'manureServer/test' 'manureServer/assembly' 2>&1 | tee "$report/run.log"
+bash scripts/backend-sbt.sh 'manureStorage/Test/validationInventory' 'manureStorage/testFull' 'manureServer/Test/validationInventory' 'manureServer/testFull' 'manureServer/assembly' 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}
 set -e
 printf '%s\n' "$status" > "$report/exit-status"

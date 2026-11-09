@@ -37,8 +37,8 @@ in pkgs.runCommand "manure-complete-jvm-backend-filesystem" {
   export MANURE_TEST_JDBC_URL="jdbc:postgresql://127.0.0.1:$port/postgres"
   export MANURE_TEST_JDBC_USER=postgres MANURE_TEST_JDBC_PASSWORD_FILE="$base/password" MANURE_TEST_ALLOW_CREATEDB=1
   timeout --signal=TERM --kill-after=15s 600s bash scripts/backend-sbt.sh \
-    'manureStorage/Test/validationInventory' 'manureStorage/test' \
-    'manureServer/Test/validationInventory' 'manureServer/test' > "$out/run.log" 2>&1 || { cat "$out/run.log"; exit 1; }
+    'manureStorage/Test/validationInventory' 'manureStorage/testFull' \
+    'manureServer/Test/validationInventory' 'manureServer/testFull' > "$out/run.log" 2>&1 || { cat "$out/run.log"; exit 1; }
   python3 ${./jvm-inventory-receipt.py} --module manure/server --module manure/backend --source ${source} --output "$out/receipt.json"
   for module in backend server; do
     mkdir "$out/$module"

@@ -1175,6 +1175,10 @@
             python3 ${./nix/tests/backend-foundation-report.py} ${./scripts/backend-foundation-report.py}
             touch "$out"
           '';
+          backend-runner-contract = pkgs.runCommand "backend-runner-contract-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${./nix/tests/backend-runner-contract.py} ${self.outPath}
+            touch "$out"
+          '';
           backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
           manure-toolchain-routing = pkgs.runCommand "manure-toolchain-routing-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
             python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java}
@@ -1190,6 +1194,14 @@
           backend-coassembly = pkgs.callPackage ./nix/tests/backend-coassembly.nix { squishLib = inputs.squish.lib; };
           rites-worker-source = pkgs.callPackage ./nix/tests/rites-worker-source.nix { };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
+          chronicle-sbt-lock-helper = let
+            updater = pkgs.callPackage ./nix/pkg/chronicle/update-lock.nix {
+              lockfileGenerator = pkgs.writeShellScriptBin "squish-lockfile" "exit 99";
+            };
+          in pkgs.runCommand "chronicle-sbt-lock-helper-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+            python3 ${./nix/pkg/chronicle/check-lock-guards.py} ${updater}/bin/chronicle-update-sbt-lock
+            touch "$out"
+          '';
           # The full suite requires Linux /proc process identity and bubblewrap.
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];

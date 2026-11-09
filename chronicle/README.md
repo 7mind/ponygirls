@@ -4,11 +4,11 @@ Internal session archive: Scala3/http4s, explicit distage constructor graph, Lif
 
 ## Build and verification
 
-Pinned toolchain: sbt1.13.1, server Scala3.9.0, generated-only Scala2.13.18, Izumi1.2.25, Baboon0.0.198, PostgreSQL18.6+pgvector0.8.7. Generated Scala runtime contains Scala2 `do/while`, so it compiles separately under `generated/.build`; server remains Scala3. Circe/cats/http4s use their2.13 artifacts consistently at this boundary. Izumi macros require `-Yretain-trees`. Scala3.10.0 was tested and rejected: PluginDef's ForcedRecompilationToken macro expands to an incompatible singleton type (retained sanitized failure in `server/scala-3.10-izumi-repro.log`). Scala3.9.0 is the newest compatible stable3.9 release verified.
+Pinned toolchain: sbt2.0.12, server Scala3.9.0, generated-only Scala2.13.18, Izumi1.2.25, Baboon0.0.198, PostgreSQL18.6+pgvector0.8.7. Generated Scala runtime contains Scala2 `do/while`, so it compiles separately under `generated/.build`; server remains Scala3. Circe/cats/http4s use their2.13 artifacts consistently at this boundary. Izumi macros require `-Yretain-trees`. Scala3.10.0 was tested and rejected: PluginDef's ForcedRecompilationToken macro expands to an incompatible singleton type (retained sanitized failure in `server/scala-3.10-izumi-repro.log`). Scala3.9.0 is the newest compatible stable3.9 release verified.
 
 ```bash
 export SBT_LAUNCH_JAR=/path/to/sbt-launch.jar
-./scripts/sbt.sh compile test assembly
+./scripts/sbt.sh compile testFull assembly
 # Fresh unprivileged real cluster; full suite MUST execute PostgreSQL leg:
 POSTGRES_HOME=/path/to/postgresql-with-pgvector ./scripts/test-postgres.sh
 BABOON=/path/to/baboon ./scripts/generate.sh
@@ -20,9 +20,10 @@ The active sbt build lives at the repository root. `scripts/sbt.sh` selects
 `chronicleServer`; it does not create a second dependency universe. Other project
 IDs are `contracts` (Scala2 generated code), `losslessJson`, `manureStorage`, and
 `root` (aggregate). From the repository root, use
-`nix develop .#backend --command bash scripts/backend-sbt.sh test` for aggregate
-JVM tests or pass `losslessJson/test` and `manureStorage/test` for the foundation
-modules. `nix build .#checks.x86_64-linux.backend-foundation` runs complete
+`nix develop .#backend --command bash scripts/backend-sbt.sh testFull` for aggregate
+JVM tests or pass `losslessJson/testFull` and `manureStorage/testFull` for the foundation
+modules. In sbt2, `test` is incremental; `testFull` executes every suite.
+`nix build .#checks.x86_64-linux.backend-foundation` runs complete
 foundation-module tests offline with nonempty inventory-bound reports; its
 receipt is separate from Chronicle's fast subset and is not native acceptance.
 Chronicle tests fork with `chronicle/` as their working directory so existing

@@ -4,7 +4,8 @@ package manure.storage
 final class ConfinedDirectorySuite extends munit.FunSuite:
   private val library = sys.env.getOrElse("MANURE_POSIX_LIBRARY",
     throw new IllegalArgumentException("explicit MANURE_POSIX_LIBRARY=/absolute/libmanure_posix.so required"))
-  private val runtime = ProbeRuntime.shared(library)
+  private val runtime = ProbeRuntime.shared(library, sys.props.getOrElse("manure.test.childClasspath",
+      throw new IllegalArgumentException("explicit manure.test.childClasspath required")))
   new FilesystemBehavior(runtime.bridge, runtime.childCommand).cases.foreach { (label, body) =>
     test(label)(body())
   }

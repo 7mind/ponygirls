@@ -26,7 +26,7 @@ chmod 600 "$base/password"
 "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base" -w start
 export RUNTIME_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/postgres"
 # No test filters/no database skips. Serial PostgreSQL suite execution in build.sbt.
-exec_cmd=(bash scripts/backend-sbt.sh 'serviceRuntime/Test/validationInventory' 'serviceRuntime/test')
+exec_cmd=(bash scripts/backend-sbt.sh 'serviceRuntime/Test/validationInventory' 'serviceRuntime/testFull')
 set +e
 "${exec_cmd[@]}" 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}

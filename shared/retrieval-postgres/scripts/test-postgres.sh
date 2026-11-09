@@ -21,7 +21,7 @@ trap '"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/nul
 export CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/postgres"
 export RETRIEVAL_DIAGNOSTIC_DIR="$report/retrieval-postgres/diagnostics"
 set +e
-bash scripts/backend-sbt.sh 'retrievalCore/Test/validationInventory' 'modelHttp/Test/validationInventory' 'retrievalPostgres/Test/validationInventory' 'retrievalCore/test' 'modelHttp/test' 'retrievalPostgres/test' 2>&1 | tee "$report/run.log"
+bash scripts/backend-sbt.sh 'retrievalCore/Test/validationInventory' 'modelHttp/Test/validationInventory' 'retrievalPostgres/Test/validationInventory' 'retrievalCore/testFull' 'modelHttp/testFull' 'retrievalPostgres/testFull' 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}
 set -e
 printf '%s\n' "$status" > "$report/exit-status"

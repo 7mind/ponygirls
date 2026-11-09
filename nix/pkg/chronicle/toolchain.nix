@@ -31,8 +31,8 @@ let
     };
   };
   launcher = fetchurl {
-    url = "https://repo.maven.apache.org/maven2/org/scala-sbt/sbt-launch/1.13.1/sbt-launch-1.13.1.jar";
-    hash = "sha256-tzqrwDektuBrXQfTbt0CapfDrBHC9+DW9YHY76R0cug=";
+    url = "https://repo.maven.apache.org/maven2/org/scala-sbt/sbt-launch/2.0.12/sbt-launch-2.0.12.jar";
+    hash = "sha256-0XOuS9brB/1wsAChLLcnXHqrJsZX48mTL0l9lXjXHrE=";
   };
   repositories = writeText "chronicle-sbt-repositories" ''
     [repositories]
