@@ -2,12 +2,12 @@
 # Link the pinned Pi SDK (from the installed Nix pi-coding-agent package) into
 # the rites workspace so TypeScript and Node resolve the real SDK, not an
 # npm-registry copy. Idempotent; run after `npm ci` (which removes
-# node_modules). Override the source with PI_MONOREPO_ROOT, e.g. from a Nix
-# build passing its own pi-coding-agent package.
+# node_modules). The pinned backend shell supplies PI_MONOREPO_ROOT.
 set -euo pipefail
 
 RITES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SDK_ROOT="${PI_MONOREPO_ROOT:-/nix/store/z0whzcf3qadlbapf48whxgdq2p5l4aaw-pi-coding-agent-1.4.0/lib/node_modules/pi-monorepo}"
+: "${PI_MONOREPO_ROOT:?use nix develop .#backend or set the pinned Pi SDK path explicitly}"
+SDK_ROOT="$PI_MONOREPO_ROOT"
 EXPECTED_VERSION="1.4.0"
 
 fail() {

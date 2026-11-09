@@ -309,8 +309,14 @@
       in
       {
         # One pinned JVM/toolchain environment for all common-build modules.
-        devShells.backend = self.devShells.${system}.chronicle.overrideAttrs (_:
+        devShells.backend = self.devShells.${system}.chronicle.overrideAttrs (old:
           pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+            nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.bubblewrap pkgs.ripgrep pkgs.fd pkgs.findutils pkgs.gnugrep ];
+            PI_MONOREPO_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            RITES_NODE = "${pkgs.nodejs_24}/bin/node";
+            RITES_BWRAP = "${pkgs.bubblewrap}/bin/bwrap";
+            RITES_CA_BUNDLE = "${pkgs.cacert}/etc/ssl/certs/ca-bundle.crt";
+            RITES_TOOLCHAIN_PATH = pkgs.lib.makeBinPath [ pkgs.nodejs_24 pkgs.bash pkgs.git pkgs.ripgrep pkgs.fd pkgs.coreutils pkgs.findutils pkgs.gnugrep ];
             MANURE_POSIX_LIBRARY = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared}/lib/libmanure_posix.so";
             MANURE_POSIX_STATIC = "${(pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static}/lib";
           });
@@ -358,8 +364,11 @@
           manure = self.lib.mkManurePackage { inherit pkgs; };
           chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
+          rites-web = pkgs.callPackage ./nix/pkg/rites/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.lib.mkChroniclePackage { inherit pkgs; };
+          rites = self.lib.mkRitesPackage { inherit pkgs; };
+          rites-worker = self.packages.${system}.rites.worker;
           manure-posix-shared = (pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared;
           manure-posix-static = (pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static;
           chronicle-native-dev = self.packages.${system}.chronicle.nativeArtifact;
@@ -831,6 +840,7 @@
             node --test ponygirls-model-stats-state.test.ts
             touch $out
           '';
+          rites-web = self.packages.${system}.rites-web;
           pi-search-hub = self.packages.${system}.pi-search-hub;
           pi-search-hub-eval = pkgs.callPackage ./nix/pkg/pi-search-hub/eval/check.nix {
             inherit (self.packages.${system}) pi-coding-agent pi-search-hub;
@@ -1102,6 +1112,9 @@
           };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.packages.${system}.chronicle;
+          rites = self.packages.${system}.rites;
+          rites-backend = pkgs.callPackage ./nix/pkg/rites/backend-tests.nix { squishLib = inputs.squish.lib; };
+          rites-browser = pkgs.callPackage ./nix/pkg/rites/browser-tests.nix { };
           chronicle-backend = self.packages.${system}.chronicle.backendValidation;
           chronicle-protocol = self.packages.${system}.chronicle.protocolValidation;
           chronicle-validation = self.packages.${system}.chronicle.validationEvidence;
@@ -1171,6 +1184,8 @@
           manure-direct-jni = pkgs.callPackage ./nix/pkg/manure/direct-jni.nix { };
           manure-posix-acceptance = pkgs.callPackage ./nix/pkg/manure/posix-acceptance.nix { squishLib = inputs.squish.lib; };
           backend-source = import ./nix/tests/backend-source.nix { inherit pkgs; };
+          backend-coassembly = pkgs.callPackage ./nix/tests/backend-coassembly.nix { squishLib = inputs.squish.lib; };
+          rites-worker-source = pkgs.callPackage ./nix/tests/rites-worker-source.nix { };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
           # The full suite requires Linux /proc process identity and bubblewrap.
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
@@ -1284,6 +1299,10 @@
         lib.mkManureClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/client.nix { };
         lib.mkManurePackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/package.nix { squishLib = inputs.squish.lib; };
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
+        lib.mkRitesPackage = { pkgs }: pkgs.callPackage ./nix/pkg/rites/package.nix {
+          squishLib = inputs.squish.lib;
+          pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+        };
         nixosModules.chronicle = import ./nix/nixos/chronicle.nix { mkChroniclePackage = self.lib.mkChroniclePackage; };
         nixosModules.haystack = import ./nix/nixos/haystack.nix { mkHaystackPackage = self.lib.mkHaystackPackage; };
         nixosModules.manure = import ./nix/nixos/manure.nix { mkManurePackage = self.lib.mkManurePackage; };

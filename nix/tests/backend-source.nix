@@ -17,6 +17,11 @@ assert !(selected sources.ritesServer "rites/worker/main.ts" "regular");
 assert !(selected sources.ritesServer "rites/config.example.json" "regular");
 assert !(selected sources.ritesServer "rites/server/target/rites-server.jar" "regular");
 assert selected sources.ritesTests "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
+assert !(selected server "rites/generated/scala/rites/api/RunInfo.scala" "regular");
+assert selected sources.backendDevelopment "haystack/generated/scala/haystack/api/Item.scala" "regular";
+assert selected sources.backendDevelopment "manure/generated/scala/manure/api/VersionInfo.scala" "regular";
+assert selected sources.backendDevelopment "haystack/server/src/main/scala/haystack/Main.scala" "regular";
+assert selected sources.backendDevelopment "manure/backend/src/main/scala/manure/Main.scala" "regular";
 assert selected sources.backendDevelopment "rites/server/src/main/scala/rites/Main.scala" "regular";
 assert selected sources.backendDevelopment "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
 assert selected server "build.sbt" "regular";
@@ -74,6 +79,7 @@ pkgs.runCommand "backend-source-layout-test" {
   haystackSource = sources.haystackServer;
   manureSource = sources.manureServer;
   manureTargetSource = sources.manureTargetTests;
+  developmentSource = sources.backendDevelopment;
   nativeBuildInputs = [ pkgs.python3 ];
 } ''
   # Real source existence belongs to the builder. Pure no-build evaluation must
@@ -84,6 +90,9 @@ pkgs.runCommand "backend-source-layout-test" {
   test -f "$testSource/chronicle/scripts/fast-suites.txt"
   test ! -e "$testSource/scripts/fast-suites.txt"
   test -f "$protocolSource/scripts/codec-fixtures.mjs"
+  test -f "$developmentSource/haystack/generated/scala/haystack/api/Item.scala"
+  test -f "$developmentSource/manure/generated/scala/manure/api/VersionInfo.scala"
+  test -f "$developmentSource/rites/generated/scala/rites/api/RunInfo.scala"
   for source in "$serverSource" "$haystackSource" "$manureSource"; do
     for shared in baboon-runtime service-runtime model-http retrieval-core retrieval-postgres; do
       test -d "$source/shared/$shared/src/main"
