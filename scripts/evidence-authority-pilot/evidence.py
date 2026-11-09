@@ -243,8 +243,12 @@ class Artifacts:
         _, version = self._checked_content(path)
         return self.evidence.observe_artifact(event_id, version)
 
+    def versions_for(self, paths: tuple[str, ...]) -> tuple[ArtifactVersion, ...]:
+        require(type(paths) is tuple and len(set(paths)) == len(paths), 'version-paths')
+        return tuple(self._checked_content(path)[1] for path in paths)
+
     def versions(self) -> tuple[ArtifactVersion, ...]:
-        return tuple(self._checked_content(path)[1] for path in self.allowed)
+        return self.versions_for(self.allowed)
 
 
 @dataclass(frozen=True)
@@ -326,8 +330,8 @@ def completion_status(contract: CompletionContract, proof: ExecutionFact | None,
     if proof.stdout_sha256 is None: return 'evidence_incomplete'
     observed = {version.path: version for version in proof.artifacts}
     if set(observed) != set(contract.artifact_paths): return 'artifact_set_mismatch'
-    current = {version.path: version for version in artifacts.versions()}
-    require(set(contract.artifact_paths) <= set(current), 'contract-path-not-owned')
+    require(set(contract.artifact_paths) <= set(artifacts.allowed), 'contract-path-not-owned')
+    current = {version.path: version for version in artifacts.versions_for(contract.artifact_paths)}
     for path, old in observed.items():
         new = current[path]
         if contract.ordering == 'after_latest_write':

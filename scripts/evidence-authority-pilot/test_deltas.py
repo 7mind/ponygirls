@@ -35,7 +35,8 @@ class DeltaContract(unittest.TestCase):
 
     def frame(self, revision, ids, nodes, relations):
         return {'scope': asdict(self.scope), 'base_revision': revision,
-                'reviewed_new_event_ids': ids, 'nodes': nodes, 'relations': relations}
+                'reviewed_new_event_ids': ids, 'nodes': nodes, 'relations': relations,
+                'relation_replacements': []}
 
     def more(self):
         return self.events + (source(2, 'worker_message', 'participant_worker', 'none'),)
@@ -128,6 +129,73 @@ class DeltaContract(unittest.TestCase):
         with self.assertRaisesRegex(DeltaError, 'relation-proposition-already-named'):
             apply_delta(head, renamed, self.more(), self.evidence)
         self.assertEqual([r.id for r in head.graph.relations], ['stable'])
+
+    def test_same_delta_inactive_alias_cannot_duplicate_proposition_identity(self):
+        for standing in ('withdrawn', 'superseded'):
+            observation = node('observation', 'observation', ['e000001'])
+            first = relation('first', 'observation', 'requirement')
+            second = relation('alias', 'observation', 'requirement'); second['standing'] = standing
+            with self.subTest(standing=standing), self.assertRaisesRegex(DeltaError, 'duplicate-relation-proposition'):
+                apply_delta(self.empty, self.frame(0, ['e000001'], self.first['nodes'] + [observation], [first, second]), self.events, self.evidence)
+        self.assertEqual(self.empty.graph.relations, ())
+
+    def replacement_scenario(self):
+        observation = node('observation', 'observation', ['e000001'])
+        head = apply_delta(self.empty, self.frame(0, ['e000001'], self.first['nodes'] + [observation],
+                           [relation('old', 'observation', 'requirement')]), self.events, self.evidence)
+        retired = relation('old', 'observation', 'requirement'); retired['standing'] = 'superseded'
+        replacement = relation('new', 'observation', 'requirement'); replacement['kind'] = 'challenges'
+        frame = self.frame(1, ['e000002'], [], [retired, replacement])
+        frame['relation_replacements'] = [{'old_relation_id': 'old', 'new_relation_id': 'new',
+                  'reason': 'Correcting my earlier relation interpretation', 'sources': ['e000002']}]
+        return head, frame
+
+    def test_relation_correction_has_a_persisted_typed_replacement_link(self):
+        head, frame = self.replacement_scenario()
+        updated = apply_delta(head, frame, self.more(), self.evidence)
+        link = updated.replacements[0]
+        self.assertEqual((link.old_relation_id, link.new_relation_id), ('old', 'new'))
+        self.assertEqual(link.sources, ('e000002',))
+        self.assertEqual(link.revision, 2)
+        self.assertEqual(head.graph.relations[0].standing, 'active')
+
+    def test_replacement_link_rejects_unknown_reused_or_unretired_endpoints(self):
+        for mutation in ('unknown-old', 'unknown-new', 'reused-new', 'old-active', 'new-inactive', 'duplicate-link'):
+            head, frame = self.replacement_scenario()
+            link = frame['relation_replacements'][0]
+            if mutation == 'unknown-old': link['old_relation_id'] = 'absent'
+            elif mutation == 'unknown-new': link['new_relation_id'] = 'absent'
+            elif mutation == 'reused-new': link['new_relation_id'] = 'old'
+            elif mutation == 'old-active': frame['relations'][0]['standing'] = 'active'
+            elif mutation == 'new-inactive': frame['relations'][1]['standing'] = 'withdrawn'
+            else: frame['relation_replacements'].append(dict(link))
+            with self.subTest(mutation=mutation), self.assertRaises(DeltaError):
+                apply_delta(head, frame, self.more(), self.evidence)
+            self.assertEqual(head.replacements, ())
+            self.assertEqual(head.graph.relations[0].standing, 'active')
+
+    def test_replacement_link_requires_exact_source_basis_and_host_revision(self):
+        for mutation in ('future-source', 'duplicate-source', 'empty-source', 'empty-reason', 'forged-revision'):
+            head, frame = self.replacement_scenario()
+            link = frame['relation_replacements'][0]
+            if mutation == 'future-source': link['sources'] = ['e999999']
+            elif mutation == 'duplicate-source': link['sources'] = ['e000002', 'e000002']
+            elif mutation == 'empty-source': link['sources'] = []
+            elif mutation == 'empty-reason': link['reason'] = ' '
+            else: link['revision'] = 50
+            with self.subTest(mutation=mutation), self.assertRaises(DeltaError):
+                apply_delta(head, frame, self.more(), self.evidence)
+            self.assertEqual(head.replacements, ())
+
+    def test_replacement_history_survives_later_empty_delta(self):
+        head, frame = self.replacement_scenario()
+        corrected = apply_delta(head, frame, self.more(), self.evidence)
+        events = self.more() + (source(3, 'worker_message', 'participant_worker', 'none'),)
+        next_head = apply_delta(corrected, self.frame(2, ['e000003'], [], []), events, self.evidence)
+        self.assertEqual(next_head.replacements, corrected.replacements)
+        self.assertEqual(next_head.replacements[0].revision, 2)
+        request = incremental_request(next_head, events, self.evidence)
+        self.assertEqual(request['previous_relation_replacements'][0]['old_relation_id'], 'old')
 
     def test_relation_endpoint_repurposing_refused(self):
         observation = node('observation', 'observation', ['e000001'])

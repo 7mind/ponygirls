@@ -175,6 +175,24 @@ class EvidenceContract:
             with self.subTest(value=value), self.assertRaises(EvidenceError):
                 replace(self.contract('after_latest_write'), revision=value)
 
+    def test_subset_contract_does_not_read_missing_optional_path(self):
+        ledger = HostEvidence(Scope('subset-trial', 'main', 1))
+        artifacts = Artifacts(self.make_port(), ledger, ('solution.py', 'optional.txt'))
+        observed = artifacts.write('subset-write', 'solution.py', b'only required file')
+        contract = CompletionContract('subset', 1, 'run_tests', ('python3',), 'a' * 64,
+                                      'after_latest_write', ('solution.py',))
+        proof = ledger.observe_execution('subset-execution', contract.identity, 1, contract.tool,
+                  contract.argv, contract.checker_sha256, (observed.version,), 'completed', 0, 'b' * 64)
+        self.assertEqual(completion_status(contract, proof, artifacts), 'action_performed_current')
+
+    def test_unowned_contract_artifact_is_not_admitted(self):
+        from dataclasses import replace
+        contract = replace(self.contract('after_latest_write'), artifact_paths=('solution.py', 'unowned.txt'))
+        foreign = replace(self.side.version, path='unowned.txt')
+        proof = self.execution(contract, (self.first.version, foreign), 'completed', 0)
+        with self.assertRaisesRegex(EvidenceError, 'contract-path-not-owned'):
+            completion_status(contract, proof, self.artifacts)
+
     def test_boolean_generation_and_exit_code_are_not_integer_aliases(self):
         from dataclasses import replace
         for value in (True, False, 1.0, 0):

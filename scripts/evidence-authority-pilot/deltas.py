@@ -4,7 +4,7 @@ from typing import TypeAlias
 
 from evidence import (ArtifactFact, DigestAssertion, EvidenceError, FactRef,
                       HostEvidence, ModelAssertion, Scope)
-from legacy_domain import Event, Graph, Rejected, digest, empty_graph, fields, parse_graph
+from legacy_domain import Event, Graph, Rejected, digest, empty_graph, fields, parse_graph, text
 
 Json: TypeAlias = None | bool | int | float | str | list['Json'] | dict[str, 'Json']
 
@@ -19,6 +19,15 @@ def require(condition: bool, code: str) -> None:
 
 
 @dataclass(frozen=True)
+class RelationReplacement:
+    old_relation_id: str
+    new_relation_id: str
+    reason: str
+    sources: tuple[str, ...]
+    revision: int
+
+
+@dataclass(frozen=True)
 class Head:
     scope: Scope
     worker_session_id: str
@@ -26,12 +35,13 @@ class Head:
     graph: Graph
     assertions: tuple[ModelAssertion, ...]
     source_pins: tuple[tuple[str, str], ...]
+    replacements: tuple[RelationReplacement, ...]
 
 
 def initial_head(scope: Scope, worker_session_id: str) -> Head:
     require(type(scope) is Scope, 'scope')
     require(type(worker_session_id) is str and bool(worker_session_id), 'source-session')
-    return Head(scope, worker_session_id, 0, empty_graph(), (), ())
+    return Head(scope, worker_session_id, 0, empty_graph(), (), (), ())
 
 
 def eligible_events(head: Head, events: tuple[Event, ...]) -> tuple[Event, ...]:
@@ -73,9 +83,32 @@ def assertion(raw: dict[str, Json], evidence: HostEvidence, by_id: dict[str, Eve
     return account
 
 
+def replacement_links(head: Head, values: Json, graph: Graph, events: tuple[Event, ...]) -> tuple[RelationReplacement, ...]:
+    require(type(values) is list, 'replacement-array')
+    old_relations = {relation.id: relation for relation in head.graph.relations}
+    new_relations = {relation.id: relation for relation in graph.relations}
+    known_sources = {event.id for event in events}
+    retired = {item.old_relation_id for item in head.replacements}
+    targets: set[str] = set()
+    added = []
+    for value in values:
+        row = fields(value, ('old_relation_id', 'new_relation_id', 'reason', 'sources'))
+        old_id = text(row['old_relation_id']); new_id = text(row['new_relation_id'])
+        require(old_id in old_relations and old_id not in retired, 'replacement-old-relation')
+        require(new_id not in old_relations and new_id in new_relations and new_id not in targets, 'replacement-new-relation')
+        require(old_relations[old_id].standing == 'active' and new_relations[old_id].standing in ('withdrawn', 'superseded'), 'replacement-old-standing')
+        require(new_relations[new_id].standing == 'active', 'replacement-new-standing')
+        sources = row['sources']
+        require(type(sources) is list and bool(sources) and all(type(ref) is str for ref in sources), 'replacement-sources')
+        require(len(set(sources)) == len(sources) and set(sources) <= known_sources, 'replacement-sources')
+        added.append(RelationReplacement(old_id, new_id, text(row['reason']), tuple(sources), head.revision + 1))
+        retired.add(old_id); targets.add(new_id)
+    return head.replacements + tuple(added)
+
+
 def apply_delta(head: Head, raw: dict[str, Json], events: tuple[Event, ...], evidence: HostEvidence) -> Head:
     try:
-        row = fields(raw, ('scope', 'base_revision', 'reviewed_new_event_ids', 'nodes', 'relations'))
+        row = fields(raw, ('scope', 'base_revision', 'reviewed_new_event_ids', 'nodes', 'relations', 'relation_replacements'))
         require(row['scope'] == asdict(head.scope) and head.scope == evidence.scope, 'scope')
         incoming_scope = fields(row['scope'], ('trial_id', 'branch_id', 'epoch'))
         Scope(incoming_scope['trial_id'], incoming_scope['branch_id'], incoming_scope['epoch'])
@@ -112,14 +145,15 @@ def apply_delta(head: Head, raw: dict[str, Json], events: tuple[Event, ...], evi
         combined = {'reviewed_event_ids': [event.id for event in selected],
                     'nodes': list(nodes_by_id.values()), 'relations': list(relations_by_id.values())}
         graph = parse_graph(combined, selected, head.graph)
-        propositions = [(value.kind, value.source, value.target) for value in graph.relations if value.standing == 'active']
-        require(len(set(propositions)) == len(propositions), 'duplicate-active-proposition')
+        propositions = [(value.kind, value.source, value.target) for value in graph.relations]
+        require(len(set(propositions)) == len(propositions), 'duplicate-relation-proposition')
+        replacements = replacement_links(head, row['relation_replacements'], graph, selected)
         accounts = {account.identity: account for account in head.assertions}
         by_id = {event.id: event for event in selected}
         for value in updates:
             accounts[value['id']] = assertion(value, evidence, by_id)
         return Head(head.scope, head.worker_session_id, head.revision + 1, graph, tuple(accounts.values()),
-                    tuple((event.id, digest(event.wire())) for event in selected))
+                    tuple((event.id, digest(event.wire())) for event in selected), replacements)
     except DeltaError:
         raise
     except (Rejected, EvidenceError) as error:
@@ -138,6 +172,7 @@ def incremental_request(head: Head, events: tuple[Event, ...], evidence: HostEvi
         'base_revision': head.revision,
         'previous_graph': head.graph.wire(),
         'previous_assertions': [asdict(account) for account in head.assertions],
+        'previous_relation_replacements': [asdict(item) for item in head.replacements],
         'new_events': [event.wire() for event in selected[len(head.graph.reviewed_event_ids):]],
         'source_index': [{'id': event.id, 'ordinal': event.ordinal, 'kind': event.kind, 'actual_actor': event.actual_actor} for event in selected],
         'host_facts': [asdict(fact) for fact in evidence.facts() if fact.event_id in by_id],
