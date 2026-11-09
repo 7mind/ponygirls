@@ -40,7 +40,8 @@ function objectiveHeading(theme: UiTheme, title: string, index: number, width: n
     .map((line, lineIndex) => heading(theme, `${lineIndex === 0 ? prefix : ' '.repeat(prefix.length)}${line}`, 'accent')).join('\n');
 }
 
-function checkpointBody(theme: UiTheme, value: Checkpoint, width: number): string {
+/** Render a single checkpoint's body for the detail pane. */
+export function checkpointDetail(theme: UiTheme, value: Checkpoint, width: number): string {
   if (value.report === null) return [
     heading(theme, 'Invalid report', 'error'),
     terminalText(value.error === null ? 'No validated report' : value.error),
@@ -87,7 +88,7 @@ export function reportContent(reports: readonly Checkpoint[], intro: string): Cu
         [...reports].reverse().map((value, index) => [
           `${heading(theme, `Checkpoint ${reports.length - index}`, 'accent')}${qualifier(theme, value)}`,
           theme.fg('muted', terminalText(`  Request: ${value.requestId}`)),
-          '', checkpointBody(theme, value, width),
+          '', checkpointDetail(theme, value, width),
         ].join('\n')).join('\n\n');
       if (intro.startsWith('Error: ')) return `${introText(theme, intro)}\n\n${body}`;
       return intro === '' ? body : `${body}\n\n${heading(theme, 'Status and configuration', 'muted')}\n${introText(theme, intro)}`;
@@ -109,7 +110,7 @@ export function historyContent(entries: readonly SessionEntry[], branch: readonl
           `${heading(theme, entry.timestamp, 'accent')}${qualifier(theme, value)}`,
           theme.fg('muted', terminalText(`  Request: ${value.requestId}`)),
           theme.fg('muted', terminalText(`  Entry ${entry.id} (${current.has(entry.id) ? 'current branch' : 'other branch'})`)),
-          '', checkpointBody(theme, value, width),
+          '', checkpointDetail(theme, value, width),
         ].join('\n');
       }).join('\n\n'),
   };

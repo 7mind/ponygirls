@@ -8,7 +8,7 @@ import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, checkpoint, checkpoints } from './src/report.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, observe, stateOnBranch, type State } from './src/state.ts';
 import { CuckooView } from './src/view.ts';
-import { historyContent, reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
+import { reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
 
 export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): void {
   let view = new CuckooView(inquire);
@@ -28,18 +28,21 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       fault = null; view.publish(ctx, reports, config.enabled, null);
     } catch (error) { warn(ctx, error); view.publish(ctx, [], false, fault); }
   }
-  function status(ctx: ExtensionContext): CuckooContent {
+  function statusIntro(ctx: ExtensionContext, reports: readonly import('./src/report.ts').Checkpoint[]): string {
     const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
     const state = stateOnBranch(ctx.sessionManager.getBranch());
     const usage = ctx.getContextUsage();
     const growth = state === null ? null : growthTokens(config.policy, state.baseline, usage === undefined ? null : usage.contextWindow);
     const next = state === null ? 'waiting for first known context usage' : growth === null ? 'waiting for known context-window capacity' : `${state.baseline + growth} tokens (baseline ${state.baseline})`;
-    const intro = `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
+    return `Cuckoo: ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
       `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
       `Global defaults: ${preferences.path}\n` +
       `Use /cuckoo history for saved answers across all session branches.`;
-    return reportContent(checkpoints(ctx.sessionManager.getBranch()), intro);
+  }
+  function status(ctx: ExtensionContext): CuckooContent {
+    const reports = checkpoints(ctx.sessionManager.getBranch());
+    return reportContent(reports, statusIntro(ctx, reports));
   }
   function cancel(ctx: ExtensionContext, reason: string): void {
     manualRequested = false;
@@ -79,8 +82,11 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       try {
         const trimmed = args.trim();
         if (trimmed.split(/\s+/).join(' ') === 'inquire now') { inquire(ctx); return; }
-        if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') { await view.show(ctx, status(ctx)); return; }
-        if (trimmed === 'history') { await view.show(ctx, historyContent(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch())); return; }
+        if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') {
+          const reports = checkpoints(ctx.sessionManager.getBranch());
+          await view.showReports(ctx, reports, statusIntro(ctx, reports)); return;
+        }
+        if (trimmed === 'history') { await view.showHistory(ctx, ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()); return; }
         const toggle = parseToggleCommand(trimmed);
         if (toggle !== null && toggle.kind !== 'status') {
           if (toggle.kind === 'session') pi.appendEntry(ENABLED_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), toggle.enabled));
@@ -102,7 +108,10 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     },
   });
   pi.registerShortcut('ctrl+alt+c', { description: 'View Cuckoo objectives and progress', handler: async ctx => {
-    try { await view.show(ctx, status(ctx)); } catch (error) { warn(ctx, error); }
+    try {
+      const reports = checkpoints(ctx.sessionManager.getBranch());
+      await view.showReports(ctx, reports, statusIntro(ctx, reports));
+    } catch (error) { warn(ctx, error); }
   } });
   pi.on('session_start', (_event, ctx) => {
     manualRequested = false;

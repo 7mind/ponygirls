@@ -51,26 +51,51 @@ copies into that new session. Opening history does not request model inference.
 
 ## Reading the panel
 
-The terminal panel puts the newest saved checkpoint and numbered objectives
-first, with effective settings below the reports. Runtime faults stay at the top.
-Checkpoint/objective headings are accented and bold; request IDs, timestamps,
-entry/branch attribution and saved-report qualifiers are muted. Session-local
-rules have a warning-colored section header, with accent user labels and muted
-assistant labels; status/configuration has a muted header. Progress and ETA have
-accent labels; obstacles, issues and bottlenecks have warning-colored labels.
-These colors identify field categories and provenance, not inferred completion,
-severity, independent verification or new authorization.
+The terminal panel shows a selectable checkpoint table with detail beneath.
+Newest checkpoint is selected by default. Navigation and detail scrolling use
+separate key bindings so both the list and the selected content remain accessible.
 
-Each checkpoint shows its session-local rules once, before numbered objectives.
-Fields use compact inline labels and hanging indentation, with blank lines only
-between sections/objectives/checkpoints. Long values wrap beneath the value;
-very narrow terminals put labels above values instead of squeezing the content.
-Arrow keys and Home/End scroll the panel; `q` or Escape closes it. In regular
-mode PgUp/PgDn also scroll it; Pi reserves those keys for transcript scrolling in
-fullscreen mode. The border badge remains available while the panel is open.
-Invalid/interrupted checkpoints have explicit error headings and literal raw
-output. Theme changes regenerate colors; RPC/plain-text output stays unstyled
-and includes the same rule source/scope data.
+**Table viewport:** Shows up to 3 checkpoints newest-first (bounded dynamically
+by allocated panel height) with columns: index, request ID, objective count, and
+status (saved or invalid). Column widths adapt to the terminal; the request-ID
+column yields first in narrow layouts. Odd rows have a subtle panel-background
+stripe; the selected row has an accent marker and selected-background band.
+
+**Detail pane:** Below the table, runtime errors appear first (prominently at
+top), then the detail header, then the selected checkpoint body. The detail
+header wraps at narrow widths so all metadata (timestamp, branch, entry ID,
+qualifier) remains accessible via scrolling. The body renders inline: rules
+section, then numbered objectives with compact labeled fields (progress,
+obstacles, issues, bottlenecks, ETA). Invalid reports show the raw output and
+error rather than parsed fields. After the detail, effective settings and
+configuration scroll into view. The entire body (errors + detail + settings)
+scrolls independently of the table via ctrl-u/ctrl-d (half-page) and Home/End
+(top/bottom). All body lines are wrapped to the panel width so no content is
+clipped.
+
+**Footer:** Key hints are fixed at the bottom, always visible. The `i` key
+closes the panel and requests an immediate inquiry.
+
+**History view** (`/cuckoo history`) adds timestamp, branch attribution, and
+entry IDs in the detail header metadata (wrapped, not as separate table columns).
+
+**Keyboard:**
+
+| Keys | Action |
+|---|---|
+| `↑` `↓` `j` `k` | Move selection in table |
+| `ctrl-u` `ctrl-d` | Scroll detail half-page up/down |
+| `Home` `End` | Scroll detail to top/bottom |
+| `i` | Close and request inquiry now |
+| `esc` `q` | Close panel |
+| Mouse wheel | Scroll detail |
+
+In regular mode the table and detail fit within the allocated height. Pi
+fullscreen reserves PgUp/PgDn for transcript scrolling, so detail scrolling
+uses ctrl-u/ctrl-d. RPC/plain-text output remains the complete unstyled flat
+report with all checkpoints, history attribution, and rule source/scope data.
+Theme changes regenerate colors. The border badge remains available while the
+panel is open.
 
 ## Cadence and output
 
