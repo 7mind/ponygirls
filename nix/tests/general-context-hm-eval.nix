@@ -89,6 +89,7 @@ let
   withoutSolid = evaluate { sections.code-style.rules.solid.enable = false; };
   withoutDocPaths = evaluate { sections.project-structure.rules.documentation-paths.enable = false; };
   withoutPlans = evaluate { sections.goal-driven-execution.rules.mandatory-plans.enable = false; };
+  withoutDesign = evaluate { sections.think-before-coding.enable = false; };
   overriddenRules = evaluate {
     sections.hammer-mode = {
       text = "Kai's complete section";
@@ -113,8 +114,12 @@ let
   before = first: second: text:
     builtins.match ".*${first}.*${second}.*" text != null;
 in
-assert builtins.hashString "sha256" contexts.general == "d82edc398517e05570657b6c10ca816aaf17f9f3234fd18632b8a520816246e5";
+assert builtins.hashString "sha256" contexts.general == "2de8a51797ad32b715391673ac710c436095700d86d87dc39834c55c8313a558";
 assert general == contexts.general;
+assert lib.hasInfix "**Design before editing.** For nontrivial features, fixes, and refactors:" general;
+assert lib.hasInfix "not necessarily the smallest diff" general;
+assert lib.hasInfix "correct observable outcome" general;
+assert !(lib.hasInfix "If you write 200 lines" general);
 assert lib.hasInfix "## Reviewer defaults" contexts.pi;
 assert defaults.programs.pi.appendSystemPrompt == contexts.pi;
 assert defaults.home.file."${defaults.programs.pi.configDir}/APPEND_SYSTEM.md".text == contexts.pi;
@@ -170,6 +175,9 @@ assert !(lib.hasInfix "docs/drafts/" (memory withoutDocPaths));
 assert lib.hasInfix "Debug scripts" (memory withoutDocPaths);
 assert !(lib.hasInfix "state a brief plan" (memory withoutPlans));
 assert lib.hasInfix "Transform tasks into verifiable goals" (memory withoutPlans);
+assert !(lib.hasInfix "Design before editing" (memory withoutDesign));
+assert lib.hasInfix "Simplicity First" (memory withoutDesign);
+assert lib.hasInfix "Reproduction Discipline" (memory withoutDesign);
 assert lib.hasInfix "Kai's complete section" (memory overriddenRules);
 assert !(lib.hasInfix "Epistemic discipline" (memory overriddenRules));
 assert !(builtins.tryEval (memory misspelledRule)).success;
@@ -179,7 +187,7 @@ assert lib.all (cfg:
   cfg.programs.claude-code.context == memory cfg
   && cfg.programs.codex.context == memory cfg
   && cfg.programs.pi.context == memory cfg
-) ([ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule ]
+) ([ defaults disabled withoutHammer replaced reordered withoutAbrasiveLanguage withoutReproduction withoutNixStoreRule withoutDesign ]
   ++ worktreeConfigs
   ++ lib.concatMap (configs: [ configs.enabled configs.disabled ]) (lib.attrValues policyConfigs));
 pkgs.runCommandLocal "general-context-hm-eval-test" {

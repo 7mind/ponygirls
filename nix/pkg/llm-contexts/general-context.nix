@@ -198,6 +198,14 @@
         - If multiple plausible interpretations would materially change the result, present them and ask.
         - If a simpler approach exists, say so. Push back when warranted.
         - If an uncertainty does not materially change the result, choose the simplest compatible interpretation, state it, and continue.
+
+        **Design before editing.** For nontrivial features, fixes, and refactors:
+        - **Outcome and ownership**: State the required behavior and invariants, and identify the type, module, or lifecycle responsible for them. For new responsibilities, establish where they belong rather than attaching them to the nearest caller.
+        - **Scope and precedent**: Trace affected callers and related paths. Search for the same responsibility or mechanism, not only the task's names, and inspect applicable helpers, conventions, and earlier changes. Distinguish observed scope from inferred scope; qualify "none found" by the search performed.
+        - **Placement**: Compare at least two meaningful placements where they differ: the immediate use site, the owner of the responsibility or invariant, or the boundary where data or control enters. Weigh each one's reach, caller contracts, regression risk, and verification. Prefer applicable precedent over another local convention. If the placements coincide or only one is viable, explain why rather than inventing alternatives.
+        - **Bounded design**: Choose the simplest coherent design whose affected behavior you can verify, not merely the smallest local edit. Put shared guarantees at their owner when demonstrated requirements justify it; do not build abstractions for hypothetical reuse. If a broader change is required but cannot be safely completed or verified, state the limit and remaining work rather than presenting a narrower change as complete.
+        - **Visible rationale**: Before editing, briefly state the chosen placement, any meaningful alternative rejected, why, and how affected behavior will be checked. Keep the depth proportionate; do not manufacture alternatives or abstractions.
+        - **Outcome verification**: Check the correct observable outcome and preserved contracts across affected paths, not merely compilation, passing checks, or absence of an exception. A guard, fallback, or early return is correct only when its resulting behavior satisfies the contract.
       '';
     }
     {
@@ -207,13 +215,13 @@
       text = ''
         ## 5. Simplicity First
 
-        **Minimum code that solves the problem. Nothing speculative.**
+        **The simplest complete solution—not necessarily the smallest diff. Nothing speculative.**
 
         - No features beyond what was asked.
         - Use abstractions to express domain boundaries, isolate dependencies, or centralize policy, even when only one implementation currently exists. Do not add abstraction solely for hypothetical future requirements.
         - No "flexibility" or "configurability" that wasn't requested.
         - No error handling for impossible scenarios.
-        - If you write 200 lines and it could be 50, rewrite it.
+        - Remove unnecessary complexity without weakening ownership, contracts, or verification. Line count alone is not a measure of simplicity.
 
         Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
       '';
@@ -229,7 +237,7 @@
 
         When editing existing code:
         - Don't "improve" adjacent code, comments, or formatting.
-        - Don't refactor things that aren't broken.
+        - Refactor only as required by the chosen design; leave unrelated code unchanged.
         - Match existing style, even if you'd do it differently.
         - If you notice unrelated dead code, mention it - don't delete it.
 
@@ -334,7 +342,7 @@
         {
           rule = "internal-compatibility";
           text = ''
-            - **No backwards compatibility in internal code**: Refactor freely. External/public APIs follow their own versioning rules (e.g. Baboon model evolution).
+            - **No backwards compatibility in internal code**: Internal changes need not preserve backwards compatibility; keep them within the chosen design's scope. External/public APIs follow their own versioning rules (e.g. Baboon model evolution).
           '';
         }
         {
