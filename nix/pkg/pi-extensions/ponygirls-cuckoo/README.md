@@ -127,6 +127,12 @@ progress, obstacles, issues, bottlenecks, and ETA” with a JSON-only schema:
 {"objectives":[{"objective":"Current objective","progress":"Brief factual progress","obstacles":"None known","issues":"None known","bottlenecks":"Serial runtime validation","eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
 ```
 
+The prompt asks for brief, concise, human-friendly plain language in every field,
+preferably one short sentence or phrase. It discourages jargon, repetition, filler
+and unnecessary implementation details without sacrificing accuracy, material
+blockers, rule scope/attribution or uncertainty. This is a prose instruction,
+not an additional length limit or a guarantee of model behavior.
+
 All six fields are required nonempty strings (at most 8000 characters each;
 100 objectives and 100000 characters total). Obstacles describe impediments or
 blocking dependencies, issues describe known defects or risks, and bottlenecks

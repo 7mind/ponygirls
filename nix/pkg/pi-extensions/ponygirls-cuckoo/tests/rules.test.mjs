@@ -29,6 +29,10 @@ test('current reports require bounded rules with explicit origin and applicabili
   assert.equal(checkpoint('new', raw).version, 3);
 });
 
+test('inquiry requests concise human-friendly prose without losing factual caveats', () => {
+  for (const phrase of ['brief, concise, human-readable', 'plain language', 'one short sentence or phrase', 'Avoid jargon', 'Do not sacrifice accuracy', 'JSON only', 'Distinguish observed facts', 'Do not invent deadlines']) assert.ok(INQUIRY.includes(phrase), phrase);
+});
+
 test('inquiry separates active local instructions from inherited policies and invented authorization', () => {
   const example = INQUIRY.match(/JSON only: (\{.*?\})\./)[1];
   assert.ok(parseReport(example).rules.length > 0);
