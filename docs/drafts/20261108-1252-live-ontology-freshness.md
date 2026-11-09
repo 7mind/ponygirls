@@ -1,7 +1,6 @@
 # Live ontology freshness and objective re-anchoring
 
-Status: synthesis design and prospective pilot contract. Not a deployed extension,
-execution controller, established anti-drift technique or Human-benefit result.
+Status: synthesis design, retained first-pilot contract and prospective evidence-authority follow-up. The first pilot demonstrated the live feedback path, not reliable semantic fidelity or causal benefit. Not a deployed extension, execution controller, established anti-drift technique or Human-benefit result. Sections8–12 retain the original pilot contract; section13 governs the newly requested follow-up.
 
 ## 1. Purpose: keep the ontology current, then use it
 
@@ -134,6 +133,12 @@ The sidecar must maintain, at minimum:
 Semantic freshness cannot be certified by coverage counters. The host can verify
 scope, versions, event consumption and transport; interpretation fidelity needs
 independent evidence and behavioral checks. The pilot measures both separately.
+
+The follow-up makes this an operational separation: coverage status, evidence origin,
+artifact-version applicability and known typed conflicts are independent fields.
+A current coverage frontier never upgrades a curator assertion into a host fact.
+Host receipts describe observed bytes/process outcomes under their capture contract,
+not arbitrary output truth, complete correctness, Human acceptance or faithful intent.
 
 ## 5. A current graph projection, not a second objective registry
 
@@ -420,3 +425,164 @@ acceptance and both distinct from semantic/Human outcomes.
 This changes the design direction and authorizes the requested research pilot. It does
 not declare production readiness, replace the planned graph service stack or transfer
 execution authority to the sidecar.
+
+## 13. Evidence-authority follow-up after the first live pilot
+
+### 13.1 Observed motivation and retained limits
+
+The first eight originals exercised actual automatic maintenance and worker delivery.
+Five completed all four native phases, one completed three, and two failed before
+phase completion. Native phase completion is not unwaived full-scenario fulfillment.
+Current structurally admitted accounts sometimes asserted false file identities or
+falsely described an edit as already meeting its requested shape. Stable relation-ID
+violations were rejected; later original maintenance recovered. None of this proves
+that full-graph generation caused the violations, that ontology caused worker recovery,
+or that successful delivery improved Human understanding/control.
+
+The all-eight bound-current-capture accounting recorded418 proven outbound requests
+and22,628,611 raw tokens, including failed/partial originals and shadow curation.
+Historical full consumption and native end-to-end wall time were unavailable. This
+motivates testing a smaller incremental representation, not an arbitrary spending,
+generation, graph-cardinality or call cap. Preserve the original source, judgments,
+failures and reporting-contract discrepancies; do not rescore or rerun them as new
+controls. New controls require new episodes and new original identities.
+
+### 13.2 Protected observation facts and attributed assertions
+
+The host owns an append-only observation store outside the curator-writable graph.
+A fact has an immutable host ID, capture scope/event, observation kind and exact
+artifact/execution binding. The curator may reference it but cannot mint its actor,
+replace its captured values or turn its own text into a host observation.
+
+For files, record a version identity containing scope, safe logical path, monotonically
+increasing write generation, content length and digest. A read records the actual
+version observed. A successful owned write advances generation even when bytes are
+identical; failed writes do not manufacture success or a new complete observation.
+For executions, bind the exact action/argv, checker identity, contract revision,
+artifact-version inventory, process outcome and observed public result. Missing,
+partial or interrupted observations remain qualified. Tool stdout is captured output,
+not automatically a true assertion about the world.
+
+Curator prose, causal explanations, completion accounts and interpreted requirements
+remain attributed model assertions, even when they cite real facts. A reference proves
+which evidence was cited, not that the prose is entailed by it. Typed assertions about
+host-observable values may be compared deterministically; an unequal digest/length
+can produce an explicit conflict. Do not claim this verifies arbitrary prose or the
+semantic correctness of interpreted intent. Contradictions not mechanically decidable
+remain unresolved assertions for source inspection and independent evaluation.
+
+### 13.3 Projection qualifications and invalidation
+
+Project separate dimensions, not a single confidence/currentness badge:
+
+- coverage: active scope, source frontier and current versus lag/unreviewed ranges;
+- origin: host observation versus worker/curator assertion, with exact source basis;
+- applicability: exact current artifact version, historical version or unbound claim;
+- conflicts: explicit typed disagreements and unresolved semantic qualifications.
+
+Show applicable host facts beside relevant model accounts without silently replacing
+or deleting those accounts. False or unresolved interpretations must not displace
+verbatim governing intent merely to produce a clean capsule. A known bad assertion
+cannot be presented as verified because its source watermark is current. Host fact
+projection is not a second objective registry or new execution-goal owner.
+
+A write makes earlier version-bound evidence historical for current-version claims.
+Retain its historical validity. Distinguish reusable evidence about identical content
+from a contract requiring an execution AFTER the latest write: identical bytes can
+preserve a content property, but do not establish the required later action/order.
+The completion contract declares which rule applies. No automatic rerun, deletion,
+Human act or completion mutation follows from invalidation alone.
+
+### 13.4 Identity-preserving atomic revisions and incremental input
+
+The candidate curator proposes deltas against an exact prior graph revision/source
+frontier, not a freshly regenerated graph that may omit stable IDs. Operations upsert
+nodes/relations and explicitly change standing; removal is not supported. Preserve
+all prior IDs and history. A relation's kind/endpoints identify its proposition;
+correcting that proposition supersedes the old relation and introduces an explicitly
+related new one rather than silently repurposing its ID. Node reclassification may
+correct the same account with an explicit reason; semantic identity is not certified
+by a string-ID check.
+
+Validate the complete proposed delta atomically. Duplicates, unknown references,
+invalid identity reuse or stale base reject the whole publication without partial
+head changes. The last valid head remains available with honest lag. No repair,
+same-frontier retry, manual graph seed or hidden evaluator feedback is introduced.
+
+Supply the prior committed account, protected observation references and all newly
+eligible events since the LAST SUCCESSFUL publication. Failed attempts must not
+advance the successful source frontier or omit unreviewed events. Earlier immutable
+sources remain fully retrievable through the same scoped source interface. Record
+which events were inline, available by reference and actually returned. Mechanical
+coverage acknowledgement is not a full-read or comprehension attestation. If required
+input cannot fit, expose capacity failure; do not truncate unresolved intent.
+
+This changes representation/input policy, not event eligibility or delivery cadence.
+Raw-request and legacy full-graph arms retain their declared policies. A candidate
+package difference cannot isolate the causal contribution of any individual feature.
+
+### 13.5 One public completion-action contract
+
+For each phase, one immutable public contract identifies the required test tool/action,
+actual invocation, checker version and artifact/version binding. Scenario instructions,
+dispatch and reporting checks refer to that SAME contract rather than separately
+spelling incompatible executable paths. Contract revisions are captured scenario input,
+not curator-authored permissions. Other functional/behavioral requirements remain
+independently assessable; running the named action or passing finite public tests is
+not equivalent to completing the entire scenario or obtaining Human acceptance.
+
+Record actual action execution separately from the worker's completion claim. A later
+write can reopen the action requirement under the declared ordering rule. Do not waive
+a literal mismatch after seeing the result, silently reinterpret a true completion
+flag, or require workers to claim unavailable private evaluator outcomes.
+
+### 13.6 New six-original pilot and acceptance obligations
+
+Use two independently authored NEW fictional coding episodes across three arms:
+
+| Arm | Context and maintenance policy |
+|---|---|
+| R | Common reflection plus chronological scenario-request replay; legacy curator shadow-hidden |
+| G | Common reflection plus legacy automatically delivered full-graph ontology and lookup |
+| C | Common reflection plus qualified host-fact/model-assertion projection, stable-ID deltas and incremental curator input with full prior-source retrieval |
+
+All use the same genuine worker selection, common generic system/reflection prompt,
+workspace/test/raw-source tools, public observation receipts, completion-action contract,
+event eligibility and settled delivery boundaries. Curator identity remains matched;
+input/output policy differs as declared. Two endogenous episodes per arm are descriptive
+feasibility bundles, not independent statistical samples, compute-matched comparisons,
+component ablations, causal model rankings or Human-benefit results.
+
+Freeze the generic worker prompt before new episode authoring and disclose subsequent
+protocol/curator amendments. Keep private evaluator content from the runtime author and
+all participants. Freeze the final protocol, prompts, code, corpus, checker and runtime
+identities before originals. A separate engineering preflight must exercise the real
+selected provider/tool/maintenance/delivery path; it is not an original or quality result.
+
+Require actual unfinished side-work evidence before counting cancellation as exercised.
+Predeclare whether intervention occurs at a source/tool trigger or after an explicit
+partial deliverable with remaining overall work. Do not narrate a failure, interrupt an
+already-completed task and call that recovery, or remove old artifacts unless requested.
+For interruption, omit an earlier STILL-GOVERNING constraint from retained worker context
+under a common rule, preserve common raw-source access and keep sidecar state. Count
+recovery only where subsequent actual work needs that constraint; merely retaining an
+already-correct artifact or repeating an objective is uninformative. Report actual
+exposure to conflicting/quoted approval data; accessible-but-unreturned text is not
+resistance evidence. Evaluator output never enters the worker/curator feedback loop.
+
+Before live originals, execute specified positive/negative controls for protected fact
+minting, wrong scope/version, same-byte write ordering, partial/missing facts, typed
+conflicts, stale test applicability, atomic failed deltas, stable relation IDs,
+failed-frontier incremental replay, old-source retrieval, required intent omission,
+completion-action agreement and source/runtime isolation. Exercise filesystem/process
+adapters as well as in-memory contracts. A green count is not a substitute for mapping
+each required trigger to an assertion at the intended boundary.
+
+Retain every failed setup/control/preflight and original without repair/replacement.
+Review entire trajectories and exercised opportunities, freeze qualitative judgments,
+then aggregate resources with applicable denominators, unknown/N/A distinctions and
+actual matching end-to-end timestamps where available. Do not lower effort, substitute
+participants, impose financial/token caps or tune solely to development episodes.
+If supporting workers or selected participant transport are unavailable, continue only
+independent work and disclose the missing prerequisite rather than silently weakening
+author independence, holdout or actual-path acceptance.
