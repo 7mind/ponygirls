@@ -413,6 +413,8 @@ class FixtureHandler(BaseHTTPRequestHandler):
             )
         if not valid:
             raise FixtureProblem(401, "invalid-token")
+        with self.server.state.lock:
+            self.server.state.events.append({"event": "forge-user", "forge": forge, "id": selected_user_id(forge)})
         self.json_response(200, {"id": selected_user_id(forge), "login": "fixture-user", "username": "fixture-user"})
 
     def forge_rest(self, method: str, path: str, forge: str, query: str) -> None:
@@ -430,6 +432,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if method == "GET" and tail == "":
             with state.lock:
                 values = [p.public(self.server.base_url) for p in project.proposals.values() if p.state in {"open", "opened"}]
+                state.events.append({"event": "forge-list", "forge": forge, "count": len(values)})
             self.json_response(200, values)
             return
         if method == "POST" and tail == "":
@@ -461,8 +464,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
         with state.lock:
             proposal = project.proposals.get(remote_id)
             if proposal is None:
+                with state.lock:
+                    state.events.append({"event": "forge-view", "forge": forge, "id": remote_id, "state": "not-found"})
                 raise FixtureProblem(404, "not-found")
             if method == "GET":
+                state.events.append({"event": "forge-view", "forge": forge, "id": remote_id, "state": proposal.state})
                 result = proposal.public(self.server.base_url)
             elif method == "PATCH" and forge == "Github" and self.json_body().get("state") == "closed":
                 proposal.state = "closed"
@@ -537,7 +543,11 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if set(tools) != EXPECTED_TOOLS or len(tools) != len(EXPECTED_TOOLS):
             raise FixtureProblem(400, "brokered-tools-required")
         state = self.server.state
-        witnesses = PROBE_WITNESS.findall(json.dumps(body.get("messages", []), separators=(",", ":")))
+        messages = body.get("messages", [])
+        tool_results = []
+        if isinstance(messages, list):
+            tool_results = [message for message in messages if isinstance(message, dict) and message.get("role") == "tool"]
+        witnesses = PROBE_WITNESS.findall(json.dumps(tool_results, separators=(",", ":")))
         state = self.server.state
         with state.lock:
             model = state.model

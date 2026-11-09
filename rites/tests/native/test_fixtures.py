@@ -99,7 +99,7 @@ class FixtureTests(unittest.TestCase):
             closed = self.transport.request(close_method, f"{root}/{remote_id}", close_body, headers)
             self.assertEqual(200, closed.status)
             events = self.control.observation()["events"]
-            relevant = [event for event in events if event["forge"] == forge]
+            relevant = [event for event in events if event["forge"] == forge and event["event"] in {"create", "close"}]
             self.assertEqual(["create", "create", "close"], [event["event"] for event in relevant])
             remaining = self.transport.request("GET", root + "?state=open", NO_BODY, {"Authorization": f"Bearer {token}"})
             self.assertEqual(200, remaining.status)
@@ -183,7 +183,10 @@ class FixtureTests(unittest.TestCase):
         self.assertIn("grep -R -q -F", first.json)
         self.assertIn(MODEL_KEY, first.json)
         self.assertIn(FORGE_KEY, first.json)
-        denied_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+DENIED:credential-content\nPROBE_EXECUTED+DENIED:.rites-model.json"}])
+        denied_body = dict(body, messages=[
+            {"role": "assistant", "content": None, "tool_calls": [{"type": "function", "function": {"name": "rites_bash", "arguments": "PROBE_EXECUTED+EXPOSED:model-content PROBE_EXECUTED+EXPOSED:forge-content PROBE_EXECUTED+ERROR:credential-search"}}]},
+            {"role": "tool", "content": "PROBE_EXECUTED+DENIED:credential-content\nPROBE_EXECUTED+DENIED:.rites-model.json"},
+        ])
         second = self.transport.request("POST", "/model/chat/completions", denied_body, headers)
         self.assertIn('"name":"rites_write"', second.json)
         third = self.transport.request("POST", "/model/chat/completions", denied_body, headers)

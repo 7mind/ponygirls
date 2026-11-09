@@ -112,7 +112,7 @@ async function manualRun(page) {
     }, { repositoryId: plan.repositoryId, riteId: plan.riteId });
     if (state.id) runId = state.id;
     if (state.state === 'Published') break;
-    if (state.state === 'Failed' || state.state === 'Cancelled' || state.state === 'PublicationUncertain') {
+    if ((state.state === 'Failed' || state.state === 'Cancelled' || state.state === 'PublicationUncertain') && state.finishedAt != null) {
       throw new Error(`native browser run failed: ${state.state}/${state.failureCode ?? 'none'}`);
     }
     assert.equal(state.error, undefined, 'run history API remains available');

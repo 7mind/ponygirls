@@ -91,6 +91,7 @@ class Reporter:
         self.root.chmod(0o700)
         self.commands: list[CommandRecord] = []
         self.cases: list[CaseRecord] = []
+        self.fixture_observations: list[JsonObject] = []
         self.native_execution = "not-executed"
         self.started = datetime.now(timezone.utc)
         self.artifacts = {
@@ -130,12 +131,19 @@ class Reporter:
             record.detail = sanitize(str(error))
         except Exception as error:
             record.outcome = "error"
-            record.detail = sanitize(f"{type(error).__name__}: {error}")
+            frame = error.__traceback__
+            while frame is not None and frame.tb_next is not None:
+                frame = frame.tb_next
+            location = f"{Path(frame.tb_frame.f_code.co_filename).name}:{frame.tb_lineno}" if frame is not None else "unknown"
+            record.detail = sanitize(f"{type(error).__name__} at {location}: {error}")
         record.durationSeconds = time.monotonic() - started
         self.cases.append(record)
 
     def log(self, name: str, content: str) -> None:
         write_private(self.root / name, sanitize(content))
+
+    def observe_fixture(self, case: str, observation: JsonObject) -> None:
+        self.fixture_observations.append({"case": case, "observation": observation})
 
     def finish(self) -> None:
         failures = sum(case.outcome == "failed" for case in self.cases)
@@ -146,6 +154,7 @@ class Reporter:
             "source": self.source, "artifacts": self.artifacts,
             "counts": {"tests": len(self.cases), "failures": failures, "errors": errors, "skipped": 0, "passed": len(self.cases) - failures - errors},
             "cases": [asdict(case) for case in self.cases],
+            "fixtureObservations": self.fixture_observations,
             "commands": [asdict(command) for command in self.commands],
             "networkPolicy": "loopback-owned-fixtures-only",
             "nativeExecution": self.native_execution,
@@ -390,9 +399,9 @@ class NativeAcceptance:
         while time.monotonic() < deadline:
             current = session.run(run_id)
             state = current.get("state")
-            if state in TERMINAL_STATES:
+            if state in TERMINAL_STATES and current.get("finishedAt") is not None:
                 return current
-            if state not in {"Queued", "Running"}:
+            if state not in {"Queued", "Running"} and state not in TERMINAL_STATES:
                 raise AssertionError("unknown run state")
             if self.native_process is not None and self.native_process.poll() is not None:
                 raise AssertionError("native server exited while run was active")
@@ -497,10 +506,10 @@ class NativeAcceptance:
     def assert_publication(self, forge: str, run: JsonObject, content: str) -> JsonObject:
         if run.get("state") != "Published" or run.get("failureCode") is not None:
             oauth = self.controls().observation()["oauth"]
-            raise AssertionError(f"run did not publish: state={run.get('state')} failure={run.get('failureCode')} oauth={oauth}")
+            raise AssertionError(f"run did not publish: state={run.get('state')} failure={run.get('failureCode')} oauth={oauth} run={json.dumps(run, sort_keys=True)}")
         project = self.controls().project(forge, FORGE_PROJECTS[forge])
         if run.get("baseRevision") != project.get("baseRevision") or run.get("promptDigest") != project.get("promptDigest"):
-            raise AssertionError("run did not record fresh base and exact prompt digest")
+            raise AssertionError(f"run did not record fresh base and exact prompt digest: {json.dumps(run, sort_keys=True)}")
         branch = run.get("branch")
         if not isinstance(branch, str) or not branch.endswith(str(run.get("id"))) or not branch.startswith(f"rites/{forge.lower()}/site/"):
             raise AssertionError("publication branch is not bound to run identity")
@@ -623,7 +632,6 @@ class NativeAcceptance:
     def case_oauth_uncertainty_blocks_blind_retry_until_replacement(self) -> None:
         before = self.controls().observation()
         before_calls = before["oauth"]["refreshCalls"]
-        before_model = before["model"]["calls"]
         current = next(item for item in object_list(self.owner.object("GET", "/api/credentials", NO_BODY), "items") if item.get("id") == self.credentials["Gitlab"])
         self.owner.object("PUT", "/api/credentials", {
             "id": self.credentials["Gitlab"], "name": "fixture-gitlab", "forge": "Gitlab", "host": "127.0.0.1",
@@ -632,6 +640,7 @@ class NativeAcceptance:
         })
         self.controls().oauth("drop-next")
         self.controls().model("write", "must-not-run-during-uncertainty\n", False)
+        before_model = self.controls().observation()["model"]["calls"]
         request_id = str(uuid.uuid4())
         admitted = self.owner.manual("gitlab", "site", request_id)
         failed = self.wait_terminal(self.owner, admitted)
@@ -644,7 +653,7 @@ class NativeAcceptance:
         replayed = self.wait_terminal(self.owner, replay)
         after_replay = self.controls().observation()
         if replayed.get("id") != failed.get("id") or after_replay["oauth"]["refreshCalls"] != before_calls + 1 or after_replay["model"]["calls"] != before_model:
-            raise AssertionError("uncertain refresh was blindly retried or replayed agent work")
+            raise AssertionError(f"uncertain refresh replay/count mismatch: first={failed.get('id')} replay={replayed.get('id')} oauthBefore={before['oauth']} oauthAfter={after_replay['oauth']} modelBefore={before_model} modelAfter={after_replay['model']['calls']}")
         replacement_generation = after_replay["oauth"]["generation"] + 1
         self.controls().oauth("replace")
         replaced = self.owner.object("PUT", "/api/credentials", {
@@ -706,8 +715,8 @@ class NativeAcceptance:
     def assert_external_proposals_untouched(self) -> None:
         for forge, project_name in FORGE_PROJECTS.items():
             proposals = self.controls().proposals(forge, project_name)
-            merged = next(proposal for proposal in proposals if proposal.get("source_branch") == "external/unowned" and proposal.get("merged") is True)
-            unowned = next(proposal for proposal in proposals if proposal.get("source_branch") == "external/unowned" and proposal.get("merged") is False)
+            merged = next(proposal for proposal in proposals if (proposal.get("source_branch") or proposal.get("head", {}).get("ref")) == "external/unowned" and proposal.get("merged") is True)
+            unowned = next(proposal for proposal in proposals if (proposal.get("source_branch") or proposal.get("head", {}).get("ref")) == "external/unowned" and proposal.get("merged") is False)
             expected_merged = "merged"
             expected_open = "opened" if forge == "Gitlab" else "open"
             if merged.get("state") != expected_merged or unowned.get("state") != expected_open:
@@ -786,6 +795,8 @@ def main(arguments: list[str]) -> int:
         else:
             for name, operation in acceptance.cases():
                 acceptance.reporter.case(name, operation)
+                if acceptance.control is not None:
+                    acceptance.reporter.observe_fixture(name, acceptance.control.observation())
     finally:
         try:
             acceptance.close()
