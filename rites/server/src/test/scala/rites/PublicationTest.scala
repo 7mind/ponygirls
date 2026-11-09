@@ -87,6 +87,15 @@ final class PublicationTest extends munit.FunSuite {
     assert(output.contains("java.lang.RuntimeException"))
     assert(!output.contains("synthetic-secret-error-message"))
     assert(store.run(owner, current.run.id).state == RunState.Failed)
+    val currentJdbc = run(store, owner)
+    val jdbcSink = new CaptureSink
+    val jdbcLogger = new logstage.IzLogger(logstage.LogRouter(logstage.Log.Level.Trace, jdbcSink), logstage.Log.CustomContext.empty)
+    val jdbcFailure = new AgentRunner { def run(workspace: Path, prompt: String, runId: UUID, model: ModelConfig): rites.worker.RunOutcome = throw ponygirls.runtime.JdbcFailure("database-unavailable", Some("55000")) }
+    new RunCoordinator(store, models, git, jdbcFailure, publication, jdbcLogger).execute(currentJdbc)
+    val jdbcOutput = jdbcSink.entries.map(_.message.toString).mkString("\n")
+    assert(jdbcOutput.contains("database-unavailable"))
+    assert(jdbcOutput.contains("55000"))
+    assert(store.run(owner, currentJdbc.run.id).state == RunState.Failed)
     store.close()
   }
   private def predecessor(store: RitesStore, owner: Identity, forge: FixtureForge, remote: String, humanMarker: Boolean = false): Authority = {

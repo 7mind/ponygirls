@@ -7,6 +7,17 @@ import rites.api.RunState
 final class PublicationService(store: RitesStore, git: GitRepository, forge: Forge, tokens: ForgeTokens, config: Config) {
   private[rites] def withForgeToken[A](authority: Authority)(operation: String => A): A = tokens.withToken(current(authority.run.id))(operation)
   private def current(id: UUID): Authority = store.authority(id).getOrElse(throw DomainError("authorization-revoked", "run authority changed"))
+  private[rites] def reconciliationFailure(id: UUID, error: Throwable): Unit = {
+    val revoked = error match { case failure: DomainError => failure.code == "authorization-revoked"; case _ => false }
+    store.publicationStage(id) match {
+      case "None" if revoked => store.complete(id, RunCompletion(RunState.Failed, Some("authorization-revoked")))
+      case "Intent" | "Pushed" if revoked => store.abandonUndelivered(id)
+      case "Created" => store.markSupersessionPending(id)
+      case _ =>
+        val code = if (revoked) "authorization-revoked" else "publication-reconciliation-required"
+        store.markUncertain(id, code)
+    }
+  }
   private def verify(authority: Authority, proposal: Proposal, branch: String, marker: String, target: String, expectedAuthor: String): Proposal = {
     Check(proposal.source == branch && proposal.target == target && proposal.marker.linesIterator.contains(marker) && proposal.author == expectedAuthor, "publication-unowned", "proposal ownership verification failed")
     val url = URI.create(proposal.url)
@@ -26,7 +37,7 @@ final class PublicationService(store: RitesStore, git: GitRepository, forge: For
       case error: DomainError if error.code == "authorization-revoked" =>
         // Stage Intent proves create was not dispatched; Pushed proves only a unique
         // branch exists. Never apply this to CreateDispatched/Created uncertainty.
-        if (Set("Intent", "Pushed").contains(store.publicationStage(runId))) store.abandonUndelivered(runId)
+        reconciliationFailure(runId, error)
         throw error
     }
   }
@@ -103,7 +114,9 @@ final class RunCoordinator(store: RitesStore, models: RuntimeModels, git: GitRep
       case scala.util.control.NonFatal(error) =>
         val frames = error.getStackTrace.iterator.filter(f => f.getClassName.startsWith("rites.") || f.getClassName.startsWith("ponygirls.") || f.getClassName.startsWith("org.postgresql.")).take(12).map(f => f.getClassName + "." + f.getMethodName + ":" + Option(f.getFileName).getOrElse("native") + ":" + f.getLineNumber).toList
         val errorClass = error.getClass.getName
-        logger.error(s"run failed phase=$phase errorClass=$errorClass frames=$frames")
+        val jdbcCode = error match { case jdbc: ponygirls.runtime.JdbcFailure => jdbc.code; case _ => "none" }
+        val sqlState = error match { case jdbc: ponygirls.runtime.JdbcFailure => Option(jdbc.getSQLState).getOrElse("none"); case _ => "none" }
+        logger.error(s"run failed phase=$phase errorClass=$errorClass jdbcCode=$jdbcCode sqlState=$sqlState frames=$frames")
         if (safeCode(error) == "authorization-revoked" && store.publicationStage(authority.run.id) == "None") store.complete(authority.run.id, RunCompletion(RunState.Failed, Some("authorization-revoked")))
         else if (intended && store.publicationStage(authority.run.id) == "Created") store.markSupersessionPending(authority.run.id)
         else if (intended) store.markUncertain(authority.run.id, safeCode(error))

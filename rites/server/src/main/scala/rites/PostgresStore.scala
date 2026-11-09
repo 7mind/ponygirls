@@ -307,7 +307,7 @@ final class PostgresStore(config: Config) extends RitesStore {
   }
   def complete(id: UUID, completion: RunCompletion): Unit = tx { c => completeTx(c, id, completion) }
   def authority(id: UUID): Option[Authority] = tx { c =>
-    Sql.one(c, s"SELECT $joinedColumns $authorityFrom LEFT JOIN rt_grants g ON g.repository_id=r.id AND g.user_id=rr.actor WHERE rr.id=? AND rr.state IN('Running','PublicationUncertain','SupersessionPending')", id)(identity).flatMap(r => if (validAuthority(r)) Some(authorityRow(c, r)) else None)
+    Sql.one(c, s"SELECT $joinedColumns $authorityFrom LEFT JOIN rt_grants g ON g.repository_id=r.id AND g.user_id=rr.actor WHERE rr.id=? AND rr.state IN('Running','PublicationUncertain','SupersessionPending')", id)(r => if (validAuthority(r)) Some(authorityRow(c, r)) else None).getOrElse(None)
   }
   def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit = {
     Check(expectedHead.matches("[0-9a-f]{40,64}"), "invalid", "expected publication head must be a Git object id")

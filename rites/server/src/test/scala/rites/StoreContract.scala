@@ -133,6 +133,13 @@ abstract class StoreContract extends munit.FunSuite {
     store.recoverInterrupted(); assertEquals(store.run(owner, run.id).state, RunState.Failed)
     assert(store.claimNext(Instant.now()).isEmpty)
   } }
+  test("public authority decodes immutable data before JDBC row closes") { configured { store =>
+    val owner = identity(store, "owner"); val cred = credential(store, owner); repository(store, owner, "repo-live-authority", cred.id); rite(store, owner, "site", "repo-live-authority")
+    val run = store.manualRun(owner, ManualRunRequest("repo-live-authority", "site", UUID.randomUUID())).run
+    val claimed = store.claimNext(Instant.now()).get
+    val public = store.authority(claimed.run.id).getOrElse(fail("claimed authority must remain public while running"))
+    assertEquals(public.run.id, claimed.run.id); assertEquals(public.repository.id, "repo-live-authority"); assertEquals(public.rite.id, "site")
+  } }
   test("publication intent atomically rejects revoked authority and releases active rite") { configured { store =>
     val owner = identity(store, "owner"); val editor = identity(store, "editor"); val cred = credential(store, owner); val repo = repository(store, owner, "repo-intent-revocation", cred.id); rite(store, owner, "site", repo.id)
     val shared = store.setGrant(owner, SetGrantRequest(repo.id, "editor", Some(GrantRole.Editor), repo.revision))
