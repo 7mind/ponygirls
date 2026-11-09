@@ -7,7 +7,7 @@ import java.util.UUID
 import rites.api.*
 import scala.collection.mutable
 
-private final class FixtureForge extends Forge {
+private class FixtureForge extends Forge {
   val proposals = mutable.Map.empty[String, Proposal]
   val events = mutable.ArrayBuffer.empty[String]
   var current = ForgeUser("current-author")

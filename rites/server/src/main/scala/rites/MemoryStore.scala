@@ -213,6 +213,10 @@ class MemoryStore(config: Config, clock: () => Instant) extends RitesStore {
     }
   }
   def authority(id: UUID): Option[Authority] = synchronized { runsMap.get(id).filter(r => Set(RunState.Running, RunState.PublicationUncertain, RunState.SupersessionPending).contains(r.public.state)).flatMap(toAuthority) }
+  def recordPrepared(id: UUID, baseRevision: String, promptDigest: String): Unit = synchronized {
+    Check(baseRevision.matches("[0-9a-f]{40,64}") && promptDigest.nonEmpty && promptDigest.length <= 256, "invalid", "invalid prepared metadata")
+    runsMap.get(id).filter(_.public.state == RunState.Running).foreach { run => runsMap.update(id, run.copy(public = run.public.copy(baseRevision = Some(baseRevision), promptDigest = Some(promptDigest)))) }
+  }
   def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit = synchronized {
     Check(expectedHead.matches("[0-9a-f]{40,64}"), "invalid", "expected publication head must be a Git object id")
     val run = runsMap.get(id).filter(_.public.state == RunState.Running).getOrElse(throw DomainError("conflict", "run is not publication eligible"))

@@ -29,6 +29,7 @@ final class PublicationService(store: RitesStore, git: GitRepository, forge: For
   def publish(prepared: PreparedRun, initial: Authority, delta: CommitDelta): Unit = {
     val runId = initial.run.id
     try {
+      store.recordPrepared(runId, prepared.base, prepared.promptDigest)
       store.persistIntent(runId, delta.branch, delta.marker, delta.commit)
       tokens.withToken(current(runId))(token => git.push(prepared, current(runId), delta, token))
       store.markPushed(runId)

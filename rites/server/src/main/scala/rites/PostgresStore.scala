@@ -309,6 +309,10 @@ final class PostgresStore(config: Config) extends RitesStore {
   def authority(id: UUID): Option[Authority] = tx { c =>
     Sql.one(c, s"SELECT $joinedColumns $authorityFrom LEFT JOIN rt_grants g ON g.repository_id=r.id AND g.user_id=rr.actor WHERE rr.id=? AND rr.state IN('Running','PublicationUncertain','SupersessionPending')", id)(r => if (validAuthority(r)) Some(authorityRow(c, r)) else None).getOrElse(None)
   }
+  def recordPrepared(id: UUID, baseRevision: String, promptDigest: String): Unit = tx { c =>
+    Check(baseRevision.matches("[0-9a-f]{40,64}") && promptDigest.nonEmpty && promptDigest.length <= 256, "invalid", "invalid prepared metadata")
+    Sql.exec(c, "UPDATE rt_runs SET base_revision=?,prompt_digest=? WHERE id=? AND state='Running'", baseRevision, promptDigest, id); ()
+  }
   def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit = {
     Check(expectedHead.matches("[0-9a-f]{40,64}"), "invalid", "expected publication head must be a Git object id")
     val accepted = tx { c =>

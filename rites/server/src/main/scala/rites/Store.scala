@@ -51,6 +51,7 @@ trait RitesStore extends AutoCloseable {
   def recoverInterrupted(): Unit
   def complete(id: UUID, completion: RunCompletion): Unit
   def authority(id: UUID): Option[Authority]
+  def recordPrepared(id: UUID, baseRevision: String, promptDigest: String): Unit
   def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit
   def publicationHead(id: UUID): Option[String]
   /** Fail only a locally proven pre-dispatch revocation, never an uncertain remote attempt. */
