@@ -130,7 +130,7 @@ class ApiSession:
         self.cookie = f"rites_session={morsel.value}"
         return response.json
 
-    def request(self, method: str, path: str, body: object, expected_status: int, authenticated: bool) -> Response:
+    def request(self, method: str, path: str, body: object, expected_status: int | set[int], authenticated: bool) -> Response:
         headers = {"Origin": self.base_url, "X-Rites-Version": "0.2.0", "Accept": "application/json"}
         if authenticated:
             if not self.cookie:
@@ -140,14 +140,15 @@ class ApiSession:
         if body is not NO_BODY:
             headers["Content-Type"] = "application/json"
         response = self.transport.request(method, path, body, headers)
-        if response.status != expected_status:
+        expected = {expected_status} if isinstance(expected_status, int) else expected_status
+        if response.status not in expected:
             code = response.json.get("code") if isinstance(response.json, dict) else "non-json"
-            raise AssertionError(f"{method} {path}: expected HTTP {expected_status}, got {response.status} ({code})")
+            raise AssertionError(f"{method} {path}: expected HTTP {sorted(expected)}, got {response.status} ({code})")
         if authenticated and response.status < 400 and response.headers.get("x-rites-user") != self.user_id:
             raise AssertionError(f"{method} {path}: authenticated actor echo missing or incorrect")
         return response
 
-    def object(self, method: str, path: str, body: object, expected_status: int = 200, authenticated: bool = True) -> JsonObject:
+    def object(self, method: str, path: str, body: object, expected_status: int | set[int] = 200, authenticated: bool = True) -> JsonObject:
         response = self.request(method, path, body, expected_status, authenticated)
         if not isinstance(response.json, dict):
             raise AssertionError(f"{method} {path}: expected JSON object")
@@ -164,11 +165,11 @@ class ApiSession:
             raise AssertionError("run response has no run object")
         return run
 
-    def manual(self, repository_id: str, rite_id: str, request_id: str, expected_status: int = 200) -> JsonObject:
+    def manual(self, repository_id: str, rite_id: str, request_id: str, expected_status: int | set[int] = 200) -> JsonObject:
         result = self.object("POST", "/api/runs", {
             "repositoryId": repository_id, "riteId": rite_id, "requestId": request_id,
         }, expected_status=expected_status)
         run = result.get("run")
-        if expected_status == 200 and not isinstance(run, dict):
+        if isinstance(expected_status, int) and expected_status == 200 and not isinstance(run, dict):
             raise AssertionError("manual run response has no run object")
         return run if isinstance(run, dict) else result

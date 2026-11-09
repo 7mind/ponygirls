@@ -164,6 +164,35 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(500, second_error.status)
         self.assertEqual("synthetic", second_error.json["error"]["type"])
 
+    def test_credential_probe_gates_publication_on_provider_visible_denial(self) -> None:
+        tools = [{"type": "function", "function": {"name": name, "parameters": {}}} for name in sorted(EXPECTED_TOOLS)]
+        headers = {"Authorization": f"Bearer {MODEL_KEY}", "Content-Type": "application/json"}
+        self.control.model("credential-probe", "", False)
+        body = {"model": "fixture-model", "messages": [], "tools": tools, "stream": True}
+        first = self.transport.request("POST", "/model/chat/completions", body, headers)
+        self.assertEqual(200, first.status)
+        self.assertIn('"name":"rites_bash"', first.json)
+        self.assertIn('/workspace/.rites-model.json', first.json)
+        self.assertNotIn(MODEL_KEY, first.json)
+        denied_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+DENIED:.rites-model.json"}])
+        second = self.transport.request("POST", "/model/chat/completions", denied_body, headers)
+        self.assertIn('"name":"rites_write"', second.json)
+        third = self.transport.request("POST", "/model/chat/completions", denied_body, headers)
+        self.assertIn('"finish_reason":"stop"', third.json)
+        observation = self.control.observation()["model"]
+        self.assertEqual(["PROBE_EXECUTED+DENIED:.rites-model.json"], observation["witnesses"])
+        self.assertEqual(["rites_bash", "rites_write"], observation["emittedTools"])
+        self.control.model("credential-probe", "", False)
+        first_exposed = self.transport.request("POST", "/model/chat/completions", body, headers)
+        self.assertIn('"name":"rites_bash"', first_exposed.json)
+        exposed_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+EXPOSED:.rites-model.json"}])
+        second_exposed = self.transport.request("POST", "/model/chat/completions", exposed_body, headers)
+        self.assertIn("PROBE_EXECUTED+EXPOSED", second_exposed.json)
+        self.assertNotIn('"name":"rites_write"', second_exposed.json)
+        exposed_observation = self.control.observation()["model"]
+        self.assertEqual(["PROBE_EXECUTED+EXPOSED:.rites-model.json"], exposed_observation["witnesses"])
+        self.assertEqual(["rites_bash"], exposed_observation["emittedTools"])
+
     def test_oauth_rotates_and_drop_response_is_observable_without_new_tokens(self) -> None:
         rotated = self.oauth_refresh()
         self.assertNotEqual("synthetic-oauth-access-0", rotated["access_token"])

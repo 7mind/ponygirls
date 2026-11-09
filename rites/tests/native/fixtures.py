@@ -7,6 +7,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import threading
@@ -27,6 +28,8 @@ EXPECTED_TOOLS = frozenset({
     "rites_grep", "rites_find", "rites_ls",
 })
 MODEL_KEY = "synthetic-model-key"
+PROBE_WITNESS = re.compile(r"PROBE_EXECUTED\+(?:DENIED|EXPOSED):\.rites-model\.json")
+PROBE_COMMAND = "if test -r /workspace/.rites-model.json; then printf 'PROBE_EXECUTED+EXPOSED:.rites-model.json\\n'; else printf 'PROBE_EXECUTED+DENIED:.rites-model.json\\n'; fi"
 OPERATOR_CLIENT = "fixture-operator"
 OPERATOR_SECRET = "synthetic-operator-secret"
 REDIRECT_PATH = "/oauth/callback"
@@ -113,6 +116,8 @@ class ModelState:
     waiting: bool = False
     release: threading.Event = field(default_factory=threading.Event)
     observed_tool_sets: list[list[str]] = field(default_factory=list)
+    emitted_tool_calls: list[str] = field(default_factory=list)
+    witnesses: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -307,7 +312,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
             kind = body.get("kind")
             content = body.get("content")
             hold = body.get("hold")
-            if kind not in {"write", "nochange", "partial-error", "partial-length"} or not isinstance(content, str) or not isinstance(hold, bool):
+            if kind not in {"write", "nochange", "partial-error", "partial-length", "credential-probe"} or not isinstance(content, str) or not isinstance(hold, bool):
                 raise FixtureProblem(400, "invalid-model-phase")
             with state.lock:
                 if state.model.waiting:
@@ -508,11 +513,16 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if set(tools) != EXPECTED_TOOLS or len(tools) != len(EXPECTED_TOOLS):
             raise FixtureProblem(400, "brokered-tools-required")
         state = self.server.state
+        witnesses = PROBE_WITNESS.findall(json.dumps(body.get("messages", []), separators=(",", ":")))
+        state = self.server.state
         with state.lock:
             model = state.model
             model.calls += 1
             model.turn += 1
             model.observed_tool_sets.append(sorted(tools))
+            for witness in witnesses:
+                if witness not in model.witnesses:
+                    model.witnesses.append(witness)
             turn = model.turn
             hold = model.hold and turn == 1
             kind = model.kind
@@ -532,29 +542,46 @@ class FixtureHandler(BaseHTTPRequestHandler):
         if (kind == "partial-error" and turn > 1):
             self.json_response(500, {"error": {"message": "synthetic scripted failure", "type": "synthetic"}})
             return
+        planned_tool: tuple[str, JsonObject] | None = None
+        response_text = "synthetic fixture response"
+        if turn == 1 and kind in {"write", "partial-error", "partial-length"}:
+            planned_tool = ("rites_write", {"path": "result.txt", "content": content})
+        elif kind == "credential-probe" and turn == 1:
+            planned_tool = ("rites_bash", {"command": PROBE_COMMAND})
+        elif kind == "credential-probe" and turn == 2 and witnesses == ["PROBE_EXECUTED+DENIED:.rites-model.json"]:
+            planned_tool = ("rites_write", {"path": "result.txt", "content": "PROBE_EXECUTED+DENIED:.rites-model.json\n"})
+        elif kind == "credential-probe" and turn == 2:
+            response_text = "PROBE_EXECUTED+EXPOSED" if "PROBE_EXECUTED+EXPOSED:.rites-model.json" in witnesses else "PROBE_WITNESS_MISSING"
+        if planned_tool is not None:
+            with state.lock:
+                model.emitted_tool_calls.append(planned_tool[0])
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
         self.send_header("Connection", "close")
         self.end_headers()
-        if turn == 1 and kind in {"write", "partial-error", "partial-length"}:
-            self.sse({
-                "id": "chatcmpl-rites-fixture", "object": "chat.completion.chunk", "created": 1700000000,
-                "model": "fixture-model",
-                "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{
-                    "index": 0, "id": "call_rites_fixture", "type": "function",
-                    "function": {"name": "rites_write", "arguments": json.dumps({"path": "result.txt", "content": content})},
-                }]}, "finish_reason": None}],
-            })
-            self.sse(self.model_chunk({}, "tool_calls"))
+        if planned_tool is not None:
+            name, arguments = planned_tool
+            self.model_tool(name, arguments)
         else:
             finish = "length" if kind == "partial-length" and turn > 1 else "stop"
-            self.sse(self.model_chunk({"role": "assistant", "content": "synthetic fixture response"}, None))
+            self.sse(self.model_chunk({"role": "assistant", "content": response_text}, None))
             self.sse(self.model_chunk({}, finish))
         self.sse({"id": "chatcmpl-rites-fixture", "object": "chat.completion.chunk", "choices": [], "usage": {"prompt_tokens": 16, "completion_tokens": 8, "total_tokens": 24}})
         self.wfile.write(b"data: [DONE]\n\n")
         self.wfile.flush()
         self.close_connection = True
+
+    def model_tool(self, name: str, arguments: JsonObject) -> None:
+        self.sse({
+            "id": "chatcmpl-rites-fixture", "object": "chat.completion.chunk", "created": 1700000000,
+            "model": "fixture-model",
+            "choices": [{"index": 0, "delta": {"role": "assistant", "tool_calls": [{
+                "index": 0, "id": "call_rites_fixture", "type": "function",
+                "function": {"name": name, "arguments": json.dumps(arguments)},
+            }]}, "finish_reason": None}],
+        })
+        self.sse(self.model_chunk({}, "tool_calls"))
 
     def model_chunk(self, delta: JsonObject, finish: str | None) -> JsonObject:
         return {
@@ -583,6 +610,9 @@ class FixtureHandler(BaseHTTPRequestHandler):
                 valid = username == expected_user and self.server.state.token_valid(project, token)
             except (ValueError, UnicodeDecodeError):
                 valid = False
+        operation = "receive-pack" if repository_path.endswith("git-receive-pack") else "upload-pack" if repository_path.endswith("git-upload-pack") else "info-refs"
+        with self.server.state.lock:
+            self.server.state.events.append({"event": "git-auth", "forge": forge, "operation": operation, "accepted": valid})
         if not valid:
             data = b"authentication required\n"
             self.send_response(401)
@@ -658,6 +688,8 @@ class FixtureHttpServer(ThreadingHTTPServer):
                     "calls": self.state.model.calls, "turn": self.state.model.turn,
                     "waiting": self.state.model.waiting,
                     "toolSets": list(self.state.model.observed_tool_sets),
+                    "emittedTools": list(self.state.model.emitted_tool_calls),
+                    "witnesses": list(self.state.model.witnesses),
                 },
                 "oauth": {"generation": self.state.oauth.generation, "refreshCalls": self.state.oauth.refresh_calls},
                 "proposalCount": len(proposals),

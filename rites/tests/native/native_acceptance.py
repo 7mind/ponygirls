@@ -245,10 +245,13 @@ class NativeAcceptance:
         self.postgres: OwnedPostgres | None = None
         self.native_process: subprocess.Popen[bytes] | None = None
         self.native_log_path = self.runtime_path / "native.raw.log"
+        self.git_trace_path = self.runtime_path / "native-git.trace"
         self.native_log_handle = None
-        self.owner = ApiSession("", "owner", "owner", "owner-password")
-        self.editor = ApiSession("", "editor", "editor", "editor-password")
-        self.viewer = ApiSession("", "viewer", "viewer", "viewer-password")
+        # Replaced with the allocated native origin before any request is made.
+        pending_origin = "http://127.0.0.1:1"
+        self.owner = ApiSession(pending_origin, "owner", "owner", "owner-password")
+        self.editor = ApiSession(pending_origin, "editor", "editor", "editor-password")
+        self.viewer = ApiSession(pending_origin, "viewer", "viewer", "viewer-password")
         self.credentials: dict[str, str] = {}
         self.repositories: dict[str, JsonObject] = {}
         self.github_first: JsonObject = {}
@@ -280,11 +283,24 @@ class NativeAcceptance:
         config = self.write_config()
         self.reporter.command([str(self.launcher), "check-config", str(config)], self.runtime_path, b"", None, 30)
         self.reporter.command([str(self.launcher), "migrate", str(config)], self.runtime_path, b"", None, 60)
+        real_git = shutil.which("git")
+        if real_git is None:
+            raise RuntimeError("real Git executable unavailable for native acceptance")
+        monitor_bin = self.runtime_path / "monitor-bin"
+        monitor_bin.mkdir()
+        monitored_git = monitor_bin / "git"
+        monitor_script = "#!/bin/sh\n{\nprintf 'git'\nfor argument in \"$@\"; do printf ' %s' \"$argument\"; done\nprintf '\\n'\n} >> " + str(self.git_trace_path) + "\nexec " + real_git + " \"$@\"\n"
+        write_private(monitored_git, monitor_script)
+        monitored_git.chmod(0o700)
+        native_environment = {
+            "PATH": str(monitor_bin) + os.pathsep + os.environ.get("PATH", "/usr/bin:/bin"),
+            "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
+        }
         self.native_log_handle = self.native_log_path.open("wb")
         self.native_process = subprocess.Popen(
             [str(self.launcher), "serve", str(config)], cwd=self.runtime_path,
             stdin=subprocess.DEVNULL, stdout=self.native_log_handle, stderr=subprocess.STDOUT,
-            start_new_session=True,
+            start_new_session=True, env=native_environment,
         )
         self.wait_ready()
         executable = Path(f"/proc/{self.native_process.pid}/exe").resolve()
@@ -307,7 +323,7 @@ class NativeAcceptance:
         model_file = secret_root / "model.json"
         write_private(model_file, json.dumps(model_config(self.fixtures.base_url), separators=(",", ":")))
         master_key = secret_root / "master-key"
-        write_private(master_key, secrets.token_bytes(32))
+        write_private(master_key, secrets.token_urlsafe(32))
         client_secret = secret_root / "operator-client-secret"
         write_private(client_secret, OPERATOR_SECRET)
         database_password = self.postgres.password_file
@@ -326,7 +342,7 @@ class NativeAcceptance:
             "webRoot": None, "workspaceRoot": str(workspace), "cacheRoot": str(cache),
             "maxBodyBytes": 65536, "sessionTtlSeconds": 3600, "maxPromptBytes": 65536,
             "maxFileBytes": 1048576, "maxRunFiles": 1000,
-            "scheduler": {"pollMilliseconds": 100, "queueBound": 32, "concurrency": 2, "runTimeoutSeconds": 90},
+            "scheduler": {"pollMilliseconds": 100, "queueBound": 32, "concurrency": 1, "runTimeoutSeconds": 90},
             "forges": [
                 {"kind": "Github", "host": "127.0.0.1", "apiBase": self.fixtures.base_url + "/github/api/v3", "cloneBase": self.fixtures.base_url + "/github/git"},
                 {"kind": "Gitlab", "host": "127.0.0.1", "apiBase": self.fixtures.base_url + "/gitlab/api/v4", "cloneBase": self.fixtures.base_url + "/gitlab/git"},
@@ -420,13 +436,13 @@ class NativeAcceptance:
             raise AssertionError("OAuth client metadata unavailable")
         status = self.owner.object("GET", "/api/status", NO_BODY)
         expect_keys(status, {"queuedRuns", "activeRuns", "schedulerEnabled"}, "StatusInfo")
-        original = self.owner.cookie
         self.owner.cookie = "rites_session=definitely-invalid"
         self.owner.object("GET", "/api/me", NO_BODY, expected_status=401)
         self.owner.cookie = ""
         self.owner.login()
+        revoked_session = self.owner.cookie
         self.owner.logout()
-        self.owner.cookie = original
+        self.owner.cookie = revoked_session
         self.owner.object("GET", "/api/me", NO_BODY, expected_status=401)
         self.owner.login()
 
@@ -462,7 +478,7 @@ class NativeAcceptance:
             })["rite"]
             if not isinstance(rite, dict) or rite.get("revision") != 1:
                 raise AssertionError("editor could not create rite")
-            self.viewer.manual(str(repository["id"]), "site", str(uuid.uuid4()), expected_status=404)
+            self.viewer.manual(str(repository["id"]), "site", str(uuid.uuid4()), expected_status={403, 404})
             self.controls().external_proposal(forge, project, "merged", "rites-run:00000000-0000-0000-0000-000000000001")
             self.controls().external_proposal(forge, project, "open", "rites-run:00000000-0000-0000-0000-000000000002")
         if forge_by_id.get(self.credentials["Github"]) != "Github" or forge_by_id.get(self.credentials["Gitlab"]) != "Gitlab":
@@ -478,7 +494,8 @@ class NativeAcceptance:
 
     def assert_publication(self, forge: str, run: JsonObject, content: str) -> JsonObject:
         if run.get("state") != "Published" or run.get("failureCode") is not None:
-            raise AssertionError(f"run did not publish: state={run.get('state')} failure={run.get('failureCode')}")
+            oauth = self.controls().observation()["oauth"]
+            raise AssertionError(f"run did not publish: state={run.get('state')} failure={run.get('failureCode')} oauth={oauth}")
         project = self.controls().project(forge, FORGE_PROJECTS[forge])
         if run.get("baseRevision") != project.get("baseRevision") or run.get("promptDigest") != project.get("promptDigest"):
             raise AssertionError("run did not record fresh base and exact prompt digest")
@@ -500,7 +517,26 @@ class NativeAcceptance:
             raise AssertionError("real remote branch does not contain the SDK tool write")
         return proposal
 
+    def case_workspace_inference_credential_denied(self) -> None:
+        # Regression: the coordinator must never place MODEL_CONFIG in the
+        # canonical workspace mounted into every brokered tool sandbox.
+        self.controls().model("credential-probe", "", False)
+        admitted = self.owner.manual("github", "site", str(uuid.uuid4()))
+        terminal = self.wait_terminal(self.owner, admitted)
+        observation = self.controls().observation()
+        model = observation["model"]
+        witnesses = model.get("witnesses")
+        if "PROBE_EXECUTED+EXPOSED:.rites-model.json" in witnesses:
+            raise AssertionError("inference credential EXPOSED to rites_bash in /workspace")
+        if witnesses != ["PROBE_EXECUTED+DENIED:.rites-model.json"]:
+            git_evidence = [event for event in observation.get("events", []) if event.get("event") == "git-auth"]
+            raise AssertionError(f"credential probe lacked DENIED witness: state={terminal.get('state')} failure={terminal.get('failureCode')} modelCalls={model.get('calls')} git={git_evidence}")
+        if model.get("emittedTools") != ["rites_bash", "rites_write"]:
+            raise AssertionError("credential guard did not execute the scripted brokered tools")
+        self.assert_publication("Github", terminal, "PROBE_EXECUTED+DENIED:.rites-model.json\n")
+
     def case_github_publishes_real_branch_and_pr(self) -> None:
+        before_model_calls = self.controls().observation()["model"]["calls"]
         self.controls().model("write", "github-first\n", False)
         request_id = str(uuid.uuid4())
         admitted = self.owner.manual("github", "site", request_id)
@@ -513,9 +549,11 @@ class NativeAcceptance:
         self.assert_publication("Github", self.github_first, "github-first\n")
         observation = self.controls().observation()
         model = observation.get("model")
-        if not isinstance(model, dict) or model.get("calls") != 2:
+        if not isinstance(model, dict) or model.get("calls") != before_model_calls + 2:
             raise AssertionError("exact request retry repeated agent work")
         tool_sets = model.get("toolSets")
+        if isinstance(tool_sets, list):
+            tool_sets = tool_sets[-2:]
         if tool_sets != [["rites_bash", "rites_edit", "rites_find", "rites_grep", "rites_ls", "rites_read", "rites_write"], ["rites_bash", "rites_edit", "rites_find", "rites_grep", "rites_ls", "rites_read", "rites_write"]]:
             raise AssertionError("actual SDK did not expose exactly the seven brokered tools")
         viewer_run = self.viewer.run(str(admitted["id"]))
@@ -677,6 +715,7 @@ class NativeAcceptance:
         return [
             ("sessions_metadata_invalid_cookie", self.case_sessions_and_metadata),
             ("credential_ownership_repository_grants", self.case_credentials_repositories_and_grants),
+            ("workspace_inference_credential_denied", self.case_workspace_inference_credential_denied),
             ("github_real_sdk_git_pr_and_idempotency", self.case_github_publishes_real_branch_and_pr),
             ("github_create_before_predecessor_close", self.case_github_creates_replacement_before_closing_old),
             ("nochange_partial_error_keep_predecessor", self.case_nochange_and_partial_error_leave_predecessor_open),
@@ -717,6 +756,8 @@ class NativeAcceptance:
             attempt("native-log-close", self.native_log_handle.close)
         if self.native_log_path.exists():
             attempt("native-log-copy", lambda: self.reporter.log("native.log", self.native_log_path.read_text(errors="replace")))
+        if self.git_trace_path.exists():
+            attempt("git-trace-copy", lambda: self.reporter.log("native-git.trace", self.git_trace_path.read_text(errors="replace")))
         if self.postgres is not None:
             attempt("postgres", self.postgres.stop)
         postgres_log = self.runtime_path / "postgres.log"

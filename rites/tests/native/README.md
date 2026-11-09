@@ -26,5 +26,8 @@ secrets and raw authorization headers are not recorded.
 
 The self-tests are Behavioral-Active tests. Document/protocol tests are BA;
 real owned Git/HTTP fixture tests are Behavioral-Active Blackbox/Effectual
-Good-Communication tests. The eight native scenarios are the controlled
+Good-Communication tests. The nine native scenarios are the controlled
 Good-Communication leg and are never silently replaced by fixture success.
+The credential regression requires a provider-visible
+`PROBE_EXECUTED+DENIED:.rites-model.json` tool result before allowing the
+subsequent write; absence of a file or absence of a witness is not success.
