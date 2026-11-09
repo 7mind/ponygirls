@@ -1,5 +1,6 @@
 """Input-only candidate caller. Sandbox/expected comparison live outside this process."""
 import contextlib
+import hashlib
 import importlib.util
 import json
 import math
@@ -46,6 +47,7 @@ def check_data(value):
 def main():
     output = sys.stdout
     dumps = json.dumps
+    before_arguments = None
     try:
         if len(sys.argv) != 2:
             raise ValueError('module-argument')
@@ -58,6 +60,7 @@ def main():
         if type(request['function']) is not str or FUNCTION_NAME.fullmatch(request['function']) is None or type(request['args']) is not list:
             raise ValueError('call-fields')
         check_data(request['args'])
+        before_arguments = dumps(request['args'], ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
     except (ValueError, TypeError, UnicodeError):
         record = {'kind': 'protocol_error', 'code': 'call-input'}
     else:
@@ -88,6 +91,17 @@ def main():
                         record = {'kind': 'value', 'value': value}
                     except (TypeError, ValueError, UnicodeError):
                         record = {'kind': 'candidate_error', 'code': 'non-json-return'}
+    if before_arguments is not None:
+        observation = {'before_bytes': len(before_arguments), 'before_sha256': hashlib.sha256(before_arguments).hexdigest(),
+                       'after_bytes': None, 'after_sha256': None, 'after_status': 'non-json', 'mutated': True}
+        try:
+            after_arguments = dumps(request['args'], ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False).encode('utf-8')
+            check_data(request['args'])
+            observation.update(after_bytes=len(after_arguments), after_sha256=hashlib.sha256(after_arguments).hexdigest(),
+                               after_status='json', mutated=before_arguments != after_arguments)
+        except (ValueError, TypeError, UnicodeError):
+            pass
+        record['argument_observation'] = observation
     output.write(dumps(record, ensure_ascii=False, sort_keys=True, separators=(',', ':'), allow_nan=False) + '\n')
     output.flush()
 

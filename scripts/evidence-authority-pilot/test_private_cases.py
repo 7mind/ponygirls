@@ -6,8 +6,8 @@ import sys
 import tempfile
 import unittest
 
-from private_cases import (PrivateCaseError, assess, call_bytes, evaluate_cases,
-                           parse_case)
+from private_cases import (PrivateCaseError, apply_policy, assess, call_bytes,
+                           evaluate_cases, parse_case)
 from process_control import ProcessOutcome, ProcessRequest, ProcessRunner
 
 
@@ -103,7 +103,9 @@ class RealCases(InvocationContract, unittest.TestCase):
         spec = case('prints', 'f', [], {'kind': 'value', 'value': {'x': 2}})
         port = self.invoker('print("import log")\ndef f():\n print("function log")\n return {"x":2}\n', {})
         result = port.invoke(call_bytes(spec))
-        self.assertEqual(json.loads(result.stdout), {'kind': 'value', 'value': {'x': 2}})
+        response = json.loads(result.stdout)
+        self.assertFalse(response.pop('argument_observation')['mutated'])
+        self.assertEqual(response, {'kind': 'value', 'value': {'x': 2}})
         self.assertIn(b'import log', result.stderr); self.assertIn(b'function log', result.stderr)
         self.assertTrue(assess(spec, result).adequate)
 
@@ -119,7 +121,9 @@ class RealCases(InvocationContract, unittest.TestCase):
             port = self.invoker('def f():\n return ' + expression + '\n', {})
             with self.subTest(expression=expression):
                 result = port.invoke(call_bytes(spec))
-                self.assertEqual(json.loads(result.stdout), {'kind': 'candidate_error', 'code': 'non-json-return'})
+                response = json.loads(result.stdout)
+                self.assertFalse(response.pop('argument_observation')['mutated'])
+                self.assertEqual(response, {'kind': 'candidate_error', 'code': 'non-json-return'})
                 self.assertFalse(assess(spec, result).adequate)
 
     def test_cyclic_return_is_rejected_not_an_execution_timeout(self):
@@ -127,7 +131,9 @@ class RealCases(InvocationContract, unittest.TestCase):
         port = self.invoker('def f():\n value=[]\n value.append(value)\n return value\n', {})
         result = port.invoke(call_bytes(spec))
         self.assertEqual(result.status, 'completed')
-        self.assertEqual(json.loads(result.stdout), {'kind': 'candidate_error', 'code': 'non-json-return'})
+        response = json.loads(result.stdout)
+        self.assertFalse(response.pop('argument_observation')['mutated'])
+        self.assertEqual(response, {'kind': 'candidate_error', 'code': 'non-json-return'})
         self.assertFalse(assess(spec, result).adequate)
 
     def test_deep_raw_candidate_output_is_compared_as_data(self):
@@ -143,6 +149,47 @@ class RealCases(InvocationContract, unittest.TestCase):
         program = 'from __future__ import annotations\nfrom dataclasses import dataclass\n@dataclass\nclass Box:\n value:int\ndef f(x):\n return Box(x).value\n'
         port = self.invoker(program, {})
         self.assertTrue(assess(spec, port.invoke(call_bytes(spec))).adequate)
+
+    def test_correct_return_does_not_hide_argument_mutation(self):
+        spec = case('mutating-sort', 'f', [[2, 1]], {'kind': 'value', 'value': [1, 2]})
+        port = self.invoker('def f(values):\n values.sort()\n return values\n', {})
+        report = evaluate_cases((spec,), port)
+        self.assertTrue(report.adequate)
+        self.assertTrue(report.cases[0].arguments_mutated)
+        self.assertFalse(apply_policy(report, True).adequate)
+        self.assertTrue(apply_policy(report, True).complete)
+        self.assertTrue(apply_policy(report, False).adequate)
+
+    def test_copied_argument_and_return_satisfy_nonmutation_policy(self):
+        spec = case('pure-sort', 'f', [[2, 1]], {'kind': 'value', 'value': [1, 2]})
+        port = self.invoker('def f(values):\n return sorted(values)\n', {})
+        report = evaluate_cases((spec,), port)
+        self.assertFalse(report.cases[0].arguments_mutated)
+        self.assertTrue(apply_policy(report, True).adequate)
+        self.assertTrue(apply_policy(report, True).complete)
+
+    def test_argument_mutation_is_observed_even_before_expected_exception(self):
+        spec = case('mutation-before-error', 'f', [[1]], {'kind': 'exception', 'type': 'ValueError'})
+        port = self.invoker('def f(values):\n values.append(2)\n raise ValueError("ordinary")\n', {})
+        report = evaluate_cases((spec,), port)
+        self.assertTrue(report.adequate)
+        self.assertTrue(report.cases[0].arguments_mutated)
+        self.assertFalse(apply_policy(report, True).adequate)
+
+    def test_non_json_argument_after_call_is_not_called_unchanged(self):
+        spec = case('non-json-mutation', 'f', [[1]], {'kind': 'value', 'value': 2})
+        port = self.invoker('def f(values):\n values.append({1,2})\n return 2\n', {})
+        report = evaluate_cases((spec,), port)
+        self.assertTrue(report.adequate)
+        self.assertTrue(report.cases[0].arguments_mutated)
+        self.assertFalse(apply_policy(report, True).adequate)
+
+    def test_restored_arguments_are_only_net_unchanged_not_temporal_proof(self):
+        spec = case('restore', 'f', [[1]], {'kind': 'value', 'value': 2})
+        port = self.invoker('def f(values):\n values.append(2)\n values.pop()\n return 2\n', {})
+        report = evaluate_cases((spec,), port)
+        self.assertFalse(report.cases[0].arguments_mutated)
+        self.assertTrue(apply_policy(report, True).adequate)
 
     def test_missing_function_is_inadequate_not_an_expected_exception(self):
         spec = case('missing-export', 'f', [], {'kind': 'exception', 'type': 'AttributeError'})
@@ -208,6 +255,48 @@ class ComparisonControls(unittest.TestCase):
         raw = b'{"kind":"value","value":' + b'[' * 10000 + b'0' + b']' * 10000 + b'}'
         spec = case('deep-match', 'f', [], {'kind': 'value', 'value': json.loads(raw)['value']})
         self.assertTrue(assess(spec, outcome(call_bytes(spec), raw)).adequate)
+
+    def test_missing_argument_observation_is_unknown_not_unchanged(self):
+        spec = case('missing-argument-evidence', 'f', [[2, 1]], {'kind': 'value', 'value': 2})
+        report = evaluate_cases((spec,), MemoryInvocation({call_bytes(spec): b'{"kind":"value","value":2}'}))
+        self.assertTrue(report.adequate)
+        self.assertIsNone(report.cases[0].arguments_mutated)
+        self.assertEqual(report.cases[0].argument_evidence, 'missing')
+        self.assertIsNone(apply_policy(report, True).adequate)
+        self.assertFalse(apply_policy(report, True).complete)
+        self.assertTrue(apply_policy(report, False).adequate)
+
+    def test_wrong_argument_subject_or_boolean_alias_is_not_valid_evidence(self):
+        import hashlib
+        spec = case('bad-argument-evidence', 'f', [[1]], {'kind': 'value', 'value': 2})
+        raw = json.dumps([[1]], sort_keys=True, separators=(',', ':')).encode()
+        observation = {'before_bytes': len(raw), 'before_sha256': hashlib.sha256(raw).hexdigest(),
+                       'after_bytes': len(raw), 'after_sha256': hashlib.sha256(raw).hexdigest(),
+                       'after_status': 'json', 'mutated': False}
+        for altered in ({**observation, 'before_sha256': '0' * 64},
+                        {**observation, 'mutated': 0}, {**observation, 'before_bytes': False}):
+            response = json.dumps({'kind': 'value', 'value': 2, 'argument_observation': altered}).encode()
+            with self.subTest(observation=altered):
+                report = evaluate_cases((spec,), MemoryInvocation({call_bytes(spec): response}))
+                self.assertTrue(report.adequate)
+                self.assertIsNone(report.cases[0].arguments_mutated)
+                self.assertEqual(report.cases[0].argument_evidence, 'invalid')
+                self.assertIsNone(apply_policy(report, True).adequate)
+
+    def test_nonmutation_policy_does_not_hide_known_functional_failure(self):
+        first = case('wrong', 'f', [1], {'kind': 'value', 'value': 2})
+        later = case('missing', 'f', [2], {'kind': 'value', 'value': 3})
+        class PartialInvocation:
+            def invoke(self, payload):
+                if payload == call_bytes(later):
+                    return replace(outcome(payload, b''), status='start-failed', exit_code=None,
+                                   process_id=None, stdout_eof=False, stderr_eof=False, input_bytes_sent=0)
+                return outcome(payload, b'{"kind":"value","value":0}')
+        report = evaluate_cases((first, later), PartialInvocation())
+        policy = apply_policy(report, True)
+        self.assertFalse(policy.adequate); self.assertFalse(policy.complete)
+        self.assertEqual(policy.case_adequacy, (False, None))
+        with self.assertRaises(PrivateCaseError): apply_policy(report, 1)
 
     def test_empty_case_set_and_duplicate_ids_do_not_manufacture_coverage(self):
         empty = evaluate_cases((), MemoryInvocation({}))

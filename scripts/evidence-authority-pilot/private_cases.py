@@ -12,6 +12,7 @@ from process_control import ProcessOutcome
 Json: TypeAlias = None | bool | int | float | str | list['Json'] | dict[str, 'Json']
 CASE_JSON_BYTES = 4194304
 FUNCTION_NAME = re.compile(r'[A-Za-z][A-Za-z0-9_]*\Z')
+SHA256_TEXT = re.compile(r'[0-9a-f]{64}\Z')
 
 
 class PrivateCaseError(ValueError):
@@ -71,11 +72,20 @@ class CaseAssessment:
     stderr_sha256: str
     execution_status: str
     exit_code: int | None
+    arguments_mutated: bool | None
+    argument_evidence: str
 
 
 @dataclass(frozen=True)
 class CaseReport:
     cases: tuple[CaseAssessment, ...]
+    adequate: bool | None
+    complete: bool
+
+
+@dataclass(frozen=True)
+class CasePolicyReport:
+    case_adequacy: tuple[bool | None, ...]
     adequate: bool | None
     complete: bool
 
@@ -118,12 +128,37 @@ def call_bytes(case: PrivateCase) -> bytes:
     return body
 
 
+def argument_observation(case: PrivateCase, raw: Json, present: bool) -> tuple[bool | None, str]:
+    if not present:
+        return None, 'missing'
+    if raw is None:
+        return None, 'null'
+    try:
+        row = fields(raw, ('before_bytes', 'before_sha256', 'after_bytes', 'after_sha256', 'after_status', 'mutated'))
+        require(type(row['before_bytes']) is int and row['before_bytes'] == len(case.arguments_utf8), 'argument-before-length')
+        require(row['before_sha256'] == hashlib.sha256(case.arguments_utf8).hexdigest(), 'argument-before-source')
+        require(type(row['mutated']) is bool, 'argument-mutation-type')
+        if row['after_status'] == 'json':
+            require(type(row['after_bytes']) is int and row['after_bytes'] >= 0, 'argument-after-length')
+            require(type(row['after_sha256']) is str and SHA256_TEXT.fullmatch(row['after_sha256']) is not None, 'argument-after-digest')
+            changed = row['before_bytes'] != row['after_bytes'] or row['before_sha256'] != row['after_sha256']
+            require(row['mutated'] == changed, 'argument-mutation-consistency')
+            return changed, 'observed_json'
+        require(row['after_status'] == 'non-json' and row['after_bytes'] is None
+                and row['after_sha256'] is None and row['mutated'] is True, 'argument-after-status')
+        return True, 'observed_non_json'
+    except (PrivateCaseError, Rejected, KeyError, TypeError, ValueError):
+        return None, 'invalid'
+
+
 def assess(case: PrivateCase, outcome: ProcessOutcome) -> CaseAssessment:
     require(type(case) is PrivateCase and type(outcome) is ProcessOutcome, 'assessment-types')
+    mutation: bool | None = None
+    mutation_evidence = 'unavailable'
     def result(adequate: bool | None, category: str, actual: bytes | None) -> CaseAssessment:
         return CaseAssessment(case.identity, adequate, category, actual,
                               hashlib.sha256(outcome.stdout).hexdigest(), hashlib.sha256(outcome.stderr).hexdigest(),
-                              outcome.status, outcome.exit_code)
+                              outcome.status, outcome.exit_code, mutation, mutation_evidence)
     if (outcome.status != 'completed' or outcome.process_id is None or outcome.exit_code is None
             or not outcome.stdout_eof or not outcome.stderr_eof or outcome.error_codes
             or outcome.input_bytes_sent != len(call_bytes(case))):
@@ -133,6 +168,8 @@ def assess(case: PrivateCase, outcome: ProcessOutcome) -> CaseAssessment:
     try:
         raw = decode(outcome.stdout, CASE_JSON_BYTES)
         require(type(raw) is dict and type(raw.get('kind')) is str, 'response-shape')
+        mutation, mutation_evidence = argument_observation(case, raw.get('argument_observation'), 'argument_observation' in raw)
+        raw = {key: value for key, value in raw.items() if key != 'argument_observation'}
         kind = raw['kind']
         if kind == 'value':
             fields(raw, ('kind', 'value')); json_data(raw['value']); actual = canonical(raw)
@@ -162,3 +199,17 @@ def evaluate_cases(cases: tuple[PrivateCase, ...], invoker: CandidateInvoker) ->
     else:
         adequate = None
     return CaseReport(assessments, adequate, complete)
+
+
+def apply_policy(report: CaseReport, require_unchanged_arguments: bool) -> CasePolicyReport:
+    require(type(report) is CaseReport and type(require_unchanged_arguments) is bool, 'policy-types')
+    values = []
+    for item in report.cases:
+        if item.adequate is False or require_unchanged_arguments and item.arguments_mutated is True:
+            values.append(False)
+        elif item.adequate is None or require_unchanged_arguments and item.arguments_mutated is None:
+            values.append(None)
+        else:
+            values.append(True)
+    adequate = False if any(value is False for value in values) else True if values and all(value is True for value in values) else None
+    return CasePolicyReport(tuple(values), adequate, bool(values) and all(value is not None for value in values))
