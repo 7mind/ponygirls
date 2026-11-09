@@ -132,3 +132,27 @@ The complete 40 screenshots include both views at all widths/themes. This is
 focused frontend evidence, not a fresh full backend/full-target run or deployment.
 Source identity is the commit containing this section. No distinct reusable
 skill pattern was identified beyond the installed constructive test taxonomy.
+
+### Complete final validation
+
+The complete candidate `c5c155b1` subsequently passed fresh, unfiltered pinned
+runs, not merely the focused checks above:
+
+- `bash manure/scripts/test-backend.sh`: 15 backend suites / 186 cases and one
+  storage suite / 32 cases; zero failures, errors or skips.
+- Owned-provider `bash manure/scripts/test-target.sh jvm full`: all 359 current
+  Python cases, including actual Chromium UX, migration, durability and recovery;
+  zero failures, errors or skips. All 32 Node cases and 76 TypeScript codec
+  vectors also passed. No deadline or interaction was relaxed.
+
+Archived final receipts are `debug/manure-flat-dashboard-20261108/final-backend/`
+and `final-target/` in the main checkout. `run-full.sh` there records the exact
+command, explicit owned provider/tool descriptors and source identity. All
+recorded compiled/test inputs and reused viewer assets were SHA-256 checked
+against the completed reports; actual assembled SQL resources were also checked
+against source. Assembly digest remains
+`21ade3db1ca84e86825f9733a78fd1e0f864b650acc8bcc2fe07f852fcc7a0c2`.
+
+Independent read-only review found no actionable defects. This documentation-only
+addition changes no tested input. These source/JVM/browser results do not establish
+native-runtime acceptance, installed-package behavior or production deployment.
