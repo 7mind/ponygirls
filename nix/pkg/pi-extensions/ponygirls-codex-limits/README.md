@@ -1,15 +1,17 @@
 # Codex maximum context
 
-Loaded by `nix/hm/pi.nix`. Decorates only `openai-codex`, retaining Pi's built-in authentication and streaming implementation. It does not affect the separate `openai` provider or OpenAI-compatible third-party endpoints.
+Loaded by `nix/hm/pi.nix`. Overlays only `openai-codex` model metadata, retaining Pi's built-in authentication and streaming implementation. It does not register a native provider or affect the separate `openai` provider or OpenAI-compatible third-party endpoints.
 
-At session startup and subsequent Pi model-catalog refreshes, query Codex's authenticated model catalog. Match exact model slugs already known to Pi; select `max_context_window` when present, otherwise `context_window`. Missing metadata leaves Pi's catalog value unchanged. New model IDs are not fabricated: they require Pi's remaining model/transport metadata.
+Requires this repository's Pi `model-metadata-overlay.patch`. The configuration-form `modelMetadata` hook preserves provider transport classification, so subagents receive the discovered limits through their existing bounded public model descriptor. Native/custom-stream providers remain rejected; worker catalog defaults do not replace discovered limits.
+
+At session startup and subsequent Pi model-catalog refreshes, query Codex's authenticated model catalog. Match exact model slugs already known to Pi; select `max_context_window` when present, otherwise `context_window`. Missing metadata leaves Pi's catalog value unchanged. New model IDs are not fabricated: they require Pi's remaining model/transport metadata. Configured models and unrelated fields are preserved; explicit user `models.json` `modelOverrides` take precedence.
 
 **Output limits remain Pi's catalog values.** The inspected Codex discovery contract has no output-token maximum; neither its context window nor its truncation policy is an output limit.
 
 - `/codex-limits`: show discovery state and selected limits.
 - `/codex-limits refresh`: retry discovery and synchronize the selected model.
 - Network access obeys Pi's offline setting. No persistent cache, credentials, or provider responses are written by this extension.
-- Discovery failures produce a warning at startup/manual refresh; Pi's picker reports failures during its own refresh. Same-account/endpoint last-known limits remain usable after a failure. Account or endpoint changes invalidate discovered limits even during offline refresh. Missing limits for the selected model produce a warning.
+- Catalog/discovery failures produce a warning at startup/manual refresh; Pi's picker reports failures during its own refresh. A built-in catalog refresh failure does not suppress limit discovery or scope invalidation; both errors remain observable if both fail. Same-account/endpoint last-known limits remain usable after a discovery failure. Account or endpoint changes invalidate discovered limits even during offline refresh. Missing limits for the selected model produce a warning.
 - Discovery has a 10-second deadline, a 2-MiB response bound, and no redirects. Nonstandard provider endpoints disable discovery rather than sending credentials to a different endpoint.
 - Active metadata is synchronized on startup, selection, input (before prompt compaction), and before agent start. Authentication acquired after startup can trigger deferred discovery on the next prompt.
 
@@ -42,4 +44,4 @@ PI_PACKAGE_ROOT=/path/to/installed/pi-monorepo PI_OFFLINE=1 PI_TELEMETRY=0 \
 
 `PI_OFFLINE=1` disables unrelated Pi catalog traffic; the script explicitly enables only the Codex discovery refresh. It fails when Codex is unconfigured or no known model receives live limits. It sends no prompts or repository contents.
 
-The Nix check performs strict TypeScript checking, parser/provider tests, the same provider contract against memory and real local HTTP adapters, transport boundary checks, lifecycle checks, and actual Pi extension-loader/model-runtime checks. External OpenAI availability is not a CI dependency.
+The Nix check performs strict TypeScript checking, parser/provider tests, the same provider contract against memory and real local HTTP adapters, transport boundary checks, lifecycle checks, actual Pi extension-loader/model-runtime checks, and Codex-to-subagent descriptor/auth composition. Overlay tests cover configured-model preservation, user precedence, non-chat isolation, invalid overrides, rejected publication, cancellation, and inherited streaming. External OpenAI availability is not a CI dependency.

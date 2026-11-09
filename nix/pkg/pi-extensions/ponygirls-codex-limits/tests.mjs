@@ -4,6 +4,7 @@ import { once } from "node:events";
 import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
+import { piCatalogFixture } from "./test-fixtures.mjs";
 
 const root = process.env.PI_PACKAGE_ROOT;
 assert.ok(root, "PI_PACKAGE_ROOT is required");
@@ -13,7 +14,12 @@ const jiti = createJiti(import.meta.url, { moduleCache: false, fsCache: false, a
   "@earendil-works/pi-ai/providers/all": join(aiRoot, "dist/providers/all.js"),
 } });
 const { parseCatalog, HttpCodexCatalog, CATALOG_URL } = await jiti.import("./catalog.ts");
-const { maximumContextProvider } = await jiti.import("./provider.ts");
+const { maximumContextProvider: createMetadata } = await jiti.import("./provider.ts");
+const { composeModelProvider } = await import(pathToFileURL(join(root, "dist/core/provider-composer.js")));
+const maximumContextProvider = (base, catalog) => {
+  const decorated = createMetadata(base, catalog);
+  return { ...decorated, provider: composeModelProvider(base.id, base, { getProvider: () => undefined }, { modelMetadata: decorated.metadata }) };
+};
 const { registerCodexLimits } = await jiti.import("./index.ts");
 const { builtinProviders } = await import(pathToFileURL(join(aiRoot, "dist/providers/all.js")));
 const sdk = await import(pathToFileURL(join(root, "dist/index.js")));
@@ -69,9 +75,9 @@ for (const adapter of ["memory", "http"]) {
     const catalog = adapter === "memory" ? fixture : fixture.catalog;
     const builtin = base();
     const decorated = maximumContextProvider(builtin, catalog);
-    assert.equal(decorated.provider.auth, builtin.auth);
-    assert.equal(decorated.provider.stream, builtin.stream);
-    assert.equal(decorated.provider.streamSimple, builtin.streamSimple);
+    assert.deepEqual(Object.keys(decorated.metadata).sort(), ["getOverrides", "refresh"]);
+    assert.equal(decorated.provider.auth.oauth.login, builtin.auth.oauth.login);
+    assert.equal(decorated.provider.auth.oauth.refresh, builtin.auth.oauth.refresh);
     assert.equal(decorated.provider.baseUrl, builtin.baseUrl);
     assert.equal(decorated.provider.getModels()[0].contextWindow, 272000);
     await decorated.provider.refreshModels(refreshContext({ allowNetwork: false }));
@@ -238,7 +244,8 @@ test("lifecycle updates the active model before use, warns on failure, and expos
   assert.equal(notifications.length, before);
 });
 
-test("host: real Pi loader registers native provider and command; runtime applies discovery before requests", async () => {
+test("host: real Pi loader registers metadata and command; runtime applies discovery before requests", async (t) => {
+  const fixture = await piCatalogFixture(t);
   const loader = new sdk.DefaultResourceLoader({
     cwd: import.meta.dirname, agentDir: import.meta.dirname, settingsManager: sdk.SettingsManager.inMemory(),
     additionalExtensionPaths: [resolve(import.meta.dirname, "index.ts")], noExtensions: true,
@@ -248,7 +255,12 @@ test("host: real Pi loader registers native provider and command; runtime applie
   assert.deepEqual(loader.getExtensions().errors, []);
   const loaded = loader.getExtensions().extensions[0];
   assert.ok(loaded.commands.has("codex-limits"));
-  const runtime = await sdk.ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false,
+  const registrations = loader.getExtensions().runtime;
+  assert.deepEqual(registrations.pendingNativeProviderRegistrations, []);
+  assert.equal(registrations.pendingProviderRegistrations.length, 1);
+  assert.equal(registrations.pendingProviderRegistrations[0].name, "openai-codex");
+  assert.deepEqual(Object.keys(registrations.pendingProviderRegistrations[0].config), ["modelMetadata"]);
+  const runtime = await sdk.ModelRuntime.create({ modelsPath: null, refreshOnCreate: false, allowModelNetwork: false, catalogBaseUrl: fixture.catalogBaseUrl,
     credentials: {
       read: async (id) => id === "openai-codex" ? credential : undefined,
       list: async () => [{ providerId: "openai-codex", type: "oauth" }],
@@ -256,12 +268,19 @@ test("host: real Pi loader registers native provider and command; runtime applie
       delete: async () => {},
     }, modelsStore: { read: async () => undefined, write: async () => {}, delete: async () => {} },
   });
-  const decorated = maximumContextProvider(base(), new MemoryCatalog());
-  runtime.registerNativeProvider(decorated.provider);
+  const builtin = builtinProviders().find((provider) => provider.id === "openai-codex");
+  const selected = builtin.getModels()[0];
+  const source = new MemoryCatalog();
+  source.rows = [{ slug: selected.id, contextWindow: 1000000 }];
+  const decorated = maximumContextProvider(builtin, source);
+  registerCodexLimits({ registerProvider: (id, config) => runtime.registerProvider(id, config), on() {}, registerCommand() {} }, decorated);
+  assert.equal(runtime.getRegisteredNativeProvider("openai-codex"), undefined);
   const result = await runtime.refresh({ providers: ["openai-codex"], allowNetwork: true });
-  assert.equal(result.errors.size, 0);
-  assert.equal(runtime.getModel("openai-codex", row.slug).contextWindow, 1000000);
-  assert.equal(runtime.getModel("openai-codex", row.slug).maxTokens, 128000);
+  assert.deepEqual([...result.errors], []);
+  assert.equal(fixture.requests.length, 1);
+  assert.match(fixture.requests[0], /^\/api\/models\/providers\/openai-codex\?/);
+  assert.equal(runtime.getModel("openai-codex", selected.id).contextWindow, 1000000);
+  assert.equal(runtime.getModel("openai-codex", selected.id).maxTokens, selected.maxTokens);
   assert.equal((await runtime.getAuth("openai-codex")).auth.apiKey, "test-access");
   assert.equal(runtime.getModel("anthropic", "claude-sonnet-4-6").contextWindow > 0, true);
 });

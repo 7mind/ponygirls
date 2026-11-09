@@ -13,7 +13,7 @@ const runtime = await sdk.ModelRuntime.create({ modelsPath: null, allowModelNetw
 assert.ok(await runtime.checkAuth("openai-codex"), "Codex OAuth must be configured for live acceptance");
 const baseline = new Map(runtime.getModels("openai-codex").map((model) => [model.id, model]));
 const events = new Map(), commands = new Map();
-extension({ registerProvider: (provider) => runtime.registerNativeProvider(provider),
+extension({ registerProvider: (id, config) => runtime.registerProvider(id, config),
   on: (event, handler) => events.set(event, handler), registerCommand: (name, command) => commands.set(name, command),
   setModel: async () => true });
 const result = await runtime.refresh({ providers: ["openai-codex"], allowNetwork: true });

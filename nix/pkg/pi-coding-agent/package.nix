@@ -79,6 +79,8 @@ buildNpmPackage (finalAttrs: {
     ./patches/regular-retained-viewport.patch
     ./patches/widget-registration-lifetimes.patch
     ./patches/fullscreen-capture-validity.patch
+    # Portable token-limit discovery without registering a native provider implementation.
+    ./patches/model-metadata-overlay.patch
   ];
 
   npmDepsHash = "sha256-aBzVz78IxZQlzPYC72Ufa2YFtkow6nZR24YBYZrv9W0=";
@@ -137,7 +139,10 @@ buildNpmPackage (finalAttrs: {
       test/interactive-retained-viewport.test.ts \
       test/interactive-tui.test.ts \
       test/regular-mouse-settings.test.ts \
-      test/config-schemas.test.ts)
+      test/config-schemas.test.ts \
+      test/model-registry.test.ts \
+      test/model-runtime-*.test.ts \
+      test/agent-session-dynamic-provider.test.ts)
     node --test \
       packages/tui/test/bounded-v-stack.test.ts \
       packages/tui/test/tui-alt-screen-capture.test.ts \

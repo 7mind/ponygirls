@@ -803,6 +803,9 @@
             PI_TELEMETRY = "0";
           } ''
             cp -r ${./nix/pkg/pi-extensions/ponygirls-codex-limits} codex-limits
+            mkdir -p ponygirls-subagents/src
+            cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/parent-models.ts} ponygirls-subagents/src/parent-models.ts
+            cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/errors.ts} ponygirls-subagents/src/errors.ts
             chmod -R u+w codex-limits
             cd codex-limits
             mkdir -p node_modules/@earendil-works
@@ -810,7 +813,7 @@
             ln -s "$PI_PACKAGE_ROOT/node_modules/@earendil-works/pi-ai" node_modules/@earendil-works/pi-ai
             ln -s "$PI_PACKAGE_ROOT/node_modules/@types" node_modules/@types
             tsc --strict --noEmit --skipLibCheck --target esnext --module esnext --moduleResolution bundler --allowImportingTsExtensions index.ts
-            node --test tests.mjs
+            node --test tests.mjs subagents.test.mjs metadata.test.mjs
             test -f ${self.packages.${system}.ponygirls-pi-extensions}/ponygirls-codex-limits/index.ts
             touch $out
           '';

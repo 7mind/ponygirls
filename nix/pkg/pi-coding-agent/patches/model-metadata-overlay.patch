@@ -1,0 +1,155 @@
+--- a/packages/coding-agent/src/core/provider-composer.ts
++++ b/packages/coding-agent/src/core/provider-composer.ts
+@@ -89,6 +89,13 @@
+ 
+ export type ProviderModelConfig = ProviderChatModelConfig | ProviderImageModelConfig | ProviderClassifierModelConfig;
+ 
++/** Portable chat limits only; never model identity, authentication, endpoints, or transport. */
++export interface ProviderModelMetadata {
++	getOverrides(): ReadonlyMap<string, Partial<Pick<Model<Api>, "contextWindow" | "maxTokens">>>;
++	/** Publish state changes with context.publish({ update }); obey allowNetwork and signal. */
++	refresh?(context: RefreshModelsContext): Promise<void>;
++}
++
+ /** Input type for the extension registerProvider API. */
+ export interface ProviderConfigInput {
+ 	name?: string;
+@@ -106,6 +113,7 @@
+ 	authHeader?: boolean;
+ 	oauth?: ExtensionOAuthConfig;
+ 	models?: ProviderModelConfig[];
++	modelMetadata?: ProviderModelMetadata;
+ 	refreshModels?(context: RefreshModelsContext): Promise<ProviderModelConfig[]>;
+ }
+ 
+@@ -540,7 +548,34 @@
+ 	if (extension.streamSimple && !extension.api) {
+ 		throw new Error(`Provider ${providerId}: "api" is required when registering streamSimple.`);
+ 	}
+-	applyExtension(providerId, applyModelsJson(providerId, getAllProviderModels(base), modelsConfig), extension);
++	applyModelMetadata(
++		applyExtension(providerId, applyModelsJson(providerId, getAllProviderModels(base), modelsConfig), extension),
++		extension.modelMetadata,
++	);
++}
++
++function applyModelMetadata(models: AnyModel[], metadata: ProviderModelMetadata | undefined): AnyModel[] {
++	if (!metadata) return models;
++	const overrides = metadata.getOverrides();
++	for (const [id, limits] of overrides) {
++		if (typeof id !== "string" || !id || !limits || typeof limits !== "object") {
++			throw new Error("Invalid model metadata override");
++		}
++		for (const [key, value] of Object.entries(limits)) {
++			if ((key !== "contextWindow" && key !== "maxTokens") || !Number.isSafeInteger(value) || value <= 0) {
++				throw new Error("Model metadata overrides accept only positive safe-integer token limits");
++			}
++		}
++	}
++	return models.map((model) => {
++		const limits = overrides.get(model.id);
++		if (!isModelType(model, "chat") || !limits) return model;
++		return {
++			...model,
++			...(limits.contextWindow === undefined ? {} : { contextWindow: limits.contextWindow }),
++			...(limits.maxTokens === undefined ? {} : { maxTokens: limits.maxTokens }),
++		};
++	});
+ }
+ 
+ /** Compose built-in, models.json, and extension layers without reading credentials. */
+@@ -573,7 +608,7 @@
+ 				...models.filter((model) => !isModelType(model, "chat")),
+ 			];
+ 		}
+-		return models.map((model) => {
++		return applyModelMetadata(models, extension?.modelMetadata).map((model) => {
+ 			const override = config?.modelOverrides?.[model.id];
+ 			return override && isModelType(model, "chat") ? applyModelOverride(model, override) : model;
+ 		});
+@@ -616,9 +651,23 @@
+ 		getModels: () => getAllModels().filter((model) => isModelType(model, "chat")),
+ 		getAllModels,
+ 		refreshModels:
+-			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels
++			base?.refreshModels || extension?.refreshModels || extension?.oauth?.modifyModels || extension?.modelMetadata?.refresh
+ 				? async (context) => {
+-						await base?.refreshModels?.(context);
++						const errors: unknown[] = [];
++						try {
++							await base?.refreshModels?.(context);
++						} catch (error) {
++							errors.push(error);
++						}
++						if (context.signal.aborted) return;
++						try {
++							await extension?.modelMetadata?.refresh?.(context);
++						} catch (error) {
++							errors.push(error);
++						}
++						if (errors.length === 1) throw errors[0];
++						if (errors.length > 1) throw new AggregateError(errors, "Provider model refresh failed");
++						if (context.signal.aborted) return;
+ 						let refreshed: NonNullable<ProviderConfigInput["models"]> | undefined;
+ 						if (extension?.refreshModels) refreshed = await extension.refreshModels(context);
+ 						if (context.signal.aborted) return;
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -67,6 +67,7 @@
+ import type { CustomMessage } from "../messages.ts";
+ import type { ModelRegistry } from "../model-registry.ts";
+ import type { ScopedModel } from "../model-resolver.ts";
++import type { ProviderModelMetadata } from "../provider-composer.ts";
+ import type {
+ 	BranchSummaryEntry,
+ 	CompactionEntry,
+@@ -1962,6 +1963,8 @@
+ 	authHeader?: boolean;
+ 	/** Models to register. If provided, replaces all existing models for this provider. */
+ 	models?: ProviderModelConfig[];
++	/** Overlay existing chat token limits without replacing models, authentication, or transport. */
++	modelMetadata?: ProviderModelMetadata;
+ 	/**
+ 	 * Refresh this provider's model list. The returned list replaces extension-provided models.
+ 	 * Use context.publish({ persist: entry }) when the catalog should persist across sessions.
+--- a/packages/coding-agent/docs/custom-provider.md
++++ b/packages/coding-agent/docs/custom-provider.md
+@@ -123,6 +123,38 @@
+ 
+ See the checked [GitLab Duo provider](../examples/extensions/custom-provider-gitlab-duo/) for a complete registration that delegates streaming to built-in API implementations.
+ 
++## Overlay discovered token limits
++
++Use the configuration form's `modelMetadata` for token-limit discovery that does not own
++transport or authentication. It preserves existing models (including configured models)
++and the built-in implementation; do not spread a built-in provider into a native registration.
++
++```typescript
++pi.registerProvider("openai-codex", {
++  modelMetadata: {
++    getOverrides: () => limits,
++    async refresh(context) {
++      if (!context.allowNetwork) return;
++      const discovered = await discoverLimits(context.credential, context.signal);
++      await context.publish({ update: () => { limits = discovered; } });
++    },
++  },
++});
++```
++
++`limits` is a `ReadonlyMap` keyed by model ID whose values contain only optional
++`contextWindow` and `maxTokens`, each a positive safe integer. Unknown IDs are ignored;
++only chat models are affected. Other fields are rejected. Explicit `models.json`
++`modelOverrides` take precedence. `getOverrides` must synchronously return the current
++published state without I/O. Change state only inside `context.publish({ update })`:
++stale or cancelled refreshes must not publish. Refresh uses the existing provider's
++credential and endpoint context, and must honor `allowNetwork` and `signal`. Invalidate
++account/endpoint-scoped state when its scope changes, including offline refreshes.
++
++Workers can transfer the resulting public model metadata with their existing built-in
++transport; neither discovery code nor credentials belong in that descriptor. This does
++not make native providers or custom streaming implementations portable.
++
+ ## Provide authentication
+ 
+ Static providers can resolve an API key from a literal, environment interpolation, or a command. These values use the same syntax as `models.json`:

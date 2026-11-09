@@ -1,11 +1,13 @@
-import type { Model, Api, Provider } from "@earendil-works/pi-ai";
+import type { Provider } from "@earendil-works/pi-ai";
+import type { ProviderConfig } from "@earendil-works/pi-coding-agent";
 import type { CodexCatalog, CodexLimit } from "./catalog.ts";
 
 const PROVIDER_ID = "openai-codex";
 const OFFICIAL_BASE_URL = "https://chatgpt.com/backend-api";
 
 export interface MaximumContextProvider {
-  readonly provider: Provider;
+  readonly providerId: string;
+  readonly metadata: NonNullable<ProviderConfig["modelMetadata"]>;
   status(): string;
   hasLimit(id: string): boolean;
   needsRefresh(): boolean;
@@ -17,15 +19,9 @@ export function maximumContextProvider(base: Provider, catalog: CodexCatalog): M
   let credentialScope: string | undefined;
   let pendingRefresh = true;
   let status = "Discovery not performed; Pi catalog limits retained.";
-  const project = (model: Model<Api>): Model<Api> => {
-    const entry = limits.find((item) => item.slug === model.id);
-    return entry && entry.contextWindow !== undefined ? { ...model, contextWindow: entry.contextWindow } : model;
-  };
-  const provider: Provider = {
-    ...base,
-    getModels: () => base.getModels().map(project),
-    getAllModels: () => base.getModels().map(project),
-    async refreshModels(context) {
+  const metadata: MaximumContextProvider["metadata"] = {
+    getOverrides: () => new Map(limits.flatMap((entry) => entry.contextWindow === undefined ? [] : [[entry.slug, { contextWindow: entry.contextWindow }]])),
+    async refresh(context) {
       const credential = context.credential;
       if (!credential || credential.type !== "oauth") return;
       const endpoint = context.baseUrl === undefined ? OFFICIAL_BASE_URL : context.baseUrl.replace(/\/$/, "");
@@ -63,7 +59,7 @@ export function maximumContextProvider(base: Provider, catalog: CodexCatalog): M
     },
   };
   return {
-    provider, status: () => status, needsRefresh: () => pendingRefresh,
+    providerId: base.id, metadata, status: () => status, needsRefresh: () => pendingRefresh,
     hasLimit: (id) => limits.some((item) => item.slug === id && item.contextWindow !== undefined),
   };
 }
