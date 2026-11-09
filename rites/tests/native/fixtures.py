@@ -28,8 +28,21 @@ EXPECTED_TOOLS = frozenset({
     "rites_grep", "rites_find", "rites_ls",
 })
 MODEL_KEY = "synthetic-model-key"
-PROBE_WITNESS = re.compile(r"PROBE_EXECUTED\+(?:DENIED|EXPOSED):\.rites-model\.json")
-PROBE_COMMAND = "if test -r /workspace/.rites-model.json; then printf 'PROBE_EXECUTED+EXPOSED:.rites-model.json\\n'; else printf 'PROBE_EXECUTED+DENIED:.rites-model.json\\n'; fi"
+FORGE_KEY = "synthetic-github-token"
+PROBE_WITNESS = re.compile(r"PROBE_EXECUTED\+(?:DENIED|EXPOSED|ERROR):(?:credential-content|model-content|forge-content|credential-search|\.rites-model\.json)")
+PROBE_DENIALS = ("PROBE_EXECUTED+DENIED:credential-content", "PROBE_EXECUTED+DENIED:.rites-model.json")
+PROBE_COMMAND = (
+    "exposed=0; "
+    "grep -R -q -F -- '" + MODEL_KEY + "' /workspace >/dev/null 2>&1; status=$?; "
+    "if test \"$status\" -eq 0; then printf 'PROBE_EXECUTED+EXPOSED:model-content\\n'; exposed=1; "
+    "elif test \"$status\" -ne 1; then printf 'PROBE_EXECUTED+ERROR:credential-search\\n'; exposed=2; fi; "
+    "grep -R -q -F -- '" + FORGE_KEY + "' /workspace >/dev/null 2>&1; status=$?; "
+    "if test \"$status\" -eq 0; then printf 'PROBE_EXECUTED+EXPOSED:forge-content\\n'; exposed=1; "
+    "elif test \"$status\" -ne 1; then printf 'PROBE_EXECUTED+ERROR:credential-search\\n'; exposed=2; fi; "
+    "if test \"$exposed\" -eq 0; then printf 'PROBE_EXECUTED+DENIED:credential-content\\n'; fi; "
+    "if test -r /workspace/.rites-model.json; then printf 'PROBE_EXECUTED+EXPOSED:.rites-model.json\\n'; "
+    "else printf 'PROBE_EXECUTED+DENIED:.rites-model.json\\n'; fi"
+)
 OPERATOR_CLIENT = "fixture-operator"
 OPERATOR_SECRET = "synthetic-operator-secret"
 REDIRECT_PATH = "/oauth/callback"
@@ -61,7 +74,7 @@ class Proposal:
             return {
                 "number": self.remote_id,
                 "html_url": f"{base_url}/github/pull/{self.remote_id}",
-                "user": {"id": self.author, "login": "fixture-user"},
+                "user": {"id": numeric_user_id(self.author), "login": "fixture-user"},
                 "head": {"ref": self.source, "repo": repository},
                 "base": {"ref": self.target, "repo": repository},
                 "body": self.marker,
@@ -73,7 +86,7 @@ class Proposal:
         return {
             "iid": self.remote_id,
             "web_url": f"{base_url}/gitlab/merge_requests/{self.remote_id}",
-            "author": {"id": self.author, "username": "fixture-user"},
+            "author": {"id": numeric_user_id(self.author), "username": "fixture-user"},
             "source_branch": self.source,
             "target_branch": self.target,
             "description": self.marker,
@@ -149,6 +162,18 @@ def stable_project_id(project: str) -> int:
     return 10000 + int.from_bytes(hashlib.sha256(project.encode()).digest()[:2], "big")
 
 
+def numeric_user_id(author: str) -> int:
+    if author == "fixture-github-user":
+        return 41001
+    if author == "fixture-gitlab-user":
+        return 42001
+    return 49000
+
+
+def selected_user_id(forge: str) -> int:
+    return numeric_user_id("fixture-github-user" if forge == "Github" else "fixture-gitlab-user")
+
+
 def run_git(arguments: list[str], cwd: Path, input_bytes: bytes, env: Mapping[str, str] | None) -> subprocess.CompletedProcess[bytes]:
     clean_env = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
@@ -196,7 +221,7 @@ def seed_project(state_root: Path, forge: str, project: str, prompt: str) -> Pro
         bare_path=bare,
         base_revision=revision_result.stdout.decode().strip(),
         prompt_digest=hashlib.sha256(prompt.encode()).hexdigest(),
-        static_tokens={"synthetic-github-token"} if forge == "Github" else set(),
+        static_tokens={FORGE_KEY} if forge == "Github" else set(),
     )
 
 
@@ -388,8 +413,7 @@ class FixtureHandler(BaseHTTPRequestHandler):
             )
         if not valid:
             raise FixtureProblem(401, "invalid-token")
-        user_id = "fixture-github-user" if forge == "Github" else "fixture-gitlab-user"
-        self.json_response(200, {"id": user_id, "login": "fixture-user", "username": "fixture-user"})
+        self.json_response(200, {"id": selected_user_id(forge), "login": "fixture-user", "username": "fixture-user"})
 
     def forge_rest(self, method: str, path: str, forge: str, query: str) -> None:
         suffix = path.removeprefix("/github/api/v3/" if forge == "Github" else "/gitlab/api/v4/")
@@ -548,10 +572,10 @@ class FixtureHandler(BaseHTTPRequestHandler):
             planned_tool = ("rites_write", {"path": "result.txt", "content": content})
         elif kind == "credential-probe" and turn == 1:
             planned_tool = ("rites_bash", {"command": PROBE_COMMAND})
-        elif kind == "credential-probe" and turn == 2 and witnesses == ["PROBE_EXECUTED+DENIED:.rites-model.json"]:
-            planned_tool = ("rites_write", {"path": "result.txt", "content": "PROBE_EXECUTED+DENIED:.rites-model.json\n"})
+        elif kind == "credential-probe" and turn == 2 and witnesses == list(PROBE_DENIALS):
+            planned_tool = ("rites_write", {"path": "result.txt", "content": "PROBE_EXECUTED+DENIED:credential-content\nPROBE_EXECUTED+DENIED:.rites-model.json\n"})
         elif kind == "credential-probe" and turn == 2:
-            response_text = "PROBE_EXECUTED+EXPOSED" if "PROBE_EXECUTED+EXPOSED:.rites-model.json" in witnesses else "PROBE_WITNESS_MISSING"
+            response_text = "PROBE_EXECUTED+EXPOSED" if any("+EXPOSED:" in witness for witness in witnesses) else "PROBE_WITNESS_MISSING"
         if planned_tool is not None:
             with state.lock:
                 model.emitted_tool_calls.append(planned_tool[0])

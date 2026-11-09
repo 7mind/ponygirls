@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from client import FixtureControl, LoopbackTransport, NO_BODY
 from fixtures import (
-    EXPECTED_TOOLS, FORGE_PROJECTS, MODEL_KEY, OPERATOR_CLIENT, OPERATOR_SECRET,
+    EXPECTED_TOOLS, FORGE_KEY, FORGE_PROJECTS, MODEL_KEY, OPERATOR_CLIENT, OPERATOR_SECRET,
     REDIRECT_PATH, FixtureServer, model_config, run_git,
 )
 
@@ -72,7 +72,7 @@ class FixtureTests(unittest.TestCase):
             project = FORGE_PROJECTS[forge]
             if forge == "Github":
                 root = f"{api}/repos/{project}/pulls"
-                token = "synthetic-github-token"
+                token = FORGE_KEY
                 first_body = {"title": "Rites site", "head": "rites/repo/site/one", "base": "main", "body": "rites-run:one\nbase-target:main"}
                 second_body = dict(first_body, head="rites/repo/site/two", body="rites-run:two\nbase-target:main")
             else:
@@ -86,6 +86,13 @@ class FixtureTests(unittest.TestCase):
             second = self.transport.request("POST", root, second_body, headers)
             self.assertEqual(201, first.status)
             self.assertEqual(201, second.status)
+            user = self.transport.request("GET", api + "/user", NO_BODY, {"Authorization": f"Bearer {token}"})
+            self.assertEqual(200, user.status)
+            self.assertIsInstance(user.json["id"], int)
+            author = first.json["user"] if forge == "Github" else first.json["author"]
+            self.assertIsInstance(author["id"], int)
+            self.assertEqual(user.json["id"], author["id"])
+            self.assertIsInstance(first.json["number" if forge == "Github" else "iid"], int)
             remote_id = first.json["number" if forge == "Github" else "iid"]
             close_body = {"state": "closed"} if forge == "Github" else {"state_event": "close"}
             close_method = "PATCH" if forge == "Github" else "PUT"
@@ -102,7 +109,7 @@ class FixtureTests(unittest.TestCase):
         clone = self.root / "clone"
         askpass = self.root / "askpass"
         token_file = self.root / "git-token"
-        token_file.write_text("synthetic-github-token", encoding="utf-8")
+        token_file.write_text(FORGE_KEY, encoding="utf-8")
         token_file.chmod(stat.S_IRUSR | stat.S_IWUSR)
         askpass.write_text(f"#!/bin/sh\ncase \"$1\" in *Password*) exec /bin/cat {token_file};; *) exit 1;; esac\n", encoding="utf-8")
         askpass.chmod(stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
@@ -173,24 +180,26 @@ class FixtureTests(unittest.TestCase):
         self.assertEqual(200, first.status)
         self.assertIn('"name":"rites_bash"', first.json)
         self.assertIn('/workspace/.rites-model.json', first.json)
-        self.assertNotIn(MODEL_KEY, first.json)
-        denied_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+DENIED:.rites-model.json"}])
+        self.assertIn("grep -R -q -F", first.json)
+        self.assertIn(MODEL_KEY, first.json)
+        self.assertIn(FORGE_KEY, first.json)
+        denied_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+DENIED:credential-content\nPROBE_EXECUTED+DENIED:.rites-model.json"}])
         second = self.transport.request("POST", "/model/chat/completions", denied_body, headers)
         self.assertIn('"name":"rites_write"', second.json)
         third = self.transport.request("POST", "/model/chat/completions", denied_body, headers)
         self.assertIn('"finish_reason":"stop"', third.json)
         observation = self.control.observation()["model"]
-        self.assertEqual(["PROBE_EXECUTED+DENIED:.rites-model.json"], observation["witnesses"])
+        self.assertEqual(["PROBE_EXECUTED+DENIED:credential-content", "PROBE_EXECUTED+DENIED:.rites-model.json"], observation["witnesses"])
         self.assertEqual(["rites_bash", "rites_write"], observation["emittedTools"])
         self.control.model("credential-probe", "", False)
         first_exposed = self.transport.request("POST", "/model/chat/completions", body, headers)
         self.assertIn('"name":"rites_bash"', first_exposed.json)
-        exposed_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+EXPOSED:.rites-model.json"}])
+        exposed_body = dict(body, messages=[{"role": "tool", "content": "PROBE_EXECUTED+EXPOSED:model-content"}])
         second_exposed = self.transport.request("POST", "/model/chat/completions", exposed_body, headers)
         self.assertIn("PROBE_EXECUTED+EXPOSED", second_exposed.json)
         self.assertNotIn('"name":"rites_write"', second_exposed.json)
         exposed_observation = self.control.observation()["model"]
-        self.assertEqual(["PROBE_EXECUTED+EXPOSED:.rites-model.json"], exposed_observation["witnesses"])
+        self.assertEqual(["PROBE_EXECUTED+EXPOSED:model-content"], exposed_observation["witnesses"])
         self.assertEqual(["rites_bash"], exposed_observation["emittedTools"])
 
     def test_oauth_rotates_and_drop_response_is_observable_without_new_tokens(self) -> None:
@@ -221,7 +230,7 @@ class FixtureTests(unittest.TestCase):
     def test_observation_never_contains_fixture_secrets(self) -> None:
         self.oauth_refresh()
         encoded = json.dumps(self.control.observation())
-        for secret in (MODEL_KEY, OPERATOR_SECRET, "synthetic-oauth-access-1", "synthetic-oauth-refresh-1", "synthetic-github-token"):
+        for secret in (MODEL_KEY, OPERATOR_SECRET, "synthetic-oauth-access-1", "synthetic-oauth-refresh-1", FORGE_KEY):
             self.assertNotIn(secret, encoded)
 
 

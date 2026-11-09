@@ -8,8 +8,15 @@ if [ "${1:-}" = "--selftest" ] && [ "$#" -eq 1 ]; then
   PYTHONDONTWRITEBYTECODE=1 exec python3 -m unittest discover -s "$ROOT/tests/native" -p 'test_*.py' -v
 fi
 
+if [ "${1:-}" = "--browser-native" ]; then
+  [ "$#" -eq 7 ] || { echo "usage: $0 --browser-native NATIVE_LAUNCHER WORKER_EXECUTABLE NATIVE_ELF WEB_ROOT NODE_MODULE_ROOT CHROMIUM" >&2; exit 2; }
+  export PYTHONDONTWRITEBYTECODE=1
+  exec python3 "$ROOT/tests/native/browser_native.py" "$2" "$3" "$4" "$5" "$6" "$7"
+fi
+
 if [ "$#" -ne 3 ]; then
   echo "usage: $0 NATIVE_LAUNCHER WORKER_EXECUTABLE NATIVE_ELF" >&2
+  echo "       $0 --browser-native NATIVE_LAUNCHER WORKER_EXECUTABLE NATIVE_ELF WEB_ROOT NODE_MODULE_ROOT CHROMIUM" >&2
   echo "       $0 --selftest   # loopback fixtures only; not native acceptance" >&2
   exit 2
 fi

@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Callable, Mapping
 
 from client import ApiSession, FixtureControl, JsonObject, NO_BODY, Response
-from fixtures import FORGE_PROJECTS, OPERATOR_CLIENT, OPERATOR_SECRET, REDIRECT_PATH, FixtureServer, model_config
+from fixtures import FORGE_KEY, FORGE_PROJECTS, OPERATOR_CLIENT, OPERATOR_SECRET, PROBE_DENIALS, REDIRECT_PATH, FixtureServer, model_config
 
 
 TERMINAL_STATES = frozenset({"NoChange", "Published", "Failed", "PublicationUncertain", "SupersessionPending", "Cancelled"})
@@ -229,11 +229,11 @@ class OwnedPostgres:
 
 
 class NativeAcceptance:
-    def __init__(self, launcher: Path, worker: Path, native_elf: Path):
+    def __init__(self, launcher: Path, worker: Path, native_elf: Path, report_namespace: str = "native-validation-runs"):
         self.source_root = Path(__file__).resolve().parents[3]
         self.rites_root = self.source_root / "rites"
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
-        report_root = self.rites_root / "server/target/native-validation-runs" / f"{stamp}-{os.getpid()}"
+        report_root = self.rites_root / "server/target" / report_namespace / f"{stamp}-{os.getpid()}"
         self.reporter = Reporter(report_root, launcher, worker, native_elf, self.source_root)
         self.runtime_path = Path(tempfile.mkdtemp(prefix="rites-native-acceptance-"))
         self.runtime_path.chmod(0o700)
@@ -258,6 +258,7 @@ class NativeAcceptance:
         self.github_second: JsonObject = {}
         self.gitlab_first: JsonObject = {}
         self.native_base = ""
+        self.web_root: Path | None = None
 
     def start(self) -> None:
         for artifact in (self.launcher, self.worker, self.native_elf):
@@ -339,7 +340,8 @@ class NativeAcceptance:
                 "statementTimeoutMs": 10000, "lockTimeoutMs": 5000, "idleTransactionTimeoutMs": 10000, "socketTimeoutMs": 15000,
             },
             "users": users, "masterKeyFile": str(master_key), "workerCommand": str(self.worker),
-            "webRoot": None, "workspaceRoot": str(workspace), "cacheRoot": str(cache),
+            "webRoot": str(self.web_root) if self.web_root is not None else None,
+            "workspaceRoot": str(workspace), "cacheRoot": str(cache),
             "maxBodyBytes": 65536, "sessionTtlSeconds": 3600, "maxPromptBytes": 65536,
             "maxFileBytes": 1048576, "maxRunFiles": 1000,
             "scheduler": {"pollMilliseconds": 100, "queueBound": 32, "concurrency": 1, "runTimeoutSeconds": 90},
@@ -401,7 +403,7 @@ class NativeAcceptance:
         oauth = mode == "Oauth"
         body = {
             "id": None, "name": f"fixture-{forge.lower()}", "forge": forge, "host": "127.0.0.1",
-            "secret": "synthetic-oauth-access-0" if oauth else "synthetic-github-token",
+            "secret": "synthetic-oauth-access-0" if oauth else FORGE_KEY,
             "expectedRevision": 0, "mode": mode,
             "oauthClientId": OPERATOR_CLIENT if oauth else None,
             "refreshToken": "synthetic-oauth-refresh-0" if oauth else None,
@@ -526,14 +528,14 @@ class NativeAcceptance:
         observation = self.controls().observation()
         model = observation["model"]
         witnesses = model.get("witnesses")
-        if "PROBE_EXECUTED+EXPOSED:.rites-model.json" in witnesses:
-            raise AssertionError("inference credential EXPOSED to rites_bash in /workspace")
-        if witnesses != ["PROBE_EXECUTED+DENIED:.rites-model.json"]:
+        if any("+EXPOSED:" in witness or "+ERROR:" in witness for witness in witnesses):
+            raise AssertionError(f"credential content EXPOSED or probe failed in /workspace: {witnesses}")
+        if witnesses != list(PROBE_DENIALS):
             git_evidence = [event for event in observation.get("events", []) if event.get("event") == "git-auth"]
             raise AssertionError(f"credential probe lacked DENIED witness: state={terminal.get('state')} failure={terminal.get('failureCode')} modelCalls={model.get('calls')} git={git_evidence}")
         if model.get("emittedTools") != ["rites_bash", "rites_write"]:
             raise AssertionError("credential guard did not execute the scripted brokered tools")
-        self.assert_publication("Github", terminal, "PROBE_EXECUTED+DENIED:.rites-model.json\n")
+        self.assert_publication("Github", terminal, "PROBE_EXECUTED+DENIED:credential-content\nPROBE_EXECUTED+DENIED:.rites-model.json\n")
 
     def case_github_publishes_real_branch_and_pr(self) -> None:
         before_model_calls = self.controls().observation()["model"]["calls"]
@@ -678,7 +680,7 @@ class NativeAcceptance:
         credential = next(item for item in object_list(self.owner.object("GET", "/api/credentials", NO_BODY), "items") if item.get("id") == self.credentials["Github"])
         self.owner.object("PUT", "/api/credentials", {
             "id": self.credentials["Github"], "name": "fixture-github", "forge": "Github", "host": "127.0.0.1",
-            "secret": "synthetic-github-token", "expectedRevision": credential["revision"], "mode": "Token",
+            "secret": FORGE_KEY, "expectedRevision": credential["revision"], "mode": "Token",
             "oauthClientId": None, "refreshToken": None, "expiresAt": None,
         })
         self.controls().release_model()
