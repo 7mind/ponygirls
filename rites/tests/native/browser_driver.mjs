@@ -38,7 +38,7 @@ async function login(page, user) {
 }
 async function openRites(page, repository) {
   await repoRow(page, repository).getByRole('button', { name: 'Rites', exact: true }).click();
-  await ritesTable(page).waitFor();
+  await page.getByRole('heading', { name: 'Rites', exact: true }).waitFor();
 }
 async function modelWrite(content) {
   const response = await fetch(`${plan.fixtureOrigin}/__fixture/model`, {
@@ -49,11 +49,12 @@ async function modelWrite(content) {
 }
 async function createCredential(page) {
   await page.getByRole('button', { name: 'Credentials', exact: true }).click();
-  await page.getByRole('table', { name: 'Credentials', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'New credential', exact: true }).waitFor();
+  await page.getByText('No credentials yet.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'New credential', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New credential', exact: true });
   await dialog.getByLabel('Name').fill('fixture-browser');
-  await dialog.getByLabel('Forge', { exact: true }).selectOption('Github');
+  await dialog.getByLabel('Forge').selectOption('Github');
   await dialog.getByLabel('Host', { exact: true }).fill(plan.host);
   await dialog.locator('input[name="secret"]').fill(plan.forgeKey);
   await dialog.getByRole('button', { name: 'Create', exact: true }).click();
@@ -62,11 +63,12 @@ async function createCredential(page) {
 }
 async function createRepository(page) {
   await page.getByRole('button', { name: 'Repositories', exact: true }).click();
-  await reposTable(page).waitFor();
+  await page.getByRole('button', { name: 'New repository', exact: true }).waitFor();
+  await page.getByText('No repositories yet.', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'New repository', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'New repository', exact: true });
   await dialog.getByLabel('Repository ID').fill(plan.repositoryId);
-  await dialog.getByLabel('Forge', { exact: true }).selectOption('Github');
+  await dialog.getByLabel('Forge').selectOption('Github');
   await dialog.getByLabel('Host', { exact: true }).fill(plan.host);
   await dialog.getByLabel('Project', { exact: true }).fill(plan.project);
   await dialog.getByLabel('Base branch', { exact: true }).fill('main');
@@ -86,7 +88,7 @@ async function createRite(page) {
   await dialog.getByLabel('Rite ID').fill(plan.riteId);
   await dialog.getByLabel('Schedule (UTC cron)').fill('0 0 1 1 *');
   await dialog.getByLabel('Prompt path').fill('prompt.md');
-  await dialog.getByLabel('Model', { exact: true }).selectOption('fixture');
+  await dialog.getByLabel('Model').selectOption('fixture');
   await dialog.getByRole('button', { name: 'Create', exact: true }).click();
   await notice(page, 'Rite saved');
   await riteRow(page, plan.riteId).waitFor();
@@ -139,12 +141,13 @@ async function addViewerAndSwitchPrincipal(page) {
   await repoRow(page, plan.repositoryId).getByText('Viewer', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'New repository', exact: true }).count(), 0);
   await openRites(page, plan.repositoryId);
+  await page.getByText('Read-only access: viewer role.', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'New rite', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Run now', exact: true }).count(), 0);
+  await page.getByText('History', { exact: true }).waitFor();
   await page.getByRole('button', { name: 'Credentials', exact: true }).click();
-  const credentials = page.getByRole('table', { name: 'Credentials', exact: true });
-  await credentials.waitFor();
-  assert.equal(await credentials.getByRole('row', { name: 'fixture-browser' }).count(), 0, 'owner credential is not visible to viewer');
+  await page.getByText('No credentials yet.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('table', { name: 'Credentials', exact: true }).getByRole('row', { name: 'fixture-browser' }).count(), 0, 'owner credential is not visible to viewer');
   assert.equal(await page.locator('input[name="secret"], input[name="refreshToken"]').count(), 0);
   assert.equal((await page.locator('#identity').innerText()).includes('owner'), false);
 }
