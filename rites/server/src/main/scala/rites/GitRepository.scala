@@ -24,9 +24,9 @@ class GitRepository(config: Config, remotes: TestRemoteCatalog) {
         val output = Processes.run(baseArgs, cwd, baseEnv, Array.emptyByteArray, 65536, 120, "git-timeout"); Check(allow.contains(output.code), "git-failed", "git operation failed"); text(output.stdout).trim
       case Some(secret) =>
         val home = Files.createTempDirectory(config.workspaceRootPath, "auth-"); val ask = home.resolve("askpass")
-        // The token appears only in this mode-0700/0600 private askpass scratch file.
+        // The token appears only within this mode-0700 private askpass directory.
         Files.writeString(home.resolve("credential"), secret, java.nio.file.StandardOpenOption.CREATE_NEW)
-        val content = "#!/bin/sh\ncase \"$1\" in *Password*) exec /bin/cat \"" + home.resolve("credential") + "\";; *) exit 1;; esac\n"
+        val content = GitAskpass.render(home.resolve("credential"), baseEnv("PATH"))
         Files.writeString(ask, content, java.nio.file.StandardOpenOption.CREATE_NEW); Files.setPosixFilePermissions(ask, java.util.Set.of(java.nio.file.attribute.PosixFilePermission.OWNER_READ, java.nio.file.attribute.PosixFilePermission.OWNER_WRITE, java.nio.file.attribute.PosixFilePermission.OWNER_EXECUTE))
         try {
           val output = Processes.run(baseArgs, cwd, baseEnv ++ Map("GIT_ASKPASS" -> ask.toString, "HOME" -> home.toString), Array.emptyByteArray, 65536, 120, "git-timeout"); Check(allow.contains(output.code), "git-failed", "git operation failed"); text(output.stdout).trim
