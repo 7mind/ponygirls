@@ -5,7 +5,7 @@ import type { UiTheme } from "./theme.ts";
 
 export interface StatusViewOptions {
   title: string;
-  text: string | (() => string);
+  text: string | ((width: number) => string);
   theme: UiTheme;
   keys: { matches(data: string, action: "tui.select.cancel"): boolean };
   rows(): number;
@@ -18,22 +18,25 @@ export class StatusView extends PanelLayout {
   private readonly options: StatusViewOptions;
   private readonly regularScroll: ScrollView;
   private readonly text: Text;
+  private contentWidth: number | null = null;
 
   constructor(options: StatusViewOptions) {
     super((width) => this.renderParts(width));
     this.options = options;
-    this.text = new Text(this.content(), 0, 0);
+    this.text = new Text("", 0, 0);
     this.regularScroll = new ScrollView(this.text, { overscroll: "contain" });
   }
 
-  private content(): string { return typeof this.options.text === "string" ? this.options.text : this.options.text(); }
-
-  override invalidate(): void { this.text.setText(this.content()); this.text.invalidate(); }
+  override invalidate(): void { this.contentWidth = null; this.text.invalidate(); }
 
   private get scroll(): ScrollView { return this.hasAllocatedHeight ? this.bodyScroll : this.regularScroll; }
 
   private renderParts(width: number): PanelParts {
-    const { theme, title } = this.options;
+    const { theme, title, text } = this.options;
+    if (this.contentWidth !== width) {
+      this.text.setText(typeof text === "string" ? text : text(width));
+      this.contentWidth = width;
+    }
     return {
       header: [frameTitle(theme, width, { title }, "none").line],
       body: this.text.render(width),

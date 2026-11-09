@@ -39,6 +39,17 @@ test("status view rebuilds themed content on invalidation without losing the sna
   assert.doesNotMatch(view.render(80).join("\n"), /success:/);
 });
 
+test("status view provides current width to content on resize and invalidation", () => {
+  const widths: number[] = [];
+  const view = new ui.StatusView({ title: "Width", text: (width: number) => { widths.push(width); return `Content width ${width}`; },
+    theme: ui.PLAIN_THEME, keys: { matches: () => false }, rows: () => 24, requestRender() {}, close() {} });
+  assert.match(view.render(80).join("\n"), /Content width 80/);
+  assert.match(view.render(40).join("\n"), /Content width 40/);
+  view.invalidate();
+  assert.match(view.render(60).join("\n"), /Content width 60/);
+  assert.ok(widths.includes(80)); assert.ok(widths.includes(40)); assert.ok(widths.includes(60));
+});
+
 test("status view honors configured cancel and q without mutating its text", () => {
   assert.equal(typeof ui.StatusView, "function");
   let closed = 0;

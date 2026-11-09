@@ -22,7 +22,7 @@ export class CuckooView {
         super.handleInput(data);
       }
     }({
-      title: content.title, text: () => `${theme.fg('dim', 'i: inquire now')}\n\n${content.render(theme)}`, theme, keys,
+      title: content.title, text: width => `${theme.fg('dim', 'i: inquire now')}\n${content.render(theme, width)}`, theme, keys,
       rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
     }));
     if (requested && this.active) this.inquire(ctx);

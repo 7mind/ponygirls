@@ -41,7 +41,7 @@ async function fixture(t) {
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
   return { dir, session, manager, contexts, replies, errors, notifications, onRequest: fn => { onRequest = fn; } };
 }
-const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: validation pending"}]}';
+const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
 
 for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000, 30000]]) {
   test(`real Pi ${kind} growth policy schedules at the exact token delta and persists through reload`, { timeout: 20000 }, async t => {
@@ -154,6 +154,8 @@ test('real Pi manual inquiry runs while off, persists JSON and does not become a
   await f.session.reload(); await f.session.prompt('/cuckoo status');
   assert.match(f.notifications.at(-1)[0], /Cuckoo: OFF/);
   assert.match(f.notifications.at(-1)[0], /Validating the runtime/);
+  assert.match(f.notifications.at(-1)[0], /user: Show mockups before implementing \(scope: This UI change\)/);
+  assert.match(f.notifications.at(-1)[0], /assistant: Preserve cadence/);
   assert.deepEqual(f.errors, []);
 });
 

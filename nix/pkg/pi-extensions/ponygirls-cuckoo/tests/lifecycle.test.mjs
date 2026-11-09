@@ -36,7 +36,7 @@ test('default-off is inert; 20k to exactly 23k triggers JSON checkpoint at 15% a
   f.tokens(23000); const issue = f.boundary();
   assert.equal(issue.continue, true); assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
   assert.equal(stateOnBranch(f.manager.getBranch()).baseline, 23000);
-  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: tests pending"}]}'));
+  const reply = f.boundary(assistant('{"objectives":[{"objective":"Ship Cuckoo","progress":"Testing","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: tests pending"}],"rules":[]}'));
   assert.equal(reply.continue, undefined); assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives.length, 1);
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
   assert.ok(!reply.entries.some(entry => entry.customType === INQUIRY_TYPE));
@@ -55,7 +55,7 @@ test('unfinished tool turn resumes once; checkpoint tools blocked and malformed 
 
 test('JSON accompanying tool calls is invalid and retains original response identity/content', async () => {
   const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary();
-  const message = assistant('{"objectives":[]}', 'toolUse'); message.content.push({ type: 'toolCall', id: 'forbidden', name: 'bash', arguments: { command: 'exit 0' } });
+  const message = assistant('{"objectives":[],"rules":[]}', 'toolUse'); message.content.push({ type: 'toolCall', id: 'forbidden', name: 'bash', arguments: { command: 'exit 0' } });
   f.boundary(message);
   const saved = f.manager.getBranch().findLast(entry => entry.type === 'custom' && entry.customType === 'cuckoo.report');
   assert.ok(saved.data.messageEntryId); assert.equal(saved.data.content.length, 2);
@@ -67,9 +67,9 @@ test('length-truncated source tool turn resumes, and forbidden checkpoint tool t
   const source = assistant('truncated', 'length'); source.content.push({ type: 'toolCall', id: 'source', name: 'bash', arguments: {} });
   f.boundary(source);
   assert.equal(stateOnBranch(f.manager.getBranch()).pending.resume, true);
-  const valid = f.boundary(assistant('{"objectives":[]}')); assert.equal(valid.continue, true);
+  const valid = f.boundary(assistant('{"objectives":[],"rules":[]}')); assert.equal(valid.continue, true);
   f.boundary(); f.tokens(30000); f.boundary();
-  const invalid = assistant('{"objectives":[]}', 'toolUse'); invalid.content.push({ type: 'toolCall', id: 'blocked', name: 'bash', arguments: {} });
+  const invalid = assistant('{"objectives":[],"rules":[]}', 'toolUse'); invalid.content.push({ type: 'toolCall', id: 'blocked', name: 'bash', arguments: {} });
   const captured = f.boundary(invalid);
   assert.equal(captured.entries.at(-1).customType, RESUME_TYPE);
   assert.equal(captured.continue, true);
@@ -114,7 +114,7 @@ test('prior drafts/continuation survive and queued user messages defer inquiries
   const prior = { type: 'custom', customType: 'foreign', data: { preserved: true } };
   const result = f.boundary(undefined, { entries: [prior], continue: true });
   assert.deepEqual(result.entries[0], prior); assert.equal(result.continue, true);
-  const capture = f.boundary(assistant('{"objectives":[]}'));
+  const capture = f.boundary(assistant('{"objectives":[],"rules":[]}'));
   assert.equal(capture.continue, true, 'earlier continuation intent is resumed after checkpoint');
 });
 
@@ -217,7 +217,7 @@ test('inquire now completes both words and requests one checkpoint while automat
   assert.equal(f.sent[0][1].triggerTurn, true);
   assert.equal(f.preferences.read().enabled, false);
   await f.command('inquire now'); assert.equal(f.sent.length, 1);
-  f.boundary(assistant('{"objectives":[]}'));
+  f.boundary(assistant('{"objectives":[],"rules":[]}'));
   assert.equal(checkpoints(f.manager.getBranch()).length, 1);
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
 });
@@ -230,7 +230,7 @@ test('busy manual inquiry waits for a safe boundary and resumes unfinished work 
   const issue = f.boundary(assistant('tool work', 'toolUse'));
   assert.equal(issue.entries.at(-1).customType, INQUIRY_TYPE);
   assert.equal(issue.continue, true);
-  const captured = f.boundary(assistant('{"objectives":[]}'));
+  const captured = f.boundary(assistant('{"objectives":[],"rules":[]}'));
   assert.equal(captured.continue, true);
   f.boundary(); assert.equal(f.sent.length, 0);
 });
@@ -264,6 +264,6 @@ test('manual queue respects foreign drafts and pending messages before issuing o
     assert.equal(stateOnBranch(f.manager.getBranch()), null);
   }
   assert.equal(f.boundary().entries.at(-1).customType, INQUIRY_TYPE);
-  f.boundary(assistant('{"objectives":[]}'));
+  f.boundary(assistant('{"objectives":[],"rules":[]}'));
   assert.equal(f.boundary(), undefined);
 });

@@ -1,6 +1,6 @@
 # Cuckoo
 
-Opt-in objective/progress checkpoints from the **main conversation model**. Uses
+Opt-in objective/progress and session-local rule checkpoints from the **main conversation model**. Uses
 `@ponygirls/pi-settings` and `@ponygirls/pi-ui`, like the other extensions.
 
 ## Controls
@@ -54,17 +54,23 @@ copies into that new session. Opening history does not request model inference.
 The terminal panel puts the newest saved checkpoint and numbered objectives
 first, with effective settings below the reports. Runtime faults stay at the top.
 Checkpoint/objective headings are accented and bold; request IDs, timestamps,
-entry/branch attribution and saved-report qualifiers are muted. Progress and ETA
-have accent labels; obstacles, issues and bottlenecks have warning-colored labels.
-These colors identify field categories, not inferred completion or severity.
+entry/branch attribution and saved-report qualifiers are muted. Session-local
+rules have a warning-colored section header, with accent user labels and muted
+assistant labels; status/configuration has a muted header. Progress and ETA have
+accent labels; obstacles, issues and bottlenecks have warning-colored labels.
+These colors identify field categories and provenance, not inferred completion,
+severity, independent verification or new authorization.
 
-Fields are separated into readable paragraphs and wrap to the available width.
+Each checkpoint shows its session-local rules once, before numbered objectives.
+Fields use compact inline labels and hanging indentation, with blank lines only
+between sections/objectives/checkpoints. Long values wrap beneath the value;
+very narrow terminals put labels above values instead of squeezing the content.
 Arrow keys and Home/End scroll the panel; `q` or Escape closes it. In regular
 mode PgUp/PgDn also scroll it; Pi reserves those keys for transcript scrolling in
 fullscreen mode. The border badge remains available while the panel is open.
 Invalid/interrupted checkpoints have explicit error headings and literal raw
 output. Theme changes regenerate colors; RPC/plain-text output stays unstyled
-and retains its existing format.
+and includes the same rule source/scope data.
 
 ## Cadence and output
 
@@ -93,7 +99,7 @@ The main model receives “Restate me your objectives and brief me on your
 progress, obstacles, issues, bottlenecks, and ETA” with a JSON-only schema:
 
 ```json
-{"objectives":[{"objective":"Current objective","progress":"Brief factual progress","obstacles":"None known","issues":"None known","bottlenecks":"Serial runtime validation","eta":"Unknown: validation has not started"}]}
+{"objectives":[{"objective":"Current objective","progress":"Brief factual progress","obstacles":"None known","issues":"None known","bottlenecks":"Serial runtime validation","eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
 ```
 
 All six fields are required nonempty strings (at most 8000 characters each;
@@ -104,9 +110,22 @@ independent verification. ETA is time to completion with its evidence, assumptio
 and uncertainty, or `Unknown` with the reason an estimate is unavailable; the
 inquiry explicitly prohibits invented deadlines or estimates.
 
-New checkpoints use metadata version 2. Version-1 saved reports remain readable;
-the additional fields display `Not recorded (legacy report)`, not invented values.
-Current replies missing these fields are invalid and retain their raw output.
+The `rules` array restates active session-local user instructions and
+assistant-adopted working conventions, excluding inherited system/developer,
+AGENTS.md and installed-skill rules, superseded instructions and inferred
+preferences. Each rule has required `rule` and `scope` nonempty strings (at most
+8000 characters each), and `source` exactly `user` or `assistant`. At most 100
+rules are allowed, within the existing total response limit. Rules remain separate
+from objectives and may apply even when no objectives remain. An empty array
+means no session-local rules were reported. Assistant conventions are not user
+approval or authorization. This is a recall prompt, not a policy enforcement or
+independent provenance-verification mechanism.
+
+New checkpoints use metadata version 3. Version-1 and version-2 saved reports
+remain readable: rules show `Session rules not recorded (legacy report)` rather
+than implying there were none. Version-1 additional objective fields still show
+`Not recorded (legacy report)`, not invented values. Current replies missing
+required fields are invalid and retain their raw output.
 
 Only current objectives count; an empty list means zero. Reports are model
 self-reports, **not independently verified progress or new authorization**.

@@ -11,8 +11,8 @@ import { REPORT_TYPE, MAX_FIELD_CHARS, MAX_REPORT_CHARS, parseReport, checkpoint
 
 // Specified: Behavioral-Active, Blackbox-Atomic/Group; filesystem preferences exercise the real adapter.
 test('strict JSON reports include zero objectives and reject malformed or unbounded output', () => {
-  assert.deepEqual(parseReport('{"objectives":[]}'), { objectives: [] });
-  const raw = JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Tests pending', obstacles: 'None known', issues: 'None known', bottlenecks: 'Serial runtime tests', eta: 'Unknown: runtime validation has not started' }] });
+  assert.deepEqual(parseReport('{"objectives":[],"rules":[]}'), { objectives: [], rules: [] });
+  const raw = JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Tests pending', obstacles: 'None known', issues: 'None known', bottlenecks: 'Serial runtime tests', eta: 'Unknown: runtime validation has not started' }], rules: [] });
   assert.equal(parseReport(raw).objectives[0].progress, 'Tests pending');
   for (const value of ['null', '[]', '{}', '```json\n' + raw + '\n```', '{"objectives":[],"extra":true}', '{"objectives":[{"objective":"x"}]}', JSON.stringify({ objectives: [{ objective: 'x', progress: '' }] }), JSON.stringify({ objectives: [{ objective: 'x'.repeat(MAX_FIELD_CHARS + 1), progress: 'x' }] }), ' '.repeat(MAX_REPORT_CHARS + 1)]) {
     assert.throws(() => parseReport(value), undefined, value.slice(0, 100));
@@ -30,20 +30,20 @@ test('inquiry requests the current schema and evidence-qualified estimates', () 
 // Specified: Behavioral-Active, Blackbox-Group.
 test('checkpoint details survive persistence and appear in reports and history', () => {
   const item = { objective: 'Ship', progress: 'Tests running', obstacles: 'Waiting for access', issues: 'One failing case', bottlenecks: 'Serial tests', eta: 'Unknown: access pending' };
-  const raw = JSON.stringify({ objectives: [item] });
-  assert.deepEqual(parseReport(raw), { objectives: [item] });
+  const raw = JSON.stringify({ objectives: [item], rules: [] });
+  assert.deepEqual(parseReport(raw), { objectives: [item], rules: [] });
   const manager = SessionManager.inMemory();
   manager.appendCustomEntry(REPORT_TYPE, checkpoint('details', raw));
-  assert.equal(checkpoints(manager.getBranch())[0].version, 2);
+  assert.equal(checkpoints(manager.getBranch())[0].version, 3);
   for (const text of [reportText(checkpoints(manager.getBranch())), historyText(manager.getEntries(), manager.getBranch())]) {
     for (const [label, value] of [['Obstacles', item.obstacles], ['Issues', item.issues], ['Bottlenecks', item.bottlenecks], ['ETA', item.eta]]) assert.ok(text.includes(`${label}: ${value}`));
   }
   for (const name of ['obstacles', 'issues', 'bottlenecks', 'eta']) {
     for (const invalid of [undefined, null, '', ' ', 3, [], 'x'.repeat(MAX_FIELD_CHARS + 1)]) {
-      assert.throws(() => parseReport(JSON.stringify({ objectives: [{ ...item, [name]: invalid }] })), undefined, name);
+      assert.throws(() => parseReport(JSON.stringify({ objectives: [{ ...item, [name]: invalid }], rules: [] })), undefined, name);
     }
   }
-  assert.throws(() => parseReport(JSON.stringify({ objectives: [{ ...item, extra: 'no' }] })));
+  assert.throws(() => parseReport(JSON.stringify({ objectives: [{ ...item, extra: 'no' }], rules: [] })));
 });
 
 test('legacy saved reports remain readable without inventing checkpoint details', () => {
@@ -63,7 +63,7 @@ test('legacy saved reports remain readable without inventing checkpoint details'
 test('reports restore only the active branch and preserve invalid raw output', () => {
   const manager = SessionManager.inMemory();
   const anchor = manager.appendCustomEntry('anchor', {});
-  manager.appendCustomEntry(REPORT_TYPE, checkpoint('req-1', '{"objectives":[]}'));
+  manager.appendCustomEntry(REPORT_TYPE, checkpoint('req-1', '{"objectives":[],"rules":[]}'));
   manager.appendCustomEntry(REPORT_TYPE, checkpoint('req-2', 'not JSON'));
   assert.equal(checkpoints(manager.getBranch()).length, 2);
   assert.match(reportText(checkpoints(manager.getBranch())), /Invalid report.*\nRaw output:\nnot JSON/);

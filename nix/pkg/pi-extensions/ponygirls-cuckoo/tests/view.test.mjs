@@ -25,7 +25,7 @@ test('objective badge preserves zero/unknown/failure distinctions and bounds wid
   const f = fixture(theme); const view = new CuckooView(() => {});
   view.publish(f.ctx, [], false, null); assert.equal(f.widgets.at(-1)[1], undefined);
   view.publish(f.ctx, [], true, null); assert.match(f.badge().render(80)[0], /🐦 \?/);
-  const valid = checkpoint('one', '{"objectives":[]}');
+  const valid = checkpoint('one', '{"objectives":[],"rules":[]}');
   view.publish(f.ctx, [valid], true, null); assert.match(f.badge().render(80)[0], /🐦 0/);
   view.publish(f.ctx, [valid, checkpoint('two', 'bad')], false, null);
   assert.match(f.badge().render(80)[0], /🐦 0 ! off/);
@@ -56,18 +56,18 @@ test('report panel uses themed checkpoint/objective hierarchy and labeled fields
   const styled = { fg: (token, text) => `<${token}>${text}</${token}>`, bg: (_token, text) => text, bold: text => `<b>${text}</b>` };
   const f = fixture(styled); f.resize(200); const view = new CuckooView(() => {});
   const report = checkpoint('request-one', JSON.stringify({ objectives: [{ objective: 'Audit UI', progress: 'Tests running; completion unknown',
-    obstacles: 'None known', issues: 'Waiting for evidence', bottlenecks: 'None known', eta: 'Unknown' }] }));
+    obstacles: 'None known', issues: 'Waiting for evidence', bottlenecks: 'None known', eta: 'Unknown' }], rules: [] }));
   view.publish(f.ctx, [report], true, null); f.badge().handleMouse(click); await tick();
   const panel = f.views[0].component;
   const text = panel.render(300).join('\n');
   assert.match(text, /<accent><b>Checkpoint 1<\/b><\/accent>/);
   assert.match(text, /<accent><b>1\. Audit UI<\/b><\/accent>/);
-  assert.match(text, /<accent><b>Progress<\/b><\/accent>/);
-  assert.match(text, /<warning><b>Obstacles<\/b><\/warning>/);
-  assert.match(text, /<warning><b>Issues<\/b><\/warning>/);
-  assert.match(text, /<warning><b>Bottlenecks<\/b><\/warning>/);
-  assert.match(text, /<accent><b>ETA<\/b><\/accent>/);
-  assert.match(text, /<muted>request-one<\/muted>/);
+  assert.match(text, /<accent><b>Progress:<\/b><\/accent>/);
+  assert.match(text, /<warning><b>Obstacles:<\/b><\/warning>/);
+  assert.match(text, /<warning><b>Issues:<\/b><\/warning>/);
+  assert.match(text, /<warning><b>Bottlenecks:<\/b><\/warning>/);
+  assert.match(text, /<accent><b>ETA:<\/b><\/accent>/);
+  assert.match(text, /<muted>  Request: request-one<\/muted>/);
   assert.match(text, /Tests running; completion unknown/);
   assert.match(text, /None known/);
   assert.doesNotMatch(text, /100%|completed|blocked/);
@@ -80,7 +80,7 @@ test('long Unicode reports wrap within width, scroll to the raw tail, and surviv
   const f = fixture(ansi); f.resize(12); const view = new CuckooView(() => {});
   const raw = checkpoint('old', 'invalid response\nRAW-END');
   const recent = checkpoint('latest', JSON.stringify({ objectives: [{ objective: 'Unicode 🐦 界 é', progress: 'Evidence 🐦 界 é '.repeat(80),
-    obstacles: 'None known\nNo inferred status', issues: 'Awaiting verification', bottlenecks: 'Unknown', eta: 'Unknown' }] }));
+    obstacles: 'None known\nNo inferred status', issues: 'Awaiting verification', bottlenecks: 'Unknown', eta: 'Unknown' }], rules: [] }));
   const shown = view.show(f.ctx, reportContent([raw, recent], 'Cuckoo: ON'));
   await tick(); const panel = f.views[0].component;
   for (const width of [12, 24, 40, 80]) {
