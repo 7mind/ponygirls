@@ -13,7 +13,7 @@ object TestRemoteCatalog {
   val disabled: TestRemoteCatalog = new TestRemoteCatalog { def lookup(repositoryId: String): Option[String] = None }
   def fixture(values: Map[String, String]): TestRemoteCatalog = new TestRemoteCatalog { def lookup(repositoryId: String): Option[String] = values.get(repositoryId) }
 }
-final class GitRepository(config: Config, remotes: TestRemoteCatalog) {
+class GitRepository(config: Config, remotes: TestRemoteCatalog) {
   private val maintenance = new Object
   private val baseEnv = Processes.pathEnvironment ++ Map("GIT_CONFIG_NOSYSTEM" -> "1", "GIT_TERMINAL_PROMPT" -> "0", "GIT_CONFIG_GLOBAL" -> "/dev/null", "GIT_CEILING_DIRECTORIES" -> config.workspaceRoot)
   private def text(bytes: Array[Byte]): String = StandardCharsets.UTF_8.newDecoder().onMalformedInput(java.nio.charset.CodingErrorAction.REPORT).decode(java.nio.ByteBuffer.wrap(bytes)).toString
@@ -49,7 +49,6 @@ final class GitRepository(config: Config, remotes: TestRemoteCatalog) {
     raw.linesIterator.filter(_.nonEmpty).foreach { line =>
       val mode = line.takeWhile(_ != ' '); val path = line.dropWhile(_ != '\t').drop(1)
       Check(mode != "120000" && mode != "160000", "unsupported-repository", "symlinks and submodules are not supported")
-      val first = path.takeWhile(_ != '/'); Check(first != ".rites-model.json" && first != ".rites-home", "unsupported-repository", "reserved coordinator path")
     }
   }
   def prepare(authority: Authority, token: String): PreparedRun = maintenance.synchronized {
@@ -95,7 +94,6 @@ final class GitRepository(config: Config, remotes: TestRemoteCatalog) {
     val marker = s"rites-run:${authority.run.id.toString}"
     git(List("-C", pub.toString, "checkout", "-B", branch, prepared.base), config.root, None)
     scala.util.Using.resource(Files.list(pub))(_.filter(p => p.getFileName.toString != ".git").forEach(p => delete(p)))
-    delete(prepared.workspace.resolve(".rites-model.json")); delete(prepared.workspace.resolve(".rites-home"))
     var files = 0
     Files.walkFileTree(prepared.workspace, new SimpleFileVisitor[Path] {
       override def preVisitDirectory(dir: Path, attrs: BasicFileAttributes): FileVisitResult = {
@@ -123,6 +121,16 @@ final class GitRepository(config: Config, remotes: TestRemoteCatalog) {
     }
   }
   private def gitExit(args: List[String], cwd: Path): Int = Processes.run(List("git", "-c", "core.hooksPath=/dev/null", "-c", "credential.helper=") ++ args, cwd, baseEnv, Array.emptyByteArray, 4096, 120, "git-timeout").code
+  /** Read-only verification after a crash; does not update mirrors or trust branch contents. */
+  def branchHead(authority: Authority, branch: String, token: String): Option[String] = {
+    Check(branch.startsWith("rites/"), "publication-denied", "invalid publication branch")
+    val raw = git(List("ls-remote", "--heads", "--exit-code", "--", forgeUrl(authority), s"refs/heads/$branch"), config.root, Some(token), Set(0, 2))
+    if (raw.isEmpty) None else {
+      val lines = raw.linesIterator.filter(_.nonEmpty).toList
+      Check(lines.size == 1 && lines.head.takeWhile(_ != '\t').matches("[0-9a-f]{40,64}") && lines.head.endsWith(s"refs/heads/$branch"), "publication-head-unverified", "unexpected branch identity")
+      Some(lines.head.takeWhile(_ != '\t'))
+    }
+  }
   def push(prepared: PreparedRun, authority: Authority, delta: CommitDelta, token: String): Unit = {
     Check(delta.branch.startsWith("rites/") && delta.branch != authority.baseBranch, "publication-denied", "invalid publication branch")
     git(List("-C", prepared.publication.toString, "push", "--no-force", "--", forgeUrl(authority), s"${delta.commit}:refs/heads/${delta.branch}"), config.root, Some(token))

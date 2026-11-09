@@ -19,6 +19,9 @@ final case class Authority(
 final case class RunCompletion(state: RunState, failureCode: Option[String], baseRevision: Option[String] = None, promptDigest: Option[String] = None, branch: Option[String] = None, proposalUrl: Option[String] = None)
 
 trait RitesStore extends AutoCloseable {
+  /** One production coordinator per database, backed by a lifecycle-owned DB session. */
+  def acquireCoordinator(): Unit
+  def coordinatorBackendId: Option[Int]
   def initialize(): Unit
   def login(login: String, password: String, ttlSeconds: Int): (Identity, String)
   def authenticate(secret: String): Identity
@@ -48,12 +51,15 @@ trait RitesStore extends AutoCloseable {
   def recoverInterrupted(): Unit
   def complete(id: UUID, completion: RunCompletion): Unit
   def authority(id: UUID): Option[Authority]
-  def persistIntent(id: UUID, branch: String, marker: String): Unit
+  def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit
+  def publicationHead(id: UUID): Option[String]
+  /** Fail only a locally proven pre-dispatch revocation, never an uncertain remote attempt. */
+  def abandonUndelivered(id: UUID): Unit
   def publicationStage(id: UUID): String
   def markPushed(id: UUID): Unit
   def markCreateDispatched(id: UUID): Unit
   def markPublication(id: UUID, remoteId: String, url: String, author: String, predecessors: List[String]): Unit
-  def knownMarker(repositoryId: String, riteId: String, marker: String, source: String, target: String, author: String): Boolean
+  def knownMarker(repositoryId: String, riteId: String, marker: String, source: String, target: String, author: String, remoteId: String, url: String): Boolean
   def predecessorClosed(id: UUID, remoteId: String): Unit
   def pendingPublication(limit: Int): List[UUID]
   def markUncertain(id: UUID, code: String): Unit

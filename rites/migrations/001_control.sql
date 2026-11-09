@@ -47,7 +47,7 @@ CREATE TABLE rt_runs (
   credential_id uuid NOT NULL, credential_revision integer NOT NULL,
   created_at timestamptz NOT NULL, started_at timestamptz, finished_at timestamptz,
   base_revision text, prompt_digest text, branch text, proposal_url text,
-  marker text, intent_persisted boolean NOT NULL DEFAULT false,
+  marker text, expected_head text, intent_persisted boolean NOT NULL DEFAULT false,
   publication_stage text NOT NULL DEFAULT 'None', target_branch text,
   remote_id text, remote_author text, supersession_pending boolean NOT NULL DEFAULT false,
   FOREIGN KEY(repository_id,rite_id) REFERENCES rt_rites(repository_id,id) ON DELETE CASCADE

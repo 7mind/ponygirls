@@ -7,7 +7,14 @@ report=$(mktemp -d "$PWD/rites/server/target/validation-runs/$(date -u +%Y%m%dT%
 if [[ -d rites/server/target/test-reports ]]; then mv rites/server/target/test-reports "$report/previous-test-reports"; fi
 if [[ -f rites/server/target/validation-inventory.txt ]]; then mv rites/server/target/validation-inventory.txt "$report/previous-inventory.txt"; fi
 find build.sbt project shared/service-runtime shared/baboon-runtime rites/models rites/generated/scala rites/migrations rites/server rites/scripts -type f \( -name '*.scala' -o -name '*.sbt' -o -name '*.properties' -o -name '*.sh' -o -name '*.baboon' -o -name '*.sql' \) ! -path '*/target/*' ! -path 'project/project/*' -print0 | sort -z | xargs -0 sha256sum > "$report/source.sha256"
-git rev-parse HEAD > "$report/git-head"
+if head=$(git rev-parse HEAD 2>/dev/null); then
+  printf '%s\n' "$head" > "$report/git-head"
+elif [[ -n "${RITES_SOURCE_IDENTITY:-}" ]]; then
+  printf '%s\n' "$RITES_SOURCE_IDENTITY" > "$report/source-identity"
+else
+  echo 'no Git worktree; set RITES_SOURCE_IDENTITY to the explicit immutable source path' >&2
+  exit 2
+fi
 "$POSTGRES_HOME/bin/postgres" --version > "$report/postgres-version"
 java -version 2> "$report/java-version"
 echo "Rites validation receipt: $report"

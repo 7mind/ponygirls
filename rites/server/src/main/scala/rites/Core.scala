@@ -2,7 +2,7 @@ package rites
 
 import baboon.runtime.shared.{BaboonCodecContext, BaboonJsonCodec}
 import io.circe.{Decoder, Json}
-import java.nio.ByteBuffer
+import java.nio.{ByteBuffer, CharBuffer}
 import java.nio.charset.{CodingErrorAction, StandardCharsets}
 import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
@@ -76,11 +76,13 @@ final class Vault(key: SecretKeySpec, val keyId: String) {
   def encrypt(owner: String, id: UUID, forge: String, host: String, plaintext: String): VaultCiphertext = encryptPurpose(owner, id, forge, host, plaintext, "access")
   def encryptRefresh(owner: String, id: UUID, forge: String, host: String, plaintext: String): VaultCiphertext = encryptPurpose(owner, id, forge, host, plaintext, "refresh")
   private def encryptPurpose(owner: String, id: UUID, forge: String, host: String, plaintext: String, purpose: String): VaultCiphertext = {
-    Check(plaintext.nonEmpty && plaintext.length <= 16384 && !plaintext.exists(c => c == '\n' || c == '\r' || c == '\u0000'), "invalid", "invalid credential")
+    val buffer = try StandardCharsets.UTF_8.newEncoder().onMalformedInput(CodingErrorAction.REPORT).onUnmappableCharacter(CodingErrorAction.REPORT).encode(CharBuffer.wrap(plaintext)) catch { case _: java.nio.charset.CharacterCodingException => throw DomainError("invalid", "credential must be valid UTF-8") }
+    val plaintextBytes = new Array[Byte](buffer.remaining()); buffer.get(plaintextBytes)
+    Check(plaintextBytes.nonEmpty && plaintextBytes.length <= 16384 && !plaintext.exists(c => c == '\n' || c == '\r' || c == '\u0000'), "invalid", "invalid credential")
     val nonce = new Array[Byte](12); random.nextBytes(nonce)
     val cipher = Cipher.getInstance("AES/GCM/NoPadding"); cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(128, nonce))
     cipher.updateAAD((aad(owner, id, forge, host) :+ 0.toByte) ++ purpose.getBytes(StandardCharsets.UTF_8))
-    VaultCiphertext(keyId, nonce, cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8)))
+    VaultCiphertext(keyId, nonce, cipher.doFinal(plaintextBytes))
   }
   def decrypt(owner: String, id: UUID, forge: String, host: String, stored: VaultCiphertext): String = decryptPurpose(owner, id, forge, host, stored, "access")
   def decryptRefresh(owner: String, id: UUID, forge: String, host: String, stored: VaultCiphertext): String = decryptPurpose(owner, id, forge, host, stored, "refresh")

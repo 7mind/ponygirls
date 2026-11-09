@@ -34,7 +34,7 @@ object Main extends IOApp {
       make[RuntimeModels].fromValue(models)
     })
     _ <- lifecycle.use { services =>
-      IO.blocking(services.store.initialize()) *> services.scheduler.initialize() *> Semaphore[IO](2).flatMap { loginGate =>
+      IO.blocking(services.store.acquireCoordinator()) *> IO.blocking(services.store.initialize()) *> services.scheduler.initialize() *> Semaphore[IO](2).flatMap { loginGate =>
         EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw DomainError("config", "invalid listenHost")))
           .withPort(Port.fromInt(config.listenPort).getOrElse(throw DomainError("config", "invalid port"))).withMaxConnections(128).withMaxHeaderSize(16384)
           .withHttpApp(services.http.routes(loginGate).orNotFound).build.use { server =>

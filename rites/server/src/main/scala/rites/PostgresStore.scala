@@ -1,9 +1,9 @@
 package rites
 
-import java.sql.{Connection, PreparedStatement, ResultSet}
+import java.sql.{Connection, DriverManager, PreparedStatement, ResultSet}
 import java.time.Instant
 import java.util.UUID
-import ponygirls.runtime.{BlockingJdbcDatabase, Migration}
+import ponygirls.runtime.{BlockingJdbcDatabase, CredentialFile, Migration}
 import rites.api.*
 import scala.util.Using
 
@@ -24,7 +24,38 @@ private[rites] object Sql {
 
 final class PostgresStore(config: Config) extends RitesStore {
   private val db = new BlockingJdbcDatabase(config.jdbcConfig)
-  private def tx[A](f: Connection => A): A = db.transaction(f)
+  private val coordinatorLock = "rites-singleton-coordinator-v1"
+  private var coordinator: Option[(Connection, Int)] = None
+  private def coordinatorPing(): Unit = coordinator.foreach { case (connection, _) => connection.synchronized {
+    try scala.util.Using.resource(connection.createStatement()) { statement => scala.util.Using.resource(statement.executeQuery("SELECT 1")) { result => Check(result.next(), "coordinator-lost", "coordinator database session lost") } }
+    catch { case error: DomainError => throw error; case scala.util.control.NonFatal(_) => throw DomainError("coordinator-lost", "coordinator database session lost") }
+  }}
+  private def tx[A](f: Connection => A): A = { coordinatorPing(); db.transaction(f) }
+  def acquireCoordinator(): Unit = {
+    coordinatorPing()
+    synchronized {
+      if (coordinator.nonEmpty) throw DomainError("coordinator-already-started", "coordinator ownership is already held")
+      val props = new java.util.Properties
+      props.setProperty("user", config.databaseUser); props.setProperty("password", CredentialFile.read(config.jdbcConfig.passwordFile))
+      props.setProperty("connectTimeout", math.max(1, config.databaseLimits.connectTimeout.toSeconds).toString); props.setProperty("loginTimeout", math.max(1, config.databaseLimits.connectTimeout.toSeconds).toString)
+      props.setProperty("socketTimeout", math.max(1, config.databaseLimits.socketTimeout.toSeconds).toString); props.setProperty("tcpKeepAlive", "true")
+      Class.forName("org.postgresql.Driver")
+      var connection: Connection = null
+      try {
+        connection = DriverManager.getConnection(config.jdbcUrl, props); connection.setAutoCommit(true)
+        val acquired = scala.util.Using.resource(connection.prepareStatement("SELECT pg_try_advisory_lock(hashtext(?)),pg_backend_pid()")) { statement =>
+          statement.setString(1, coordinatorLock)
+          scala.util.Using.resource(statement.executeQuery()) { result => Check(result.next(), "coordinator-unavailable", "coordinator lock result missing"); (result.getBoolean(1), result.getInt(2)) }
+        }
+        if (!acquired._1) { connection.close(); throw DomainError("coordinator-already-active", "another Rites coordinator owns this database") }
+        coordinator = Some((connection, acquired._2))
+      } catch {
+        case error: DomainError => throw error
+        case scala.util.control.NonFatal(_) => if (connection != null) connection.close(); throw DomainError("coordinator-unavailable", "cannot acquire coordinator ownership")
+      }
+    }
+  }
+  def coordinatorBackendId: Option[Int] = coordinator.map(_._2)
   private def migration(name: String): String = {
     val stream = getClass.getResourceAsStream("/" + name); Check(stream != null, "config", "migration resource missing")
     Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)
@@ -42,7 +73,11 @@ final class PostgresStore(config: Config) extends RitesStore {
       Sql.exec(c, "DELETE FROM rt_sessions WHERE expires<=clock_timestamp() OR owner IN(SELECT id FROM rt_users WHERE NOT enabled)" )
     }
   }
-  def close(): Unit = db.close()
+  def close(): Unit = synchronized {
+    val lease = coordinator; coordinator = None
+    lease.foreach { case (connection, _) => connection.synchronized(connection.close()) }
+    db.close()
+  }
   private def currentTx(c: Connection, identity: Identity): Identity = Sql.one(c, "SELECT u.id,u.login FROM rt_sessions s JOIN rt_users u ON u.id=s.owner WHERE s.hash=? AND s.owner=? AND s.expires>clock_timestamp() AND u.enabled FOR UPDATE OF s", identity.sessionHash, identity.userId)(r => Identity(r.getString(1), r.getString(2), identity.sessionHash)).getOrElse(throw DomainError("unauthorized", "session expired or revoked"))
   def login(login: String, password: String, ttlSeconds: Int): (Identity, String) = tx { c =>
     Check(Valid.text(login, 128) && password.nonEmpty && password.length <= 1024, "invalid", "invalid login")
@@ -274,10 +309,27 @@ final class PostgresStore(config: Config) extends RitesStore {
   def authority(id: UUID): Option[Authority] = tx { c =>
     Sql.one(c, s"SELECT $joinedColumns $authorityFrom LEFT JOIN rt_grants g ON g.repository_id=r.id AND g.user_id=rr.actor WHERE rr.id=? AND rr.state IN('Running','PublicationUncertain','SupersessionPending')", id)(identity).flatMap(r => if (validAuthority(r)) Some(authorityRow(c, r)) else None)
   }
-  def persistIntent(id: UUID, branch: String, marker: String): Unit = tx { c =>
-    Check(Sql.one(c, "SELECT state FROM rt_runs WHERE id=? FOR UPDATE", id)(_.getString(1)).contains("Running"), "conflict", "run is not publication eligible")
-    Sql.exec(c, "UPDATE rt_runs SET branch=?,marker=?,intent_persisted=true,publication_stage='Intent',state='PublicationUncertain',failure_code='publication-in-progress' WHERE id=?", branch, marker, id)
+  def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit = {
+    Check(expectedHead.matches("[0-9a-f]{40,64}"), "invalid", "expected publication head must be a Git object id")
+    val accepted = tx { c =>
+    val ids = Sql.one(c, "SELECT repository_id,rite_id,credential_id FROM rt_runs WHERE id=?", id)(r => (r.getString(1), r.getString(2), Sql.uuid(r, "credential_id"))).getOrElse(throw DomainError("conflict", "run is not publication eligible"))
+    Sql.one(c, "SELECT id FROM rt_repositories WHERE id=? FOR UPDATE", ids._1)(_.getString(1)).getOrElse(throw DomainError("authorization-revoked", "repository authority removed"))
+    Sql.one(c, "SELECT id FROM rt_rites WHERE repository_id=? AND id=? FOR UPDATE", ids._1, ids._2)(_.getString(1)).getOrElse(throw DomainError("authorization-revoked", "rite authority removed"))
+    Sql.one(c, "SELECT id FROM rt_credentials WHERE id=? FOR UPDATE", ids._3)(r => Sql.uuid(r, "id")).getOrElse(throw DomainError("authorization-revoked", "credential authority removed"))
+    Sql.one(c, "SELECT id FROM rt_runs WHERE id=? FOR UPDATE", id)(r => Sql.uuid(r, "id")).getOrElse(throw DomainError("authorization-revoked", "run authority removed"))
+    val valid = Sql.one(c, s"SELECT $joinedColumns $authorityFrom LEFT JOIN rt_grants g ON g.repository_id=r.id AND g.user_id=rr.actor WHERE rr.id=?", id)(r => r.getString("state") == "Running" && validAuthority(r)).contains(true)
+    if (!valid) completeTx(c, id, RunCompletion(RunState.Failed, Some("authorization-revoked")))
+    else Sql.exec(c, "UPDATE rt_runs SET branch=?,marker=?,expected_head=?,intent_persisted=true,publication_stage='Intent',state='PublicationUncertain',failure_code='publication-in-progress' WHERE id=?", branch, marker, expectedHead, id)
+    valid
+    }
+    Check(accepted, "authorization-revoked", "run authority changed")
   }
+  def abandonUndelivered(id: UUID): Unit = tx { c =>
+    val changed = Sql.exec(c, "UPDATE rt_runs SET state='Failed',failure_code='authorization-revoked',finished_at=clock_timestamp(),publication_stage='None' WHERE id=? AND state='PublicationUncertain' AND publication_stage IN('Intent','Pushed')", id)
+    if (changed == 1) Sql.exec(c, "UPDATE rt_rites SET active_run=NULL WHERE active_run=?", id)
+    ()
+  }
+  def publicationHead(id: UUID): Option[String] = tx { c => Sql.one(c, "SELECT expected_head FROM rt_runs WHERE id=?", id)(r => Sql.option(r, "expected_head", _.getString(_))).getOrElse(None) }
   def publicationStage(id: UUID): String = tx { c => Sql.one(c, "SELECT publication_stage FROM rt_runs WHERE id=?", id)(_.getString(1)).getOrElse("None") }
   def markPushed(id: UUID): Unit = tx { c => Sql.exec(c, "UPDATE rt_runs SET publication_stage='Pushed' WHERE id=? AND intent_persisted", id); () }
   def markCreateDispatched(id: UUID): Unit = tx { c => Sql.exec(c, "UPDATE rt_runs SET publication_stage='CreateDispatched' WHERE id=? AND intent_persisted", id); () }
@@ -286,7 +338,7 @@ final class PostgresStore(config: Config) extends RitesStore {
     predecessors.foreach(p => Sql.exec(c, "INSERT INTO rt_publication_predecessors(run_id,remote_id) VALUES(?,?) ON CONFLICT DO NOTHING", id, p))
     if (predecessors.isEmpty) completeTx(c, id, RunCompletion(RunState.Published, None)) else Sql.exec(c, "UPDATE rt_runs SET state='SupersessionPending',failure_code='supersession-pending',finished_at=clock_timestamp() WHERE id=?", id)
   }
-  def knownMarker(repositoryId: String, riteId: String, marker: String, source: String, target: String, author: String): Boolean = tx { c => Sql.one(c, "SELECT 1 FROM rt_runs WHERE repository_id=? AND rite_id=? AND marker=? AND branch=? AND target_branch=? AND remote_author=?", repositoryId, riteId, marker, source, target, author)(_ => true).contains(true) }
+  def knownMarker(repositoryId: String, riteId: String, marker: String, source: String, target: String, author: String, remoteId: String, url: String): Boolean = tx { c => Sql.one(c, "SELECT 1 FROM rt_runs WHERE repository_id=? AND rite_id=? AND marker=? AND branch=? AND target_branch=? AND remote_author=? AND remote_id=? AND proposal_url=?", repositoryId, riteId, marker, source, target, author, remoteId, url)(_ => true).contains(true) }
   def predecessorClosed(id: UUID, remoteId: String): Unit = tx { c =>
     Sql.exec(c, "UPDATE rt_publication_predecessors SET closed=true WHERE run_id=? AND remote_id=?", id, remoteId)
     val open = Sql.one(c, "SELECT count(*) FROM rt_publication_predecessors WHERE run_id=? AND NOT closed", id)(_.getInt(1)).get

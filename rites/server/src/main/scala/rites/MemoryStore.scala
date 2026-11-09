@@ -9,7 +9,7 @@ import scala.collection.mutable
   * operations are atomic under one lock; PostgreSQL-only skip-lock/isolation behavior
   * has separate real-adapter tests rather than being approximated here.
   */
-final class MemoryStore(config: Config, clock: () => Instant) extends RitesStore {
+class MemoryStore(config: Config, clock: () => Instant) extends RitesStore {
   private case class Account(config: UserConfig, credential: String)
   private case class Credential(public: CredentialInfo, owner: String, encrypted: VaultCiphertext, refresh: Option[VaultCiphertext], generation: Long, refreshIntent: Boolean)
   private case class Rite(public: RiteInfo, cursor: Option[Instant], active: Option[UUID])
@@ -23,8 +23,11 @@ final class MemoryStore(config: Config, clock: () => Instant) extends RitesStore
   private val publicationStages = mutable.Map.empty[UUID, String]
   private val remoteAuthors = mutable.Map.empty[UUID, String]
   private val runMarkers = mutable.Map.empty[UUID, String]
+  private val expectedHeads = mutable.Map.empty[UUID, String]
   private val runTargets = mutable.Map.empty[UUID, String]
   private val predecessors = mutable.Map.empty[(UUID, String), Boolean]
+  def acquireCoordinator(): Unit = ()
+  def coordinatorBackendId: Option[Int] = None
   def initialize(): Unit = synchronized {
     config.users.foreach(u => accounts.update(u.id, Account(u, config.password(u))))
     accounts.values.filterNot(a => config.users.exists(_.id == a.config.id)).foreach(a => accounts.update(a.config.id, a.copy(config = a.config.copy(enabled = false))))
@@ -210,9 +213,18 @@ final class MemoryStore(config: Config, clock: () => Instant) extends RitesStore
     }
   }
   def authority(id: UUID): Option[Authority] = synchronized { runsMap.get(id).filter(r => Set(RunState.Running, RunState.PublicationUncertain, RunState.SupersessionPending).contains(r.public.state)).flatMap(toAuthority) }
-  def persistIntent(id: UUID, branch: String, marker: String): Unit = synchronized {
-    runsMap.get(id).filter(_.public.state == RunState.Running).foreach { run => runsMap.update(id, run.copy(public = run.public.copy(state = RunState.PublicationUncertain, failureCode = Some("publication-in-progress"), branch = Some(branch)), intent = true)); publicationStages.update(id, "Intent"); runMarkers.update(id, marker) }
+  def persistIntent(id: UUID, branch: String, marker: String, expectedHead: String): Unit = synchronized {
+    Check(expectedHead.matches("[0-9a-f]{40,64}"), "invalid", "expected publication head must be a Git object id")
+    val run = runsMap.get(id).filter(_.public.state == RunState.Running).getOrElse(throw DomainError("conflict", "run is not publication eligible"))
+    if (toAuthority(run).isEmpty) { complete(id, RunCompletion(RunState.Failed, Some("authorization-revoked"))); throw DomainError("authorization-revoked", "run authority changed") }
+    runsMap.update(id, run.copy(public = run.public.copy(state = RunState.PublicationUncertain, failureCode = Some("publication-in-progress"), branch = Some(branch)), intent = true)); publicationStages.update(id, "Intent"); runMarkers.update(id, marker); expectedHeads.update(id, expectedHead)
   }
+  def abandonUndelivered(id: UUID): Unit = synchronized {
+    runsMap.get(id).filter(r => r.intent && r.public.state == RunState.PublicationUncertain && Set("Intent", "Pushed").contains(publicationStages.getOrElse(id, ""))).foreach { _ =>
+      publicationStages.update(id, "None"); complete(id, RunCompletion(RunState.Failed, Some("authorization-revoked")))
+    }
+  }
+  def publicationHead(id: UUID): Option[String] = synchronized { expectedHeads.get(id) }
   def publicationStage(id: UUID): String = synchronized { publicationStages.getOrElse(id, "None") }
   def markPushed(id: UUID): Unit = synchronized { if (runsMap.get(id).exists(_.intent)) publicationStages.update(id, "Pushed") }
   def markCreateDispatched(id: UUID): Unit = synchronized { if (runsMap.get(id).exists(_.intent)) publicationStages.update(id, "CreateDispatched") }
@@ -222,8 +234,8 @@ final class MemoryStore(config: Config, clock: () => Instant) extends RitesStore
       val state = if (previous.isEmpty) RunState.Published else RunState.SupersessionPending; val public = run.public.copy(state = state, failureCode = if (previous.isEmpty) None else Some("supersession-pending"), proposalUrl = Some(url), finishedAt = Some(clock().toString)); runsMap.update(id, run.copy(public = public, remoteId = Some(remoteId))); if (previous.isEmpty) clearActive(id)
     }
   }
-  def knownMarker(repositoryId: String, riteId: String, marker: String, source: String, target: String, author: String): Boolean = synchronized {
-    runsMap.values.exists(r => r.public.repositoryId == repositoryId && r.public.riteId == riteId && r.public.branch.contains(source) && remoteAuthors.get(r.public.id).contains(author) && runTargets.get(r.public.id).contains(target) && runMarkers.get(r.public.id).contains(marker))
+  def knownMarker(repositoryId: String, riteId: String, marker: String, source: String, target: String, author: String, remoteId: String, url: String): Boolean = synchronized {
+    runsMap.values.exists(r => r.public.repositoryId == repositoryId && r.public.riteId == riteId && r.public.branch.contains(source) && remoteAuthors.get(r.public.id).contains(author) && runTargets.get(r.public.id).contains(target) && runMarkers.get(r.public.id).contains(marker) && r.remoteId.contains(remoteId) && r.public.proposalUrl.contains(url))
   }
   def predecessorClosed(id: UUID, remoteId: String): Unit = synchronized {
     predecessors.update((id, remoteId), true); if (!predecessors.exists { case ((run, _), closed) => run == id && !closed }) complete(id, RunCompletion(RunState.Published, None))

@@ -133,6 +133,15 @@ abstract class StoreContract extends munit.FunSuite {
     store.recoverInterrupted(); assertEquals(store.run(owner, run.id).state, RunState.Failed)
     assert(store.claimNext(Instant.now()).isEmpty)
   } }
+  test("publication intent atomically rejects revoked authority and releases active rite") { configured { store =>
+    val owner = identity(store, "owner"); val editor = identity(store, "editor"); val cred = credential(store, owner); val repo = repository(store, owner, "repo-intent-revocation", cred.id); rite(store, owner, "site", repo.id)
+    val shared = store.setGrant(owner, SetGrantRequest(repo.id, "editor", Some(GrantRole.Editor), repo.revision))
+    store.manualRun(editor, ManualRunRequest(repo.id, "site", UUID.randomUUID())); val claimed = store.claimNext(Instant.now()).get
+    store.setGrant(owner, SetGrantRequest(repo.id, "editor", None, shared.revision))
+    assertEquals(intercept[DomainError](store.persistIntent(claimed.run.id, "rites/repo-intent-revocation/site/" + claimed.run.id, "rites-run:" + claimed.run.id, "cccccccccccccccccccccccccccccccccccccccc")).code, "authorization-revoked")
+    assertEquals(store.run(owner, claimed.run.id).state, RunState.Failed); assertEquals(store.publicationStage(claimed.run.id), "None"); assert(store.pendingPublication(32).isEmpty)
+    assert(store.manualRun(owner, ManualRunRequest(repo.id, "site", UUID.randomUUID())).admitted)
+  } }
   test("OAuth rotation preserves user revision but CAS rejects manual replacement race") { configured { store =>
     val owner = identity(store, "owner"); val saved = credential(store, owner, request(mode = CredentialMode.Oauth))
     val first = store.beginTokenUse(saved.id, Instant.now(), _ => 300).asInstanceOf[RefreshTicket]

@@ -17,7 +17,7 @@ trait Forge {
   def list(authority: Authority, token: String): List[Proposal]
   def close(authority: Authority, token: String, proposal: Proposal): Unit
 }
-final class HttpTransport {
+class HttpTransport {
   private val client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).followRedirects(HttpClient.Redirect.NEVER).build()
   final case class Reply(status: Int, json: Json)
   private final case class Accepted(status: Int, body: Array[Byte])
@@ -60,7 +60,8 @@ final class HttpForge(config: Config, transport: HttpTransport) extends Forge {
   private def escape(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8).replace("+", "%20")
   private def endpoint(authority: Authority, suffix: String): URI = {
     val forge = config.forge(authority.forge, authority.host); val base = forge.parsed(config.testMode).toString.stripSuffix("/")
-    val full = URI.create(base + suffix); Check(full.getHost == authority.host, "remote-rejected", "endpoint host changed"); full
+    val configured = forge.parsed(config.testMode); val full = URI.create(base + suffix)
+    Check(full.getScheme == configured.getScheme && full.getHost == configured.getHost && full.getPort == configured.getPort && full.getRawUserInfo == null, "remote-rejected", "endpoint origin changed"); full
   }
   private def project(authority: Authority): String = escape(authority.project)
   private def call(authority: Authority, method: String, suffix: String, token: String, payload: Option[Json], expected: Set[Int]): Json = {
@@ -69,9 +70,12 @@ final class HttpForge(config: Config, transport: HttpTransport) extends Forge {
     reply.json
   }
   private def required(cursor: io.circe.ACursor, field: String): String = cursor.get[String](field).getOrElse(throw DomainError("remote-response", "missing field"))
-  private def numberJson(json: Json, field: String): String = json.hcursor.get[Int](field).map(_.toString).getOrElse(throw DomainError("remote-response", "missing proposal id"))
+  private def identifier(cursor: io.circe.ACursor, field: String): String = cursor.get[Json](field).toOption.flatMap { value =>
+    value.asNumber.flatMap(_.toLong).filter(_ > 0).map(_.toString).orElse(value.asString.filter(id => id.nonEmpty && id.length <= 256 && !id.exists(_.isControl)))
+  }.getOrElse(throw DomainError("remote-response", "invalid opaque identifier"))
+  private def numberJson(json: Json, field: String): String = identifier(json.hcursor, field)
   def user(authority: Authority, token: String): ForgeUser = {
-    val json = call(authority, "GET", "/user", token, None, Set(200)); ForgeUser(required(json.hcursor, "id"))
+    val json = call(authority, "GET", "/user", token, None, Set(200)); ForgeUser(identifier(json.hcursor, "id"))
   }
   def create(authority: Authority, token: String, delta: CommitDelta): Proposal = {
     val marker = delta.marker + s"\nbase-target:${authority.baseBranch}"
@@ -91,12 +95,12 @@ final class HttpForge(config: Config, transport: HttpTransport) extends Forge {
   private def githubProposal(json: Json): Proposal = {
     val c = json.hcursor; val head = c.downField("head"); val base = c.downField("base")
     Check(required(head.downField("repo"), "full_name").nonEmpty && required(base.downField("repo"), "full_name").nonEmpty, "remote-response", "missing repository identity")
-    Proposal(numberJson(json, "number"), required(c, "html_url"), required(c.downField("user"), "id"), required(head, "ref"), required(base, "ref"), required(c, "body"))
+    Proposal(numberJson(json, "number"), required(c, "html_url"), identifier(c.downField("user"), "id"), required(head, "ref"), required(base, "ref"), required(c, "body"))
   }
   private def gitlabProposal(json: Json): Proposal = {
     val c = json.hcursor
     Check(c.get[Long]("source_project_id").toOption.contains(c.get[Long]("target_project_id").getOrElse(-1L)), "remote-response", "cross-project proposal rejected")
-    Proposal(numberJson(json, "iid"), required(c, "web_url"), required(c.downField("author"), "id"), required(c, "source_branch"), required(c, "target_branch"), required(c, "description"))
+    Proposal(numberJson(json, "iid"), required(c, "web_url"), identifier(c.downField("author"), "id"), required(c, "source_branch"), required(c, "target_branch"), required(c, "description"))
   }
   private def parse(authority: Authority, json: Json): Proposal = if (authority.forge == ForgeKind.Github) githubProposal(json) else gitlabProposal(json)
   private def open(authority: Authority, json: Json): Boolean = json.hcursor.get[String](if (authority.forge == ForgeKind.Github) "state" else "state").contains(if (authority.forge == ForgeKind.Github) "open" else "opened")

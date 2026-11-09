@@ -18,6 +18,16 @@ final class CoreTest extends munit.FunSuite {
     assert(Valid.text("Maintenance 🐎", 128))
     assert(!Valid.text("bad\ud800", 128))
   }
+  test("vault bounds UTF8 bytes symmetrically and roundtrips exact supplementary Unicode") {
+    val key = new Vault(new javax.crypto.spec.SecretKeySpec(Array.fill[Byte](32)(11), "AES"), "fixture"); val id = java.util.UUID.randomUUID()
+    val accents = "é" * 8192; val horses = "🐎" * 4096
+    val access = key.encrypt("owner", id, "Gitlab", "git.example.invalid", accents)
+    val refresh = key.encryptRefresh("owner", id, "Gitlab", "git.example.invalid", horses)
+    assertEquals(key.decrypt("owner", id, "Gitlab", "git.example.invalid", access), accents)
+    assertEquals(key.decryptRefresh("owner", id, "Gitlab", "git.example.invalid", refresh), horses)
+    intercept[DomainError](key.encrypt("owner", id, "Gitlab", "git.example.invalid", "é" * 8193))
+    intercept[DomainError](key.encryptRefresh("owner", id, "Gitlab", "git.example.invalid", "🐎" * 4097))
+  }
   test("unschedulable Gregorian calendar is rejected at configuration boundary") {
     intercept[DomainError](Cron("0 0 31 2 *"))
   }
