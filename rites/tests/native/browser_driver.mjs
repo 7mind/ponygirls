@@ -139,7 +139,8 @@ async function addViewerAndSwitchPrincipal(page) {
   await login(page, 'viewer');
   await repoRow(page, plan.repositoryId).waitFor();
   await repoRow(page, plan.repositoryId).getByText('Viewer', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'New repository', exact: true }).count(), 0);
+  // Viewer grants restrict this shared repository; users may still create their own.
+  assert.equal(await page.getByRole('button', { name: 'New repository', exact: true }).count(), 1);
   await openRites(page, plan.repositoryId);
   await page.getByText('Read-only access: viewer role.', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'New rite', exact: true }).count(), 0);

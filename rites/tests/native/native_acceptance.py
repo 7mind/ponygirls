@@ -24,7 +24,8 @@ from client import ApiSession, FixtureControl, JsonObject, NO_BODY, Response
 from fixtures import FORGE_KEY, FORGE_PROJECTS, OPERATOR_CLIENT, OPERATOR_SECRET, PROBE_DENIALS, REDIRECT_PATH, FixtureServer, model_config
 
 
-TERMINAL_STATES = frozenset({"NoChange", "Published", "Failed", "PublicationUncertain", "SupersessionPending", "Cancelled"})
+TERMINAL_STATES = frozenset({"NoChange", "Published", "Failed", "PublicationUncertain", "Cancelled"})
+TRANSITIONAL_RUN_STATES = frozenset({"SupersessionPending"})
 SYNTHETIC_SECRET = re.compile(r"(?:(?:synthetic|fixture)-(?:[a-z0-9]+-)*(?:token|key|secret|password|access-[0-9]+|refresh-[0-9]+)(?:[a-z0-9-]*)|(?:owner|editor|viewer)-password)", re.IGNORECASE)
 BEARER = re.compile(r"(?i)(bearer\s+)[^\s,;\"']+")
 
@@ -401,7 +402,7 @@ class NativeAcceptance:
             state = current.get("state")
             if state in TERMINAL_STATES and current.get("finishedAt") is not None:
                 return current
-            if state not in {"Queued", "Running"} and state not in TERMINAL_STATES:
+            if state not in {"Queued", "Running"} and state not in TERMINAL_STATES and state not in TRANSITIONAL_RUN_STATES:
                 raise AssertionError("unknown run state")
             if self.native_process is not None and self.native_process.poll() is not None:
                 raise AssertionError("native server exited while run was active")
@@ -547,8 +548,8 @@ class NativeAcceptance:
         self.assert_publication("Github", terminal, "PROBE_EXECUTED+DENIED:credential-content\nPROBE_EXECUTED+DENIED:.rites-model.json\n")
 
     def case_github_publishes_real_branch_and_pr(self) -> None:
-        before_model_calls = self.controls().observation()["model"]["calls"]
         self.controls().model("write", "github-first\n", False)
+        before_model_calls = self.controls().observation()["model"]["calls"]
         request_id = str(uuid.uuid4())
         admitted = self.owner.manual("github", "site", request_id)
         if not admitted:
