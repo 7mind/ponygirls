@@ -1,0 +1,20 @@
+# Input-only private comparison port
+
+This is generic engineering code written before Root has read any new held-out narrative, private case, reference solver or solution. It is NOT a standalone sandbox or execution release. Runtime owns `private_execution.py` confinement and receipt glue; it must not import candidate code in its credentialed controller.
+
+`private_cases.py`:
+
+- `parse_case(raw)` accepts exactly flat `{id,function,args,expected}`. Expectations are `kind:value/value:JSON` or `kind:exception/type:<builtin Exception name>`. Parsed argument/expected values are immutable canonical JSON bytes.
+- `call_bytes(case)` emits ONLY `{function,args}`. Private case IDs, expected values, reference code, future input and evaluator results never enter this input channel.
+- `assess(case, ProcessOutcome)` returns `CaseAssessment`: adequateTrue/False/None, category, canonical actual response orNone, raw stream digests, execution status/exit. Incomplete capture/input delivery, unavailable execution and child protocol failure remain unavailable; nonzero candidate exit, malformed output or returned mismatch are observed inadequate. Pipe bytes sent are not proof of consumption.
+- `evaluate_cases(cases, invoker)` calls `invoker.invoke(payload:bytes)->ProcessOutcome`, preserving each case. A knownFalse remainsFalse even if another case is unavailable; complete coverage is separate. Empty inputs yield unavailable, not vacuous success. These functional results do not establish whole-scenario or Human acceptance.
+
+`candidate_child.py` runs ONLY in an already-confined child: argv is the trusted primary module path (`/work/solution.py` for measured use), stdin is the call bytes. It loads that module through importlib, redirects ordinary module/function prints to stderr, and emits one JSON value/function-exception/candidate-error/protocol-error envelope on stdout. It never imports the private comparison module or accepts expected data. Valid dataclass modules are registered normally; cyclic/non-JSON returns are rejected rather than consumed indefinitely. Output is untrusted process behavior, not authenticated execution against malicious in-process interference. Expected values remain outside it.
+
+The caller must bind the immutable artifact snapshot, child/helper/runtime source, exact argv/cwd/clearenv/confinement, private case/source identity, raw process result and full capture/input status. A ProcessOutcome self-label is not authenticity. The measured child gets only reviewed runtime/current artifact/public mounts and function inputs—not private oracle source, expected values, future phases, credentials, HOME or the entire source/Nix tree. No result enters public facts, curator eligibility or participant feedback. Keep all raw outcome evidence private and source-bound.
+
+## Controls and retained failures
+
+One behavioral contract runs through a hand-written response port and a real owned subprocess port using invented engineering functions only. Additional controls cover typed JSON aliases, invalid/forged outputs, missing/partial execution, known-failure-plus-unavailable preservation, no expected/ID input leakage, load versus function exceptions, normal print handling and valid dataclasses.
+
+Root first retained111controls/1failure: legitimate dataclass module failed to load because its importlib module was not registered; an owned direct reproduction captured completed0 with candidate_error/load. Registering the module corrected that trigger. A later114-control run retained1failure: a cyclic returned list made the pre-serialization validator loop until the owned5-second deadline. Running JSON's circular-reference guard before walking return containers corrected it. Both before-source/log epochs remain under `.local/private-port-controls-*`; no participant originals existed or were rescued. The final current114 unfiltered controls pass0fail/error/skip, source pins unchanged. This is not independent semantic quality, a full sandbox test or an independently implemented oracle.
