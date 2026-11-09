@@ -82,7 +82,18 @@ let
   # second one collides (bin/python3, bin/pydoc3.13). Instead we prefix it onto
   # PATH for the pi process only (below), so the python3 pi spawns resolves to
   # this env without touching the home-manager profile.
-  ddgsPython = pkgs.python3.withPackages (ps: [ ps.ddgs ]);
+  # Backport nixpkgs b9eb668f72ae56cfbb69190682086d82ca73f61b until our pin
+  # includes primp's pkg-config/system-library build inputs.
+  ddgsInterpreter = pkgs.python3.override {
+    packageOverrides = final: prev: {
+      primp = prev.primp.overrideAttrs (old: {
+        __structuredAttrs = true;
+        nativeBuildInputs = old.nativeBuildInputs ++ [ pkgs.pkg-config ];
+        buildInputs = old.buildInputs ++ [ pkgs.aws-lc pkgs.zstd ];
+      });
+    };
+  };
+  ddgsPython = ddgsInterpreter.withPackages (ps: [ ps.ddgs ]);
   piWrapped = pkgs.symlinkJoin {
     name = "pi-coding-agent-wrapped";
     paths = [ piBase ];
@@ -368,7 +379,7 @@ let
   # stays reproducible.
   inferenceProviderPackages = {
     xai = "npm:pi-xai@0.18.0";
-    ollama = "npm:pi-ollama-cloud@0.12.2";
+    ollama = "npm:pi-ollama-cloud@0.13.1";
   };
   defaultEnabledProviders = [ ];
   enabledProviderPackages = lib.attrValues (
@@ -833,8 +844,8 @@ in
           #       drop-client-web-search-for-grok.ts did.
           #   Both fixes are present in every release since 0.9.1.
           # - pi-ollama-cloud: Ollama Cloud provider (first-party, badlogic).
-          #   PINNED to 0.12.2 (its model refresh uses pi's native `refreshModels`,
-          #   needs pi ≥ 0.84.0 — vendored pi is 1.0.0).
+          #   PINNED to 0.13.1 (its model refresh uses pi's native `refreshModels`,
+          #   needs pi ≥ 0.84.0 — vendored pi is 1.5.0).
           #   Registers the `ollama-cloud` provider against https://ollama.com/v1
           #   (apiKey `$OLLAMA_API_KEY`; or ~/.pi/agent/ollama-cloud.json) — no
           #   local server. Self-contained: its only imports (@sinclair/typebox +

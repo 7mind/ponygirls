@@ -8,7 +8,7 @@ set -euo pipefail
 RITES_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 : "${PI_MONOREPO_ROOT:?use nix develop .#backend or set the pinned Pi SDK path explicitly}"
 SDK_ROOT="$PI_MONOREPO_ROOT"
-EXPECTED_VERSION="1.4.0"
+EXPECTED_VERSION="1.5.0"
 
 fail() {
   echo "prepare-sdk: $*" >&2

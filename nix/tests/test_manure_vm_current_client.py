@@ -24,6 +24,24 @@ class CurrentReplyTests(unittest.TestCase):
         payload = cp.dumps(cp.ServerEnvelope(rid, cp.Result_Version(cp.VersionInfo("1.0.0", ["1.0.0"]))))
         self.assertIsInstance(probe.checked_reply(200, payload, rid, cp.Result_Version), cp.Result_Version)
 
+    def test_status_failure_reports_only_status_variant_and_error_code(self):
+        rid = uuid4()
+        secret = "sensitive-fixture-body-never-log"
+        payload = cp.dumps(cp.ServerEnvelope(rid, cp.Result_Error(cp.Failure(cp.ErrorCode.Forbidden, secret, None))))
+        with self.assertRaises(AssertionError) as raised:
+            probe.checked_reply(403, payload, rid, cp.Result_Identity)
+        message = str(raised.exception)
+        for field in ("expected=200", "actual=403", "result=Result_Error", "error=Forbidden"):
+            self.assertIn(field, message)
+        self.assertNotIn(secret, message)
+
+    def test_status_failure_with_nonprotocol_body_never_logs_body(self):
+        secret = "sensitive-nonprotocol-response"
+        with self.assertRaises(AssertionError) as raised:
+            probe.checked_reply(502, secret.encode(), uuid4(), cp.Result_Identity)
+        self.assertIn("expected=200 actual=502 result=invalid-envelope error=none", str(raised.exception))
+        self.assertNotIn(secret, str(raised.exception))
+
     def test_old_health_payload_is_not_a_current_response(self):
         with self.assertRaises(cp.ProtocolError):
             probe.checked_reply(200, b'{"ok":true}', uuid4(), cp.Result_Version)

@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index 28bd362..230f9fe 100644
+index f7b2acb..b9e5731 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
-@@ -364,6 +364,15 @@ interface ToolDefinitionEntry {
+@@ -377,6 +377,15 @@ interface ToolDefinitionEntry {
  	sourceInfo: SourceInfo;
  }
  
@@ -18,7 +18,7 @@ index 28bd362..230f9fe 100644
  function estimateMessagesTokens(messages: AgentMessage[]): number {
  	let tokens = 0;
  	for (const message of messages) {
-@@ -397,8 +406,16 @@ export class AgentSession {
+@@ -410,8 +419,16 @@ export class AgentSession {
  	private _followUpMessages: string[] = [];
  	/** Messages queued to be included with the next user prompt as context ("asides"). */
  	private _pendingNextTurnMessages: CustomMessage[] = [];
@@ -37,7 +37,7 @@ index 28bd362..230f9fe 100644
  
  	// Compaction state
  	private _compactionAbortController: AbortController | undefined = undefined;
-@@ -459,6 +476,7 @@ export class AgentSession {
+@@ -472,6 +489,7 @@ export class AgentSession {
  	private _sessionStartEvent: SessionStartEvent;
  	private _extensionUIContext?: ExtensionUIContext;
  	private _extensionMode: ExtensionMode = "print";
@@ -45,7 +45,7 @@ index 28bd362..230f9fe 100644
  	private _extensionCommandContextActions?: ExtensionCommandContextActions;
  	private _extensionAbortHandler?: () => void;
  	private _extensionShutdownHandler?: ShutdownHandler;
-@@ -993,7 +1011,7 @@ export class AgentSession {
+@@ -1009,7 +1027,7 @@ export class AgentSession {
  	}
  
  	private _getPendingBoundaryMessages(): AgentMessage[] {
@@ -54,7 +54,7 @@ index 28bd362..230f9fe 100644
  	}
  
  	private _buildBoundaryContext(
-@@ -1066,6 +1084,7 @@ export class AgentSession {
+@@ -1082,6 +1100,7 @@ export class AgentSession {
  	}
  
  	private _resolveIdleWaitIfIdle(): void {
@@ -62,7 +62,7 @@ index 28bd362..230f9fe 100644
  		if (!this.isIdle || !this._resolveIdleWait) {
  			return;
  		}
-@@ -1076,31 +1095,30 @@ export class AgentSession {
+@@ -1092,31 +1111,30 @@ export class AgentSession {
  	}
  
  	private async _emitAgentSettled(): Promise<void> {
@@ -108,7 +108,7 @@ index 28bd362..230f9fe 100644
  		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
  		// here. agent_start is awaited before the first request.
  		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
-@@ -1193,7 +1211,7 @@ export class AgentSession {
+@@ -1209,7 +1227,7 @@ export class AgentSession {
  		// extension and listener dispatch above also picks up messages that turn_end
  		// handlers queued.
  		if (event.type === "turn_end") {
@@ -117,7 +117,7 @@ index 28bd362..230f9fe 100644
  		}
  	};
  
-@@ -1410,6 +1428,9 @@ export class AgentSession {
+@@ -1426,6 +1444,9 @@ export class AgentSession {
  	 * Call this when completely done with the session.
  	 */
  	dispose(): void {
@@ -127,7 +127,7 @@ index 28bd362..230f9fe 100644
  		try {
  			this.abortRetry();
  			this.abortCompaction();
-@@ -1870,32 +1891,28 @@ export class AgentSession {
+@@ -1891,32 +1912,28 @@ export class AgentSession {
  	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
  	 * @param onStarted Called once the run's messages are prepared, before the first request.
  	 */
@@ -178,7 +178,7 @@ index 28bd362..230f9fe 100644
  			await this.agent.prompt(messages);
  			while (!this._agentRunAbortRequested) {
  				if (await this._handlePostAgentRun()) {
-@@ -1911,9 +1928,18 @@ export class AgentSession {
+@@ -1932,9 +1949,18 @@ export class AgentSession {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
  			this._failedResponse = undefined;
  			this._runSystemPromptOptions = undefined;
@@ -200,7 +200,7 @@ index 28bd362..230f9fe 100644
  		}
  	}
  
-@@ -1923,7 +1949,7 @@ export class AgentSession {
+@@ -1944,7 +1970,7 @@ export class AgentSession {
  	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
  	 * system patch first when the prompt changed.
  	 */
@@ -209,7 +209,7 @@ index 28bd362..230f9fe 100644
  		// Check if we need to compact before sending (catches aborted responses).
  		// The starting message is sent below, so do not call agent.continue() here.
  		const lastAssistant = this._findLastAssistantMessage();
-@@ -1943,7 +1969,7 @@ export class AgentSession {
+@@ -1964,7 +1990,7 @@ export class AgentSession {
  
  		const messages: AgentMessage[] = [];
  		if (trigger.messageType === "custom") {
@@ -218,7 +218,7 @@ index 28bd362..230f9fe 100644
  		} else {
  			// Normalize images after before_agent_start so extension-driven model selection
  			// determines the resize profile used for the request and history.
-@@ -1983,7 +2009,10 @@ export class AgentSession {
+@@ -2004,7 +2030,10 @@ export class AgentSession {
  			this._finishCancelledRetry();
  			return false;
  		}
@@ -230,7 +230,7 @@ index 28bd362..230f9fe 100644
  
  		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-@@ -2011,11 +2040,14 @@ export class AgentSession {
+@@ -2032,11 +2061,14 @@ export class AgentSession {
  
  		// The low-level loop drains both queues before agent_end. Messages queued by
  		// agent_end handlers require a fresh run before pre-settlement handlers fire.
@@ -247,7 +247,7 @@ index 28bd362..230f9fe 100644
  		this._isBeforeSettle = true;
  		this._abortDuringBeforeSettle = false;
  		try {
-@@ -2024,10 +2056,10 @@ export class AgentSession {
+@@ -2045,10 +2077,10 @@ export class AgentSession {
  				(entries) => this._buildBoundaryContext(entries, "agent_before_settle"),
  			);
  			this._commitBoundaryDrafts(result.entries);
@@ -260,7 +260,7 @@ index 28bd362..230f9fe 100644
  			if (shouldContinue && !finalContext.canContinue) {
  				if (result.continue) this._reportInvalidBoundaryContinuation("agent_before_settle");
  				return false;
-@@ -2113,6 +2145,31 @@ export class AgentSession {
+@@ -2134,6 +2166,31 @@ export class AgentSession {
  			);
  		}
  
@@ -292,7 +292,7 @@ index 28bd362..230f9fe 100644
  		// Emit input event for extension interception (before skill/template expansion)
  		const processedInput = await this._runInputHandlers(
  			text,
-@@ -2169,9 +2226,7 @@ export class AgentSession {
+@@ -2190,9 +2247,7 @@ export class AgentSession {
  			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
  		}
  
@@ -303,7 +303,7 @@ index 28bd362..230f9fe 100644
  	}
  
  	/**
-@@ -2380,25 +2435,26 @@ export class AgentSession {
+@@ -2401,25 +2456,26 @@ export class AgentSession {
  				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
  				return;
  			}
@@ -333,7 +333,7 @@ index 28bd362..230f9fe 100644
  		this._refreshFinalizedContext();
  		this._emit({ type: "message_start", message: appMessage });
  		this._emit({ type: "message_end", message: appMessage });
-@@ -2408,13 +2464,112 @@ export class AgentSession {
+@@ -2429,13 +2485,112 @@ export class AgentSession {
  	 * Append custom messages queued while the agent was running.
  	 * Called once the current turn's tool results are in agent state and session history.
  	 */
@@ -452,7 +452,7 @@ index 28bd362..230f9fe 100644
  		}
  	}
  
-@@ -2461,6 +2616,7 @@ export class AgentSession {
+@@ -2482,6 +2637,7 @@ export class AgentSession {
  	/**
  	 * Clear all queued messages and return them.
  	 * Useful for restoring to editor when user aborts.
@@ -460,7 +460,7 @@ index 28bd362..230f9fe 100644
  	 * @returns Object with steering and followUp arrays
  	 */
  	clearQueue(): { steering: string[]; followUp: string[] } {
-@@ -2496,6 +2652,7 @@ export class AgentSession {
+@@ -2517,6 +2673,7 @@ export class AgentSession {
  	 * Abort current operation and wait for agent to become idle.
  	 */
  	async abort(): Promise<void> {
@@ -468,7 +468,7 @@ index 28bd362..230f9fe 100644
  		if (this._isAgentRunActive) {
  			this._agentRunAbortRequested = true;
  		}
-@@ -2505,6 +2662,7 @@ export class AgentSession {
+@@ -2526,6 +2683,7 @@ export class AgentSession {
  		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
  		this.agent.abort();
  		await this.waitForIdle();
@@ -476,7 +476,7 @@ index 28bd362..230f9fe 100644
  	}
  
  	async waitForIdle(): Promise<void> {
-@@ -3299,7 +3457,11 @@ export class AgentSession {
+@@ -3320,7 +3478,11 @@ export class AgentSession {
  			if (this._autoCompactionAbortController === abortController) {
  				this._autoCompactionAbortController = undefined;
  			}
@@ -489,7 +489,7 @@ index 28bd362..230f9fe 100644
  		}
  	}
  
-@@ -3316,6 +3478,7 @@ export class AgentSession {
+@@ -3337,6 +3499,7 @@ export class AgentSession {
  	}
  
  	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -497,7 +497,7 @@ index 28bd362..230f9fe 100644
  		if (bindings.uiContext !== undefined) {
  			this._extensionUIContext = bindings.uiContext;
  		}
-@@ -3454,6 +3617,7 @@ export class AgentSession {
+@@ -3475,6 +3638,7 @@ export class AgentSession {
  						});
  					});
  				},
@@ -505,7 +505,7 @@ index 28bd362..230f9fe 100644
  				sendUserMessage: (content, options) => {
  					this.sendUserMessage(content, options).catch((err) => {
  						runner.emitError({
-@@ -3745,12 +3909,7 @@ export class AgentSession {
+@@ -3766,12 +3930,7 @@ export class AgentSession {
  			includeAllExtensionTools: true,
  		});
  
@@ -520,10 +520,10 @@ index 28bd362..230f9fe 100644
  			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
  			this._extensionRunner.reportUnhandledMcpServers();
 diff --git a/packages/coding-agent/src/core/extensions/loader.ts b/packages/coding-agent/src/core/extensions/loader.ts
-index cbc1100..e75112e 100644
+index ff9f127..fcc0010 100644
 --- a/packages/coding-agent/src/core/extensions/loader.ts
 +++ b/packages/coding-agent/src/core/extensions/loader.ts
-@@ -171,6 +171,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
+@@ -172,6 +172,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
  
  	const runtime: ExtensionRuntime = {
  		sendMessage: notInitialized,
@@ -531,7 +531,7 @@ index cbc1100..e75112e 100644
  		sendUserMessage: notInitialized,
  		appendEntry: notInitialized,
  		setSessionName: notInitialized,
-@@ -386,6 +387,11 @@ function createExtensionAPI(
+@@ -387,6 +388,11 @@ function createExtensionAPI(
  			runtime.sendMessage(message, options);
  		},
  
@@ -556,10 +556,10 @@ index ea0790a..71c81d8 100644
  		this.runtime.appendEntry = actions.appendEntry;
  		this.runtime.setSessionName = actions.setSessionName;
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index 12ea542..dbd5be6 100644
+index c3c6ec2..a81acce 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
-@@ -968,7 +968,7 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
+@@ -990,7 +990,7 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
  	images?: ImageContent[];
  }
  
@@ -568,7 +568,7 @@ index 12ea542..dbd5be6 100644
  export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
  	messageType: "custom";
  	/** The custom message that starts the run. */
-@@ -1755,6 +1755,21 @@ export interface ExtensionAPI {
+@@ -1781,6 +1781,21 @@ export interface ExtensionAPI {
  		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
  	): void;
  
@@ -590,7 +590,7 @@ index 12ea542..dbd5be6 100644
  	/**
  	 * Send a user message to the agent. Always triggers a turn.
  	 * When the agent is streaming, use deliverAs to specify how to queue the message.
-@@ -2210,6 +2225,7 @@ export interface ExtensionRuntimeState {
+@@ -2236,6 +2251,7 @@ export interface ExtensionRuntimeState {
   */
  export interface ExtensionActions {
  	sendMessage: SendMessageHandler;
@@ -599,7 +599,7 @@ index 12ea542..dbd5be6 100644
  	appendEntry: AppendEntryHandler;
  	setSessionName: SetSessionNameHandler;
 diff --git a/packages/coding-agent/src/core/session-manager.ts b/packages/coding-agent/src/core/session-manager.ts
-index df5281a..9d9c9b6 100644
+index 20b6eda..b3124f1 100644
 --- a/packages/coding-agent/src/core/session-manager.ts
 +++ b/packages/coding-agent/src/core/session-manager.ts
 @@ -17,12 +17,15 @@ import {
@@ -618,7 +618,7 @@ index df5281a..9d9c9b6 100644
  	writeFileSync,
  } from "fs";
  import { readdir, stat } from "fs/promises";
-@@ -991,6 +994,7 @@ export class SessionManager {
+@@ -992,6 +995,7 @@ export class SessionManager {
  	private cwd: string;
  	private persist: boolean;
  	private flushed: boolean = false;
@@ -626,7 +626,7 @@ index df5281a..9d9c9b6 100644
  	private fileEntries: FileEntry[] = [];
  	private byId: Map<string, SessionEntry> = new Map();
  	private labelsById: Map<string, string> = new Map();
-@@ -1171,28 +1175,64 @@ export class SessionManager {
+@@ -1172,21 +1176,50 @@ export class SessionManager {
  
  	_persist(entry: SessionEntry): void {
  		if (!this.persist || !this.sessionFile) return;
@@ -687,18 +687,3 @@ index df5281a..9d9c9b6 100644
  	}
  
  	private _appendEntry(entry: SessionEntry): void {
- 		this.fileEntries.push(entry);
- 		this.byId.set(entry.id, entry);
- 		this.leafId = entry.id;
--		this._persist(entry);
-+		try {
-+			this._persist(entry);
-+		} catch (error) {
-+			this.fileEntries.pop();
-+			this.byId.delete(entry.id);
-+			this.leafId = entry.parentId;
-+			throw error;
-+		}
- 	}
- 
- 	/** Append a message as child of current leaf, then advance leaf. Returns entry id.

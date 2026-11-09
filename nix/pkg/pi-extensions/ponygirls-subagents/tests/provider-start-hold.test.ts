@@ -95,13 +95,13 @@ const NONZERO_SUMMARY_USAGE = JSON.stringify({
 const tick = (ms = 20): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
 function requireSdkRoot(): string {
-  assert.ok(SDK_ROOT, "PI_SUBAGENTS_SDK_ROOT must be set (pinned production SDK 1.4.0)");
+  assert.ok(SDK_ROOT, "PI_SUBAGENTS_SDK_ROOT must be set (pinned production SDK 1.5.0)");
   const root: string = SDK_ROOT;
   assert.ok(existsSync(root), `pinned SDK root missing: ${root}`);
   const pkgPath = join(root, "package.json");
   assert.ok(existsSync(pkgPath), `pinned SDK package.json missing: ${pkgPath}`);
   const version: unknown = (JSON.parse(readFileSync(pkgPath, "utf8")) as { version?: unknown }).version;
-  assert.equal(version, "1.4.0", `pinned SDK must be 1.4.0 (got ${String(version)})`);
+  assert.equal(version, "1.5.0", `pinned SDK must be 1.5.0 (got ${String(version)})`);
   return root;
 }
 
@@ -1888,7 +1888,7 @@ test("provider-start hold: healthy split compaction enters twice via guard (fixe
         assert.equal(compRec["cacheRead"], 40, "compaction combined cacheRead (SDK persisted)");
         assert.equal(compRec["cacheWrite"], 42, "compaction combined cacheWrite (SDK persisted)");
         assert.equal(compRec["totalTokens"], 156, "compaction totalTokens (SDK persisted)");
-        assert.deepEqual(compRec["cost"], { input: 12, output: 14, cacheRead: 16, cacheWrite: 18, total: 30 }, "compaction combined cost (SDK persisted)");
+        assert.deepEqual(compRec["cost"], { input: 12, output: 14, cacheRead: 16, cacheWrite: 18, total: 30, totalFromProvider: false }, "compaction combined cost (SDK persisted)");
         const texts = toolResultTexts(sessionsDir, g.agentId);
         const big = texts.filter((t) => t.length >= 10000);
         assert.ok(big.length >= 2, "two real text-bearing tool turns (actual host bytes): " + String(texts.map((t) => t.length).join(",")));
@@ -2628,7 +2628,7 @@ test("provider-start hold: original seam faults mark unknown and join settlement
   })();
 });
 
-test("provider-start hold: summary identity pinned to SDK 1.4.0 construction (fixed)", async () => {
+test("provider-start hold: summary identity pinned to SDK 1.5.0 construction (fixed)", async () => {
   const sdkRoot = requireSdkRoot();
   const indexMod = await import(sdkRoot + "/dist/index.js") as Record<string, unknown>;
   assert.ok(!("SUMMARIZATION_SYSTEM_PROMPT" in indexMod), "package root public API omits the constant (deep import unsupported)");

@@ -12,7 +12,7 @@ index bd48945..7c8357f 100644
  ### setTitle
  
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 704a786..05d4bb2 100644
+index c3fb309..8a03255 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
 @@ -10,7 +10,7 @@ Start with `ctx.ui` methods from an [extension](extensions.md#interact-with-the-
@@ -33,7 +33,7 @@ index 704a786..05d4bb2 100644
  
  Unhandled wheel events scroll the nearest `ScrollView`. Unhandled primary-button drags remain available for transcript selection. OSC 8 links take precedence over enclosing click regions.
  
-@@ -189,7 +189,7 @@ The checked extension examples cover the main patterns:
+@@ -191,7 +191,7 @@ The checked extension examples cover the main patterns:
  - [`qna.ts`](../examples/extensions/qna.ts) uses cancellable asynchronous UI.
  - [`modal-editor.ts`](../examples/extensions/modal-editor.ts) replaces the editor.
  - [`custom-footer.ts`](../examples/extensions/custom-footer.ts) replaces the footer.
@@ -57,10 +57,10 @@ index 44bf5b6..4671e41 100644
  	});
  }
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index 60388c0..c1a8588 100644
+index 098f7fb..159883a 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
-@@ -118,8 +118,19 @@ export interface ExtensionUIDialogOptions {
+@@ -120,8 +120,19 @@ export interface ExtensionUIDialogOptions {
  	timeout?: number;
  }
  
@@ -82,7 +82,7 @@ index 60388c0..c1a8588 100644
  
  /** Options for extension widgets. */
  export interface ExtensionWidgetOptions {
-@@ -184,11 +195,11 @@ export interface ExtensionUIContext {
+@@ -199,11 +210,11 @@ export interface ExtensionUIContext {
  	/** Set the label shown for hidden thinking blocks. Call with no argument to restore default. */
  	setHiddenThinkingLabel(label?: string): void;
  
@@ -97,10 +97,10 @@ index 60388c0..c1a8588 100644
  	): void;
  
 diff --git a/packages/coding-agent/src/index.ts b/packages/coding-agent/src/index.ts
-index 0b8fb1d..f828597 100644
+index 7e25c2c..7455c2d 100644
 --- a/packages/coding-agent/src/index.ts
 +++ b/packages/coding-agent/src/index.ts
-@@ -444,6 +444,8 @@ export {
+@@ -446,6 +446,8 @@ export {
  	type CustomEditorOptions,
  	CustomMessageComponent,
  	DynamicBorder,
@@ -110,7 +110,7 @@ index 0b8fb1d..f828597 100644
  	ExtensionInputComponent,
  	ExtensionSelectorComponent,
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index 9d345b4..efbf3b6 100644
+index 1f0c539..637ea82 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -1,4 +1,13 @@
@@ -440,7 +440,7 @@ index c394653..a607805 100644
  export { type RenderDiffOptions, renderDiff } from "./diff.ts";
  export { DynamicBorder } from "./dynamic-border.ts";
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 1365e5d..31df8c2 100644
+index 63ed28c..d120745 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -92,6 +92,7 @@ import type {
@@ -451,7 +451,7 @@ index 1365e5d..31df8c2 100644
  	WorkingIndicatorOptions,
  } from "../../core/extensions/index.ts";
  import { FooterDataProvider, type ReadonlyFooterDataProvider } from "../../core/footer-data-provider.ts";
-@@ -142,7 +143,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
+@@ -143,7 +144,7 @@ import { AssistantMessageComponent } from "./components/assistant-message.ts";
  import { BashExecutionComponent } from "./components/bash-execution.ts";
  import { BranchSummaryMessageComponent } from "./components/branch-summary-message.ts";
  import { CompactionSummaryMessageComponent } from "./components/compaction-summary-message.ts";
@@ -460,7 +460,7 @@ index 1365e5d..31df8c2 100644
  import { CustomEntryComponent } from "./components/custom-entry.ts";
  import { CustomMessageComponent } from "./components/custom-message.ts";
  import { DynamicBorder } from "./components/dynamic-border.ts";
-@@ -230,6 +231,44 @@ function isEmbeddedStatus(editor: EditorComponent): editor is WorkingStatusEdito
+@@ -231,6 +232,44 @@ function isEmbeddedStatus(editor: EditorComponent): editor is WorkingStatusEdito
  	);
  }
  
@@ -505,7 +505,7 @@ index 1365e5d..31df8c2 100644
  function isExpandable(obj: unknown): obj is Expandable {
  	return typeof obj === "object" && obj !== null && "setExpanded" in obj && typeof obj.setExpanded === "function";
  }
-@@ -576,9 +615,8 @@ export class InteractiveMode {
+@@ -584,9 +623,8 @@ export class InteractiveMode {
  		unsubscribe: () => void;
  	}>();
  
@@ -517,7 +517,7 @@ index 1365e5d..31df8c2 100644
  	private widgetContainerAbove!: Container;
  	private widgetContainerBelow!: Container;
  
-@@ -2414,25 +2452,21 @@ export class InteractiveMode {
+@@ -2513,25 +2551,21 @@ export class InteractiveMode {
  	 */
  	private setExtensionWidget(
  		key: string,
@@ -549,7 +549,7 @@ index 1365e5d..31df8c2 100644
  
  		if (Array.isArray(content)) {
  			// Wrap string array in a Container with Text components
-@@ -2444,25 +2478,28 @@ export class InteractiveMode {
+@@ -2543,25 +2577,28 @@ export class InteractiveMode {
  				container.addChild(new ThemedText(() => theme.fg("muted", "... (widget truncated)"), 1, 0));
  			}
  			component = container;
@@ -587,7 +587,7 @@ index 1365e5d..31df8c2 100644
  		this.renderWidgets();
  	}
  
-@@ -2501,24 +2538,41 @@ export class InteractiveMode {
+@@ -2600,24 +2637,41 @@ export class InteractiveMode {
  	private static readonly MAX_WIDGET_LINES = 10;
  
  	/**
@@ -634,7 +634,7 @@ index 1365e5d..31df8c2 100644
  			if (spacerWhenEmpty) {
  				container.addChild(new Spacer(1));
  			}
-@@ -2528,7 +2582,7 @@ export class InteractiveMode {
+@@ -2627,7 +2681,7 @@ export class InteractiveMode {
  		if (leadingSpacer) {
  			container.addChild(new Spacer(1));
  		}
@@ -643,12 +643,12 @@ index 1365e5d..31df8c2 100644
  			container.addChild(component);
  		}
  	}
-@@ -2921,6 +2975,7 @@ export class InteractiveMode {
+@@ -3024,6 +3078,7 @@ export class InteractiveMode {
  				this.statusContainer.addChild(this.activeStatusIndicator);
  			}
  		}
 +		this.renderWidgets();
- 		this.ui.setFocus(this.editor as Component);
+ 		if (!dialogOpen) this.ui.setFocus(this.editor as Component);
  		this.ui.requestRender();
  	}
 diff --git a/packages/coding-agent/src/modes/rpc/rpc-types.ts b/packages/coding-agent/src/modes/rpc/rpc-types.ts
@@ -1074,10 +1074,10 @@ index 0000000..8612409
 +	});
 +});
 diff --git a/packages/tui/src/components/editor.ts b/packages/tui/src/components/editor.ts
-index 5d453e3..e9feb22 100644
+index 9fd3677..964ef3c 100644
 --- a/packages/tui/src/components/editor.ts
 +++ b/packages/tui/src/components/editor.ts
-@@ -310,7 +310,7 @@ export class Editor implements Component, Focusable {
+@@ -315,7 +315,7 @@ export class Editor implements Component, Focusable {
  
  	// Store last render geometry for cursor navigation and mouse hit-testing.
  	private lastWidth: number = 80;

@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 05d4bb2..56dec4a 100644
+index 8a03255..de84533 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
-@@ -143,6 +143,8 @@ Treat each custom component instance as belonging to one interaction. Create a n
+@@ -145,6 +145,8 @@ Treat each custom component instance as belonging to one interaction. Create a n
  
  Finish the interaction with the completion callback supplied to the component factory. It resolves the `ctx.ui.custom()` promise and disposes the component. Do not call `OverlayHandle.hide()` on an overlay created by `ctx.ui.custom()`.
  
@@ -12,10 +12,10 @@ index 05d4bb2..56dec4a 100644
  
  ## Apply themes correctly
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index dbd5be6..77152ce 100644
+index 159883a..3c123bb 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
-@@ -242,6 +242,8 @@ export interface ExtensionUIContext {
+@@ -246,6 +246,8 @@ export interface ExtensionUIContext {
  		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
  		options?: {
  			overlay?: boolean;
@@ -38,7 +38,7 @@ index eff762a..dd3e3a3 100644
  	return {
  		transcript,
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index efbf3b6..69bbea0 100644
+index 637ea82..8dcc734 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -1,4 +1,5 @@
@@ -137,7 +137,7 @@ index efbf3b6..69bbea0 100644
  		return super.handleMouse(event);
  	}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 2233000..002da6c 100644
+index d120745..82d1546 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -52,6 +52,7 @@ import {
@@ -148,7 +148,7 @@ index 2233000..002da6c 100644
  } from "@earendil-works/pi-tui";
  import chalk from "chalk";
  import { spawn } from "child_process";
-@@ -245,6 +246,14 @@ function isBorderContentEditor(editor: EditorComponent): editor is BorderContent
+@@ -246,6 +247,14 @@ function isBorderContentEditor(editor: EditorComponent): editor is BorderContent
  	);
  }
  
@@ -163,7 +163,7 @@ index 2233000..002da6c 100644
  /** The border slot a border placement renders in, or undefined for above/below placements. */
  function borderSlotOf(placement: WidgetPlacement): EditorBorderSlot | undefined {
  	switch (placement) {
-@@ -509,7 +518,7 @@ export class InteractiveMode {
+@@ -516,7 +525,7 @@ export class InteractiveMode {
  	private autocompleteProvider: AutocompleteProvider | undefined;
  	private autocompleteProviderWrappers: AutocompleteProviderFactory[] = [];
  	private fdPath: string | undefined;
@@ -172,7 +172,7 @@ index 2233000..002da6c 100644
  	private activeSelectorToken?: object;
  	private activeSelectorDispose?: () => void;
  	private footer: FooterComponent;
-@@ -609,7 +618,8 @@ export class InteractiveMode {
+@@ -617,7 +626,8 @@ export class InteractiveMode {
  	// Extension UI state
  	// Extension dialogs shown in the editor slot (select, confirm, input, editor, inline custom).
  	// The last entry is visible; see pushExtensionDialog().
@@ -182,7 +182,7 @@ index 2233000..002da6c 100644
  	private extensionTerminalInputSubscriptions = new Set<{
  		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
  		unsubscribe: () => void;
-@@ -700,7 +710,7 @@ export class InteractiveMode {
+@@ -708,7 +718,7 @@ export class InteractiveMode {
  			embedWorkingStatus: true,
  		});
  		this.editor = this.defaultEditor;
@@ -191,7 +191,7 @@ index 2233000..002da6c 100644
  		this.editorContainer.addChild(this.editor as Component);
  		this.footerDataProvider = new FooterDataProvider(this.sessionManager.getCwd());
  		this.footer = new FooterComponent(this.session, this.footerDataProvider);
-@@ -2764,9 +2774,9 @@ export class InteractiveMode {
+@@ -2858,9 +2868,9 @@ export class InteractiveMode {
  	 * the previous one again. Every dialog stays answerable, so no dialog promise is left pending,
  	 * and dialogs opened from inside another dialog (for example a confirm from a custom component) work.
  	 */
@@ -203,7 +203,7 @@ index 2233000..002da6c 100644
  		this.showTopExtensionDialog();
  	}
  
-@@ -2781,8 +2791,15 @@ export class InteractiveMode {
+@@ -2875,8 +2885,15 @@ export class InteractiveMode {
  	private showTopExtensionDialog(): void {
  		const top = this.extensionDialogs.at(-1);
  		const component = top?.component ?? this.editor;
@@ -219,7 +219,7 @@ index 2233000..002da6c 100644
  		this.ui.setFocus(component);
  		this.programStatus.setBlocked("extension-dialog", top?.blocked);
  		this.ui.requestRender();
-@@ -2819,7 +2836,7 @@ export class InteractiveMode {
+@@ -2913,7 +2930,7 @@ export class InteractiveMode {
  				() => finish(undefined),
  				{ tui: this.ui, timeout: opts?.timeout, onToggleToolsExpanded: () => this.toggleToolOutputExpansion() },
  			);
@@ -228,7 +228,7 @@ index 2233000..002da6c 100644
  		});
  	}
  
-@@ -2876,7 +2893,7 @@ export class InteractiveMode {
+@@ -2970,7 +2987,7 @@ export class InteractiveMode {
  				() => finish(undefined),
  				{ tui: this.ui, timeout: opts?.timeout },
  			);
@@ -237,7 +237,7 @@ index 2233000..002da6c 100644
  		});
  	}
  
-@@ -2899,7 +2916,7 @@ export class InteractiveMode {
+@@ -2993,7 +3010,7 @@ export class InteractiveMode {
  				undefined,
  				this.settingsManager.getExternalEditorCommand(),
  			);
@@ -246,20 +246,20 @@ index 2233000..002da6c 100644
  		});
  	}
  
-@@ -3008,6 +3025,7 @@ export class InteractiveMode {
+@@ -3106,6 +3123,7 @@ export class InteractiveMode {
  		) => (Component & { dispose?(): void }) | Promise<Component & { dispose?(): void }>,
  		options?: {
  			overlay?: boolean;
 +			retainEditorBorders?: boolean;
  			overlayOptions?: OverlayOptions | (() => OverlayOptions);
  			onHandle?: (handle: OverlayHandle) => void;
- 		},
-@@ -3063,7 +3081,7 @@ export class InteractiveMode {
+ 			blocked?: BlockedStatus;
+@@ -3162,7 +3180,7 @@ export class InteractiveMode {
  						// Expose handle to caller for visibility control
  						options?.onHandle?.(overlayHandle);
  					} else {
--						this.pushExtensionDialog(c);
-+						this.pushExtensionDialog(c, undefined, options?.retainEditorBorders === true);
+-						this.pushExtensionDialog(c, options?.blocked);
++						this.pushExtensionDialog(c, options?.blocked, options?.retainEditorBorders === true);
  					}
  				})
  				.catch((err) => {
@@ -378,7 +378,7 @@ index 66beec6..626f2ca 100644
  		initTheme("dark");
  		const editor = createEditor();
 diff --git a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
-index d296ff2..5dec2cf 100644
+index 91a9d19..0c3187e 100644
 --- a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 +++ b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 @@ -1,5 +1,10 @@
@@ -393,15 +393,16 @@ index d296ff2..5dec2cf 100644
  import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
  import { initTheme } from "../src/modes/interactive/theme/theme.ts";
  
-@@ -18,6 +23,7 @@ type DialogMethods = {
+@@ -18,7 +23,7 @@ type DialogMethods = {
  	showExtensionConfirm(title: string, message: string, opts?: { signal?: AbortSignal }): Promise<boolean>;
  	showExtensionCustom<T>(
  		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
-+		options?: { retainEditorBorders: boolean },
+-		options?: { blocked?: { kind: "permission" | "question" | "auth"; message: string } },
++		options?: { retainEditorBorders?: boolean; blocked?: { kind: "permission" | "question" | "auth"; message: string } },
  	): Promise<T>;
- };
- 
-@@ -32,7 +38,7 @@ function createContext(): DialogContext & DialogMethods {
+ 	setCustomEditorComponent(
+ 		factory: ((tui: unknown, theme: unknown, keybindings: unknown) => Component) | undefined,
+@@ -36,7 +41,7 @@ function createContext(): DialogContext & DialogMethods {
  	});
  	const context: DialogContext = {
  		extensionDialogs: [],
@@ -410,7 +411,7 @@ index d296ff2..5dec2cf 100644
  		editor,
  		focused: undefined,
  		ui: {
-@@ -62,6 +68,66 @@ function visible(context: DialogContext): string {
+@@ -66,6 +71,66 @@ function visible(context: DialogContext): string {
  describe("InteractiveMode extension dialogs", () => {
  	beforeAll(() => initTheme("dark"));
  

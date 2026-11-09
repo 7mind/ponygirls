@@ -7,23 +7,12 @@ Subject: [PATCH] fix(coding-agent): backport border gesture and editor
 Keep press identity through release and synthesized click, revoke stale ownership, and preserve open retained dialogs when replacing the editor. Backport only the corrections and regression/example coverage from a98affb onto the pinned v1.4.0 patched baseline; do not change runtime or catalogs.
 
 Focused tests and scoped source/test typechecking and lint pass. Full check is blocked by unchanged baseline noUnsafeFinally in agent-session.ts; full typecheck also reports unchanged baseline test errors. Parent authorized this documented partial-validation local commit.
----
- packages/coding-agent/docs/tui.md             |   2 +-
- .../extensions/retained-border-details.ts     |  69 ++++++++++
- .../interactive/components/custom-editor.ts   | 103 +++++++++++---
- .../src/modes/interactive/interactive-mode.ts |  25 ++--
- .../test/custom-editor-border-content.test.ts |  20 +++
- .../test/custom-editor-border-gesture.test.ts | 128 ++++++++++++++++++
- ...interactive-mode-extension-dialogs.test.ts |  57 +++++++-
- 7 files changed, 374 insertions(+), 30 deletions(-)
- create mode 100644 packages/coding-agent/examples/extensions/retained-border-details.ts
- create mode 100644 packages/coding-agent/test/custom-editor-border-gesture.test.ts
 
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 56dec4a..9aa915e 100644
+index de84533..1541a6a 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
-@@ -145,7 +145,7 @@ Finish the interaction with the completion callback supplied to the component fa
+@@ -147,7 +147,7 @@ Finish the interaction with the completion callback supplied to the component fa
  
  For an inline detail view opened by an editor-border badge, pass `{ retainEditorBorders: true }` to `ctx.ui.custom()`. The editor's visible border widgets remain above/below the view, without showing the draft or moving keyboard focus to the hidden editor. A second badge click can call that interaction's completion callback to close it. Keep one pending/open interaction per badge and revoke its callback on session shutdown; repeated clicks must not stack duplicate views. Empty border rows take no space. The option is ignored for overlays and custom editors without `createBorderComponent()` support. Nested confirmation/input dialogs do not retain the rows. Mouse interaction still requires fullscreen mode; preserve command/shortcut and keyboard dismissal paths.
  
@@ -108,7 +97,7 @@ index 0000000..3366561
 +	});
 +}
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index 69bbea0..f40b45d 100644
+index 8dcc734..18a91ff 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -40,6 +40,11 @@ export interface BorderContentSpan {
@@ -262,7 +251,7 @@ index 69bbea0..f40b45d 100644
  		}
  		return super.handleMouse(event);
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 002da6c..a5a897e 100644
+index d5359e9..3f6aeaf 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -51,8 +51,8 @@ import {
@@ -275,7 +264,7 @@ index 002da6c..a5a897e 100644
  } from "@earendil-works/pi-tui";
  import chalk from "chalk";
  import { spawn } from "child_process";
-@@ -2796,10 +2796,15 @@ export class InteractiveMode {
+@@ -2895,10 +2895,15 @@ export class InteractiveMode {
  		this.editorContainer.clear();
  		const editor = this.editor;
  		const retainBorders = top?.retainEditorBorders === true;
@@ -294,34 +283,11 @@ index 002da6c..a5a897e 100644
  		this.ui.setFocus(component);
  		this.programStatus.setBlocked("extension-dialog", top?.blocked);
  		this.ui.requestRender();
-@@ -2930,8 +2935,11 @@ export class InteractiveMode {
- 		// Save text from current editor before switching
- 		const currentText = this.editor.getText();
- 
--		this.disposeActiveSelector();
--		this.editorContainer.clear();
-+		const dialogOpen = this.extensionDialogs.length > 0;
-+		if (!dialogOpen) {
-+			this.disposeActiveSelector();
-+			this.editorContainer.clear();
-+		}
- 
- 		if (factory) {
- 			// Create the custom editor with tui, theme, and keybindings
-@@ -2989,7 +2997,7 @@ export class InteractiveMode {
- 			this.editor = this.defaultEditor;
- 		}
- 
--		this.editorContainer.addChild(this.editor as Component);
-+		if (!dialogOpen) this.editorContainer.addChild(this.editor as Component);
- 		if (this.activeStatusIndicator) {
- 			this.statusContainer.clear();
- 			this.activeWorkingIndicatorEmbedded = this.setEditorWorkingStatusIndicator(this.activeStatusIndicator);
-@@ -2998,7 +3006,8 @@ export class InteractiveMode {
+@@ -3101,7 +3106,8 @@ export class InteractiveMode {
  			}
  		}
  		this.renderWidgets();
--		this.ui.setFocus(this.editor as Component);
+-		if (!dialogOpen) this.ui.setFocus(this.editor as Component);
 +		if (dialogOpen) this.showTopExtensionDialog();
 +		else this.ui.setFocus(this.editor as Component);
  		this.ui.requestRender();
@@ -493,7 +459,7 @@ index 0000000..2a4e865
 +	});
 +});
 diff --git a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
-index 5dec2cf..d2b3467 100644
+index 0c3187e..130d663 100644
 --- a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 +++ b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 @@ -1,4 +1,4 @@
@@ -502,17 +468,7 @@ index 5dec2cf..d2b3467 100644
  import { beforeAll, describe, expect, it, vi } from "vitest";
  import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
  import { KeybindingsManager } from "../src/core/keybindings.ts";
-@@ -25,6 +25,9 @@ type DialogMethods = {
- 		factory: (tui: unknown, theme: unknown, keybindings: unknown, done: (result: T) => void) => Component,
- 		options?: { retainEditorBorders: boolean },
- 	): Promise<T>;
-+	setCustomEditorComponent(
-+		factory: ((tui: unknown, theme: unknown, keybindings: unknown) => Component) | undefined,
-+	): void;
- };
- 
- function createContext(): DialogContext & DialogMethods {
-@@ -122,12 +125,62 @@ describe("InteractiveMode extension dialogs", () => {
+@@ -125,12 +125,62 @@ describe("InteractiveMode extension dialogs", () => {
  			return new Text(Array.from({ length: 30 }, (_, i) => `detail ${i}`).join("\n"), 0, 0);
  		}, { retainEditorBorders: true });
  		await vi.waitFor(() => expect(context.editorContainer.children.length).toBe(3));
@@ -576,6 +532,3 @@ index 5dec2cf..d2b3467 100644
  	// Regression for #11166: a second dialog replaced the first one and the first promise never settled.
  	it("shows the earlier confirm again after the later one is answered", async () => {
  		const context = createContext();
--- 
-2.56.0
-

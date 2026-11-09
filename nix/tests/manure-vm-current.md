@@ -16,7 +16,7 @@ These are the original fixture's behavioral assertions, unchanged in intent:
 | Unauthenticated health through TLS; HTTP→HTTPS301 | Generated `Command.Version` on `/api/current`; same redirect status and exact destination path. Removed REST health is not accepted. |
 | Direct invalid Host400, valid Host without trusted TLS403 | Current Version probes decode `BadHost` / `TlsRequired`, including reserved pre-envelope correlation ID. |
 | Trusted peer's X-Forwarded-Proto honored; X-Forwarded-Host ignored; strict untrusted peer cannot spoof TLS | Same edge/strict cases through current commands and exact statuses/enum errors. |
-| Loaded digest authenticates; cookie Whoami; login Origin required; bad token401 | `auth`: generated Login/Whoami, actual secure/HttpOnly/host-only cookie, missing-Origin403, invalid-token401, no rejection cookie. |
+| Loaded digests authenticate; human cookie Whoami; agent browser login forbidden; login Origin required; bad token401 | `auth`: agent bearer Whoami200/Agent remains separate from human Login200/Human and cookie Whoami200/Human; actual secure/HttpOnly/host-only cookie; agent Login403/Forbidden, missing-Origin403/Forbidden, invalid-token401/Unauthorized, no rejection cookies. Existing agent/HM/CLI credential is unchanged. |
 | Full internal handoff init/chunk/publish/grant/redeem/content bytes | Installed `ManureClient` current generated commands/raw chunk route; current ContentEnvelope redemption and exact `hello manure` bytes. |
 | Launcher runtime config has credential paths, not digest material | Original two config grep assertions unchanged. |
 | R5 manifest >1MiB but <4MiB admitted; >4MiB413 | `body-bounds`: generated InitUpload envelopes with the original2000/6000 manifest-entry corpus, same byte bounds/statuses. |
@@ -73,12 +73,16 @@ existing actual-client live-resume proofs retain their independent scope.
 
 ## Validation and parent handoff
 
-Local checks are narrow:15 pure current-response/evidence-guard cases, Nix parse,
+Local checks are narrow:17 pure current-response/evidence-guard cases, Nix parse,
 evaluated Python-driver AST and actual Nix option/derivation evaluation. They are
 not VM execution. Pure negatives include old health JSON, wrong correlation/error,
 unsafe cookies, missing offset0, acknowledged-offset substitution with the SAME
 count, duplicate/omitted offsets, wrong artifact,499/failure, extra/duplicate log
-fields, empty/complete baseline and a cursor splitting a record.
+fields, empty/complete baseline and a cursor splitting a record. Unexpected HTTP
+statuses report only expected/actual status, the decoded result class and typed
+error code (or explicit invalid-envelope), never response messages, bodies or
+credentials. Pure controls verify this diagnostic redaction; they do not prove
+browser authentication or replace the actual VM run.
 
 The parent must merge the sole Nix owner's private provider-bootstrap aperture
 fix before boot (the old stock dataDir ReadWritePaths fails226/NAMESPACE before

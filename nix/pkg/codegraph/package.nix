@@ -34,7 +34,7 @@ buildNpmPackage {
   npmDeps = fetchNpmDeps {
     inherit src;
     # Hash of the pinned main rev's package-lock.json closure. Refresh on bumps.
-    hash = "sha256-J8viY38M/loCoJmpxEOIApN6cpf6sU2aa80knVNRSvI=";
+    hash = "sha256-5QPaaLBY3ORU1gFsFE+tkCbhC/Vd8YQ2z//xqYouUls=";
   };
 
   nodejs = nodejs_24;
@@ -43,14 +43,7 @@ buildNpmPackage {
   npmInstallFlags = [ "--ignore-scripts" ];
   dontNpmRebuild = true;
 
-  # The nixpkgs npm hook still selects root Vite 5 instead of UI Vite 7,
-  # even after upstream changed build:ui to run from the UI directory.
-  postPatch = ''
-    substituteInPlace package.json \
-      --replace-fail \
-        'cd ui && npm run build && cd .. && node scripts/check-ui-build.mjs' \
-        '(cd ui && node node_modules/vite/bin/vite.js build) && node scripts/check-ui-build.mjs'
-  '' + lib.optionalString stdenv.hostPlatform.isLinux ''
+  postPatch = lib.optionalString stdenv.hostPlatform.isLinux ''
     # Absolute helper path is part of the runtime closure, including when the
     # module is required directly (not through the CLI wrapper).
     substituteInPlace src/kernel-lock.ts \

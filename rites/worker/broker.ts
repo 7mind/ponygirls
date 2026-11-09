@@ -19,7 +19,7 @@ import {
   createWriteTool,
   type ToolDefinition,
 } from "@earendil-works/pi-coding-agent";
-import type { AgentTool, AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { KILL_GRACE_MS } from "./bounds.js";
 import { TreeKiller } from "./kill.js";
@@ -67,7 +67,7 @@ export class ToolBroker {
   }
 
   private definition(builtin: BuiltinToolName): ToolDefinition {
-    const metadata: AgentTool = createTool(builtin);
+    const metadata = createTool(builtin);
     const definition: ToolDefinition = {
       name: `rites_${builtin}`,
       label: metadata.label,
@@ -223,7 +223,7 @@ function stringListProperty(source: object, name: string): string[] | undefined 
   return undefined;
 }
 
-function createTool(builtin: BuiltinToolName): AgentTool {
+function createTool(builtin: BuiltinToolName) {
   switch (builtin) {
     case "read":
       return createReadTool("/workspace");

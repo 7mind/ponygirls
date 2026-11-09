@@ -167,9 +167,9 @@
    );
  }
 
-@@ -258,11 +258,34 @@
+@@ -258,11 +309,34 @@
  }
- 
+
  export function assertNoRebuild(root: string): void {
 +  if (process.platform === 'linux') {
 +    const pidPath = getWriterPidPath(root, 'rebuild.pid');
@@ -186,7 +186,7 @@
 +  }
    if (isRebuildInProgress(root)) throw new RebuildInProgressError();
  }
- 
+
  /** Whether another live process holds the project's rebuild lock (`codegraph index`). */
  export function isRebuildInProgress(root: string): boolean {
 +  if (process.platform === 'linux') {
@@ -209,7 +209,7 @@
  /**
   * CodeGraph Utilities
   *
-@@ -272,6 +273,7 @@
+@@ -470,6 +471,7 @@
  export class FileLock {
    private lockPath: string;
    private held = false;
@@ -217,8 +217,8 @@
 
    constructor(lockPath: string) {
      this.lockPath = lockPath;
-@@ -281,6 +283,22 @@
-    * Acquire the lock. Throws if the lock is held by another live process.
+@@ -486,6 +488,22 @@
+    * write as the only writer.
     */
    acquire(): void {
 +    if (process.platform === 'linux') {
@@ -237,10 +237,10 @@
 +        return;
 +      } catch (err) { releaseKernelLock(fd); throw err; }
 +    }
-     // Check for existing lock
-     if (fs.existsSync(this.lockPath)) {
-       try {
-@@ -327,6 +345,13 @@
+     const refusal = this.tryAcquire(0);
+     if (refusal) {
+       const who = refusal.state === 'held' && refusal.pid !== undefined ? ` (PID ${refusal.pid})` : '';
+@@ -591,6 +609,13 @@
     */
    release(): void {
      if (!this.held) return;
@@ -261,7 +261,7 @@
  /**
   * Directory Management
   *
-@@ -976,7 +977,34 @@
+@@ -1058,7 +1059,34 @@
      return;
    }
 
@@ -299,7 +299,7 @@
 
 --- a/src/bin/codegraph.ts
 +++ b/src/bin/codegraph.ts
-@@ -2298,8 +2298,21 @@
+@@ -2479,8 +2479,21 @@
        const lockPath = path.join(getCodeGraphDir(projectPath), 'codegraph.lock');
        let removed = false;
        if (fs.existsSync(lockPath)) {

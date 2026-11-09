@@ -23,11 +23,17 @@ let
   # never a real secret.
   testToken = lib.concatStrings (lib.genList (_: "A") 43);
   testDigest = builtins.hashString "sha256" testToken;
+  testHumanToken = "B" + lib.concatStrings (lib.genList (_: "A") 42);
+  testHumanDigest = builtins.hashString "sha256" testHumanToken;
 
   mkUser = {
     w-agent = {
       type = "agent";
       tokens.default.tokenHashFile = "/etc/manure-test/token.sha256";
+    };
+    w-human = {
+      type = "human";
+      tokens.default.tokenHashFile = "/etc/manure-test/human-token.sha256";
     };
   };
 
@@ -85,6 +91,7 @@ let
       hmEval.home.path
     ];
     environment.etc."manure-test/token.sha256".text = testDigest + "\n";
+    environment.etc."manure-test/human-token.sha256".text = testHumanDigest + "\n";
     # Harness inputs consumed INSIDE sandboxes (token bind, ad-hoc guard
     # bind) live OUTSIDE /etc as regular files: bwrap refuses symlink
     # destinations (all of /etc on NixOS). Pure reads (guardlib, probe,
@@ -97,6 +104,8 @@ let
       mkdir -p /srv/manure-test
       printf '%s' '${testToken}' > /srv/manure-test/token.raw
       chmod 600 /srv/manure-test/token.raw
+      printf '%s' '${testHumanToken}' > /srv/manure-test/human-token.raw
+      chmod 600 /srv/manure-test/human-token.raw
       cat > /srv/manure-test/hm-guard.sh <<'GUARDEOF'
 ${hmGuard.command}
 GUARDEOF
@@ -310,7 +319,7 @@ assert hmSrc.rev == "7834e82588860aaf780cec1366524456a70898d7";
     strict.succeed(probe + "version --base http://127.0.0.1:47329 --host strict.example.test --xfp https --expect-status 403 --expect-error TlsRequired")
     strict.fail(probe + "version --base http://127.0.0.1:47329 --host strict.example.test --xfp https")
 
-    # Current Login/Whoami + secure cookie, missing Origin and invalid token.
+    # Agent bearer identity; human Login/Whoami + secure cookie; rejected logins.
     edge.succeed(probe + "auth")
     # Real portable client init/raw-chunk/publish/grant + typed content redemption.
     edge.succeed(probe + "handoff")

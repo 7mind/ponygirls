@@ -45,8 +45,7 @@ import { defineTool, type ExtensionAPI, type ExtensionContext } from "@earendil-
 import { CustomViewToggle } from "@ponygirls/pi-ui";
 import { SearchService } from "./search-service.js";
 import { WebSearchView } from "./websearch-view.js";
-import { StringEnum } from "@earendil-works/pi-ai";
-import { Type } from "typebox";
+import { Type, type TUnsafe } from "typebox";
 
 import type { BackendConfig, SearchConfig } from "./types.js";
 import { getAgentDir, clearCooldowns, validateUrl } from "./utils.js";
@@ -63,6 +62,11 @@ import { SharedRuntime, boundedOperation } from "./engine/runtime.js";
 import { DEFAULT_CONCURRENCY, resolveConcurrency, resolveTimeouts } from "./engine/policy.js";
 
 
+
+// Keep enum schemas in TypeBox's type system while preserving flat JSON Schema enums.
+function StringEnum<T extends readonly string[]>(values: T, options: { description: string }): TUnsafe<T[number]> {
+	return Type.Unsafe<T[number]>({ type: "string", enum: [...values], description: options.description });
+}
 
 interface InputOptions { placeholder: string; validate?: (value: string) => string | undefined }
 async function setupInput(ctx: ExtensionContext, label: string, options: InputOptions): Promise<string | undefined> {

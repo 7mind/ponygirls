@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext, ExtensionToolContext } from "@earendil-works/pi-coding-agent";
 import searchHub from "../extensions/search-hub.js";
+import { Value } from "typebox/value";
 import type { NativeEngine } from "../extensions/native.js";
 import { NativeSearchError, NativeUsageUnavailableError } from "../extensions/native.js";
 import { refreshConfig, roundRobinIndex } from "../extensions/config.js";
@@ -206,6 +207,36 @@ describe("search tool service", () => {
     state.native[0].search = async () => { throw new NativeSearchError("hosted tool unavailable", usage); };
     const result = await new SearchService(new SharedRuntime(DEFAULT_CONCURRENCY)).search({ query: "q", backend: "native:openai" }, undefined, ctx);
     expect(result.isError).toBe(true); expect(result.usage).toEqual(usage);
+  });
+  it("registers flat TypeBox enums that retain every web tool restriction", () => {
+    const tools = new Map<string, Parameters<ExtensionAPI["registerTool"]>[0]>();
+    const pi = {
+      registerTool: (tool: Parameters<ExtensionAPI["registerTool"]>[0]) => tools.set(tool.name, tool),
+      registerCommand: () => {}, on: () => {},
+    } as unknown as ExtensionAPI;
+    searchHub(pi);
+    const search = tools.get("web_search")!.parameters;
+    const read = tools.get("web_read")!.parameters;
+    expect(search).toMatchObject({ properties: {
+      backend: { type: "string", enum: ["duckduckgo", "auto"] },
+      rerank: { type: "string", enum: ["rrf", "lexical"] },
+    } });
+    expect(read).toMatchObject({ properties: {
+      mode: { type: "string", enum: ["rush", "smart"] },
+      reader: { type: "string", enum: ["jina", "sofya", "firecrawl", "exa", "exa_mcp"] },
+    } });
+    for (const backend of ["duckduckgo", "auto"]) {
+      for (const rerank of ["rrf", "lexical"]) expect(Value.Check(search, { query: "q", backend, rerank })).toBe(true);
+    }
+    for (const invalid of [{ backend: "unknown" }, { backend: 1 }, { rerank: "unknown" }, { rerank: 1 }]) {
+      expect(Value.Check(search, { query: "q", ...invalid })).toBe(false);
+    }
+    for (const reader of ["jina", "sofya", "firecrawl", "exa", "exa_mcp"]) {
+      for (const mode of ["rush", "smart"]) expect(Value.Check(read, { url: "https://example.org", reader, mode })).toBe(true);
+    }
+    for (const invalid of [{ reader: "unknown" }, { reader: 1 }, { mode: "unknown" }, { mode: 1 }]) {
+      expect(Value.Check(read, { url: "https://example.org", ...invalid })).toBe(false);
+    }
   });
   it("never writes status-bar entries and preserves a disabled search tool on refresh", async () => {
     const tools = new Map<string, Parameters<ExtensionAPI["registerTool"]>[0]>();

@@ -276,7 +276,7 @@
        if (settled) return;
 --- a/src/mcp/daemon-registry.ts
 +++ b/src/mcp/daemon-registry.ts
-@@ -28,7 +28,6 @@
+@@ -27,7 +27,6 @@
    getDaemonSocketCandidates,
    decodeLockInfo,
    canProbeDaemonIdentity,
@@ -284,7 +284,7 @@
    type DaemonLockInfo,
  } from './daemon-paths';
  import {
-@@ -40,11 +39,14 @@
+@@ -39,11 +38,14 @@
    writerLockHeldMessage,
    type WriterLockInfo,
  } from './writer-lock';
@@ -300,7 +300,7 @@
    /** Realpath'd project root the daemon serves. */
    root: string;
    pid: number;
-@@ -92,7 +94,7 @@
+@@ -93,7 +95,7 @@
  export function registerDaemon(rec: DaemonRecord): void {
    try {
      fs.mkdirSync(getRegistryDir(), { recursive: true });
@@ -309,7 +309,7 @@
    } catch {
      /* best-effort — list's liveness prune tolerates a missing record */
    }
-@@ -131,6 +133,9 @@
+@@ -132,6 +134,9 @@
        rec = null;
      }
      const valid = rec && typeof rec.pid === 'number' && typeof rec.root === 'string';
@@ -319,7 +319,7 @@
      if (valid && isProcessAlive(rec!.pid)) {
        live.push(rec!);
      } else if (prune) {
-@@ -168,7 +173,9 @@
+@@ -169,7 +174,9 @@
    // A daemon owns writer.pid before binding or relocating its socket. Claiming
    // the writer slot therefore freezes every legitimate daemon artifact writer
    // while we compare the inspected lock snapshot and clean it up.
@@ -330,7 +330,7 @@
    const claim = tryAcquireWriterLock(root, 'cleanup');
    if (claim.kind === 'taken') return false;
 
-@@ -182,6 +189,11 @@
+@@ -183,6 +190,11 @@
  /** The removal behind {@link cleanupDaemonArtifacts}, for a caller already holding the writer slot. */
  function removeDaemonArtifacts(root: string, expectedLockContents: string | null): boolean {
    const pidPath = getDaemonPidPath(root);
@@ -342,7 +342,7 @@
    if (expectedLockContents === null) {
      if (fs.existsSync(pidPath)) return false;
    } else {
-@@ -204,6 +216,7 @@
+@@ -205,6 +217,7 @@
      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') return false;
    }
    return true;
@@ -350,7 +350,7 @@
  }
 
  /** Remove daemon artifacts only when no matching daemon answers the socket hello. */
-@@ -219,6 +232,10 @@
+@@ -220,6 +233,10 @@
      lockContents = fs.readFileSync(pidPath, 'utf8');
      info = decodeLockInfo(lockContents);
    } catch { /* missing/corrupt */ }
@@ -361,7 +361,7 @@
    if (info && isProcessAlive(info.pid)) {
      if (canProbeDaemonIdentity(info)) {
        if (await probeDaemonIdentity(info)) return false;
-@@ -318,6 +335,13 @@
+@@ -319,6 +336,13 @@
      if (rec) identity = rec;
    }
 
@@ -375,7 +375,7 @@
    if (pid == null) {
      cleanupDaemonArtifacts(root, lockContents);
      return { root, pid: null, outcome: 'no-daemon' };
-@@ -364,6 +388,9 @@
+@@ -365,6 +389,9 @@
    let holder: number | null = null;
    try {
      const current = decodeLockInfo(fs.readFileSync(lockPath, 'utf8'));
@@ -385,7 +385,7 @@
      if (current && isProcessAlive(current.pid)) holder = current.pid;
    } catch { /* no lock now */ }
    if (holder !== null && result.pid !== null && holder !== result.pid) {
-@@ -387,7 +414,7 @@
+@@ -388,7 +415,7 @@
    // lock, so that is what kept it.
    const writer = readWriterLock(root);
    const writerPath = getWriterPidPath(root);
@@ -394,7 +394,7 @@
      if (writer.pid === holder) {
        return `The project's writer lock (${writerPath}) names process ${holder}, which is not a CodeGraph process, ` +
          `so it is stale: delete ${writerPath}, ${retry}.`;
-@@ -418,7 +445,7 @@
+@@ -419,7 +446,7 @@
      try { return fs.readFileSync(getDaemonPidPath(root), 'utf8') === lockContents; }
      catch { return lockContents === null; }
    };
@@ -403,7 +403,7 @@
 
    // POSIX: SIGTERM runs the daemon's graceful shutdown. Windows: TerminateProcess
    // (no graceful path), so we always sweep artifacts ourselves below.
-@@ -494,7 +521,16 @@
+@@ -495,7 +522,16 @@
    }
    const identity = decodeLockInfo(lockContents);
    if (!identity) return { root, pid: null, outcome: 'unverified' };
@@ -429,8 +429,8 @@
 +import { namespaceIdentity } from '../kernel-lock';
  import * as fs from 'fs';
  import * as net from 'net';
- import { HOST_PPID_ENV } from '../extraction/wasm-runtime-flags';
-@@ -215,6 +216,7 @@
+ import { findNearestCodeGraphRoot } from '../directory';
+@@ -221,6 +222,7 @@
  function sendClientHello(socket: net.Socket): void {
    const clientHello: DaemonClientHello = {
      codegraph_client: 1,
@@ -438,7 +438,7 @@
      pid: process.pid,
      hostPid: parseHostPpid(process.env[HOST_PPID_ENV]) ?? EARLY_PPID,
    };
-@@ -646,6 +648,11 @@
+@@ -686,6 +688,11 @@
            reject(new Error('daemon hello missing required fields'));
            return;
          }
@@ -518,7 +518,7 @@
  /** Shared synchronization ownership for projects accessed by MCP engines (#1835). */
  import { realpathSync } from 'fs';
  import * as path from 'path';
-@@ -148,6 +149,7 @@
+@@ -149,6 +150,7 @@
        const current = readWriterLock(root);
        if (!current || current.pid !== writer.existing.pid) return activate(root, project);
        if (current.ready !== false) break;
@@ -576,7 +576,7 @@
      // Another process owns updates. A fallback may still serve read-only WAL
      // queries without claiming a second writer or starting a watcher (#1963).
      return readOnlyFallback(`writer lock held by PID ${writer.pid} (${writer.mode} mode)`);
-@@ -408,6 +418,9 @@
+@@ -412,6 +422,9 @@
      );
      return 'stopped';
    }
@@ -586,7 +586,7 @@
    if (result.outcome === 'still-running') {
      process.stderr.write(`[CodeGraph MCP] Asked ${daemon} serving this project to stop, but it has not exited yet.\n`);
    } else if (answered) {
-@@ -437,7 +450,7 @@
+@@ -441,7 +454,7 @@
      if (!heldForUs()) return false;
      let holder: number | undefined;
      try { holder = decodeLockInfo(fs.readFileSync(getDaemonPidPath(root), 'utf8'))?.pid; } catch { holder = undefined; }
@@ -595,7 +595,7 @@
      await sleep(25);
    }
    return false;
-@@ -591,13 +604,20 @@
+@@ -595,13 +608,20 @@
      const writerRoot = resolveDaemonRoot(this.projectPath);
      if (writerRoot) {
        assertNoRebuild(writerRoot);
@@ -622,7 +622,7 @@
      }
 
      this.engine = new MCPEngine({ queryPool: true, queryPoolDefaultMax: DIRECT_QUERY_POOL_MAX });
-@@ -674,6 +694,10 @@
+@@ -686,6 +706,10 @@
        // Taken. If the holder is alive, another daemon already serves (or is
        // binding) — we're redundant; exit cleanly so the launcher proxies to it.
        const existing = lock.existing;
@@ -635,15 +635,15 @@
          // Give a newly-elected daemon time to bind, then require its socket hello
 --- a/src/mcp/daemon-paths.ts
 +++ b/src/mcp/daemon-paths.ts
-@@ -29,6 +29,7 @@
+@@ -28,6 +28,7 @@
+  * converge on whichever the daemon bound with zero coordination.
   */
 
- import * as crypto from 'crypto';
 +import * as fs from 'fs';
  import * as net from 'net';
  import * as os from 'os';
  import * as path from 'path';
-@@ -55,9 +56,40 @@
+@@ -56,9 +57,40 @@
   * function of the root means the daemon and the proxy compute the identical
   * path without talking to each other.
   */
@@ -686,7 +686,7 @@
 
  /**
   * Ordered socket / named-pipe path candidates the daemon should try to bind (and
-@@ -79,8 +111,8 @@
+@@ -80,7 +112,7 @@
    }
    const inProject = path.join(getCodeGraphDir(projectRoot), 'daemon.sock');
    const tmp = tmpdirSocketPath(projectRoot);
@@ -694,5 +694,3 @@
 +  if (Buffer.byteLength(inProject, 'utf8') > POSIX_SOCKET_PATH_LIMIT) return [tmp];
    return [inProject, tmp];
  }
-
- /**

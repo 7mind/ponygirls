@@ -31,6 +31,7 @@ from manure.client import ManureClient, read_token_file
 
 API = "https://api.example.test"
 TOKEN_FILE = "/srv/manure-test/token.raw"
+HUMAN_TOKEN_FILE = "/srv/manure-test/human-token.raw"
 ZERO = UUID(int=0)
 
 
@@ -59,7 +60,16 @@ class GuestTransport:
 
 
 def checked_reply(status, payload, request_id, expected, expected_status=200, error=None, pre_envelope=False):
-    assert status == expected_status, "unexpected current HTTP status"
+    if status != expected_status:
+        variant, code = "invalid-envelope", "none"
+        try:
+            reply = cp.decode(cp.ServerEnvelope, cp.loads(payload)).result
+            variant = type(reply).__name__
+            if isinstance(reply, cp.Result_Error):
+                code = reply.failure.code.value
+        except cp.ProtocolError:
+            pass
+        raise AssertionError(f"unexpected current HTTP status: expected={expected_status} actual={status} result={variant} error={code}")
     result = cp.decode(cp.ServerEnvelope, cp.loads(payload))
     assert result.requestId == request_id or (pre_envelope and result.requestId == ZERO and isinstance(result.result, cp.Result_Error)), "uncorrelated current response"
     if error is not None:
@@ -106,13 +116,17 @@ def cookie(headers, name, same_site):
 
 def auth_probe():
     wire = Wire()
-    token = read_token_file(TOKEN_FILE)
-    result, headers = wire.command(cp.Command_Login(token), cp.Result_Identity, headers={"Origin": API})
+    agent_token = read_token_file(TOKEN_FILE)
+    human_token = read_token_file(HUMAN_TOKEN_FILE)
+    result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, bearer=True)
     assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-agent", "default", cp.PrincipalType.Agent)
+    result, headers = wire.command(cp.Command_Login(human_token), cp.Result_Identity, headers={"Origin": API})
+    assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-human", "default", cp.PrincipalType.Human)
     session = cookie(headers, "__Host-manure", "Strict")
     result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, headers={"Cookie": session})
-    assert result.principal.userId == "w-agent"
-    for command, h, status, error in ((cp.Command_Login(token), {}, 403, "Forbidden"),
+    assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-human", "default", cp.PrincipalType.Human)
+    for command, h, status, error in ((cp.Command_Login(agent_token), {"Origin": API}, 403, "Forbidden"),
+                                    (cp.Command_Login(human_token), {}, 403, "Forbidden"),
                                     (cp.Command_Login("x"), {"Origin": API}, 401, "Unauthorized")):
         _, rejected = wire.command(command, cp.Result_Identity, headers=h, status=status, error=error)
         assert "set-cookie" not in {k.lower(): v for k, v in rejected.items()}, "rejected login sets cookie"
