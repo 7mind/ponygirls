@@ -88,6 +88,7 @@ class CasePolicyReport:
     case_adequacy: tuple[bool | None, ...]
     adequate: bool | None
     complete: bool
+    required_evidence_complete: bool
 
 
 class CandidateInvoker(Protocol):
@@ -212,4 +213,6 @@ def apply_policy(report: CaseReport, require_unchanged_arguments: bool) -> CaseP
         else:
             values.append(True)
     adequate = False if any(value is False for value in values) else True if values and all(value is True for value in values) else None
-    return CasePolicyReport(tuple(values), adequate, bool(values) and all(value is not None for value in values))
+    evidence_complete = bool(report.cases) and all(item.adequate is not None
+                        and (not require_unchanged_arguments or item.arguments_mutated is not None) for item in report.cases)
+    return CasePolicyReport(tuple(values), adequate, bool(values) and all(value is not None for value in values), evidence_complete)

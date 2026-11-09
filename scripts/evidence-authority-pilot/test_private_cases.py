@@ -167,6 +167,7 @@ class RealCases(InvocationContract, unittest.TestCase):
         self.assertFalse(report.cases[0].arguments_mutated)
         self.assertTrue(apply_policy(report, True).adequate)
         self.assertTrue(apply_policy(report, True).complete)
+        self.assertTrue(apply_policy(report, True).required_evidence_complete)
 
     def test_argument_mutation_is_observed_even_before_expected_exception(self):
         spec = case('mutation-before-error', 'f', [[1]], {'kind': 'exception', 'type': 'ValueError'})
@@ -297,6 +298,16 @@ class ComparisonControls(unittest.TestCase):
         self.assertFalse(policy.adequate); self.assertFalse(policy.complete)
         self.assertEqual(policy.case_adequacy, (False, None))
         with self.assertRaises(PrivateCaseError): apply_policy(report, 1)
+
+    def test_determinate_policy_failure_does_not_certify_all_components_observed(self):
+        spec = case('known-failure', 'f', [], {'kind': 'value', 'value': 2})
+        report = evaluate_cases((spec,), MemoryInvocation({call_bytes(spec): b'{"kind":"value","value":0}'}))
+        required = apply_policy(report, True)
+        self.assertFalse(required.adequate); self.assertTrue(required.complete)
+        self.assertFalse(required.required_evidence_complete)
+        functional_only = apply_policy(report, False)
+        self.assertFalse(functional_only.adequate); self.assertTrue(functional_only.complete)
+        self.assertTrue(functional_only.required_evidence_complete)
 
     def test_empty_case_set_and_duplicate_ids_do_not_manufacture_coverage(self):
         empty = evaluate_cases((), MemoryInvocation({}))
