@@ -166,6 +166,18 @@ in
             ''
               ## manure file & directory hosting
 
+              Prefer Manure for artifacts produced for human consumption:
+              summaries, briefs, reports, slides, diagrams, images, and other
+              deliverables. Publish the artifact and return its link, with a
+              concise explanation in chat. This is a preference, not a
+              requirement to turn every short chat answer into a file.
+              Respect user restrictions and applicable publication, privacy,
+              visibility, and expiry policies; this preference does not
+              authorize publishing secrets or private source data. Do not
+              assume public access is appropriate. If Manure is unavailable
+              or publication is not authorized, provide the artifact locally
+              and state that it was not published.
+
               `manure` CLI + `manure-mcp` stdio tools publish files and
               directories as artifacts (`internal` | `external(password)` |
               `public`, optional TTL). Connection: `MANURE_URL` plus the

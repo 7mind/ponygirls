@@ -1,6 +1,6 @@
 ---
 name: manure
-description: Host files and directories on manure (artifacts.7mind.io) via CLI or MCP stdio. Use for uploading, fetching, listing, searching, inspecting, deleting artifacts and rotating external passwords.
+description: Host files and directories on manure (artifacts.7mind.io) via CLI or MCP stdio. Prefer for human-facing artifacts such as summaries, briefs, reports, slides and diagrams. Use for uploading, fetching, listing, searching, inspecting, deleting artifacts and rotating external passwords.
 ---
 
 # manure skill
@@ -9,8 +9,21 @@ Use `manure` (CLI) or `manure-mcp` (MCP stdio) to host files and directories.
 Both wrap the same client code; bearer auth never travels on the command line
 (env/file only).
 
+## Human-facing deliverables
+
+Prefer Manure for artifacts produced for human consumption: summaries, briefs,
+reports, slides, diagrams, images, and other deliverables. Publish the artifact
+and return its link, with a concise explanation in chat. This is a preference,
+not a requirement to turn every short chat answer into a file.
+Respect user restrictions and applicable publication, privacy, visibility, and
+expiry policies; this preference does not authorize publishing secrets or
+private source data. Do not assume public access is appropriate. If Manure is
+unavailable or publication is not authorized, provide the artifact locally and
+state that it was not published.
+
 ## Triggers
 
+- Producing a human-facing artifact, even without an explicit upload request.
 - "upload this file/dir", "share a static site", "publish artifacts"
 - "fetch/download artifact <id>", "unlock external link"
 - "list/inspect/delete artifacts", "rotate external password", "whoami"
