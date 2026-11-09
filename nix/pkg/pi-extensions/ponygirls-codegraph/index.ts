@@ -54,7 +54,7 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     const controller = statusView;
     const runtime = workspace;
     ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
-      render: () => [theme.bg("selectedBg", ` ${BADGE_GLYPH}: ${label}${detail} `)],
+      render: () => [theme.bg("selectedBg", ` ${BADGE_GLYPH} ${label}${detail} `)],
       renderCompact: () => renderCompactBadge(theme, state.phase, querying),
       invalidate: () => {},
       handleMouse: (event) => {

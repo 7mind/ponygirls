@@ -64,8 +64,8 @@ test("the footer status names the total and only nonzero states", () => {
   const views = [view(), view({ id: "a-2", path: "/root/b", observed: "queued", pendingIntent: "queued" })];
   assert.equal(widgetLine(views), "agents 2 · running 1 · queued 1");
   assert.equal(widgetLine([view({ observed: "settled", pendingIntent: "settled" })]), "agents 1");
-  assert.equal(badgeLine(views), "👥 2 · running 1 · queued 1");
-  assert.equal(badgeLine([view({ pendingIntent: "awaiting parent reply" })]), "👥 1 · running 1 · questions 1");
+  assert.equal(badgeLine(views), "👥 2 · ⚙️ 1 · ⏳ 1");
+  assert.equal(badgeLine([view({ pendingIntent: "awaiting parent reply" })]), "👥 1 · ⚙️ 1 · ❓ 1");
   assert.deepEqual(countTree(views), { running: 1, queued: 1, parked: 0, questions: 0 });
 });
 

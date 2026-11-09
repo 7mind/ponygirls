@@ -50,7 +50,7 @@ test("badge toggles last-checked status without enabling Codegraph, and closes b
   assert.equal(views.length, 1);
   assert.match(views[0]!.component.render(100).join("\n"), /Codegraph inventory.*last checks/);
   assert.match(views[0]!.component.render(100).join("\n"), /0 scopes/);
-  assert.match(badge!.render(80)[0]!, /🕸️: skipped/, "read-only status must not enable routing");
+  assert.match(badge!.render(80)[0]!, /🕸️ skipped/, "read-only status must not enable routing");
   badge!.handleMouse(click); await new Promise(setImmediate);
   assert.equal(views[0]!.closed, true);
   badge!.handleMouse(click); await new Promise(setImmediate);

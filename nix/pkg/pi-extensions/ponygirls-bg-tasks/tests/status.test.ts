@@ -54,6 +54,6 @@ test("any running phase counts as active", () => {
 });
 
 test("running count renders singular and plural", () => {
-  assert.equal(bgStatusLine([task("running")]), "🛠️ 1 running");
-  assert.equal(bgStatusLine([task("running"), task("completed"), task("running")]), "🛠️ 2 running");
+  assert.equal(bgStatusLine([task("running")]), "🛠️ 1");
+  assert.equal(bgStatusLine([task("running"), task("completed"), task("running")]), "🛠️ 2");
 });

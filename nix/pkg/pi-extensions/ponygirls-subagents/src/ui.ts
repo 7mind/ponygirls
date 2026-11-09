@@ -60,7 +60,12 @@ export function widgetLine(views: AgentView[]): string {
 
 /** Badge-only identity; inspector and headless summaries keep their textual label. */
 export function badgeLine(views: AgentView[]): string {
-  return widgetLine(views).replace(/^agents /, "👥 ");
+  const c = countTree(views);
+  const parts = [`👥 ${views.length}`];
+  if (c.running > 0) parts.push(`⚙️ ${c.running}`);
+  if (c.queued > 0) parts.push(`⏳ ${c.queued}`);
+  if (c.questions > 0) parts.push(`❓ ${c.questions}`);
+  return parts.join(" · ");
 }
 
 /** Border short form state: a question needs the user, live work runs, otherwise settled. */

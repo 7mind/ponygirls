@@ -60,7 +60,7 @@ test("border badge shows running tasks and clears when none remain", async (t) =
   const id = (spawned.details as { task: { id: string } }).task.id;
   assert.ok(id);
 
-  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === "[selectedBg] 🛠️ 1 running ") ? true : null), "running status");
+  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === "[selectedBg] 🛠️ 1 ") ? true : null), "running status");
   const mark = statuses.length;
   const badge = statuses.findLast(([k, v]) => k === "bg" && v !== undefined)![1]!();
   assert.equal(badge.renderCompact?.(10), "[toolPendingBg] <accent>🛠️<text>1 ", "short form: neutral chip, running glyph, count");

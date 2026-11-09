@@ -22,5 +22,5 @@ export function countRunning(tasks: readonly TaskRecord[]): number {
 export function bgStatusLine(tasks: readonly TaskRecord[]): string | null {
   const running = countRunning(tasks);
   if (running === 0) return null;
-  return `🛠️ ${running} running`;
+  return `🛠️ ${running}`;
 }
