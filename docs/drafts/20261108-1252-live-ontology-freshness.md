@@ -639,9 +639,11 @@ Do not assume confidence is calibrated or state is complete. The inspected publi
 slices state under its token allowance; verify the actual deployed input contract and
 reject/expose incomplete inputs instead of silently dropping governing evidence. Pin
 local weights/head/tokenizer/quantization/server and actual admission behavior before
-measured calls; a catalogue context window does not establish them. Q53 requests this
-deployment identity and API/configuration; until resolved, continue independent research
-and design but do not guess an inference endpoint or import local credentials.
+measured calls; a catalogue context window does not establish them. Q53 located the
+full BF16 SGLang deployment through `../paddock`; live metadata and three synthetic
+engineering controls matched the selected native path with8192 effective prompt tokens.
+Those controls do not establish ontology quality, ongoing readiness or all weight bytes.
+Do not guess another endpoint, import credentials or mutate the deployment.
 
 Freeze quality judgments before resource aggregation. Report per-task precision/recall,
 critical regressions, candidate recall, selective risk AND coverage, abstentions and
