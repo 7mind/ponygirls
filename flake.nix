@@ -287,6 +287,8 @@
           assert worktreeManagedCustom == true;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeInvalidAssertions;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
+          assert limitsDefault.programs.pi.settings.httpIdleTimeoutMs == 900000;
+          assert !(limitsDefault.programs.pi.settings.retry.provider ? timeoutMs);
           assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
           assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";

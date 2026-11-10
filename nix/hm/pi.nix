@@ -28,14 +28,13 @@ let
   # patches/surface-settings-write-errors.patch); persist a change by editing
   # programs.pi.settings here and switching.
   retryPolicy = {
-    httpIdleTimeoutMs = 300000;
+    httpIdleTimeoutMs = 900000;
     retry = {
       enabled = true;
       maxRetries = 4;
       baseDelayMs = 2000;
       maxAgentDelayMs = 60000;
       provider = {
-        timeoutMs = 300000;
         # Retry-After-aware in-request retries (408/409/429/5xx at the HTTP
         # layer). Known tradeoff (settings.md): provider retries can delay
         # pi's own quota/usage-limit handling, hence the small budget.
