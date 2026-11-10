@@ -81,6 +81,12 @@ buildNpmPackage (finalAttrs: {
     ./patches/fullscreen-capture-validity.patch
     # Portable token-limit discovery without registering a native provider implementation.
     ./patches/model-metadata-overlay.patch
+    # Pi #10781 / #11202: summaries inherit the effective Agent transport;
+    # failed Codex auto summaries retry on SSE without changing ordinary sockets.
+    # Backported from denispol/pi@04bab8e2 (building on ioki-smore/pi@61577508),
+    # excluding its unrelated endpoint-affinity changes. Drop when released upstream.
+    ./patches/compaction-transport-setting.patch
+    ./patches/compaction-codex-sse-recovery.patch
   ];
 
   npmDepsHash = "sha256-koVd02HEhEAOkcvIuUg4X1A6P6P0B+wJp4DJLwkH62w=";
@@ -128,6 +134,12 @@ buildNpmPackage (finalAttrs: {
   doCheck = true;
   checkPhase = ''
     runHook preCheck
+    printf '%s\n' '{"extends":"./tsconfig.json","include":["packages/*/src/**/*","packages/coding-agent/test/sdk-stream-options.test.ts","packages/coding-agent/test/compaction-codex-transport.test.ts","packages/coding-agent/test/compaction-codex-transport-wire.test.ts"]}' > tsconfig.compaction-backport.json
+    ./node_modules/.bin/tsc --noEmit -p tsconfig.compaction-backport.json
+    (cd packages/ai && ../../node_modules/.bin/vitest run \
+      test/openai-codex-stream.test.ts \
+      test/openai-codex-oauth.test.ts \
+      test/retry.test.ts)
     (cd packages/coding-agent && ../../node_modules/.bin/vitest run \
       test/chat-viewport.test.ts \
       test/custom-editor-border-content.test.ts \
@@ -143,7 +155,15 @@ buildNpmPackage (finalAttrs: {
       test/config-schemas.test.ts \
       test/model-registry.test.ts \
       test/model-runtime-*.test.ts \
-      test/agent-session-dynamic-provider.test.ts)
+      test/agent-session-dynamic-provider.test.ts \
+      test/sdk-stream-options.test.ts \
+      test/compaction*.test.ts \
+      test/agent-session-auto-compaction-queue.test.ts \
+      test/branch-summarization.test.ts \
+      test/branch-summary-extensions.test.ts \
+      test/settings-manager-compaction.test.ts \
+      test/interactive-mode-compaction.test.ts \
+      test/agent-session-retry.test.ts)
     node --test \
       packages/tui/test/bounded-v-stack.test.ts \
       packages/tui/test/tui-alt-screen-capture.test.ts \
@@ -215,6 +235,7 @@ buildNpmPackage (finalAttrs: {
   installCheckPhase = ''
     runHook preInstallCheck
     test "$("$out/bin/pi" --version)" = "${finalAttrs.version}"
+    PI_OFFLINE=1 node ${./tests/compaction-transport-runtime.mjs} "$out/lib/node_modules/pi-monorepo"
     runHook postInstallCheck
   '';
 
