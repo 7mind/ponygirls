@@ -123,7 +123,7 @@ def write_record(path, value):
         os.fsync(stream.fileno())
 
 
-def native(plan_root, output, tokenizer, release, expected_release_sha):
+def native_controller(plan_root, output, tokenizer, release, expected_release_sha, case_loader, batch_builder, generic, cases_per_record, record_count):
     release_raw=release.read_bytes()
     if sha(release_raw) != expected_release_sha:
         raise ValueError('release-identity')
@@ -133,7 +133,7 @@ def native(plan_root, output, tokenizer, release, expected_release_sha):
         raise ValueError('release-gate')
     manifest=json.loads(manifest_raw)
     records=manifest['records']
-    roster=list(range(1,FAMILIES*CASES_PER_FAMILY//CASES_PER_RECORD+1))
+    roster=list(range(1,record_count+1))
     if [r['index'] for r in records] != roster:
         raise ValueError('roster-identity')
     if output.exists() or output.is_symlink():
@@ -158,7 +158,7 @@ def native(plan_root, output, tokenizer, release, expected_release_sha):
         output_owned=True
         write_record(output/'started.json',{'unix_ns':time.time_ns(),'plan_sha256':sha(manifest_raw),'release_sha256':expected_release_sha})
         stage='preflight'
-        raw,cases=load_cases(plan_root/'public-cases.json')
+        raw,cases=case_loader(plan_root/'public-cases.json')
         if sha(raw) != manifest['public_sha256']:
             raise ValueError('corpus-changed')
         from sglang.srt.entrypoints.systemone.protocol import SystemOneRequest
@@ -169,11 +169,11 @@ def native(plan_root, output, tokenizer, release, expected_release_sha):
             index=record['index'];current_record=index
             if record['request'] != f'record-{index:02d}.json':
                 raise ValueError('request-path-identity')
-            selected=cases[(index-1)*CASES_PER_RECORD:index*CASES_PER_RECORD]
-            batch=build_batch(selected,manifest['public_sha256'],index)
+            selected=cases[(index-1)*cases_per_record:index*cases_per_record]
+            batch=batch_builder(selected,manifest['public_sha256'],index)
             prepared=prepare(batch,tokenizer,limits,batch.binding)
             expected=(plan_root/record['request']).read_bytes()
-            prompt=GENERIC+'\n\n'+prepared.body.decode()
+            prompt=generic+'\n\n'+prepared.body.decode()
             if prepared.body != expected or prepared.sha256 != record['request_sha256'] or sha(prompt.encode()) != record['llm_prompt_sha256'] or (plan_root/f'record-{index:02d}.llm.txt').read_text() != prompt or prepared.untruncated_input_tokens != record['full_input_tokens'] or record['question_ids'] != [q.id for q in batch.questions] or record['case_ids'] != [c['id'] for c in selected] or record['family'] != selected[0]['family'] or record['partition'] != selected[0]['partition']:
                 raise ValueError('request-changed-before-send')
             native_ids,_=encode_joint_schema(tokenizer,SystemOneRequest.model_validate(json.loads(prepared.body)),max_length=PROMPT_LIMIT,image_token_counts=[])
@@ -216,6 +216,10 @@ def native(plan_root, output, tokenizer, release, expected_release_sha):
     if failure is not None:
         raise failure
     print(json.dumps({'records':len(outcomes),'protocol_valid':sum(o['valid'] for o in outcomes),'quality_scored':False}))
+
+
+def native(plan_root, output, tokenizer, release, expected_release_sha):
+    return native_controller(plan_root,output,tokenizer,release,expected_release_sha,load_cases,build_batch,GENERIC,CASES_PER_RECORD,FAMILIES*CASES_PER_FAMILY//CASES_PER_RECORD)
 
 
 if __name__=='__main__':

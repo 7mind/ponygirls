@@ -1,6 +1,6 @@
-# CLEF-assisted ontology maintenance: research and prospective pilot
+# CLEF-assisted ontology maintenance: research and component pilot results
 
-Status: research/design preparation, not a frozen measured protocol, deployment acceptance or performance result. User requested prior-art research, design extension and pilots using their locally deployed large CLEF. Q53 directed inspection of `../paddock`. Its deployment declares full27B BF16, revision `cfddda043dd190ef3b01cff449d5ee8cff1e8ec6`, native SGLang0.5.23 at `http://127.0.0.1:30000/v1/systemone`. Fresh service/HTTP/process-profile observations and three engineering controls confirm the selected path under the observed host; they do not authenticate all weight bytes, establish ongoing readiness or measure ontology quality. No deployment change was made. Do not substitute the public hosted model or smaller Flash. The earlier six originals are closed historical evidence, not this pilot's fresh controls.
+Status: completed component pilots; no integrated curator/worker result, deployment acceptance or causal performance claim. User requested prior-art research, design extension and pilots using their locally deployed large CLEF. Q53 directed inspection of `../paddock`. Its deployment declares full27B BF16, revision `cfddda043dd190ef3b01cff449d5ee8cff1e8ec6`, native SGLang0.5.23 at `http://127.0.0.1:30000/v1/systemone`. Fresh service/HTTP/process-profile observations and three engineering controls confirm the selected path under the observed host; they do not authenticate all weight bytes, establish ongoing readiness or measure ontology quality. No deployment change was made. Do not substitute the public hosted model or smaller Flash. The earlier six originals are closed historical evidence, not this pilot's fresh controls.
 
 ## 1. Prior art and what transfers
 
@@ -79,4 +79,34 @@ Research/design received an independent actionable review; two concrete specific
 
 Native engineering preflight002 exercised three synthetic two-question requests, all accepted with installed-compiler full-token-ID parity and matching untruncated input counts376/382/378, output_tokens0, and unchanged service parent before/after. Initial preflight001 failed before inference due to a local HTTP-module name shadow; its frozen source/trace remain history. The prior curator selection Kimi-K3.1-Pro/max returned a separate engineering canary via the harness. Neither establishes semantic quality, calibration, actual maximum-context wire allocation or workflow speedup.
 
-The first conditional-classification protocol and independent public corpus are under preparation (72 cases/18 families; three tasks/case). Gold is independently authored in a separate durable task, inaccessible to inference participants and withheld from the Root model until predictions are sealed. Opaque host-side byte/hash/schema preservation may occur before inference without displaying labels; disclose this as model-level masking, not secrecy from host administrators. No P1 measured classification, scored quality, resource comparison, realized call-saving or closed-loop workflow outcome is established yet. Q53 is answered; no further endpoint identification request or hosted substitution is needed. The next gate is a reviewed, source-pinned protocol/plan/gold receipt before genuine measured legs.
+Both measured component pilots are now closed. P1 used72cases/18families and216decisions per model; P2 used24fresh node cases/6families. References were independently authored/adjudicated before model calls, host-side opaquely preserved, and withheld from the Root model until predictions were sealed. This is model-level masking, not secrecy from host administrators or Human-gold certification. Each quality assessment was frozen before its resource aggregation. Failures, input/source/closure reproductions and reference uncertainties remain preserved; no measured original was retried or repaired. Q53 is resolved; deployment was not mutated. These are supplied-unit/pair component pilots, not a new full curator/worker closed-loop or production deployment.
+
+## 6. Measured findings and design disposition
+
+P1 held-out agreement with the frozen reference (24cases/task):
+
+| Task | CLEF | Curator-model baseline | Predeclared critical errors, CLEF/baseline |
+|---|---:|---:|---:|
+| Node kind, five kinds plus unknown |22/24|23/24|0/0|
+| Directed supports/challenges/none/unknown |10/24|16/24|7/2|
+| Entails/contradicts/insufficient source support |13/24|23/24|2/0|
+
+One declared node-reference ambiguity would affect both models equally; primary scores remain unchanged. Other ontology kinds, candidate extraction/recall and graph revision planning were not tested as replacement tasks. The edge policy chosen from calibration alone still accepted3errors among11held-out accepted decisions, including1critical error. Source support yielded no nonzero-coverage zero-observed-critical calibration policy. Softmax confidence therefore supplies neither truth nor a safety certificate.
+
+P1 median deployment-port invocation intervals were0.149s CLEF versus8.494s baseline (57.1 ratio of medians), for the declared2case/6question record. They include different wrapper work, use different backends/hardware and serial blocks, and are not randomized model-core or full-curation speedups. Every original was invoked in both arms: actual avoided calls0.
+
+P2 transferred the frozen node threshold0.50 without tuning on new references. Its node-only2question record differs from P1's joint6question schema, so this is an explicit threshold-transfer test. Results on24new cases:
+
+| Strategy | Reference agreement | Critical errors |
+|---|---:|---:|
+| CLEF alone |22/24|1|
+| Baseline |23/24|0|
+| Baseline plus authentic scores |23/24|0|
+| Baseline plus deterministically altered scores |23/24|0|
+| Actual CLEF-first selective cascade |22/24|1|
+
+Both advice arms produced exactly the baseline labels on all24cases. The altered packets were wrong in23cases; none of those wrong suggestions was adopted. This is bounded label invariance, not proof of internal reasoning or general resistance. All strategies share one task-versus-live-applicability reference disagreement; primary labels were not changed post-outcome.
+
+The actual cascade accepted21nodes locally, deferred3nodes and issued3SDKrecords rather than12:9real record-level calls omitted, not21hypothetical per-node calls. One accepted error was critical atpmax0.707: an origin-ambiguous merged status stream was strengthened into observation. Reduced requests therefore did not preserve the baseline's critical-error behavior. Component interval sums were22.970s native-plus-fallback versus37.835s baseline; the shared native work is charged once per strategy. Those sums are not one measured end-to-end workflow interval, and cache/order/load are uncontrolled.
+
+Disposition: retain the default curator and host authority owners. Do not enable automatic relation/source-support replacement or promote high-confidence node labels into host observations. Do not deploy this threshold as a safety gate. Non-authoritative prelabels remain an experimental UI or proposal aid, not an observed quality improvement; real advice did not improve the baseline here. A future replacement claim requires fresh task-family calibration/validation, all required ontology kinds, candidate recall, actual curator decomposition and graph/worker acceptance. Do not merely raise the threshold to fit these consumed test cases. The source-bound ports and invariants are reusable experimental infrastructure, not an installed production policy.

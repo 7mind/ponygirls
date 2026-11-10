@@ -1,6 +1,6 @@
 # Live ontology freshness and objective re-anchoring
 
-Status: synthesis design with retained earlier pilot contracts and a prospective decision-model-assisted extension. Earlier pilots exercised the live feedback path, not established semantic fidelity or causal benefit. Not a deployed extension, execution controller, established anti-drift technique or Human-benefit result. Sections8–13 retain the earlier experimental contracts; section14 introduces the newly requested CLEF research/pilot scope.
+Status: synthesis design with retained earlier pilot contracts and completed decision-model component pilots. Earlier pilots exercised the live feedback path, not established semantic fidelity or causal benefit. Not a deployed extension, execution controller, established anti-drift technique or Human-benefit result. Sections8–13 retain the earlier experimental contracts; section14 records CLEF findings without claiming an integrated curator/worker result.
 
 ## 1. Purpose: keep the ontology current, then use it
 
@@ -587,11 +587,12 @@ If supporting workers or selected participant transport are unavailable, continu
 independent work and disclose the missing prerequisite rather than silently weakening
 author independence, holdout or actual-path acceptance.
 
-## 14. Decision-model-assisted classification: prospective CLEF pilot
+## 14. Decision-model-assisted classification: CLEF pilots and bounded findings
 
-The next requested experiment asks whether the locally deployed large CLEF can improve
+The requested experiment asks whether the locally deployed large CLEF can improve
 or accelerate bounded ontology decisions, either as additional curator evidence or by
-replacing a matched classification stage. See the [research and staged pilot design](20261110-0530-clef-ontology-pilot.md)
+replacing a matched classification stage. Two component pilots are now measured; their
+results do not establish full ontology-loop or Human benefit. See the [research and staged pilot design](20261110-0530-clef-ontology-pilot.md)
 for full-text prior-art evidence, ownership, controls, evaluation and execution gates.
 This is not authorization to modify the deployment, substitute a hosted/smaller model,
 rerun the closed six originals or claim model quality from a transport canary.
@@ -655,3 +656,13 @@ being slower; replacement may save calls while losing critical relations. No arb
 financial/token cap, test-set threshold tuning, silent fallback or success-only reporting
 is introduced. A useful fit is an observed task-specific trade-off, not general semantic
 reliability, Human benefit or production readiness.
+
+Measured disposition: on P1 held-out24cases/task, CLEF/reference agreement was22node,
+10relation and13source-support versus23/16/23 for the baseline. On24fresh P2node cases,
+real and altered score advice left every baseline label unchanged; the actual cascade
+omitted9of12SDKrecords but retained a critical high-confidence unknown-to-observation
+error and scored22/24 versus23/24 baseline. Fast component intervals therefore justify
+further investigation, not automatic replacement. Keep the default curator/host owners,
+non-authoritative advice isolation and exact source/action gates; do not deploy the raw
+pmax threshold or repair it by tuning on these consumed tests. The linked design records
+reference uncertainties, timing boundaries, held-out limits and future acceptance needs.
