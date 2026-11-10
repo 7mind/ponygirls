@@ -34,6 +34,7 @@ lazy val contracts = project.in(file("chronicle/generated/.build")).dependsOn(ba
 lazy val haystackContracts = project.in(file("haystack/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val manureContracts = project.in(file("manure/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val ritesContracts = project.in(file("rites/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
+lazy val ontologyContracts = project.in(file("ontology/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val validationInventory = taskKey[File]("Write the discovered, unfiltered release test inventory")
 lazy val testChildClasspath = taskKey[String]("Export the physical classpath for isolated test children")
 // Libraries use only artifacts already present in the common dependency lock.
@@ -150,7 +151,14 @@ lazy val ritesServer = project.in(file("rites/server")).dependsOn(ritesContracts
   assembly / mainClass := Some("rites.Main"),
   assembly / assemblyJarName := "rites-server.jar",
 )
-lazy val root = project.in(file(".")).aggregate(baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, ritesContracts, haystackServer, manureServer, ritesServer).settings(
+lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontologyContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
+  name := "ontology-server",
+  Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
+  Compile / mainClass := Some("ontology.Main"),
+  assembly / mainClass := Some("ontology.Main"),
+  assembly / assemblyJarName := "ontology-server.jar"
+)
+lazy val root = project.in(file(".")).aggregate(ontologyContracts, ontologyServer, baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, ritesContracts, haystackServer, manureServer, ritesServer).settings(
   name := "backend-foundation",
   publish / skip := true,
   cleanFiles += baseDirectory.value / "target" / "contracts-coassembly.jar",

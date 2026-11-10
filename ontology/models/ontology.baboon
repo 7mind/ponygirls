@@ -1,0 +1,113 @@
+model ontology.api
+version "0.1.0"
+
+root data VersionInfo { current: str minimum: str supported: lst[str] }
+root data Failure { code: str message: str }
+root data Ack { ok: bit }
+enum ActorKind { Human Agent Collector Service Unknown }
+data Actor { id: str kind: ActorKind }
+data Ref { id: uid revision: i32 }
+data ActorRecord { ref: Ref value: Actor }
+data Provenance { contributor: Actor recorder: Actor input: uid recordedAt: str }
+enum Force { Required Preferred Unresolved }
+enum Polarity { Required Prohibited }
+enum Execution { Delegated HumanRequired }
+enum Modality { Assertion Prediction Assumption ObservationAccount }
+enum Correction { Implementation Interpretation IntentChange Mixed Unresolved }
+enum Assessment { Unassessed Supported Contradicted Mixed }
+enum Escalation { NoEscalation HumanRequired Unresolved }
+enum ConflictState { Open Resolved }
+enum Standing { Active Superseded Withdrawn }
+data Acceptance { clauses: lst[str] question: opt[Ref] }
+
+adt Content {
+ data Outcome { text: str acceptance: Acceptance force: Force }
+ data Constraint { text: str polarity: Polarity force: Force }
+ data Task { text: str acceptance: Acceptance execution: Execution }
+ data Statement { text: str modality: Modality }
+ data Hypothesis { text: str prediction: str }
+ data Defect { text: str observed: str expected: str reproduction: str affected: lst[Ref] correction: Correction }
+ data Question { text: str alternatives: lst[str] answer: opt[str] escalation: Escalation }
+ data Decision { text: str alternatives: lst[str] rationale: str }
+ data Review { text: str findings: lst[str] subjects: lst[Ref] basis: lst[Ref] uncertainty: str assessment: Assessment }
+ data Source { text: str context: lst[Ref] rawDigest: str eventId: uid }
+ data Artifact { text: str digest: str mediaType: str locator: str generation: i64 }
+ data Conflict { text: str subjects: lst[Ref] status: ConflictState resolution: opt[str] uncertainty: str }
+}
+
+enum RelationKind { Quotes Interprets Infers Assumes Supports Challenges Adopts Chooses Delegates Supersedes Withdraws ContributesTo DependsOn Requires Decomposes AssignedTo PlannedOutput Produced Answers Assesses }
+enum Gate { Completion Fulfillment }
+enum Consumption { Current Historical }
+enum Grouping { All Alternative Navigation }
+enum AdoptionOrigin { Interpretation CapturedAction }
+adt RelationDetail {
+ data Empty {}
+ data Dependency { gate: Gate consumption: Consumption event: opt[Ref] applicability: str }
+ data Decomposition { grouping: Grouping }
+ data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Ref] }
+ data Adoption { presentationId: uid origin: AdoptionOrigin }
+}
+data Definition { ref: Ref scope: str content: Content standing: Standing basis: lst[Ref] changeReason: opt[str] provenance: Provenance }
+data Relation { ref: Ref scope: str kind: RelationKind sources: lst[Ref] targets: lst[Ref] detail: RelationDetail why: str standing: Standing provenance: Provenance }
+data Binding { ref: Ref scope: str definition: Ref context: lst[Ref] provenance: Provenance }
+enum Phase { Planned Active Blocked Completed Cancelled }
+enum Resolution { Fulfilled NotFulfilled Inconclusive }
+data StateEvent { ref: Ref scope: str subject: Ref previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Ref] uncertainty: str provenance: Provenance }
+
+adt Target { data Exact { ref: Ref } data Created { alias: str } }
+adt Operation {
+ data Create { alias: str content: Content basis: lst[Target] }
+ data Revise { alias: str ref: Ref content: Content standing: Standing basis: lst[Target] reason: str }
+ data Relate { alias: str kind: RelationKind sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str }
+ data ReviseRelation { alias: str ref: Ref sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str standing: Standing }
+ data Bind { alias: str definition: Target context: lst[Target] }
+ data State { alias: str subject: Target previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Target] uncertainty: str }
+}
+root data ApplyRequest { scope: str requestId: uid expectedGeneration: i64 operations: lst[Operation] }
+data AliasRef { alias: str ref: Ref }
+root data ApplyResult { generation: i64 created: lst[AliasRef] replayed: bit }
+root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] }
+enum ReadView { Current History BindingContext }
+root data ReadRequest { scope: str view: ReadView targets: lst[Ref] cursor: opt[str] limit: i32 }
+adt GraphRecord { data Person { value: ActorRecord } data Node { value: Definition } data Edge { value: Relation } data Contract { value: Binding } data Progress { value: StateEvent } }
+root data ReadResult { generation: i64 records: lst[GraphRecord] cursor: opt[str] }
+root data FindRequest { scope: str kind: opt[str] query: str cursor: opt[str] limit: i32 }
+data SearchHit { ref: Ref kind: str text: str standing: Standing }
+root data FindResult { generation: i64 items: lst[SearchHit] cursor: opt[str] }
+
+// Capture is a separate trusted ingress; these actor claims are not graph mutations.
+enum EventOrigin { UserMessage WorkerMessage ToolOutput }
+enum LineageStatus { Unknown Recorded }
+data CaptureContext { sessionId: str rootSessionId: opt[str] parentSessionId: opt[str] lineage: LineageStatus branch: str epoch: uid }
+adt Observation {
+ data None {}
+ data FileVersion { path: str generation: i64 digest: str length: i64 }
+ data Execution { action: str checker: str contract: opt[Ref] artifacts: lst[Ref] exitCode: opt[i32] complete: bit }
+}
+root data IngestRequest { scope: str requestId: uid eventId: uid context: CaptureContext origin: EventOrigin text: str observation: Observation }
+data CapturedEvent { id: uid scope: str frontier: i64 context: CaptureContext origin: EventOrigin text: str observation: Observation provenance: Provenance }
+root data IngestResult { source: Ref frontier: i64 replayed: bit }
+root data SourceRequest { scope: str after: i64 limit: i32 }
+root data SourceResult { events: lst[CapturedEvent] frontier: i64 nextAfter: opt[i64] }
+enum CurationState { Idle Pending Running Failed }
+root data ScopeRequest { scope: str }
+data ScopeSummary { scope: str generation: i64 frontier: i64 coveredFrontier: i64 curation: CurationState failure: opt[str] rdfGeneration: opt[i64] }
+root data ScopesResult { items: lst[ScopeSummary] }
+root data CurationStatus { scope: str generation: i64 frontier: i64 coveredFrontier: i64 state: CurationState failure: opt[str] }
+root data CurationProposal { expectedGeneration: i64 frontier: i64 operations: lst[Operation] }
+
+root data CapsuleRequest { scope: str context: CaptureContext expectedFrontier: i64 }
+data GoverningChange { previous: Ref current: Ref reason: str humanBasis: lst[CapturedEvent] }
+root data Capsule { id: uid scope: str generation: i64 frontier: i64 coveredFrontier: i64 context: CaptureContext current: lst[Definition] relations: lst[Relation] observations: lst[CapturedEvent] changes: lst[GoverningChange] qualifications: lst[str] text: str }
+root data DeliveryRequest { scope: str requestId: uid capsuleId: uid generation: i64 frontier: i64 context: CaptureContext payloadDigest: str }
+root data DeliveryReceipt { id: uid capsuleId: uid generation: i64 frontier: i64 payloadDigest: str recordedAt: str }
+
+enum JudgmentKind { Accept RequestCorrection NeedEvidence ReviseIntent }
+root data PresentRequest { scope: str targets: lst[Ref] expectedGeneration: i64 }
+root data Presentation { id: uid scope: str generation: i64 targets: lst[Ref] records: lst[GraphRecord] sourceRefs: lst[Ref] createdAt: str }
+root data JudgmentRequest { scope: str requestId: uid presentationId: uid kind: JudgmentKind rationale: str }
+data Judgment { id: uid scope: str presentationId: uid kind: JudgmentKind rationale: str actor: Actor recordedAt: str }
+root data JudgmentsResult { items: lst[Judgment] }
+root data LoginRequest { token: str }
+root data Identity { actor: Actor scopes: lst[str] }
+root data LoginResult { identity: Identity versions: VersionInfo }

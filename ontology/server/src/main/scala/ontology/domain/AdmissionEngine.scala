@@ -1,0 +1,161 @@
+package ontology.domain
+
+import ontology.api.*
+import java.util.UUID
+import java.nio.charset.StandardCharsets.UTF_8
+
+final class AdmissionEngine {
+  def apply(base: GraphSnapshot, request: ApplyRequest, admission: Admission): Applied = {
+    Require(request.scope == base.scope, "scope", "scope mismatch")
+    Require(request.requestId == admission.requestId, "request", "request binding mismatch")
+    Require(request.expectedGeneration == base.generation, "conflict", "graph generation changed")
+    Require(request.operations.nonEmpty, "operations", "empty transaction")
+    val actorRef = Ref(UUID.nameUUIDFromBytes(("actor:" + admission.actor.kind.toString + ":" + admission.actor.id).getBytes(UTF_8)), 1)
+    var graph = if (base.actors.exists(_.ref == actorRef)) base else base.copy(actors = base.actors :+ ActorRecord(actorRef, admission.actor))
+    var aliases = Map.empty[String, Ref]
+    def resolve(target: Target): Ref = target match {
+      case Target.Exact(ref) => Require(Graph.exists(graph, ref), "reference", "unknown exact reference"); ref
+      case Target.Created(alias) => aliases.getOrElse(alias, throw Fault("reference", "unknown earlier alias"))
+    }
+    def refs(xs: List[Target]): List[Ref] = { val values = xs.map(resolve); Require(values.distinct == values, "reference", "duplicate references"); values }
+    def aliasOf(op: Operation): String = op match {
+      case x: Operation.Create => x.alias; case x: Operation.Revise => x.alias; case x: Operation.Relate => x.alias
+      case x: Operation.ReviseRelation => x.alias; case x: Operation.Bind => x.alias; case x: Operation.State => x.alias
+    }
+    def writable(content: Content): Unit = Require(!content.isInstanceOf[Content.Source] && !content.isInstanceOf[Content.Artifact], "protected", "source and artifact records require trusted capture")
+    request.operations.foreach { operation =>
+      val alias = aliasOf(operation)
+      Require(alias.matches("[A-Za-z][A-Za-z0-9_-]{0,63}") && !aliases.contains(alias), "alias", "invalid or duplicate alias")
+      val fresh = admission.ref(alias)
+      Require(!Graph.exists(graph, fresh), "identity", "new identity already exists")
+      val published: Ref = operation match {
+        case x: Operation.Create =>
+          writable(x.content); Graph.validateContent(graph, x.content)
+          val d = Definition(fresh, graph.scope, x.content, Standing.Active, refs(x.basis), None, admission.provenance)
+          graph = graph.copy(definitions = graph.definitions :+ d); fresh
+        case x: Operation.Revise =>
+          val old = Graph.node(graph, x.ref)
+          Require(Graph.definitions(graph).exists(_.ref == x.ref), "conflict", "definition revision changed")
+          writable(old.content); writable(x.content); Graph.validateContent(graph, x.content)
+          Require(x.reason.trim.nonEmpty, "content", "revision reason required")
+          val basis = refs(x.basis)
+          Require(basis.nonEmpty, "basis", "revisions require an inspectable change basis")
+          val next = Ref(old.ref.id, Math.addExact(old.ref.revision, 1))
+          graph = graph.copy(definitions = graph.definitions :+ Definition(next, graph.scope, x.content, x.standing, basis, Some(x.reason), admission.provenance)); next
+        case x: Operation.Relate =>
+          val r = Relation(fresh, graph.scope, x.kind, refs(x.sources), refs(x.targets), x.detail, x.why, Standing.Active, admission.provenance)
+          validateRelation(graph, r)
+          graph = graph.copy(relations = graph.relations :+ r); fresh
+        case x: Operation.ReviseRelation =>
+          val old = Graph.relation(graph, x.ref)
+          Require(Graph.relations(graph).exists(_.ref == x.ref), "conflict", "relation revision changed")
+          val sources = refs(x.sources); val targets = refs(x.targets)
+          Require(old.sources == sources && old.targets == targets && old.detail == x.detail, "identity", "changed relation proposition requires explicit replacement")
+          val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), why = x.why, standing = x.standing, provenance = admission.provenance)
+          validateRelation(graph, r); graph = graph.copy(relations = graph.relations :+ r); r.ref
+        case x: Operation.Bind =>
+          val b = Binding(fresh, graph.scope, resolve(x.definition), refs(x.context), admission.provenance)
+          Graph.validateBinding(graph, b)
+          graph = graph.copy(bindings = graph.bindings :+ b); fresh
+        case x: Operation.State =>
+          val subject = resolve(x.subject); val b = Graph.binding(graph, subject)
+          val task = Graph.node(graph, b.definition).content match { case t: Content.Task => t; case _ => throw Fault("kind", "work progress requires a task binding") }
+          Require(Graph.latestEvent(graph, subject).map(_.ref) == x.previous, "conflict", "previous event is not binding-local current head")
+          Require(x.result.nonEmpty == (x.phase == Phase.Completed), "state", "only completed work has a result")
+          Require(!Set(Phase.Completed, Phase.Cancelled, Phase.Blocked).contains(x.phase) || x.resolution.exists(_.trim.nonEmpty), "state", "resolution required")
+          if (x.phase == Phase.Active || x.phase == Phase.Completed) {
+            Graph.validateBinding(graph, b)
+            Require(task.acceptance.clauses.nonEmpty, "acceptance", "unresolved acceptance blocks execution and fulfillment")
+            validateGates(graph, b)
+          }
+          val evidence = refs(x.evidence)
+          Require(!x.result.contains(Resolution.Fulfilled) || evidence.nonEmpty, "evidence", "fulfilled report requires evidence")
+          if (task.execution == Execution.HumanRequired && (x.phase == Phase.Active || x.phase == Phase.Completed)) Require(admission.actor.kind == ActorKind.Human, "authority", "Human-required task cannot be performed by an agent report")
+          val e = StateEvent(fresh, graph.scope, subject, x.previous, x.phase, x.result, x.resolution, evidence, x.uncertainty, admission.provenance)
+          graph = graph.copy(events = graph.events :+ e); fresh
+      }
+      aliases = aliases.updated(alias, published)
+    }
+    validateCycles(graph)
+    // Later operations in the same transaction must not invalidate a new binding or completion.
+    graph.bindings.drop(base.bindings.size).foreach(Graph.validateBinding(graph, _))
+    graph.events.drop(base.events.size).filter(e => e.phase == Phase.Active || e.phase == Phase.Completed).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateBinding(graph, b); validateGates(graph, b) })
+    Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
+  }
+
+  private def validateRelation(g: GraphSnapshot, r: Relation): Unit = {
+    Require(r.why.trim.nonEmpty && r.sources.nonEmpty && r.targets.nonEmpty, "relation", "relation explanation and endpoints required")
+    Require(r.kind == RelationKind.Infers || r.sources.size == 1, "arity", "relation requires exactly one source")
+    Require(Set(RelationKind.Decomposes, RelationKind.Assesses).contains(r.kind) || r.targets.size == 1, "arity", "relation requires exactly one target")
+    (r.sources ++ r.targets).foreach(x => Require(Graph.exists(g, x), "reference", "unknown relation endpoint"))
+    def task(ref: Ref): Unit = Require(Graph.node(g, ref).content.isInstanceOf[Content.Task], "kind", "task definition required")
+    r.kind match {
+      case RelationKind.DependsOn =>
+        task(r.sources.head)
+        val b = Graph.binding(g, r.targets.head); task(b.definition)
+        r.detail match {
+          case d: RelationDetail.Dependency =>
+            Require(d.event.nonEmpty == (d.consumption == Consumption.Historical), "detail", "historical dependency requires exact completion event")
+            d.event.foreach { e => Require(Graph.event(g, e).subject == b.ref && d.applicability.trim.nonEmpty, "detail", "historical event/applicability mismatch") }
+          case _ => throw Fault("detail", "dependency gate/consumption required")
+        }
+      case RelationKind.Requires => task(r.sources.head); Graph.binding(g, r.targets.head); empty(r)
+      case RelationKind.Decomposes =>
+        Require(r.detail.isInstanceOf[RelationDetail.Decomposition], "detail", "decomposition meaning required")
+        (r.sources ++ r.targets).foreach(x => Graph.node(g, x))
+      case RelationKind.Delegates => Require(r.detail.isInstanceOf[RelationDetail.Delegation], "detail", "delegation bounds required")
+      case RelationKind.Adopts | RelationKind.Chooses => r.detail match {
+        case a: RelationDetail.Adoption => Require(a.origin == AdoptionOrigin.Interpretation, "protected", "captured Human action requires the presentation/judgment endpoint")
+        case _ => throw Fault("detail", "adoption presentation binding required")
+      }
+      case RelationKind.AssignedTo => task(r.sources.head); Require(g.actors.exists(_.ref == r.targets.head), "kind", "assignment target must be a captured actor"); empty(r)
+      case RelationKind.Quotes | RelationKind.Interprets =>
+        Require(Graph.node(g, r.sources.head).content.isInstanceOf[Content.Source], "kind", "lineage source must be captured input")
+        Graph.node(g, r.targets.head); empty(r)
+      case RelationKind.PlannedOutput =>
+        task(r.sources.head)
+        Require(g.definitions.exists(d => d.ref == r.targets.head && !d.content.isInstanceOf[Content.Source] && !d.content.isInstanceOf[Content.Artifact]), "kind", "planned output requires an intended definition, not a produced artifact or actor")
+        empty(r)
+      case RelationKind.Produced =>
+        Require(Graph.event(g, r.sources.head).phase == Phase.Completed, "kind", "produced source must describe completed work")
+        Require(Graph.node(g, r.targets.head).content.isInstanceOf[Content.Artifact], "kind", "produced target must be captured artifact"); empty(r)
+      case RelationKind.Assesses =>
+        r.targets.foreach(x => Graph.binding(g, x))
+        Graph.node(g, r.sources.head).content match {
+          case review: Content.Review => Require(r.targets.forall(review.subjects.contains), "assessment-subject", "assessment edge and review subjects disagree")
+          case _ => throw Fault("kind", "assessment source must be an explicit review")
+        }
+        empty(r)
+      case RelationKind.Answers => Require(Graph.node(g, r.targets.head).content.isInstanceOf[Content.Question], "kind", "answer target must be a question"); empty(r)
+      case _ => empty(r)
+    }
+  }
+  private def empty(r: Relation): Unit = Require(r.detail.isInstanceOf[RelationDetail.Empty], "detail", "unexpected relation detail")
+  private def validateGates(g: GraphSnapshot, b: Binding): Unit = {
+    b.context.flatMap(ref => g.relations.find(_.ref == ref)).foreach { r =>
+      if (r.kind == RelationKind.DependsOn) {
+        val d = r.detail.asInstanceOf[RelationDetail.Dependency]
+        val completion = d.event.map(Graph.event(g, _)).orElse(Graph.latestEvent(g, r.targets.head))
+        Require(completion.exists(e => e.phase == Phase.Completed && (d.gate == Gate.Completion || e.result.contains(Resolution.Fulfilled))), "prerequisite", "work prerequisite not satisfied")
+        if (d.consumption == Consumption.Current) Graph.validateBinding(g, Graph.binding(g, r.targets.head))
+      }
+      if (r.kind == RelationKind.Requires) {
+        Graph.validateBinding(g, Graph.binding(g, r.targets.head))
+        val supported = Graph.relations(g).filter(e => e.kind == RelationKind.Assesses && e.standing == Standing.Active && e.targets.contains(r.targets.head)).flatMap(e => e.sources.flatMap(s => g.definitions.find(_.ref == s))).filter(d => Graph.definitions(g).exists(_.ref == d.ref) && d.standing == Standing.Active).collect { case d if d.content.isInstanceOf[Content.Review] => d.content.asInstanceOf[Content.Review].assessment }
+        Require(supported.nonEmpty && supported.forall(_ == Assessment.Supported), "condition", "condition lacks an unconflicted applicable supporting assessment")
+      }
+    }
+  }
+  private def validateCycles(g: GraphSnapshot): Unit = {
+    val edges = Graph.relations(g).filter(_.standing == Standing.Active).flatMap { r =>
+      if (r.kind == RelationKind.DependsOn && r.detail.asInstanceOf[RelationDetail.Dependency].consumption == Consumption.Current) List(r.sources.head.id -> Graph.binding(g, r.targets.head).definition.id)
+      else if (r.kind == RelationKind.Decomposes && r.detail != RelationDetail.Decomposition(Grouping.Navigation)) r.targets.map(t => r.sources.head.id -> t.id)
+      else Nil
+    }
+    def visit(node: UUID, path: Set[UUID]): Unit = {
+      Require(!path.contains(node), "cycle", "active work/refinement cycle")
+      edges.filter(_._1 == node).foreach(e => visit(e._2, path + node))
+    }
+    edges.map(_._1).distinct.foreach(visit(_, Set.empty))
+  }
+}

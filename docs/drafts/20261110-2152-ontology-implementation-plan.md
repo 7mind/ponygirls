@@ -1,6 +1,6 @@
 # Ontology application — implementation plan
 
-Status: implementation requested; scope-dependent work awaits Q55. This plan records shared requirements and the two possible implementation scopes without silently choosing the smaller one. It is not a deployment or Human-study launch authorization.
+Status: full implementation authorized by answered Q55 revision 3. Implement the full live service, RDF projection, curator/worker integration and Human UI first; introduce the Human into the loop afterward. No deployment or Human-study launch is authorized by this implementation request.
 
 ## 1. Confirmed direction
 
@@ -13,17 +13,15 @@ Status: implementation requested; scope-dependent work awaits Q55. This plan rec
 - CLEF is not a default dependency or acceptance/authority gate.
 - No deployment, production-data ingestion, migration of another application, Human recruitment or new measured scientific pilot follows automatically from implementation.
 
-## 2. Scope decision that changes implementation
+## 2. Selected scope and preserved alternative
 
-Q55 asks which of these is intended now:
+Q55 selected B below. A is retained only to show the rejected narrower scope; it is not the implementation target.
 
 **A — Human-review pilot application:** controlled snapshot/evidence ingestion, an intent/constraint/evidence view and an equally capable source-linked notes view, exact presented-version Human judgments, durable persistence/history, and UI/theme/browser acceptance. No automatic live curator or worker integration is claimed. RDF can be constructed from an exact snapshot without a persistent triplestore deployment.
 
 **B — Full live ontology service and sidecar:** the complete versioned domain and three graph APIs, protected event/observation capture, atomic curator deltas, qualified projections actually delivered to workers, PostgreSQL/outbox/RDF projection, and the Human review client. Controlled snapshots are useful test fixtures, not a substitute for live maintenance. Adapter/source selection and runtime integration require concrete contracts before dependent code.
 
-The earlier Human-pilot proposal deliberately allowed A without first building B. The latest implementation request does not explicitly distinguish them. Do not interpret an unanswered question as approval, and do not implement a snapshot client then label it the full service.
-
-Independent work while Q55 is pending: repository reconnaissance, this plan, automatic-theme acceptance criteria and a source/ownership map. Do not choose application-specific persistence, public endpoints or live integrations prematurely.
+The earlier Human-pilot proposal deliberately allowed A without first building B. The Human explicitly selected full implementation first, then their participation. Do not implement a snapshot client and label it the full service. Application namespace/directory: `ontology`. Preserve completed research originals; engineering acceptance uses new controlled inputs.
 
 ## 3. Repository precedent and placement
 
@@ -92,4 +90,4 @@ Do not create a generic theme controller solely to duplicate browser media-query
 
 ## 7. Current state
 
-Only planning and read-only reconnaissance are complete. No application runtime, schema migration, model call, deployment or Human pilot has been started. Q55 is the remaining scope prerequisite. Task branch/worktree: `feature/ontology-implementation`, `.worktrees/wt-ponygirls-ontology-implementation`.
+Q55 revision 3 is answered and recorded. Task branch/worktree: `feature/ontology-implementation`, `.worktrees/wt-ponygirls-ontology-implementation`. Implementation begins with the shared typed contract and deterministic admission, followed by actual persistence/RDF/HTTP/worker/UI paths and integrated acceptance. The harness rejects prepared writer workspaces because no workspaceRoots are granted; Root remains the sole writer, with read-only source reviewers. No writer isolation bypass. Application tests may use owned PostgreSQL and controlled model transports; no private transcript ingestion, deployment or Human study.
