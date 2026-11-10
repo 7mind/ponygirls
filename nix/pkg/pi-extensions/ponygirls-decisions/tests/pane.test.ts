@@ -35,7 +35,7 @@ function decision(number: number, overrides: Partial<Decision> = {}): Decision {
 
 function open(items = [decision(1)], initialId: string | null = null, projectName = "pony") {
   let records = structuredClone(items), height = 40, closed = false, renders = 0;
-  let loadError: Error | null = null, saveError: Error | null = null;
+  let loadError: Error | null = null, saveError: Error | null = null, reloadError: Error | null = null;
   const writes: { base: Decision; status: Decision["status"]; answer: string | null }[] = [];
   const tui = { terminal: { get rows() { return height; } }, requestRender: () => { renders++; } } as unknown as TUI;
   const pane = new DecisionsPane(theme, {
@@ -47,6 +47,7 @@ function open(items = [decision(1)], initialId: string | null = null, projectNam
       const index = records.findIndex((d) => d.id === base.id);
       if (index < 0 || records[index]!.revision !== base.revision) throw new Error("Stale revision; reload before saving");
       records[index] = { ...records[index]!, status, answer, revision: base.revision + 1 };
+      loadError = reloadError;
     },
     requestRender: () => { renders++; }, close: () => { closed = true; },
   }, projectName, initialId, () => height, "current");
@@ -57,6 +58,7 @@ function open(items = [decision(1)], initialId: string | null = null, projectNam
   return {
     pane, press, screen, activeTab, writes, records: () => records, setRecords: (value: Decision[]) => { records = structuredClone(value); },
     resize: (rows: number) => { height = rows; }, closed: () => closed, renders: () => renders,
+    reloadFails: (error: Error) => { reloadError = error; },
     loadFails: (error: Error | null) => { loadError = error; }, saveFails: (error: Error | null) => { saveError = error; },
   };
 }
@@ -136,32 +138,48 @@ test("only questions originating in this session are marked in pending, history,
   }
 });
 
-test("saving the last pending answer returns from detail to an inbox that closes with one Escape", () => {
+test("saving the last pending answer automatically closes the pane", () => {
   for (const mode of ["a", "1"]) {
-    const h = open([decision(1)], "Q1");
-    h.press(mode);
-    if (mode === "a") h.press("My answer");
-    h.press(SAVE);
-    assert.equal(h.records()[0]!.status, "answered");
-    assert.equal(h.activeTab(), "pending 0");
-    assert.match(h.screen(), /No pending decisions/);
-    assert.match(h.screen(), /⎋ close/);
-    assert.doesNotMatch(h.screen(), /⎋ inbox/);
-    assert.equal(h.closed(), false, "saving returns to the inbox without closing it");
-    h.press(ESC);
-    assert.equal(h.closed(), true, "one Escape closes the empty inbox");
+    for (const initialId of [null, "Q1"]) {
+      const h = open([decision(1)], initialId);
+      h.press(mode);
+      if (mode === "a") h.press("My answer");
+      h.press(SAVE);
+      assert.equal(h.records()[0]!.status, "answered");
+      assert.equal(h.closed(), true, "saving the final pending answer closes without Escape");
+    }
   }
+});
+
+test("automatic close checks pending questions even in the all tab", () => {
+  const h = open([decision(1), decision(2)]);
+  h.press(TAB, "1", SAVE);
+  assert.equal(h.closed(), false);
+  h.press(DOWN, "1", SAVE);
+  assert.equal(h.closed(), true);
+});
+
+test("a failed post-save reload keeps the pane open", () => {
+  const h = open();
+  h.press("1");
+  h.reloadFails(new Error("disk unavailable"));
+  h.press(SAVE);
+  assert.equal(h.records()[0]!.status, "answered");
+  assert.equal(h.closed(), false);
+  assert.match(h.screen(), /Cannot load decisions/);
 });
 
 test("saving from detail returns to the remaining pending list and preserves history navigation", () => {
   const h = open([decision(1), decision(2), decision(3)], "Q1");
   h.press("1", SAVE);
+  assert.equal(h.closed(), false);
   assert.match(h.screen(), /▌ Q2\s+\? pending/);
   assert.match(h.screen(), /Q3\s+\? pending/);
   h.press(DOWN);
   assert.match(h.screen(), /▌ Q3\s+\? pending/, "arrows select questions rather than scrolling obsolete detail");
   const history = open([decision(7, { status: "answered", answer: "Existing answer" })], "Q7");
   history.press("e", "!", SAVE);
+  assert.equal(history.closed(), false, "editing history does not complete a pending question");
   assert.equal(history.activeTab(), "all");
   assert.match(history.screen(), /▌ Q7\s+✓ answered/);
   history.press(ESC);
@@ -255,6 +273,7 @@ test("save/load failures retain draft; cancellation never writes or closes the i
   h.saveFails(new Error("readonly disk \x1b]52;c;secret\x07"));
   h.press(SAVE);
   assert.match(h.screen(), /Save failed; draft retained/);
+  assert.equal(h.closed(), false);
   assert.match(h.screen(), /keep-me/);
   assert.doesNotMatch(h.screen(), /secret/);
   h.press(ESC);
@@ -270,6 +289,7 @@ test("dismiss/reopen require explicit confirmation; existing answers can be edit
   assert.equal(h.writes.length, 0);
   assert.match(h.screen(), /Dismiss this decision/);
   h.press(ESC, "d", SAVE, TAB);
+  assert.equal(h.closed(), false, "dismissal is not an answer");
   assert.equal(h.writes[0]!.status, "dismissed");
   assert.match(h.screen(), /dismissed/);
   h.press("u", ENTER);

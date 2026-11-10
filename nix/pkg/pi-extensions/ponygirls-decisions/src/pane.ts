@@ -220,6 +220,8 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
       this.scroll = 0;
       this.notice = draft.status === "pending" ? "Reopened." : draft.status === "dismissed" ? "Dismissed." : "Answer saved.";
       this.refresh();
+      if (draft.base.status === "pending" && draft.status === "answered" && !this.loadError
+        && !this.items.some((item) => item.status === "pending")) this.callbacks.close();
     } catch (error) { this.notice = `Save failed; draft retained: ${String(error)}`; }
   }
 

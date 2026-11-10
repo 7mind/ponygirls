@@ -33,6 +33,8 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 - The inbox supports keyboard navigation, Markdown context and recommendations,
   suggested answers, and a multiline free-form answer editor. Answers are saved
   explicitly, never by merely moving the selection. Escape cancels an edit.
+  Saving the final pending answer automatically closes the pane. Editing history
+  or dismissing a question keeps it open.
 - **↑/↓** selects; **⏎** expands detail; **⇞/⇟** scrolls; **⇥** toggles
   pending/history. **a/e** edits an answer, **o** or **1–9** stages an option,
   **d** stages dismissal, **u** stages reopening. **⌃S** saves; **⎋** cancels.
