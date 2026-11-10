@@ -1,6 +1,6 @@
 # Live ontology freshness and objective re-anchoring
 
-Status: synthesis design, retained first-pilot contract and prospective evidence-authority follow-up. The first pilot demonstrated the live feedback path, not reliable semantic fidelity or causal benefit. Not a deployed extension, execution controller, established anti-drift technique or Human-benefit result. Sections8–12 retain the original pilot contract; section13 governs the newly requested follow-up.
+Status: synthesis design with retained earlier pilot contracts and a prospective decision-model-assisted extension. Earlier pilots exercised the live feedback path, not established semantic fidelity or causal benefit. Not a deployed extension, execution controller, established anti-drift technique or Human-benefit result. Sections8–13 retain the earlier experimental contracts; section14 introduces the newly requested CLEF research/pilot scope.
 
 ## 1. Purpose: keep the ontology current, then use it
 
@@ -586,3 +586,70 @@ participants, impose financial/token caps or tune solely to development episodes
 If supporting workers or selected participant transport are unavailable, continue only
 independent work and disclose the missing prerequisite rather than silently weakening
 author independence, holdout or actual-path acceptance.
+
+## 14. Decision-model-assisted classification: prospective CLEF pilot
+
+The next requested experiment asks whether the locally deployed large CLEF can improve
+or accelerate bounded ontology decisions, either as additional curator evidence or by
+replacing a matched classification stage. See the [research and staged pilot design](20261110-0530-clef-ontology-pilot.md)
+for full-text prior-art evidence, ownership, controls, evaluation and execution gates.
+This is not authorization to modify the deployment, substitute a hosted/smaller model,
+rerun the closed six originals or claim model quality from a transport canary.
+
+The official large model scores supplied options with a joint schema head. It does not
+by that interface discover every missing proposition or freely author graph edits.
+Separate candidate extraction/pair recall, semantic classification, identity/revision
+assembly and atomic admission. Each existing graph node retains one kind; a passage
+containing a task and independent constraint needs separately identified propositions
+upstream, not an inadmissible multi-kind node. Compare node/proposition type, directed
+relation and source-support tasks without collapsing standing, applicability and attribution.
+A score, agreement or classifier label remains an attributed model assessment, never a
+host observation, Human mandate, permission or semantic truth certificate.
+
+Place a versioned source-bound decision interface before curator/delta admission:
+
+- Advisory arm: deliver classifier scores and explicit uncertainty alongside original
+  source to the existing curator; measure actual delivery, use, disagreement and harm.
+- Replacement arm: classify already identified units/pairs, with declared abstention
+  and LLM deferral; retain source proposal and graph identity owners separately.
+- Decomposition-only control: use the same proposal/classification/assembly path with
+  the matched LLM classifier. The current combined curator is also a baseline; do not
+  count hypothetical per-node LLM calls as actual removed calls.
+
+Classifier outcomes bind source scope/frontier, base graph and candidate revisions,
+ordered questions/options, schema and model/serving identities. Changed inputs fence
+stale results. Advice is separately stored derived assessment, not a newly eligible
+primary event, independent Human basis, host fact or additional curation trigger; its
+delivery cannot advance the source frontier or create self-confirming evidence. Host
+capture, exact artifact/action applicability, stable relation IDs,
+CAS, source availability and qualified projections retain their existing deterministic
+owners. A relation label change is a new proposition/replacement, not ID repurposing.
+No-relation and insufficient-evidence/abstain are distinct non-edge outcomes, not new
+admitted graph kinds or silent deletion of existing unresolved relations.
+
+Use staged evidence: actual deployment/adapter acceptance; independently authored
+conditional classification and held-out selective-routing evaluation; frozen-stream
+maintenance replay; then new live worker/curator episodes for promising configurations.
+Replay is not a closed-loop behavioral benefit result. Keep development/calibration
+families disjoint from sealed tests, ground labels in source spans and disclose genuine
+ambiguity. Include critical intent/provenance/scope/time/generation negatives, candidate
+omissions and correct/incorrect-advice controls. LLM agreement is not the gold label.
+
+Do not assume confidence is calibrated or state is complete. The inspected public encoder
+slices state under its token allowance; verify the actual deployed input contract and
+reject/expose incomplete inputs instead of silently dropping governing evidence. Pin
+local weights/head/tokenizer/quantization/server and actual admission behavior before
+measured calls; a catalogue context window does not establish them. Q53 requests this
+deployment identity and API/configuration; until resolved, continue independent research
+and design but do not guess an inference endpoint or import local credentials.
+
+Freeze quality judgments before resource aggregation. Report per-task precision/recall,
+critical regressions, candidate recall, selective risk AND coverage, abstentions and
+all-case quality after actual deferral. Zero accepted decisions have undefined selective
+risk, not a perfect score. Measure actual call removal and matching-boundary end-to-end
+latency, including proposal/queue/serialization/transfer/deferral/failed work, separately
+from model-only timing and publisher benchmarks. Advisory may improve quality while
+being slower; replacement may save calls while losing critical relations. No arbitrary
+financial/token cap, test-set threshold tuning, silent fallback or success-only reporting
+is introduced. A useful fit is an observed task-specific trade-off, not general semantic
+reliability, Human benefit or production readiness.
