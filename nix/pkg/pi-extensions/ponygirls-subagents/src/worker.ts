@@ -29,6 +29,8 @@ import type { InitializePayload, IpcEnvelope, ProviderAdmissionResponse, WorkerE
 import { bindChannel, taskHeader, validateEnvelope, validateInitializePayload } from "./protocol.ts";
 import type { Api, AssistantMessage, AssistantMessageEventStream, CredentialStore, Model, Provider, ProviderStreams, SimpleStreamOptions, TranscriptContext, Usage } from "@earendil-works/pi-ai";
 import type { StreamFn } from "@earendil-works/pi-agent-core";
+import type { EventBus, Extension, ExtensionFactory, ExtensionRuntime, LoadExtensionsResult } from "@earendil-works/pi-coding-agent";
+import { registerStatsCollector } from "../../ponygirls-model-stats-collector.ts";
 import { CHILD_CONTROL_TOOLS, DELEGATION_TOOLS, RESULT_TEXT_MAX, childToolGuidelines, childToolSpec, type TypeBuilder } from "./tools.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
 import { PROTOCOL_VERSION, type InstructionSet } from "./types.ts";
@@ -88,6 +90,7 @@ interface GenerationState {
 
 interface SdkModules {
   createAgentSession: (options: Record<string, unknown>) => Promise<{ session: unknown }>;
+  createEventBus: () => EventBus;
   SessionManager: {
     create: (cwd: string, dir?: string) => SessionManagerLike;
     open: (p: string) => SessionManagerLike;
@@ -119,10 +122,10 @@ interface ResourceLoaderLike {
  * packages, SYSTEM.md, AGENTS.md, skills) is discovered from the workdir;
  * it lists exactly the skills and context files its owner selected at spawn.
  */
-function snapshotResourceLoader(base: ResourceLoaderLike, set: InstructionSet): ResourceLoaderLike {
+function snapshotResourceLoader(base: ResourceLoaderLike, set: InstructionSet, extensions: LoadExtensionsResult): ResourceLoaderLike {
   const skills = set.skills.map((s) => ({ ...s, sourceInfo: { path: s.filePath, source: "ponygirls-subagents", scope: "temporary", origin: "top-level" } }));
   return {
-    getExtensions: () => base.getExtensions(),
+    getExtensions: () => extensions,
     getSkills: () => ({ skills, diagnostics: [] }),
     getPrompts: () => base.getPrompts(),
     getThemes: () => base.getThemes(),
@@ -1588,9 +1591,19 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
       noPromptTemplates: true,
       noThemes: true,
       noContextFiles: true,
-      extensionsOverride: (base: { runtime: unknown }) => ({ extensions: [], errors: [], runtime: base.runtime }),
     });
-    const resourceLoader = snapshotResourceLoader(baseLoader, init.instructions);
+    const extensions = baseLoader.getExtensions() as LoadExtensionsResult;
+    const hostAgentDir = process.env["PI_SUBAGENTS_HOST_AGENT_DIR"];
+    if (hostAgentDir) {
+      // Load only the packaged headless collector, never reload/discover ambient resources.
+      const { loadExtensionFromFactory } = await import(`file://${sdkRoot()}/dist/core/extensions/index.js`) as {
+        loadExtensionFromFactory: (factory: ExtensionFactory, cwd: string, eventBus: EventBus, runtime: ExtensionRuntime, path: string) => Promise<Extension>;
+      };
+      extensions.extensions.push(await loadExtensionFromFactory(
+        (pi) => registerStatsCollector(pi, hostAgentDir), init.workdir, sdk.createEventBus(), extensions.runtime, "ponygirls-worker-perf",
+      ));
+    }
+    const resourceLoader = snapshotResourceLoader(baseLoader, init.instructions, extensions);
     const Type = await loadTypeBox();
     // Preserved parent schemas/descriptions for external proxies (no generic
     // catchall); native tools keep pi-shaped child specs. Unknown names fail

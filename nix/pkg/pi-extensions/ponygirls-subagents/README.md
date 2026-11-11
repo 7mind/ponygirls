@@ -492,6 +492,13 @@ as its cached parts, `outputTokens` with `reasoningTokens` as its reasoning
 part (`null` when the provider reports no breakdown), `cost`, and `unknown`
 (some usage never arrived; never read as zero).
 
+Workers also register the packaged headless `/perf` collector explicitly,
+without discovering ambient extensions. Measured responses and failure counts
+append to the host agent directory's `model-stats.jsonl`, so `/perf` combines
+parent and child requests by model and effort. Unmeasured historical requests
+are not backfilled. Existing retained worker processes need replacement to
+pick up collector changes.
+
 A child's question ends a settlement wait with `reason: "needs_response"`;
 its text is in `messages` (and `openQuestion` in `list_agents`). Answer with
 `send_message(target="<child>", mode="note", reply_to="<messageId>", message=...)`

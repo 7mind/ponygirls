@@ -842,7 +842,7 @@
             chmod -R u+w pi-extensions
             cd pi-extensions
             mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
-            node --test ponygirls-model-stats-state.test.ts
+            node --test ponygirls-model-stats-state.test.ts ponygirls-model-stats-collector.test.ts
             touch $out
           '';
           rites-web = self.packages.${system}.rites-web;
@@ -1211,9 +1211,9 @@
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''
-            cp -r ${./nix/pkg/pi-extensions/ponygirls-subagents} ponygirls-subagents
-            chmod -R u+w ponygirls-subagents
-            cd ponygirls-subagents
+            cp -r ${./nix/pkg/pi-extensions} pi-extensions
+            chmod -R u+w pi-extensions
+            cd pi-extensions
             mkdir -p node_modules/@earendil-works
             mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$PI_SUBAGENTS_SDK_ROOT" node_modules/@earendil-works/pi-coding-agent
@@ -1222,6 +1222,7 @@
             ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@earendil-works/pi-agent-core" node_modules/@earendil-works/pi-agent-core
             ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/typebox" node_modules/typebox
             ln -s "$PI_SUBAGENTS_SDK_ROOT/node_modules/@types" node_modules/@types
+            cd ponygirls-subagents
             tsc -p tsconfig.json
             PI_SUBAGENTS_SDK_ROOT="$PI_SUBAGENTS_SDK_ROOT" node --test tests/*.test.ts
             touch $out

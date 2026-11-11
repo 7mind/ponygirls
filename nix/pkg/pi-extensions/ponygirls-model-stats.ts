@@ -31,9 +31,9 @@
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
 
-import { appendFileSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
+import { readStatsRecords, registerStatsCollector } from "./ponygirls-model-stats-collector.ts";
 
 import { getSelectListTheme, type ExtensionAPI, type Theme } from "@earendil-works/pi-coding-agent";
 import {
@@ -52,17 +52,12 @@ import {
 import { frameRule, frameTitle, keyHints, zebra, type KeyHint } from "@ponygirls/pi-ui";
 
 import {
-	classifyOutcome,
 	clampStatsBudget,
 	clampStatsScrollTop,
 	defaultStatsBudget,
-	isUsableRecord,
 	measureWindows,
-	parseStatsLine,
-	pruneRecords,
 	renderWindow,
 	SORT_KEYS,
-	serializeStatsRecord,
 	type StatsBreakdown,
 	sortModels,
 	STATS_BUDGET_STEP,
@@ -70,14 +65,10 @@ import {
 	STATS_WHEEL_STEP,
 	statsVisibleRange,
 	summarize,
-	WEEK_MS,
 	windowTitle,
-	type StatsRecord,
 	type WindowSummary,
 } from "./ponygirls-model-stats-state.ts";
 import { scrollPosition } from "./scroll-state.ts";
-
-const PRUNE_EVERY = 64;
 
 const STATS_TITLE = "Model performance";
 const STATS_HINTS: readonly KeyHint[] = [
@@ -104,46 +95,6 @@ const BOX_SIDE_WIDTH = 2;
 function statsPath(): string {
 	const dir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
 	return join(dir, "model-stats.jsonl");
-}
-
-function writeRecords(path: string, records: readonly StatsRecord[]): void {
-	const temporary = `${path}.${process.pid}.tmp`;
-	writeFileSync(temporary, records.map((record) => serializeStatsRecord(record) + "\n").join(""), "utf-8");
-	renameSync(temporary, path);
-}
-
-/** Parsed usable records. Non-blank lines that do not parse, or that are not a measurement, are removed from the file. */
-function readRecords(): StatsRecord[] {
-	const path = statsPath();
-	let raw: string;
-	try {
-		raw = readFileSync(path, "utf-8");
-	} catch {
-		return [];
-	}
-	const kept: StatsRecord[] = [];
-	let dropped = 0;
-	for (const line of raw.split("\n")) {
-		if (!line.trim()) continue;
-		const record = parseStatsLine(line);
-		if (!record || !isUsableRecord(record)) {
-			dropped += 1;
-			continue;
-		}
-		kept.push(record);
-	}
-	if (dropped > 0) {
-		try {
-			writeRecords(path, kept);
-		} catch {
-			// The in-memory view is still filtered; a rewrite failure must not hide stats.
-		}
-	}
-	return kept;
-}
-
-function writePruned(path: string): void {
-	writeRecords(path, pruneRecords(readRecords(), Date.now() - WEEK_MS));
 }
 
 class SortPicker implements Component {
@@ -367,53 +318,7 @@ function fitLine(line: string, width: number): string {
 }
 
 export default function (pi: ExtensionAPI): void {
-	/** Open request attempt; before_provider_headers is the dispatch anchor. */
-	let attempt: { startedAt: number; firstTokenAt?: number } | undefined;
-	let writesSincePrune = 0;
-
-	pi.on("before_provider_headers", () => {
-		attempt = { startedAt: Date.now() };
-	});
-
-	pi.on("provider_stream_event", () => {
-		if (attempt && attempt.firstTokenAt === undefined) attempt.firstTokenAt = Date.now();
-	});
-
-	pi.on("message_end", (event) => {
-		const open = attempt;
-		attempt = undefined;
-		if (!open || event.message.role !== "assistant") return;
-		const message = event.message;
-		const finishedAt = Date.now();
-		const key = `${message.provider}/${message.model}`;
-		const outcome = classifyOutcome(message.stopReason, message.errorMessage);
-		const effort = message.thinkingLevel === undefined ? {} : { effort: message.thinkingLevel };
-		const record: StatsRecord =
-			outcome === "ok"
-				? {
-						type: "ok",
-						ts: finishedAt,
-						key,
-						ttftMs: (open.firstTokenAt ?? finishedAt) - open.startedAt,
-						totalMs: finishedAt - open.startedAt,
-						outputTokens: message.usage.output,
-						...effort,
-					}
-				: { type: "fail", ts: finishedAt, key, kind: outcome, ...effort };
-		if (!isUsableRecord(record)) return;
-		try {
-			const path = statsPath();
-			mkdirSync(dirname(path), { recursive: true });
-			appendFileSync(path, `${serializeStatsRecord(record)}\n`, "utf-8");
-			writesSincePrune += 1;
-			if (writesSincePrune >= PRUNE_EVERY) {
-				writesSincePrune = 0;
-				writePruned(path);
-			}
-		} catch {
-			// Stats are best-effort; a storage failure must not disturb the turn.
-		}
-	});
+	registerStatsCollector(pi, process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
 
 	pi.registerCommand("perf", {
 		description: "Per-model response-time distributions (last hour / 24h / week), optionally per effort",
@@ -422,7 +327,7 @@ export default function (pi: ExtensionAPI): void {
 				ctx.ui.notify("/perf needs the interactive UI", "warning");
 				return;
 			}
-			const records = readRecords();
+			const records = readStatsRecords(statsPath());
 			const now = Date.now();
 			const summaries: BreakdownSummaries = { model: summarize(records, now, "model"), effort: summarize(records, now, "effort") };
 			// In place, replacing the editor, as /usage does. An overlay is a popup.

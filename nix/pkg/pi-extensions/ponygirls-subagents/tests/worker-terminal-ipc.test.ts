@@ -52,10 +52,15 @@ async function localProvider(dir: string, error: string, priorText: string | nul
       emit({ type: "response.output_item.added", output_index: 1, item: { ...call, arguments: "", status: "in_progress" } });
       emit({ type: "response.function_call_arguments.delta", output_index: 1, item_id: call.id, delta: call.arguments });
       emit({ type: "response.output_item.done", output_index: 1, item: call });
-      emit({ type: "response.completed", response: {
-        id: "local-response", status: "completed", output: [message, call],
-        usage: { input_tokens: 16, output_tokens: 7, total_tokens: 23, input_tokens_details: { cached_tokens: 3, cache_write_tokens: 2 }, output_tokens_details: { reasoning_tokens: 2 } },
-      } });
+      // Keep a measured decode span rather than a buffered completion dump.
+      setTimeout(() => {
+        emit({ type: "response.completed", response: {
+          id: "local-response", status: "completed", output: [message, call],
+          usage: { input_tokens: 16, output_tokens: 7, total_tokens: 23, input_tokens_details: { cached_tokens: 3, cache_write_tokens: 2 }, output_tokens_details: { reasoning_tokens: 2 } },
+        } });
+        response.end();
+      }, 150);
+      return;
     } else {
       emit({ type: "response.failed", response: { id: "local-failure", status: "failed", error: { message: error, code: "local_terminal_error" } } });
     }
@@ -198,6 +203,34 @@ for (const example of errors) {
     });
   });
 }
+
+test("real worker: provider failures are included in the host perf records", REAL_WORKER, async () => {
+  await withWorker(`${ERROR_PREFIX}perf probe`, null, async ({ dir, requests }) => {
+    const path = join(dir, "provider-config", "model-stats.jsonl");
+    assert.ok(existsSync(path), "worker provider request missing from shared /perf records");
+    const records = readFileSync(path, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(records.length, requests);
+    assert.deepEqual(records.map(({ type, key, kind, effort }) => ({ type, key, kind, effort })), [
+      { type: "fail", key: "local-terminal/terminal", kind: "error", effort: "off" },
+    ]);
+    assert.equal(existsSync(join(dir, "worker-home", "model-stats.jsonl")), false);
+  });
+});
+
+test("real worker: measured responses and failures share the host perf file", REAL_WORKER, async () => {
+  await withWorker(`${ERROR_PREFIX}after success`, "measured response", async ({ dir, requests }) => {
+    const records = readFileSync(join(dir, "provider-config", "model-stats.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+    assert.equal(records.length, requests);
+    assert.equal(records.length, 2);
+    assert.equal(records[0].type, "ok");
+    assert.equal(records[0].key, "local-terminal/terminal");
+    assert.equal(records[0].effort, "off");
+    assert.equal(records[0].outputTokens, 7);
+    assert.ok(records[0].ttftMs >= 0);
+    assert.ok(records[0].totalMs - records[0].ttftMs >= 100);
+    assert.equal(records[1].type, "fail");
+  });
+});
 
 test("real worker: error truncation preserves the prior text file, retention bound and exact usage", REAL_WORKER, async () => {
   const text = "result \"\\\u0000\n".repeat(40_000);
