@@ -22,7 +22,7 @@ function transport(options) {
     state.commands.push(name);let result;
     if(name==='GetCapabilities') result={CapabilityInfo:{capabilities:{contentMode:'Path',searchModes:['Lexical'],metadataOnlySearch:true,chunkBytes:4,maxListLimit:50,maxRequestBodyBytes:'1048576',maxFileBytes:String(options.limit),maxArtifactBytes:String(options.limit),maxFilesPerArtifact:1,maxTtlSeconds:100,cataloguePolicy:'current'}}};
     if(name==='InitUpload') {
-      state.inits++;assert.equal(command.InitUpload.visibility,options.visibility);assert.equal(command.InitUpload.files[0].File.sha256,digest(Buffer.from('screenshot bytes')));
+      state.inits++;assert.deepEqual(command.InitUpload.tags,[]);assert.equal(command.InitUpload.hostname,null);assert.equal(command.InitUpload.projectPath,null);assert.equal(command.InitUpload.visibility,options.visibility);assert.equal(command.InitUpload.files[0].File.sha256,digest(Buffer.from('screenshot bytes')));
       if(options.initFailure) throw new Error('offline');
       if(options.initError && state.inits===1) return new Response(JSON.stringify({requestId:envelope.requestId,result:{Error:{failure:{code:options.initError,message:'controlled admission',retryAfterSeconds:5}}}}),{status:options.initError==='QuotaExceeded'?413:429});
       result={UploadInitialized:{artifactId:id,chunkBytes:4,contentUrl:'http://test/view/'+id,externalPassword:options.visibility==='External'?'transient-password':null}};

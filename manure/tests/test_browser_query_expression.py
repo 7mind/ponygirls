@@ -33,7 +33,7 @@ class QueryExpressionBrowserTests(unittest.TestCase):
         self.assertEqual(result["query"], "newer draft")
         self.assertIn("Draft changed", result["status"])
 
-    def test_over_limit_sort_preserves_applied_query_and_remains_usable(self):
+    def test_maximum_text_sort_preserves_applied_query_and_remains_usable(self):
         fix = bf.start_server(suffix_mode="separate")
         self.addCleanup(fix.close)
         rows = bf.run_steps([
@@ -48,7 +48,8 @@ class QueryExpressionBrowserTests(unittest.TestCase):
             {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query')?.length === 4096 && !document.querySelector('[data-sort=name]').disabled"},
             {"op": "eval", "fn": "() => { window.__beforeSort=location.hash; return true; }"},
             {"op": "click", "selector": "[data-sort=name]"},
-            {"op": "eval", "fn": "() => ({errors:window.__queryErrors,unchanged:location.hash===window.__beforeSort,query:document.querySelector('#filter-text').value.length,status:document.querySelector('#draft-status').textContent})"},
+            {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query')?.startsWith('sort:name ') && !document.querySelector('[data-sort=name]').disabled"},
+            {"op": "eval", "fn": "() => ({errors:window.__queryErrors,unchanged:location.hash===window.__beforeSort,query:document.querySelector('#filter-text').value,status:document.querySelector('#draft-status').textContent})"},
             {"op": "fill", "selector": "#filter-text", "value": "after-sort"},
             {"op": "click", "selector": "#search-submit"},
             {"op": "waitForEval", "fn": "() => new URLSearchParams(location.hash.split('?')[1]).get('query') === 'after-sort'"},
@@ -57,9 +58,9 @@ class QueryExpressionBrowserTests(unittest.TestCase):
         self.assertTrue(all(row["ok"] for row in rows), [row for row in rows if not row["ok"]])
         values = [row["value"] for row in rows if row["op"] == "eval"]
         self.assertEqual(values[1]["errors"], [])
-        self.assertTrue(values[1]["unchanged"])
-        self.assertEqual(values[1]["query"], 4096)
-        self.assertIn("unchanged", values[1]["status"])
+        self.assertFalse(values[1]["unchanged"])
+        self.assertEqual(values[1]["query"], "sort:name " + "a" * 4096)
+        self.assertIn("Draft matches applied", values[1]["status"])
         self.assertEqual(values[2]["errors"], [])
         self.assertEqual(values[2]["query"], "after-sort")
         self.assertIn("Created", values[2]["sort"])

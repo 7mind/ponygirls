@@ -78,7 +78,7 @@ aria-describedby="token-note">
 
 <form id="list-form" class="search-panel">
 <div class="query-control query-text"><label for="filter-text">Search artifacts</label>
-<div class="expression-composer"><div class="query-input"><input type="text" id="filter-text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="query-suggestions" aria-describedby="query-diagnostic draft-status" maxlength="4096" placeholder="Search or filter · access:public" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear draft · Escape after closing suggestions">×</button></div>
+<div class="expression-composer"><div class="query-input"><input type="text" id="filter-text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="query-suggestions" aria-describedby="query-diagnostic draft-status" maxlength="131072" placeholder="Search or filter · access:public" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear draft · Escape after closing suggestions">×</button></div>
 <div id="query-suggestions" class="expression-hints" role="listbox" aria-label="Expression suggestions" hidden></div></div></div>
 <div class="search-actions"><button type="submit" id="search-submit" class="primary">Search</button><button type="button" id="refresh-button" title="Refresh applied query, not the draft">Refresh</button></div>
 <div class="visibility-presets" role="group" aria-label="Access query presets">
@@ -91,9 +91,10 @@ aria-describedby="token-note">
 <p id="draft-status" class="search-help" role="status">Draft matches applied query.</p>
 <details id="query-syntax" class="search-help"><summary>Query syntax</summary>
 <p>Press Search to apply. Typing and suggestions never run retrieval. Fields are conjunctions: <code>access:internal|external|public</code>, <code>mode:catalogue|lexical|semantic|hybrid</code>.</p>
+<p>In all modes: <code>tag:release tag:reviewed</code> requires all tags; <code>hostname:build-host</code>, <code>project:"/work/repo"</code> match exact explicit metadata.</p>
 <p>Catalogue: literal name/ID text; <code>state:ready|uploading|publishing</code>, <code>expired:true|false</code>, <code>sort:name</code>, <code>direction:asc|desc</code>. Defaults: unexpired, created_at descending.</p>
-<p>Retrieval: names and manifest paths, never file bytes; <code>kind:file|dir</code>, <code>owner:"Exact User"</code>. Ready, unexpired artifacts; relevance order. Lexical uses English words/stems, quoted phrases, OR and -negation. Semantic/hybrid call the model only on Search or Refresh.</p>
-<p>Use <code>text:"exact text: with spaces"</code> for literal colons, JSON escapes, or arbitrary retrieval syntax. Do not combine text: with bare terms. Field names ignore case; values are exact lowercase. ↑↓ select · Enter insert · Escape close, then clear · Ctrl/⌘ K focus.</p>
+<p>Retrieval: names, tags, supplied provenance and manifest paths, never file bytes; <code>kind:file|dir</code>, <code>owner:"Exact User"</code>. Ready, unexpired artifacts; relevance order. Lexical uses English words/stems, quoted phrases, OR and -negation. Semantic/hybrid call the model only on Search or Refresh.</p>
+<p>Use <code>text:"exact text: with spaces"</code> for literal colons, JSON escapes, or arbitrary retrieval syntax. Do not combine text: with bare terms. Field names ignore case; closed values are lowercase; metadata values keep their exact case and whitespace. ↑↓ select · Enter insert · Escape close, then clear · Ctrl/⌘ K focus.</p>
 </details>
 </form>
 

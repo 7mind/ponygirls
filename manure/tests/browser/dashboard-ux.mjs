@@ -141,12 +141,15 @@ await check("sortable table, global search, URL reload and responsive themes", a
 });
 
 await check("expression length bound and delayed capabilities preserve draft", async (page) => {
-  assert.equal(await page.locator("#filter-text").getAttribute("maxlength"), "4096");
-  await page.locator("#filter-text").fill("x".repeat(4097));
-  assert.equal((await page.locator("#filter-text").inputValue()).length, 4096, "native input enforces its length limit");
-  await page.locator("#filter-text").evaluate((input) => { input.value = "x".repeat(4097); input.dispatchEvent(new Event("input", { bubbles: true })); });
+  assert.equal(await page.locator("#filter-text").getAttribute("maxlength"), "131072");
+  await page.locator("#filter-text").fill("x".repeat(131073));
+  assert.equal((await page.locator("#filter-text").inputValue()).length, 131072, "native input enforces its expression limit");
+  await page.locator("#filter-text").evaluate((input) => { input.value = "x".repeat(131073); input.dispatchEvent(new Event("input", { bubbles: true })); });
   await page.locator("#search-submit").click();
-  assert.match(await page.locator("#query-diagnostic").textContent(), /4096/);
+  assert.equal(await page.locator("#query-diagnostic").textContent(), "Query exceeds 131072 UTF-16 code units.");
+  await page.locator("#filter-text").fill("x".repeat(4097));
+  await page.locator("#search-submit").click();
+  assert.equal(await page.locator("#query-diagnostic").textContent(), "Search text exceeds 4096 UTF-16 code units.");
   await page.evaluate(() => { location.hash = "#/artifacts?mode=semantic&q=ux-bundle"; });
   await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("unavailable"));
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:semantic ux-bundle");

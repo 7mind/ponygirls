@@ -145,7 +145,8 @@ th { position: sticky; top: 0; z-index: 1; padding: 10px 12px; text-align: left;
 td { padding: 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:hover td { background: var(--surface-hover); }
-.artifacts th:first-child, .artifacts td:first-child { width: 23%; padding-left: 14px; }
+.artifacts th, .artifacts td { padding: 6px 7px; }
+.artifacts th:first-child, .artifacts td:first-child { width: 23%; padding-left: 8px; }
 .artifacts th, .artifacts td { overflow-wrap: anywhere; white-space: normal; }
 .artifacts th:last-child, .artifacts td:last-child { width: 13%; }
 .sort-header { display: inline-flex; max-width: 100%; text-align: left; align-items: center; gap: 7px; border: 0; padding: 2px 0; background: transparent; font: inherit; color: inherit; letter-spacing: inherit; }
@@ -153,11 +154,21 @@ tbody tr:hover td { background: var(--surface-hover); }
 .sort-indicator { color: var(--muted); font-size: 11px; }
 th[aria-sort=ascending] .sort-header, th[aria-sort=descending] .sort-header { color: var(--ink); }
 th[aria-sort=ascending] .sort-indicator, th[aria-sort=descending] .sort-indicator { color: var(--accent); }
+.record-heading { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 4px; }
+.record-heading > .record-open { flex: 1; min-width: 0; }
+.record-copy { flex: none; width: 28px; height: 28px; padding: 0; font-size: 17px; line-height: 1; }
+.record-copy-status { flex-basis: 100%; color: var(--muted); font-size: 11px; }
+.record-copy-status:empty { display: none; }
+.record-copy-fallback { flex-basis: 100%; min-width: 0; }
+.record-copy-fallback input { user-select: all; }
+.record-copy-fallback button { margin-top: 4px; padding: 3px 6px; }
+.metadata-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+.metadata-tags span, .metadata-literal { white-space: pre-wrap; }
 .record-open { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; padding: 0; background: transparent; text-align: left; }
 .record-open:hover { background: transparent; }
 .record-open > span:last-child { min-width: 0; }
 .record-open strong { display: block; font-size: 12px; font-weight: 550; line-height: 1.5; overflow-wrap: anywhere; }
-.record-open small { display: block; margin-top: 4px; color: var(--muted); font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.record-open small { display: block; margin-top: 2px; color: var(--muted); font: 10px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
 .record-icon { flex: none; width: 29px; height: 32px; display: grid; place-items: center; background: var(--surface-muted); color: var(--muted); border: 1px solid var(--line); font-size: 12px; }
 .record-icon svg { width: 17px; height: 17px; }
 .type-badge, .access-badge { display: inline-block; border: 1px solid var(--line); padding: 2px 5px; color: var(--muted); font-size: 10px; }
@@ -329,9 +340,9 @@ th[aria-sort=ascending] .sort-indicator, th[aria-sort=descending] .sort-indicato
 @media (max-width: 1350px) {
   .artifacts, .artifacts thead, .artifacts tbody { display: block; width: 100%; }
   .artifacts thead { position: sticky; top: 0; z-index: 1; background: var(--surface-muted); }
-  .artifacts thead tr { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 10px 14px; }
+  .artifacts thead tr { display: flex; flex-wrap: wrap; gap: 4px 12px; padding: 8px 10px; }
   .artifacts th, .artifacts th:first-child, .artifacts th:last-child { position: static; width: auto; padding: 0; box-shadow: none; }
-  .artifacts tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); padding: 12px 14px; gap: 12px; }
+  .artifacts tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-bottom: 1px solid var(--line); padding: 8px 10px; gap: 8px; }
   .artifacts td, .artifacts td:first-child, .artifacts td:last-child { display: block; width: auto; min-width: 0; padding: 0; border: 0; text-align: left; }
   .artifacts td:first-child, .artifacts td:last-child { grid-column: 1 / -1; }
   .artifacts td::before { content: attr(data-label); display: block; color: var(--muted); font-size: 10px; margin-bottom: 4px; }
