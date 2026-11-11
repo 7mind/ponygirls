@@ -105,6 +105,35 @@ class ArchiveProjectionTest extends munit.FunSuite {
       assertEquals(Sql.one(c,"SELECT pg_get_expr(indpred,indrelid) FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getString(1)),Some("head_candidate"))
     }
   }}
+  test("Effectual GoodCommunication regression: migrated startup recovers projections and GIN without revisiting source revisions") { database { (config,db,archive) =>
+    val original=Fixtures.snapshot(); val out=archive.ingest("a",original)
+    archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+    db.transaction { c =>
+      Sql.exec(c,"UPDATE ch_revision_info SET lexical_version=0 WHERE session_id=? AND revision=1",out.sessionId)
+      Sql.exec(c,"DELETE FROM ch_revision_info WHERE session_id=? AND revision=2",out.sessionId)
+      Sql.exec(c,"DELETE FROM ch_messages WHERE session_id=? AND revision=2",out.sessionId)
+      Sql.exec(c,"DELETE FROM ch_archive_fragments WHERE session_id=? AND revision=2",out.sessionId)
+      Sql.exec(c,"DROP INDEX ch_archive_fragments_lower_trgm")
+      Sql.exec(c,"CREATE FUNCTION reject_startup_revision_sweep() RETURNS trigger LANGUAGE plpgsql AS 'BEGIN RAISE EXCEPTION USING ERRCODE = ''P0001'', MESSAGE = ''startup revisited source revisions''; END;'")
+      Sql.exec(c,"CREATE TRIGGER reject_startup_revision_sweep BEFORE UPDATE OF revision ON ch_sources FOR EACH STATEMENT EXECUTE FUNCTION reject_startup_revision_sweep()")
+    }
+    try {
+      db.initialize(); db.initialize()
+      db.transaction { c =>
+        assertEquals(Sql.one(c,"SELECT pg_get_expr(indpred,indrelid) FROM pg_index WHERE indexrelid='ch_archive_fragments_lower_trgm'::regclass")(_.getString(1)),Some("head_candidate"))
+        assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND revision=2 AND NOT head_candidate",out.sessionId)(_.getInt(1)),Some(0))
+        assert(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments WHERE session_id=? AND revision=1 AND head_candidate",out.sessionId)(_.getInt(1)).get>0,"rebuilt historical TRUE extras are permitted; startup must not require archive-wide compaction")
+        assertEquals(Sql.rows(c,"SELECT lexical_version FROM ch_revision_info WHERE session_id=? ORDER BY revision",out.sessionId)(_.getInt(1)),List.fill(2)(ArchiveProjection.lexicalVersion))
+      }
+      List(1,2).foreach { revision =>
+        assertEquals(archive.messages("a",out.sessionId,0,100,Some(ContentView(revision,None))).messages,original.messages)
+        assertEquals(archive.raw("a",out.sessionId,Some(revision)).files,original.files)
+      }
+    } finally db.transaction { c =>
+      Sql.exec(c,"DROP TRIGGER reject_startup_revision_sweep ON ch_sources")
+      Sql.exec(c,"DROP FUNCTION reject_startup_revision_sweep()")
+    }
+  }}
   test("BG GoodCommunication regression: initialize repairs obsolete and missing whole-field projections, then preserves bytes and GIN identity") { database { (config,db,archive) =>
     val original=Fixtures.snapshot(); val text="aΣ"+"\u0301"*5000+"b İSTANBUL KELVIN %_\\"
     val request=original.copy(metadata=original.metadata.copy(title=text),messages=original.messages.map(_.copy(text=text)))

@@ -35,7 +35,6 @@ BEGIN
 END;
 $$;
 
-UPDATE ch_sources source SET revision=source.revision
-WHERE EXISTS(SELECT 1 FROM ch_archive_fragments fragment
-  WHERE fragment.session_id=source.id AND fragment.revision<>source.revision AND fragment.head_candidate);
+-- Historical TRUE extras are safe: search also matches the current source revision.
+-- Do not compact the archive at every startup; HEAD advances prune unlocked extras.
 CREATE INDEX IF NOT EXISTS ch_archive_fragments_lower_trgm ON ch_archive_fragments USING gin(value gin_trgm_ops) WHERE head_candidate;
