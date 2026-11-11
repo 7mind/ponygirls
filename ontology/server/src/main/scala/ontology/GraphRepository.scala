@@ -40,6 +40,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
   private var sourceIndex = Map.empty[SourceKey, (String, IngestResult)]
   private var ingestReceipts = Map.empty[IngestKey, (String, IngestResult)]
   private val capture = new CaptureEngine
+  private val commands = new GraphCommandEngine(engine)
   private var coordinator = CoordinatorState(0L, None)
   private var curationAttempts = Map.empty[java.util.UUID, CurationAttempt]
   private var curationJournal = Map.empty[java.util.UUID, List[CurationAuditRecord]]
@@ -85,11 +86,27 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
       case _: PrimaryOutcome.Captured =>
         val indexed = judgmentIndex.exists { case (key, (_, id)) => key.scope == graph.scope && id == record.event.id }
         PrimaryIntegrity.capture(graph, record, receipt, indexed)
+      case PrimaryOutcome.Commanded(value) =>
+        val indexed = judgmentIndex.exists { case (key, (_, id)) => key.scope == graph.scope && id == record.event.id }
+        val request = StoredJson.decode(ApplyRequest.codecJson, receipt.content)
+        val before = versions.getOrElse((graph.scope, request.expectedGeneration), throw Fault("corrupt", "command base snapshot missing"))
+        PrimaryIntegrity.command(graph, record, receipt, indexed, before, loadAdoptions(before, Adoptions.claims(request)), engine)
+        val mutation = receipts.getOrElse(Receipt(graph.scope, receipt.contributor, value.requestId), throw Fault("corrupt", "command mutation index missing"))
+        Require(mutation == (receipt.digest, value), "corrupt", "command mutation index differs")
       case PrimaryOutcome.Reviewed(value) =>
         PrimaryIntegrity.judgment(graph, record, reviewEvidence(graph, record), review)
         val indexed = judgmentIndex.getOrElse(Receipt(graph.scope, value.actor, value.requestId), throw Fault("corrupt", "judgment index missing"))
         Require(indexed == (receipt.digest, record.event.id), "corrupt", "judgment index mismatch")
     }
+  }
+  private def commandLink(graph: GraphSnapshot, receipt: InputReceipt): Unit = {
+    val request = StoredJson.decode(ApplyRequest.codecJson, receipt.content)
+    val source = GraphCommandIdentity.source(graph.scope, receipt.contributor, request.requestId)
+    val records = sourceEvents.getOrElse(graph.scope, Nil).filter(_.event.id == source.id)
+    Require(records.size == 1 && records.head.kind == InputKind.GraphMutation && records.head.event.provenance.input == receipt.ref.id,
+      "corrupt", "mutation receipt has no exact command primary")
+    validatePrimary(graph, records.head)
+    SourceIntegrity.linkedInput(graph, receipt)
   }
   private def validateContexts(principal: Principal, contexts: List[ContextRecord]): Unit = {
     val keys = ContextAccess.requiredSnapshots(principal, contexts)
@@ -107,28 +124,48 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
     val key = Receipt(request.scope, admission.actor, request.requestId)
     val digest = Digests.text(Wire.encode(ApplyRequest.codecJson, request).noSpaces)
     receipts.get(key) match {
-      case Some((previous, result)) => Require(previous == digest, "replay-conflict", "request ID has different content"); result.copy(replayed = true)
+      case Some((previous, result)) =>
+        Require(previous == digest, "replay-conflict", "request ID has different content")
+        val graph = verified(heads.getOrElse(request.scope, Graph.empty(request.scope)))
+        val receipt = rawInput(request.scope, Ref(InputReceipts.graphId(admission.actor, request.requestId), 1))
+        Require(receipt.digest == previous, "corrupt", "replayed command receipt differs")
+        commandLink(graph, receipt)
+        result.copy(replayed = true)
       case None =>
         val claims = Adoptions.claims(request)
         if (claims.nonEmpty) admission.principal.require(request.scope, Capability.Read)
         validateContexts(admission.principal, List(context))
         val before = verified(heads.getOrElse(request.scope, Graph.empty(request.scope)))
-        val changed = engine(before, request, admission.copy(reviewEvidence = loadAdoptions(before, claims)))
-        val receipt = InputReceipts.create(admission.provenance.input, request.scope, changed.snapshot.generation, InputKind.GraphMutation, admission.actor, admission.recorder, admission.actor, "ontology.api.ApplyRequest/0.1.0 canonical JSON", Wire.encode(ApplyRequest.codecJson, request).noSpaces, admission.recordedAt, context, admission.ingress)
-        Require(!inputs.contains((request.scope, receipt.ref)), "identity", "input receipt already exists")
-        heads = heads.updated(request.scope, changed.snapshot)
-        inputs = inputs.updated((request.scope, receipt.ref), receipt)
-        versions = versions.updated((request.scope, before.generation), before).updated((request.scope, changed.snapshot.generation), changed.snapshot)
-        receipts = receipts.updated(key, (digest, changed.result))
-        outbox = outbox.updated((request.scope, changed.snapshot.generation), false)
+        val evidence = loadAdoptions(before, claims)
+        val changed = commands(before, request, admission.copy(reviewEvidence = evidence))
+        val receipt = changed.receipt
+        val primary = PrimaryRecord(request.requestId, changed.event, CaptureIdentity.fingerprint(changed.event, request.requestId), PrimaryOutcome.Commanded(changed.result))
+        val events = sourceEvents.getOrElse(request.scope, Nil) :+ primary
+        Require(!inputs.contains((request.scope, receipt.ref)) && !versions.contains((request.scope, changed.snapshot.generation)), "identity", "command receipt or generation already exists")
+        PrimaryIntegrity.command(changed.snapshot, primary, receipt, false, before, evidence, engine)
+        SourceIntegrity.frontier(changed.snapshot, events.map(_.event))
+        PrimaryIntegrity.inventory(changed.snapshot, events)
+        val nextHeads = heads.updated(request.scope, changed.snapshot)
+        val nextInputs = inputs.updated((request.scope, receipt.ref), receipt)
+        val nextVersions = versions.updated((request.scope, before.generation), before).updated((request.scope, changed.snapshot.generation), changed.snapshot)
+        val nextReceipts = receipts.updated(key, (digest, changed.result))
+        val nextEvents = sourceEvents.updated(request.scope, events)
+        val nextOutbox = outbox.updated((request.scope, changed.snapshot.generation), false)
+        heads = nextHeads
+        inputs = nextInputs
+        versions = nextVersions
+        receipts = nextReceipts
+        sourceEvents = nextEvents
+        outbox = nextOutbox
         changed.result
     }
   })
   def input(scope: String, ref: Ref): IO[InputReceipt] = IO(synchronized {
     val receipt = rawInput(scope, ref)
-    if (Set(InputKind.Capture, InputKind.Judgment, InputKind.PresentationPublication).contains(receipt.kind)) {
+    if (Set(InputKind.Capture, InputKind.Judgment, InputKind.PresentationPublication, InputKind.GraphMutation).contains(receipt.kind)) {
       val graph = verified(heads.getOrElse(scope, Graph.empty(scope)))
-      SourceIntegrity.linkedInput(graph, receipt)
+      if (receipt.kind == InputKind.GraphMutation) commandLink(graph, receipt)
+      else SourceIntegrity.linkedInput(graph, receipt)
     }
     receipt
   }).flatMap(receipt => if (receipt.kind == InputKind.Curation) curationStore.validateInput(receipt).map(_ => receipt) else IO.pure(receipt))

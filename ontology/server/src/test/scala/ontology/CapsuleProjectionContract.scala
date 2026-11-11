@@ -87,8 +87,8 @@ abstract class CapsuleProjectionContract extends CurationRepositorySupport {
     entries = prepared.value.payload.manifest.entries
     _ = assert(entries.exists(e => e.ref == ref(created, "bindingA") && e.partition == CapsulePartition.SelectedWorkContext))
     _ = assert(entries.exists(e => e.ref == ref(created, "planned") && e.roles.contains(CapsuleRole.Progress)))
-    _ = assert(!entries.exists(_.ref == ref(created, "bindingB")))
-    _ = assert(!entries.exists(_.ref == ref(created, "taskB")))
+    _ = assert(entries.exists(e => e.ref == ref(created, "bindingB") && e.partition != CapsulePartition.SelectedWorkContext))
+    _ = assert(entries.exists(e => e.ref == ref(created, "taskB") && e.partition != CapsulePartition.SelectedWorkContext))
     _ = assertEquals(entries.map(_.ref), prepared.value.payload.records.map(Graph.recordRef))
     _ = assert(prepared.value.payload.records.exists(_.isInstanceOf[GraphRecord.Input]))
   } yield () } }
@@ -257,7 +257,7 @@ abstract class CapsuleProjectionContract extends CurationRepositorySupport {
     receipt = DeliveryEngine.record(request, ServiceCall.internal(settings.principal, "delivery.report", UUID.randomUUID()), prepared.baseline,
       CapsuleContext.cut(status), Nil, UUID.randomUUID(), Instant.parse("2026-11-11T00:02:00Z"))
     _ = assertEquals(receipt.cutComparison, DeliveryCutComparison.ChangedGraphOrCoverage)
-    _ = assertEquals(receipt.observedCut.frontier, 1L)
+    _ = assertEquals(receipt.observedCut.frontier, prepared.value.payload.cut.frontier + 1L)
     _ = assertEquals(receipt.observedCut.coveredFrontier, 0L)
     _ = DeliveryEngine.validate(receipt, request, prepared.baseline, Nil)
   } yield () } }

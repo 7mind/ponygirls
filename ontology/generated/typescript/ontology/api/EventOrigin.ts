@@ -3,13 +3,15 @@ import {BaboonCodecContext, BaboonDecoderFailure, Lazy} from '../../BaboonShared
 export enum EventOrigin {
     UserMessage = "UserMessage",
     WorkerMessage = "WorkerMessage",
-    ToolOutput = "ToolOutput"
+    ToolOutput = "ToolOutput",
+    GraphCommand = "GraphCommand"
 }
 
 export const EventOrigin_values: ReadonlyArray<EventOrigin> = [
     EventOrigin.UserMessage,
     EventOrigin.WorkerMessage,
-    EventOrigin.ToolOutput
+    EventOrigin.ToolOutput,
+    EventOrigin.GraphCommand
 ] as const;
 
 export function EventOrigin_parse(s: string): EventOrigin {

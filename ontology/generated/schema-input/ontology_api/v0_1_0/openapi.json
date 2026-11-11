@@ -2647,7 +2647,8 @@
         "enum" : [
           "UserMessage",
           "WorkerMessage",
-          "ToolOutput"
+          "ToolOutput",
+          "GraphCommand"
         ]
       },
       "ontology_api_Execution" : {

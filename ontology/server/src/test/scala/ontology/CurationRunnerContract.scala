@@ -21,8 +21,8 @@ abstract class CurationRunnerContract extends CurationCoordinatorSupport {
       config => CurationCoordinator.create(owner, repo, settings.principal, model, new CursorSigner(Array.fill[Byte](32)(4)),
         QueryLimits(100, 64, 65536, 2048), config, IO(UUID.randomUUID()), cycleLog, new SupervisedCurationCleanup),
       new SupervisedCurationCleanup, log)
-  test("automatic polling publishes once and shutdown releases ownership") { check { (repo, settings, scope) => for {
-    _ <- capture(repo, scope)
+  for (origin <- List("capture", "command")) test(s"automatic polling for $origin publishes once and shutdown releases ownership") { check { (repo, settings, scope) => for {
+    _ <- if (origin == "command") mutate(repo, scope).void else capture(repo, scope).void
     calls <- Cell.of[IO, Int](0)
     renewals <- Cell.of[IO, Int](0)
     published <- Deferred[IO, Unit]

@@ -23,7 +23,7 @@ sealed trait MutationAdmission {
 }
 final case class Admission(principal: Principal, recorder: Actor, requestId: UUID, recordedAt: String, ingress: RequestTrace, reviewEvidence: List[ReviewEvidence]) extends MutationAdmission {
   def provenance: Provenance = Provenance(actor, recorder, InputReceipts.graphId(actor, requestId), recordedAt)
-  def ref(alias: String): Ref = Ref(UUID.nameUUIDFromBytes((requestId.toString + ":" + alias).getBytes(UTF_8)), 1)
+  def ref(alias: String): Ref = GraphCommandIdentity.operation(requestId, alias)
   def validateRequest(request: ApplyRequest): Unit = ()
 }
 private[domain] final case class CurationAdmission(scope: String, principal: Principal, recorder: Actor, submitter: Actor,

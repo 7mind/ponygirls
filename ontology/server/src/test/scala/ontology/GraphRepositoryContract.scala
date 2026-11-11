@@ -71,7 +71,7 @@ abstract class GraphRepositoryContract extends FunSuite {
     for {
       one <- repo.ingest(first, principal, captureRecorder, captureTime, ontology.TestContexts.trace("fixture-ingest"))
       captured <- repo.read(name)
-      mutation = request(name, captured.generation, "Interpretation does not add a source")
+      mutation = request(name, captured.generation, "External interpretation is itself a primary command")
       applied <- repo.apply(mutation, admission(mutation))
       two <- repo.ingest(second, principal, captureRecorder, captureTime, ontology.TestContexts.trace("fixture-ingest"))
       initial <- repo.history(name, 0L)
@@ -80,9 +80,9 @@ abstract class GraphRepositoryContract extends FunSuite {
       current <- repo.read(name)
       _ = assertEquals(frontier(initial), 0L)
       _ = assertEquals(frontier(oldCapture), one.frontier)
-      _ = assertEquals(frontier(oldMutation), one.frontier)
+      _ = assertEquals(frontier(oldMutation), one.frontier + 1L)
       _ = assertEquals(frontier(current), two.frontier)
-      _ = assertEquals(two.frontier, 2L)
+      _ = assertEquals(two.frontier, 3L)
     } yield ()
   } }
   test("event and transport replay are distinct and neither advances the source frontier") { check { repo =>
@@ -140,6 +140,59 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(rest.nextAfter, None)
       bad <- repo.sources(SourceRequest(name, 3L, 1)).attempt
       _ = assertEquals(bad.left.toOption.collect { case f: Fault => f.code }, Some("source-page"))
+    } yield ()
+  } }
+  test("external command batches atomically publish one primary Source and replay its original evidence") { check { repo =>
+    val first = request(scope(), 0L, "Externally contributed account")
+    val r = first.copy(operations = first.operations :+ Operation.Create("second", TestAuthoring.applicability(TestApplicability.unresolved),
+      ContentInput.Statement("Second operation in the same command", Modality.Assertion), Nil))
+    val accepted = admission(r)
+    for {
+      result <- repo.apply(r, accepted)
+      graph <- repo.read(r.scope)
+      page <- repo.sources(SourceRequest(r.scope, 0L, 10))
+      _ = assertEquals(graph.generation, 1L)
+      _ = assertEquals(graph.sourceFrontier, 1L)
+      _ = assertEquals(graph.coveredFrontier, 0L)
+      _ = assertEquals(page.events.size, 1)
+      event = page.events.head
+      _ = assertEquals(event.origin.toString, "GraphCommand")
+      _ = assertEquals(event.metadata.representation, SourceRepresentation.GraphCommand)
+      _ = assertEquals(event.context, Contexts.server(accepted.ingress, Contexts.ProtocolLimits))
+      _ = assertEquals(event.observation, Observation.None())
+      input <- repo.input(r.scope, Ref(accepted.provenance.input, 1))
+      _ = assertEquals(input.kind, InputKind.GraphMutation)
+      _ = assertEquals(input.content, Wire.encode(ApplyRequest.codecJson, r).noSpaces)
+      _ = assertEquals(event.text, input.content)
+      source = Graph.node(graph, Ref(event.id, 1))
+      _ = assertEquals(source.content.asInstanceOf[Content.Source].rawDigest, input.digest)
+      _ = assertEquals(result.created.map(_.alias).toSet, Set("claim", "second"))
+      _ = assert(!result.created.exists(_.ref == source.ref))
+      retried <- repo.apply(r, accepted.copy(principal = accepted.principal.copy(credentialId = "rotated-credential"),
+        recordedAt = "2026-11-10T01:00:00Z", ingress = TestContexts.trace("retried-command")))
+      _ = assertEquals(retried, result.copy(replayed = true))
+      after <- repo.read(r.scope)
+      afterPage <- repo.sources(SourceRequest(r.scope, 0L, 10))
+      _ = assertEquals(after, graph)
+      _ = assertEquals(afterPage, page)
+      outbox <- repo.pendingProjections(100000)
+      _ = assertEquals(outbox.filter(_.scope == r.scope), List(graph))
+    } yield ()
+  } }
+  test("rejected external commands retain neither a primary source nor a frontier increment") { check { repo =>
+    val r = request(scope(), 0L, "This batch must be rolled back")
+    val bad = r.copy(operations = r.operations :+ Operation.Bind("bad", Target.Exact(Ref(UUID.randomUUID(), 1)), Nil, "fixture"))
+    for {
+      rejected <- repo.apply(bad, admission(bad)).attempt
+      _ = assertEquals(rejected.left.toOption.collect { case f: Fault => f.code }, Some("reference"))
+      empty = r.copy(requestId = UUID.randomUUID(), operations = Nil)
+      emptyResult <- repo.apply(empty, admission(empty)).attempt
+      _ = assertEquals(emptyResult.left.toOption.collect { case f: Fault => f.code }, Some("operations"))
+      graph <- repo.read(r.scope)
+      page <- repo.sources(SourceRequest(r.scope, 0L, 10))
+      _ = assertEquals(graph, Graph.empty(r.scope))
+      _ = assertEquals(page.events, Nil)
+      _ = assertEquals(page.frontier, 0L)
     } yield ()
   } }
   test("graph provenance resolves to the actual normalized command, not only its hash") { check { repo =>
@@ -309,7 +362,8 @@ abstract class GraphRepositoryContract extends FunSuite {
       replay <- repo.apply(r, admission(r).copy(recordedAt = "later"))
       head <- repo.read(r.scope)
       _ = assertEquals(replay, first.copy(replayed = true))
-      _ = assertEquals(head.definitions.size, 2)
+      _ = assertEquals(head.definitions.size, 4)
+      _ = assertEquals(head.sourceFrontier, 2L)
     } yield ()
   } }
   test("same request identity with changed payload is a conflict") { check { repo =>
@@ -341,7 +395,8 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(List(results._1, results._2).count(_.isRight), 1)
       _ = assertEquals(List(results._1, results._2).flatMap(_.left.toOption).collect { case f: Fault => f.code }, List("conflict"))
       head <- repo.read(s)
-      _ = assertEquals(head.definitions.size, 1)
+      _ = assertEquals(head.definitions.size, 2)
+      _ = assertEquals(head.sourceFrontier, 1L)
     } yield ()
   } }
   test("graph accumulation is not constrained by one HTTP request byte budget") { check { repo =>
@@ -350,7 +405,9 @@ abstract class GraphRepositoryContract extends FunSuite {
       val r = request(s, i.toLong, s"assertion-$i " + ("x" * 450000))
       repo.apply(r, admission(r)).void
     } *> repo.read(s).map { head =>
-      assertEquals(head.definitions.size, 10)
+      assertEquals(head.definitions.size, 20)
+      assertEquals(head.definitions.count(_.content.isInstanceOf[Content.Source]), 10)
+      assertEquals(head.sourceFrontier, 10L)
       assertEquals(head.generation, 10L)
     }
   } }

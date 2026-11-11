@@ -104,7 +104,7 @@ abstract class RdfProjectionContract extends FunSuite {
       _ <- rdf.publish(graph)
       restored <- rdf.snapshot("s", graph.generation)
       _ = assertEquals(restored, graph)
-      _ = assertEquals(restored.sourceFrontier, 1L)
+      _ = assertEquals(restored.sourceFrontier, before.sourceFrontier + 1L)
       _ = assert(Graph.node(restored, p.reservedSourceRef).content.asInstanceOf[Content.Source].descriptor.isInstanceOf[SourceDescriptor.DerivedPresentation])
       _ = assert(Graph.node(restored, judgment.source).content.asInstanceOf[Content.Source].descriptor.isInstanceOf[SourceDescriptor.PrimaryCapture])
       sources <- rdf.subjects("s", graph.generation, "source", judgment.source)

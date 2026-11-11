@@ -30,7 +30,7 @@ object SourceIntegrity {
       case node if node.content.isInstanceOf[Content.Source] => node.content.asInstanceOf[Content.Source].descriptor
     }
     val expected = receipt.kind match {
-      case InputKind.Capture | InputKind.Judgment => linked.count(_.isInstanceOf[SourceDescriptor.PrimaryCapture])
+      case InputKind.Capture | InputKind.Judgment | InputKind.GraphMutation => linked.count(_.isInstanceOf[SourceDescriptor.PrimaryCapture])
       case InputKind.PresentationPublication => linked.count(_.isInstanceOf[SourceDescriptor.DerivedPresentation])
       case _ => 1
     }

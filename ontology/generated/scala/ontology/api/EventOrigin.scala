@@ -8,12 +8,14 @@ package ontology.api {
     case object UserMessage extends EventOrigin
     case object WorkerMessage extends EventOrigin
     case object ToolOutput extends EventOrigin
+    case object GraphCommand extends EventOrigin
     
     def parse(s: String): Option[EventOrigin] = {
       s match {
         case "UserMessage" => Some(UserMessage)
         case "WorkerMessage" => Some(WorkerMessage)
         case "ToolOutput" => Some(ToolOutput)
+        case "GraphCommand" => Some(GraphCommand)
         case _ => None
       }
     }
@@ -21,7 +23,8 @@ package ontology.api {
     def all: List[EventOrigin] = List(
       UserMessage,
       WorkerMessage,
-      ToolOutput
+      ToolOutput,
+      GraphCommand
     ) 
   }
   

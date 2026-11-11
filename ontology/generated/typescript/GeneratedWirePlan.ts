@@ -4,8 +4,8 @@ export const wirePlan: WirePlan = {
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "b7de1039c545317fc6e18a624ddc94349e228e5cdbf86a0c2e072d5831e7dc04",
-  "rawDigest": "04625c7523f33b8b1e194deec5ca4a7594fed2a886b80e6fe67fd9b298036cf2",
+  "modelDigest": "73458e4acd57d491d736a174548ea6054723e55d19963096a3b748f248a6a29c",
+  "rawDigest": "33467ad548ec3aae1c63015ce4c690aeb441116e214811dee9a8790713660736",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -3200,7 +3200,8 @@ export const wirePlan: WirePlan = {
       "values": [
         "UserMessage",
         "WorkerMessage",
-        "ToolOutput"
+        "ToolOutput",
+        "GraphCommand"
       ]
     },
     "ontology_api_Execution": {

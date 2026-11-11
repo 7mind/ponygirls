@@ -148,7 +148,7 @@ data SearchHit { ref: Ref kind: str text: str standing: Standing applicability: 
 root data FindResult { scope: str generation: i64 items: lst[SearchHit] cursor: opt[str] }
 
 // Capture is a separate trusted ingress; these actor claims are not graph mutations.
-enum EventOrigin { UserMessage WorkerMessage ToolOutput }
+enum EventOrigin { UserMessage WorkerMessage ToolOutput GraphCommand }
 enum LineageStatus { Unknown Recorded }
 data CaptureContext { sessionId: str rootSessionId: opt[str] parentSessionId: opt[str] lineage: LineageStatus branch: str epoch: uid }
 adt Observation {

@@ -212,7 +212,7 @@ final class PostgresReviewControls extends FunSuite {
     judgment <- repo.judge(f.request, f.call, service, at)
     graph <- repo.read(f.scope)
     sources <- repo.sources(SourceRequest(f.scope, 0L, 10))
-    event = sources.events.head
+    event = sources.events.find(_.id == judgment.source.id).get
     derived = Graph.node(graph, f.presentation.reservedSourceRef)
     pubBytes <- bytes(db, f.scope, derived.provenance.input)
     pub = StoredJson.decode(InputReceipt.codecJson, pubBytes)

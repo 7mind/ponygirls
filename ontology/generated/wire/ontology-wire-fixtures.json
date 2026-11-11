@@ -5920,6 +5920,13 @@
     "scalaWire": "ToolOutput"
   },
   {
+    "typeId": "ontology.api/:#EventOrigin",
+    "label": "enum:GraphCommand",
+    "wire": "GraphCommand",
+    "scalaTypeId": "ontology.api/:#EventOrigin",
+    "scalaWire": "GraphCommand"
+  },
+  {
     "typeId": "ontology.api/:#Execution",
     "label": "base",
     "wire": "Delegated",

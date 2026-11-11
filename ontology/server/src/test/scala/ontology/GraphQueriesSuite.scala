@@ -100,10 +100,12 @@ final class GraphQueriesSuite extends FunSuite {
   test("page bytes are bounded and oversized records are not silently truncated") {
     val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC()); val queries = service(repo, 4096)
     check(for {
-      _ <- change(repo, 0L, (0 until 10).toList.map(i => node("n" + i, "x" * 600)))
-      page <- queries.read(reader, ReadRequest("a", ReadView.History, Nil, None, 100))
+      batch <- change(repo, 0L, (0 until 10).toList.map(i => node("n" + i, "x" * 600)))
+      page <- queries.read(reader, ReadRequest("a", ReadView.History, batch.created.map(_.ref), None, 100))
       _ = assert(Wire.encode(ReadResult.codecJson, page).noSpaces.getBytes(UTF_8).length <= 4096)
       _ = assert(page.cursor.nonEmpty)
+      commandSource <- queries.find(reader, FindRequest("a", Some(DefinitionKind.Source), "", None, 100)).attempt
+      _ = assertEquals(commandSource.left.toOption.collect { case f: Fault => f.code }, Some("record-too-large"))
       _ <- change(repo, 1L, List(node("large", "large" + ("x" * 5000))))
       tooLarge <- queries.find(reader, FindRequest("a", None, "large", None, 100)).attempt
       _ = assertEquals(tooLarge.left.toOption.collect { case f: Fault => f.code }, Some("record-too-large"))

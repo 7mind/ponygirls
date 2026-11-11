@@ -171,7 +171,8 @@ abstract class CurationRepositoryContract extends CurationRepositorySupport {
       _ = fault(conflict, "replay-conflict")
       finalHead <- repo.read(scope)
       _ = assertEquals(finalHead.generation, receipt.generation + 1L)
-      _ = assertEquals(finalHead.sourceFrontier, 1L)
+      _ = assertEquals(finalHead.sourceFrontier, 2L)
+      _ = assertEquals(finalHead.coveredFrontier, 1L)
     } yield ()
   } }
   test("a head change before preparation persists Stale without recording possible dispatch") { check { (repo, settings, scope) => leased(repo) { lease => for {
@@ -187,7 +188,7 @@ abstract class CurationRepositoryContract extends CurationRepositorySupport {
     _ = assertEquals(stored.attempt.state, CurationAttemptState.Stale)
     _ = assertEquals(stored.journal, Nil)
     graph <- repo.read(scope)
-    _ = assertEquals((graph.sourceFrontier, graph.coveredFrontier), (1L, 0L))
+    _ = assertEquals((graph.sourceFrontier, graph.coveredFrontier), (2L, 0L))
   } yield () } } }
 
   test("a response after a head change is retained but cannot advance coverage") { check { (repo, settings, scope) => leased(repo) { lease => for {
