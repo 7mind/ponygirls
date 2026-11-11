@@ -51,18 +51,25 @@ object JsonHttp {
   /** Capture accepted usage/output BEFORE releasing response resources. Cancellation
     * during release must not erase already accepted counters (Chronicle contract).
     */
-  def postF[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => IO[A]): IO[A] = IO.defer {
+  def postF[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => IO[A]): IO[A] =
+    postAccepted(client,endpoint,credential,deadline,maxBytes,payload)(decode)(effect => IO.uncancelable(_ => effect))
+  /** The callback remains inside response ownership but may be interrupted by the
+    * deadline. Callers must preserve uncertain audit outcomes as failure, not success.
+    */
+  def postCancelableF[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => IO[A]): IO[A] =
+    postAccepted(client,endpoint,credential,deadline,maxBytes,payload)(decode)(identity)
+  private def postAccepted[A](client: Client[IO],endpoint: String,credential: String,deadline: FiniteDuration,maxBytes: Int,payload: Json)(decode: Json => IO[A])(accept: IO[A] => IO[A]): IO[A] = IO.defer {
     RetrievalChecks(deadline>Duration.Zero && maxBytes>0,"config","invalid model response/deadline bound")
     val base=Request[IO](Method.POST,operationUri(endpoint)).withEntity(payload.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
     RetrievalChecks(!credential.exists(c => c<' ' || c==127.toChar),"config","invalid model credential")
     val request=if(credential.isEmpty) base else base.putHeaders(Header.Raw(CIString("Authorization"),s"Bearer $credential"))
     client.run(request).use { response =>
       if(!response.status.isSuccess) IO.raiseError(RetrievalError("model-http",s"model returned HTTP ${response.status.code}"))
-      else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes => IO.uncancelable { _ => IO {
+      else response.body.take(maxBytes.toLong+1).compile.to(Array).flatMap { bytes => accept(IO {
         RetrievalChecks(bytes.length<=maxBytes,"model-response-bound","model response byte bound exceeded")
         val text=try UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString catch { case _: Exception => throw RetrievalError("model-json","invalid model JSON") }
         io.circe.parser.parse(text).fold(_ => throw RetrievalError("model-json","invalid model JSON"),identity)
-      }.flatMap(json => decode(json).handleErrorWith(error => IO.raiseError(DecoderFailure(error)))) } }
+      }.flatMap(json => decode(json).handleErrorWith(error => IO.raiseError(DecoderFailure(error))))) }
     }.timeoutTo(deadline,IO.raiseError(RetrievalError("model-timeout","model deadline exceeded"))).handleErrorWith {
       case DecoderFailure(error) => IO.raiseError(error)
       case error: RetrievalError => IO.raiseError(error)
