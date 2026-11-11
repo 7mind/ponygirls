@@ -234,6 +234,7 @@ try {
       await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('shown') && !document.querySelector('[data-sort=name]').disabled);
       await Promise.all([page.waitForResponse(response=>response.url().endsWith('/api/current') && response.request().postDataJSON().command.ListArtifacts?.query.sort==='Name'),page.locator('[data-sort=name]').click()]);
       const maximumPlan=commands.filter(command=>command.ListArtifacts).at(-1).ListArtifacts.query;
+      assert.equal(maximumPlan.direction,'Asc','first name sort is explicitly ascending on the wire');
       assert.deepEqual(maximumPlan.tags,maximumTags); assert.equal(maximumPlan.hostname,maximumHostname); assert.equal(maximumPlan.projectPath,maximumProject); assert.equal(maximumPlan.query,maximumText);
       await input.fill('text:'+JSON.stringify('x'.repeat(4097)));
       const beforeInvalidText=commands.length;

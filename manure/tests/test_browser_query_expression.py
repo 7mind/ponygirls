@@ -59,7 +59,7 @@ class QueryExpressionBrowserTests(unittest.TestCase):
         values = [row["value"] for row in rows if row["op"] == "eval"]
         self.assertEqual(values[1]["errors"], [])
         self.assertFalse(values[1]["unchanged"])
-        self.assertEqual(values[1]["query"], "sort:name " + "a" * 4096)
+        self.assertEqual(values[1]["query"], "sort:name direction:asc " + "a" * 4096)
         self.assertIn("Draft matches applied", values[1]["status"])
         self.assertEqual(values[2]["errors"], [])
         self.assertEqual(values[2]["query"], "after-sort")
