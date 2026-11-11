@@ -9,7 +9,7 @@ nix develop .#chronicle
 nix build .#chronicle .#chronicle-collector
 ```
 
-The Linux build uses GraalVM's supported fully-static musl target. This avoids the pinned glibc 2.44 mixed static-libm/dynamic-libc linker defect (`_dl_x86_cpu_features`), independently reproduced with a C `log2` program. It is still a native image, not a JVM fallback. The server uses Scala 3.9.0 with `-Yretain-trees`; Baboon 0.0.198 codecs compile in an isolated Scala 2.13.18 library because that generator's runtime is not Scala-3-source-compatible. See the server README for build probes.
+The Linux build uses GraalVM's supported fully-static musl target. This avoids the pinned glibc 2.44 mixed static-libm/dynamic-libc linker defect (`_dl_x86_cpu_features`), independently reproduced with a C `log2` program. It is still a native image, not a JVM fallback. The server uses Scala 3.9.0 with `-Yretain-trees`; Baboon 0.0.200 codecs compile in an isolated Scala 2.13.18 library because that generator's runtime is not Scala-3-source-compatible. See the server README for build probes.
 
 Create password hashes with stdin, not password arguments or Nix literals:
 

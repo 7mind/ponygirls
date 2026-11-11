@@ -8,7 +8,7 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-COMPILER_SHA256 = "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36"
+COMPILER_SHA256 = "1d0debf771b8a22334e68cf7e6f99d55443f2451279eae3713ad1b155a96cfc4"
 
 
 def contents(directory):

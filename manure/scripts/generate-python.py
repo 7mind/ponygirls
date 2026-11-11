@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the stdlib typed bridge for the deliberately small current schema.
 
-Baboon 0.0.198 remains authoritative for Scala/TS JSON. This bridge does not
+Baboon 0.0.200 remains authoritative for Scala/TS JSON. This bridge does not
 introduce a Python server or an alternate wire format. Fail closed on syntax
 outside this schema's enum/data/ADT/list/option subset. Codec goldens cross-check
 this output against Baboon's generated TS/Scala codecs.
