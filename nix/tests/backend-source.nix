@@ -24,6 +24,9 @@ assert selected sources.backendDevelopment "haystack/server/src/main/scala/hayst
 assert selected sources.backendDevelopment "manure/backend/src/main/scala/manure/Main.scala" "regular";
 assert selected sources.backendDevelopment "rites/server/src/main/scala/rites/Main.scala" "regular";
 assert selected sources.backendDevelopment "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
+assert selected sources.backendDevelopment "ontology/generated/scala/ontology/api/Ref.scala" "regular";
+assert !(selected server "ontology/generated/scala/ontology/api/Ref.scala" "regular");
+assert !(selected sources.backendDevelopment "ontology/generated/.build/target/classes/ontology/api/Ref.class" "regular");
 assert selected server "build.sbt" "regular";
 assert selected server "project/plugins.sbt" "regular";
 assert selected server "project/BuildChecks.scala" "regular";
@@ -98,6 +101,8 @@ pkgs.runCommand "backend-source-layout-test" {
   test -f "$developmentSource/haystack/generated/scala/haystack/api/Item.scala"
   test -f "$developmentSource/manure/generated/scala/manure/api/VersionInfo.scala"
   test -f "$developmentSource/rites/generated/scala/rites/api/RunInfo.scala"
+  test -f "$developmentSource/ontology/generated/scala/ontology/api/Ref.scala"
+  test ! -e "$developmentSource/ontology/generated/.build/target"
   for source in "$serverSource" "$haystackSource" "$manureSource"; do
     for shared in baboon-runtime service-runtime model-http retrieval-core retrieval-postgres; do
       test -d "$source/shared/$shared/src/main"
