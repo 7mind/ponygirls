@@ -158,6 +158,13 @@ lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontology
     "org.eclipse.rdf4j" % "rdf4j-sail-memory" % "6.1.0",
     "org.eclipse.rdf4j" % "rdf4j-sail-nativerdf" % "6.1.0"
   ),
+  // MapDB's version ranges require floating Maven metadata even with locked artifacts.
+  dependencyOverrides ++= Seq(
+    "org.eclipse.collections" % "eclipse-collections-api" % "10.4.0",
+    "org.eclipse.collections" % "eclipse-collections" % "10.4.0",
+    "org.eclipse.collections" % "eclipse-collections-forkjoin" % "10.4.0",
+    "org.jetbrains.kotlin" % "kotlin-stdlib" % "1.9.25"
+  ),
   Compile / unmanagedResourceDirectories ++= Seq(baseDirectory.value.getParentFile / "migrations", baseDirectory.value.getParentFile / "generated" / "wire"),
   Compile / mainClass := Some("ontology.Main"),
   assembly / mainClass := Some("ontology.Main"),

@@ -29,10 +29,23 @@ let
   manureWitnesses = lib.unique (lib.concatMap (group: map (ref: ref.path) (group.sourceRefs ++ group.targetRefs)) manureInventory.invariantGroups);
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json" "chronicle/scripts" ];
+  sharedTests = [ "shared/lossless-json/src/test" "shared/baboon-runtime/src/test"
+    "shared/service-runtime/src/test" "shared/model-http/src/test"
+    "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
+  ontologyRuntime = [ "ontology/generated/scala" "ontology/generated/wire"
+    "ontology/server/src/main" "ontology/migrations" ];
+  ontologyTests = [ "ontology/server/src/test" "ontology/models" "ontology/scripts"
+    "ontology/generated/typescript" "ontology/generated/schema-input"
+    "ontology/web/package.json" "ontology/web/package-lock.json" ];
 in {
   # JVM derivations consume the active repository-root build. Non-JVM sources
   # deliberately retain their existing Chronicle-relative layouts and identities.
   server = backendSource "chronicle-server-source" runtime;
+  ontologyServer = backendSource "ontology-server-source" (common ++ shared ++ ontologyRuntime);
+  ontologyTests = backendSource "ontology-tests-source" (common ++ shared ++ sharedTests ++ ontologyRuntime ++ ontologyTests);
+  ontologyWeb = sourceAt (root + "/ontology") "ontology-web-source" [
+    "web" "generated/typescript" "generated/schema-input" "generated/wire" "models" "scripts"
+  ];
   ritesServer = backendSource "rites-native-source" (common ++ shared ++ [ "rites/generated/scala" "rites/models" "rites/server/src/main" "rites/migrations" ]);
   ritesTests = backendSource "rites-tests-source" (common ++ shared ++ [ "rites/generated/scala" "rites/server/src" "rites/migrations" "rites/models" "rites/tests" "rites/scripts" "rites/config.example.json" ]);
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
@@ -54,9 +67,7 @@ in {
   ];
   manureAcceptance = backendSource "manure-posix-acceptance-source" (common ++ manure ++ manureScripts);
   foundation = backendSource "backend-foundation-source" (common ++ shared ++ [ "shared/lossless-json/src/test" "manure/server/src" "scripts/backend-foundation-report.py" ]);
-  backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ [
-    "ontology/generated/scala"
-    "shared/lossless-json/src/test"
+  backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ sharedTests ++ ontologyRuntime ++ ontologyTests ++ [
     "haystack/generated/scala" "haystack/server/src" "haystack/migrations"
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migrations"
     "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/server/native-image"

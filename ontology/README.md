@@ -13,6 +13,17 @@ nix develop .#backend --command bash ontology/scripts/test-postgres.sh
 
 The assembly is `ontology/server/target/ontology-server.jar`. The PostgreSQL test command starts an owned database and runs the complete discovered suite. A package build or focused test is not a substitute for that run.
 
+## Nix packages
+
+```bash
+nix build .#ontology .#ontology-web
+nix run .#ontology -- check-config /absolute/config.json
+```
+
+`ontology` combines the service JAR, a launcher using the pinned JVM, and dashboard assets. It is not an AOT/native executable. `ontology-web` builds and checks the locked frontend independently. `lib.mkOntologyPackage { inherit pkgs; }` exposes `serverArtifact`, `web`, `runtimeSource` and `sharedJavaRuntime`.
+
+Set `http.webRoot` explicitly to `${ontologyPackage.web}/share/ontology/web` in rendered configuration to serve the packaged dashboard. `null` remains valid for API-only use; the launcher supplies no web-root environment fallback. Package construction does not enable a service or supply runtime credentials.
+
 ## Commands
 
 ```bash
@@ -37,4 +48,4 @@ External graph commands and designated captures/reviews atomically create primar
 
 Runtime resources stay in native Cats Resource scopes. Distage receives borrowed values and constructs the object graph; it does not close those resources again. The pinned mixed Scala/Cats graph is not routed through the incompatible `Lifecycle.fromCats` adapter.
 
-Controlled tests exercise real Auth/HTTP/MCP, PostgreSQL, loopback model transport, Native RDF, review and capsule paths, including shutdown and ownership denial. Those results are not genuine-Human participation, semantic-quality evidence, deployment, native-ELF acceptance or browser acceptance. Pi/worker integration, Nix packaging and final integrated acceptance remain unfinished.
+Controlled tests exercise real Auth/HTTP/MCP, PostgreSQL, loopback model transport, Native RDF, review and capsule paths, including shutdown and ownership denial. Those results are not genuine-Human participation, semantic-quality evidence, deployment, native-ELF acceptance or browser acceptance. Pi/worker integration and final integrated acceptance remain unfinished. Nix package builds and packaged `check-config` are smoke evidence, not acceptance of the installed service against PostgreSQL or a browser.
