@@ -118,6 +118,23 @@ class MemoryRetrievalContractTest extends RetrievalContractTest {
 }
 class PostgresRetrievalContractTest extends RetrievalContractTest {
   protected def fresh(): RetrievalContractStore = new PgFixture(Some(ControlledFixtures.profile)).store
+  test("Blackbox-GoodCommunication: 37 caller filters and the bounded maximum remain exact conjunctions in every mode") {
+    import ControlledFixtures.*
+    val fixture=new PgFixture(Some(profile))
+    val attributes=Vector.tabulate(PostgresRetrieval.MaxFilters)(i => ProjectionAttribute(AttributeKey.parse("filter-"+i),AttributeValue("value-"+i)))
+    val filters=attributes.map(a => AttributeFilter.Equal(a.key,a.value))
+    fixture.store.put(source("matching","alpha",Set("reader")).copy(attributes=attributes))
+    fixture.store.put(source("excluded","alpha",Set("reader")).copy(attributes=attributes.updated(0,attributes.head.copy(value=AttributeValue("other")))))
+    fixture.store.publishAll()
+    List(RetrievalMode.Lexical,RetrievalMode.Semantic,RetrievalMode.Hybrid).foreach { mode =>
+      List(37,PostgresRetrieval.MaxFilters).foreach { count =>
+        val page=fixture.store.search(query(mode).copy(filters=filters.take(count)))
+        assertEquals(page.total,1L);assertEquals(page.hits.map(_.id),List("matching"))
+      }
+      val overflow=query(mode).copy(filters=filters :+ filters.head)
+      assertEquals(intercept[RetrievalError](fixture.store.search(overflow)).code,"invalid")
+    }
+  }
   test("BG: legacy endpoint-bound metadata migrates without re-embedding or changing publication and accepted work") {
     import ControlledFixtures.*
     import Jdbc.*

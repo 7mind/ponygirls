@@ -21,7 +21,7 @@ final class MetadataSearchSuite extends FunSuite:
         def documents(values: List[String]): IO[List[List[Double]]] = IO.pure(values.map(_ => List(1.0,0.0,0.0)))
         def query(value: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
       val search=new Search(f.database.get,f.lease,f.config,f.auth,f.clock,engine,projection,Some(embedding))
-      val input=InitUpload("needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector("needle tag\u0000馬","release"),Some("host\u0000例"),Some("/project/𐀀"))
+      val input=InitUpload("needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,(Vector("needle tag\u0000馬","release") ++ Vector.tabulate(MetadataRules.MaxTags-2)(i => "tag-"+i)),Some("host\u0000例"),Some("/project/𐀀"))
       def publish: IO[Unit] = f.database.get.transaction { c =>
         var claim=engine.claim(c,30)
         while claim.nonEmpty do
@@ -38,7 +38,7 @@ final class MetadataSearchSuite extends FunSuite:
         _ <- f.database.get.transaction { c => engine.initialize(c); projection.put(c,ready);projection.put(c,excluded) }
         _ <- publish
         _ <- wire.SearchMode.all.traverse_ { mode =>
-          val filter=wire.SearchFilter(None,None,None,input.tags.toList,input.hostname,input.projectPath)
+          val filter=wire.SearchFilter(Some(wire.Visibility.Internal),Some(wire.ArtifactKind.Directory),Some(f.identity.userId),input.tags.toList,input.hostname,input.projectPath)
           val query=wire.SearchQuery("needle",mode,filter,1,None)
           for
             page <- search.query(f.other,query,f.config.apiOrigin)
@@ -61,6 +61,23 @@ final class MetadataSearchSuite extends FunSuite:
           assertEquals(key.value.length,68)
           assert(projection.tagKey("release") != projection.tagKey("Release"))
         }
+      yield ()
+    }.unsafeRunSync()
+  }
+
+  test("all 32 supported tags can be combined with every other exact search filter") {
+    BackendFixture.resource(true).use { f =>
+      val tags=Vector.tabulate(MetadataRules.MaxTags)(i => "tag-" + i)
+      val input=InitUpload("needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,tags,Some("host"),Some("/project"))
+      val engine=new PostgresRetrieval("manure",None)
+      val projection=new SearchProjection(f.config,engine)
+      val search=new Search(f.database.get,f.lease,f.config,f.auth,f.clock,engine,projection,None)
+      for
+        initialized <- f.artifacts.init(f.identity,input)
+        ready <- f.artifacts.finish(f.identity,initialized.artifact.id)
+        page <- search.query(f.other,wire.SearchQuery("needle",wire.SearchMode.Lexical,
+          wire.SearchFilter(Some(wire.Visibility.Internal),Some(wire.ArtifactKind.Directory),Some(f.identity.userId),tags.toList,input.hostname,input.projectPath),1,None),f.config.apiOrigin)
+        _ <- IO { assertEquals(page.total,1L);assertEquals(page.hits.map(_.artifact.artifactId),List(ready.id)) }
       yield ()
     }.unsafeRunSync()
   }

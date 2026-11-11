@@ -27,6 +27,10 @@ private[postgres] object Jdbc {
 private[postgres] final case class RetrievalPlan(sql: String,args: List[Jdbc.Value])
 final case class WorkClaim(jobId: String,sourceId: String,version: String,epoch: Long,fence: Long,run: String,profile: String,chunks: List[InputChunk])
 
+object PostgresRetrieval {
+  val MaxFilters = 64
+}
+
 /** All operations run on the caller's Connection: projection/outbox/publication can
   * participate atomically in authoritative app mutations. Never opens/commits a tx.
   * Callers must synchronize EVERY visibility/archive/delete mutation using put/remove
@@ -213,7 +217,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   }
   private[postgres] def plan(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPlan = {
     transaction(c)
-    RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.limit<=100 && query.filters.size<=32,"invalid","invalid retrieval query")
+    RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.limit<=100 && query.filters.size<=PostgresRetrieval.MaxFilters,"invalid","invalid retrieval query")
     val semantic=query.mode!=RetrievalMode.Lexical
     RetrievalChecks(!semantic || query.offset<CandidatePolicy.rankingLimit(query.mode),"invalid","offset exceeds candidate ranking window")
     val (scope,scopeArgs)=authorization(query)
