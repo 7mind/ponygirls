@@ -2,9 +2,11 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import { ApiClient } from './client.js';
 import App from './App.js';
+import { WireValidation } from './wire-validation.js';
+import { wirePlan } from '../../generated/typescript/GeneratedWirePlan.js';
 
 function createApiClient(fetcher: typeof fetch): ApiClient {
-  return new ApiClient(fetcher);
+  return new ApiClient(fetcher, new WireValidation(wirePlan));
 }
 
 function mount(): void {

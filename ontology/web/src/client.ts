@@ -1,7 +1,8 @@
 import { BaboonCodecContext } from './contracts.js';
 import { parseJson } from './json.js';
+import { WireValidation, type WireCodecIdentity } from './wire-validation.js';
 
-export interface Codec<T> {
+export interface Codec<T> extends WireCodecIdentity {
   encode(context: BaboonCodecContext, value: T): unknown;
   decode(context: BaboonCodecContext, value: unknown): T;
 }
@@ -42,13 +43,16 @@ function errorCode(value: unknown): string {
 }
 export class ApiClient {
   private actor: string | null = null;
-  constructor(private readonly fetcher: typeof fetch) {}
+  constructor(private readonly fetcher: typeof fetch, private readonly validation: WireValidation) {}
   setActor(actor: string | null): void { this.actor = actor; }
   async get<T>(operation: OperationName, codec: Codec<T>, signal: AbortSignal): Promise<T> {
     return this.request(operation, undefined, codec, signal);
   }
   async post<I, O>(operation: OperationName, value: I, input: Codec<I>, output: Codec<O>, signal: AbortSignal): Promise<O> {
-    return this.request(operation, input.encode(BaboonCodecContext.Default, value), output, signal);
+    let body: unknown;
+    try { body = this.validation.normalize(input, input.encode(BaboonCodecContext.Default, value)); }
+    catch { throw new ApiFailure('invalid-request'); }
+    return this.request(operation, body, output, signal);
   }
   private async request<T>(operation: OperationName, body: unknown, codec: Codec<T>, signal: AbortSignal): Promise<T> {
     const options: RequestInit = {
@@ -66,7 +70,7 @@ export class ApiClient {
     const response = await this.fetcher(`/api/v1/${operation}`, options);
     const json = await responseJson(response);
     if (!response.ok) throw new ApiFailure(errorCode(json));
-    try { return codec.decode(BaboonCodecContext.Default, json); }
+    try { return codec.decode(BaboonCodecContext.Default, this.validation.normalize(codec, json)); }
     catch { throw new ApiFailure('invalid-response'); }
   }
 }

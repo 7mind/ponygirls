@@ -1,0 +1,12 @@
+{
+  "extends": "../web/tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "types": ["node"],
+    "typeRoots": ["../web/node_modules/@types"],
+    "allowImportingTsExtensions": false,
+    "rootDir": "..",
+    "outDir": "../web/.cache/schema-builder"
+  },
+  "include": ["schema-*.ts", "../web/src/wire-plan.ts", "../generated/typescript/**/*.ts"]
+}

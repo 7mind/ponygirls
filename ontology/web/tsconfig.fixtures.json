@@ -6,5 +6,5 @@
     "rootDir": "..",
     "outDir": ".cache/fixtures"
   },
-  "include": ["src/contracts.ts", "src/client.ts", "src/actions.ts", "tests-browser/*.ts"]
+  "include": ["src/contracts.ts", "src/client.ts", "src/actions.ts", "../generated/typescript/GeneratedWirePlan.ts", "tests-browser/*.ts"]
 }

@@ -7,7 +7,7 @@ import io.circe.Json
 import munit.FunSuite
 import ontology.api.*
 import ontology.domain.Fault
-import ontology.http.{HttpApi, Mcp, ToolSchemas}
+import ontology.http.{CompiledToolSchemas, HttpApi, Mcp}
 import org.http4s.*
 import org.typelevel.ci.CIString
 import java.nio.charset.StandardCharsets.UTF_8
@@ -46,11 +46,7 @@ final class HttpApiSuite extends FunSuite {
     def delivery(p: ServiceCall, r: DeliveryRequest): IO[DeliveryReceipt] = unused
   }
   private def application(service: Service): HttpApp[IO] = {
-    val schemas = new ToolSchemas {
-      def find: Json = Json.obj("type" -> Json.fromString("object"))
-      def read: Json = Json.obj("type" -> Json.fromString("object"))
-      def apply: Json = Json.obj("type" -> Json.fromString("object"))
-    }
+    val schemas = new CompiledToolSchemas
     new HttpApi(authentication(), service, new Mcp(service, schemas), None, logstage.IzLogger(), () => java.util.UUID.randomUUID()).routes.orNotFound
   }
   private def request(method: Method, path: String, body: Json, auth: List[String], media: String): Request[IO] = {

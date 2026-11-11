@@ -1,4 +1,4 @@
-import { parse } from 'lossless-json';
+import { compareNumber, parse } from 'lossless-json';
 
 const MAX_DEPTH = 96;
 const MIN_INTEGER = -(1n << 63n);
@@ -14,7 +14,7 @@ function numberToken(token: string): number | bigint {
     return Number.isSafeInteger(ordinary) ? ordinary : value;
   }
   const value = Number(token);
-  if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value))) throw new Error('Unsafe noncanonical numeric token');
+  if (!Number.isFinite(value) || (Number.isInteger(value) && !Number.isSafeInteger(value)) || compareNumber(token, String(value)) !== 0) throw new Error('Unsafe noncanonical numeric token');
   return value;
 }
 

@@ -15,6 +15,7 @@ object Wire {
   }
   def encode[A](codec: BaboonJsonCodec[A], value: A): Json = codec.encode(BaboonCodecContext.Default, value)
   def decode[A](codec: BaboonJsonCodec[A], json: Json): A = {
+    WireSchemas.validate(codec, json)
     val value = codec.decode(BaboonCodecContext.Default, json).fold(_ => throw Fault("bad-envelope", "invalid typed payload"), identity)
     requireShape(json, encode(codec, value))
     value

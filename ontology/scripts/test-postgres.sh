@@ -7,7 +7,7 @@ report=$(mktemp -d "$PWD/ontology/server/target/validation-runs/$(date -u +%Y%m%
 if [[ -d ontology/server/target/test-reports ]]; then mv ontology/server/target/test-reports "$report/previous-test-reports"; fi
 if [[ -f ontology/server/target/validation-inventory.txt ]]; then mv ontology/server/target/validation-inventory.txt "$report/previous-inventory.txt"; fi
 source_manifest() {
-  find build.sbt project deps.lock.json lockfile-config.json scripts/backend-sbt.sh ontology/models ontology/generated/scala ontology/server/src ontology/migrations ontology/scripts shared/service-runtime/src shared/baboon-runtime/src shared/lossless-json/src shared/model-http/src shared/retrieval-core/src shared/retrieval-postgres/src -type f \( -name '*.scala' -o -name '*.sbt' -o -name '*.properties' -o -name '*.sh' -o -name '*.baboon' -o -name '*.sql' -o -name '*.json' \) ! -path '*/target/*' ! -path 'project/project/*' -print0 | sort -z | xargs -0 sha256sum
+  find build.sbt project deps.lock.json lockfile-config.json scripts/backend-sbt.sh ontology/models ontology/generated/scala ontology/generated/typescript ontology/generated/schema-input ontology/generated/wire ontology/web/package.json ontology/web/package-lock.json ontology/server/src ontology/migrations ontology/scripts shared/service-runtime/src shared/baboon-runtime/src shared/lossless-json/src shared/model-http/src shared/retrieval-core/src shared/retrieval-postgres/src -type f \( -name '*.scala' -o -name '*.sbt' -o -name '*.properties' -o -name '*.sh' -o -name '*.baboon' -o -name '*.sql' -o -name '*.json' -o -name '*.ts' \) ! -path '*/target/*' ! -path 'project/project/*' -print0 | sort -z | xargs -0 sha256sum
 }
 source_manifest > "$report/source.sha256"
 git rev-parse HEAD > "$report/git-head"

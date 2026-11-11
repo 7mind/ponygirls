@@ -158,7 +158,7 @@ lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontology
     "org.eclipse.rdf4j" % "rdf4j-sail-memory" % "6.1.0",
     "org.eclipse.rdf4j" % "rdf4j-sail-nativerdf" % "6.1.0"
   ),
-  Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
+  Compile / unmanagedResourceDirectories ++= Seq(baseDirectory.value.getParentFile / "migrations", baseDirectory.value.getParentFile / "generated" / "wire"),
   Compile / mainClass := Some("ontology.Main"),
   assembly / mainClass := Some("ontology.Main"),
   assembly / assemblyJarName := "ontology-server.jar"
