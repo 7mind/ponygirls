@@ -29,6 +29,18 @@ nix build --impure --no-link --print-out-paths --expr \
 The installation is `$out/share/manure/web/viewer/`. Never commit `node_modules`
 or `dist`. The source directory is not directly browser-usable; build first.
 
+## Markdown section links
+
+Every Markdown heading (levels 1–6) has a visible, keyboard-accessible `#`
+permalink. Click it or copy its link address to share that section. Unique
+sanitized authored heading IDs are preserved. Otherwise, generated IDs use
+lowercase heading text with punctuation removed and whitespace replaced by
+hyphens, preserving Unicode letters and numbers. Empty slugs use `section`;
+duplicate or already-reserved IDs receive numeric suffixes (`-1`, `-2`, …).
+Fragment URLs scroll after Markdown loads and diagram rendering completes;
+fragment changes and browser back/forward navigation work without reloading.
+The same behavior applies to directory README previews.
+
 ## Directory browsing
 
 Directories without `index.html`/`index.htm` show an escaped, manifest-backed

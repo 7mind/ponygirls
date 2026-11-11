@@ -75,12 +75,48 @@ function sanitizedMarkdown(text) {
   });
   return purifier.sanitize(marked.parse(text, {gfm:true, renderer:markdownRenderer}), {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background']});
 }
+function headingLinks(article) {
+  const headings = [...article.querySelectorAll('h1,h2,h3,h4,h5,h6')];
+  const counts = new Map();
+  for (const node of [...document.querySelectorAll('[id]'), ...article.querySelectorAll('[id]')]) {
+    counts.set(node.id, (counts.get(node.id) || 0) + 1);
+  }
+  const used = new Set(counts.keys());
+  const suffixes = new Map();
+  for (const heading of headings) {
+    const title = heading.textContent.trim();
+    const slug = title.toLowerCase().replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '').trim().replace(/\s+/gu, '-') || 'section';
+    let id = heading.id;
+    if (!id || counts.get(id) !== 1) {
+      id = slug;
+      let suffix = suffixes.get(slug) || 1;
+      while (used.has(id)) id = `${slug}-${suffix++}`;
+      suffixes.set(slug, suffix);
+    }
+    used.add(id);
+    heading.id = id;
+    const link = element('a', '#', 'heading-anchor');
+    link.href = `#${encodeURIComponent(id)}`;
+    link.setAttribute('aria-label', `Link to section: ${title || 'Untitled section'}`);
+    heading.append(document.createTextNode(' '), link);
+  }
+  const scrollToFragment = () => {
+    let id;
+    try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
+    const target = document.getElementById(id);
+    if (target && article.contains(target)) target.scrollIntoView();
+  };
+  addEventListener('hashchange', scrollToFragment);
+  return scrollToFragment;
+}
 async function markdown(text) {
   const article = element('article',null,'markdown');
   article.innerHTML = sanitizedMarkdown(text);
+  const scrollToFragment = headingLinks(article);
   const graphs = [...article.querySelectorAll('pre > code')].filter(code => /language-(mermaid|mmd|dot|gv|graphviz)\b/.test(code.className));
   diagramCount(graphs.length);
   content.append(article);
+  scrollToFragment();
   const deadline = Date.now() + 30000;
   for (const code of graphs) {
     const kind = code.className.match(/language-(mermaid|mmd|dot|gv|graphviz)\b/)[1];
@@ -90,6 +126,7 @@ async function markdown(text) {
       await diagram(code.textContent, kind, target);
     } catch (error) { fail(error,target); }
   }
+  scrollToFragment();
 }
 async function fetchBytes(limit) {
   const controller = new AbortController();
