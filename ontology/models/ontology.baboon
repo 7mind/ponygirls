@@ -164,11 +164,49 @@ data CapturedEvent { id: uid scope: str sourceNamespace: str frontier: i64 conte
 root data IngestResult { scope: str requestId: uid eventId: uid sourceNamespace: str source: Ref artifacts: lst[Ref] frontier: i64 replayed: bit }
 root data SourceRequest { scope: str after: i64 limit: i32 }
 root data SourceResult { scope: str events: lst[CapturedEvent] frontier: i64 nextAfter: opt[i64] }
-enum CurationState { Idle Pending Running Failed }
+enum CurationState { Idle Pending Running Failed Stale Interrupted }
+enum CurationAttemptState { Claimed InputSealed Running Published Failed Stale Interrupted }
+enum CurationAuditStage { RequestPrepared DispatchPossible ResponseObserved }
+
+data CoordinatorFence { ownerId: uid epoch: i64 }
+root data CoordinatorLease { fence: CoordinatorFence acquiredAt: str renewedAt: str expiresAt: str }
+root data CurationClaim {
+ attemptId: uid scope: str fence: CoordinatorFence baseGeneration: i64 frontier: i64 previousCoveredFrontier: i64
+ profileId: str profileDigest: str schemaDigest: str graphDigest: str sourceCutDigest: str claimedAt: str
+}
+data CurationRecordPin { ref: Ref digest: str }
+data CurationSourcePin { ref: Ref frontier: i64 digest: str }
+root data CurationInputManifest {
+ attemptId: uid seed: lst[CurationRecordPin] sources: lst[CurationSourcePin]
+ encoding: str inputDigest: str inputBytes: i64 sealedAt: str
+}
+data CurationAuditPayload { encoding: str content: str digest: str bytes: i64 }
+root data CurationAuditRecord {
+ attemptId: uid scope: str fence: CoordinatorFence ordinal: i32 stage: CurationAuditStage
+ requestDigest: str payload: opt[CurationAuditPayload] observedAt: str
+}
+root data CurationCandidate {
+ attemptId: uid inputDigest: str responseOrdinal: i32 responseDigest: str proposal: CurationProposal proposalDigest: str
+}
+root data CurationPublicationInput {
+ claim: CurationClaim manifest: CurationInputManifest responseOrdinal: i32 responseDigest: str
+ proposal: CurationProposal proposalDigest: str publishedAt: str
+}
+data CurationPublicationReceipt { attemptId: uid scope: str input: Ref generation: i64 frontier: i64 coveredFrontier: i64 recordedAt: str }
+root data CurationAttempt {
+ claim: CurationClaim state: CurationAttemptState inputManifest: opt[CurationInputManifest]
+ candidate: opt[CurationCandidate] publication: opt[CurationPublicationReceipt]
+ terminalCode: opt[str] auditUncertain: bit finishedAt: opt[str]
+}
+data CurationAttemptSummary {
+ attemptId: uid baseGeneration: i64 frontier: i64 previousCoveredFrontier: i64 state: CurationAttemptState
+ inputDigest: opt[str] lastOrdinal: opt[i32] lastStage: opt[CurationAuditStage]
+ terminalCode: opt[str] auditUncertain: bit claimedAt: str finishedAt: opt[str]
+}
 root data ScopeRequest { scope: str }
-data ScopeSummary { scope: str generation: i64 frontier: i64 coveredFrontier: i64 curation: CurationState failure: opt[str] rdfGeneration: opt[i64] }
+data ScopeSummary { scope: str generation: i64 frontier: i64 coveredFrontier: i64 curation: CurationState failure: opt[str] rdfGeneration: opt[i64] lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }
 root data ScopesResult { items: lst[ScopeSummary] }
-root data CurationStatus { scope: str generation: i64 frontier: i64 coveredFrontier: i64 state: CurationState failure: opt[str] }
+root data CurationStatus { scope: str generation: i64 frontier: i64 coveredFrontier: i64 state: CurationState failure: opt[str] lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }
 root data CurationProposal { expectedGeneration: i64 frontier: i64 operations: lst[Operation] }
 
 root data CapsuleRequest { scope: str context: CaptureContext expectedFrontier: i64 }

@@ -19,7 +19,7 @@ for (const [name, value] of [
     await assert.rejects(() => client.get('whoami', C.Identity.jsonCodec(), new AbortController().signal), /invalid response/);
   });
 }
-const status = generation => `{"scope":"a","generation":${generation},"frontier":0,"coveredFrontier":0,"state":"Idle","failure":null}`;
+const status = generation => `{"scope":"a","generation":${generation},"frontier":0,"coveredFrontier":0,"state":"Idle","failure":null,"lastPublicationGeneration":null,"attempt":null}`;
 
 test('requests preserve the generated decimal-string i64 representation exactly', async () => {
   let sent = false;

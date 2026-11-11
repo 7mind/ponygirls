@@ -1430,6 +1430,46 @@
           }
         }
       },
+      "ontology_api_CoordinatorFence" : {
+        "type" : "object",
+        "required" : [
+          "ownerId",
+          "epoch"
+        ],
+        "properties" : {
+          "ownerId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "epoch" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_CoordinatorLease" : {
+        "type" : "object",
+        "required" : [
+          "fence",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt"
+        ],
+        "properties" : {
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "acquiredAt" : {
+            "type" : "string"
+          },
+          "renewedAt" : {
+            "type" : "string"
+          },
+          "expiresAt" : {
+            "type" : "string"
+          }
+        }
+      },
       "ontology_api_Correction" : {
         "type" : "string",
         "enum" : [
@@ -1439,6 +1479,391 @@
           "Mixed",
           "Unresolved"
         ]
+      },
+      "ontology_api_CurationAttempt" : {
+        "type" : "object",
+        "required" : [
+          "claim",
+          "state",
+          "auditUncertain"
+        ],
+        "properties" : {
+          "claim" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationClaim"
+          },
+          "state" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAttemptState"
+          },
+          "inputManifest" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationInputManifest"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "candidate" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationCandidate"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "publication" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationPublicationReceipt"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "terminalCode" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "auditUncertain" : {
+            "type" : "boolean"
+          },
+          "finishedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_CurationAttemptState" : {
+        "type" : "string",
+        "enum" : [
+          "Claimed",
+          "InputSealed",
+          "Running",
+          "Published",
+          "Failed",
+          "Stale",
+          "Interrupted"
+        ]
+      },
+      "ontology_api_CurationAttemptSummary" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "baseGeneration",
+          "frontier",
+          "previousCoveredFrontier",
+          "state",
+          "auditUncertain",
+          "claimedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "baseGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "previousCoveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "state" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAttemptState"
+          },
+          "inputDigest" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastOrdinal" : {
+            "oneOf" : [
+              {
+                "type" : "integer",
+                "format" : "int32"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastStage" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAuditStage"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "terminalCode" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "auditUncertain" : {
+            "type" : "boolean"
+          },
+          "claimedAt" : {
+            "type" : "string"
+          },
+          "finishedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_CurationAuditPayload" : {
+        "type" : "object",
+        "required" : [
+          "encoding",
+          "content",
+          "digest",
+          "bytes"
+        ],
+        "properties" : {
+          "encoding" : {
+            "type" : "string"
+          },
+          "content" : {
+            "type" : "string"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "bytes" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_CurationAuditRecord" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "scope",
+          "fence",
+          "ordinal",
+          "stage",
+          "requestDigest",
+          "observedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "ordinal" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "stage" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAuditStage"
+          },
+          "requestDigest" : {
+            "type" : "string"
+          },
+          "payload" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAuditPayload"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "observedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationAuditStage" : {
+        "type" : "string",
+        "enum" : [
+          "RequestPrepared",
+          "DispatchPossible",
+          "ResponseObserved"
+        ]
+      },
+      "ontology_api_CurationCandidate" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "inputDigest",
+          "responseOrdinal",
+          "responseDigest",
+          "proposal",
+          "proposalDigest"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "inputDigest" : {
+            "type" : "string"
+          },
+          "responseOrdinal" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "responseDigest" : {
+            "type" : "string"
+          },
+          "proposal" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationProposal"
+          },
+          "proposalDigest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationClaim" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "scope",
+          "fence",
+          "baseGeneration",
+          "frontier",
+          "previousCoveredFrontier",
+          "profileId",
+          "profileDigest",
+          "schemaDigest",
+          "graphDigest",
+          "sourceCutDigest",
+          "claimedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "baseGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "previousCoveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "profileId" : {
+            "type" : "string"
+          },
+          "profileDigest" : {
+            "type" : "string"
+          },
+          "schemaDigest" : {
+            "type" : "string"
+          },
+          "graphDigest" : {
+            "type" : "string"
+          },
+          "sourceCutDigest" : {
+            "type" : "string"
+          },
+          "claimedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationInputManifest" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "seed",
+          "sources",
+          "encoding",
+          "inputDigest",
+          "inputBytes",
+          "sealedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "seed" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CurationRecordPin"
+            }
+          },
+          "sources" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CurationSourcePin"
+            }
+          },
+          "encoding" : {
+            "type" : "string"
+          },
+          "inputDigest" : {
+            "type" : "string"
+          },
+          "inputBytes" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "sealedAt" : {
+            "type" : "string"
+          }
+        }
       },
       "ontology_api_CurationProposal" : {
         "type" : "object",
@@ -1464,13 +1889,125 @@
           }
         }
       },
+      "ontology_api_CurationPublicationInput" : {
+        "type" : "object",
+        "required" : [
+          "claim",
+          "manifest",
+          "responseOrdinal",
+          "responseDigest",
+          "proposal",
+          "proposalDigest",
+          "publishedAt"
+        ],
+        "properties" : {
+          "claim" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationClaim"
+          },
+          "manifest" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationInputManifest"
+          },
+          "responseOrdinal" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "responseDigest" : {
+            "type" : "string"
+          },
+          "proposal" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationProposal"
+          },
+          "proposalDigest" : {
+            "type" : "string"
+          },
+          "publishedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationPublicationReceipt" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "scope",
+          "input",
+          "generation",
+          "frontier",
+          "coveredFrontier",
+          "recordedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "input" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationRecordPin" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "digest"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationSourcePin" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "frontier",
+          "digest"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
       "ontology_api_CurationState" : {
         "type" : "string",
         "enum" : [
           "Idle",
           "Pending",
           "Running",
-          "Failed"
+          "Failed",
+          "Stale",
+          "Interrupted"
         ]
       },
       "ontology_api_CurationStatus" : {
@@ -1505,6 +2042,27 @@
             "oneOf" : [
               {
                 "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastPublicationGeneration" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "attempt" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAttemptSummary"
               },
               {
                 "type" : "null"
@@ -3860,6 +4418,27 @@
               {
                 "type" : "string",
                 "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastPublicationGeneration" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "attempt" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAttemptSummary"
               },
               {
                 "type" : "null"

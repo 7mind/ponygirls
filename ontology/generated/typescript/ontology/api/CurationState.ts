@@ -4,14 +4,18 @@ export enum CurationState {
     Idle = "Idle",
     Pending = "Pending",
     Running = "Running",
-    Failed = "Failed"
+    Failed = "Failed",
+    Stale = "Stale",
+    Interrupted = "Interrupted"
 }
 
 export const CurationState_values: ReadonlyArray<CurationState> = [
     CurationState.Idle,
     CurationState.Pending,
     CurationState.Running,
-    CurationState.Failed
+    CurationState.Failed,
+    CurationState.Stale,
+    CurationState.Interrupted
 ] as const;
 
 export function CurationState_parse(s: string): CurationState {

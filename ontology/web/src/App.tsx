@@ -354,6 +354,18 @@ function SourcesPane({ client, scope, inspect }: { client: ApiClient; scope: str
     {sources.data && <><p className='page-caption'>Reported frontier {sources.data.frontier.toString()} · page {pageNumber}</p><div className='card-list'>{sources.data.events.map(event => <CapturedSource key={event.id} event={event} inspect={inspect} />)}</div>{!sources.data.events.length && <p className='empty'>No captured events returned on this page.</p>}<button type='button' disabled={sources.pending || sources.data.nextAfter === undefined} onClick={() => { if (sources.data?.nextAfter !== undefined) void load(sources.data.nextAfter, sources.data.frontier, pageNumber + 1); }}>Next source page</button></>}
   </section>;
 }
+function CurationAttemptView({ value }: { value: C.CurationAttemptSummary | undefined }) {
+  if (value === undefined) return <p className='muted'>No curation attempt recorded.</p>;
+  return <section className='inset'><h3>Pinned curation attempt</h3><dl>
+    <Field label='Attempt identifier'><code>{value.attemptId}</code></Field><Field label='Attempt state'>{value.state}</Field>
+    <Field label='Attempt base generation'>{value.baseGeneration.toString()}</Field><Field label='Attempt target frontier'>{value.frontier.toString()}</Field>
+    <Field label='Attempt previous coverage'>{value.previousCoveredFrontier.toString()}</Field><Field label='Sealed input digest'>{value.inputDigest ?? 'Not sealed'}</Field>
+    <Field label='Latest audit ordinal'>{value.lastOrdinal === undefined ? 'None recorded' : value.lastOrdinal}</Field><Field label='Latest audit stage'>{value.lastStage ?? 'None recorded'}</Field>
+    <Field label='Terminal code'>{value.terminalCode ?? 'None recorded'}</Field><Field label='Audit uncertainty recorded'>{value.auditUncertain ? 'Yes' : 'No'}</Field>
+    <Field label='Claimed at'>{value.claimedAt}</Field><Field label='Finished at'>{value.finishedAt ?? 'Not recorded'}</Field>
+    </dl><p className='fine-print'>The journal distinguishes request preparation, possible dispatch and an observed response. It does not prove provider receipt, model use or the absence of unrecorded activity.</p></section>;
+}
+
 function JudgmentsPane({ client, scope }: { client: ApiClient; scope: string }) {
   const judgments = useLoad<C.JudgmentsResult>();
   return <section className='panel' aria-labelledby='judgments-heading'>
@@ -485,7 +497,9 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
     <section className='panel status-panel' aria-labelledby='status-heading'>
       <div className='toolbar spread'><h2 id='status-heading'>Scope status · {scope}</h2><button type='button' onClick={() => void refreshStatus()} disabled={status.pending}>Refresh status</button></div>
       <RequestState job={status} label='Checking scope status' />
-      {curation && <><dl className='metrics'><Field label='Graph generation'>{curation.generation.toString()}</Field><Field label='Captured frontier'>{curation.frontier.toString()}</Field><Field label='Covered frontier'>{curation.coveredFrontier.toString()}</Field><Field label='Curation state'>{curation.state}</Field></dl>
+      {curation && <><dl className='metrics'><Field label='Graph generation'>{curation.generation.toString()}</Field><Field label='Captured frontier'>{curation.frontier.toString()}</Field><Field label='Covered frontier'>{curation.coveredFrontier.toString()}</Field><Field label='Curation state'>{curation.state}</Field><Field label='Last curation publication generation'>{curation.lastPublicationGeneration === undefined ? 'None recorded' : curation.lastPublicationGeneration.toString()}</Field></dl>
+        <CurationAttemptView value={curation.attempt} />
+        <p className='fine-print'>Source coverage does not establish that later graph edits were reviewed. Attempt coordinates and the last publication remain separate from the current head.</p>
         {curation.failure !== undefined && <p className='notice error'>Curation failure: {curation.failure}</p>}
         <p className={curation.coveredFrontier < curation.frontier ? 'notice warning' : 'fine-print'}>{curation.coveredFrontier < curation.frontier ? 'The reported captured frontier is not fully covered by curation.' : curation.coveredFrontier === curation.frontier ? 'Coverage matches the reported frontier in this response. This is not a verification or a guarantee of present freshness.' : 'The reported coverage exceeds the frontier; these status values require investigation.'}</p>
         <p className='fine-print'>Observed in this browser: {statusObservedAt ?? 'unknown'}. Status is checked every 45 seconds; record pages and presentations do not silently refresh.</p>

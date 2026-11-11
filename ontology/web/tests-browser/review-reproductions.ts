@@ -42,10 +42,10 @@ class Fixture {
       if (name === 'scopes') {
         if (this.blockScopes) await this.scopeGate;
         if (page.isClosed()) return;
-        return reply(route, C.ScopesResult.jsonCodec(), new C.ScopesResult([new C.ScopeSummary('a', 1n, 0n, 0n, C.CurationState.Idle, undefined, 1n)]), 200);
+        return reply(route, C.ScopesResult.jsonCodec(), new C.ScopesResult([new C.ScopeSummary('a', 1n, 0n, 0n, C.CurationState.Idle, undefined, 1n, undefined, undefined)]), 200);
       }
       if (name === 'read') return reply(route, C.ReadResult.jsonCodec(), new C.ReadResult('a', 1n, this.records, undefined), 200);
-      if (name === 'status') return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus('a', 1n, 0n, 0n, C.CurationState.Idle, undefined), 200);
+      if (name === 'status') return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus('a', 1n, 0n, 0n, C.CurationState.Idle, undefined, undefined, undefined), 200);
       if (name === 'present') {
         const payload = new C.PresentationPayload('a', 1n, [new C.Ref(id(1), 1)], this.records, [], new C.PresentationManifest([], []));
         const digest = createHash('sha256').update(JSON.stringify(C.PresentationPayload.jsonCodec().encode(C.BaboonCodecContext.Default, payload))).digest('hex');

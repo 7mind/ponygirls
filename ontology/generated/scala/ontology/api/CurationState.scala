@@ -9,6 +9,8 @@ package ontology.api {
     case object Pending extends CurationState
     case object Running extends CurationState
     case object Failed extends CurationState
+    case object Stale extends CurationState
+    case object Interrupted extends CurationState
     
     def parse(s: String): Option[CurationState] = {
       s match {
@@ -16,6 +18,8 @@ package ontology.api {
         case "Pending" => Some(Pending)
         case "Running" => Some(Running)
         case "Failed" => Some(Failed)
+        case "Stale" => Some(Stale)
+        case "Interrupted" => Some(Interrupted)
         case _ => None
       }
     }
@@ -24,7 +28,9 @@ package ontology.api {
       Idle,
       Pending,
       Running,
-      Failed
+      Failed,
+      Stale,
+      Interrupted
     ) 
   }
   

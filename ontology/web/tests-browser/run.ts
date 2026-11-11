@@ -71,6 +71,7 @@ let activePage: Page | null = null;
 const executionEvent = new C.CapturedEvent(id(26), 'a', 'fixture-host', 3n, context, C.EventOrigin.ToolOutput,
   new C.CaptureMetadata('execution-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic execution account, not a physical measurement'], []),
   'Synthetic execution account', new C.Observation_Execution('controlled run', 'fixture host instrument', undefined, [inputArtifact.ref], [outputArtifact.ref], undefined, false), undefined, provenance(host, 95));
+const pendingAttempt = new C.CurationAttemptSummary(id(500), 5n, 3n, 2n, C.CurationAttemptState.Running, 'a'.repeat(64), 1, C.CurationAuditStage.DispatchPossible, undefined, true, time, undefined);
 let authenticated = false;
 let generation = 5n;
 let saved: C.Presentation | undefined;
@@ -108,13 +109,13 @@ try {
     if (operation === 'whoami') return reply(route, C.Identity.jsonCodec(), identity, 200);
     assert.equal(request.headers()['x-ontology-actor'], human.id);
     if (operation === 'scopes') {
-      const a = new C.ScopeSummary('a', generation, 3n, 3n, C.CurationState.Idle, undefined, generation);
-      const b = new C.ScopeSummary('b', 0n, 0n, 0n, C.CurationState.Idle, undefined, 0n);
+      const a = new C.ScopeSummary('a', generation, 3n, 2n, C.CurationState.Running, undefined, generation, 4n, pendingAttempt);
+      const b = new C.ScopeSummary('b', 0n, 0n, 0n, C.CurationState.Idle, undefined, 0n, undefined, undefined);
       return reply(route, C.ScopesResult.jsonCodec(), new C.ScopesResult([a, b]), 200);
     }
     if (operation === 'status') {
       const input = decode(C.ScopeRequest.jsonCodec(), data);
-      return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus(input.scope, input.scope === 'a' ? generation : 0n, input.scope === 'a' ? 3n : 0n, input.scope === 'a' ? 3n : 0n, C.CurationState.Idle, undefined), 200);
+      return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus(input.scope, input.scope === 'a' ? generation : 0n, input.scope === 'a' ? 3n : 0n, input.scope === 'a' ? 2n : 0n, input.scope === 'a' ? C.CurationState.Running : C.CurationState.Idle, undefined, input.scope === 'a' ? 4n : undefined, input.scope === 'a' ? pendingAttempt : undefined), 200);
     }
     if (operation === 'read') {
       const input = decode(C.ReadRequest.jsonCodec(), data);
@@ -245,6 +246,15 @@ try {
   generation = 6n;
   await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
   await page.getByText('This review remains pinned to 5;', { exact: false }).waitFor();
+  const statusRegion = page.getByRole('region', { name: 'Scope status · a', exact: true });
+  const field = (label: string) => statusRegion.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
+  assert.equal(await field('Graph generation').textContent(), '6');
+  assert.equal(await field('Attempt base generation').textContent(), '5');
+  assert.equal(await field('Attempt target frontier').textContent(), '3');
+  assert.equal(await field('Last curation publication generation').textContent(), '4');
+  assert.equal(await field('Latest audit stage').textContent(), 'DispatchPossible');
+  await statusRegion.getByText('It does not prove provider receipt, model use or the absence of unrecorded activity.', { exact: false }).waitFor();
+  receipts.push('current head, pinned attempt, last publication and dispatch qualifications remain distinct');
   assert(saved !== undefined);
   assert.equal(saved.payload.generation, 5n);
   await page.getByRole('radio', { name: 'Need evidence State what evidence or qualification is missing.', exact: true }).check();

@@ -9,7 +9,9 @@ package ontology.api {
     frontier: Long,
     coveredFrontier: Long,
     state: CurationState,
-    failure: Option[String]
+    failure: Option[String],
+    lastPublicationGeneration: Option[Long],
+    attempt: Option[CurationAttemptSummary]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CurationStatus.baboonDomainVersion
     override def baboonDomainIdentifier: String = CurationStatus.baboonDomainIdentifier
@@ -44,7 +46,9 @@ package ontology.api {
         "frontier" -> Json.fromString(value.frontier.toString),
         "coveredFrontier" -> Json.fromString(value.coveredFrontier.toString),
         "state" -> CurationState_JsonCodec.instance.encode(ctx, value.state),
-        "failure" -> value.failure.map(v => Json.fromString(v)).getOrElse(Json.Null)
+        "failure" -> value.failure.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "lastPublicationGeneration" -> value.lastPublicationGeneration.map(v => Json.fromString(v.toString)).getOrElse(Json.Null),
+        "attempt" -> value.attempt.map(v => CurationAttemptSummary_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -61,7 +65,9 @@ package ontology.api {
             coveredFrontier <- getField(jsonObject, "coveredFrontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             state <- getField(jsonObject, "state").flatMap(v => CurationState_JsonCodec.circeDecoder(v.hcursor))
             failure <- getField(jsonObject, "failure").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield CurationStatus(scope,generation,frontier,coveredFrontier,state,failure)
+            lastPublicationGeneration <- getField(jsonObject, "lastPublicationGeneration").flatMap(v => decodeOption(BaboonJsonCodec.decodeLong)(v.hcursor))
+            attempt <- getField(jsonObject, "attempt").flatMap(v => decodeOption(CurationAttemptSummary_JsonCodec.circeDecoder)(v.hcursor))
+          } yield CurationStatus(scope,generation,frontier,coveredFrontier,state,failure,lastPublicationGeneration,attempt)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CurationStatus: object expected"))
       }
     }

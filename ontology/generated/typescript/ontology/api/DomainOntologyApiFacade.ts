@@ -33,8 +33,23 @@ import { Content, Content_JsonCodec } from './Content.js';
 import { ContentInput, ContentInput_JsonCodec } from './ContentInput.js';
 import { ContextRecord, ContextRecord_JsonCodec } from './ContextRecord.js';
 import { ContextRecordInput, ContextRecordInput_JsonCodec } from './ContextRecordInput.js';
+import { CoordinatorFence, CoordinatorFence_JsonCodec } from './CoordinatorFence.js';
+import { CoordinatorLease, CoordinatorLease_JsonCodec } from './CoordinatorLease.js';
 import { Correction, Correction_JsonCodec } from './Correction.js';
+import { CurationAttempt, CurationAttempt_JsonCodec } from './CurationAttempt.js';
+import { CurationAttemptState, CurationAttemptState_JsonCodec } from './CurationAttemptState.js';
+import { CurationAttemptSummary, CurationAttemptSummary_JsonCodec } from './CurationAttemptSummary.js';
+import { CurationAuditPayload, CurationAuditPayload_JsonCodec } from './CurationAuditPayload.js';
+import { CurationAuditRecord, CurationAuditRecord_JsonCodec } from './CurationAuditRecord.js';
+import { CurationAuditStage, CurationAuditStage_JsonCodec } from './CurationAuditStage.js';
+import { CurationCandidate, CurationCandidate_JsonCodec } from './CurationCandidate.js';
+import { CurationClaim, CurationClaim_JsonCodec } from './CurationClaim.js';
+import { CurationInputManifest, CurationInputManifest_JsonCodec } from './CurationInputManifest.js';
 import { CurationProposal, CurationProposal_JsonCodec } from './CurationProposal.js';
+import { CurationPublicationInput, CurationPublicationInput_JsonCodec } from './CurationPublicationInput.js';
+import { CurationPublicationReceipt, CurationPublicationReceipt_JsonCodec } from './CurationPublicationReceipt.js';
+import { CurationRecordPin, CurationRecordPin_JsonCodec } from './CurationRecordPin.js';
+import { CurationSourcePin, CurationSourcePin_JsonCodec } from './CurationSourcePin.js';
 import { CurationState, CurationState_JsonCodec } from './CurationState.js';
 import { CurationStatus, CurationStatus_JsonCodec } from './CurationStatus.js';
 import { Definition, Definition_JsonCodec } from './Definition.js';
@@ -143,8 +158,23 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(ContentInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContentInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ContextRecord_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContextRecord_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ContextRecordInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContextRecordInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CoordinatorFence_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CoordinatorFence_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CoordinatorLease_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CoordinatorLease_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Correction_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Correction_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAttempt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAttempt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAttemptState_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAttemptState_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAttemptSummary_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAttemptSummary_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAuditPayload_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAuditPayload_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAuditRecord_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAuditRecord_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAuditStage_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAuditStage_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationCandidate_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationCandidate_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationClaim_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationClaim_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationInputManifest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationInputManifest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationProposal_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationProposal_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationPublicationInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationPublicationInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationPublicationReceipt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationPublicationReceipt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationRecordPin_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationRecordPin_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationSourcePin_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationSourcePin_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationState_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationState_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationStatus_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationStatus_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Definition_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Definition_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -266,8 +296,23 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ContentInput": ['0.1.0'],
         "ontology.api/:#ContextRecord": ['0.1.0'],
         "ontology.api/:#ContextRecordInput": ['0.1.0'],
+        "ontology.api/:#CoordinatorFence": ['0.1.0'],
+        "ontology.api/:#CoordinatorLease": ['0.1.0'],
         "ontology.api/:#Correction": ['0.1.0'],
+        "ontology.api/:#CurationAttempt": ['0.1.0'],
+        "ontology.api/:#CurationAttemptState": ['0.1.0'],
+        "ontology.api/:#CurationAttemptSummary": ['0.1.0'],
+        "ontology.api/:#CurationAuditPayload": ['0.1.0'],
+        "ontology.api/:#CurationAuditRecord": ['0.1.0'],
+        "ontology.api/:#CurationAuditStage": ['0.1.0'],
+        "ontology.api/:#CurationCandidate": ['0.1.0'],
+        "ontology.api/:#CurationClaim": ['0.1.0'],
+        "ontology.api/:#CurationInputManifest": ['0.1.0'],
         "ontology.api/:#CurationProposal": ['0.1.0'],
+        "ontology.api/:#CurationPublicationInput": ['0.1.0'],
+        "ontology.api/:#CurationPublicationReceipt": ['0.1.0'],
+        "ontology.api/:#CurationRecordPin": ['0.1.0'],
+        "ontology.api/:#CurationSourcePin": ['0.1.0'],
         "ontology.api/:#CurationState": ['0.1.0'],
         "ontology.api/:#CurationStatus": ['0.1.0'],
         "ontology.api/:#Definition": ['0.1.0'],
@@ -455,8 +500,23 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ContentInput": { '0.1.0': 'identical' },
         "ontology.api/:#ContextRecord": { '0.1.0': 'identical' },
         "ontology.api/:#ContextRecordInput": { '0.1.0': 'identical' },
+        "ontology.api/:#CoordinatorFence": { '0.1.0': 'identical' },
+        "ontology.api/:#CoordinatorLease": { '0.1.0': 'identical' },
         "ontology.api/:#Correction": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAttempt": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAttemptState": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAttemptSummary": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAuditPayload": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAuditRecord": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAuditStage": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationCandidate": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationClaim": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationInputManifest": { '0.1.0': 'identical' },
         "ontology.api/:#CurationProposal": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationPublicationInput": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationPublicationReceipt": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationRecordPin": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationSourcePin": { '0.1.0': 'identical' },
         "ontology.api/:#CurationState": { '0.1.0': 'identical' },
         "ontology.api/:#CurationStatus": { '0.1.0': 'identical' },
         "ontology.api/:#Definition": { '0.1.0': 'identical' },

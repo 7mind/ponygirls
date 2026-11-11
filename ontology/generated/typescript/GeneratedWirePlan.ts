@@ -4,8 +4,8 @@ export const wirePlan: WirePlan = {
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "d028b3ff39d4acf3ea8af9d2a8203bddbecffbd8e0dca0ad2147dbf58b00088b",
-  "rawDigest": "d116a2b86dcda8f9378b5dd67a57f97be7a84a3f717c68002627a00469e51e5d",
+  "modelDigest": "414c1f3c32d630a6a399fec08a481ba504da0b39965599ec58706b1b0d92c1fd",
+  "rawDigest": "a62dd548c6673640150ebaee9880d0803faea93092b0de2d9892fdd63fca44ac",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -248,6 +248,22 @@ export const wirePlan: WirePlan = {
       "tag": null
     },
     {
+      "typeId": "ontology.api/:#CoordinatorFence",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CoordinatorFence",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CoordinatorLease",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CoordinatorLease",
+      "parent": null,
+      "tag": null
+    },
+    {
       "typeId": "ontology.api/:#Correction",
       "domain": "ontology.api",
       "version": "0.1.0",
@@ -256,10 +272,114 @@ export const wirePlan: WirePlan = {
       "tag": null
     },
     {
+      "typeId": "ontology.api/:#CurationAttempt",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAttempt",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationAttemptState",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAttemptState",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationAttemptSummary",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAttemptSummary",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationAuditPayload",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAuditPayload",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationAuditRecord",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAuditRecord",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationAuditStage",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAuditStage",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationCandidate",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationCandidate",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationClaim",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationClaim",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationInputManifest",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationInputManifest",
+      "parent": null,
+      "tag": null
+    },
+    {
       "typeId": "ontology.api/:#CurationProposal",
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_CurationProposal",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationPublicationInput",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationPublicationInput",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationPublicationReceipt",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationPublicationReceipt",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationRecordPin",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationRecordPin",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationSourcePin",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationSourcePin",
       "parent": null,
       "tag": null
     },
@@ -2041,6 +2161,35 @@ export const wirePlan: WirePlan = {
         }
       }
     },
+    "ontology_api_CoordinatorFence": {
+      "kind": "object",
+      "fields": {
+        "epoch": {
+          "kind": "i64"
+        },
+        "ownerId": {
+          "kind": "uuid"
+        }
+      }
+    },
+    "ontology_api_CoordinatorLease": {
+      "kind": "object",
+      "fields": {
+        "acquiredAt": {
+          "kind": "string"
+        },
+        "expiresAt": {
+          "kind": "string"
+        },
+        "fence": {
+          "kind": "ref",
+          "component": "ontology_api_CoordinatorFence"
+        },
+        "renewedAt": {
+          "kind": "string"
+        }
+      }
+    },
     "ontology_api_Correction": {
       "kind": "enum",
       "values": [
@@ -2050,6 +2199,285 @@ export const wirePlan: WirePlan = {
         "Mixed",
         "Unresolved"
       ]
+    },
+    "ontology_api_CurationAttempt": {
+      "kind": "object",
+      "fields": {
+        "auditUncertain": {
+          "kind": "boolean"
+        },
+        "candidate": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationCandidate"
+          }
+        },
+        "claim": {
+          "kind": "ref",
+          "component": "ontology_api_CurationClaim"
+        },
+        "finishedAt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        },
+        "inputManifest": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationInputManifest"
+          }
+        },
+        "publication": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationPublicationReceipt"
+          }
+        },
+        "state": {
+          "kind": "ref",
+          "component": "ontology_api_CurationAttemptState"
+        },
+        "terminalCode": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "ontology_api_CurationAttemptState": {
+      "kind": "enum",
+      "values": [
+        "Claimed",
+        "InputSealed",
+        "Running",
+        "Published",
+        "Failed",
+        "Stale",
+        "Interrupted"
+      ]
+    },
+    "ontology_api_CurationAttemptSummary": {
+      "kind": "object",
+      "fields": {
+        "attemptId": {
+          "kind": "uuid"
+        },
+        "auditUncertain": {
+          "kind": "boolean"
+        },
+        "baseGeneration": {
+          "kind": "i64"
+        },
+        "claimedAt": {
+          "kind": "string"
+        },
+        "finishedAt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        },
+        "frontier": {
+          "kind": "i64"
+        },
+        "inputDigest": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        },
+        "lastOrdinal": {
+          "kind": "nullable",
+          "value": {
+            "kind": "i32"
+          }
+        },
+        "lastStage": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationAuditStage"
+          }
+        },
+        "previousCoveredFrontier": {
+          "kind": "i64"
+        },
+        "state": {
+          "kind": "ref",
+          "component": "ontology_api_CurationAttemptState"
+        },
+        "terminalCode": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "ontology_api_CurationAuditPayload": {
+      "kind": "object",
+      "fields": {
+        "bytes": {
+          "kind": "i64"
+        },
+        "content": {
+          "kind": "string"
+        },
+        "digest": {
+          "kind": "string"
+        },
+        "encoding": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_CurationAuditRecord": {
+      "kind": "object",
+      "fields": {
+        "attemptId": {
+          "kind": "uuid"
+        },
+        "fence": {
+          "kind": "ref",
+          "component": "ontology_api_CoordinatorFence"
+        },
+        "observedAt": {
+          "kind": "string"
+        },
+        "ordinal": {
+          "kind": "i32"
+        },
+        "payload": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationAuditPayload"
+          }
+        },
+        "requestDigest": {
+          "kind": "string"
+        },
+        "scope": {
+          "kind": "string"
+        },
+        "stage": {
+          "kind": "ref",
+          "component": "ontology_api_CurationAuditStage"
+        }
+      }
+    },
+    "ontology_api_CurationAuditStage": {
+      "kind": "enum",
+      "values": [
+        "RequestPrepared",
+        "DispatchPossible",
+        "ResponseObserved"
+      ]
+    },
+    "ontology_api_CurationCandidate": {
+      "kind": "object",
+      "fields": {
+        "attemptId": {
+          "kind": "uuid"
+        },
+        "inputDigest": {
+          "kind": "string"
+        },
+        "proposal": {
+          "kind": "ref",
+          "component": "ontology_api_CurationProposal"
+        },
+        "proposalDigest": {
+          "kind": "string"
+        },
+        "responseDigest": {
+          "kind": "string"
+        },
+        "responseOrdinal": {
+          "kind": "i32"
+        }
+      }
+    },
+    "ontology_api_CurationClaim": {
+      "kind": "object",
+      "fields": {
+        "attemptId": {
+          "kind": "uuid"
+        },
+        "baseGeneration": {
+          "kind": "i64"
+        },
+        "claimedAt": {
+          "kind": "string"
+        },
+        "fence": {
+          "kind": "ref",
+          "component": "ontology_api_CoordinatorFence"
+        },
+        "frontier": {
+          "kind": "i64"
+        },
+        "graphDigest": {
+          "kind": "string"
+        },
+        "previousCoveredFrontier": {
+          "kind": "i64"
+        },
+        "profileDigest": {
+          "kind": "string"
+        },
+        "profileId": {
+          "kind": "string"
+        },
+        "schemaDigest": {
+          "kind": "string"
+        },
+        "scope": {
+          "kind": "string"
+        },
+        "sourceCutDigest": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_CurationInputManifest": {
+      "kind": "object",
+      "fields": {
+        "attemptId": {
+          "kind": "uuid"
+        },
+        "encoding": {
+          "kind": "string"
+        },
+        "inputBytes": {
+          "kind": "i64"
+        },
+        "inputDigest": {
+          "kind": "string"
+        },
+        "sealedAt": {
+          "kind": "string"
+        },
+        "seed": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_CurationRecordPin"
+          }
+        },
+        "sources": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_CurationSourcePin"
+          }
+        }
+      }
     },
     "ontology_api_CurationProposal": {
       "kind": "object",
@@ -2069,18 +2497,110 @@ export const wirePlan: WirePlan = {
         }
       }
     },
+    "ontology_api_CurationPublicationInput": {
+      "kind": "object",
+      "fields": {
+        "claim": {
+          "kind": "ref",
+          "component": "ontology_api_CurationClaim"
+        },
+        "manifest": {
+          "kind": "ref",
+          "component": "ontology_api_CurationInputManifest"
+        },
+        "proposal": {
+          "kind": "ref",
+          "component": "ontology_api_CurationProposal"
+        },
+        "proposalDigest": {
+          "kind": "string"
+        },
+        "publishedAt": {
+          "kind": "string"
+        },
+        "responseDigest": {
+          "kind": "string"
+        },
+        "responseOrdinal": {
+          "kind": "i32"
+        }
+      }
+    },
+    "ontology_api_CurationPublicationReceipt": {
+      "kind": "object",
+      "fields": {
+        "attemptId": {
+          "kind": "uuid"
+        },
+        "coveredFrontier": {
+          "kind": "i64"
+        },
+        "frontier": {
+          "kind": "i64"
+        },
+        "generation": {
+          "kind": "i64"
+        },
+        "input": {
+          "kind": "ref",
+          "component": "ontology_api_Ref"
+        },
+        "recordedAt": {
+          "kind": "string"
+        },
+        "scope": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_CurationRecordPin": {
+      "kind": "object",
+      "fields": {
+        "digest": {
+          "kind": "string"
+        },
+        "ref": {
+          "kind": "ref",
+          "component": "ontology_api_Ref"
+        }
+      }
+    },
+    "ontology_api_CurationSourcePin": {
+      "kind": "object",
+      "fields": {
+        "digest": {
+          "kind": "string"
+        },
+        "frontier": {
+          "kind": "i64"
+        },
+        "ref": {
+          "kind": "ref",
+          "component": "ontology_api_Ref"
+        }
+      }
+    },
     "ontology_api_CurationState": {
       "kind": "enum",
       "values": [
         "Idle",
         "Pending",
         "Running",
-        "Failed"
+        "Failed",
+        "Stale",
+        "Interrupted"
       ]
     },
     "ontology_api_CurationStatus": {
       "kind": "object",
       "fields": {
+        "attempt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationAttemptSummary"
+          }
+        },
         "coveredFrontier": {
           "kind": "i64"
         },
@@ -2095,6 +2615,12 @@ export const wirePlan: WirePlan = {
         },
         "generation": {
           "kind": "i64"
+        },
+        "lastPublicationGeneration": {
+          "kind": "nullable",
+          "value": {
+            "kind": "i64"
+          }
         },
         "scope": {
           "kind": "string"
@@ -3216,6 +3742,13 @@ export const wirePlan: WirePlan = {
     "ontology_api_ScopeSummary": {
       "kind": "object",
       "fields": {
+        "attempt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationAttemptSummary"
+          }
+        },
         "coveredFrontier": {
           "kind": "i64"
         },
@@ -3234,6 +3767,12 @@ export const wirePlan: WirePlan = {
         },
         "generation": {
           "kind": "i64"
+        },
+        "lastPublicationGeneration": {
+          "kind": "nullable",
+          "value": {
+            "kind": "i64"
+          }
         },
         "rdfGeneration": {
           "kind": "nullable",

@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import java.net.{URI, URISyntaxException}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{InvalidPathException, Path}
-import ontology.Wire
+import ontology.{Digests, Wire}
 import ontology.api.*
 import ontology.domain.{Fault, Require}
 import org.http4s.client.Client
@@ -41,6 +41,7 @@ final case class CurationInput(
   scope: String,
   generation: Long,
   frontier: Long,
+  previousCoveredFrontier: Long,
   seed: List[GraphRecord],
   sources: List[CapturedEvent]
 )
@@ -60,11 +61,13 @@ trait CurationSchemas {
 
 trait CurationAudit {
   def request(ordinal: Int, payload: Json): IO[Unit]
+  def dispatchPossible(ordinal: Int): IO[Unit]
   def response(ordinal: Int, value: Json): IO[Unit]
 }
 
+final case class AuditedProposal(proposal: CurationProposal, responseOrdinal: Int, responseDigest: String)
 trait CuratorModel {
-  def propose(input: CurationInput, reader: CurationReader, audit: CurationAudit): IO[CurationProposal]
+  def propose(input: CurationInput, reader: CurationReader, audit: CurationAudit): IO[AuditedProposal]
 }
 
 object CuratorModel {
@@ -75,7 +78,7 @@ object CuratorModel {
   private final case class ReadQuery(request: ReadRequest) extends ToolQuery
   private final case class ModelCall(id: String, name: String, arguments: String, query: ToolQuery)
   private sealed trait Turn
-  private final case class Candidate(value: CurationProposal) extends Turn
+  private final case class Candidate(value: CurationProposal, responseDigest: String) extends Turn
   private final case class Reads(content: Option[String], calls: Vector[ModelCall]) extends Turn
 
   private val Policy =
@@ -174,20 +177,15 @@ object CuratorModel {
     }
 
     private def inputJson(input: CurationInput): Json = {
-      Require(input.scope.nonEmpty && input.generation >= 0 && input.frontier >= 0,
+      Require(input.scope.nonEmpty && input.generation >= 0 && input.previousCoveredFrontier >= 0 && input.frontier >= input.previousCoveredFrontier,
         "curator-input", "invalid frozen input coordinates")
       checkRecords(input, input.seed)
-      input.sources.foreach { source =>
-        Require(source.scope == input.scope && source.frontier >= 0 && source.frontier <= input.frontier,
-          "curator-snapshot", "source outside frozen scope or frontier")
+      Require(input.sources.size.toLong == input.frontier - input.previousCoveredFrontier, "curator-snapshot", "incomplete frozen source cut")
+      input.sources.zipWithIndex.foreach { case (source, index) =>
+        Require(source.scope == input.scope && source.frontier == input.previousCoveredFrontier + index.toLong + 1L,
+          "curator-snapshot", "source outside frozen ordered cut")
       }
-      Json.obj(
-        "scope" -> Json.fromString(input.scope),
-        "generation" -> Json.fromString(input.generation.toString),
-        "frontier" -> Json.fromString(input.frontier.toString),
-        "seed" -> Json.fromValues(input.seed.map(value => Wire.encode(GraphRecord.codecJson, value))),
-        "sources" -> Json.fromValues(input.sources.map(value => Wire.encode(CapturedEvent.codecJson, value)))
-      )
+      CurationInputs.json(input)
     }
 
     private def systemPrompt: String = config.responseFormat match {
@@ -268,37 +266,11 @@ object CuratorModel {
     }
 
     private def decodeTurn(input: CurationInput, state: Conversation, value: Json): Turn = {
-      val root = objectValue(value)
-      Require(root("error").forall(_.isNull), "curator-protocol", "model returned an error envelope")
-      val choices = field(root, "choices").asArray.getOrElse(protocol("model choices array required"))
-      Require(choices.size == 1, "curator-protocol", "exactly one model choice required")
-      val choice = objectValue(choices.head)
-      choice("index").foreach { index =>
-        Require(index.asNumber.flatMap(_.toInt).contains(0), "curator-protocol", "invalid choice index")
-      }
-      val finish = stringField(choice, "finish_reason")
-      val message = objectValue(field(choice, "message"))
-      Require(stringField(message, "role") == "assistant", "curator-protocol", "assistant role required")
-      Require(message("refusal").forall(_.isNull), "curator-protocol", "model refusal")
-      Require(message("function_call").forall(_.isNull), "curator-protocol", "legacy function calls forbidden")
-      val content = message("content") match {
-        case None => None
-        case Some(json) if json.isNull => None
-        case Some(json) => Some(json.asString.getOrElse(protocol("plain assistant text required")))
-      }
-      val rawCalls = message("tool_calls") match {
-        case None => Vector.empty[Json]
-        case Some(json) if json.isNull => Vector.empty[Json]
-        case Some(json) => json.asArray.getOrElse(protocol("tool calls array required"))
-      }
-      finish match {
+      val response = CuratorResponse.envelope(value)
+      val rawCalls = response.toolCalls
+      response.finish match {
         case "stop" =>
-          Require(rawCalls.isEmpty, "curator-protocol", "final proposal cannot contain tool calls")
-          val text = content.getOrElse(protocol("final proposal text required"))
-          val proposal = Wire.decode(CurationProposal.codecJson, strictInner(text))
-          Require(proposal.expectedGeneration == input.generation && proposal.frontier == input.frontier,
-            "curator-snapshot", "proposal generation or frontier differs from frozen input")
-          Candidate(proposal)
+          Candidate(CuratorResponse.proposal(input.generation, input.frontier, response), Digests.text(value.noSpaces))
         case "tool_calls" =>
           Require(rawCalls.nonEmpty, "curator-protocol", "tool finish requires tool calls")
           // Validate the entire batch, including every scope, before invoking any reader.
@@ -306,7 +278,7 @@ object CuratorModel {
           val ids = calls.map(_.id)
           Require(ids.distinct.size == ids.size && ids.forall(id => !state.usedCallIds.contains(id)),
             "curator-protocol", "duplicate tool call ID")
-          Reads(content, calls)
+          Reads(response.content, calls)
         case _ => protocol("invalid or incomplete model finish reason")
       }
     }
@@ -353,7 +325,7 @@ object CuratorModel {
       }
 
     private def loop(input: CurationInput, reader: CurationReader, audit: CurationAudit,
-      started: FiniteDuration, state: Conversation): IO[CurationProposal] = IO.defer {
+      started: FiniteDuration, state: Conversation): IO[AuditedProposal] = IO.defer {
       val body = payload(state.messages)
       // Includes schemas, all messages and JSON escaping; no truncation or context salvage.
       checkSize(body.noSpaces, config.maxInputBytes)
@@ -362,6 +334,7 @@ object CuratorModel {
         _ <- audit.request(state.ordinal, body)
         _ <- remaining(started)
         credential <- JsonHttp.credential(config.credentialFile)
+        _ <- audit.dispatchPossible(state.ordinal)
         left <- remaining(started)
         turn <- JsonHttp.postCancelableF(client, config.operationUrl, credential, left, config.maxResponseBytes, body) { response =>
           // This is candidate evidence, not success. Capture before response resource release.
@@ -372,7 +345,7 @@ object CuratorModel {
         // postF must finish releasing its response resource successfully before proceeding.
         _ <- remaining(started)
         proposal <- turn match {
-          case Candidate(value) => IO.pure(value)
+          case Candidate(value, digest) => IO.pure(AuditedProposal(value, state.ordinal, digest))
           case Reads(content, calls) =>
             calls.traverse(call => execute(input, reader, started, call)).flatMap { replies =>
               val next = Conversation(
@@ -386,7 +359,7 @@ object CuratorModel {
       } yield proposal
     }
 
-    def propose(input: CurationInput, reader: CurationReader, audit: CurationAudit): IO[CurationProposal] = IO.defer {
+    def propose(input: CurationInput, reader: CurationReader, audit: CurationAudit): IO[AuditedProposal] = IO.defer {
       Require(config.allowSourceSharing, "curator-sharing", "source sharing is disabled")
       IO.monotonic.flatMap { started =>
         val work = IO.defer {
@@ -404,7 +377,7 @@ object CuratorModel {
         }
         // One monotonic budget covers input preparation, audit, credentials, all reads and HTTP.
         // A valid tool continuation is not a retry; every error terminates this invocation.
-        work.timeoutTo(config.deadline, expired[CurationProposal])
+        work.timeoutTo(config.deadline, expired[AuditedProposal])
       }
     }
   }

@@ -10,7 +10,9 @@ package ontology.api {
     coveredFrontier: Long,
     curation: CurationState,
     failure: Option[String],
-    rdfGeneration: Option[Long]
+    rdfGeneration: Option[Long],
+    lastPublicationGeneration: Option[Long],
+    attempt: Option[CurationAttemptSummary]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ScopeSummary.baboonDomainVersion
     override def baboonDomainIdentifier: String = ScopeSummary.baboonDomainIdentifier
@@ -46,7 +48,9 @@ package ontology.api {
         "coveredFrontier" -> Json.fromString(value.coveredFrontier.toString),
         "curation" -> CurationState_JsonCodec.instance.encode(ctx, value.curation),
         "failure" -> value.failure.map(v => Json.fromString(v)).getOrElse(Json.Null),
-        "rdfGeneration" -> value.rdfGeneration.map(v => Json.fromString(v.toString)).getOrElse(Json.Null)
+        "rdfGeneration" -> value.rdfGeneration.map(v => Json.fromString(v.toString)).getOrElse(Json.Null),
+        "lastPublicationGeneration" -> value.lastPublicationGeneration.map(v => Json.fromString(v.toString)).getOrElse(Json.Null),
+        "attempt" -> value.attempt.map(v => CurationAttemptSummary_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -64,7 +68,9 @@ package ontology.api {
             curation <- getField(jsonObject, "curation").flatMap(v => CurationState_JsonCodec.circeDecoder(v.hcursor))
             failure <- getField(jsonObject, "failure").flatMap(v => decodeOption(decodeString)(v.hcursor))
             rdfGeneration <- getField(jsonObject, "rdfGeneration").flatMap(v => decodeOption(BaboonJsonCodec.decodeLong)(v.hcursor))
-          } yield ScopeSummary(scope,generation,frontier,coveredFrontier,curation,failure,rdfGeneration)
+            lastPublicationGeneration <- getField(jsonObject, "lastPublicationGeneration").flatMap(v => decodeOption(BaboonJsonCodec.decodeLong)(v.hcursor))
+            attempt <- getField(jsonObject, "attempt").flatMap(v => decodeOption(CurationAttemptSummary_JsonCodec.circeDecoder)(v.hcursor))
+          } yield ScopeSummary(scope,generation,frontier,coveredFrontier,curation,failure,rdfGeneration,lastPublicationGeneration,attempt)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ScopeSummary: object expected"))
       }
     }
