@@ -1,8 +1,8 @@
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index f7b2acb..b9e5731 100644
+index d5032b7..13ac1be 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
-@@ -377,6 +377,15 @@ interface ToolDefinitionEntry {
+@@ -378,6 +378,15 @@ interface ToolDefinitionEntry {
  	sourceInfo: SourceInfo;
  }
  
@@ -18,8 +18,8 @@ index f7b2acb..b9e5731 100644
  function estimateMessagesTokens(messages: AgentMessage[]): number {
  	let tokens = 0;
  	for (const message of messages) {
-@@ -410,8 +419,16 @@ export class AgentSession {
- 	private _followUpMessages: string[] = [];
+@@ -430,8 +439,16 @@ export class AgentSession {
+ 	private _queuedMessagesWithImages = new WeakSet<AgentMessage>();
  	/** Messages queued to be included with the next user prompt as context ("asides"). */
  	private _pendingNextTurnMessages: CustomMessage[] = [];
 -	/** Context-only custom messages queued during a run, flushed once the current turn's tool results are in. */
@@ -37,7 +37,7 @@ index f7b2acb..b9e5731 100644
  
  	// Compaction state
  	private _compactionAbortController: AbortController | undefined = undefined;
-@@ -472,6 +489,7 @@ export class AgentSession {
+@@ -492,6 +509,7 @@ export class AgentSession {
  	private _sessionStartEvent: SessionStartEvent;
  	private _extensionUIContext?: ExtensionUIContext;
  	private _extensionMode: ExtensionMode = "print";
@@ -45,7 +45,7 @@ index f7b2acb..b9e5731 100644
  	private _extensionCommandContextActions?: ExtensionCommandContextActions;
  	private _extensionAbortHandler?: () => void;
  	private _extensionShutdownHandler?: ShutdownHandler;
-@@ -1009,7 +1027,7 @@ export class AgentSession {
+@@ -1054,7 +1072,7 @@ export class AgentSession {
  	}
  
  	private _getPendingBoundaryMessages(): AgentMessage[] {
@@ -54,7 +54,7 @@ index f7b2acb..b9e5731 100644
  	}
  
  	private _buildBoundaryContext(
-@@ -1082,6 +1100,7 @@ export class AgentSession {
+@@ -1127,6 +1145,7 @@ export class AgentSession {
  	}
  
  	private _resolveIdleWaitIfIdle(): void {
@@ -62,7 +62,7 @@ index f7b2acb..b9e5731 100644
  		if (!this.isIdle || !this._resolveIdleWait) {
  			return;
  		}
-@@ -1092,31 +1111,30 @@ export class AgentSession {
+@@ -1137,31 +1156,30 @@ export class AgentSession {
  	}
  
  	private async _emitAgentSettled(): Promise<void> {
@@ -108,7 +108,7 @@ index f7b2acb..b9e5731 100644
  		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
  		// here. agent_start is awaited before the first request.
  		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
-@@ -1209,7 +1227,7 @@ export class AgentSession {
+@@ -1258,7 +1276,7 @@ export class AgentSession {
  		// extension and listener dispatch above also picks up messages that turn_end
  		// handlers queued.
  		if (event.type === "turn_end") {
@@ -117,7 +117,7 @@ index f7b2acb..b9e5731 100644
  		}
  	};
  
-@@ -1426,6 +1444,9 @@ export class AgentSession {
+@@ -1475,6 +1493,9 @@ export class AgentSession {
  	 * Call this when completely done with the session.
  	 */
  	dispose(): void {
@@ -127,7 +127,7 @@ index f7b2acb..b9e5731 100644
  		try {
  			this.abortRetry();
  			this.abortCompaction();
-@@ -1891,32 +1912,28 @@ export class AgentSession {
+@@ -1940,32 +1961,28 @@ export class AgentSession {
  	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
  	 * @param onStarted Called once the run's messages are prepared, before the first request.
  	 */
@@ -178,7 +178,7 @@ index f7b2acb..b9e5731 100644
  			await this.agent.prompt(messages);
  			while (!this._agentRunAbortRequested) {
  				if (await this._handlePostAgentRun()) {
-@@ -1932,9 +1949,18 @@ export class AgentSession {
+@@ -1981,9 +1998,18 @@ export class AgentSession {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
  			this._failedResponse = undefined;
  			this._runSystemPromptOptions = undefined;
@@ -200,7 +200,7 @@ index f7b2acb..b9e5731 100644
  		}
  	}
  
-@@ -1944,7 +1970,7 @@ export class AgentSession {
+@@ -1993,7 +2019,7 @@ export class AgentSession {
  	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
  	 * system patch first when the prompt changed.
  	 */
@@ -209,7 +209,7 @@ index f7b2acb..b9e5731 100644
  		// Check if we need to compact before sending (catches aborted responses).
  		// The starting message is sent below, so do not call agent.continue() here.
  		const lastAssistant = this._findLastAssistantMessage();
-@@ -1964,7 +1990,7 @@ export class AgentSession {
+@@ -2013,7 +2039,7 @@ export class AgentSession {
  
  		const messages: AgentMessage[] = [];
  		if (trigger.messageType === "custom") {
@@ -218,7 +218,7 @@ index f7b2acb..b9e5731 100644
  		} else {
  			// Normalize images after before_agent_start so extension-driven model selection
  			// determines the resize profile used for the request and history.
-@@ -2004,7 +2030,10 @@ export class AgentSession {
+@@ -2053,7 +2079,10 @@ export class AgentSession {
  			this._finishCancelledRetry();
  			return false;
  		}
@@ -230,7 +230,7 @@ index f7b2acb..b9e5731 100644
  
  		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-@@ -2032,11 +2061,14 @@ export class AgentSession {
+@@ -2081,11 +2110,14 @@ export class AgentSession {
  
  		// The low-level loop drains both queues before agent_end. Messages queued by
  		// agent_end handlers require a fresh run before pre-settlement handlers fire.
@@ -247,7 +247,7 @@ index f7b2acb..b9e5731 100644
  		this._isBeforeSettle = true;
  		this._abortDuringBeforeSettle = false;
  		try {
-@@ -2045,10 +2077,10 @@ export class AgentSession {
+@@ -2094,10 +2126,10 @@ export class AgentSession {
  				(entries) => this._buildBoundaryContext(entries, "agent_before_settle"),
  			);
  			this._commitBoundaryDrafts(result.entries);
@@ -260,50 +260,44 @@ index f7b2acb..b9e5731 100644
  			if (shouldContinue && !finalContext.canContinue) {
  				if (result.continue) this._reportInvalidBoundaryContinuation("agent_before_settle");
  				return false;
-@@ -2134,6 +2166,31 @@ export class AgentSession {
- 			);
- 		}
+@@ -2185,24 +2217,27 @@ export class AgentSession {
  
-+		// A retained extension wake must not start a run while this prompt is being prepared:
-+		// the prompt would then be rejected as concurrent. Its committed context joins this run.
+ 		// Reserve the context through async input hooks and auth checks so tree navigation cannot
+ 		// start meanwhile (#9154). _startRun marks the run active synchronously, so there is no gap.
++		// A retained extension wake likewise must not start a run while this prompt is being prepared.
+ 		this._promptPreflightCount++;
 +		this._promptPreflights++;
-+		let prepared: { text: string; images: ImageContent[] | undefined } | undefined;
-+		try {
-+			prepared = await this._preparePrompt(text, options, expandPromptTemplates);
-+		} finally {
+ 		let trigger: BeforeAgentStartTrigger | undefined;
+ 		try {
+-			trigger = await this._preparePrompt(text, options);
++			trigger = await this._preparePrompt(text, options, expandPromptTemplates);
+ 		} finally {
+ 			this._promptPreflightCount--;
 +			this._promptPreflights--;
-+			if (prepared === undefined) this._scheduleCustomMessageDrain();
-+		}
-+		if (prepared === undefined) return;
-+
-+		await this._startRun({ messageType: "user", prompt: prepared.text, images: prepared.images }, () =>
-+			preflightResult?.("started"),
-+			false,
-+		);
-+	}
-+
++			if (trigger === undefined) this._scheduleCustomMessageDrain();
+ 		}
+-		if (trigger) await this._startRun(trigger, () => preflightResult?.("started"));
++		if (trigger) await this._startRun(trigger, () => preflightResult?.("started"), false);
+ 	}
+ 
+-	/**
+-	 * Run input hooks, expand templates, queue while streaming, and validate model and auth.
+-	 * Returns the run trigger, or undefined when the prompt was handled or queued.
+-	 */
+-	private async _preparePrompt(text: string, options?: PromptOptions): Promise<BeforeAgentStartTrigger | undefined> {
+-		const expandPromptTemplates = options?.expandPromptTemplates ?? true;
 +	/** Input handling and expansion; queues during a run, otherwise validates a new run. Undefined: handled or queued. */
 +	private async _preparePrompt(
 +		text: string,
 +		options: PromptOptions | undefined,
 +		expandPromptTemplates: boolean,
-+	): Promise<{ text: string; images: ImageContent[] | undefined } | undefined> {
-+		const preflightResult = options?.preflightResult;
++	): Promise<BeforeAgentStartTrigger | undefined> {
+ 		const preflightResult = options?.preflightResult;
+-
  		// Emit input event for extension interception (before skill/template expansion)
  		const processedInput = await this._runInputHandlers(
  			text,
-@@ -2190,9 +2247,7 @@ export class AgentSession {
- 			throw new Error(formatNoApiKeyFoundMessage(this.model.provider));
- 		}
- 
--		await this._startRun({ messageType: "user", prompt: expandedText, images: currentImages }, () =>
--			preflightResult?.("started"),
--		);
-+		return { text: expandedText, images: currentImages };
- 	}
- 
- 	/**
-@@ -2401,25 +2456,26 @@ export class AgentSession {
+@@ -2483,25 +2518,26 @@ export class AgentSession {
  				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
  				return;
  			}
@@ -333,7 +327,7 @@ index f7b2acb..b9e5731 100644
  		this._refreshFinalizedContext();
  		this._emit({ type: "message_start", message: appMessage });
  		this._emit({ type: "message_end", message: appMessage });
-@@ -2429,13 +2485,112 @@ export class AgentSession {
+@@ -2511,13 +2547,112 @@ export class AgentSession {
  	 * Append custom messages queued while the agent was running.
  	 * Called once the current turn's tool results are in agent state and session history.
  	 */
@@ -452,7 +446,7 @@ index f7b2acb..b9e5731 100644
  		}
  	}
  
-@@ -2482,6 +2637,7 @@ export class AgentSession {
+@@ -2564,6 +2699,7 @@ export class AgentSession {
  	/**
  	 * Clear all queued messages and return them.
  	 * Useful for restoring to editor when user aborts.
@@ -460,7 +454,7 @@ index f7b2acb..b9e5731 100644
  	 * @returns Object with steering and followUp arrays
  	 */
  	clearQueue(): { steering: string[]; followUp: string[] } {
-@@ -2517,6 +2673,7 @@ export class AgentSession {
+@@ -2599,6 +2735,7 @@ export class AgentSession {
  	 * Abort current operation and wait for agent to become idle.
  	 */
  	async abort(): Promise<void> {
@@ -468,7 +462,7 @@ index f7b2acb..b9e5731 100644
  		if (this._isAgentRunActive) {
  			this._agentRunAbortRequested = true;
  		}
-@@ -2526,6 +2683,7 @@ export class AgentSession {
+@@ -2608,6 +2745,7 @@ export class AgentSession {
  		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
  		this.agent.abort();
  		await this.waitForIdle();
@@ -476,7 +470,7 @@ index f7b2acb..b9e5731 100644
  	}
  
  	async waitForIdle(): Promise<void> {
-@@ -3320,7 +3478,11 @@ export class AgentSession {
+@@ -3394,7 +3532,11 @@ export class AgentSession {
  			if (this._autoCompactionAbortController === abortController) {
  				this._autoCompactionAbortController = undefined;
  			}
@@ -489,7 +483,7 @@ index f7b2acb..b9e5731 100644
  		}
  	}
  
-@@ -3337,6 +3499,7 @@ export class AgentSession {
+@@ -3411,6 +3553,7 @@ export class AgentSession {
  	}
  
  	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -497,7 +491,7 @@ index f7b2acb..b9e5731 100644
  		if (bindings.uiContext !== undefined) {
  			this._extensionUIContext = bindings.uiContext;
  		}
-@@ -3475,6 +3638,7 @@ export class AgentSession {
+@@ -3549,6 +3692,7 @@ export class AgentSession {
  						});
  					});
  				},
@@ -505,7 +499,7 @@ index f7b2acb..b9e5731 100644
  				sendUserMessage: (content, options) => {
  					this.sendUserMessage(content, options).catch((err) => {
  						runner.emitError({
-@@ -3766,12 +3930,7 @@ export class AgentSession {
+@@ -3847,12 +3991,7 @@ export class AgentSession {
  			includeAllExtensionTools: true,
  		});
  
@@ -520,10 +514,10 @@ index f7b2acb..b9e5731 100644
  			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
  			this._extensionRunner.reportUnhandledMcpServers();
 diff --git a/packages/coding-agent/src/core/extensions/loader.ts b/packages/coding-agent/src/core/extensions/loader.ts
-index ff9f127..fcc0010 100644
+index e26aeba..1ae65e7 100644
 --- a/packages/coding-agent/src/core/extensions/loader.ts
 +++ b/packages/coding-agent/src/core/extensions/loader.ts
-@@ -172,6 +172,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
+@@ -175,6 +175,7 @@ export function createExtensionRuntime(): ExtensionRuntime {
  
  	const runtime: ExtensionRuntime = {
  		sendMessage: notInitialized,
@@ -531,7 +525,7 @@ index ff9f127..fcc0010 100644
  		sendUserMessage: notInitialized,
  		appendEntry: notInitialized,
  		setSessionName: notInitialized,
-@@ -387,6 +388,11 @@ function createExtensionAPI(
+@@ -395,6 +396,11 @@ function createExtensionAPI(
  			runtime.sendMessage(message, options);
  		},
  
@@ -544,7 +538,7 @@ index ff9f127..fcc0010 100644
  			assertActive();
  			runtime.sendUserMessage(content, options);
 diff --git a/packages/coding-agent/src/core/extensions/runner.ts b/packages/coding-agent/src/core/extensions/runner.ts
-index ea0790a..71c81d8 100644
+index 3cac261..94e7d0d 100644
 --- a/packages/coding-agent/src/core/extensions/runner.ts
 +++ b/packages/coding-agent/src/core/extensions/runner.ts
 @@ -428,6 +428,7 @@ export class ExtensionRunner {
@@ -556,10 +550,10 @@ index ea0790a..71c81d8 100644
  		this.runtime.appendEntry = actions.appendEntry;
  		this.runtime.setSessionName = actions.setSessionName;
 diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
-index c3c6ec2..a81acce 100644
+index 0317db1..c0a29c4 100644
 --- a/packages/coding-agent/src/core/extensions/types.ts
 +++ b/packages/coding-agent/src/core/extensions/types.ts
-@@ -990,7 +990,7 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
+@@ -991,7 +991,7 @@ export interface BeforeAgentStartUserEvent extends BeforeAgentStartEventBase {
  	images?: ImageContent[];
  }
  
@@ -568,7 +562,7 @@ index c3c6ec2..a81acce 100644
  export interface BeforeAgentStartCustomEvent extends BeforeAgentStartEventBase {
  	messageType: "custom";
  	/** The custom message that starts the run. */
-@@ -1781,6 +1781,21 @@ export interface ExtensionAPI {
+@@ -1806,6 +1806,21 @@ export interface ExtensionAPI {
  		options?: { triggerTurn?: boolean; deliverAs?: "steer" | "followUp" | "nextTurn" },
  	): void;
  
@@ -590,7 +584,7 @@ index c3c6ec2..a81acce 100644
  	/**
  	 * Send a user message to the agent. Always triggers a turn.
  	 * When the agent is streaming, use deliverAs to specify how to queue the message.
-@@ -2236,6 +2251,7 @@ export interface ExtensionRuntimeState {
+@@ -2261,6 +2276,7 @@ export interface ExtensionRuntimeState {
   */
  export interface ExtensionActions {
  	sendMessage: SendMessageHandler;
@@ -687,3 +681,35 @@ index 20b6eda..b3124f1 100644
  	}
  
  	private _appendEntry(entry: SessionEntry): void {
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index f2b02e4..7912ed9 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -647,9 +647,9 @@ export class InteractiveMode {
+ 	private readonly extensionOverlays = new Map<OverlayHandle, () => void>();
+ 	private extensionDialogBorderOwner: object | undefined;
+ 	private extensionTerminalInputSubscriptions = new Set<{
+-	handler: (data: string) => { consume?: boolean; data?: string } | undefined;
+-	unsubscribe: () => void;
+-}>();
++		handler: (data: string) => { consume?: boolean; data?: string } | undefined;
++		unsubscribe: () => void;
++	}>();
+ 
+ 	// Extension widgets (rendered above/below the editor or in its border slots)
+ 	private extensionWidgets = new Map<string, ExtensionWidget>();
+diff --git a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
+index e096ace..8bce769 100644
+--- a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
++++ b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
+@@ -33,8 +33,8 @@ type DialogMethods = {
+ 		options?: {
+ 			overlay?: boolean;
+ 			onHandle?: (handle: { setHidden: (hidden: boolean) => void }) => void;
+-		retainEditorBorders?: boolean;
+-		blocked?: { kind: "permission" | "question" | "auth"; message: string };
++			retainEditorBorders?: boolean;
++			blocked?: { kind: "permission" | "question" | "auth"; message: string };
+ 		},
+ 	): Promise<T>;
+ 	setCustomEditorComponent(

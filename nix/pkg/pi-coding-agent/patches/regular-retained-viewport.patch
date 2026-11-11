@@ -18,10 +18,10 @@ Backport 51f42336f8cffc1d42f7260609703cff0e41931d onto the pinned 1.4.0 runtime.
  create mode 100644 packages/tui/test/bounded-v-stack.test.ts
 
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 0f6e601..962cb22 100644
+index 51f3ea1..ceb590e 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
-@@ -145,6 +145,8 @@ Finish the interaction with the completion callback supplied to the component fa
+@@ -147,6 +147,8 @@ Finish the interaction with the completion callback supplied to the component fa
  
  For an inline detail view opened by an editor-border badge, pass `{ retainEditorBorders: true }` to `ctx.ui.custom()`. The editor's visible border widgets remain above/below the view, without showing the draft or moving keyboard focus to the hidden editor. A second badge click can call that interaction's completion callback to close it. Keep one pending/open interaction per badge and revoke its callback on session shutdown; repeated clicks must not stack duplicate views. Empty border rows take no space. The option is ignored for overlays and custom editors without `createBorderComponent()` support. Nested confirmation/input dialogs do not retain the rows. Mouse interaction requires fullscreen mode or regular mode with `regularMouse: true`; preserve command/shortcut and keyboard dismissal paths.
  
@@ -31,7 +31,7 @@ index 0f6e601..962cb22 100644
  
  ## Apply themes correctly
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 3f043ae..b0dc4a2 100644
+index 42d2fd7..07e2cfd 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -32,6 +32,7 @@ import type {
@@ -42,7 +42,7 @@ index 3f043ae..b0dc4a2 100644
  	CombinedAutocompleteProvider,
  	type Component,
  	Container,
-@@ -51,7 +52,7 @@ import {
+@@ -52,7 +53,7 @@ import {
  	TuiMainScreen,
  	type TuiMouseEvent,
  	type TuiMouseEventResult,
@@ -51,7 +51,7 @@ index 3f043ae..b0dc4a2 100644
  	visibleWidth,
  } from "@earendil-works/pi-tui";
  import chalk from "chalk";
-@@ -711,7 +712,25 @@ export class InteractiveMode {
+@@ -737,7 +738,25 @@ export class InteractiveMode {
  			embedWorkingStatus: true,
  		});
  		this.editor = this.defaultEditor;
@@ -388,7 +388,7 @@ index 0000000..668ffe7
 +	);
 +});
 diff --git a/packages/tui/README.md b/packages/tui/README.md
-index 9594034..58dd60d 100644
+index b820821..5c15ad9 100644
 --- a/packages/tui/README.md
 +++ b/packages/tui/README.md
 @@ -11,7 +11,7 @@ Minimal terminal UI framework with differential rendering and synchronized outpu
@@ -424,7 +424,7 @@ index 9594034..58dd60d 100644
  ### Overlays
  
  Overlays render components on top of existing content without replacing it. Useful for dialogs, menus, and modal UI.
-@@ -311,7 +319,7 @@ const collapsible = new MouseRegion(content, (event) => {
+@@ -313,7 +321,7 @@ const collapsible = new MouseRegion(content, (event) => {
  });
  ```
  
@@ -619,7 +619,7 @@ index 0000000..c7f33fb
 +	);
 +}
 diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
-index 01df076..33dbcf0 100644
+index 677a52c..a884df3 100644
 --- a/packages/tui/src/index.ts
 +++ b/packages/tui/src/index.ts
 @@ -37,6 +37,7 @@ export {
@@ -1003,6 +1003,3 @@ index 0000000..c1d142f
 +		);
 +	});
 +});
--- 
-2.56.0
-

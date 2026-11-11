@@ -309,7 +309,7 @@ index a3c06b2..9f20228 100644
  	grow?: number;
  	shrink?: number;
 diff --git a/packages/tui/src/layout.ts b/packages/tui/src/layout.ts
-index 897c51d..d289c10 100644
+index a64c262..e5eedd6 100644
 --- a/packages/tui/src/layout.ts
 +++ b/packages/tui/src/layout.ts
 @@ -22,6 +22,8 @@ export interface LayoutRect {
@@ -364,7 +364,7 @@ index 897c51d..d289c10 100644
  				),
  			);
  		}
-@@ -396,6 +403,7 @@ export function renderLayoutFrame(
+@@ -400,6 +407,7 @@ export function renderLayoutFrame(
  		width: safeWidth,
  		height: safeHeight,
  	});
@@ -505,7 +505,7 @@ index 0000000..8281e64
 +	);
 +}
 diff --git a/packages/tui/src/tui-alt-screen.ts b/packages/tui/src/tui-alt-screen.ts
-index 5e6d768..dc2c246 100644
+index 85f69ac..6f1599c 100644
 --- a/packages/tui/src/tui-alt-screen.ts
 +++ b/packages/tui/src/tui-alt-screen.ts
 @@ -18,6 +18,7 @@ import {
@@ -537,7 +537,7 @@ index 5e6d768..dc2c246 100644
  } from "./tui.ts";
  import {
  	extractAnsiCode,
-@@ -208,6 +213,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -209,6 +214,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  	private previousScreenHeight = 0;
  	private layoutRoot: Component | undefined;
  	private currentLayout: LayoutFrame | undefined;
@@ -546,7 +546,7 @@ index 5e6d768..dc2c246 100644
  	private readonly implicitDocument: Component;
  	private readonly implicitScrollView: ScrollView;
  	private readonly flashes: AltScreenFlashContainer;
-@@ -231,9 +238,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -232,9 +239,13 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  	private pressedUrl?: string;
  	private selectionDragged = false;
  	private mouseCapture?: TuiMouseDispatchTarget;
@@ -560,7 +560,7 @@ index 5e6d768..dc2c246 100644
  	private lastComponentClick?: {
  		timestamp: number;
  		count: number;
-@@ -327,7 +338,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -328,7 +339,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  	setLayoutRoot(component: Component | undefined): void {
  		if (this.layoutRoot === component) return;
  		this.layoutRoot = component;
@@ -571,7 +571,7 @@ index 5e6d768..dc2c246 100644
  		this.requestRender();
  	}
  
-@@ -682,12 +696,44 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -685,12 +699,44 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  	}
  
  	private clearComponentMouseGesture(): void {
@@ -616,7 +616,7 @@ index 5e6d768..dc2c246 100644
  	private handleViewportInput(data: string): { consume?: boolean } | undefined {
  		if (data === FOCUS_OUT) {
  			const hadActiveSelection = this.selectionPressActive;
-@@ -849,6 +895,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -852,6 +898,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  			if (visited.has(box.component)) continue;
  			if (getLayoutNode(box.component) && box.component.handleMouse === Container.prototype.handleMouse) continue;
  			visited.add(box.component);
@@ -625,7 +625,7 @@ index 5e6d768..dc2c246 100644
  			const result = dispatchMouseEvent(box.component, {
  				...event,
  				x: event.screenX - box.rect.x,
-@@ -856,16 +904,43 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -859,16 +907,43 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  				width: box.rect.width,
  				height: box.rect.height,
  			});
@@ -673,7 +673,7 @@ index 5e6d768..dc2c246 100644
  		return (
  			result.render ??
  			(focusChanged ||
-@@ -922,19 +997,38 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -925,19 +1000,38 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  
  		if (this.mouseCapture || this.mousePressTarget) {
  			const target = this.mouseCapture ?? this.mousePressTarget!;
@@ -713,7 +713,7 @@ index 5e6d768..dc2c246 100644
  					if (clickResult) render = this.applyMouseDispatchResult(clickEvent, clickResult) || render;
  				}
  				this.clearComponentMouseGesture();
-@@ -945,6 +1039,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -948,6 +1042,8 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  
  		if (this.handleSearchMouseEvent(raw)) return;
  
@@ -722,7 +722,7 @@ index 5e6d768..dc2c246 100644
  		const overlay = this.dispatchMouseToOverlay(event);
  		if (!overlay.hit) {
  			if (this.handleScrollToEndIndicatorMouseEvent(raw)) return;
-@@ -957,13 +1053,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -960,13 +1056,16 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  
  		const result = overlay.result ?? (overlay.hit ? undefined : this.dispatchMouseToLayout(event));
  		if (result) {
@@ -740,7 +740,7 @@ index 5e6d768..dc2c246 100644
  			if (render) this.requestRender();
  			return;
  		}
-@@ -1792,6 +1891,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
+@@ -1793,6 +1892,10 @@ export class TuiAltScreen extends TuiBase implements ViewportTUI {
  		this.previousScreen = screen;
  		this.previousScreenWidth = width;
  		this.previousScreenHeight = height;
@@ -752,7 +752,7 @@ index 5e6d768..dc2c246 100644
  	}
  }
 diff --git a/packages/tui/src/tui.ts b/packages/tui/src/tui.ts
-index 1035879..eb599af 100644
+index c0705f1..abf1a7b 100644
 --- a/packages/tui/src/tui.ts
 +++ b/packages/tui/src/tui.ts
 @@ -57,10 +57,24 @@ export interface TuiMouseEventResult {
@@ -829,7 +829,7 @@ index 1035879..eb599af 100644
  		return forwarded.focus && component.handleInput ? { ...forwarded, focusTarget: component } : forwarded;
  	}
  	if (!result.handled && !result.capture && !result.focus) return undefined;
-@@ -327,6 +373,7 @@ export interface OverlayHandle {
+@@ -333,6 +379,7 @@ export interface OverlayHandle {
  
  type OverlayStackEntry = {
  	component: Component;
@@ -837,7 +837,7 @@ index 1035879..eb599af 100644
  	options?: OverlayOptions;
  	preFocus: Component | null;
  	hidden: boolean;
-@@ -360,6 +407,21 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
+@@ -366,6 +413,21 @@ type OverlayFocusRestorePolicy = "clear" | "preserve";
  export class Container implements Component {
  	children: Component[] = [];
  	private mouseLayout?: { width: number; children: Array<{ component: Component; height: number; layout?: object }> };
@@ -859,7 +859,7 @@ index 1035879..eb599af 100644
  
  	protected get mouseLayoutToken(): object | undefined {
  		return this.mouseLayout;
-@@ -373,11 +435,13 @@ export class Container implements Component {
+@@ -379,11 +441,13 @@ export class Container implements Component {
  		const index = this.children.indexOf(component);
  		if (index !== -1) {
  			this.children.splice(index, 1);
@@ -873,7 +873,7 @@ index 1035879..eb599af 100644
  	}
  
  	invalidate(): void {
-@@ -393,21 +457,25 @@ export class Container implements Component {
+@@ -399,21 +463,25 @@ export class Container implements Component {
  				? this.mouseLayout.children
  				: this.children.map((component) => ({ component, height: component.render(event.width).length }));
  		let childY = 0;
@@ -905,7 +905,7 @@ index 1035879..eb599af 100644
  				if (result.focus && (this as Component).handleInput) return { ...result, focusTarget: this };
  				return result;
  			}
-@@ -796,6 +864,7 @@ export abstract class TuiBase extends Container implements TUI {
+@@ -802,6 +870,7 @@ export abstract class TuiBase extends Container implements TUI {
  	showOverlay(component: Component, options?: OverlayOptions): OverlayHandle {
  		const entry: OverlayStackEntry = {
  			component,
@@ -913,7 +913,7 @@ index 1035879..eb599af 100644
  			...(options === undefined ? {} : { options }),
  			preFocus: this.focusedComponent,
  			hidden: false,
-@@ -829,6 +898,7 @@ export abstract class TuiBase extends Container implements TUI {
+@@ -835,6 +904,7 @@ export abstract class TuiBase extends Container implements TUI {
  			setHidden: (hidden: boolean) => {
  				if (entry.hidden === hidden) return;
  				entry.hidden = hidden;
@@ -921,7 +921,7 @@ index 1035879..eb599af 100644
  				// Update focus when hiding/showing
  				if (hidden) {
  					this.clearOverlayFocusRestoreFor(entry);
-@@ -951,6 +1021,7 @@ export abstract class TuiBase extends Container implements TUI {
+@@ -957,6 +1027,7 @@ export abstract class TuiBase extends Container implements TUI {
  			) {
  				continue;
  			}
@@ -929,7 +929,7 @@ index 1035879..eb599af 100644
  			const result = dispatchMouseEvent(layout.entry.component, {
  				...event,
  				x: event.screenX - layout.col,
-@@ -959,16 +1030,16 @@ export abstract class TuiBase extends Container implements TUI {
+@@ -965,16 +1036,16 @@ export abstract class TuiBase extends Container implements TUI {
  				height: layout.height,
  			});
  			if (result) {
@@ -2239,6 +2239,3 @@ index 0000000..d6c9ef6
 +		assert.equal(response.target.validity!.path.length, 0);
 +	});
 +});
--- 
-2.56.0
-

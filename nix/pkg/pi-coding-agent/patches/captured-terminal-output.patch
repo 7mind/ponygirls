@@ -12,7 +12,7 @@ index 5a9552d..2b8affc 100644
 +	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
 +}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 6c6fbcf..2308eec 100644
+index d8e2390..2a7d6f2 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -20,6 +20,7 @@ import {
@@ -23,7 +23,7 @@ index 6c6fbcf..2308eec 100644
  	EditorComponent,
  	Keybinding,
  	KeyId,
-@@ -61,6 +62,7 @@ import {
+@@ -62,6 +63,7 @@ import {
  	detectInstallChange,
  	getAgentDir,
  	getAuthPath,
@@ -31,7 +31,7 @@ index 6c6fbcf..2308eec 100644
  	getDebugLogPath,
  	getDocsPath,
  	VERSION,
-@@ -508,6 +510,11 @@ export class InteractiveMode {
+@@ -519,6 +521,11 @@ export class InteractiveMode {
  	private lastStatusSpacer: Spacer | undefined = undefined;
  	private lastStatusText: ThemedText | undefined = undefined;
  	private lastStatusMessage = "";
@@ -43,7 +43,7 @@ index 6c6fbcf..2308eec 100644
  	private managedToolStatusStarted = false;
  
  	// Streaming message tracking
-@@ -637,6 +644,7 @@ export class InteractiveMode {
+@@ -655,6 +662,7 @@ export class InteractiveMode {
  			onRightClickPaste: this.onRightClickPaste,
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
  			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
@@ -51,7 +51,7 @@ index 6c6fbcf..2308eec 100644
  		});
  		this.ui = createInteractiveTuiReference(() => this.renderer);
  		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-@@ -3916,6 +3924,48 @@ export class InteractiveMode {
+@@ -3983,6 +3991,48 @@ export class InteractiveMode {
  		this.ui.requestRender();
  	}
  

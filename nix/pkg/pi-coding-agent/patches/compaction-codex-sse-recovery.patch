@@ -4,46 +4,12 @@ Backport of the relevant parts of denispol/pi commit
 04bab8e2cdfd54d6bd09eda1be97c25562725c31 (Pi #10781 / #11202),
 including the transport work from ioki-smore/pi commit
 61577508ae95de8a88e029fc9387f5b6ccd960b7.
-Adapted to our pinned Pi 1.5.0; regression coverage extended locally.
+Adapted to our pinned Pi 1.5.2; regression coverage extended locally.
 The unrelated endpoint-affinity and auth-test changes are excluded.
 
---- a/packages/coding-agent/src/core/compaction/compaction.ts
-+++ b/packages/coding-agent/src/core/compaction/compaction.ts
-@@ -630,10 +630,30 @@
- 		cacheRetention: "none",
- 		sessionId: options.sessionId ?? uuidv7(),
- 	};
--	const produce = async (): Promise<AssistantMessage> =>
--		streamFn
--			? (await streamFn(model, context, requestOptions)).result()
--			: completeSimple(model, context, requestOptions);
-+	// Summaries have no socket-cache affinity; keep post-start auto fallback local to this retry loop.
-+	let useSse = false;
-+	const produce = async (): Promise<AssistantMessage> => {
-+		const attemptOptions: SimpleStreamOptions = {
-+			...requestOptions,
-+			transport: useSse ? "sse" : requestOptions.transport,
-+		};
-+		const response = streamFn
-+			? await (await streamFn(model, context, attemptOptions)).result()
-+			: await completeSimple(model, context, attemptOptions);
-+		if (
-+			response.stopReason === "error" &&
-+			response.api === "openai-codex-responses" &&
-+			response.diagnostics?.some(
-+				(diagnostic) =>
-+					diagnostic.type === "provider_transport_failure" &&
-+					diagnostic.details?.configuredTransport === "auto" &&
-+					diagnostic.details?.eventsEmitted === true,
-+			)
-+		) {
-+			useSse = true;
-+		}
-+		return response;
-+	};
- 	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
- }
- 
+diff --git a/packages/ai/test/fixtures/codex-websocket.ts b/packages/ai/test/fixtures/codex-websocket.ts
+new file mode 100644
+index 0000000..a4df20a
 --- /dev/null
 +++ b/packages/ai/test/fixtures/codex-websocket.ts
 @@ -0,0 +1,147 @@
@@ -194,6 +160,138 @@ The unrelated endpoint-affinity and auth-test changes are excluded.
 +
 +	return { WebSocket: SyntheticWebSocket, connections, enqueue: (...next: Behavior[]) => behaviors.push(...next) };
 +}
+diff --git a/packages/coding-agent/src/core/compaction/compaction.ts b/packages/coding-agent/src/core/compaction/compaction.ts
+index 07a58ac..356f6b3 100644
+--- a/packages/coding-agent/src/core/compaction/compaction.ts
++++ b/packages/coding-agent/src/core/compaction/compaction.ts
+@@ -630,10 +630,30 @@ export async function completeSummarization(
+ 		cacheRetention: "none",
+ 		sessionId: options.sessionId ?? uuidv7(),
+ 	};
+-	const produce = async (): Promise<AssistantMessage> =>
+-		streamFn
+-			? (await streamFn(model, context, requestOptions)).result()
+-			: completeSimple(model, context, requestOptions);
++	// Summaries have no socket-cache affinity; keep post-start auto fallback local to this retry loop.
++	let useSse = false;
++	const produce = async (): Promise<AssistantMessage> => {
++		const attemptOptions: SimpleStreamOptions = {
++			...requestOptions,
++			transport: useSse ? "sse" : requestOptions.transport,
++		};
++		const response = streamFn
++			? await (await streamFn(model, context, attemptOptions)).result()
++			: await completeSimple(model, context, attemptOptions);
++		if (
++			response.stopReason === "error" &&
++			response.api === "openai-codex-responses" &&
++			response.diagnostics?.some(
++				(diagnostic) =>
++					diagnostic.type === "provider_transport_failure" &&
++					diagnostic.details?.configuredTransport === "auto" &&
++					diagnostic.details?.eventsEmitted === true,
++			)
++		) {
++			useSse = true;
++		}
++		return response;
++	};
+ 	return retryAssistantCall(produce, retry, requestOptions.signal, callbacks);
+ }
+ 
+diff --git a/packages/coding-agent/test/compaction-codex-transport-wire.test.ts b/packages/coding-agent/test/compaction-codex-transport-wire.test.ts
+new file mode 100644
+index 0000000..6347ea2
+--- /dev/null
++++ b/packages/coding-agent/test/compaction-codex-transport-wire.test.ts
+@@ -0,0 +1,84 @@
++import { once } from "node:events";
++import { createServer, type Server } from "node:http";
++import type { AddressInfo } from "node:net";
++import { closeOpenAICodexWebSocketSessions, streamSimple } from "@earendil-works/pi-ai/api/openai-codex-responses";
++import { afterEach, beforeEach, describe, expect, it } from "vitest";
++import { WebSocketServer } from "ws";
++import {
++	codexModel,
++	syntheticContext,
++	syntheticSseResponse,
++	syntheticToken,
++} from "../../ai/test/fixtures/codex-websocket.ts";
++import { completeSummarization } from "../src/core/compaction/compaction.ts";
++
++let server: Server;
++let sockets: WebSocketServer;
++let baseUrl: string;
++let websocketRequests: number;
++let httpRequests: number;
++
++beforeEach(async () => {
++	websocketRequests = 0;
++	httpRequests = 0;
++	const sse = await syntheticSseResponse("Recovered over HTTP").text();
++	const completeEvents = sse
++		.trim()
++		.split("\n\n")
++		.map((line) => line.slice("data: ".length));
++	server = createServer((request, response) => {
++		httpRequests++;
++		request.resume();
++		response.writeHead(200, { "content-type": "text/event-stream" });
++		response.end(sse);
++	});
++	sockets = new WebSocketServer({ server });
++	sockets.on("connection", (socket) => {
++		socket.on("message", () => {
++			websocketRequests++;
++			socket.send(JSON.stringify({ type: "response.created", response: { id: "created", status: "in_progress" } }));
++			if (websocketRequests === 1) {
++				for (const event of completeEvents.slice(0, 3)) socket.send(event);
++				socket.close(1011, "synthetic_disconnect");
++			} else {
++				for (const event of completeEvents) socket.send(event);
++			}
++		});
++	});
++	server.listen(0, "127.0.0.1");
++	await once(server, "listening");
++	baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
++});
++
++afterEach(async () => {
++	closeOpenAICodexWebSocketSessions();
++	for (const socket of sockets.clients) socket.terminate();
++	await new Promise<void>((resolve, reject) => sockets.close((error) => (error ? reject(error) : resolve())));
++	server.closeAllConnections();
++	await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
++});
++
++describe("Codex summary recovery over loopback transports", () => {
++	it.each([
++		{ transport: "auto", expectedWebsocketRequests: 1, expectedHttpRequests: 1 },
++		{ transport: "sse", expectedWebsocketRequests: 0, expectedHttpRequests: 1 },
++		{ transport: "websocket", expectedWebsocketRequests: 2, expectedHttpRequests: 0 },
++	] as const)(
++		"preserves $transport policy using real sockets",
++		async ({ transport, expectedWebsocketRequests, expectedHttpRequests }) => {
++			const model = { ...codexModel, baseUrl };
++			const result = await completeSummarization(
++				model,
++				syntheticContext(),
++				{ apiKey: syntheticToken(), transport, signal: AbortSignal.timeout(5000), timeoutMs: 2000 },
++				(requestModel, context, options) =>
++					streamSimple({ ...requestModel, api: "openai-codex-responses" }, context, options),
++				{ enabled: true, maxRetries: 1, baseDelayMs: 1, maxAgentDelayMs: 1 },
++			);
++			expect(result.stopReason).toBe("stop");
++			expect(result.content).toEqual([expect.objectContaining({ type: "text", text: "Recovered over HTTP" })]);
++			expect(websocketRequests).toBe(expectedWebsocketRequests);
++			expect(httpRequests).toBe(expectedHttpRequests);
++		},
++	);
++});
+diff --git a/packages/coding-agent/test/compaction-codex-transport.test.ts b/packages/coding-agent/test/compaction-codex-transport.test.ts
+new file mode 100644
+index 0000000..3ed46f8
 --- /dev/null
 +++ b/packages/coding-agent/test/compaction-codex-transport.test.ts
 @@ -0,0 +1,414 @@
@@ -610,91 +708,4 @@ The unrelated endpoint-affinity and auth-test changes are excluded.
 +		expect(harness.connections[0].bodies[1].prompt_cache_key).toBe("ordinary");
 +		expect(fetchMock).toHaveBeenCalledTimes(1);
 +	});
-+});
---- /dev/null
-+++ b/packages/coding-agent/test/compaction-codex-transport-wire.test.ts
-@@ -0,0 +1,84 @@
-+import { once } from "node:events";
-+import { createServer, type Server } from "node:http";
-+import type { AddressInfo } from "node:net";
-+import { closeOpenAICodexWebSocketSessions, streamSimple } from "@earendil-works/pi-ai/api/openai-codex-responses";
-+import { afterEach, beforeEach, describe, expect, it } from "vitest";
-+import { WebSocketServer } from "ws";
-+import {
-+	codexModel,
-+	syntheticContext,
-+	syntheticSseResponse,
-+	syntheticToken,
-+} from "../../ai/test/fixtures/codex-websocket.ts";
-+import { completeSummarization } from "../src/core/compaction/compaction.ts";
-+
-+let server: Server;
-+let sockets: WebSocketServer;
-+let baseUrl: string;
-+let websocketRequests: number;
-+let httpRequests: number;
-+
-+beforeEach(async () => {
-+	websocketRequests = 0;
-+	httpRequests = 0;
-+	const sse = await syntheticSseResponse("Recovered over HTTP").text();
-+	const completeEvents = sse
-+		.trim()
-+		.split("\n\n")
-+		.map((line) => line.slice("data: ".length));
-+	server = createServer((request, response) => {
-+		httpRequests++;
-+		request.resume();
-+		response.writeHead(200, { "content-type": "text/event-stream" });
-+		response.end(sse);
-+	});
-+	sockets = new WebSocketServer({ server });
-+	sockets.on("connection", (socket) => {
-+		socket.on("message", () => {
-+			websocketRequests++;
-+			socket.send(JSON.stringify({ type: "response.created", response: { id: "created", status: "in_progress" } }));
-+			if (websocketRequests === 1) {
-+				for (const event of completeEvents.slice(0, 3)) socket.send(event);
-+				socket.close(1011, "synthetic_disconnect");
-+			} else {
-+				for (const event of completeEvents) socket.send(event);
-+			}
-+		});
-+	});
-+	server.listen(0, "127.0.0.1");
-+	await once(server, "listening");
-+	baseUrl = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-+});
-+
-+afterEach(async () => {
-+	closeOpenAICodexWebSocketSessions();
-+	for (const socket of sockets.clients) socket.terminate();
-+	await new Promise<void>((resolve, reject) => sockets.close((error) => (error ? reject(error) : resolve())));
-+	server.closeAllConnections();
-+	await new Promise<void>((resolve, reject) => server.close((error) => (error ? reject(error) : resolve())));
-+});
-+
-+describe("Codex summary recovery over loopback transports", () => {
-+	it.each([
-+		{ transport: "auto", expectedWebsocketRequests: 1, expectedHttpRequests: 1 },
-+		{ transport: "sse", expectedWebsocketRequests: 0, expectedHttpRequests: 1 },
-+		{ transport: "websocket", expectedWebsocketRequests: 2, expectedHttpRequests: 0 },
-+	] as const)(
-+		"preserves $transport policy using real sockets",
-+		async ({ transport, expectedWebsocketRequests, expectedHttpRequests }) => {
-+			const model = { ...codexModel, baseUrl };
-+			const result = await completeSummarization(
-+				model,
-+				syntheticContext(),
-+				{ apiKey: syntheticToken(), transport, signal: AbortSignal.timeout(5000), timeoutMs: 2000 },
-+				(requestModel, context, options) =>
-+					streamSimple({ ...requestModel, api: "openai-codex-responses" }, context, options),
-+				{ enabled: true, maxRetries: 1, baseDelayMs: 1, maxAgentDelayMs: 1 },
-+			);
-+			expect(result.stopReason).toBe("stop");
-+			expect(result.content).toEqual([expect.objectContaining({ type: "text", text: "Recovered over HTTP" })]);
-+			expect(websocketRequests).toBe(expectedWebsocketRequests);
-+			expect(httpRequests).toBe(expectedHttpRequests);
-+		},
-+	);
 +});

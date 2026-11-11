@@ -5,7 +5,7 @@ Subject: [PATCH] feat(tui): backport opt-in regular-mode component mouse input
 
 
 diff --git a/packages/coding-agent/docs/settings.md b/packages/coding-agent/docs/settings.md
-index 3de528c..10a55cd 100644
+index 29b8d69..6b24b2a 100644
 --- a/packages/coding-agent/docs/settings.md
 +++ b/packages/coding-agent/docs/settings.md
 @@ -95,6 +95,7 @@ See [Compaction Reference](compaction.md) for trigger, summarization, and valida
@@ -17,7 +17,7 @@ index 3de528c..10a55cd 100644
  | `fullscreenScrollbar` | `"auto" \| "always" \| "hidden"` | `"auto"` | Fullscreen transcript scrollbar behavior. |
  | `fullscreenCopyOnSelect` | boolean | `true` | Copy selected text automatically in fullscreen mode. |
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index 1541a6a..c6d3d17 100644
+index dd70ab8..51f3ea1 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
 @@ -55,11 +55,11 @@ Forward keys your editor does not own to the base implementation, and restore th
@@ -45,7 +45,7 @@ index 1541a6a..c6d3d17 100644
  See [`retained-border-details.ts`](../examples/extensions/retained-border-details.ts) for a repeat-click detail view with a command and keyboard dismissal path. See [`overlay-qa-tests.ts`](../examples/extensions/overlay-qa-tests.ts) for positioning, stacking, focus, responsive visibility, and animation behavior.
  
 diff --git a/packages/coding-agent/schemas/settings.schema.json b/packages/coding-agent/schemas/settings.schema.json
-index c331ae2..137511b 100644
+index cc28afe..fada2a1 100644
 --- a/packages/coding-agent/schemas/settings.schema.json
 +++ b/packages/coding-agent/schemas/settings.schema.json
 @@ -713,6 +713,11 @@
@@ -61,12 +61,12 @@ index c331ae2..137511b 100644
        "anyOf": [
          {
 diff --git a/packages/coding-agent/src/core/settings-defaults.ts b/packages/coding-agent/src/core/settings-defaults.ts
-index 1f90280..92dd32c 100644
+index 2191ce1..e131551 100644
 --- a/packages/coding-agent/src/core/settings-defaults.ts
 +++ b/packages/coding-agent/src/core/settings-defaults.ts
 @@ -60,6 +60,7 @@ export const SETTINGS_DEFAULTS = {
  	},
- 	cacheWarming: "streaming",
+ 	cacheWarming: "idle",
  	tuiMode: "fullscreen",
 +	regularMouse: false,
  	fullscreenExitOutput: "transcript",
@@ -106,10 +106,10 @@ index 1ef7973..a281ebe 100644
  			Type.Union([Type.Literal("transcript"), Type.Literal("resume-hint")], {
  				description: "No effect in regular TUI mode.",
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index 3f6aeaf..efb2c52 100644
+index 32f5cc0..42d2fd7 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -691,6 +691,7 @@ export class InteractiveMode {
+@@ -709,6 +709,7 @@ export class InteractiveMode {
  			logDirectory: getAgentDir(),
  			terminal: options.terminal,
  			onRightClickPaste: this.onRightClickPaste,
@@ -117,7 +117,7 @@ index 3f6aeaf..efb2c52 100644
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
  			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
  			onCapturedOutput: (text, stream) => this.handleCapturedTerminalOutput(text, stream),
-@@ -1001,6 +1002,7 @@ export class InteractiveMode {
+@@ -1017,6 +1018,7 @@ export class InteractiveMode {
  			logDirectory: getAgentDir(),
  			terminal,
  			onRightClickPaste: this.onRightClickPaste,
@@ -1039,7 +1039,7 @@ index 71229fc..55b3902 100644
  			return;
  		}
 diff --git a/packages/tui/src/tui.ts b/packages/tui/src/tui.ts
-index ad11a36..c7eb63e 100644
+index fe0f2c7..c0705f1 100644
 --- a/packages/tui/src/tui.ts
 +++ b/packages/tui/src/tui.ts
 @@ -59,6 +59,8 @@ export interface TuiMouseEventResult {

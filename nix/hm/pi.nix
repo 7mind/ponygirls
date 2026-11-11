@@ -844,7 +844,7 @@ in
           #   Both fixes are present in every release since 0.9.1.
           # - pi-ollama-cloud: Ollama Cloud provider (first-party, badlogic).
           #   PINNED to 0.13.1 (its model refresh uses pi's native `refreshModels`,
-          #   needs pi ≥ 0.84.0 — vendored pi is 1.5.0).
+          #   needs pi ≥ 0.84.0 — vendored pi is 1.5.2).
           #   Registers the `ollama-cloud` provider against https://ollama.com/v1
           #   (apiKey `$OLLAMA_API_KEY`; or ~/.pi/agent/ollama-cloud.json) — no
           #   local server. Self-contained: its only imports (@sinclair/typebox +
