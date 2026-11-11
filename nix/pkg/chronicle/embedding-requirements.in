@@ -1,6 +1,5 @@
-vllm==0.32.0
+vllm==0.33.0
 transformers==5.19.0
-torch==2.13.0
 # Reference container compiler/bindings (the Torch CUDA runtime is 13.0).
 cuda-python==13.4.4
 cuda-bindings==13.4.4

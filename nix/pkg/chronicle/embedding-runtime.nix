@@ -19,7 +19,7 @@ in
 assert stdenv.hostPlatform.system == "x86_64-linux";
 stdenv.mkDerivation {
   pname = "chronicle-embedding-runtime";
-  version = "0.32.0";
+  version = "0.33.0";
   dontUnpack = true;
   dontStrip = true;
   dontPatchELF = true;
