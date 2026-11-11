@@ -165,7 +165,7 @@
         "browser"
       ],
       "tests": [
-        "test_browser_query_expression.QueryExpressionBrowserTests.test_over_limit_sort_preserves_applied_query_and_remains_usable",
+        "test_browser_query_expression.QueryExpressionBrowserTests.test_maximum_text_sort_preserves_applied_query_and_remains_usable",
         "test_browser_query_expression.QueryExpressionBrowserTests.test_submitted_route_preserves_a_newer_draft"
       ]
     },
@@ -869,7 +869,8 @@
         "request correlates generated result and never accepts wrong or legacy responses",
         "errors expose enumerated code only, not untrusted secret-bearing messages",
         "opted-in insecure HTTP context does not require secure-only crypto.randomUUID",
-        "search goldens carry actual published space distinct from profile and lexical HEAD nulls"
+        "search goldens carry actual published space distinct from profile and lexical HEAD nulls",
+        "metadata adapters append every required wire field, absent values explicitly empty/null"
       ],
       "timeoutSeconds": 120
     },
@@ -910,7 +911,9 @@
         "serializer round trips exact literal text including Unicode and escaping",
         "completion replaces touched token including suffix and restores scalar-safe caret",
         "closed values, mode applicability, and completed token boundaries guide hints",
-        "shared Python/browser expression contract fixtures"
+        "shared Python/browser expression contract fixtures",
+        "explicit metadata is exact, repeatable tags conjoin in all modes and round trip",
+        "maximum metadata and text round trip independently without exhausting expression budget"
       ],
       "timeoutSeconds": 120
     },
