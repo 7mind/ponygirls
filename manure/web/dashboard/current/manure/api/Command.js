@@ -522,12 +522,18 @@ export class Command_InitUpload {
     _visibility;
     _expiresInSeconds;
     _files;
-    constructor(name, kind, visibility, expiresInSeconds, files) {
+    _tags;
+    _hostname;
+    _projectPath;
+    constructor(name, kind, visibility, expiresInSeconds, files, tags, hostname, projectPath) {
         this._name = name;
         this._kind = kind;
         this._visibility = visibility;
         this._expiresInSeconds = expiresInSeconds;
         this._files = files;
+        this._tags = tags;
+        this._hostname = hostname;
+        this._projectPath = projectPath;
     }
     get name() {
         return this._name;
@@ -544,20 +550,32 @@ export class Command_InitUpload {
     get files() {
         return this._files;
     }
+    get tags() {
+        return this._tags;
+    }
+    get hostname() {
+        return this._hostname;
+    }
+    get projectPath() {
+        return this._projectPath;
+    }
     toJSON() {
         return {
             name: this._name,
             kind: this._kind,
             visibility: this._visibility,
             expiresInSeconds: this._expiresInSeconds !== undefined ? this._expiresInSeconds : undefined,
-            files: this._files
+            files: this._files,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
     with(overrides) {
-        return new Command_InitUpload('name' in overrides ? overrides.name : this._name, 'kind' in overrides ? overrides.kind : this._kind, 'visibility' in overrides ? overrides.visibility : this._visibility, 'expiresInSeconds' in overrides ? overrides.expiresInSeconds : this._expiresInSeconds, 'files' in overrides ? overrides.files : this._files);
+        return new Command_InitUpload('name' in overrides ? overrides.name : this._name, 'kind' in overrides ? overrides.kind : this._kind, 'visibility' in overrides ? overrides.visibility : this._visibility, 'expiresInSeconds' in overrides ? overrides.expiresInSeconds : this._expiresInSeconds, 'files' in overrides ? overrides.files : this._files, 'tags' in overrides ? overrides.tags : this._tags, 'hostname' in overrides ? overrides.hostname : this._hostname, 'projectPath' in overrides ? overrides.projectPath : this._projectPath);
     }
     static fromPlain(obj) {
-        return new Command_InitUpload(obj.name, obj.kind, obj.visibility, obj.expiresInSeconds, obj.files);
+        return new Command_InitUpload(obj.name, obj.kind, obj.visibility, obj.expiresInSeconds, obj.files, obj.tags, obj.hostname, obj.projectPath);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {
@@ -602,6 +620,9 @@ export class Command_InitUpload_JsonCodec {
             "visibility": Visibility_JsonCodec.instance.encode(BaboonCodecContext.Default, value.visibility),
             "expiresInSeconds": value.expiresInSeconds === undefined ? null : value.expiresInSeconds,
             "files": Array.from(value.files).map(item => ManifestEntry_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         };
     }
     decode(ctx, json) {
@@ -609,7 +630,7 @@ export class Command_InitUpload_JsonCodec {
             return Command_InitUpload_JsonCodec.lazyInstance.value.decode(ctx, json);
         }
         const obj = json;
-        return new Command_InitUpload(obj["name"], ArtifactKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]), Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]), obj["expiresInSeconds"] === undefined || obj["expiresInSeconds"] === null ? undefined : obj["expiresInSeconds"] === undefined || obj["expiresInSeconds"] === null ? undefined : obj["expiresInSeconds"], obj["files"].map(item => ManifestEntry_JsonCodec.instance.decode(BaboonCodecContext.Default, item)));
+        return new Command_InitUpload(obj["name"], ArtifactKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]), Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]), obj["expiresInSeconds"] === undefined || obj["expiresInSeconds"] === null ? undefined : obj["expiresInSeconds"] === undefined || obj["expiresInSeconds"] === null ? undefined : obj["expiresInSeconds"], obj["files"].map(item => ManifestEntry_JsonCodec.instance.decode(BaboonCodecContext.Default, item)), obj["tags"].map(item => item), obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"], obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"]);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {

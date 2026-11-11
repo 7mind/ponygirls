@@ -419,7 +419,10 @@ package manure.api {
       kind: ArtifactKind,
       visibility: Visibility,
       expiresInSeconds: Option[Int],
-      files: List[ManifestEntry]
+      files: List[ManifestEntry],
+      tags: List[String],
+      hostname: Option[String],
+      projectPath: Option[String]
     ) extends Command with BaboonAdtMemberMeta with BaboonGeneratedLatest {
       override def baboonDomainVersion: String = Command.InitUpload.baboonDomainVersion
       override def baboonDomainIdentifier: String = Command.InitUpload.baboonDomainIdentifier
@@ -457,7 +460,10 @@ package manure.api {
           "kind" -> ArtifactKind_JsonCodec.instance.encode(ctx, value.kind),
           "visibility" -> Visibility_JsonCodec.instance.encode(ctx, value.visibility),
           "expiresInSeconds" -> value.expiresInSeconds.map(v => Json.fromInt(v)).getOrElse(Json.Null),
-          "files" -> Json.fromValues(value.files.map(e => ManifestEntry_JsonCodec.instance.encode(ctx, e)))
+          "files" -> Json.fromValues(value.files.map(e => ManifestEntry_JsonCodec.instance.encode(ctx, e))),
+          "tags" -> Json.fromValues(value.tags.map(e => Json.fromString(e))),
+          "hostname" -> value.hostname.map(v => Json.fromString(v)).getOrElse(Json.Null),
+          "projectPath" -> value.projectPath.map(v => Json.fromString(v)).getOrElse(Json.Null)
         )
       }
       
@@ -473,7 +479,10 @@ package manure.api {
               visibility <- getField(jsonObject, "visibility").flatMap(v => Visibility_JsonCodec.circeDecoder(v.hcursor))
               expiresInSeconds <- getField(jsonObject, "expiresInSeconds").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
               files <- getField(jsonObject, "files").flatMap(v => decodeList(ManifestEntry_JsonCodec.circeDecoder)(v.hcursor))
-            } yield Command.InitUpload(name,kind,visibility,expiresInSeconds,files)
+              tags <- getField(jsonObject, "tags").flatMap(v => decodeList(decodeString)(v.hcursor))
+              hostname <- getField(jsonObject, "hostname").flatMap(v => decodeOption(decodeString)(v.hcursor))
+              projectPath <- getField(jsonObject, "projectPath").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            } yield Command.InitUpload(name,kind,visibility,expiresInSeconds,files,tags,hostname,projectPath)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to InitUpload: object expected"))
         }
       }

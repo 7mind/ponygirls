@@ -16,8 +16,11 @@ export class Artifact implements BaboonGeneratedLatest {
     private readonly _totalBytes: bigint;
     private readonly _fileCount: number;
     private readonly _contentUrl: string;
+    private readonly _tags: Array<string>;
+    private readonly _hostname: string | undefined;
+    private readonly _projectPath: string | undefined;
 
-    constructor(artifactId: string, name: string, kind: ArtifactKind, visibility: Visibility, state: ArtifactState, createdByUser: string, createdAt: string, expiresAt: string | undefined, totalBytes: bigint, fileCount: number, contentUrl: string) {
+    constructor(artifactId: string, name: string, kind: ArtifactKind, visibility: Visibility, state: ArtifactState, createdByUser: string, createdAt: string, expiresAt: string | undefined, totalBytes: bigint, fileCount: number, contentUrl: string, tags: Array<string>, hostname: string | undefined, projectPath: string | undefined) {
         this._artifactId = artifactId
         this._name = name
         this._kind = kind
@@ -29,6 +32,9 @@ export class Artifact implements BaboonGeneratedLatest {
         this._totalBytes = totalBytes
         this._fileCount = fileCount
         this._contentUrl = contentUrl
+        this._tags = tags
+        this._hostname = hostname
+        this._projectPath = projectPath
     }
 
     public get artifactId(): string {
@@ -64,6 +70,15 @@ export class Artifact implements BaboonGeneratedLatest {
     public get contentUrl(): string {
         return this._contentUrl;
     }
+    public get tags(): Array<string> {
+        return this._tags;
+    }
+    public get hostname(): string | undefined {
+        return this._hostname;
+    }
+    public get projectPath(): string | undefined {
+        return this._projectPath;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -77,11 +92,14 @@ export class Artifact implements BaboonGeneratedLatest {
             expiresAt: this._expiresAt !== undefined ? this._expiresAt : undefined,
             totalBytes: this._totalBytes,
             fileCount: this._fileCount,
-            contentUrl: this._contentUrl
+            contentUrl: this._contentUrl,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
 
-    public with(overrides: {artifactId?: string; name?: string; kind?: ArtifactKind; visibility?: Visibility; state?: ArtifactState; createdByUser?: string; createdAt?: string; expiresAt?: string | undefined; totalBytes?: bigint; fileCount?: number; contentUrl?: string}): Artifact {
+    public with(overrides: {artifactId?: string; name?: string; kind?: ArtifactKind; visibility?: Visibility; state?: ArtifactState; createdByUser?: string; createdAt?: string; expiresAt?: string | undefined; totalBytes?: bigint; fileCount?: number; contentUrl?: string; tags?: Array<string>; hostname?: string | undefined; projectPath?: string | undefined}): Artifact {
         return new Artifact(
             'artifactId' in overrides ? overrides.artifactId! : this._artifactId,
             'name' in overrides ? overrides.name! : this._name,
@@ -93,11 +111,14 @@ export class Artifact implements BaboonGeneratedLatest {
             'expiresAt' in overrides ? overrides.expiresAt! : this._expiresAt,
             'totalBytes' in overrides ? overrides.totalBytes! : this._totalBytes,
             'fileCount' in overrides ? overrides.fileCount! : this._fileCount,
-            'contentUrl' in overrides ? overrides.contentUrl! : this._contentUrl
+            'contentUrl' in overrides ? overrides.contentUrl! : this._contentUrl,
+            'tags' in overrides ? overrides.tags! : this._tags,
+            'hostname' in overrides ? overrides.hostname! : this._hostname,
+            'projectPath' in overrides ? overrides.projectPath! : this._projectPath
         );
     }
 
-    public static fromPlain(obj: {artifactId: string; name: string; kind: ArtifactKind; visibility: Visibility; state: ArtifactState; createdByUser: string; createdAt: string; expiresAt: string | undefined; totalBytes: bigint; fileCount: number; contentUrl: string}): Artifact {
+    public static fromPlain(obj: {artifactId: string; name: string; kind: ArtifactKind; visibility: Visibility; state: ArtifactState; createdByUser: string; createdAt: string; expiresAt: string | undefined; totalBytes: bigint; fileCount: number; contentUrl: string; tags: Array<string>; hostname: string | undefined; projectPath: string | undefined}): Artifact {
         return new Artifact(
             obj.artifactId,
             obj.name,
@@ -109,7 +130,10 @@ export class Artifact implements BaboonGeneratedLatest {
             obj.expiresAt,
             obj.totalBytes,
             obj.fileCount,
-            obj.contentUrl
+            obj.contentUrl,
+            obj.tags,
+            obj.hostname,
+            obj.projectPath
         );
     }
 
@@ -160,6 +184,9 @@ export class Artifact_JsonCodec {
             "totalBytes": value.totalBytes.toString(),
             "fileCount": value.fileCount,
             "contentUrl": value.contentUrl,
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Artifact {
@@ -180,6 +207,9 @@ export class Artifact_JsonCodec {
             BaboonInt64.read(obj["totalBytes"], "i64/u64"),
             obj["fileCount"] as number,
             obj["contentUrl"] as string,
+            (obj["tags"] as unknown[]).map(item => item as string),
+            obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] as string,
+            obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] as string,
         )
     }
 

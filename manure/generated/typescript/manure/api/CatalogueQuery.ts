@@ -14,8 +14,11 @@ export class CatalogueQuery implements BaboonGeneratedLatest {
     private readonly _direction: SortDirection;
     private readonly _limit: number;
     private readonly _cursor: string | undefined;
+    private readonly _tags: Array<string>;
+    private readonly _hostname: string | undefined;
+    private readonly _projectPath: string | undefined;
 
-    constructor(query: string, includeExpired: boolean, visibility: Visibility | undefined, state: ArtifactState | undefined, sort: CatalogueSort, direction: SortDirection, limit: number, cursor: string | undefined) {
+    constructor(query: string, includeExpired: boolean, visibility: Visibility | undefined, state: ArtifactState | undefined, sort: CatalogueSort, direction: SortDirection, limit: number, cursor: string | undefined, tags: Array<string>, hostname: string | undefined, projectPath: string | undefined) {
         this._query = query
         this._includeExpired = includeExpired
         this._visibility = visibility
@@ -24,6 +27,9 @@ export class CatalogueQuery implements BaboonGeneratedLatest {
         this._direction = direction
         this._limit = limit
         this._cursor = cursor
+        this._tags = tags
+        this._hostname = hostname
+        this._projectPath = projectPath
     }
 
     public get query(): string {
@@ -50,6 +56,15 @@ export class CatalogueQuery implements BaboonGeneratedLatest {
     public get cursor(): string | undefined {
         return this._cursor;
     }
+    public get tags(): Array<string> {
+        return this._tags;
+    }
+    public get hostname(): string | undefined {
+        return this._hostname;
+    }
+    public get projectPath(): string | undefined {
+        return this._projectPath;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -60,11 +75,14 @@ export class CatalogueQuery implements BaboonGeneratedLatest {
             sort: this._sort,
             direction: this._direction,
             limit: this._limit,
-            cursor: this._cursor !== undefined ? this._cursor : undefined
+            cursor: this._cursor !== undefined ? this._cursor : undefined,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
 
-    public with(overrides: {query?: string; includeExpired?: boolean; visibility?: Visibility | undefined; state?: ArtifactState | undefined; sort?: CatalogueSort; direction?: SortDirection; limit?: number; cursor?: string | undefined}): CatalogueQuery {
+    public with(overrides: {query?: string; includeExpired?: boolean; visibility?: Visibility | undefined; state?: ArtifactState | undefined; sort?: CatalogueSort; direction?: SortDirection; limit?: number; cursor?: string | undefined; tags?: Array<string>; hostname?: string | undefined; projectPath?: string | undefined}): CatalogueQuery {
         return new CatalogueQuery(
             'query' in overrides ? overrides.query! : this._query,
             'includeExpired' in overrides ? overrides.includeExpired! : this._includeExpired,
@@ -73,11 +91,14 @@ export class CatalogueQuery implements BaboonGeneratedLatest {
             'sort' in overrides ? overrides.sort! : this._sort,
             'direction' in overrides ? overrides.direction! : this._direction,
             'limit' in overrides ? overrides.limit! : this._limit,
-            'cursor' in overrides ? overrides.cursor! : this._cursor
+            'cursor' in overrides ? overrides.cursor! : this._cursor,
+            'tags' in overrides ? overrides.tags! : this._tags,
+            'hostname' in overrides ? overrides.hostname! : this._hostname,
+            'projectPath' in overrides ? overrides.projectPath! : this._projectPath
         );
     }
 
-    public static fromPlain(obj: {query: string; includeExpired: boolean; visibility: Visibility | undefined; state: ArtifactState | undefined; sort: CatalogueSort; direction: SortDirection; limit: number; cursor: string | undefined}): CatalogueQuery {
+    public static fromPlain(obj: {query: string; includeExpired: boolean; visibility: Visibility | undefined; state: ArtifactState | undefined; sort: CatalogueSort; direction: SortDirection; limit: number; cursor: string | undefined; tags: Array<string>; hostname: string | undefined; projectPath: string | undefined}): CatalogueQuery {
         return new CatalogueQuery(
             obj.query,
             obj.includeExpired,
@@ -86,7 +107,10 @@ export class CatalogueQuery implements BaboonGeneratedLatest {
             obj.sort,
             obj.direction,
             obj.limit,
-            obj.cursor
+            obj.cursor,
+            obj.tags,
+            obj.hostname,
+            obj.projectPath
         );
     }
 
@@ -134,6 +158,9 @@ export class CatalogueQuery_JsonCodec {
             "direction": SortDirection_JsonCodec.instance.encode(BaboonCodecContext.Default, value.direction),
             "limit": value.limit,
             "cursor": value.cursor === undefined ? null : value.cursor,
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): CatalogueQuery {
@@ -151,6 +178,9 @@ export class CatalogueQuery_JsonCodec {
             SortDirection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["direction"]),
             obj["limit"] as number,
             obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] as string,
+            (obj["tags"] as unknown[]).map(item => item as string),
+            obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] as string,
+            obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] as string,
         )
     }
 

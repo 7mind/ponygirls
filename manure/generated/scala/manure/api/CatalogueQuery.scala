@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeBoolean, decodeOption, decodeString}
+import io.circe.Decoder.{decodeBoolean, decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -11,7 +11,10 @@ package manure.api {
     sort: CatalogueSort,
     direction: SortDirection,
     limit: Int,
-    cursor: Option[String]
+    cursor: Option[String],
+    tags: List[String],
+    hostname: Option[String],
+    projectPath: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CatalogueQuery.baboonDomainVersion
     override def baboonDomainIdentifier: String = CatalogueQuery.baboonDomainIdentifier
@@ -48,7 +51,10 @@ package manure.api {
         "sort" -> CatalogueSort_JsonCodec.instance.encode(ctx, value.sort),
         "direction" -> SortDirection_JsonCodec.instance.encode(ctx, value.direction),
         "limit" -> Json.fromInt(value.limit),
-        "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
+        "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "tags" -> Json.fromValues(value.tags.map(e => Json.fromString(e))),
+        "hostname" -> value.hostname.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "projectPath" -> value.projectPath.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
     
@@ -67,7 +73,10 @@ package manure.api {
             direction <- getField(jsonObject, "direction").flatMap(v => SortDirection_JsonCodec.circeDecoder(v.hcursor))
             limit <- getField(jsonObject, "limit").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield CatalogueQuery(query,includeExpired,visibility,state,sort,direction,limit,cursor)
+            tags <- getField(jsonObject, "tags").flatMap(v => decodeList(decodeString)(v.hcursor))
+            hostname <- getField(jsonObject, "hostname").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            projectPath <- getField(jsonObject, "projectPath").flatMap(v => decodeOption(decodeString)(v.hcursor))
+          } yield CatalogueQuery(query,includeExpired,visibility,state,sort,direction,limit,cursor,tags,hostname,projectPath)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CatalogueQuery: object expected"))
       }
     }

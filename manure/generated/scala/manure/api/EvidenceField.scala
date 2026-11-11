@@ -7,18 +7,27 @@ package manure.api {
   object EvidenceField extends BaboonEnum[EvidenceField] {
     case object Name extends EvidenceField
     case object ManifestPath extends EvidenceField
+    case object Tag extends EvidenceField
+    case object Hostname extends EvidenceField
+    case object ProjectPath extends EvidenceField
     
     def parse(s: String): Option[EvidenceField] = {
       s match {
         case "Name" => Some(Name)
         case "ManifestPath" => Some(ManifestPath)
+        case "Tag" => Some(Tag)
+        case "Hostname" => Some(Hostname)
+        case "ProjectPath" => Some(ProjectPath)
         case _ => None
       }
     }
     
     def all: List[EvidenceField] = List(
       Name,
-      ManifestPath
+      ManifestPath,
+      Tag,
+      Hostname,
+      ProjectPath
     ) 
   }
   

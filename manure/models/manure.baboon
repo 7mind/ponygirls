@@ -10,7 +10,7 @@ enum SortDirection { Asc Desc }
 enum CatalogueSort { Name CreatedAt ExpiresAt TotalBytes FileCount Visibility State Kind CreatedByUser }
 enum SearchMode { Lexical Semantic Hybrid }
 enum SearchCountScope { ExactMatches CandidateWindow }
-enum EvidenceField { Name ManifestPath }
+enum EvidenceField { Name ManifestPath Tag Hostname ProjectPath }
 
 data Principal { userId: str tokenId: str principalType: PrincipalType }
 data VersionInfo { current: str supported: lst[str] }
@@ -21,7 +21,7 @@ adt ManifestEntry {
   data Directory { path: str }
 }
 
-data Artifact { artifactId: str name: str kind: ArtifactKind visibility: Visibility state: ArtifactState createdByUser: str createdAt: str expiresAt: opt[str] totalBytes: i64 fileCount: i32 contentUrl: str }
+data Artifact { artifactId: str name: str kind: ArtifactKind visibility: Visibility state: ArtifactState createdByUser: str createdAt: str expiresAt: opt[str] totalBytes: i64 fileCount: i32 contentUrl: str tags: lst[str] hostname: opt[str] projectPath: opt[str] }
 data Manifest { artifactId: str state: ArtifactState files: lst[ManifestEntry] }
 data ByteRange { start: i64 endExclusive: i64 }
 data FileProgress { path: str size: i64 receivedBytes: i64 receivedRanges: lst[ByteRange] }
@@ -35,9 +35,9 @@ adt ExpiryChange {
 }
 
 data ArtifactPatch { name: opt[str] visibility: opt[Visibility] expiry: ExpiryChange }
-data CatalogueQuery { query: str includeExpired: bit visibility: opt[Visibility] state: opt[ArtifactState] sort: CatalogueSort direction: SortDirection limit: i32 cursor: opt[str] }
+data CatalogueQuery { query: str includeExpired: bit visibility: opt[Visibility] state: opt[ArtifactState] sort: CatalogueSort direction: SortDirection limit: i32 cursor: opt[str] tags: lst[str] hostname: opt[str] projectPath: opt[str] }
 data CataloguePage { artifacts: lst[Artifact] nextCursor: opt[str] }
-data SearchFilter { visibility: opt[Visibility] kind: opt[ArtifactKind] createdByUser: opt[str] }
+data SearchFilter { visibility: opt[Visibility] kind: opt[ArtifactKind] createdByUser: opt[str] tags: lst[str] hostname: opt[str] projectPath: opt[str] }
 data SearchQuery { query: str mode: SearchMode filter: SearchFilter limit: i32 cursor: opt[str] }
 data SearchEvidence { field: EvidenceField path: opt[str] text: str score: f64 }
 data SearchHit { artifact: Artifact sourceVersion: str generationId: str policyId: str embeddingProfile: opt[str] embeddingSpace: opt[str] evidence: lst[SearchEvidence] score: f64 }
@@ -59,7 +59,7 @@ root adt Command {
   data Logout {}
   data Whoami {}
   data ListArtifacts { query: CatalogueQuery }
-  data InitUpload { name: str kind: ArtifactKind visibility: Visibility expiresInSeconds: opt[i32] files: lst[ManifestEntry] }
+  data InitUpload { name: str kind: ArtifactKind visibility: Visibility expiresInSeconds: opt[i32] files: lst[ManifestEntry] tags: lst[str] hostname: opt[str] projectPath: opt[str] }
   data GetArtifact { artifactId: str }
   data PatchArtifact { artifactId: str patch: ArtifactPatch }
   data DeleteArtifact { artifactId: str }

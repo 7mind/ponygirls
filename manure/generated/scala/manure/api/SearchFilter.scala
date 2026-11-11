@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeOption, decodeString}
+import io.circe.Decoder.{decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -6,7 +6,10 @@ package manure.api {
   final case class SearchFilter(
     visibility: Option[Visibility],
     kind: Option[ArtifactKind],
-    createdByUser: Option[String]
+    createdByUser: Option[String],
+    tags: List[String],
+    hostname: Option[String],
+    projectPath: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = SearchFilter.baboonDomainVersion
     override def baboonDomainIdentifier: String = SearchFilter.baboonDomainIdentifier
@@ -38,7 +41,10 @@ package manure.api {
       Json.obj(
         "visibility" -> value.visibility.map(v => Visibility_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
         "kind" -> value.kind.map(v => ArtifactKind_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
-        "createdByUser" -> value.createdByUser.map(v => Json.fromString(v)).getOrElse(Json.Null)
+        "createdByUser" -> value.createdByUser.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "tags" -> Json.fromValues(value.tags.map(e => Json.fromString(e))),
+        "hostname" -> value.hostname.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "projectPath" -> value.projectPath.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
     
@@ -52,7 +58,10 @@ package manure.api {
             visibility <- getField(jsonObject, "visibility").flatMap(v => decodeOption(Visibility_JsonCodec.circeDecoder)(v.hcursor))
             kind <- getField(jsonObject, "kind").flatMap(v => decodeOption(ArtifactKind_JsonCodec.circeDecoder)(v.hcursor))
             createdByUser <- getField(jsonObject, "createdByUser").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield SearchFilter(visibility,kind,createdByUser)
+            tags <- getField(jsonObject, "tags").flatMap(v => decodeList(decodeString)(v.hcursor))
+            hostname <- getField(jsonObject, "hostname").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            projectPath <- getField(jsonObject, "projectPath").flatMap(v => decodeOption(decodeString)(v.hcursor))
+          } yield SearchFilter(visibility,kind,createdByUser,tags,hostname,projectPath)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to SearchFilter: object expected"))
       }
     }

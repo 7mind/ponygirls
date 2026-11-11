@@ -12,7 +12,10 @@ export class CatalogueQuery {
     _direction;
     _limit;
     _cursor;
-    constructor(query, includeExpired, visibility, state, sort, direction, limit, cursor) {
+    _tags;
+    _hostname;
+    _projectPath;
+    constructor(query, includeExpired, visibility, state, sort, direction, limit, cursor, tags, hostname, projectPath) {
         this._query = query;
         this._includeExpired = includeExpired;
         this._visibility = visibility;
@@ -21,6 +24,9 @@ export class CatalogueQuery {
         this._direction = direction;
         this._limit = limit;
         this._cursor = cursor;
+        this._tags = tags;
+        this._hostname = hostname;
+        this._projectPath = projectPath;
     }
     get query() {
         return this._query;
@@ -46,6 +52,15 @@ export class CatalogueQuery {
     get cursor() {
         return this._cursor;
     }
+    get tags() {
+        return this._tags;
+    }
+    get hostname() {
+        return this._hostname;
+    }
+    get projectPath() {
+        return this._projectPath;
+    }
     toJSON() {
         return {
             query: this._query,
@@ -55,14 +70,17 @@ export class CatalogueQuery {
             sort: this._sort,
             direction: this._direction,
             limit: this._limit,
-            cursor: this._cursor !== undefined ? this._cursor : undefined
+            cursor: this._cursor !== undefined ? this._cursor : undefined,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
     with(overrides) {
-        return new CatalogueQuery('query' in overrides ? overrides.query : this._query, 'includeExpired' in overrides ? overrides.includeExpired : this._includeExpired, 'visibility' in overrides ? overrides.visibility : this._visibility, 'state' in overrides ? overrides.state : this._state, 'sort' in overrides ? overrides.sort : this._sort, 'direction' in overrides ? overrides.direction : this._direction, 'limit' in overrides ? overrides.limit : this._limit, 'cursor' in overrides ? overrides.cursor : this._cursor);
+        return new CatalogueQuery('query' in overrides ? overrides.query : this._query, 'includeExpired' in overrides ? overrides.includeExpired : this._includeExpired, 'visibility' in overrides ? overrides.visibility : this._visibility, 'state' in overrides ? overrides.state : this._state, 'sort' in overrides ? overrides.sort : this._sort, 'direction' in overrides ? overrides.direction : this._direction, 'limit' in overrides ? overrides.limit : this._limit, 'cursor' in overrides ? overrides.cursor : this._cursor, 'tags' in overrides ? overrides.tags : this._tags, 'hostname' in overrides ? overrides.hostname : this._hostname, 'projectPath' in overrides ? overrides.projectPath : this._projectPath);
     }
     static fromPlain(obj) {
-        return new CatalogueQuery(obj.query, obj.includeExpired, obj.visibility, obj.state, obj.sort, obj.direction, obj.limit, obj.cursor);
+        return new CatalogueQuery(obj.query, obj.includeExpired, obj.visibility, obj.state, obj.sort, obj.direction, obj.limit, obj.cursor, obj.tags, obj.hostname, obj.projectPath);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {
@@ -106,6 +124,9 @@ export class CatalogueQuery_JsonCodec {
             "direction": SortDirection_JsonCodec.instance.encode(BaboonCodecContext.Default, value.direction),
             "limit": value.limit,
             "cursor": value.cursor === undefined ? null : value.cursor,
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         };
     }
     decode(ctx, json) {
@@ -113,7 +134,7 @@ export class CatalogueQuery_JsonCodec {
             return CatalogueQuery_JsonCodec.lazyInstance.value.decode(ctx, json);
         }
         const obj = json;
-        return new CatalogueQuery(obj["query"], obj["includeExpired"], obj["visibility"] === undefined || obj["visibility"] === null ? undefined : obj["visibility"] === undefined || obj["visibility"] === null ? undefined : Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]), obj["state"] === undefined || obj["state"] === null ? undefined : obj["state"] === undefined || obj["state"] === null ? undefined : ArtifactState_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["state"]), CatalogueSort_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["sort"]), SortDirection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["direction"]), obj["limit"], obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"]);
+        return new CatalogueQuery(obj["query"], obj["includeExpired"], obj["visibility"] === undefined || obj["visibility"] === null ? undefined : obj["visibility"] === undefined || obj["visibility"] === null ? undefined : Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]), obj["state"] === undefined || obj["state"] === null ? undefined : obj["state"] === undefined || obj["state"] === null ? undefined : ArtifactState_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["state"]), CatalogueSort_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["sort"]), SortDirection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["direction"]), obj["limit"], obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"], obj["tags"].map(item => item), obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"], obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"]);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {

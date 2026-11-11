@@ -2,12 +2,18 @@ import {BaboonCodecContext, BaboonDecoderFailure, Lazy} from '../../BaboonShared
 
 export enum EvidenceField {
     Name = "Name",
-    ManifestPath = "ManifestPath"
+    ManifestPath = "ManifestPath",
+    Tag = "Tag",
+    Hostname = "Hostname",
+    ProjectPath = "ProjectPath"
 }
 
 export const EvidenceField_values: ReadonlyArray<EvidenceField> = [
     EvidenceField.Name,
-    EvidenceField.ManifestPath
+    EvidenceField.ManifestPath,
+    EvidenceField.Tag,
+    EvidenceField.Hostname,
+    EvidenceField.ProjectPath
 ] as const;
 
 export function EvidenceField_parse(s: string): EvidenceField {
