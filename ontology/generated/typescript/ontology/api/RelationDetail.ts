@@ -8,7 +8,7 @@ import {Grouping, Grouping_JsonCodec} from './Grouping.js'
 import {PresentedSelection, PresentedSelection_JsonCodec} from './PresentedSelection.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
 
-export type RelationDetail = RelationDetail_Empty | RelationDetail_Dependency | RelationDetail_Decomposition | RelationDetail_Delegation | RelationDetail_Adoption | RelationDetail_AssessmentUse
+export type RelationDetail = RelationDetail_Empty | RelationDetail_Dependency | RelationDetail_PlanRequirement | RelationDetail_Decomposition | RelationDetail_Delegation | RelationDetail_Adoption | RelationDetail_AssessmentUse
 
 export const RelationDetail = {
     BaboonDomainVersion: '0.1.0',
@@ -263,6 +263,114 @@ export class RelationDetail_Dependency_JsonCodec {
     public static lazyInstance = new Lazy(() => new RelationDetail_Dependency_JsonCodec())
     public static get instance(): RelationDetail_Dependency_JsonCodec {
         return RelationDetail_Dependency_JsonCodec.lazyInstance.value
+    }
+}
+
+export class RelationDetail_PlanRequirement implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#RelationDetail]#PlanRequirement' as const;
+    private readonly _workContext: string;
+
+    constructor(workContext: string) {
+        this._workContext = workContext
+    }
+
+    public get workContext(): string {
+        return this._workContext;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            workContext: this._workContext
+        };
+    }
+
+    public with(overrides: {workContext?: string}): RelationDetail_PlanRequirement {
+        return new RelationDetail_PlanRequirement(
+            'workContext' in overrides ? overrides.workContext! : this._workContext
+        );
+    }
+
+    public static fromPlain(obj: {workContext: string}): RelationDetail_PlanRequirement {
+        return new RelationDetail_PlanRequirement(
+            obj.workContext
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return RelationDetail_PlanRequirement.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return RelationDetail_PlanRequirement.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#RelationDetail]#PlanRequirement'
+    public baboonTypeIdentifier() {
+        return RelationDetail_PlanRequirement.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return RelationDetail_PlanRequirement.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return RelationDetail_PlanRequirement.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return RelationDetail_PlanRequirement.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#RelationDetail'
+    public baboonAdtTypeIdentifier() {
+        return RelationDetail_PlanRequirement.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): RelationDetail_PlanRequirement_JsonCodec {
+        return RelationDetail_PlanRequirement_JsonCodec.instance
+    }
+}
+
+export class RelationDetail_PlanRequirement_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: RelationDetail_PlanRequirement): unknown {
+        if (this !== RelationDetail_PlanRequirement_JsonCodec.lazyInstance.value) {
+          return RelationDetail_PlanRequirement_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "workContext": value.workContext,
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): RelationDetail_PlanRequirement {
+        if (this !== RelationDetail_PlanRequirement_JsonCodec .lazyInstance.value) {
+            return RelationDetail_PlanRequirement_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new RelationDetail_PlanRequirement (
+            obj["workContext"] as string,
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return RelationDetail_PlanRequirement_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return RelationDetail_PlanRequirement_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#RelationDetail]#PlanRequirement'
+    public baboonTypeIdentifier() {
+        return RelationDetail_PlanRequirement_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#RelationDetail'
+    public baboonAdtTypeIdentifier() {
+        return RelationDetail_PlanRequirement_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new RelationDetail_PlanRequirement_JsonCodec())
+    public static get instance(): RelationDetail_PlanRequirement_JsonCodec {
+        return RelationDetail_PlanRequirement_JsonCodec.lazyInstance.value
     }
 }
 
@@ -781,6 +889,9 @@ export class RelationDetail_JsonCodec {
             if (value instanceof RelationDetail_Dependency) {
                 return { "Dependency": RelationDetail_Dependency_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof RelationDetail_PlanRequirement) {
+                return { "PlanRequirement": RelationDetail_PlanRequirement_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof RelationDetail_Decomposition) {
                 return { "Decomposition": RelationDetail_Decomposition_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -805,6 +916,7 @@ export class RelationDetail_JsonCodec {
         switch (key) {
             case "Empty": return RelationDetail_Empty_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Dependency": return RelationDetail_Dependency_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "PlanRequirement": return RelationDetail_PlanRequirement_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Decomposition": return RelationDetail_Decomposition_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Delegation": return RelationDetail_Delegation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Adoption": return RelationDetail_Adoption_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])

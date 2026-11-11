@@ -8,7 +8,7 @@ import {Grouping, Grouping_JsonCodec} from './Grouping.js'
 import {PresentedSelectionInput, PresentedSelectionInput_JsonCodec} from './PresentedSelectionInput.js'
 import {Target, Target_JsonCodec} from './Target.js'
 
-export type RelationDetailInput = RelationDetailInput_Empty | RelationDetailInput_Dependency | RelationDetailInput_Decomposition | RelationDetailInput_Delegation | RelationDetailInput_Adoption | RelationDetailInput_AssessmentUse
+export type RelationDetailInput = RelationDetailInput_Empty | RelationDetailInput_Dependency | RelationDetailInput_PlanRequirement | RelationDetailInput_Decomposition | RelationDetailInput_Delegation | RelationDetailInput_Adoption | RelationDetailInput_AssessmentUse
 
 export const RelationDetailInput = {
     BaboonDomainVersion: '0.1.0',
@@ -263,6 +263,114 @@ export class RelationDetailInput_Dependency_JsonCodec {
     public static lazyInstance = new Lazy(() => new RelationDetailInput_Dependency_JsonCodec())
     public static get instance(): RelationDetailInput_Dependency_JsonCodec {
         return RelationDetailInput_Dependency_JsonCodec.lazyInstance.value
+    }
+}
+
+export class RelationDetailInput_PlanRequirement implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#RelationDetailInput]#PlanRequirement' as const;
+    private readonly _workContext: string;
+
+    constructor(workContext: string) {
+        this._workContext = workContext
+    }
+
+    public get workContext(): string {
+        return this._workContext;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            workContext: this._workContext
+        };
+    }
+
+    public with(overrides: {workContext?: string}): RelationDetailInput_PlanRequirement {
+        return new RelationDetailInput_PlanRequirement(
+            'workContext' in overrides ? overrides.workContext! : this._workContext
+        );
+    }
+
+    public static fromPlain(obj: {workContext: string}): RelationDetailInput_PlanRequirement {
+        return new RelationDetailInput_PlanRequirement(
+            obj.workContext
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return RelationDetailInput_PlanRequirement.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return RelationDetailInput_PlanRequirement.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#RelationDetailInput]#PlanRequirement'
+    public baboonTypeIdentifier() {
+        return RelationDetailInput_PlanRequirement.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return RelationDetailInput_PlanRequirement.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return RelationDetailInput_PlanRequirement.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return RelationDetailInput_PlanRequirement.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#RelationDetailInput'
+    public baboonAdtTypeIdentifier() {
+        return RelationDetailInput_PlanRequirement.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): RelationDetailInput_PlanRequirement_JsonCodec {
+        return RelationDetailInput_PlanRequirement_JsonCodec.instance
+    }
+}
+
+export class RelationDetailInput_PlanRequirement_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: RelationDetailInput_PlanRequirement): unknown {
+        if (this !== RelationDetailInput_PlanRequirement_JsonCodec.lazyInstance.value) {
+          return RelationDetailInput_PlanRequirement_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "workContext": value.workContext,
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): RelationDetailInput_PlanRequirement {
+        if (this !== RelationDetailInput_PlanRequirement_JsonCodec .lazyInstance.value) {
+            return RelationDetailInput_PlanRequirement_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new RelationDetailInput_PlanRequirement (
+            obj["workContext"] as string,
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return RelationDetailInput_PlanRequirement_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return RelationDetailInput_PlanRequirement_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#RelationDetailInput]#PlanRequirement'
+    public baboonTypeIdentifier() {
+        return RelationDetailInput_PlanRequirement_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#RelationDetailInput'
+    public baboonAdtTypeIdentifier() {
+        return RelationDetailInput_PlanRequirement_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new RelationDetailInput_PlanRequirement_JsonCodec())
+    public static get instance(): RelationDetailInput_PlanRequirement_JsonCodec {
+        return RelationDetailInput_PlanRequirement_JsonCodec.lazyInstance.value
     }
 }
 
@@ -781,6 +889,9 @@ export class RelationDetailInput_JsonCodec {
             if (value instanceof RelationDetailInput_Dependency) {
                 return { "Dependency": RelationDetailInput_Dependency_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof RelationDetailInput_PlanRequirement) {
+                return { "PlanRequirement": RelationDetailInput_PlanRequirement_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof RelationDetailInput_Decomposition) {
                 return { "Decomposition": RelationDetailInput_Decomposition_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -805,6 +916,7 @@ export class RelationDetailInput_JsonCodec {
         switch (key) {
             case "Empty": return RelationDetailInput_Empty_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Dependency": return RelationDetailInput_Dependency_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "PlanRequirement": return RelationDetailInput_PlanRequirement_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Decomposition": return RelationDetailInput_Decomposition_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Delegation": return RelationDetailInput_Delegation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Adoption": return RelationDetailInput_Adoption_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])

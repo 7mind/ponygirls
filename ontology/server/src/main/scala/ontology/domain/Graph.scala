@@ -56,7 +56,14 @@ object Graph {
   def exists(g: GraphSnapshot, r: Ref): Boolean = g.definitions.exists(_.ref == r) || g.relations.exists(_.ref == r) || g.bindings.exists(_.ref == r) || g.events.exists(_.ref == r) || g.actors.exists(_.ref == r) || g.selections.exists(_.ref == r)
   def latestEvent(g: GraphSnapshot, subject: Ref): Option[StateEvent] = g.events.filter(_.subject == subject).lastOption
   def governing(k: RelationKind): Boolean = Set(RelationKind.DependsOn, RelationKind.Requires, RelationKind.AssignedTo, RelationKind.PlannedOutput).contains(k)
-  def context(g: GraphSnapshot, d: Ref): List[Ref] = relations(g).filter(r => r.standing == Standing.Active && governing(r.kind) && r.sources.exists(_.id == d.id)).map(_.ref)
+  private def inWorkContext(r: Relation, workContext: Option[String]): Boolean = r.detail match {
+    case value: RelationDetail.PlanRequirement => workContext.forall(_ == value.workContext)
+    case _ => true
+  }
+  def governs(r: Relation, binding: Binding): Boolean = governing(r.kind) && r.scope == binding.scope &&
+    r.sources == List(binding.definition) && inWorkContext(r, Some(binding.workContext))
+  def context(g: GraphSnapshot, d: Ref, workContext: Option[String]): List[Ref] = relations(g)
+    .filter(r => r.standing == Standing.Active && governing(r.kind) && r.sources.exists(_.id == d.id) && inWorkContext(r, workContext)).map(_.ref)
   def validateBinding(g: GraphSnapshot, b: Binding): Unit = validateBindings(g, b, false)
   def validateSelectedBinding(g: GraphSnapshot, b: Binding): Unit = validateBindings(g, b, true)
   private def validateBindings(g: GraphSnapshot, b: Binding, selected: Boolean): Unit = {
@@ -70,11 +77,11 @@ object Graph {
         if (selected) Require(Selections.selected(g, item), "unselected-context", "binding is not selected in its work context")
         val d = node(g, item.definition)
         Require(definitions(g).exists(x => x.ref == d.ref && x.standing == Standing.Active), "stale-context", "definition is not active current content")
-        Require(context(g, d.ref).forall(item.context.contains), "missing-context", "governing relations missing from binding")
+        Require(context(g, d.ref, Some(item.workContext)).forall(item.context.contains), "missing-context", "governing relations missing from binding")
         item.context.foreach { ref =>
           Require(exists(g, ref) && current(g, ref), "stale-context", "binding context changed")
           g.relations.find(_.ref == ref).filter(r => governing(r.kind)).foreach { r =>
-            Require(r.standing == Standing.Active && r.sources.contains(d.ref), "stale-context", "governing relation targets an earlier definition")
+            Require(r.standing == Standing.Active && governs(r, item), "stale-context", "governing relation belongs to another definition or work context")
             if (r.kind == RelationKind.PlannedOutput) r.targets.foreach(t => Require(definitions(g).exists(n => n.ref == t && n.standing == Standing.Active), "stale-context", "planned-output contract changed"))
             if (r.kind == RelationKind.DependsOn || r.kind == RelationKind.Requires) {
               val targets = r.targets.map(binding(g, _))

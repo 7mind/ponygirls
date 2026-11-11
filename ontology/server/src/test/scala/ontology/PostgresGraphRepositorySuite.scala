@@ -6,7 +6,7 @@ import ponygirls.runtime.{JdbcConfig, JdbcDatabase, JdbcLimits}
 import java.nio.file.Path
 import scala.concurrent.duration.*
 
-final class PostgresGraphRepositorySuite extends ReviewRepositoryContract {
+final class PostgresGraphRepositorySuite extends RelationCoverageContract {
   protected def repository: Resource[IO, GraphRepository] = {
     def required(name: String): String = sys.env.getOrElse(name, throw new IllegalStateException(s"$name required: run ontology/scripts/test-postgres.sh"))
     val config = JdbcConfig(required("ONTOLOGY_TEST_JDBC_URL"), "postgres", Path.of(required("ONTOLOGY_TEST_PASSWORD_FILE")),

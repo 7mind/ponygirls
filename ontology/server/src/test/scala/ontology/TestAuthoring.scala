@@ -29,6 +29,7 @@ object TestAuthoring {
   def detail(value: RelationDetail): RelationDetailInput = value match {
     case _: RelationDetail.Empty => RelationDetailInput.Empty()
     case v: RelationDetail.Dependency => RelationDetailInput.Dependency(v.gate, v.consumption, v.event.map(Target.Exact(_)), v.applicability)
+    case v: RelationDetail.PlanRequirement => RelationDetailInput.PlanRequirement(v.workContext)
     case v: RelationDetail.Decomposition => RelationDetailInput.Decomposition(v.grouping)
     case v: RelationDetail.Delegation => RelationDetailInput.Delegation(v.actors, v.operations, v.outcomes.map(Target.Exact(_)))
     case v: RelationDetail.Adoption => RelationDetailInput.Adoption(v.presentationId, v.origin, Target.Exact(v.response), v.selection match {

@@ -18,7 +18,7 @@ object CaptureIdentity {
   def definition(event: CapturedEvent): Definition = {
     Require(event.reviewResponse.isEmpty, "corrupt", "generic capture cannot contain a protected review response")
     val source = Ref(event.id, 1)
-    val execution = event.observation match { case value: Observation.Execution => value.contract.toList ++ value.artifacts; case _ => Nil }
+    val execution = event.observation match { case value: Observation.Execution => value.contract.toList ++ value.inputs ++ value.outputs; case _ => Nil }
     val content = Content.Source(event.text, (artifacts(event) ++ execution).distinct, Digests.text(event.text),
       SourceDescriptor.PrimaryCapture(event.id, event.sourceNamespace, event.context, event.metadata, event.origin, event.observation, None))
     Definition(source, event.scope, Applicability.Captured(source), content, Standing.Active, Nil, None, event.provenance)
@@ -70,7 +70,10 @@ final class CaptureEngine {
       case value: Observation.Execution =>
         Require(value.action.nonEmpty && value.checker.nonEmpty, "observation", "action and checker identities required")
         value.contract.foreach(ref => Graph.binding(base, ref))
-        value.artifacts.foreach(ref => Require(Graph.node(base, ref).content.isInstanceOf[Content.Artifact], "observation", "execution input must reference captured artifact"))
+        List(value.inputs, value.outputs).foreach { references =>
+          Require(references.distinct == references, "observation", "duplicate execution artifact references")
+          references.foreach(ref => Require(Graph.node(base, ref).content.isInstanceOf[Content.Artifact], "observation", "execution roles must reference exact captured artifacts"))
+        }
       case _: Observation.None => ()
     }
     file(input.observation).foreach { coordinate =>

@@ -383,15 +383,17 @@ export class Observation_Execution implements BaboonAdtMemberMeta, BaboonGenerat
     private readonly _action: string;
     private readonly _checker: string;
     private readonly _contract: Ref | undefined;
-    private readonly _artifacts: Array<Ref>;
+    private readonly _inputs: Array<Ref>;
+    private readonly _outputs: Array<Ref>;
     private readonly _exitCode: number | undefined;
     private readonly _complete: boolean;
 
-    constructor(action: string, checker: string, contract: Ref | undefined, artifacts: Array<Ref>, exitCode: number | undefined, complete: boolean) {
+    constructor(action: string, checker: string, contract: Ref | undefined, inputs: Array<Ref>, outputs: Array<Ref>, exitCode: number | undefined, complete: boolean) {
         this._action = action
         this._checker = checker
         this._contract = contract
-        this._artifacts = artifacts
+        this._inputs = inputs
+        this._outputs = outputs
         this._exitCode = exitCode
         this._complete = complete
     }
@@ -405,8 +407,11 @@ export class Observation_Execution implements BaboonAdtMemberMeta, BaboonGenerat
     public get contract(): Ref | undefined {
         return this._contract;
     }
-    public get artifacts(): Array<Ref> {
-        return this._artifacts;
+    public get inputs(): Array<Ref> {
+        return this._inputs;
+    }
+    public get outputs(): Array<Ref> {
+        return this._outputs;
     }
     public get exitCode(): number | undefined {
         return this._exitCode;
@@ -420,29 +425,32 @@ export class Observation_Execution implements BaboonAdtMemberMeta, BaboonGenerat
             action: this._action,
             checker: this._checker,
             contract: this._contract !== undefined ? this._contract : undefined,
-            artifacts: this._artifacts,
+            inputs: this._inputs,
+            outputs: this._outputs,
             exitCode: this._exitCode !== undefined ? this._exitCode : undefined,
             complete: this._complete
         };
     }
 
-    public with(overrides: {action?: string; checker?: string; contract?: Ref | undefined; artifacts?: Array<Ref>; exitCode?: number | undefined; complete?: boolean}): Observation_Execution {
+    public with(overrides: {action?: string; checker?: string; contract?: Ref | undefined; inputs?: Array<Ref>; outputs?: Array<Ref>; exitCode?: number | undefined; complete?: boolean}): Observation_Execution {
         return new Observation_Execution(
             'action' in overrides ? overrides.action! : this._action,
             'checker' in overrides ? overrides.checker! : this._checker,
             'contract' in overrides ? overrides.contract! : this._contract,
-            'artifacts' in overrides ? overrides.artifacts! : this._artifacts,
+            'inputs' in overrides ? overrides.inputs! : this._inputs,
+            'outputs' in overrides ? overrides.outputs! : this._outputs,
             'exitCode' in overrides ? overrides.exitCode! : this._exitCode,
             'complete' in overrides ? overrides.complete! : this._complete
         );
     }
 
-    public static fromPlain(obj: {action: string; checker: string; contract: Ref | undefined; artifacts: Array<Ref>; exitCode: number | undefined; complete: boolean}): Observation_Execution {
+    public static fromPlain(obj: {action: string; checker: string; contract: Ref | undefined; inputs: Array<Ref>; outputs: Array<Ref>; exitCode: number | undefined; complete: boolean}): Observation_Execution {
         return new Observation_Execution(
             obj.action,
             obj.checker,
             obj.contract,
-            obj.artifacts,
+            obj.inputs,
+            obj.outputs,
             obj.exitCode,
             obj.complete
         );
@@ -492,7 +500,8 @@ export class Observation_Execution_JsonCodec {
             "action": value.action,
             "checker": value.checker,
             "contract": value.contract === undefined ? null : Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.contract),
-            "artifacts": Array.from(value.artifacts).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "inputs": Array.from(value.inputs).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "outputs": Array.from(value.outputs).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "exitCode": value.exitCode === undefined ? null : value.exitCode,
             "complete": value.complete,
         }
@@ -507,7 +516,8 @@ export class Observation_Execution_JsonCodec {
             obj["action"] as string,
             obj["checker"] as string,
             obj["contract"] === undefined || obj["contract"] === null ? undefined : obj["contract"] === undefined || obj["contract"] === null ? undefined : Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["contract"]),
-            (obj["artifacts"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            (obj["inputs"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            (obj["outputs"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["exitCode"] === undefined || obj["exitCode"] === null ? undefined : obj["exitCode"] === undefined || obj["exitCode"] === null ? undefined : obj["exitCode"] as number,
             obj["complete"] as boolean,
         )

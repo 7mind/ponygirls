@@ -113,6 +113,63 @@ abstract class RdfProjectionContract extends FunSuite {
       _ = assertEquals(targets, sources)
     } yield ()
   } }
+  test("execution input and output roles roundtrip and traverse independently") { check { rdf =>
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)
+    val host = Actor("host", ActorKind.Service)
+    val principal = Principal("host", host, Set("s"), Set(Capability.Capture, Capability.HostCapture))
+    val context = TestContexts.claim(CaptureContext("fixture", None, None, LineageStatus.Unknown, "branch", UUID.randomUUID()))
+    def capture(value: Observation): IO[IngestResult] = repo.ingest(IngestRequest("s", UUID.randomUUID(), UUID.randomUUID(), Some(context), None, EventOrigin.ToolOutput,
+      CaptureMetadata("fixture", None, None, SourceRepresentation.HostReceipt, Nil, Nil), "Synthetic observation", value), principal, host, "fixture", TestContexts.trace("fixture"))
+    for {
+      input <- capture(Observation.FileVersion("input.txt", 1L, Digests.text("input"), 5L))
+      output <- capture(Observation.FileVersion("output.txt", 1L, Digests.text("output"), 6L))
+      execution <- capture(Observation.Execution("run", "fixture", None, input.artifacts, output.artifacts, None, false))
+      graph <- repo.read("s")
+      _ <- rdf.publish(graph)
+      restored <- rdf.snapshot("s", graph.generation)
+      _ = assertEquals(restored, graph)
+      inputs <- rdf.subjects("s", graph.generation, "executionInput", input.artifacts.head)
+      outputs <- rdf.subjects("s", graph.generation, "executionOutput", output.artifacts.head)
+      wrongRole <- rdf.subjects("s", graph.generation, "executionOutput", input.artifacts.head)
+      _ = assertEquals(inputs, List(execution.source))
+      _ = assertEquals(outputs, List(execution.source))
+      _ = assertEquals(wrongRole, Nil)
+      detail = Graph.node(restored, execution.source).content.asInstanceOf[Content.Source].descriptor.asInstanceOf[SourceDescriptor.PrimaryCapture].observation.asInstanceOf[Observation.Execution]
+      _ = assertEquals(detail.exitCode, None)
+      _ = assertEquals(detail.complete, false)
+    } yield ()
+  } }
+
+  test("plan work-context qualification and retained requirement survive RDF publication after retirement") { check { rdf =>
+    val id = UUID.randomUUID()
+    val applicability = TestAuthoring.applicability(TestApplicability.unresolved)
+    val principal = TestContexts.principal("s", Actor("agent", ActorKind.Agent))
+    val host = Actor("host", ActorKind.Service)
+    val ops = List(
+      Operation.Create("condition", applicability, ContentInput.Statement("Condition", Modality.Assertion), Nil),
+      Operation.Bind("cb", Target.Created("condition"), Nil, "condition"),
+      Operation.SelectBinding("cs", Target.Created("cb"), true, "Explicit", List(Target.Created("condition"))),
+      Operation.Create("plan", applicability, ContentInput.Decision("Plan", Nil, "Chosen account"), Nil),
+      Operation.Relate("requires", applicability, RelationKind.Requires, List(Target.Created("plan")), List(Target.Created("cb")), RelationDetailInput.PlanRequirement("A"), "Selected plan only"),
+      Operation.Bind("pb", Target.Created("plan"), List(Target.Created("requires")), "A"),
+      Operation.SelectBinding("ps", Target.Created("pb"), true, "Explicit", List(Target.Created("plan"))))
+    val made = new AdmissionEngine().apply(Graph.empty("s"), ApplyRequest("s", id, 0L, ops, None), Admission(principal, host, id, "fixture", TestContexts.trace("fixture"), Nil))
+    val plan = made.result.created.find(_.alias == "plan").get.ref
+    val binding = made.result.created.find(_.alias == "pb").get.ref
+    val requirement = made.snapshot.relations.head
+    val nextId = UUID.randomUUID()
+    val retired = new AdmissionEngine().apply(made.snapshot, ApplyRequest("s", nextId, made.snapshot.generation,
+      List(Operation.SelectBinding("retired", Target.Exact(binding), false, "Not cancellation", List(Target.Exact(plan)))), None), Admission(principal, host, nextId, "fixture", TestContexts.trace("fixture"), Nil)).snapshot
+    for {
+      _ <- rdf.publish(made.snapshot)
+      _ <- rdf.publish(retired)
+      restored <- rdf.snapshot("s", retired.generation)
+      _ = assertEquals(restored, retired)
+      _ = assertEquals(restored.relations.head.detail, RelationDetail.PlanRequirement("A"))
+      _ = assertEquals(restored.relations.head.standing, Standing.Active)
+      _ = assert(!PlanRequirements.visibleCurrent(restored, requirement))
+    } yield ()
+  } }
   test("same revision is idempotent, changed bytes conflict, old revisions cannot regress head") { check { rdf =>
     val first = sample("s"); val next = first.copy(generation = 2L)
     for {

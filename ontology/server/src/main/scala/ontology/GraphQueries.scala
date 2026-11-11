@@ -90,7 +90,7 @@ final class GraphQueries(repository: GraphRepository, cursors: CursorSigner, lim
         else try { Gates.validateEvent(graph, event); true }
         catch { case f: Fault if Set("stale-context", "missing-context", "unselected-context", "stale-warrant", "assessment-use", "condition", "prerequisite").contains(f.code) => false }
       }
-      val current = Graph.definitions(graph).map(GraphRecord.Node(_)) ++ Graph.relations(graph).map(GraphRecord.Edge(_)) ++ graph.actors.map(GraphRecord.Person(_)) ++
+      val current = Graph.definitions(graph).map(GraphRecord.Node(_)) ++ Graph.relations(graph).filter(PlanRequirements.visibleCurrent(graph, _)).map(GraphRecord.Edge(_)) ++ graph.actors.map(GraphRecord.Person(_)) ++
         Selections.latest(graph).map(GraphRecord.Selection(_)) ++ currentBindings.map(GraphRecord.Contract(_)) ++ currentProgress.map(GraphRecord.Progress(_)) ++ inputs.map(GraphRecord.Input(_))
       val selected = request.view match {
         case ReadView.History => if (request.targets.isEmpty) all else all.filter(r => request.targets.exists(_.id == Graph.recordRef(r).id))
@@ -104,8 +104,8 @@ final class GraphQueries(repository: GraphRepository, cursors: CursorSigner, lim
           Require(request.targets.nonEmpty, "targets", "binding context requires explicit targets")
           val wanted = request.targets.flatMap { ref =>
             graph.bindings.find(_.ref == ref) match {
-              case Some(b) => List(b.ref, b.definition) ++ Graph.definitions(graph).filter(_.ref.id == b.definition.id).map(_.ref) ++ b.context ++ Graph.context(graph, b.definition) ++ graph.selections.filter(_.binding == b.ref).map(_.ref) ++ Selections.current(graph, b).toList.flatMap(s => List(s.ref, s.binding)) ++ graph.events.filter(_.subject == b.ref).flatMap(e => e.ref :: Gates.references(e.gateBasis)) ++ graph.relations.filter(r => r.kind == RelationKind.UsesAssessment && r.targets.contains(b.ref)).flatMap(r => r.ref :: r.sources)
-              case None => Graph.node(graph, ref); List(ref) ++ Graph.definitions(graph).filter(_.ref.id == ref.id).map(_.ref) ++ Graph.context(graph, ref)
+              case Some(b) => List(b.ref, b.definition) ++ Graph.definitions(graph).filter(_.ref.id == b.definition.id).map(_.ref) ++ b.context ++ Graph.context(graph, b.definition, Some(b.workContext)) ++ graph.selections.filter(_.binding == b.ref).map(_.ref) ++ Selections.current(graph, b).toList.flatMap(s => List(s.ref, s.binding)) ++ graph.events.filter(_.subject == b.ref).flatMap(e => e.ref :: Gates.references(e.gateBasis)) ++ graph.relations.filter(r => r.kind == RelationKind.UsesAssessment && r.targets.contains(b.ref)).flatMap(r => r.ref :: r.sources)
+              case None => Graph.node(graph, ref); List(ref) ++ Graph.definitions(graph).filter(_.ref.id == ref.id).map(_.ref) ++ Graph.context(graph, ref, None)
             }
           }.distinct
           val related = graph.relations.filter(r => wanted.contains(r.ref)).flatMap { r =>

@@ -78,6 +78,7 @@ enum AdoptionOrigin { Interpretation CapturedAction }
 adt RelationDetail {
  data Empty {}
  data Dependency { gate: Gate consumption: Consumption event: opt[Ref] applicability: str }
+ data PlanRequirement { workContext: str }
  data Decomposition { grouping: Grouping }
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Ref] }
  data Adoption { presentationId: uid origin: AdoptionOrigin response: Ref selection: PresentedSelection }
@@ -118,6 +119,7 @@ adt PresentedSelectionInput {
 adt RelationDetailInput {
  data Empty {}
  data Dependency { gate: Gate consumption: Consumption event: opt[Target] applicability: str }
+ data PlanRequirement { workContext: str }
  data Decomposition { grouping: Grouping }
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Target] }
  data Adoption { presentationId: uid origin: AdoptionOrigin response: Target selection: PresentedSelectionInput }
@@ -153,7 +155,7 @@ adt Observation {
  data None {}
  data FileVersion { path: str generation: i64 digest: str length: i64 }
  data FileAbsent { path: str generation: i64 }
- data Execution { action: str checker: str contract: opt[Ref] artifacts: lst[Ref] exitCode: opt[i32] complete: bit }
+ data Execution { action: str checker: str contract: opt[Ref] inputs: lst[Ref] outputs: lst[Ref] exitCode: opt[i32] complete: bit }
 }
 enum SourceRepresentation { Text PiTranscript HostReceipt GraphCommand HumanJudgment }
 data CaptureMetadata { sourceId: str parentSourceId: opt[str] observedAt: opt[str] representation: SourceRepresentation omissions: lst[str] exposedDeliveries: lst[uid] }

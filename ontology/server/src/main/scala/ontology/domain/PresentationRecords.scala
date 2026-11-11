@@ -24,7 +24,7 @@ private[domain] object PresentationRecords {
       val captured = v.descriptor match {
         case p: SourceDescriptor.PrimaryCapture =>
           val observation = p.observation match {
-            case e: Observation.Execution => e.contract.toList ++ e.artifacts
+            case e: Observation.Execution => e.contract.toList ++ e.inputs ++ e.outputs
             case _: Observation.None | _: Observation.FileVersion | _: Observation.FileAbsent => Nil
           }
           observation ++ p.reviewResponse.toList.map(_.presentationSource)
@@ -35,7 +35,7 @@ private[domain] object PresentationRecords {
   private def detailRefs(value: RelationDetail): List[Ref] = value match {
     case _: RelationDetail.Empty => Nil
     case v: RelationDetail.Dependency => v.event.toList
-    case _: RelationDetail.Decomposition => Nil
+    case _: RelationDetail.Decomposition | _: RelationDetail.PlanRequirement => Nil
     case v: RelationDetail.Delegation => v.outcomes
     case v: RelationDetail.Adoption => v.response :: selectionRefs(v.selection)
     case v: RelationDetail.AssessmentUse => v.requirement :: v.basis

@@ -20,7 +20,7 @@ object Gates {
     val consumer = Graph.binding(graph, use.targets.head)
     val requirement = Graph.relation(graph, detail.requirement)
     Require(assessment.kind == RelationKind.Assesses && requirement.kind == RelationKind.Requires, "assessment-use", "assessment and requirement relations required")
-    Require(consumer.context.contains(requirement.ref) && requirement.sources == List(consumer.definition), "assessment-use", "requirement must belong to this exact consumer contract")
+    Require(consumer.context.contains(requirement.ref) && Graph.governs(requirement, consumer), "assessment-use", "requirement must belong to this exact consumer contract")
     Require(requirement.targets.size == 1 && assessment.targets.contains(requirement.targets.head), "assessment-use", "assessment must address the required condition binding")
     val content = review(graph, assessment).content.asInstanceOf[Content.Review]
     Require(assessment.targets.forall(content.subjects.contains), "assessment-use", "assessment subjects disagree")
@@ -37,7 +37,7 @@ object Gates {
     val selectionWitnesses = List.newBuilder[Ref]
     consumed += binding.ref
     selectionWitnesses += selection.ref
-    Graph.relations(graph).filter(r => r.standing == Standing.Active && r.sources.contains(binding.definition)).foreach { requirement =>
+    Graph.relations(graph).filter(r => r.standing == Standing.Active && binding.context.contains(r.ref) && Graph.governs(r, binding)).foreach { requirement =>
       requirement.kind match {
         case RelationKind.DependsOn =>
           val detail = requirement.detail.asInstanceOf[RelationDetail.Dependency]

@@ -1,6 +1,7 @@
 package ontology
 
 import cats.effect.IO
+import cats.syntax.all.*
 import cats.effect.unsafe.IORuntime
 import munit.FunSuite
 import ontology.api.*
@@ -105,6 +106,34 @@ final class CaptureReproductionSuite extends FunSuite {
         } yield ()
       } }.unsafeRunSync()(using runtime)
     }
+  }
+  test("swapped valid execution roles cannot detach a retained input from its captured Source") {
+    RepositoryReproductionDatabase.resource.use { db => RepositoryReproductionDatabase.store(db).flatMap { repo =>
+      val scope = "execution-roles-" + UUID.randomUUID()
+      val host = Actor("fixture-host", ActorKind.Service)
+      val principal = Principal("host", host, Set(scope), Set(Capability.Capture, Capability.HostCapture))
+      val occurrence = Some(TestContexts.claim(CaptureContext("fixture-host", None, None, LineageStatus.Unknown, "fixture", UUID.randomUUID())))
+      def request(value: Observation): IngestRequest = IngestRequest(scope, UUID.randomUUID(), UUID.randomUUID(), occurrence, None, EventOrigin.ToolOutput,
+        CaptureMetadata("fixture", None, None, SourceRepresentation.HostReceipt, Nil, Nil), "Synthetic execution evidence", value)
+      def capture(value: Observation): IO[IngestResult] = repo.ingest(request(value), principal, recorder, at, TestContexts.trace("fixture"))
+      for {
+        input <- capture(Observation.FileVersion("in", 1L, Digests.text("in"), 2L))
+        output <- capture(Observation.FileVersion("out", 1L, Digests.text("out"), 3L))
+        execution = request(Observation.Execution("run", "fixture", None, input.artifacts, output.artifacts, Some(1), true))
+        recorded <- repo.ingest(execution, principal, recorder, at, TestContexts.trace("fixture"))
+        graph <- repo.read(scope)
+        receipt <- repo.input(scope, Ref(Graph.node(graph, recorded.source).provenance.input, 1))
+        swapped = execution.copy(observation = execution.observation.asInstanceOf[Observation.Execution].copy(inputs = output.artifacts, outputs = input.artifacts))
+        content = StoredJson.encode(IngestRequest.codecJson, swapped)
+        changed = receipt.copy(content = content, digest = Digests.text(content))
+        set = (value: InputReceipt) => db.transaction { connection => Using.resource(connection.prepareStatement("UPDATE ontology_inputs SET payload = ? WHERE scope = ? AND input_id = ?")) { statement =>
+          statement.setString(1, StoredJson.encode(InputReceipt.codecJson, value)); statement.setString(2, scope); statement.setObject(3, receipt.ref.id)
+          assertEquals(statement.executeUpdate(), 1)
+        } }
+        results <- (set(changed) *> List(repo.read(scope).void, repo.sources(SourceRequest(scope, 0L, 10)).void, repo.input(scope, receipt.ref).void).traverse(_.attempt)).guarantee(set(receipt))
+        _ = results.foreach(result => fault(result, "corrupt"))
+      } yield ()
+    } }.unsafeRunSync()(using runtime)
   }
   test("source-page lookahead limit contract matches between adapters") {
     val scope = "empty-" + UUID.randomUUID()

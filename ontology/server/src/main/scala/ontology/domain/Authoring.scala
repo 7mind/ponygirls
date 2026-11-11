@@ -38,6 +38,7 @@ object Authoring {
   def relationDetail(value: RelationDetailInput, resolve: Target => Ref): RelationDetail = value match {
     case _: RelationDetailInput.Empty => RelationDetail.Empty()
     case v: RelationDetailInput.Dependency => RelationDetail.Dependency(v.gate, v.consumption, v.event.map(resolve), v.applicability)
+    case v: RelationDetailInput.PlanRequirement => RelationDetail.PlanRequirement(v.workContext)
     case v: RelationDetailInput.Decomposition => RelationDetail.Decomposition(v.grouping)
     case v: RelationDetailInput.Delegation => RelationDetail.Delegation(v.actors, v.operations, v.outcomes.map(resolve))
     case v: RelationDetailInput.Adoption => RelationDetail.Adoption(v.presentationId, v.origin, resolve(v.response), selection(v.selection, resolve))

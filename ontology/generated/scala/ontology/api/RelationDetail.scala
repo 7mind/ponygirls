@@ -158,6 +158,74 @@ package ontology.api {
     }
     
     
+    final case class PlanRequirement(
+      workContext: String
+    ) extends RelationDetail with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = RelationDetail.PlanRequirement.baboonDomainVersion
+      override def baboonDomainIdentifier: String = RelationDetail.PlanRequirement.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = RelationDetail.PlanRequirement.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = RelationDetail.PlanRequirement.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = RelationDetail.PlanRequirement.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = RelationDetail.PlanRequirement.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = RelationDetail.PlanRequirement.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = RelationDetail.PlanRequirement.baboonAdtType
+    }
+    
+    object PlanRequirement {
+      def baboonDomainVersion: String = "0.1.0"
+      def baboonDomainIdentifier: String = "ontology.api"
+      def baboonTypeIdentifier: String = "ontology.api/[ontology.api/:#RelationDetail]#PlanRequirement"
+      private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "ontology.api/:#RelationDetail"
+      def baboonAdtType: _root_.java.lang.Class[?] = RelationDetail.getClass
+      def codecJson: BaboonJsonCodec[RelationDetail.PlanRequirement] = RelationDetail.PlanRequirement_JsonCodec.instance
+    }
+    
+    object PlanRequirement_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[RelationDetail.PlanRequirement, BaboonJsonCodec[RelationDetail.PlanRequirement]] {
+      def encode(ctx: BaboonCodecContext, value: RelationDetail.PlanRequirement): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "workContext" -> Json.fromString(value.workContext)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, RelationDetail.PlanRequirement] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              workContext <- getField(jsonObject, "workContext").flatMap(v => decodeString(v.hcursor))
+            } yield RelationDetail.PlanRequirement(workContext)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to PlanRequirement: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = RelationDetail.PlanRequirement.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = RelationDetail.PlanRequirement.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = RelationDetail.PlanRequirement.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = RelationDetail.PlanRequirement.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = RelationDetail.PlanRequirement.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[RelationDetail.PlanRequirement]] = Lazy(RelationDetail.PlanRequirement_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[RelationDetail.PlanRequirement]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[RelationDetail.PlanRequirement] = LazyInstance.value
+    }
+    
+    
     final case class Decomposition(
       grouping: Grouping
     ) extends RelationDetail with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -472,6 +540,8 @@ package ontology.api {
         
         case dependency: RelationDetail.Dependency => Json.obj("Dependency" -> RelationDetail.Dependency_JsonCodec.instance.encode(ctx, dependency))
         
+        case planrequirement: RelationDetail.PlanRequirement => Json.obj("PlanRequirement" -> RelationDetail.PlanRequirement_JsonCodec.instance.encode(ctx, planrequirement))
+        
         case decomposition: RelationDetail.Decomposition => Json.obj("Decomposition" -> RelationDetail.Decomposition_JsonCodec.instance.encode(ctx, decomposition))
         
         case delegation: RelationDetail.Delegation => Json.obj("Delegation" -> RelationDetail.Delegation_JsonCodec.instance.encode(ctx, delegation))
@@ -499,6 +569,9 @@ package ontology.api {
                 
                 case "Dependency" =>
                   RelationDetail.Dependency_JsonCodec.instance.decode(ctx, json)
+                
+                case "PlanRequirement" =>
+                  RelationDetail.PlanRequirement_JsonCodec.instance.decode(ctx, json)
                 
                 case "Decomposition" =>
                   RelationDetail.Decomposition_JsonCodec.instance.decode(ctx, json)

@@ -355,6 +355,6 @@ abstract class GraphRepositoryContract extends FunSuite {
     }
   } }
 }
-final class MemoryGraphRepositorySuite extends ReviewRepositoryContract {
+final class MemoryGraphRepositorySuite extends RelationCoverageContract {
   protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)))
 }

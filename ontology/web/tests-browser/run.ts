@@ -51,7 +51,15 @@ const selected = new C.BindingSelection(ref(31), 'a', contract.ref, true, 'Expli
 const question = new C.Definition(ref(70), 'a', new C.Applicability_Unresolved('Controlled choice fixture', [], []), new C.Content_Question('Choose an exact alternative', ['A', 'B'], undefined, C.Escalation.HumanRequired), C.Standing.Active, [source.ref], undefined, provenance(agent, 90));
 const questionBinding = new C.Binding(ref(71), 'a', question.ref, [], 'alternative-work', provenance(agent, 90));
 const questionSelection = new C.BindingSelection(ref(72), 'a', questionBinding.ref, true, 'Controlled question binding selection', [question.ref], provenance(agent, 90));
-const records: C.GraphRecord[] = [new C.GraphRecord_Contract(questionBinding), new C.GraphRecord_Selection(questionSelection), new C.GraphRecord_Node(question), new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected), ...assessmentRecords('a', ref, provenance(agent, 90))];
+const plan = new C.Definition(ref(170), 'a', new C.Applicability_Unresolved('Controlled plan account', [], []), new C.Content_Decision('Context-qualified plan', ['Alternative plan'], 'Fixture choice account'), C.Standing.Active, [source.ref], undefined, provenance(agent, 90));
+const planRequirement = new C.Relation(ref(171), 'a', new C.Applicability_Unresolved('Only the declared plan context', [], []), C.RelationKind.Requires, [plan.ref], [ref(142)], new C.RelationDetail_PlanRequirement('plan-A'), 'Plan-specific condition', C.Standing.Active, provenance(agent, 90));
+const planBinding = new C.Binding(ref(172), 'a', plan.ref, [planRequirement.ref], 'plan-A', provenance(agent, 90));
+const planSelection = new C.BindingSelection(ref(173), 'a', planBinding.ref, true, 'Explicit fixture plan context', [plan.ref], provenance(agent, 90));
+const inputArtifact = new C.Definition(ref(180), 'a', new C.Applicability_Unresolved('Synthetic artifact fixture, not independently verified', [], []), new C.Content_Artifact('Synthetic input artifact', digest('input'), 'application/octet-stream', 'urn:fixture:input', 1n), C.Standing.Active, [], undefined, provenance(host, 96));
+const outputArtifact = new C.Definition(ref(181), 'a', new C.Applicability_Unresolved('Synthetic artifact fixture, not independently verified', [], []), new C.Content_Artifact('Synthetic output artifact', digest('output'), 'application/octet-stream', 'urn:fixture:output', 1n), C.Standing.Active, [], undefined, provenance(host, 97));
+const records: C.GraphRecord[] = [new C.GraphRecord_Node(plan), new C.GraphRecord_Edge(planRequirement), new C.GraphRecord_Contract(planBinding), new C.GraphRecord_Selection(planSelection), new C.GraphRecord_Node(inputArtifact), new C.GraphRecord_Node(outputArtifact), new C.GraphRecord_Contract(questionBinding), new C.GraphRecord_Selection(questionSelection), new C.GraphRecord_Node(question), new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected), ...assessmentRecords('a', ref, provenance(agent, 90))];
+const reservedPresentationBase = 1000;
+assert(!records.some(record => record.value.ref.id === id(reservedPresentationBase)), 'Fixture presentation reservation must not collide with an existing graph record');
 const sourceEvent = C.CapturedEvent.fromPlain({ id: id(20), scope: 'a', sourceNamespace: 'fixture-collector', frontier: 1n, context, origin: C.EventOrigin.UserMessage, metadata, text: sourceText, observation: new C.Observation_None(), reviewResponse: undefined, provenance: source.provenance });
 const absentEvent = C.CapturedEvent.fromPlain({ id: id(22), scope: 'a', sourceNamespace: 'fixture-host', frontier: 2n, context, origin: C.EventOrigin.ToolOutput, metadata: new C.CaptureMetadata('absence-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic witness, not a physical measurement'], []), text: 'Reported absence', observation: new C.Observation_FileAbsent('report.txt', 2n), reviewResponse: undefined, provenance: provenance(host, 92) });
 const identity = new C.Identity(human, ['a', 'b'], [C.Capability.Read, C.Capability.Review]);
@@ -60,6 +68,9 @@ const errors: string[] = [];
 const receipts: string[] = [];
 const themes: ThemeObservation[] = [];
 let activePage: Page | null = null;
+const executionEvent = new C.CapturedEvent(id(26), 'a', 'fixture-host', 3n, context, C.EventOrigin.ToolOutput,
+  new C.CaptureMetadata('execution-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic execution account, not a physical measurement'], []),
+  'Synthetic execution account', new C.Observation_Execution('controlled run', 'fixture host instrument', undefined, [inputArtifact.ref], [outputArtifact.ref], undefined, false), undefined, provenance(host, 95));
 let authenticated = false;
 let generation = 5n;
 let saved: C.Presentation | undefined;
@@ -97,13 +108,13 @@ try {
     if (operation === 'whoami') return reply(route, C.Identity.jsonCodec(), identity, 200);
     assert.equal(request.headers()['x-ontology-actor'], human.id);
     if (operation === 'scopes') {
-      const a = new C.ScopeSummary('a', generation, 2n, 2n, C.CurationState.Idle, undefined, generation);
+      const a = new C.ScopeSummary('a', generation, 3n, 3n, C.CurationState.Idle, undefined, generation);
       const b = new C.ScopeSummary('b', 0n, 0n, 0n, C.CurationState.Idle, undefined, 0n);
       return reply(route, C.ScopesResult.jsonCodec(), new C.ScopesResult([a, b]), 200);
     }
     if (operation === 'status') {
       const input = decode(C.ScopeRequest.jsonCodec(), data);
-      return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus(input.scope, input.scope === 'a' ? generation : 0n, input.scope === 'a' ? 2n : 0n, input.scope === 'a' ? 2n : 0n, C.CurationState.Idle, undefined), 200);
+      return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus(input.scope, input.scope === 'a' ? generation : 0n, input.scope === 'a' ? 3n : 0n, input.scope === 'a' ? 3n : 0n, C.CurationState.Idle, undefined), 200);
     }
     if (operation === 'read') {
       const input = decode(C.ReadRequest.jsonCodec(), data);
@@ -130,11 +141,12 @@ try {
     }
     if (operation === 'sources') {
       const input = decode(C.SourceRequest.jsonCodec(), data);
-      return reply(route, C.SourceResult.jsonCodec(), new C.SourceResult(input.scope, input.scope === 'a' ? [sourceEvent, absentEvent] : [], input.scope === 'a' ? 2n : 0n, undefined), 200);
+      return reply(route, C.SourceResult.jsonCodec(), new C.SourceResult(input.scope, input.scope === 'a' ? [sourceEvent, absentEvent, executionEvent] : [], input.scope === 'a' ? 3n : 0n, undefined), 200);
     }
     if (operation === 'present') {
       const input = decode(C.PresentRequest.jsonCodec(), data);
-      const reserved = ref(140 + preparedCount);
+      const reserved = ref(reservedPresentationBase + preparedCount);
+      assert(!records.some(record => record.value.ref.id === reserved.id), 'Fixture reservation must remain unpublished');
       const choices: C.PresentedSelection[] = [];
       const adoptionTargets: C.Ref[] = [];
       for (const target of input.targets) {
@@ -194,6 +206,11 @@ try {
   await recordRegion.getByText('Recorded gate evidence', { exact: true }).waitFor();
   await recordRegion.getByText('Selected-contract witnesses', { exact: true }).waitFor();
   receipts.push('assessment use remains qualified and gate evidence roles stay separate');
+  const planEdge = recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Relation · Requires', exact: true }) }).filter({ hasText: 'Plan-specific condition' });
+  await planEdge.getByText('Plan requirement work context', { exact: true }).waitFor();
+  await planEdge.getByText('plan-A', { exact: true }).waitFor();
+  await planEdge.getByText('Selection is not readiness or permission.', { exact: false }).waitFor();
+  receipts.push('plan requirement work context and selection qualifications are explicit');
   await recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Intent · Outcome', exact: true }) }).getByLabel('Include exact revision in review', { exact: true }).check();
   await page.getByRole('button', { name: 'Prepare exact presentation', exact: true }).click();
   await page.getByRole('heading', { name: 'Presented snapshot', exact: true }).waitFor();
@@ -296,6 +313,19 @@ try {
   await page.getByRole('region', { name: 'Captured sources', exact: true }).locator('details').filter({ hasText: 'Reported absence' }).locator(':scope > summary').click();
   await page.getByText('Reported file absence', { exact: true }).waitFor();
   receipts.push('source representation, unknown lineage and typed absence remain inspectable');
+  await page.getByText(/ToolOutput · frontier 3/).click();
+  const execution = page.getByRole('region', { name: 'Captured sources', exact: true }).locator('details.record-card').filter({ hasText: 'Synthetic execution account' });
+  const inputs = execution.locator('.ref-group').filter({ has: page.getByRole('heading', { name: 'Execution input artifacts', exact: true }) });
+  const outputs = execution.locator('.ref-group').filter({ has: page.getByRole('heading', { name: 'Execution output artifacts', exact: true }) });
+  await inputs.getByRole('button', { name: `Inspect exact revision ${id(180)}@1`, exact: true }).waitFor();
+  await outputs.getByRole('button', { name: `Inspect exact revision ${id(181)}@1`, exact: true }).waitFor();
+  await execution.getByText('No (reported)', { exact: true }).waitFor();
+  await execution.locator('dl > div').filter({ has: page.getByText('Exit code', { exact: true }) }).getByText('Not recorded', { exact: true }).waitFor();
+  await outputs.getByRole('button', { name: `Inspect exact revision ${id(181)}@1`, exact: true }).click();
+  const outputInspection = page.getByRole('dialog', { name: 'Inspect exact historical reference', exact: true });
+  await outputInspection.getByText('Synthetic output artifact', { exact: true }).waitFor();
+  await outputInspection.getByRole('button', { name: 'Close', exact: true }).click();
+  receipts.push('execution inputs and outputs remain separate with incomplete and unknown-exit qualifications');
   await recordRegion.getByText('fixture-session', { exact: true }).waitFor();
   await recordRegion.getByText('Reported native context — not independently observed', { exact: true }).waitFor();
   await recordRegion.getByRole('button', { name: `Inspect exact revision ${id(91)}@1`, exact: true }).click();

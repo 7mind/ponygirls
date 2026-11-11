@@ -112,6 +112,9 @@ final class AdmissionEngine {
     val newSelections = graph.selections.drop(base.selections.size).map(_.ref).toSet
     Selections.latest(graph).filter(value => newSelections.contains(value.ref) && value.selected).foreach(value => Graph.validateSelectedBinding(graph, Graph.binding(graph, value.binding)))
     graph.events.drop(base.events.size).filter(e => Gates.requiresWarrant(e.phase)).foreach(Gates.validateEvent(graph, _))
+    val newRelations = graph.relations.drop(base.relations.size).map(_.ref).toSet
+    Graph.relations(graph).filter(value => newRelations.contains(value.ref) && value.standing == Standing.Active && PlanRequirements.isPlan(value))
+      .foreach(PlanRequirements.validateAdmission(graph, _))
     Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(request.scope, request.requestId, Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
   }
 
@@ -131,7 +134,16 @@ final class AdmissionEngine {
             d.event.foreach { e => Require(Graph.event(g, e).subject == b.ref && d.applicability.trim.nonEmpty, "detail", "historical event/applicability mismatch") }
           case _ => throw Fault("detail", "dependency gate/consumption required")
         }
-      case RelationKind.Requires => task(r.sources.head); Graph.binding(g, r.targets.head); empty(r)
+      case RelationKind.Requires =>
+        Graph.binding(g, r.targets.head)
+        Graph.node(g, r.sources.head).content match {
+          case _: Content.Task => empty(r)
+          case _: Content.Decision => r.detail match {
+            case value: RelationDetail.PlanRequirement => Require(value.workContext.trim.nonEmpty, "detail", "plan requirement work context required")
+            case _ => throw Fault("detail", "Decision requirement must name its work context")
+          }
+          case _ => throw Fault("kind", "requirement source must be a Task or selected Decision plan")
+        }
       case RelationKind.Decomposes =>
         Require(r.detail.isInstanceOf[RelationDetail.Decomposition], "detail", "decomposition meaning required")
         (r.sources ++ r.targets).foreach(x => Graph.node(g, x))
@@ -151,8 +163,27 @@ final class AdmissionEngine {
         Require(g.definitions.exists(d => d.ref == r.targets.head && !d.content.isInstanceOf[Content.Source] && !d.content.isInstanceOf[Content.Artifact]), "kind", "planned output requires an intended definition, not a produced artifact or actor")
         empty(r)
       case RelationKind.Produced =>
-        Require(Graph.event(g, r.sources.head).phase == Phase.Completed, "kind", "produced source must describe completed work")
-        Require(Graph.node(g, r.targets.head).content.isInstanceOf[Content.Artifact], "kind", "produced target must be captured artifact"); empty(r)
+        Require(Graph.node(g, r.targets.head).content.isInstanceOf[Content.Artifact], "kind", "produced target must be captured artifact")
+        g.events.find(_.ref == r.sources.head) match {
+          case Some(event) => Require(event.phase == Phase.Completed, "kind", "produced state source must describe completed work")
+          case None =>
+            val source = Graph.node(g, r.sources.head)
+            source.content match {
+              case value: Content.Source => value.descriptor match {
+                case primary: SourceDescriptor.PrimaryCapture =>
+                  Require(source.provenance.contributor.kind == ActorKind.Service && primary.origin == EventOrigin.ToolOutput &&
+                    primary.metadata.representation == SourceRepresentation.HostReceipt && primary.reviewResponse.isEmpty,
+                    "kind", "protected execution capture required")
+                  primary.observation match {
+                    case execution: Observation.Execution => Require(execution.outputs.contains(r.targets.head), "produced-output", "artifact was not recorded as this execution's output")
+                    case _ => throw Fault("kind", "execution observation required")
+                  }
+                case _ => throw Fault("kind", "derived presentation is not an execution capture")
+              }
+              case _ => throw Fault("kind", "produced source must be completed work or a captured execution")
+            }
+        }
+        empty(r)
       case RelationKind.Assesses =>
         r.targets.foreach(x => Graph.binding(g, x))
         Graph.node(g, r.sources.head).content match {

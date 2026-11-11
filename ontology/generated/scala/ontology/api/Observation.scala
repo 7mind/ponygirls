@@ -232,7 +232,8 @@ package ontology.api {
       action: String,
       checker: String,
       contract: Option[Ref],
-      artifacts: List[Ref],
+      inputs: List[Ref],
+      outputs: List[Ref],
       exitCode: Option[Int],
       complete: Boolean
     ) extends Observation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -271,7 +272,8 @@ package ontology.api {
           "action" -> Json.fromString(value.action),
           "checker" -> Json.fromString(value.checker),
           "contract" -> value.contract.map(v => Ref_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
-          "artifacts" -> Json.fromValues(value.artifacts.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
+          "inputs" -> Json.fromValues(value.inputs.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
+          "outputs" -> Json.fromValues(value.outputs.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
           "exitCode" -> value.exitCode.map(v => Json.fromInt(v)).getOrElse(Json.Null),
           "complete" -> Json.fromBoolean(value.complete)
         )
@@ -287,10 +289,11 @@ package ontology.api {
               action <- getField(jsonObject, "action").flatMap(v => decodeString(v.hcursor))
               checker <- getField(jsonObject, "checker").flatMap(v => decodeString(v.hcursor))
               contract <- getField(jsonObject, "contract").flatMap(v => decodeOption(Ref_JsonCodec.circeDecoder)(v.hcursor))
-              artifacts <- getField(jsonObject, "artifacts").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
+              inputs <- getField(jsonObject, "inputs").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
+              outputs <- getField(jsonObject, "outputs").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
               exitCode <- getField(jsonObject, "exitCode").flatMap(v => decodeOption(BaboonJsonCodec.decodeInt)(v.hcursor))
               complete <- getField(jsonObject, "complete").flatMap(v => decodeBoolean(v.hcursor))
-            } yield Observation.Execution(action,checker,contract,artifacts,exitCode,complete)
+            } yield Observation.Execution(action,checker,contract,inputs,outputs,exitCode,complete)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to Execution: object expected"))
         }
       }
