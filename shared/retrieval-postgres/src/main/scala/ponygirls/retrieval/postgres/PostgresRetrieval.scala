@@ -217,7 +217,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
   }
   private[postgres] def plan(c: Connection,query: RetrievalQuery,vector: Option[List[Double]]): RetrievalPlan = {
     transaction(c)
-    RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.limit<=100 && query.filters.size<=PostgresRetrieval.MaxFilters,"invalid","invalid retrieval query")
+    RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.filters.size<=PostgresRetrieval.MaxFilters,"invalid","invalid retrieval query")
     val semantic=query.mode!=RetrievalMode.Lexical
     RetrievalChecks(!semantic || query.offset<CandidatePolicy.rankingLimit(query.mode),"invalid","offset exceeds candidate ranking window")
     val (scope,scopeArgs)=authorization(query)

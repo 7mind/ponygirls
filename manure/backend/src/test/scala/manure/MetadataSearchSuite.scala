@@ -55,6 +55,23 @@ final class MetadataSearchSuite extends FunSuite:
             _ <- IO(assertEquals(invalid.left.toOption.collect { case error: DomainError => error.code },Some("bad-envelope")))
           yield ()
         }
+        _ <- wire.SearchMode.all.traverse_ { mode =>
+          val query=wire.SearchQuery("needle",mode,wire.SearchFilter(None,None,None,Nil,None,None),f.config.limits.maxListLimit,None)
+          for
+            page <- search.query(f.other,query,f.config.apiOrigin)
+            _ <- IO {
+              assertEquals(f.config.limits.maxListLimit,200)
+              assertEquals(page.total,2L)
+              assertEquals(page.hits.map(_.artifact.artifactId).toSet,Set(ready.id,excluded.id))
+            }
+            rejected <- search.query(f.other,query.copy(limit=query.limit+1),f.config.apiOrigin).attempt
+            _ <- IO(assertEquals(rejected.left.toOption.collect { case error: DomainError => error.code },Some("bad-envelope")))
+            expandedConfig=f.config.copy(limits=f.config.limits.copy(maxListLimit=201))
+            expanded=new Search(f.database.get,f.lease,expandedConfig,f.auth,f.clock,engine,projection,Some(embedding))
+            larger <- expanded.query(f.other,query.copy(limit=201),f.config.apiOrigin)
+            _ <- IO(assertEquals(larger.hits.map(_.artifact.artifactId).toSet,Set(ready.id,excluded.id)))
+          yield ()
+        }
         _ <- IO {
           val longTag="𐀀"*128
           val key=AttributeKey.parse(projection.tagKey(longTag))

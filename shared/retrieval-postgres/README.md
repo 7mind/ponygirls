@@ -17,6 +17,10 @@ Worker calls (separate short DB transactions):
 
 There is no exactly-once provider call promise: response-before-commit crashes can repeat a call. Source/profile/fence/lease checks prevent stale publication. Old publication survives source/profile rebuild until complete replacement. Profile identity includes corpus policy: same vector space is NOT implicit policy compatibility; a new policy cannot serve old-policy snippets. A request with visible missing/incompatible publication returns typed unavailable (not a misleading empty complete result). Explicit same-version restoration after remove enqueues a fresh generation.
 
+Page limits must be positive; the caller owns its API/configuration ceiling. The
+adapter binds the requested limit without imposing another page ceiling; ANN
+candidate windows remain independently bounded.
+
 `search(c,query,vector: Option[List[Double]])` uses lexical HEAD exact/unbounded scope or exact profile+embedding-space matched published ANN semantic/hybrid (1000/leg), original-vector exact cosine rerank, RRF k60 and deterministic best-chunk entity grouping. `visible(c,query,id)` supports fresh-transaction delivery-time reauthorization; never relabel pinned hits with new source metadata. Filters are typed bound exact equality, applied before each candidate limit/count. No caller SQL fragments. Model absence or incompatible space is typed unavailable, not fallback.
 
 `IndexingWorker(index,transactions: RetrievalTransactions,embedder,batchSize,leaseSeconds,pollInterval)` exposes `once` and `run`; the narrow transaction trait has `transaction[A](Connection => A): IO[A]`. Heartbeats renew fenced claims; retry/cancel preserves committed batches and never holds JDBC open during provider calls.

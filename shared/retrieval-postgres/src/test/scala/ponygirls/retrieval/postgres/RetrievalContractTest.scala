@@ -92,6 +92,22 @@ abstract class RetrievalContractTest extends munit.FunSuite {
       assertEquals(store.search(query(mode).copy(includeArchived=true)).total,3L)
     }
   }
+  test("Blackbox: caller-owned page limits above 100 preserve selection, offsets and count scope") {
+    val store=fresh()
+    (1 to 201).foreach(i => store.put(source(f"artifact-$i%03d","alpha",Set("reader"))))
+    store.publishAll()
+    List(RetrievalMode.Lexical,RetrievalMode.Semantic,RetrievalMode.Hybrid).foreach { mode =>
+      val page=store.search(query(mode).copy(limit=200))
+      assertEquals(page.hits.size,200); assertEquals(page.total,201L)
+      assertEquals(page.hits.map(_.id).distinct.size,200)
+      val tail=store.search(query(mode).copy(offset=200,limit=200))
+      assertEquals(tail.hits.size,1); assertEquals(tail.total,201L)
+      assertEquals((page.hits ++ tail.hits).map(_.id).toSet,(1 to 201).map(i => f"artifact-$i%03d").toSet)
+      List(201,Int.MaxValue).foreach(limit => assertEquals(store.search(query(mode).copy(limit=limit)).hits.size,201))
+      assertEquals(page.countScope,if(mode==RetrievalMode.Lexical) CountScope.ExactMatches else CountScope.CandidateWindow)
+      assertEquals(page.rankingLimit,if(mode==RetrievalMode.Lexical) None else Some(CandidatePolicy.rankingLimit(mode)))
+    }
+  }
   test("Blackbox: live revocation/delete prevents hydration of previously pinned hit") {
     val store=fresh(); val s=source("one","alpha",Set("reader")); store.put(s); store.publishAll()
     val hit=store.search(query(RetrievalMode.Semantic)).hits.head
@@ -133,6 +149,15 @@ class PostgresRetrievalContractTest extends RetrievalContractTest {
       }
       val overflow=query(mode).copy(filters=filters :+ filters.head)
       assertEquals(intercept[RetrievalError](fixture.store.search(overflow)).code,"invalid")
+    }
+  }
+  test("Blackbox-GoodCommunication: nonpositive page limits remain invalid in every mode") {
+    import ControlledFixtures.*
+    val store=fresh()
+    List(RetrievalMode.Lexical,RetrievalMode.Semantic,RetrievalMode.Hybrid).foreach { mode =>
+      List(0,-1,Int.MinValue).foreach { limit =>
+        assertEquals(intercept[RetrievalError](store.search(query(mode).copy(limit=limit))).code,"invalid")
+      }
     }
   }
   test("BG: legacy endpoint-bound metadata migrates without re-embedding or changing publication and accepted work") {
