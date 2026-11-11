@@ -67,7 +67,7 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
   private def requireGeneration(c: RepositoryConnection, scope: String, expected: Long): Unit =
     Require(generation(c, scope).contains(expected), "projection-lag", "requested graph revision is not projected")
   private def requireScope(snapshot: GraphSnapshot): Unit =
-    Require((snapshot.definitions.map(_.scope) ++ snapshot.relations.map(_.scope) ++ snapshot.bindings.map(_.scope) ++ snapshot.events.map(_.scope)).forall(_ == snapshot.scope), "scope", "projected record scope differs from dataset scope")
+    Require((snapshot.definitions.map(_.scope) ++ snapshot.relations.map(_.scope) ++ snapshot.bindings.map(_.scope) ++ snapshot.events.map(_.scope) ++ snapshot.selections.map(_.scope)).forall(_ == snapshot.scope), "scope", "projected record scope differs from dataset scope")
   def publish(snapshot: GraphSnapshot): IO[Long] = transaction(true) { c =>
     requireScope(snapshot)
     val scope = snapshot.scope
@@ -112,8 +112,9 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
         case GraphRecord.Input(v) => literal("text", v.content); literal("inputKind", v.kind.toString); literal("contributor", v.contributor.id); literal("recorder", v.recorder.id); "input-receipt"
         case GraphRecord.Node(v) => applicability(v.applicability); literal("kind", Graph.kind(v.content)); literal("text", Graph.text(v.content)); literal("standing", v.standing.toString); links("basis", v.basis); provenance(model, scope, subject, v.provenance); "definition"
         case GraphRecord.Edge(v) => applicability(v.applicability); literal("kind", v.kind.toString); literal("text", v.why); literal("standing", v.standing.toString); links("source", v.sources); links("target", v.targets); provenance(model, scope, subject, v.provenance); "relation"
-        case GraphRecord.Contract(v) => links("definition", List(v.definition)); links("context", v.context); provenance(model, scope, subject, v.provenance); "binding"
+        case GraphRecord.Contract(v) => literal("workContext", v.workContext); links("definition", List(v.definition)); links("context", v.context); provenance(model, scope, subject, v.provenance); "binding"
         case GraphRecord.Progress(v) => links("subject", List(v.subject)); links("previous", v.previous.toList); links("evidence", v.evidence); literal("phase", v.phase.toString); provenance(model, scope, subject, v.provenance); "event"
+        case GraphRecord.Selection(v) => links("binding", List(v.binding)); links("basis", v.basis); literal("selected", v.selected.toString); literal("text", v.reason); provenance(model, scope, subject, v.provenance); "binding-selection"
       }
       model.add(subject, RDF.TYPE, values.createIRI("urn:ontology:type:" + category), graph(scope))
     }
@@ -136,7 +137,7 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
     val covered = try frontier.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF coverage") }
     val result = GraphSnapshot(scope, expectedGeneration, covered,
       records.collect { case GraphRecord.Node(v) => v }, records.collect { case GraphRecord.Edge(v) => v },
-      records.collect { case GraphRecord.Contract(v) => v }, records.collect { case GraphRecord.Progress(v) => v }, records.collect { case GraphRecord.Person(v) => v })
+      records.collect { case GraphRecord.Contract(v) => v }, records.collect { case GraphRecord.Progress(v) => v }, records.collect { case GraphRecord.Person(v) => v }, records.collect { case GraphRecord.Selection(v) => v })
     val digest = Digests.text(StoredJson.encode(GraphSnapshot.codecJson, result))
     Require(field(c, scope, "digest").contains(digest), "corrupt", "RDF projection does not match checkpoint")
     val expected = try { requireScope(result); render(result, digest) } catch { case _: Fault => throw Fault("corrupt", "invalid projected records") }
@@ -147,7 +148,7 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
     result
   }
   def subjects(scope: String, expectedGeneration: Long, predicate: String, target: Ref): IO[List[Ref]] = transaction(false) { c =>
-    Require(Set("source", "target", "basis", "definition", "context", "subject", "previous", "evidence", "applicability").contains(predicate), "query", "unknown traversal predicate")
+    Require(Set("source", "target", "basis", "definition", "context", "subject", "previous", "evidence", "applicability", "binding").contains(predicate), "query", "unknown traversal predicate")
     readSnapshot(c, scope, expectedGeneration)
     val query = c.prepareTupleQuery("SELECT ?payload WHERE { GRAPH ?scope { ?record ?predicate ?target ; <urn:ontology:property:payload> ?payload ; <urn:ontology:property:ordinal> ?ordinal } } ORDER BY ?ordinal")
     query.setBinding("scope", graph(scope)); query.setBinding("predicate", property(predicate)); query.setBinding("target", record(scope, target)); query.setMaxExecutionTime(queryDeadlineSeconds)

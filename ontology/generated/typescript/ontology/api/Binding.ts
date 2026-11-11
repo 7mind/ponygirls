@@ -8,13 +8,15 @@ export class Binding implements BaboonGeneratedLatest {
     private readonly _scope: string;
     private readonly _definition: Ref;
     private readonly _context: Array<Ref>;
+    private readonly _workContext: string;
     private readonly _provenance: Provenance;
 
-    constructor(ref: Ref, scope: string, definition: Ref, context: Array<Ref>, provenance: Provenance) {
+    constructor(ref: Ref, scope: string, definition: Ref, context: Array<Ref>, workContext: string, provenance: Provenance) {
         this._ref = ref
         this._scope = scope
         this._definition = definition
         this._context = context
+        this._workContext = workContext
         this._provenance = provenance
     }
 
@@ -30,6 +32,9 @@ export class Binding implements BaboonGeneratedLatest {
     public get context(): Array<Ref> {
         return this._context;
     }
+    public get workContext(): string {
+        return this._workContext;
+    }
     public get provenance(): Provenance {
         return this._provenance;
     }
@@ -40,26 +45,29 @@ export class Binding implements BaboonGeneratedLatest {
             scope: this._scope,
             definition: this._definition,
             context: this._context,
+            workContext: this._workContext,
             provenance: this._provenance
         };
     }
 
-    public with(overrides: {ref?: Ref; scope?: string; definition?: Ref; context?: Array<Ref>; provenance?: Provenance}): Binding {
+    public with(overrides: {ref?: Ref; scope?: string; definition?: Ref; context?: Array<Ref>; workContext?: string; provenance?: Provenance}): Binding {
         return new Binding(
             'ref' in overrides ? overrides.ref! : this._ref,
             'scope' in overrides ? overrides.scope! : this._scope,
             'definition' in overrides ? overrides.definition! : this._definition,
             'context' in overrides ? overrides.context! : this._context,
+            'workContext' in overrides ? overrides.workContext! : this._workContext,
             'provenance' in overrides ? overrides.provenance! : this._provenance
         );
     }
 
-    public static fromPlain(obj: {ref: Ref; scope: string; definition: Ref; context: Array<Ref>; provenance: Provenance}): Binding {
+    public static fromPlain(obj: {ref: Ref; scope: string; definition: Ref; context: Array<Ref>; workContext: string; provenance: Provenance}): Binding {
         return new Binding(
             obj.ref,
             obj.scope,
             obj.definition,
             obj.context,
+            obj.workContext,
             obj.provenance
         );
     }
@@ -104,6 +112,7 @@ export class Binding_JsonCodec {
             "scope": value.scope,
             "definition": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.definition),
             "context": Array.from(value.context).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "workContext": value.workContext,
             "provenance": Provenance_JsonCodec.instance.encode(BaboonCodecContext.Default, value.provenance),
         }
     }
@@ -118,6 +127,7 @@ export class Binding_JsonCodec {
             obj["scope"] as string,
             Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["definition"]),
             (obj["context"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            obj["workContext"] as string,
             Provenance_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["provenance"]),
         )
     }

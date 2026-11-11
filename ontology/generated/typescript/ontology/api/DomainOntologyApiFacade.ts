@@ -19,6 +19,7 @@ import { ApplyRequest, ApplyRequest_JsonCodec } from './ApplyRequest.js';
 import { ApplyResult, ApplyResult_JsonCodec } from './ApplyResult.js';
 import { Assessment, Assessment_JsonCodec } from './Assessment.js';
 import { Binding, Binding_JsonCodec } from './Binding.js';
+import { BindingSelection, BindingSelection_JsonCodec } from './BindingSelection.js';
 import { Capability, Capability_JsonCodec } from './Capability.js';
 import { Capsule, Capsule_JsonCodec } from './Capsule.js';
 import { CapsuleRequest, CapsuleRequest_JsonCodec } from './CapsuleRequest.js';
@@ -109,6 +110,7 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(ApplyResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ApplyResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Assessment_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Assessment_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Binding_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Binding_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(BindingSelection_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => BindingSelection_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Capability_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Capability_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Capsule_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Capsule_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CapsuleRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -212,6 +214,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ApplyResult": ['0.1.0'],
         "ontology.api/:#Assessment": ['0.1.0'],
         "ontology.api/:#Binding": ['0.1.0'],
+        "ontology.api/:#BindingSelection": ['0.1.0'],
         "ontology.api/:#Capability": ['0.1.0'],
         "ontology.api/:#Capsule": ['0.1.0'],
         "ontology.api/:#CapsuleRequest": ['0.1.0'],
@@ -319,6 +322,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#GraphRecord]#Node": ['0.1.0'],
         "ontology.api/[ontology.api/:#GraphRecord]#Person": ['0.1.0'],
         "ontology.api/[ontology.api/:#GraphRecord]#Progress": ['0.1.0'],
+        "ontology.api/[ontology.api/:#GraphRecord]#Selection": ['0.1.0'],
         "ontology.api/[ontology.api/:#Observation]#Execution": ['0.1.0'],
         "ontology.api/[ontology.api/:#Observation]#FileAbsent": ['0.1.0'],
         "ontology.api/[ontology.api/:#Observation]#FileVersion": ['0.1.0'],
@@ -328,6 +332,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#Operation]#Relate": ['0.1.0'],
         "ontology.api/[ontology.api/:#Operation]#Revise": ['0.1.0'],
         "ontology.api/[ontology.api/:#Operation]#ReviseRelation": ['0.1.0'],
+        "ontology.api/[ontology.api/:#Operation]#SelectBinding": ['0.1.0'],
         "ontology.api/[ontology.api/:#Operation]#State": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": ['0.1.0'],
@@ -359,6 +364,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ApplyResult": { '0.1.0': 'identical' },
         "ontology.api/:#Assessment": { '0.1.0': 'identical' },
         "ontology.api/:#Binding": { '0.1.0': 'identical' },
+        "ontology.api/:#BindingSelection": { '0.1.0': 'identical' },
         "ontology.api/:#Capability": { '0.1.0': 'identical' },
         "ontology.api/:#Capsule": { '0.1.0': 'identical' },
         "ontology.api/:#CapsuleRequest": { '0.1.0': 'identical' },
@@ -466,6 +472,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#GraphRecord]#Node": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#GraphRecord]#Person": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#GraphRecord]#Progress": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#GraphRecord]#Selection": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Observation]#Execution": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Observation]#FileAbsent": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Observation]#FileVersion": { '0.1.0': 'identical' },
@@ -475,6 +482,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#Operation]#Relate": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Operation]#Revise": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Operation]#ReviseRelation": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#Operation]#SelectBinding": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Operation]#State": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": { '0.1.0': 'identical' },

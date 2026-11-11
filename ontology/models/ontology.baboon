@@ -57,7 +57,8 @@ adt RelationDetail {
 }
 data Definition { ref: Ref scope: str applicability: Applicability content: Content standing: Standing basis: lst[Ref] changeReason: opt[str] provenance: Provenance }
 data Relation { ref: Ref scope: str applicability: Applicability kind: RelationKind sources: lst[Ref] targets: lst[Ref] detail: RelationDetail why: str standing: Standing provenance: Provenance }
-data Binding { ref: Ref scope: str definition: Ref context: lst[Ref] provenance: Provenance }
+data Binding { ref: Ref scope: str definition: Ref context: lst[Ref] workContext: str provenance: Provenance }
+data BindingSelection { ref: Ref scope: str binding: Ref selected: bit reason: str basis: lst[Ref] provenance: Provenance }
 enum Phase { Planned Active Blocked Completed Cancelled Open Resolved }
 enum Resolution { Fulfilled NotFulfilled Inconclusive }
 data StateEvent { ref: Ref scope: str subject: Ref previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Ref] uncertainty: str provenance: Provenance }
@@ -93,16 +94,17 @@ adt Operation {
  data Revise { alias: str ref: Ref applicability: ApplicabilityInput content: ContentInput standing: Standing basis: lst[Target] reason: str }
  data Relate { alias: str applicability: ApplicabilityInput kind: RelationKind sources: lst[Target] targets: lst[Target] detail: RelationDetailInput why: str }
  data ReviseRelation { alias: str ref: Ref applicability: ApplicabilityInput sources: lst[Target] targets: lst[Target] detail: RelationDetailInput why: str standing: Standing }
- data Bind { alias: str definition: Target context: lst[Target] }
+ data Bind { alias: str definition: Target context: lst[Target] workContext: str }
+ data SelectBinding { alias: str binding: Target selected: bit reason: str basis: lst[Target] }
  data State { alias: str subject: Target previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Target] uncertainty: str }
 }
 root data ApplyRequest { scope: str requestId: uid expectedGeneration: i64 operations: lst[Operation] }
 data AliasRef { alias: str ref: Ref }
 root data ApplyResult { scope: str requestId: uid generation: i64 created: lst[AliasRef] replayed: bit }
-root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] }
+root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] selections: lst[BindingSelection] }
 enum ReadView { Current History BindingContext }
 root data ReadRequest { scope: str view: ReadView targets: lst[Ref] cursor: opt[str] limit: i32 }
-adt GraphRecord { data Input { value: InputReceipt } data Person { value: ActorRecord } data Node { value: Definition } data Edge { value: Relation } data Contract { value: Binding } data Progress { value: StateEvent } }
+adt GraphRecord { data Input { value: InputReceipt } data Person { value: ActorRecord } data Node { value: Definition } data Edge { value: Relation } data Contract { value: Binding } data Progress { value: StateEvent } data Selection { value: BindingSelection } }
 root data ReadResult { scope: str generation: i64 records: lst[GraphRecord] cursor: opt[str] }
 enum DefinitionKind { Outcome Constraint Task Statement Hypothesis Defect Question Decision Review Source Artifact Conflict }
 root data FindRequest { scope: str kind: opt[DefinitionKind] query: str cursor: opt[str] limit: i32 }

@@ -33,6 +33,25 @@ abstract class RdfProjectionContract extends FunSuite {
       _ = assertEquals(restored, graph)
     } yield ()
   } }
+  test("binding work context and full selection history survive projection and traversal") { check { rdf =>
+    val base = sample("s")
+    val id = UUID.randomUUID()
+    val definition = base.definitions.head.ref
+    val ops = List(
+      Operation.Bind("binding", Target.Exact(definition), Nil, "declared-work-context"),
+      Operation.SelectBinding("selected", Target.Created("binding"), true, "Selected context", List(Target.Exact(definition))),
+      Operation.SelectBinding("retired", Target.Created("binding"), false, "Retired context, not cancelled work", List(Target.Exact(definition))))
+    val graph = new AdmissionEngine().apply(base, ApplyRequest("s", id, base.generation, ops), Admission(Actor("agent", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now")).snapshot
+    for {
+      _ <- rdf.publish(graph)
+      restored <- rdf.snapshot("s", graph.generation)
+      _ = assertEquals(restored, graph)
+      linked <- rdf.subjects("s", graph.generation, "binding", graph.bindings.head.ref)
+      _ = assertEquals(linked, graph.selections.map(_.ref))
+      bad <- rdf.publish(graph.copy(generation = graph.generation + 1L, selections = graph.selections.map(_.copy(scope = "other")))).attempt
+      _ = assertEquals(bad.left.toOption.collect { case f: Fault => f.code }, Some("scope"))
+    } yield ()
+  } }
   test("same revision is idempotent, changed bytes conflict, old revisions cannot regress head") { check { rdf =>
     val first = sample("s"); val next = first.copy(generation = 2L)
     for {

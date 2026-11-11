@@ -11,7 +11,8 @@ package ontology.api {
     relations: List[Relation],
     bindings: List[Binding],
     events: List[StateEvent],
-    actors: List[ActorRecord]
+    actors: List[ActorRecord],
+    selections: List[BindingSelection]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = GraphSnapshot.baboonDomainVersion
     override def baboonDomainIdentifier: String = GraphSnapshot.baboonDomainIdentifier
@@ -48,7 +49,8 @@ package ontology.api {
         "relations" -> Json.fromValues(value.relations.map(e => Relation_JsonCodec.instance.encode(ctx, e))),
         "bindings" -> Json.fromValues(value.bindings.map(e => Binding_JsonCodec.instance.encode(ctx, e))),
         "events" -> Json.fromValues(value.events.map(e => StateEvent_JsonCodec.instance.encode(ctx, e))),
-        "actors" -> Json.fromValues(value.actors.map(e => ActorRecord_JsonCodec.instance.encode(ctx, e)))
+        "actors" -> Json.fromValues(value.actors.map(e => ActorRecord_JsonCodec.instance.encode(ctx, e))),
+        "selections" -> Json.fromValues(value.selections.map(e => BindingSelection_JsonCodec.instance.encode(ctx, e)))
       )
     }
     
@@ -67,7 +69,8 @@ package ontology.api {
             bindings <- getField(jsonObject, "bindings").flatMap(v => decodeList(Binding_JsonCodec.circeDecoder)(v.hcursor))
             events <- getField(jsonObject, "events").flatMap(v => decodeList(StateEvent_JsonCodec.circeDecoder)(v.hcursor))
             actors <- getField(jsonObject, "actors").flatMap(v => decodeList(ActorRecord_JsonCodec.circeDecoder)(v.hcursor))
-          } yield GraphSnapshot(scope,generation,coveredFrontier,definitions,relations,bindings,events,actors)
+            selections <- getField(jsonObject, "selections").flatMap(v => decodeList(BindingSelection_JsonCodec.circeDecoder)(v.hcursor))
+          } yield GraphSnapshot(scope,generation,coveredFrontier,definitions,relations,bindings,events,actors,selections)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to GraphSnapshot: object expected"))
       }
     }

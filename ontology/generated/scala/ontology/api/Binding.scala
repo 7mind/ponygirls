@@ -8,6 +8,7 @@ package ontology.api {
     scope: String,
     definition: Ref,
     context: List[Ref],
+    workContext: String,
     provenance: Provenance
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = Binding.baboonDomainVersion
@@ -42,6 +43,7 @@ package ontology.api {
         "scope" -> Json.fromString(value.scope),
         "definition" -> Ref_JsonCodec.instance.encode(ctx, value.definition),
         "context" -> Json.fromValues(value.context.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
+        "workContext" -> Json.fromString(value.workContext),
         "provenance" -> Provenance_JsonCodec.instance.encode(ctx, value.provenance)
       )
     }
@@ -57,8 +59,9 @@ package ontology.api {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             definition <- getField(jsonObject, "definition").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
             context <- getField(jsonObject, "context").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
+            workContext <- getField(jsonObject, "workContext").flatMap(v => decodeString(v.hcursor))
             provenance <- getField(jsonObject, "provenance").flatMap(v => Provenance_JsonCodec.circeDecoder(v.hcursor))
-          } yield Binding(ref,scope,definition,context,provenance)
+          } yield Binding(ref,scope,definition,context,workContext,provenance)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Binding: object expected"))
       }
     }

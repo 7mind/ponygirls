@@ -43,7 +43,9 @@ const metadata = new C.CaptureMetadata('fixture-entry', undefined, undefined, C.
 const sourceText = 'Keep the audit trail. This is controlled test content, not a Human study.';
 const source = C.Definition.fromPlain({ ref: ref(20), scope: 'a', applicability: new C.Applicability_Captured(ref(20)), content: C.Content_Source.fromPlain({ text: sourceText, context: [], rawDigest: digest(sourceText), eventId: id(20), sourceNamespace: 'fixture-collector', captureContext: context, metadata, origin: C.EventOrigin.UserMessage, observation: new C.Observation_None() }), standing: C.Standing.Active, basis: [], changeReason: undefined, provenance: provenance(unknown, 91) });
 const goal = C.Definition.fromPlain({ ref: ref(1), scope: 'a', applicability: new C.Applicability_Unresolved('Fixture has not established semantic applicability', [], []), content: C.Content_Outcome.fromPlain({ text: 'Preserve the audit trail', acceptance: new C.Acceptance(['Retain evidence and unresolved intent'], undefined), force: C.Force.Required }), standing: C.Standing.Active, basis: [source.ref], changeReason: undefined, provenance: provenance(agent, 90) });
-const records = [new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source)];
+const contract = new C.Binding(ref(30), 'a', goal.ref, [], 'worker-fixture', provenance(agent, 90));
+const selected = new C.BindingSelection(ref(31), 'a', contract.ref, true, 'Explicit synthetic contract selection', [goal.ref], provenance(agent, 90));
+const records: C.GraphRecord[] = [new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected)];
 const sourceEvent = C.CapturedEvent.fromPlain({ id: id(20), scope: 'a', sourceNamespace: 'fixture-collector', frontier: 1n, context, origin: C.EventOrigin.UserMessage, metadata, text: sourceText, observation: new C.Observation_None(), provenance: source.provenance });
 const absentEvent = C.CapturedEvent.fromPlain({ id: id(22), scope: 'a', sourceNamespace: 'fixture-host', frontier: 2n, context, origin: C.EventOrigin.ToolOutput, metadata: new C.CaptureMetadata('absence-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic witness, not a physical measurement'], []), text: 'Reported absence', observation: new C.Observation_FileAbsent('report.txt', 2n), provenance: provenance(host, 92) });
 const identity = new C.Identity(human, ['a', 'b'], [C.Capability.Read, C.Capability.Review]);
@@ -152,7 +154,10 @@ try {
   await page.getByLabel('Host-issued token', { exact: true }).fill(Buffer.alloc(32, 8).toString('base64url'));
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('combobox', { name: 'Authorized scope', exact: true }).selectOption('a');
-  await page.getByRole('region', { name: 'Ontology records', exact: true }).locator('article.record-card').filter({ has: page.getByRole('button', { name: `Inspect exact revision ${id(1)}@1`, exact: true }) }).getByLabel('Include exact revision in review', { exact: true }).check();
+  const recordRegion = page.getByRole('region', { name: 'Ontology records', exact: true });
+  await recordRegion.getByRole('heading', { name: 'Selection event · selected', exact: true }).waitFor();
+  await recordRegion.getByText('worker-fixture', { exact: true }).waitFor();
+  await recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Intent · Outcome', exact: true }) }).getByLabel('Include exact revision in review', { exact: true }).check();
   await page.getByRole('button', { name: 'Prepare exact presentation', exact: true }).click();
   await page.getByRole('heading', { name: 'Presented snapshot', exact: true }).waitFor();
   const rationale = page.getByRole('textbox', { name: 'Rationale', exact: true });

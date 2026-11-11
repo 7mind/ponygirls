@@ -14,7 +14,7 @@ final case class Admission(actor: Actor, recorder: Actor, requestId: UUID, recor
 }
 final case class Applied(snapshot: GraphSnapshot, result: ApplyResult)
 object Graph {
-  def empty(scope: String): GraphSnapshot = GraphSnapshot(scope, 0L, 0L, Nil, Nil, Nil, Nil, Nil)
+  def empty(scope: String): GraphSnapshot = GraphSnapshot(scope, 0L, 0L, Nil, Nil, Nil, Nil, Nil, Nil)
   def text(c: Content): String = c match {
     case x: Content.Outcome => x.text
     case x: Content.Constraint => x.text
@@ -49,18 +49,22 @@ object Graph {
   def relation(g: GraphSnapshot, r: Ref): Relation = g.relations.find(_.ref == r).getOrElse(throw Fault("reference", "relation not found in scope"))
   def definitions(g: GraphSnapshot): List[Definition] = g.definitions.groupBy(_.ref.id).values.map(_.maxBy(_.ref.revision)).toList.sortBy(_.ref.id.toString)
   def relations(g: GraphSnapshot): List[Relation] = g.relations.groupBy(_.ref.id).values.map(_.maxBy(_.ref.revision)).toList.sortBy(_.ref.id.toString)
-  def current(g: GraphSnapshot, r: Ref): Boolean = definitions(g).exists(_.ref == r) || relations(g).exists(_.ref == r) || g.bindings.exists(_.ref == r) || g.events.exists(_.ref == r) || g.actors.exists(_.ref == r)
-  def exists(g: GraphSnapshot, r: Ref): Boolean = g.definitions.exists(_.ref == r) || g.relations.exists(_.ref == r) || g.bindings.exists(_.ref == r) || g.events.exists(_.ref == r) || g.actors.exists(_.ref == r)
+  def current(g: GraphSnapshot, r: Ref): Boolean = definitions(g).exists(_.ref == r) || relations(g).exists(_.ref == r) || g.bindings.exists(_.ref == r) || g.events.exists(_.ref == r) || g.actors.exists(_.ref == r) || Selections.latest(g).exists(_.ref == r)
+  def exists(g: GraphSnapshot, r: Ref): Boolean = g.definitions.exists(_.ref == r) || g.relations.exists(_.ref == r) || g.bindings.exists(_.ref == r) || g.events.exists(_.ref == r) || g.actors.exists(_.ref == r) || g.selections.exists(_.ref == r)
   def latestEvent(g: GraphSnapshot, subject: Ref): Option[StateEvent] = g.events.filter(_.subject == subject).lastOption
   def governing(k: RelationKind): Boolean = Set(RelationKind.DependsOn, RelationKind.Requires, RelationKind.AssignedTo, RelationKind.PlannedOutput).contains(k)
   def context(g: GraphSnapshot, d: Ref): List[Ref] = relations(g).filter(r => r.standing == Standing.Active && governing(r.kind) && r.sources.exists(_.id == d.id)).map(_.ref)
-  def validateBinding(g: GraphSnapshot, b: Binding): Unit = {
+  def validateBinding(g: GraphSnapshot, b: Binding): Unit = validateBindings(g, b, false)
+  def validateSelectedBinding(g: GraphSnapshot, b: Binding): Unit = validateBindings(g, b, true)
+  private def validateBindings(g: GraphSnapshot, b: Binding, selected: Boolean): Unit = {
     var pending = List(b)
     var visited = Set.empty[Ref]
     while (pending.nonEmpty) {
       val item = pending.head; pending = pending.tail
       if (!visited.contains(item.ref)) {
         visited += item.ref
+        Require(item.workContext.trim.nonEmpty, "context", "declared work context required")
+        if (selected) Require(Selections.selected(g, item), "unselected-context", "binding is not selected in its work context")
         val d = node(g, item.definition)
         Require(definitions(g).exists(x => x.ref == d.ref && x.standing == Standing.Active), "stale-context", "definition is not active current content")
         Require(context(g, d.ref).forall(item.context.contains), "missing-context", "governing relations missing from binding")
@@ -97,6 +101,6 @@ object Graph {
       case _ => ()
     }
   }
-  def records(g: GraphSnapshot): List[GraphRecord] = g.actors.map(GraphRecord.Person(_)) ++ g.definitions.map(GraphRecord.Node(_)) ++ g.relations.map(GraphRecord.Edge(_)) ++ g.bindings.map(GraphRecord.Contract(_)) ++ g.events.map(GraphRecord.Progress(_))
-  def recordRef(r: GraphRecord): Ref = r match { case GraphRecord.Input(v) => v.ref; case GraphRecord.Person(v) => v.ref; case GraphRecord.Node(v) => v.ref; case GraphRecord.Edge(v) => v.ref; case GraphRecord.Contract(v) => v.ref; case GraphRecord.Progress(v) => v.ref }
+  def records(g: GraphSnapshot): List[GraphRecord] = g.actors.map(GraphRecord.Person(_)) ++ g.definitions.map(GraphRecord.Node(_)) ++ g.relations.map(GraphRecord.Edge(_)) ++ g.bindings.map(GraphRecord.Contract(_)) ++ g.events.map(GraphRecord.Progress(_)) ++ g.selections.map(GraphRecord.Selection(_))
+  def recordRef(r: GraphRecord): Ref = r match { case GraphRecord.Input(v) => v.ref; case GraphRecord.Person(v) => v.ref; case GraphRecord.Node(v) => v.ref; case GraphRecord.Edge(v) => v.ref; case GraphRecord.Contract(v) => v.ref; case GraphRecord.Progress(v) => v.ref; case GraphRecord.Selection(v) => v.ref }
 }

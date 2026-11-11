@@ -66,7 +66,7 @@ final class GraphQueriesSuite extends FunSuite {
     val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
     val task = Content.Task("Original", Acceptance(List("accepted behavior"), None), Execution.Delegated)
     check(for {
-      initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task), Nil), Operation.Bind("b", Target.Created("t"), Nil), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
+      initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task), Nil), Operation.Bind("b", Target.Created("t"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("t"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
       original = initial.created.find(_.alias == "t").get.ref
       before <- queries.read(reader, ReadRequest("a", ReadView.Current, Nil, None, 100))
       _ = assertEquals(before.records.collect { case GraphRecord.Progress(v) => v }.size, 1)
@@ -81,7 +81,7 @@ final class GraphQueriesSuite extends FunSuite {
     val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
     val task = Content.Task("Work", Acceptance(List("deliver"), None), Execution.Delegated)
     check(for {
-      initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task), Nil), Operation.Create("o", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Outcome("Output", Acceptance(List("matches"), None), Force.Required)), Nil), Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.PlannedOutput, List(Target.Created("t")), List(Target.Created("o")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Expected output"), Operation.Bind("b", Target.Created("t"), List(Target.Created("r"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
+      initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task), Nil), Operation.Create("o", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Outcome("Output", Acceptance(List("matches"), None), Force.Required)), Nil), Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.PlannedOutput, List(Target.Created("t")), List(Target.Created("o")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Expected output"), Operation.Bind("b", Target.Created("t"), List(Target.Created("r")), "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("t"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
       graph <- repo.read("a")
       relation = graph.relations.head
       before <- queries.read(reader, ReadRequest("a", ReadView.Current, Nil, None, 100))

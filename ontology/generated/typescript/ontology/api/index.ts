@@ -16,6 +16,7 @@ export * from './ApplyRequest.js';
 export * from './ApplyResult.js';
 export * from './Assessment.js';
 export * from './Binding.js';
+export * from './BindingSelection.js';
 export * from './Capability.js';
 export * from './Capsule.js';
 export * from './CapsuleRequest.js';

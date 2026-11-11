@@ -135,7 +135,7 @@ abstract class GraphRepositoryContract extends FunSuite {
     val question = Content.Question("Which evidence is missing?", Nil, None, Escalation.HumanRequired)
     val opened = ApplyRequest(name, UUID.randomUUID(), 0L, List(
       Operation.Create("question", ontology.TestAuthoring.applicability(TestApplicability.unresolved), ontology.TestAuthoring.content(question), Nil),
-      Operation.Bind("binding", Target.Created("question"), Nil),
+      Operation.Bind("binding", Target.Created("question"), Nil, "fixture"), Operation.SelectBinding("binding-selection", Target.Created("binding"), true, "Selected by this fixture", List(Target.Created("question"))),
       Operation.State("open", Target.Created("binding"), None, Phase.Open, None, None, Nil, "Unanswered")))
     for {
       first <- repo.apply(opened, admission(opened))
@@ -161,7 +161,7 @@ abstract class GraphRepositoryContract extends FunSuite {
     val r = ApplyRequest(name, UUID.randomUUID(), 0L, List(
       Operation.Create("question", applicability, ContentInput.Question("Which acceptance applies?", Nil, None, Escalation.Unresolved), Nil),
       Operation.Create("task", applicability, ContentInput.Task("Build", AcceptanceInput(Nil, Some(Target.Created("question"))), Execution.Delegated), Nil),
-      Operation.Bind("binding", Target.Created("task"), Nil),
+      Operation.Bind("binding", Target.Created("task"), Nil, "fixture"), Operation.SelectBinding("binding-selection", Target.Created("binding"), true, "Selected by this fixture", List(Target.Created("task"))),
       Operation.Create("review", applicability, ContentInput.Review("Review", Nil, List(Target.Created("binding")), List(Target.Created("question")), "No conclusion", Assessment.Unassessed), Nil),
       Operation.Create("defect", applicability, ContentInput.Defect("Gap", "Observed", "Expected", "Reproduction", List(Target.Created("binding")), Correction.Unresolved), Nil),
       Operation.Create("conflict", applicability, ContentInput.Conflict("Conflict", List(Target.Created("task")), ConflictState.Open, None, "Unresolved"), Nil)))
@@ -229,7 +229,7 @@ abstract class GraphRepositoryContract extends FunSuite {
   } }
   test("failed batch leaves no partial head, history or request receipt") { check { repo =>
     val good = request(scope(), 0L, "Candidate")
-    val bad = good.copy(operations = good.operations :+ Operation.Bind("bad", Target.Created("missing"), Nil))
+    val bad = good.copy(operations = good.operations :+ Operation.Bind("bad", Target.Created("missing"), Nil, "fixture"))
     for {
       failed <- repo.apply(bad, admission(bad)).attempt
       unchanged <- repo.read(good.scope)

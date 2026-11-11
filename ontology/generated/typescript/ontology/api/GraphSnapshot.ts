@@ -2,6 +2,7 @@ import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActorRecord, ActorRecord_JsonCodec} from './ActorRecord.js'
 import {Binding, Binding_JsonCodec} from './Binding.js'
+import {BindingSelection, BindingSelection_JsonCodec} from './BindingSelection.js'
 import {Definition, Definition_JsonCodec} from './Definition.js'
 import {Relation, Relation_JsonCodec} from './Relation.js'
 import {StateEvent, StateEvent_JsonCodec} from './StateEvent.js'
@@ -15,8 +16,9 @@ export class GraphSnapshot implements BaboonGeneratedLatest {
     private readonly _bindings: Array<Binding>;
     private readonly _events: Array<StateEvent>;
     private readonly _actors: Array<ActorRecord>;
+    private readonly _selections: Array<BindingSelection>;
 
-    constructor(scope: string, generation: bigint, coveredFrontier: bigint, definitions: Array<Definition>, relations: Array<Relation>, bindings: Array<Binding>, events: Array<StateEvent>, actors: Array<ActorRecord>) {
+    constructor(scope: string, generation: bigint, coveredFrontier: bigint, definitions: Array<Definition>, relations: Array<Relation>, bindings: Array<Binding>, events: Array<StateEvent>, actors: Array<ActorRecord>, selections: Array<BindingSelection>) {
         this._scope = scope
         this._generation = generation
         this._coveredFrontier = coveredFrontier
@@ -25,6 +27,7 @@ export class GraphSnapshot implements BaboonGeneratedLatest {
         this._bindings = bindings
         this._events = events
         this._actors = actors
+        this._selections = selections
     }
 
     public get scope(): string {
@@ -51,6 +54,9 @@ export class GraphSnapshot implements BaboonGeneratedLatest {
     public get actors(): Array<ActorRecord> {
         return this._actors;
     }
+    public get selections(): Array<BindingSelection> {
+        return this._selections;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -61,11 +67,12 @@ export class GraphSnapshot implements BaboonGeneratedLatest {
             relations: this._relations,
             bindings: this._bindings,
             events: this._events,
-            actors: this._actors
+            actors: this._actors,
+            selections: this._selections
         };
     }
 
-    public with(overrides: {scope?: string; generation?: bigint; coveredFrontier?: bigint; definitions?: Array<Definition>; relations?: Array<Relation>; bindings?: Array<Binding>; events?: Array<StateEvent>; actors?: Array<ActorRecord>}): GraphSnapshot {
+    public with(overrides: {scope?: string; generation?: bigint; coveredFrontier?: bigint; definitions?: Array<Definition>; relations?: Array<Relation>; bindings?: Array<Binding>; events?: Array<StateEvent>; actors?: Array<ActorRecord>; selections?: Array<BindingSelection>}): GraphSnapshot {
         return new GraphSnapshot(
             'scope' in overrides ? overrides.scope! : this._scope,
             'generation' in overrides ? overrides.generation! : this._generation,
@@ -74,11 +81,12 @@ export class GraphSnapshot implements BaboonGeneratedLatest {
             'relations' in overrides ? overrides.relations! : this._relations,
             'bindings' in overrides ? overrides.bindings! : this._bindings,
             'events' in overrides ? overrides.events! : this._events,
-            'actors' in overrides ? overrides.actors! : this._actors
+            'actors' in overrides ? overrides.actors! : this._actors,
+            'selections' in overrides ? overrides.selections! : this._selections
         );
     }
 
-    public static fromPlain(obj: {scope: string; generation: bigint; coveredFrontier: bigint; definitions: Array<Definition>; relations: Array<Relation>; bindings: Array<Binding>; events: Array<StateEvent>; actors: Array<ActorRecord>}): GraphSnapshot {
+    public static fromPlain(obj: {scope: string; generation: bigint; coveredFrontier: bigint; definitions: Array<Definition>; relations: Array<Relation>; bindings: Array<Binding>; events: Array<StateEvent>; actors: Array<ActorRecord>; selections: Array<BindingSelection>}): GraphSnapshot {
         return new GraphSnapshot(
             obj.scope,
             obj.generation,
@@ -87,7 +95,8 @@ export class GraphSnapshot implements BaboonGeneratedLatest {
             obj.relations,
             obj.bindings,
             obj.events,
-            obj.actors
+            obj.actors,
+            obj.selections
         );
     }
 
@@ -135,6 +144,7 @@ export class GraphSnapshot_JsonCodec {
             "bindings": Array.from(value.bindings).map(item => Binding_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "events": Array.from(value.events).map(item => StateEvent_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "actors": Array.from(value.actors).map(item => ActorRecord_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "selections": Array.from(value.selections).map(item => BindingSelection_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): GraphSnapshot {
@@ -152,6 +162,7 @@ export class GraphSnapshot_JsonCodec {
             (obj["bindings"] as unknown[]).map(item => Binding_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             (obj["events"] as unknown[]).map(item => StateEvent_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             (obj["actors"] as unknown[]).map(item => ActorRecord_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            (obj["selections"] as unknown[]).map(item => BindingSelection_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
         )
     }
 

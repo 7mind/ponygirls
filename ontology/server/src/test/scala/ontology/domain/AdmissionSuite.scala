@@ -19,7 +19,7 @@ final class AdmissionSuite extends FunSuite {
   private def failure(code: String)(f: => Any): Unit = assertEquals(intercept[Fault](f).code, code)
 
   test("create resolves earlier aliases with host-sealed provenance") {
-    val x = run(Graph.empty("project"), List(create("work", task("Build")), Operation.Bind("contract", Target.Created("work"), Nil)))
+    val x = run(Graph.empty("project"), List(create("work", task("Build")), Operation.Bind("contract", Target.Created("work"), Nil, "fixture"), Operation.SelectBinding("contract-selection", Target.Created("contract"), true, "Selected by this fixture", List(Target.Created("work")))))
     assertEquals(x.snapshot.generation, 1L)
     assertEquals(x.snapshot.bindings.head.definition, x.snapshot.definitions.head.ref)
     assertEquals(x.snapshot.definitions.head.provenance.contributor, actor)
@@ -31,11 +31,11 @@ final class AdmissionSuite extends FunSuite {
   }
   test("cross-scope references are not ambient identities") {
     val foreign = run(Graph.empty("other"), List(create("x", task("Foreign")))).snapshot.definitions.head.ref
-    failure("reference") { run(Graph.empty("project"), List(Operation.Bind("b", exact(foreign), Nil))) }
+    failure("reference") { run(Graph.empty("project"), List(Operation.Bind("b", exact(foreign), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(exact(foreign))))) }
   }
   test("atomic failure leaves original snapshot untouched") {
     val base = Graph.empty("project")
-    failure("reference") { run(base, List(create("x", task("Build")), Operation.Bind("b", Target.Created("absent"), Nil))) }
+    failure("reference") { run(base, List(create("x", task("Build")), Operation.Bind("b", Target.Created("absent"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("absent"))))) }
     assertEquals(base.definitions, Nil)
     assertEquals(base.generation, 0L)
   }
@@ -53,28 +53,28 @@ final class AdmissionSuite extends FunSuite {
     failure("acceptance") { run(Graph.empty("project"), List(create("x", Content.Task("Build", Acceptance(Nil, None), Execution.Delegated)))) }
   }
   test("work events never apply to non-task definitions") {
-    val x = run(Graph.empty("project"), List(create("claim", Content.Statement("It works", Modality.Assertion)), Operation.Bind("b", Target.Created("claim"), Nil)))
+    val x = run(Graph.empty("project"), List(create("claim", Content.Statement("It works", Modality.Assertion)), Operation.Bind("b", Target.Created("claim"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("claim")))))
     failure("kind") { run(x.snapshot, List(Operation.State("e", exact(x.snapshot.bindings.head.ref), None, Phase.Completed, Some(Resolution.Fulfilled), Some("done"), List(exact(x.snapshot.definitions.head.ref)), ""))) }
   }
   test("progress does not revise task content or binding") {
-    val x = run(Graph.empty("project"), List(create("x", task("Build")), Operation.Bind("b", Target.Created("x"), Nil)))
+    val x = run(Graph.empty("project"), List(create("x", task("Build")), Operation.Bind("b", Target.Created("x"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("x")))))
     val next = run(x.snapshot, List(Operation.State("start", exact(x.snapshot.bindings.head.ref), None, Phase.Active, None, None, Nil, "")))
     assertEquals(next.snapshot.definitions, x.snapshot.definitions)
     assertEquals(next.snapshot.bindings, x.snapshot.bindings)
     failure("conflict") { run(next.snapshot, List(Operation.State("stale", exact(x.snapshot.bindings.head.ref), None, Phase.Blocked, None, Some("waiting"), Nil, ""))) }
   }
   test("completion and cancellation have separate result contracts") {
-    val x = run(Graph.empty("project"), List(create("x", task("Build")), Operation.Bind("b", Target.Created("x"), Nil)))
+    val x = run(Graph.empty("project"), List(create("x", task("Build")), Operation.Bind("b", Target.Created("x"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("x")))))
     failure("state") { run(x.snapshot, List(Operation.State("e", exact(x.snapshot.bindings.head.ref), None, Phase.Cancelled, Some(Resolution.Fulfilled), Some("cancel"), Nil, ""))) }
     val done = run(x.snapshot, List(Operation.State("e", exact(x.snapshot.bindings.head.ref), None, Phase.Completed, Some(Resolution.NotFulfilled), Some("method failed"), Nil, "Outcome remains wanted")))
     assertEquals(done.snapshot.events.head.result, Some(Resolution.NotFulfilled))
   }
   test("required governing context cannot be omitted") {
-    val x = run(Graph.empty("project"), List(create("pre", task("Probe")), Operation.Bind("preb", Target.Created("pre"), Nil), create("work", task("Implement")), Operation.Relate("gate", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.DependsOn, List(Target.Created("work")), List(Target.Created("preb")), ontology.TestAuthoring.detail(RelationDetail.Dependency(Gate.Completion, Consumption.Current, None, "")), "Probe first")))
+    val x = run(Graph.empty("project"), List(create("pre", task("Probe")), Operation.Bind("preb", Target.Created("pre"), Nil, "fixture"), Operation.SelectBinding("preb-selection", Target.Created("preb"), true, "Selected by this fixture", List(Target.Created("pre"))), create("work", task("Implement")), Operation.Relate("gate", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.DependsOn, List(Target.Created("work")), List(Target.Created("preb")), ontology.TestAuthoring.detail(RelationDetail.Dependency(Gate.Completion, Consumption.Current, None, "")), "Probe first")))
     val work = x.result.created.find(_.alias == "work").get.ref
-    failure("missing-context") { run(x.snapshot, List(Operation.Bind("b", exact(work), Nil))) }
+    failure("missing-context") { run(x.snapshot, List(Operation.Bind("b", exact(work), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(exact(work))))) }
     val gate = x.snapshot.relations.head.ref
-    val bound = run(x.snapshot, List(Operation.Bind("b", exact(work), List(exact(gate)))))
+    val bound = run(x.snapshot, List(Operation.Bind("b", exact(work), List(exact(gate)), "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(exact(work)))))
     failure("prerequisite") { run(bound.snapshot, List(Operation.State("start", exact(bound.result.created.head.ref), None, Phase.Active, None, None, Nil, ""))) }
   }
   test("relation endpoints cannot be repurposed behind stable identity") {
@@ -89,11 +89,11 @@ final class AdmissionSuite extends FunSuite {
     failure("arity") { run(Graph.empty("project"), ops :+ Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Supports, List(Target.Created("a"), Target.Created("b")), List(Target.Created("c")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Wrong arity")) }
   }
   test("Human-required work cannot be completed by the curator") {
-    val x = run(Graph.empty("project"), List(create("h", Content.Task("Approve", Acceptance(List("Human action"), None), Execution.HumanRequired)), Operation.Bind("b", Target.Created("h"), Nil)))
+    val x = run(Graph.empty("project"), List(create("h", Content.Task("Approve", Acceptance(List("Human action"), None), Execution.HumanRequired)), Operation.Bind("b", Target.Created("h"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("h")))))
     failure("authority") { run(x.snapshot, List(Operation.State("e", exact(x.snapshot.bindings.head.ref), None, Phase.Active, None, None, Nil, ""))) }
   }
   test("Baboon roundtrip retains all exact graph fields") {
-    val x = run(Graph.empty("project"), List(create("x", task("Build")), Operation.Bind("b", Target.Created("x"), Nil))).snapshot
+    val x = run(Graph.empty("project"), List(create("x", task("Build")), Operation.Bind("b", Target.Created("x"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("x"))))).snapshot
     val codec = GraphSnapshot.codecJson
     assertEquals(codec.decode(BaboonCodecContext.Default, codec.encode(BaboonCodecContext.Default, x)), Right(x))
   }

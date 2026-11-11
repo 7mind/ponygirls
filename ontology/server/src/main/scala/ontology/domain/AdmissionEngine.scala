@@ -23,7 +23,7 @@ final class AdmissionEngine {
     def refs(xs: List[Target]): List[Ref] = { val values = xs.map(resolve); Require(values.distinct == values, "reference", "duplicate references"); values }
     def aliasOf(op: Operation): String = op match {
       case x: Operation.Create => x.alias; case x: Operation.Revise => x.alias; case x: Operation.Relate => x.alias
-      case x: Operation.ReviseRelation => x.alias; case x: Operation.Bind => x.alias; case x: Operation.State => x.alias
+      case x: Operation.ReviseRelation => x.alias; case x: Operation.Bind => x.alias; case x: Operation.SelectBinding => x.alias; case x: Operation.State => x.alias
     }
     def writable(content: Content): Unit = Require(!content.isInstanceOf[Content.Source] && !content.isInstanceOf[Content.Artifact], "protected", "source and artifact records require trusted capture")
     request.operations.foreach { operation =>
@@ -68,9 +68,17 @@ final class AdmissionEngine {
           val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), applicability = applicability, detail = detail, why = x.why, standing = x.standing, provenance = admission.provenance)
           validateRelation(graph, r); graph = graph.copy(relations = graph.relations :+ r); r.ref
         case x: Operation.Bind =>
-          val b = Binding(fresh, graph.scope, resolve(x.definition), refs(x.context), admission.provenance)
+          val b = Binding(fresh, graph.scope, resolve(x.definition), refs(x.context), x.workContext, admission.provenance)
           Graph.validateBinding(graph, b)
           graph = graph.copy(bindings = graph.bindings :+ b); fresh
+        case x: Operation.SelectBinding =>
+          val binding = Graph.binding(graph, resolve(x.binding))
+          Require(x.reason.trim.nonEmpty, "selection", "selection explanation required")
+          val basis = refs(x.basis)
+          Require(basis.nonEmpty, "selection", "selection basis required")
+          if (x.selected) Graph.validateBinding(graph, binding)
+          else Require(Selections.selected(graph, binding), "selection", "only the selected binding can be retired")
+          graph = graph.copy(selections = graph.selections :+ BindingSelection(fresh, graph.scope, binding.ref, x.selected, x.reason, basis, admission.provenance)); fresh
         case x: Operation.State =>
           val subject = resolve(x.subject); val b = Graph.binding(graph, subject)
           val task = Graph.node(graph, b.definition).content match {
@@ -81,7 +89,7 @@ final class AdmissionEngine {
           Require(Graph.latestEvent(graph, subject).map(_.ref) == x.previous, "conflict", "previous event is not binding-local current head")
           Require(x.result.nonEmpty == (x.phase == Phase.Completed), "state", "only completed work has a result")
           Require(!Set(Phase.Completed, Phase.Cancelled, Phase.Blocked, Phase.Resolved).contains(x.phase) || x.resolution.exists(_.trim.nonEmpty), "state", "resolution required")
-          if (currentContractPhases.contains(x.phase)) Graph.validateBinding(graph, b)
+          if (currentContractPhases.contains(x.phase)) Graph.validateSelectedBinding(graph, b)
           task.foreach { value =>
             if (x.phase == Phase.Active || x.phase == Phase.Completed) {
               Require(value.acceptance.clauses.nonEmpty, "acceptance", "unresolved acceptance blocks execution and fulfillment")
@@ -99,7 +107,9 @@ final class AdmissionEngine {
     validateCycles(graph)
     // Later operations in the same transaction must not invalidate a new binding or completion.
     graph.bindings.drop(base.bindings.size).foreach(Graph.validateBinding(graph, _))
-    graph.events.drop(base.events.size).filter(e => currentContractPhases.contains(e.phase)).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateBinding(graph, b); validateGates(graph, b) })
+    val newSelections = graph.selections.drop(base.selections.size).map(_.ref).toSet
+    Selections.latest(graph).filter(value => newSelections.contains(value.ref) && value.selected).foreach(value => Graph.validateSelectedBinding(graph, Graph.binding(graph, value.binding)))
+    graph.events.drop(base.events.size).filter(e => currentContractPhases.contains(e.phase)).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateSelectedBinding(graph, b); validateGates(graph, b) })
     Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(request.scope, request.requestId, Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
   }
 
@@ -157,10 +167,10 @@ final class AdmissionEngine {
         val d = r.detail.asInstanceOf[RelationDetail.Dependency]
         val completion = d.event.map(Graph.event(g, _)).orElse(Graph.latestEvent(g, r.targets.head))
         Require(completion.exists(e => e.phase == Phase.Completed && (d.gate == Gate.Completion || e.result.contains(Resolution.Fulfilled))), "prerequisite", "work prerequisite not satisfied")
-        if (d.consumption == Consumption.Current) Graph.validateBinding(g, Graph.binding(g, r.targets.head))
+        if (d.consumption == Consumption.Current) Graph.validateSelectedBinding(g, Graph.binding(g, r.targets.head))
       }
       if (r.kind == RelationKind.Requires) {
-        Graph.validateBinding(g, Graph.binding(g, r.targets.head))
+        Graph.validateSelectedBinding(g, Graph.binding(g, r.targets.head))
         val supported = Graph.relations(g).filter(e => e.kind == RelationKind.Assesses && e.standing == Standing.Active && e.targets.contains(r.targets.head)).flatMap(e => e.sources.flatMap(s => g.definitions.find(_.ref == s))).filter(d => Graph.definitions(g).exists(_.ref == d.ref) && d.standing == Standing.Active).collect { case d if d.content.isInstanceOf[Content.Review] => d.content.asInstanceOf[Content.Review].assessment }
         Require(supported.nonEmpty && supported.forall(_ == Assessment.Supported), "condition", "condition lacks an unconflicted applicable supporting assessment")
       }

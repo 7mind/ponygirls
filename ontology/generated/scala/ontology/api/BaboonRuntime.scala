@@ -31,6 +31,7 @@ package ontology.api {
     register("ontology.api/:#RelationDetailInput", Lazy(RelationDetailInput_JsonCodec))
     register("ontology.api/:#GraphSnapshot", Lazy(GraphSnapshot_JsonCodec))
     register("ontology.api/:#Target", Lazy(Target_JsonCodec))
+    register("ontology.api/:#BindingSelection", Lazy(BindingSelection_JsonCodec))
     register("ontology.api/:#Phase", Lazy(Phase_JsonCodec))
     register("ontology.api/:#Capsule", Lazy(Capsule_JsonCodec))
     register("ontology.api/:#Consumption", Lazy(Consumption_JsonCodec))

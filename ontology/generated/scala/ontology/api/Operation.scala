@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeList, decodeOption, decodeString}
+import io.circe.Decoder.{decodeBoolean, decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonAdtMemberMeta, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -355,7 +355,8 @@ package ontology.api {
     final case class Bind(
       alias: String,
       definition: Target,
-      context: List[Target]
+      context: List[Target],
+      workContext: String
     ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
       override def baboonDomainVersion: String = Operation.Bind.baboonDomainVersion
       override def baboonDomainIdentifier: String = Operation.Bind.baboonDomainIdentifier
@@ -391,7 +392,8 @@ package ontology.api {
         Json.obj(
           "alias" -> Json.fromString(value.alias),
           "definition" -> Target_JsonCodec.instance.encode(ctx, value.definition),
-          "context" -> Json.fromValues(value.context.map(e => Target_JsonCodec.instance.encode(ctx, e)))
+          "context" -> Json.fromValues(value.context.map(e => Target_JsonCodec.instance.encode(ctx, e))),
+          "workContext" -> Json.fromString(value.workContext)
         )
       }
       
@@ -405,7 +407,8 @@ package ontology.api {
               alias <- getField(jsonObject, "alias").flatMap(v => decodeString(v.hcursor))
               definition <- getField(jsonObject, "definition").flatMap(v => Target_JsonCodec.circeDecoder(v.hcursor))
               context <- getField(jsonObject, "context").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
-            } yield Operation.Bind(alias,definition,context)
+              workContext <- getField(jsonObject, "workContext").flatMap(v => decodeString(v.hcursor))
+            } yield Operation.Bind(alias,definition,context,workContext)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to Bind: object expected"))
         }
       }
@@ -423,6 +426,86 @@ package ontology.api {
       private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Operation.Bind]] = Lazy(Operation.Bind_JsonCodec)
       override protected def LazyInstance: Lazy[BaboonJsonCodec[Operation.Bind]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[Operation.Bind] = LazyInstance.value
+    }
+    
+    
+    final case class SelectBinding(
+      alias: String,
+      binding: Target,
+      selected: Boolean,
+      reason: String,
+      basis: List[Target]
+    ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Operation.SelectBinding.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Operation.SelectBinding.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Operation.SelectBinding.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Operation.SelectBinding.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Operation.SelectBinding.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Operation.SelectBinding.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Operation.SelectBinding.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Operation.SelectBinding.baboonAdtType
+    }
+    
+    object SelectBinding {
+      def baboonDomainVersion: String = "0.1.0"
+      def baboonDomainIdentifier: String = "ontology.api"
+      def baboonTypeIdentifier: String = "ontology.api/[ontology.api/:#Operation]#SelectBinding"
+      private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "ontology.api/:#Operation"
+      def baboonAdtType: _root_.java.lang.Class[?] = Operation.getClass
+      def codecJson: BaboonJsonCodec[Operation.SelectBinding] = Operation.SelectBinding_JsonCodec.instance
+    }
+    
+    object SelectBinding_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Operation.SelectBinding, BaboonJsonCodec[Operation.SelectBinding]] {
+      def encode(ctx: BaboonCodecContext, value: Operation.SelectBinding): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "alias" -> Json.fromString(value.alias),
+          "binding" -> Target_JsonCodec.instance.encode(ctx, value.binding),
+          "selected" -> Json.fromBoolean(value.selected),
+          "reason" -> Json.fromString(value.reason),
+          "basis" -> Json.fromValues(value.basis.map(e => Target_JsonCodec.instance.encode(ctx, e)))
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Operation.SelectBinding] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              alias <- getField(jsonObject, "alias").flatMap(v => decodeString(v.hcursor))
+              binding <- getField(jsonObject, "binding").flatMap(v => Target_JsonCodec.circeDecoder(v.hcursor))
+              selected <- getField(jsonObject, "selected").flatMap(v => decodeBoolean(v.hcursor))
+              reason <- getField(jsonObject, "reason").flatMap(v => decodeString(v.hcursor))
+              basis <- getField(jsonObject, "basis").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
+            } yield Operation.SelectBinding(alias,binding,selected,reason,basis)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to SelectBinding: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Operation.SelectBinding.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Operation.SelectBinding.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Operation.SelectBinding.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Operation.SelectBinding.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Operation.SelectBinding.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Operation.SelectBinding]] = Lazy(Operation.SelectBinding_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Operation.SelectBinding]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Operation.SelectBinding] = LazyInstance.value
     }
     
     
@@ -542,6 +625,8 @@ package ontology.api {
         
         case bind: Operation.Bind => Json.obj("Bind" -> Operation.Bind_JsonCodec.instance.encode(ctx, bind))
         
+        case selectbinding: Operation.SelectBinding => Json.obj("SelectBinding" -> Operation.SelectBinding_JsonCodec.instance.encode(ctx, selectbinding))
+        
         case state: Operation.State => Json.obj("State" -> Operation.State_JsonCodec.instance.encode(ctx, state))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
@@ -572,6 +657,9 @@ package ontology.api {
                 
                 case "Bind" =>
                   Operation.Bind_JsonCodec.instance.decode(ctx, json)
+                
+                case "SelectBinding" =>
+                  Operation.SelectBinding_JsonCodec.instance.decode(ctx, json)
                 
                 case "State" =>
                   Operation.State_JsonCodec.instance.decode(ctx, json)

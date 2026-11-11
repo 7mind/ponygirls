@@ -22,7 +22,8 @@ final class AtomicAuthoringSuite extends FunSuite {
   }
   private def review(subject: Json, basis: Json): Json = j(s"""{"Review":{"text":"Review","findings":[],"subjects":[$subject],"basis":[$basis],"uncertainty":"Unknown","assessment":"Unassessed"}}""")
   private def create(a: String, c: Json, ap: Json): Json = j(s"""{"Create":{"alias":"$a","applicability":$ap,"content":$c,"basis":[]}}""")
-  private def bind(a: String, d: Json): Json = j(s"""{"Bind":{"alias":"$a","definition":$d,"context":[]}}""")
+  private def bind(a: String, d: Json): Json = j(s"""{"Bind":{"alias":"$a","definition":$d,"context":[],"workContext":"fixture"}}""")
+  private def select(a: String, b: Json, basis: Json): Json = j(s"""{"SelectBinding":{"alias":"$a","binding":$b,"selected":true,"reason":"Explicit fixture selection","basis":[$basis]}}""")
   private def state(a: String, b: Json, phase: String, result: Json): Json = j(s"""{"State":{"alias":"$a","subject":$b,"previous":null,"phase":"$phase","result":$result,"resolution":"Report","evidence":[],"uncertainty":"Synthetic report"}}""")
   private def link(a: String, k: String, s: Json, t: Json, d: Json): Json = j(s"""{"Relate":{"alias":"$a","applicability":$u,"kind":"$k","sources":[$s],"targets":[$t],"detail":$d,"why":"Synthetic account"}}""")
   private def dep(e: Json): Json = j(s"""{"Dependency":{"gate":"Completion","consumption":"Historical","event":$e,"applicability":"Earlier bounded result"}}""")
@@ -52,7 +53,7 @@ final class AtomicAuthoringSuite extends FunSuite {
   private val source = Content.Source("SYNTHETIC fixture, not native authority", Nil, "a" * 64, sr.id, "synthetic", CaptureContext("fixture", None, None, LineageStatus.Unknown, "fixture", UUID.randomUUID()), CaptureMetadata("fixture", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.WorkerMessage, Observation.None())
   private val provenance = Provenance(Actor("fixture", ActorKind.Unknown), Actor("fixture", ActorKind.Unknown), UUID.randomUUID(), "fixture")
   private val seed = Graph.empty("atomic").copy(definitions = List(Definition(sr, "atomic", Applicability.Captured(sr), source, Standing.Active, Nil, None, provenance)))
-  private def fresh: List[Json] = List(create("q", q, u), create("t", task(cr("q")), u), bind("tb", cr("t")), create("c", claim, u), bind("cb", cr("c")), create("r", review(cr("cb"), cr("c")), app("Declared", "statement", ex(sr), cr("cb"))))
+  private def fresh: List[Json] = List(create("q", q, u), create("t", task(cr("q")), u), bind("tb", cr("t")), select("select-t", cr("tb"), cr("t")), create("c", claim, u), bind("cb", cr("c")), select("select-c", cr("cb"), cr("c")), create("r", review(cr("cb"), cr("c")), app("Declared", "statement", ex(sr), cr("cb"))))
 
   test("one atomic proposal resolves content and applicability without inventing acceptance") {
     val before = Wire.encode(GraphSnapshot.codecJson, seed)
@@ -90,7 +91,7 @@ final class AtomicAuthoringSuite extends FunSuite {
 
   test("nested detail references resolve; revision compares exact persisted detail") {
     val outcome = Wire.encode(Content.codecJson, Content.Outcome("Result", Acceptance(List("check"), None), Force.Required))
-    val r = run(seed, List(create("p", task(Json.Null), u), bind("pb", cr("p")), state("done", cr("pb"), "Completed", Json.fromString("NotFulfilled")), create("w", task(Json.Null), u), create("o", outcome, u), link("d", "DependsOn", cr("w"), cr("pb"), dep(cr("done"))), link("g", "Delegates", ex(sr), cr("w"), delegation(cr("o")))))
+    val r = run(seed, List(create("p", task(Json.Null), u), bind("pb", cr("p")), select("select-p", cr("pb"), cr("p")), state("done", cr("pb"), "Completed", Json.fromString("NotFulfilled")), create("w", task(Json.Null), u), create("o", outcome, u), link("d", "DependsOn", cr("w"), cr("pb"), dep(cr("done"))), link("g", "Delegates", ex(sr), cr("w"), delegation(cr("o")))))
     val edge = Graph.relation(r.snapshot, ref(r, "d"))
     assertEquals(edge.detail.asInstanceOf[RelationDetail.Dependency].event, Some(ref(r, "done")))
     assertEquals(Graph.relation(r.snapshot, ref(r, "g")).detail.asInstanceOf[RelationDetail.Delegation].outcomes, List(ref(r, "o")))

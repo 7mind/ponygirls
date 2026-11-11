@@ -10,7 +10,7 @@ import {Resolution, Resolution_JsonCodec} from './Resolution.js'
 import {Standing, Standing_JsonCodec} from './Standing.js'
 import {Target, Target_JsonCodec} from './Target.js'
 
-export type Operation = Operation_Create | Operation_Revise | Operation_Relate | Operation_ReviseRelation | Operation_Bind | Operation_State
+export type Operation = Operation_Create | Operation_Revise | Operation_Relate | Operation_ReviseRelation | Operation_Bind | Operation_SelectBinding | Operation_State
 
 export const Operation = {
     BaboonDomainVersion: '0.1.0',
@@ -682,11 +682,13 @@ export class Operation_Bind implements BaboonAdtMemberMeta, BaboonGeneratedLates
     private readonly _alias: string;
     private readonly _definition: Target;
     private readonly _context: Array<Target>;
+    private readonly _workContext: string;
 
-    constructor(alias: string, definition: Target, context: Array<Target>) {
+    constructor(alias: string, definition: Target, context: Array<Target>, workContext: string) {
         this._alias = alias
         this._definition = definition
         this._context = context
+        this._workContext = workContext
     }
 
     public get alias(): string {
@@ -698,28 +700,34 @@ export class Operation_Bind implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public get context(): Array<Target> {
         return this._context;
     }
+    public get workContext(): string {
+        return this._workContext;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
             alias: this._alias,
             definition: this._definition,
-            context: this._context
+            context: this._context,
+            workContext: this._workContext
         };
     }
 
-    public with(overrides: {alias?: string; definition?: Target; context?: Array<Target>}): Operation_Bind {
+    public with(overrides: {alias?: string; definition?: Target; context?: Array<Target>; workContext?: string}): Operation_Bind {
         return new Operation_Bind(
             'alias' in overrides ? overrides.alias! : this._alias,
             'definition' in overrides ? overrides.definition! : this._definition,
-            'context' in overrides ? overrides.context! : this._context
+            'context' in overrides ? overrides.context! : this._context,
+            'workContext' in overrides ? overrides.workContext! : this._workContext
         );
     }
 
-    public static fromPlain(obj: {alias: string; definition: Target; context: Array<Target>}): Operation_Bind {
+    public static fromPlain(obj: {alias: string; definition: Target; context: Array<Target>; workContext: string}): Operation_Bind {
         return new Operation_Bind(
             obj.alias,
             obj.definition,
-            obj.context
+            obj.context,
+            obj.workContext
         );
     }
 
@@ -767,6 +775,7 @@ export class Operation_Bind_JsonCodec {
             "alias": value.alias,
             "definition": Target_JsonCodec.instance.encode(BaboonCodecContext.Default, value.definition),
             "context": Array.from(value.context).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "workContext": value.workContext,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Operation_Bind {
@@ -779,6 +788,7 @@ export class Operation_Bind_JsonCodec {
             obj["alias"] as string,
             Target_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["definition"]),
             (obj["context"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            obj["workContext"] as string,
         )
     }
 
@@ -802,6 +812,154 @@ export class Operation_Bind_JsonCodec {
     public static lazyInstance = new Lazy(() => new Operation_Bind_JsonCodec())
     public static get instance(): Operation_Bind_JsonCodec {
         return Operation_Bind_JsonCodec.lazyInstance.value
+    }
+}
+
+export class Operation_SelectBinding implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#Operation]#SelectBinding' as const;
+    private readonly _alias: string;
+    private readonly _binding: Target;
+    private readonly _selected: boolean;
+    private readonly _reason: string;
+    private readonly _basis: Array<Target>;
+
+    constructor(alias: string, binding: Target, selected: boolean, reason: string, basis: Array<Target>) {
+        this._alias = alias
+        this._binding = binding
+        this._selected = selected
+        this._reason = reason
+        this._basis = basis
+    }
+
+    public get alias(): string {
+        return this._alias;
+    }
+    public get binding(): Target {
+        return this._binding;
+    }
+    public get selected(): boolean {
+        return this._selected;
+    }
+    public get reason(): string {
+        return this._reason;
+    }
+    public get basis(): Array<Target> {
+        return this._basis;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            alias: this._alias,
+            binding: this._binding,
+            selected: this._selected,
+            reason: this._reason,
+            basis: this._basis
+        };
+    }
+
+    public with(overrides: {alias?: string; binding?: Target; selected?: boolean; reason?: string; basis?: Array<Target>}): Operation_SelectBinding {
+        return new Operation_SelectBinding(
+            'alias' in overrides ? overrides.alias! : this._alias,
+            'binding' in overrides ? overrides.binding! : this._binding,
+            'selected' in overrides ? overrides.selected! : this._selected,
+            'reason' in overrides ? overrides.reason! : this._reason,
+            'basis' in overrides ? overrides.basis! : this._basis
+        );
+    }
+
+    public static fromPlain(obj: {alias: string; binding: Target; selected: boolean; reason: string; basis: Array<Target>}): Operation_SelectBinding {
+        return new Operation_SelectBinding(
+            obj.alias,
+            obj.binding,
+            obj.selected,
+            obj.reason,
+            obj.basis
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return Operation_SelectBinding.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return Operation_SelectBinding.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#Operation]#SelectBinding'
+    public baboonTypeIdentifier() {
+        return Operation_SelectBinding.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return Operation_SelectBinding.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return Operation_SelectBinding.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return Operation_SelectBinding.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_SelectBinding.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Operation_SelectBinding_JsonCodec {
+        return Operation_SelectBinding_JsonCodec.instance
+    }
+}
+
+export class Operation_SelectBinding_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Operation_SelectBinding): unknown {
+        if (this !== Operation_SelectBinding_JsonCodec.lazyInstance.value) {
+          return Operation_SelectBinding_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "alias": value.alias,
+            "binding": Target_JsonCodec.instance.encode(BaboonCodecContext.Default, value.binding),
+            "selected": value.selected,
+            "reason": value.reason,
+            "basis": Array.from(value.basis).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Operation_SelectBinding {
+        if (this !== Operation_SelectBinding_JsonCodec .lazyInstance.value) {
+            return Operation_SelectBinding_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Operation_SelectBinding (
+            obj["alias"] as string,
+            Target_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["binding"]),
+            obj["selected"] as boolean,
+            obj["reason"] as string,
+            (obj["basis"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return Operation_SelectBinding_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return Operation_SelectBinding_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#Operation]#SelectBinding'
+    public baboonTypeIdentifier() {
+        return Operation_SelectBinding_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#Operation'
+    public baboonAdtTypeIdentifier() {
+        return Operation_SelectBinding_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Operation_SelectBinding_JsonCodec())
+    public static get instance(): Operation_SelectBinding_JsonCodec {
+        return Operation_SelectBinding_JsonCodec.lazyInstance.value
     }
 }
 
@@ -1005,6 +1163,9 @@ export class Operation_JsonCodec {
             if (value instanceof Operation_Bind) {
                 return { "Bind": Operation_Bind_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Operation_SelectBinding) {
+                return { "SelectBinding": Operation_SelectBinding_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof Operation_State) {
                 return { "State": Operation_State_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -1023,6 +1184,7 @@ export class Operation_JsonCodec {
                 case "Relate": return Operation_Relate_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "ReviseRelation": return Operation_ReviseRelation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Bind": return Operation_Bind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "SelectBinding": return Operation_SelectBinding_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "State": return Operation_State_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }

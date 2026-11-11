@@ -161,6 +161,7 @@ object CuratorModel {
       case GraphRecord.Edge(value) => scope(value.scope)
       case GraphRecord.Contract(value) => scope(value.scope)
       case GraphRecord.Progress(value) => scope(value.scope)
+      case GraphRecord.Selection(value) => scope(value.scope)
     }
   }
 

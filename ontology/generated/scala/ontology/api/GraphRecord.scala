@@ -419,6 +419,74 @@ package ontology.api {
       override protected def LazyInstance: Lazy[BaboonJsonCodec[GraphRecord.Progress]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[GraphRecord.Progress] = LazyInstance.value
     }
+    
+    
+    final case class Selection(
+      value: BindingSelection
+    ) extends GraphRecord with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = GraphRecord.Selection.baboonDomainVersion
+      override def baboonDomainIdentifier: String = GraphRecord.Selection.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = GraphRecord.Selection.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = GraphRecord.Selection.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = GraphRecord.Selection.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = GraphRecord.Selection.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = GraphRecord.Selection.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = GraphRecord.Selection.baboonAdtType
+    }
+    
+    object Selection {
+      def baboonDomainVersion: String = "0.1.0"
+      def baboonDomainIdentifier: String = "ontology.api"
+      def baboonTypeIdentifier: String = "ontology.api/[ontology.api/:#GraphRecord]#Selection"
+      private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "ontology.api/:#GraphRecord"
+      def baboonAdtType: _root_.java.lang.Class[?] = GraphRecord.getClass
+      def codecJson: BaboonJsonCodec[GraphRecord.Selection] = GraphRecord.Selection_JsonCodec.instance
+    }
+    
+    object Selection_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[GraphRecord.Selection, BaboonJsonCodec[GraphRecord.Selection]] {
+      def encode(ctx: BaboonCodecContext, value: GraphRecord.Selection): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "value" -> BindingSelection_JsonCodec.instance.encode(ctx, value.value)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, GraphRecord.Selection] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              value <- getField(jsonObject, "value").flatMap(v => BindingSelection_JsonCodec.circeDecoder(v.hcursor))
+            } yield GraphRecord.Selection(value)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to Selection: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = GraphRecord.Selection.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = GraphRecord.Selection.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = GraphRecord.Selection.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = GraphRecord.Selection.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = GraphRecord.Selection.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[GraphRecord.Selection]] = Lazy(GraphRecord.Selection_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[GraphRecord.Selection]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[GraphRecord.Selection] = LazyInstance.value
+    }
     def baboonDomainVersion: String = "0.1.0"
     def baboonDomainIdentifier: String = "ontology.api"
     def baboonTypeIdentifier: String = "ontology.api/:#GraphRecord"
@@ -449,6 +517,8 @@ package ontology.api {
         case contract: GraphRecord.Contract => Json.obj("Contract" -> GraphRecord.Contract_JsonCodec.instance.encode(ctx, contract))
         
         case progress: GraphRecord.Progress => Json.obj("Progress" -> GraphRecord.Progress_JsonCodec.instance.encode(ctx, progress))
+        
+        case selection: GraphRecord.Selection => Json.obj("Selection" -> GraphRecord.Selection_JsonCodec.instance.encode(ctx, selection))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
       }
@@ -481,6 +551,9 @@ package ontology.api {
                 
                 case "Progress" =>
                   GraphRecord.Progress_JsonCodec.instance.decode(ctx, json)
+                
+                case "Selection" =>
+                  GraphRecord.Selection_JsonCodec.instance.decode(ctx, json)
       
                 case _ => Left(new IllegalArgumentException(s"Cannot decode $wire to GraphRecord: no matching value"))
               }

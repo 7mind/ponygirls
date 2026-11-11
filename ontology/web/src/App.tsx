@@ -155,6 +155,7 @@ function recordTitle(record: C.GraphRecord): string {
   if (record instanceof C.GraphRecord_Edge) return `Relation · ${record.value.kind}`;
   if (record instanceof C.GraphRecord_Contract) return 'Binding · context';
   if (record instanceof C.GraphRecord_Progress) return `Reported state · ${record.value.phase}`;
+  if (record instanceof C.GraphRecord_Selection) return `Selection event · ${record.value.selected ? 'selected' : 'retired'}`;
   if (record instanceof C.GraphRecord_Input) return `Input receipt · ${record.value.kind}`;
   return `Actor record · ${record.value.value.kind}`;
 }
@@ -169,11 +170,15 @@ function RecordDetails({ record, inspect }: { record: C.GraphRecord; inspect: In
   }
   if (record instanceof C.GraphRecord_Contract) {
     const value = record.value;
-    return <><Refs label='Bound definition' values={[value.definition]} inspect={inspect} /><Refs label='Binding context' values={value.context} inspect={inspect} /><p className='fine-print'>A retained binding is not evidence that it remains valid in the current view.</p></>;
+    return <><dl><Field label='Declared work context'>{value.workContext}</Field></dl><Refs label='Bound definition' values={[value.definition]} inspect={inspect} /><Refs label='Binding context' values={value.context} inspect={inspect} /><p className='fine-print'>A retained binding is not evidence that it remains valid in the current view.</p></>;
   }
   if (record instanceof C.GraphRecord_Progress) {
     const value = record.value;
     return <><dl><Field label='Reported phase'>{value.phase}</Field><Field label='Reported result'>{value.result}</Field><Field label='Resolution account'>{value.resolution}</Field><Field label='Uncertainty'>{value.uncertainty}</Field></dl><Refs label='State subject' values={[value.subject]} inspect={inspect} /><Refs label='Previous state event' values={value.previous ? [value.previous] : []} inspect={inspect} /><Refs label='State evidence' values={value.evidence} inspect={inspect} /><p className='fine-print'>This is a reported state event, not an independent finding of task completion.</p></>;
+  }
+  if (record instanceof C.GraphRecord_Selection) {
+    const value = record.value;
+    return <><p className='record-text'>{value.reason}</p><Refs label='Selection binding' values={[value.binding]} inspect={inspect} /><Refs label='Selection basis' values={value.basis} inspect={inspect} /><p className='fine-print'>This is an append-only selection account. Later replacement or retirement may supersede it. Selection is not execution permission; retirement is not task cancellation.</p></>;
   }
   if (record instanceof C.GraphRecord_Input) {
     const value = record.value;

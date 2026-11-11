@@ -2,12 +2,13 @@ import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../Baboon
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActorRecord, ActorRecord_JsonCodec} from './ActorRecord.js'
 import {Binding, Binding_JsonCodec} from './Binding.js'
+import {BindingSelection, BindingSelection_JsonCodec} from './BindingSelection.js'
 import {Definition, Definition_JsonCodec} from './Definition.js'
 import {InputReceipt, InputReceipt_JsonCodec} from './InputReceipt.js'
 import {Relation, Relation_JsonCodec} from './Relation.js'
 import {StateEvent, StateEvent_JsonCodec} from './StateEvent.js'
 
-export type GraphRecord = GraphRecord_Input | GraphRecord_Person | GraphRecord_Node | GraphRecord_Edge | GraphRecord_Contract | GraphRecord_Progress
+export type GraphRecord = GraphRecord_Input | GraphRecord_Person | GraphRecord_Node | GraphRecord_Edge | GraphRecord_Contract | GraphRecord_Progress | GraphRecord_Selection
 
 export const GraphRecord = {
     BaboonDomainVersion: '0.1.0',
@@ -670,6 +671,114 @@ export class GraphRecord_Progress_JsonCodec {
     }
 }
 
+export class GraphRecord_Selection implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#GraphRecord]#Selection' as const;
+    private readonly _value: BindingSelection;
+
+    constructor(value: BindingSelection) {
+        this._value = value
+    }
+
+    public get value(): BindingSelection {
+        return this._value;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            value: this._value
+        };
+    }
+
+    public with(overrides: {value?: BindingSelection}): GraphRecord_Selection {
+        return new GraphRecord_Selection(
+            'value' in overrides ? overrides.value! : this._value
+        );
+    }
+
+    public static fromPlain(obj: {value: BindingSelection}): GraphRecord_Selection {
+        return new GraphRecord_Selection(
+            obj.value
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return GraphRecord_Selection.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return GraphRecord_Selection.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#GraphRecord]#Selection'
+    public baboonTypeIdentifier() {
+        return GraphRecord_Selection.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return GraphRecord_Selection.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return GraphRecord_Selection.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return GraphRecord_Selection.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#GraphRecord'
+    public baboonAdtTypeIdentifier() {
+        return GraphRecord_Selection.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): GraphRecord_Selection_JsonCodec {
+        return GraphRecord_Selection_JsonCodec.instance
+    }
+}
+
+export class GraphRecord_Selection_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: GraphRecord_Selection): unknown {
+        if (this !== GraphRecord_Selection_JsonCodec.lazyInstance.value) {
+          return GraphRecord_Selection_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "value": BindingSelection_JsonCodec.instance.encode(BaboonCodecContext.Default, value.value),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): GraphRecord_Selection {
+        if (this !== GraphRecord_Selection_JsonCodec .lazyInstance.value) {
+            return GraphRecord_Selection_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new GraphRecord_Selection (
+            BindingSelection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["value"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return GraphRecord_Selection_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return GraphRecord_Selection_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#GraphRecord]#Selection'
+    public baboonTypeIdentifier() {
+        return GraphRecord_Selection_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#GraphRecord'
+    public baboonAdtTypeIdentifier() {
+        return GraphRecord_Selection_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new GraphRecord_Selection_JsonCodec())
+    public static get instance(): GraphRecord_Selection_JsonCodec {
+        return GraphRecord_Selection_JsonCodec.lazyInstance.value
+    }
+}
+
 
 export class GraphRecord_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: GraphRecord): unknown {
@@ -695,6 +804,9 @@ export class GraphRecord_JsonCodec {
             if (value instanceof GraphRecord_Progress) {
                 return { "Progress": GraphRecord_Progress_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof GraphRecord_Selection) {
+                return { "Selection": GraphRecord_Selection_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): GraphRecord {
@@ -711,6 +823,7 @@ export class GraphRecord_JsonCodec {
                 case "Edge": return GraphRecord_Edge_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Contract": return GraphRecord_Contract_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Progress": return GraphRecord_Progress_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "Selection": return GraphRecord_Selection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }

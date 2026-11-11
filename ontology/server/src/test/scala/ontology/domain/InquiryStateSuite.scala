@@ -16,7 +16,7 @@ final class InquiryStateSuite extends FunSuite {
   private def ref(value: Applied, alias: String): Ref = value.result.created.find(_.alias == alias).get.ref
   private def initial(content: Content): Applied = run(Graph.empty("inquiry"), List(
     Operation.Create("definition", ontology.TestAuthoring.applicability(TestApplicability.unresolved), ontology.TestAuthoring.content(content), Nil),
-    Operation.Bind("binding", Target.Created("definition"), Nil)))
+    Operation.Bind("binding", Target.Created("definition"), Nil, "fixture"), Operation.SelectBinding("binding-selection", Target.Created("binding"), true, "Selected by this fixture", List(Target.Created("definition")))))
   private def state(alias: String, binding: Ref, previous: Option[Ref], name: String, reason: Option[String], evidence: List[Target]): Operation =
     Operation.State(alias, Target.Exact(binding), previous, phase(name), None, reason, evidence, "No conclusion about truth or approval")
 
@@ -32,7 +32,7 @@ final class InquiryStateSuite extends FunSuite {
   test("resolved review can remain contradictory without changing findings or assessment") {
     val subject = initial(question)
     val review = Content.Review("Review the question", List("Evidence contradicts the premise"), List(ref(subject, "binding")), Nil, "Limited evidence", Assessment.Contradicted)
-    val base = run(subject.snapshot, List(Operation.Create("review", ontology.TestAuthoring.applicability(TestApplicability.unresolved), ontology.TestAuthoring.content(review), Nil), Operation.Bind("review-binding", Target.Created("review"), Nil)))
+    val base = run(subject.snapshot, List(Operation.Create("review", ontology.TestAuthoring.applicability(TestApplicability.unresolved), ontology.TestAuthoring.content(review), Nil), Operation.Bind("review-binding", Target.Created("review"), Nil, "fixture"), Operation.SelectBinding("review-binding-selection", Target.Created("review-binding"), true, "Selected by this fixture", List(Target.Created("review")))))
     val done = run(base.snapshot, List(state("done", ref(base, "review-binding"), None, "Resolved", Some("Review finished and requests correction"), Nil)))
     assertEquals(Graph.node(done.snapshot, ref(base, "review")).content, review)
     assertEquals(done.snapshot.events.last.result, None)
