@@ -37,7 +37,7 @@ test('strict browser schema rejects i64 numbers, wrong enums, keys and surrogate
 });
 
 test('dashboard builders use current generated commands with exact catalogue and tri-state patch',()=>{
-  const state={q:' A\u0000Straße ',includeExpired:false,visibility:'external',itemState:'ready',sort:'created_by_user',direction:'desc'};
+  const state={q:' A\u0000Straße ',includeExpired:false,visibility:'external',itemState:'ready',sort:'created_by_user',direction:'desc',tags:[],hostname:null,projectPath:null};
   const descriptor=boundary.catalogue('position',state,25);
   const command=descriptor[0];
   assert.ok(command instanceof p.Command_ListArtifacts);
@@ -103,7 +103,7 @@ test('search goldens carry actual published space distinct from profile and lexi
 // Specified contract: retrieval is a separate typed Search command, never a
 // catalogue query with a different label or a hand-decoded response.
 test('dashboard retrieval descriptor and projected enums use generated current Search codecs',()=>{
-  const descriptor=boundary.search({q:'hayneedle',mode:'hybrid',visibility:'external',kind:'dir',createdByUser:'owner'},25);
+  const descriptor=boundary.search({q:'hayneedle',mode:'hybrid',visibility:'external',kind:'dir',createdByUser:'owner',tags:[],hostname:null,projectPath:null},25);
   assert.ok(descriptor[0] instanceof p.Command_Search);
   assert.equal(descriptor[0].query.mode,p.SearchMode.Hybrid);
   assert.equal(descriptor[0].query.filter.kind,p.ArtifactKind.Directory);
@@ -125,4 +125,23 @@ test('dashboard retrieval descriptor and projected enums use generated current S
   assert.equal(pages[1].count_scope,'exactmatches');
   assert.equal(pages[0].hits[0].evidence[0].field,'name');
   assert.equal(pages[0].hits[0].artifact.kind,'dir');
+});
+
+
+test('metadata adapters append every required wire field, absent values explicitly empty/null',()=>{
+  for(const metadata of [{tags:[],hostname:null,projectPath:null},{tags:['A',' a '],hostname:'HOST.Example',projectPath:' /work/A '}]) {
+    const state={...boundary.parseExpression('text:needle'),...metadata};
+    for(const descriptor of [boundary.catalogue(null,state,25),boundary.search({...state,mode:'lexical'},25)]) {
+      const wire=p.ClientEnvelope_JsonCodec.instance.encode(ctx,new p.ClientEnvelope(id,'1.0.0',descriptor[0]));
+      boundary.validate('ClientEnvelope',wire);
+      const plan=wire.command.ListArtifacts ? wire.command.ListArtifacts.query : wire.command.Search.query.filter;
+      for(const [key,value] of Object.entries(metadata)) assert.deepEqual(plan[key],value,key);
+    }
+  }
+  const upload=boundary.initUpload({name:'file.txt',size:1},'public','a'.repeat(64));
+  const wire=p.ClientEnvelope_JsonCodec.instance.encode(ctx,new p.ClientEnvelope(id,'1.0.0',upload[0]));
+  boundary.validate('ClientEnvelope',wire);
+  assert.deepEqual(wire.command.InitUpload.tags,[]);
+  assert.equal(wire.command.InitUpload.hostname,null);
+  assert.equal(wire.command.InitUpload.projectPath,null);
 });

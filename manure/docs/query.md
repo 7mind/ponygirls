@@ -14,6 +14,9 @@ limit=..., cursor=...)`, which compiles the same expression into current typed
 | --- | --- | --- |
 | `mode` | `catalogue`, `lexical`, `semantic`, `hybrid` | Default `catalogue` |
 | `access` | `internal`, `external`, `public` | All modes |
+| `tag` | Exact tag; repeat up to 32 distinct tags (AND) | All modes |
+| `hostname` | Exact source hostname | All modes; nonblank, at most 253 Unicode scalars |
+| `project` | Exact project path | All modes; nonblank, at most 4096 Unicode scalars |
 | `state` | `ready`, `uploading`, `publishing` | Catalogue only |
 | `expired` | `true`, `false` | Catalogue only; default `false` |
 | `sort` | `name`, `created_at`, `expires_at`, `total_bytes`, `file_count`, `visibility`, `state`, `kind`, `created_by_user` | Catalogue only; default `created_at` |
@@ -23,13 +26,17 @@ limit=..., cursor=...)`, which compiles the same expression into current typed
 | `text` | Exact underlying search text | All modes; excludes bare search terms |
 
 Field identifiers are case-insensitive; closed values are exact lowercase.
-All metadata filters **conjoin**. This is not a Boolean language over metadata:
+All metadata filters **conjoin**. Tag, hostname and project values are
+case-sensitive exact matches: no trimming, case folding, path canonicalization,
+prefix matching or host resolution. Each tag must be nonblank and at most 128
+Unicode scalars. `tag:Release tag:release` requires both tags; repeated identical
+tags and duplicate hostname/project fields are errors. This is not a Boolean language over metadata:
 parentheses, `OR` and `NOT` in bare retrieval text belong to the existing
 retrieval engine, not to the metadata parser. Never express alternatives as
 `access:public OR access:internal`: duplicate fields are rejected.
 
-Catalogue text is the backend's literal case-insensitive name/artifact-ID
-substring filter. Retrieval searches authorized artifact metadata and manifest
+Catalogue text is the backend's literal case-insensitive substring filter over
+name, artifact ID, tags, hostname and project path. Retrieval searches authorized artifact metadata and manifest
 paths, not file bytes. Lexical mode uses the existing English retrieval syntax;
 semantic/hybrid require the configured provider and can report
 `search-unavailable`, with no silent lexical fallback. Retrieval results retain
@@ -51,7 +58,7 @@ parentheses/operators, or when data looks like a metadata field:
 
 ```text
 access:public state:ready sort:name direction:asc report
-mode:lexical access:internal kind:dir owner:"Exact User" "quarterly report"
+mode:lexical tag:release hostname:build-host project:"/work/project" access:internal kind:dir owner:"Exact User" "quarterly report"
 mode:lexical text:"(\"cat  dog\" OR bird) NOT fish"
 text:"mode:hybrid"
 ```
@@ -66,7 +73,11 @@ an empty one.
 
 ## Bounds and failures
 
-The entire source expression is limited to 4096 UTF-16 code units. Valid Unicode
+The entire source expression is limited to 131072 UTF-16 code units; the compiled
+search text is independently limited to 4096 UTF-16 code units in every mode.
+`text:` JSON escapes are decoded before this text limit; bare retrieval phrases
+retain their raw JSON spelling as described above, which counts toward the text
+limit. Metadata does not consume the search-text budget. Valid Unicode
 surrogate pairs are supported; unpaired surrogates in source or decoded JSON
 values are rejected. Python `QueryError.start` / `.end` are UTF-16 offsets for
 selection in the browser. MCP/client expression errors use `bad-query` with a
@@ -79,5 +90,6 @@ No field is silently ignored or reinterpreted as search text.
 `tests/fixtures/query-expressions.json` is the shared cross-language contract:
 each array entry contains `name`, `query`, and either an `expected` plan with
 `q`, `mode`, `visibility`, `itemState`, `includeExpired`, `kind`,
-`createdByUser`, `sort`, `direction`, or an `error` message. Parser fixtures do
+`createdByUser`, `sort`, `direction`, `tags`, `hostname`, `projectPath`, or an
+`error` message. Parser fixtures do
 not establish browser interaction or real-provider semantic quality.

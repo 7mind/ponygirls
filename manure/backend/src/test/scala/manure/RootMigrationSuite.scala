@@ -94,7 +94,7 @@ final class RootMigrationSuite extends munit.FunSuite:
   private def initialize(config: Config,token: String): IO[String] = Main.resources(config).use { services =>
     val identity=new Auth(config.users).authenticate(token).get
     val request=InitUpload("portable\u0000馬",ArtifactKind.File,Visibility.Internal,
-      Vector(ManifestEntry("資料/file.txt",false,payload.length,SecretCodec.sha256(payload))),None)
+      Vector(ManifestEntry("資料/file.txt",false,payload.length,SecretCodec.sha256(payload))),None,Vector.empty,None,None)
     for
       upload <- services.artifacts.init(identity,request)
       _ <- services.artifacts.putChunk(identity,upload.artifact.id,"資料/file.txt",0,payload,SecretCodec.sha256(payload))

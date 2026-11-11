@@ -134,13 +134,13 @@ export const logout = () => [new p.Command_Logout(),p.Result_Ok,()=>({ok:true})]
 export const search = (state,limit) => [new p.Command_Search(new p.SearchQuery(
   state.q,p.SearchMode[state.mode[0].toUpperCase()+state.mode.slice(1)],
   new p.SearchFilter(state.visibility ? p.Visibility[state.visibility[0].toUpperCase()+state.visibility.slice(1)] : null,
-    state.kind ? p.ArtifactKind[state.kind === 'dir' ? 'Directory' : 'File'] : null,state.createdByUser || null),
+    state.kind ? p.ArtifactKind[state.kind === 'dir' ? 'Directory' : 'File'] : null,state.createdByUser || null,state.tags,state.hostname,state.projectPath),
   limit,null)),p.Result_SearchResults,r=>local(r.page)];
 export const catalogue = (cursor,state,limit) => [new p.Command_ListArtifacts(new p.CatalogueQuery(
   state.q,state.includeExpired,state.visibility ? p.Visibility[state.visibility[0].toUpperCase()+state.visibility.slice(1)] : null,
   state.itemState ? p.ArtifactState[state.itemState[0].toUpperCase()+state.itemState.slice(1)] : null,
   p.CatalogueSort[state.sort.split('_').map(s=>s[0].toUpperCase()+s.slice(1)).join('')],
-  state.direction === 'asc' ? p.SortDirection.Asc : p.SortDirection.Desc,limit,cursor)),p.Result_Catalogue,r=>local(r.page)];
+  state.direction === 'asc' ? p.SortDirection.Asc : p.SortDirection.Desc,limit,cursor,state.tags,state.hostname,state.projectPath)),p.Result_Catalogue,r=>local(r.page)];
 export const artifact = id => [new p.Command_GetArtifact(id),p.Result_ArtifactInfo,r=>local(r.artifact)];
 export const manifest = id => [new p.Command_GetManifest(id),p.Result_ArtifactManifest,r=>local(r.manifest)];
 export const grant = id => [new p.Command_CreateGrant(id),p.Result_GrantCreated,r=>local(r)];
@@ -160,7 +160,7 @@ export const capabilities = () => [new p.Command_GetCapabilities(),p.Result_Capa
 }];
 export const initUpload = (file,visibility,sha256) => [new p.Command_InitUpload(file.name,p.ArtifactKind.File,
   p.Visibility[visibility[0].toUpperCase()+visibility.slice(1)],null,
-  [new p.ManifestEntry_File(file.name,BigInt(file.size),sha256)]),p.Result_UploadInitialized,r=>{
+  [new p.ManifestEntry_File(file.name,BigInt(file.size),sha256)],[],null,null),p.Result_UploadInitialized,r=>{
     const value=local(r);value.external_password=r.externalPassword === undefined ? null : r.externalPassword;return value;
   }];
 export const finishUpload = id => [new p.Command_FinishUpload(id),p.Result_UploadFinished,r=>local(r)];
@@ -184,7 +184,8 @@ export async function putChunk(fetch,id,path,offset,data,sha256,signal) {
     receipt.receivedBytes<BigInt(offset+data.size)) bad();
 }
 
-export const QUERY_LIMIT = 4096;
+export const QUERY_LIMIT = 131072;
+export const SEARCH_TEXT_LIMIT = 4096;
 export const SORTS = Object.freeze(['name', 'kind', 'visibility', 'state', 'total_bytes', 'file_count', 'created_at', 'expires_at', 'created_by_user']);
 const FIELDS = Object.freeze({
   mode: {values:['catalogue','lexical','semantic','hybrid'], detail:'Search mode'},
@@ -193,6 +194,9 @@ const FIELDS = Object.freeze({
   expired: {values:['true','false'], scope:'catalogue', detail:'Include expired artifacts'},
   kind: {values:['file','dir'], scope:'retrieval', detail:'Artifact kind'},
   owner: {scope:'retrieval', detail:'Exact creator · JSON quotes allowed'},
+  tag: {repeatable:true, maxScalars:128, title:'Tag', detail:'Exact tag · repeat to require all tags'},
+  hostname: {maxScalars:253, title:'Hostname', detail:'Exact explicit hostname · JSON quotes allowed'},
+  project: {maxScalars:4096, title:'Project path', detail:'Exact explicit project path · JSON quotes allowed'},
   sort: {values:SORTS, scope:'catalogue', detail:'Global catalogue sort'},
   direction: {values:['asc','desc'], scope:'catalogue', detail:'Catalogue sort direction'},
   text: {detail:'Exact search text · JSON quotes allowed'}
@@ -247,18 +251,24 @@ function valueOf(raw, start, end) {
   return value;
 }
 export function parseExpression(expression) {
-  if (expression.length > QUERY_LIMIT) throw new ExpressionError('Query exceeds 4096 UTF-16 code units.', QUERY_LIMIT, expression.length);
+  if (expression.length > QUERY_LIMIT) throw new ExpressionError('Query exceeds '+QUERY_LIMIT+' UTF-16 code units.', QUERY_LIMIT, expression.length);
   unicode(expression,0,expression.length);
-  const values = new Map(), positions = new Map(), bare = [];
+  const values = new Map(), positions = new Map(), bare = [], tags = [];
   for (const token of scan(expression,false)) {
     const colon = token.raw.startsWith('"') ? -1 : token.raw.indexOf(':');
     if (colon < 0) { bare.push({raw:token.raw,value:valueOf(token.raw,token.start,token.end)}); continue; }
     const field = token.raw.slice(0,colon).toLowerCase();
     if (!Object.hasOwn(FIELDS,field)) throw new ExpressionError('Unknown field; use a supported query field.',token.start,token.start+colon);
-    if (values.has(field)) throw new ExpressionError('Duplicate field; specify each field once.',token.start,token.end);
+    if (values.has(field) && !FIELDS[field].repeatable) throw new ExpressionError('Duplicate field; specify each field once.',token.start,token.end);
     const value = valueOf(token.raw.slice(colon+1),token.start+colon+1,token.end);
     const spec = FIELDS[field];
     if (spec.values && !spec.values.includes(value)) throw new ExpressionError('Invalid '+field+' value; use '+spec.values.join(', ')+'.',token.start+colon+1,token.end);
+    if (spec.maxScalars && (!value.trim() || Array.from(value).length > spec.maxScalars)) throw new ExpressionError(spec.title+' must be nonblank and at most '+spec.maxScalars+' Unicode scalar values.',token.start+colon+1,token.end);
+    if (field === 'tag') {
+      if (tags.includes(value)) throw new ExpressionError('Duplicate tag; specify each tag once.',token.start,token.end);
+      if (tags.length === 32) throw new ExpressionError('At most 32 tags are allowed.',token.start,token.end);
+      tags.push(value);
+    }
     if (field === 'owner' && !value.trim()) throw new ExpressionError('Owner must not be blank.',token.start+colon+1,token.end);
     values.set(field,value); positions.set(field,token);
   }
@@ -272,8 +282,10 @@ export function parseExpression(expression) {
   const decoded = values.has('text') ? values.get('text') : bare.map(token=>token.value).join(' ');
   if (mode !== 'catalogue' && !decoded.trim()) throw new ExpressionError('Retrieval mode requires nonblank search text.',expression.length,expression.length);
   const q = values.has('text') || mode === 'catalogue' ? decoded : bare.map(token=>token.raw).join(' ');
+  if (q.length > SEARCH_TEXT_LIMIT) throw new ExpressionError('Search text exceeds 4096 UTF-16 code units.',0,expression.length);
   return {q, mode, visibility:values.get('access') ?? null, itemState:values.get('state') ?? null,
     includeExpired:values.get('expired') === 'true', kind:values.get('kind') ?? null,
+    tags, hostname:values.get('hostname') ?? null, projectPath:values.get('project') ?? null,
     createdByUser:values.get('owner') ?? null, sort:values.get('sort') || 'created_at', direction:values.get('direction') || 'desc'};
 }
 export function serializeExpression(state) {
@@ -289,11 +301,15 @@ export function serializeExpression(state) {
     if (state.kind) parts.push('kind:'+state.kind);
     if (state.createdByUser) parts.push('owner:'+(/^[^\s":]+$/u.test(state.createdByUser) ? state.createdByUser : JSON.stringify(state.createdByUser)));
   }
+  const literal = value => /^[^\s":]+$/u.test(value) ? value : JSON.stringify(value);
+  state.tags.forEach(tag=>parts.push('tag:'+literal(tag)));
+  if (state.hostname !== null) parts.push('hostname:'+literal(state.hostname));
+  if (state.projectPath !== null) parts.push('project:'+literal(state.projectPath));
   const candidates = state.q ? [state.q, JSON.stringify(state.q), 'text:'+JSON.stringify(state.q)].sort((a,b)=>a.length-b.length) : [''];
   const expected = {...state,visibility:state.visibility || null,itemState:state.itemState || null,kind:state.kind || null,createdByUser:state.createdByUser || null};
   for (const text of candidates) {
     const expression = [...parts,...(text ? [text] : [])].join(' ');
-    try { if (Object.entries(parseExpression(expression)).every(([field,value])=>value === expected[field])) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
+    try { if (Object.entries(parseExpression(expression)).every(([field,value])=>field === 'tags' ? JSON.stringify(value) === JSON.stringify(expected[field]) : value === expected[field])) return expression; } catch (_) { /* Try the next lossless literal encoding. */ }
   }
   throw new ExpressionError('Query cannot be represented within the expression limit.',0,0);
 }
@@ -332,7 +348,7 @@ export function completeExpression(expression, caret) {
   } else {
     const prefix = expression.slice(start,caret).toLowerCase();
     for (const [field,spec] of Object.entries(FIELDS)) {
-      if (!field.startsWith(prefix) || used.has(field) || spec.scope === 'catalogue' && mode !== 'catalogue' || spec.scope === 'retrieval' && mode === 'catalogue') continue;
+      if (!field.startsWith(prefix) || used.has(field) && !spec.repeatable || spec.scope === 'catalogue' && mode !== 'catalogue' || spec.scope === 'retrieval' && mode === 'catalogue') continue;
       add(field+':',spec.detail,start,colon >= 0 ? start+colon+1 : end,field+':');
     }
   }

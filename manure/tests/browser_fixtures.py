@@ -432,7 +432,7 @@ def upload_fixture(fix: ServerFixture, *, name: str, kind: str, visibility: str,
     entries = [cp.ManifestEntry_File(path,len(files[path]),hashlib.sha256(files[path]).hexdigest()) for path in sorted(files)]
     entries += [cp.ManifestEntry_Directory(path) for path in sorted(empty_dirs or [])]
     command = cp.Command_InitUpload(name,cp.ArtifactKind.File if kind=="file" else cp.ArtifactKind.Directory,
-        cp.Visibility(visibility.capitalize()),expires_in_s,entries)
+        cp.Visibility(visibility.capitalize()),expires_in_s,entries,[],None,None)
     res = http.current(fix.api_base,command,headers=auth)
     assert res.status == 200, f"current init failed: {res.status}"
     init = res.json();artifact_id=init["artifact_id"];chunk_bytes=init["chunk_bytes"]
@@ -788,7 +788,7 @@ def init_command(body):
     return cp.Command_InitUpload(body["name"],cp.ArtifactKind.File if body["kind"]=="file" else cp.ArtifactKind.Directory,
         cp.Visibility(body["visibility"].capitalize()),body.get("expires_in_s"),[
         cp.ManifestEntry_File(e["path"],e["size"],e["sha256"]) if e["kind"]=="file" else cp.ManifestEntry_Directory(e["path"])
-        for e in body["files"]])
+        for e in body["files"]],[],None,None)
 
 
 def patch_command(artifact_id,body):

@@ -135,6 +135,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_up = sub.add_parser("upload")
     p_up.add_argument("path")
     p_up.add_argument("--name", default=None)
+    p_up.add_argument("--tag", action="append", default=None, help="exact tag (repeatable, max 32)")
+    p_up.add_argument("--hostname", default=None, help="explicit source hostname (never inferred)")
+    p_up.add_argument("--project-path", default=None, help="explicit project path (never inferred)")
     p_up.add_argument("--access", default=None)
     p_up.add_argument("--expires-in", default=None)
     p_up.add_argument("--resume", default=None)
@@ -273,7 +276,8 @@ def main(argv: list[str] | None = None) -> int:
                 return 2
             res = client.upload_path(args.path, access=args.access, name=args.name,
                                      expires_in_s=exp, resume_id=args.resume,
-                                     fresh=bool(args.fresh))
+                                     fresh=bool(args.fresh), tags=args.tag,
+                                     hostname=args.hostname, project_path=args.project_path)
             _print_result(res, as_json)
             return 0
     except ManureError as e:

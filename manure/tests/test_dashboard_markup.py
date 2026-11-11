@@ -90,7 +90,7 @@ class DashboardMarkupTests(unittest.TestCase):
         attrs = self.elements.ids["filter-text"][1]
         self.assertEqual(attrs["role"], "combobox")
         self.assertEqual(attrs["aria-controls"], "query-suggestions")
-        self.assertEqual(attrs["maxlength"], "4096")
+        self.assertEqual(attrs["maxlength"], "131072")
         self.assertEqual(self.elements.ids["query-suggestions"][1]["role"], "listbox")
         self.assertEqual(self.elements.ids["query-syntax"][0], "details")
         self.assertEqual(self.elements.ids["query-diagnostic"][1]["role"], "status")

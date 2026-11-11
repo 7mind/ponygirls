@@ -5,7 +5,11 @@ from dataclasses import dataclass
 import json
 from typing import Literal, cast
 
-MAX_QUERY_UTF16 = 4096
+from manure.metadata import (MAX_TAGS, MAX_TAG_SCALARS, MAX_HOSTNAME_SCALARS,
+                             MAX_PROJECT_PATH_SCALARS, WHITESPACE, validate_value)
+
+MAX_QUERY_UTF16 = 131072
+MAX_TEXT_UTF16 = 4096
 Mode = Literal['catalogue', 'lexical', 'semantic', 'hybrid']
 Access = Literal['internal', 'external', 'public']
 State = Literal['ready', 'uploading', 'publishing']
@@ -13,11 +17,10 @@ Kind = Literal['file', 'dir']
 Direction = Literal['asc', 'desc']
 CatalogueSort = Literal['name', 'created_at', 'expires_at', 'total_bytes', 'file_count',
                         'visibility', 'state', 'kind', 'created_by_user']
-FIELDS = ('mode', 'access', 'state', 'expired', 'kind', 'owner', 'sort', 'direction', 'text')
+FIELDS = ('mode', 'access', 'state', 'expired', 'kind', 'owner', 'sort', 'direction', 'text', 'tag', 'hostname', 'project')
 SORTS = ('name', 'created_at', 'expires_at', 'total_bytes', 'file_count', 'visibility',
          'state', 'kind', 'created_by_user')
-# ECMAScript whitespace, shared with the browser tokenizer (not Python isspace).
-WHITESPACE = '\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff'
+
 
 
 class QueryError(ValueError):
@@ -39,12 +42,16 @@ class QueryPlan:
     created_by_user: str | None
     sort: CatalogueSort
     direction: Direction
+    tags: list[str]
+    hostname: str | None
+    project_path: str | None
 
-    def as_dict(self) -> dict[str, str | bool | None]:
+    def as_dict(self) -> dict[str, str | bool | list[str] | None]:
         return {'q': self.q, 'mode': self.mode, 'visibility': self.visibility,
                 'itemState': self.item_state, 'includeExpired': self.include_expired,
                 'kind': self.kind, 'createdByUser': self.created_by_user,
-                'sort': self.sort, 'direction': self.direction}
+                'sort': self.sort, 'direction': self.direction, 'tags': self.tags,
+                'hostname': self.hostname, 'projectPath': self.project_path}
 
 
 @dataclass(frozen=True)
@@ -105,9 +112,10 @@ def parse_expression(expression: str) -> QueryPlan:
         raise QueryError('Query must be a string.', 0, 0)
     source = _scalars(expression)
     if _units(source) > MAX_QUERY_UTF16:
-        raise QueryError('Query exceeds 4096 UTF-16 code units.', 0, _units(source))
+        raise QueryError('Query exceeds 131072 UTF-16 code units.', 0, _units(source))
     fields: dict[str, _Token] = {}
     bare: list[_Token] = []
+    tags: list[str] = []
     index = 0
     while index < len(source):
         if source[index] in WHITESPACE:
@@ -124,10 +132,25 @@ def parse_expression(expression: str) -> QueryPlan:
                 while end < len(source) and source[end] not in WHITESPACE:
                     end += 1
                 raise _error(source, 'Unknown field; use a supported query field.', start, end)
-            if field in fields:
+            if field != 'tag' and field in fields:
                 raise _error(source, 'Duplicate field; specify each field once.', start, index)
             token = _value(source, index + 1)
-            fields[field] = token
+            if field in ('tag', 'hostname', 'project'):
+                label, maximum = {'tag': ('Tag', MAX_TAG_SCALARS),
+                                  'hostname': ('Hostname', MAX_HOSTNAME_SCALARS),
+                                  'project': ('Project path', MAX_PROJECT_PATH_SCALARS)}[field]
+                try:
+                    validate_value(token.value, label, maximum)
+                except ValueError as error:
+                    raise _error(source, str(error), token.start, token.end) from None
+            if field == 'tag':
+                if token.value in tags:
+                    raise _error(source, 'Duplicate tag; specify each tag once.', token.start, token.end)
+                if len(tags) == MAX_TAGS:
+                    raise _error(source, 'At most 32 tags are allowed.', token.start, token.end)
+                tags.append(token.value)
+            else:
+                fields[field] = token
         else:
             token = _value(source, start)
             bare.append(token)
@@ -162,7 +185,11 @@ def parse_expression(expression: str) -> QueryPlan:
         raise _error(source, 'text: cannot be combined with bare search terms.', bare[0].start, bare[-1].end)
     text = fields['text'].value if 'text' in fields else ' '.join(
         token.value if mode == 'catalogue' else token.raw for token in bare)
+    if _units(text) > MAX_TEXT_UTF16:
+        raise _error(source, 'Search text exceeds 4096 UTF-16 code units.', 0, len(source))
     nonblank = text.strip(WHITESPACE) if 'text' in fields else any(token.value.strip(WHITESPACE) for token in bare)
     if mode != 'catalogue' and not nonblank:
         raise _error(source, 'Retrieval mode requires nonblank search text.', 0, len(source))
-    return QueryPlan(text, mode, visibility, state, expired == 'true', kind, owner, sort, direction)
+    return QueryPlan(text, mode, visibility, state, expired == 'true', kind, owner, sort, direction,
+                     tags, fields['hostname'].value if 'hostname' in fields else None,
+                     fields['project'].value if 'project' in fields else None)

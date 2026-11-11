@@ -28,6 +28,15 @@
 > key is configured. This explicitly supersedes hash-only storage, one-time-only
 > disclosure and rotate-only recovery below, not any other authorization rule.
 
+> **Artifact metadata amendment:** The coordinated sole-current API adds explicit
+> optional tags, hostname and project-path labels to artifact initialization and
+> management metadata, with exact conjunctive filters in catalogue and all
+> retrieval modes. Catalogue literal text and retrieval corpus include these
+> labels. See [`docs/current-api.md`](docs/current-api.md#artifact-tags-and-provenance)
+> for bounds and matching semantics. No automatic machine/path collection, new
+> authorization boundary, payload inspection or deployment is implied. Existing
+> artifacts retain empty tags and absent provenance through migration.
+
 # manure — file & directory hosting (v0.2.0, amended)
 
 Original implementation freeze, with the explicit §0.1 amendment below.

@@ -7,11 +7,17 @@ export class SearchFilter implements BaboonGeneratedLatest {
     private readonly _visibility: Visibility | undefined;
     private readonly _kind: ArtifactKind | undefined;
     private readonly _createdByUser: string | undefined;
+    private readonly _tags: Array<string>;
+    private readonly _hostname: string | undefined;
+    private readonly _projectPath: string | undefined;
 
-    constructor(visibility: Visibility | undefined, kind: ArtifactKind | undefined, createdByUser: string | undefined) {
+    constructor(visibility: Visibility | undefined, kind: ArtifactKind | undefined, createdByUser: string | undefined, tags: Array<string>, hostname: string | undefined, projectPath: string | undefined) {
         this._visibility = visibility
         this._kind = kind
         this._createdByUser = createdByUser
+        this._tags = tags
+        this._hostname = hostname
+        this._projectPath = projectPath
     }
 
     public get visibility(): Visibility | undefined {
@@ -23,28 +29,46 @@ export class SearchFilter implements BaboonGeneratedLatest {
     public get createdByUser(): string | undefined {
         return this._createdByUser;
     }
+    public get tags(): Array<string> {
+        return this._tags;
+    }
+    public get hostname(): string | undefined {
+        return this._hostname;
+    }
+    public get projectPath(): string | undefined {
+        return this._projectPath;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
             visibility: this._visibility !== undefined ? this._visibility : undefined,
             kind: this._kind !== undefined ? this._kind : undefined,
-            createdByUser: this._createdByUser !== undefined ? this._createdByUser : undefined
+            createdByUser: this._createdByUser !== undefined ? this._createdByUser : undefined,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
 
-    public with(overrides: {visibility?: Visibility | undefined; kind?: ArtifactKind | undefined; createdByUser?: string | undefined}): SearchFilter {
+    public with(overrides: {visibility?: Visibility | undefined; kind?: ArtifactKind | undefined; createdByUser?: string | undefined; tags?: Array<string>; hostname?: string | undefined; projectPath?: string | undefined}): SearchFilter {
         return new SearchFilter(
             'visibility' in overrides ? overrides.visibility! : this._visibility,
             'kind' in overrides ? overrides.kind! : this._kind,
-            'createdByUser' in overrides ? overrides.createdByUser! : this._createdByUser
+            'createdByUser' in overrides ? overrides.createdByUser! : this._createdByUser,
+            'tags' in overrides ? overrides.tags! : this._tags,
+            'hostname' in overrides ? overrides.hostname! : this._hostname,
+            'projectPath' in overrides ? overrides.projectPath! : this._projectPath
         );
     }
 
-    public static fromPlain(obj: {visibility: Visibility | undefined; kind: ArtifactKind | undefined; createdByUser: string | undefined}): SearchFilter {
+    public static fromPlain(obj: {visibility: Visibility | undefined; kind: ArtifactKind | undefined; createdByUser: string | undefined; tags: Array<string>; hostname: string | undefined; projectPath: string | undefined}): SearchFilter {
         return new SearchFilter(
             obj.visibility,
             obj.kind,
-            obj.createdByUser
+            obj.createdByUser,
+            obj.tags,
+            obj.hostname,
+            obj.projectPath
         );
     }
 
@@ -87,6 +111,9 @@ export class SearchFilter_JsonCodec {
             "visibility": value.visibility === undefined ? null : Visibility_JsonCodec.instance.encode(BaboonCodecContext.Default, value.visibility),
             "kind": value.kind === undefined ? null : ArtifactKind_JsonCodec.instance.encode(BaboonCodecContext.Default, value.kind),
             "createdByUser": value.createdByUser === undefined ? null : value.createdByUser,
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): SearchFilter {
@@ -99,6 +126,9 @@ export class SearchFilter_JsonCodec {
             obj["visibility"] === undefined || obj["visibility"] === null ? undefined : obj["visibility"] === undefined || obj["visibility"] === null ? undefined : Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]),
             obj["kind"] === undefined || obj["kind"] === null ? undefined : obj["kind"] === undefined || obj["kind"] === null ? undefined : ArtifactKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]),
             obj["createdByUser"] === undefined || obj["createdByUser"] === null ? undefined : obj["createdByUser"] === undefined || obj["createdByUser"] === null ? undefined : obj["createdByUser"] as string,
+            (obj["tags"] as unknown[]).map(item => item as string),
+            obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] as string,
+            obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] as string,
         )
     }
 

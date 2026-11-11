@@ -332,7 +332,7 @@ class UnlockFlows:
     def test_b3_no_password_appears_in_listings_or_manifest(self):
         aid, password, _ = self._external_artifact(name="ext-leak")
         bearer = {"Authorization": f"Bearer {self.fix.identity.token}"}
-        listing = self.http.current((self.api), bf.cp.Command_ListArtifacts(bf.cp.CatalogueQuery("",False,None,None,bf.cp.CatalogueSort.CreatedAt,bf.cp.SortDirection.Desc,50,None)), headers=bearer)
+        listing = self.http.current((self.api), bf.cp.Command_ListArtifacts(bf.cp.CatalogueQuery("",False,None,None,bf.cp.CatalogueSort.CreatedAt,bf.cp.SortDirection.Desc,50,None,[],None,None)), headers=bearer)
         self.assertEqual(listing.status, 200, listing.body[:300])
         self.assertNotIn(password, listing.body.decode())
         info = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers=bearer)

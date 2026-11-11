@@ -70,7 +70,7 @@ try{
     assert.match(await page.locator('#list-status').textContent(),/exact matches/);
     assert.equal(await page.locator('#load-more-button').isVisible(),false);
     const command=await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode==='Lexical')[0]);
-    assert.deepEqual(command.filter,{visibility:'External',kind:'Directory',createdByUser:'search-manager'});
+    assert.deepEqual(command.filter,{visibility:'External',kind:'Directory',createdByUser:'search-manager',tags:[],hostname:null,projectPath:null});
     assert.ok(command.limit<=25 && command.limit>0);assert.equal(command.cursor,null);
     if(input.stage==='semantic'){
       const record=async selected=>{

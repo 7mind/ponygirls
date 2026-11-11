@@ -27,7 +27,8 @@ def sample(t, field='', options=False):
                 'createdAt':'2026-11-03T00:00:00Z', 'expiresAt':'2026-11-04T00:00:00Z',
                 'contentUrl':'https://'+'a'*32+'.example.invalid', 'current':p.API_VERSION,
                 'supported':p.API_VERSION, 'query':'Straße Σ İ E\u0301',
-                'name':'é𐐀\u0000name'}.get(field, 'fixture-'+field)
+                'name':'é𐐀\u0000name', 'tags':'release:2026',
+                'hostname':'build.example.invalid', 'projectPath':'/work/é project'}.get(field, 'fixture-'+field)
     if t is UUID: return REQUEST_ID
     if t is p.Int32: return 50
     if t is p.Int64: return 9007199254740993
@@ -49,12 +50,16 @@ def search_fixture(published):
     # are synthetic immutable identities, not provider endpoints or dimensions.
     artifact=p.Artifact('a'*32,'Published metadata' if published else 'Lexical HEAD metadata',
         p.ArtifactKind.Directory,p.Visibility.Internal,p.ArtifactState.Ready,'fixture-owner',
-        '2026-11-03T00:00:00Z',None,42,1,'https://'+'a'*32+'.example.invalid')
+        '2026-11-03T00:00:00Z',None,42,1,'https://'+'a'*32+'.example.invalid',
+        ['release:2026', 'é𐐀'], 'build.example.invalid', '/work/é project')
     hit=p.SearchHit(artifact,'d'*64 if published else 'e'*64,
         '11111111-1111-4111-8111-111111111111' if published else '22222222-2222-4222-8222-222222222222',
-        'manure-metadata-paths-v1','b'*64 if published else None,'c'*64 if published else None,
+        'manure-metadata-paths-v2','b'*64 if published else None,'c'*64 if published else None,
         [p.SearchEvidence(p.EvidenceField.Name,None,artifact.name,0.625),
-         p.SearchEvidence(p.EvidenceField.ManifestPath,'é/𐐀.txt','é/𐐀.txt',0.5)],0.625)
+         p.SearchEvidence(p.EvidenceField.ManifestPath,'é/𐐀.txt','é/𐐀.txt',0.5),
+         p.SearchEvidence(p.EvidenceField.Tag,None,'release:2026',0.5),
+         p.SearchEvidence(p.EvidenceField.Hostname,None,'build.example.invalid',0.5),
+         p.SearchEvidence(p.EvidenceField.ProjectPath,None,'/work/é project',0.5)],0.625)
     page=p.SearchPage([hit],1,p.SearchCountScope.CandidateWindow if published else p.SearchCountScope.ExactMatches,
         1000 if published else None,None)
     return p.ServerEnvelope(REQUEST_ID,p.Result_SearchResults(page))

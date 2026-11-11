@@ -250,9 +250,11 @@ Reconciliation itself changes the destination; do it on a disposable rehearsal
 copy after the comparison/write boundary, not on the archive.
 
 When migration and runtime roles differ, the operator-controlled ownership
-handoff must include all current application tables: `artifacts`, `receipts`,
-`one_time_grants`, `content_grants` and `external_passwords`. The runtime needs
-application-table DML, not migration-administrator credentials or broad grants.
+handoff must include all current application tables: `artifacts`, `artifact_tags`,
+`receipts`, `one_time_grants`, `content_grants` and `external_passwords`. The runtime
+must own these imported relations for application DML and subsequent migrations,
+not receive migration-administrator credentials or broad grants. Even an empty
+`artifact_tags` projection needs runtime access: startup reconciliation rebuilds it.
 The new password table is empty after historical import: existing hashes and
 password-bound grants remain unchanged, and password retrieval returns null
 until an explicit rotation. Migration control state remains read-only to the

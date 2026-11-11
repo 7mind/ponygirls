@@ -136,7 +136,7 @@ final case class Artifact(
   createdByUser: String, createdByToken: String, createdAt: String, createdAtSeconds: Double,
   expiresAt: Option[String], expiresAtSeconds: Option[Double], state: UploadState,
   totalBytes: Long, fileCount: Long, reservedBytes: Long, externalPasswordHash: Option[String],
-  lastActivityAt: Double, manifestJson: String
+  lastActivityAt: Double, manifestJson: String, tags: Vector[String], hostname: Option[String], projectPath: Option[String]
 ):
   lazy val manifest: Vector[ManifestEntry] = Manifest.decode(manifestJson)
   def expired(now: Double): Boolean = expiresAtSeconds.exists(now >= _)
@@ -151,7 +151,7 @@ final case class ContentGrant(hash: String, artifactId: String, expiresAt: Doubl
   userId: Option[String], tokenId: Option[String], tokenDigest: Option[String], passwordHash: Option[String])
 final case class Identity(userId: String, userType: String, tokenId: String, tokenDigest: String)
 final case class InitUpload(name: String, kind: ArtifactKind, visibility: Visibility,
-  files: Vector[ManifestEntry], expiresInSeconds: Option[Long])
+  files: Vector[ManifestEntry], expiresInSeconds: Option[Long], tags: Vector[String], hostname: Option[String], projectPath: Option[String])
 final case class Initialized(artifact: Artifact, externalPassword: Option[String])
 final case class FileProgress(path: String, size: Long, receivedBytes: Long, ranges: Vector[(Long, Long)])
 final case class UploadProgress(artifactId: String, state: UploadState, files: Vector[FileProgress])
@@ -159,6 +159,24 @@ enum TtlPatch:
   case Unchanged, Never
   case After(seconds: Long)
 final case class ArtifactPatch(name: Option[String], visibility: Option[Visibility], ttl: TtlPatch)
+
+object MetadataRules:
+  val MaxTags = 32
+  val MaxTagScalars = 128
+  val MaxHostnameScalars = 253
+  val MaxProjectPathScalars = 4096
+  private val whitespace = "\t\n\u000b\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+  private def text(value: String,maximum: Int): Unit =
+    Require(value.exists(c => !whitespace.contains(c)) && value.codePointCount(0,value.length) <= maximum,"bad-envelope")
+    try Exact.utf8(value) catch case _: java.nio.charset.CharacterCodingException => throw DomainError("bad-envelope")
+  def validate(tags: Seq[String],hostname: Option[String],projectPath: Option[String]): Unit =
+    Require(tags.size <= MaxTags && tags.distinct.size == tags.size,"bad-envelope")
+    tags.foreach(text(_,MaxTagScalars))
+    hostname.foreach(text(_,MaxHostnameScalars))
+    projectPath.foreach(text(_,MaxProjectPathScalars))
+  def encodeTags(tags: Vector[String]): String = Json.fromValues(tags.map(Json.fromString)).noSpaces
+  def decodeTags(value: String): Vector[String] =
+    parser.parse(value).flatMap(_.as[Vector[String]]).getOrElse(throw DomainError("unavailable"))
 
 object UploadRules:
   def name(value: String): Unit =

@@ -165,7 +165,7 @@
         "browser"
       ],
       "tests": [
-        "test_browser_query_expression.QueryExpressionBrowserTests.test_over_limit_sort_preserves_applied_query_and_remains_usable",
+        "test_browser_query_expression.QueryExpressionBrowserTests.test_maximum_text_sort_preserves_applied_query_and_remains_usable",
         "test_browser_query_expression.QueryExpressionBrowserTests.test_submitted_route_preserves_a_newer_draft"
       ]
     },
@@ -447,6 +447,8 @@
         "test_client_transport.TestCredentialIsolation.test_cross_origin_redirect_drops_credentials",
         "test_client_transport.TestCredentialIsolation.test_grant_jar_exact_host",
         "test_client_transport.TestLoopbackFixture.test_fixture_verifies_bearer_and_range",
+        "test_client_transport.TestLoopbackFixture.test_maximum_metadata_pages_survive_actual_http_transport",
+        "test_client_transport.TestLoopbackFixture.test_oversized_http_responses_still_fail_with_and_without_content_length",
         "test_client_transport.TestLoopbackHttps.test_http_loopback_allowed",
         "test_client_transport.TestLoopbackHttps.test_http_non_loopback_rejected_before_network",
         "test_client_transport.TestLoopbackHttps.test_https_non_loopback_allowed",
@@ -520,6 +522,7 @@
       "classification": "current",
       "requires": [],
       "tests": [
+        "test_current_target_harness.TargetHarnessSafetyTests.test_browser_fixture_metadata_defaults_use_current_schema",
         "test_current_target_harness.TargetHarnessSafetyTests.test_database_requires_explicit_createdb_opt_in_before_any_process",
         "test_current_target_harness.TargetHarnessSafetyTests.test_empty_or_non_argv_launcher_never_starts_a_process",
         "test_current_target_harness.TargetHarnessSafetyTests.test_missing_launcher_fails_not_skips_or_python_fallback",
@@ -613,6 +616,22 @@
         "test_mcp_protocol.TestMcpProtocol.test_stdout_purity",
         "test_mcp_protocol.TestMcpProtocol.test_tools_call_domain_fault_iserror",
         "test_mcp_protocol.TestMcpProtocol.test_tools_call_whoami_inprocess"
+      ]
+    },
+    {
+      "module": "test_metadata_client",
+      "path": "manure/tests/test_metadata_client.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_metadata_client.MetadataClientTests.test_cli_upload_forwards_metadata_and_rejects_duplicates_locally",
+        "test_metadata_client.MetadataClientTests.test_invalid_metadata_rejected_before_any_network",
+        "test_metadata_client.MetadataClientTests.test_mcp_upload_schema_checks_string_array_and_dispatches_metadata",
+        "test_metadata_client.MetadataClientTests.test_metadata_defaults_are_explicitly_empty",
+        "test_metadata_client.MetadataClientTests.test_metadata_scalar_boundaries_and_exact_filters",
+        "test_metadata_client.MetadataClientTests.test_resume_checks_server_metadata_before_mutation",
+        "test_metadata_client.MetadataClientTests.test_resume_metadata_binding_and_old_cache_defaults",
+        "test_metadata_client.MetadataClientTests.test_upload_metadata_round_trips_without_normalization"
       ]
     },
     {
@@ -853,7 +872,8 @@
         "request correlates generated result and never accepts wrong or legacy responses",
         "errors expose enumerated code only, not untrusted secret-bearing messages",
         "opted-in insecure HTTP context does not require secure-only crypto.randomUUID",
-        "search goldens carry actual published space distinct from profile and lexical HEAD nulls"
+        "search goldens carry actual published space distinct from profile and lexical HEAD nulls",
+        "metadata adapters append every required wire field, absent values explicitly empty/null"
       ],
       "timeoutSeconds": 120
     },
@@ -894,7 +914,9 @@
         "serializer round trips exact literal text including Unicode and escaping",
         "completion replaces touched token including suffix and restores scalar-safe caret",
         "closed values, mode applicability, and completed token boundaries guide hints",
-        "shared Python/browser expression contract fixtures"
+        "shared Python/browser expression contract fixtures",
+        "explicit metadata is exact, repeatable tags conjoin in all modes and round trip",
+        "maximum metadata and text round trip independently without exhausting expression budget"
       ],
       "timeoutSeconds": 120
     },
@@ -1207,7 +1229,7 @@
     },
     {
       "id": "publication-import",
-      "invariant": "Verify→publishing commit→tree/rename/parent/root fsync→ready commit→cleanup; never serve partial/publishing; ready retry idempotent; matched offline snapshot retains all states/receipts/grants/IEEE epochs and writable fix-forward boundary.",
+      "invariant": "Verify\u2192publishing commit\u2192tree/rename/parent/root fsync\u2192ready commit\u2192cleanup; never serve partial/publishing; ready retry idempotent; matched offline snapshot retains all states/receipts/grants/IEEE epochs and writable fix-forward boundary.",
       "sourceRefs": [
         {
           "path": "manure/manure/storage.py",
@@ -2088,7 +2110,7 @@
       "observedEvidence": {
         "failFirst": "f7d3eb13: actual owned blackbox NUL and LF subtests each returned(3,fixtureInvoked:true), expected(2,false); no PG/model/service launched.",
         "fix": "bfdfd121: actual NUL/LF checks, constant diagnostic, exit2 before fixture. Same two negatives plus valid five-pin positive control pass; all5 harness methods pass0 errors/skips.",
-        "scope": "Portable launcher only, not a compiled/native input; new CURRENT method increases final unfiltered expected IDs334→335, never changes historical141 execution count."
+        "scope": "Portable launcher only, not a compiled/native input; new CURRENT method increases final unfiltered expected IDs334\u2192335, never changes historical141 execution count."
       }
     }
   ],

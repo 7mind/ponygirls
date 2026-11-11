@@ -14,7 +14,10 @@ export class Artifact {
     _totalBytes;
     _fileCount;
     _contentUrl;
-    constructor(artifactId, name, kind, visibility, state, createdByUser, createdAt, expiresAt, totalBytes, fileCount, contentUrl) {
+    _tags;
+    _hostname;
+    _projectPath;
+    constructor(artifactId, name, kind, visibility, state, createdByUser, createdAt, expiresAt, totalBytes, fileCount, contentUrl, tags, hostname, projectPath) {
         this._artifactId = artifactId;
         this._name = name;
         this._kind = kind;
@@ -26,6 +29,9 @@ export class Artifact {
         this._totalBytes = totalBytes;
         this._fileCount = fileCount;
         this._contentUrl = contentUrl;
+        this._tags = tags;
+        this._hostname = hostname;
+        this._projectPath = projectPath;
     }
     get artifactId() {
         return this._artifactId;
@@ -60,6 +66,15 @@ export class Artifact {
     get contentUrl() {
         return this._contentUrl;
     }
+    get tags() {
+        return this._tags;
+    }
+    get hostname() {
+        return this._hostname;
+    }
+    get projectPath() {
+        return this._projectPath;
+    }
     toJSON() {
         return {
             artifactId: this._artifactId,
@@ -72,14 +87,17 @@ export class Artifact {
             expiresAt: this._expiresAt !== undefined ? this._expiresAt : undefined,
             totalBytes: this._totalBytes,
             fileCount: this._fileCount,
-            contentUrl: this._contentUrl
+            contentUrl: this._contentUrl,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
     with(overrides) {
-        return new Artifact('artifactId' in overrides ? overrides.artifactId : this._artifactId, 'name' in overrides ? overrides.name : this._name, 'kind' in overrides ? overrides.kind : this._kind, 'visibility' in overrides ? overrides.visibility : this._visibility, 'state' in overrides ? overrides.state : this._state, 'createdByUser' in overrides ? overrides.createdByUser : this._createdByUser, 'createdAt' in overrides ? overrides.createdAt : this._createdAt, 'expiresAt' in overrides ? overrides.expiresAt : this._expiresAt, 'totalBytes' in overrides ? overrides.totalBytes : this._totalBytes, 'fileCount' in overrides ? overrides.fileCount : this._fileCount, 'contentUrl' in overrides ? overrides.contentUrl : this._contentUrl);
+        return new Artifact('artifactId' in overrides ? overrides.artifactId : this._artifactId, 'name' in overrides ? overrides.name : this._name, 'kind' in overrides ? overrides.kind : this._kind, 'visibility' in overrides ? overrides.visibility : this._visibility, 'state' in overrides ? overrides.state : this._state, 'createdByUser' in overrides ? overrides.createdByUser : this._createdByUser, 'createdAt' in overrides ? overrides.createdAt : this._createdAt, 'expiresAt' in overrides ? overrides.expiresAt : this._expiresAt, 'totalBytes' in overrides ? overrides.totalBytes : this._totalBytes, 'fileCount' in overrides ? overrides.fileCount : this._fileCount, 'contentUrl' in overrides ? overrides.contentUrl : this._contentUrl, 'tags' in overrides ? overrides.tags : this._tags, 'hostname' in overrides ? overrides.hostname : this._hostname, 'projectPath' in overrides ? overrides.projectPath : this._projectPath);
     }
     static fromPlain(obj) {
-        return new Artifact(obj.artifactId, obj.name, obj.kind, obj.visibility, obj.state, obj.createdByUser, obj.createdAt, obj.expiresAt, obj.totalBytes, obj.fileCount, obj.contentUrl);
+        return new Artifact(obj.artifactId, obj.name, obj.kind, obj.visibility, obj.state, obj.createdByUser, obj.createdAt, obj.expiresAt, obj.totalBytes, obj.fileCount, obj.contentUrl, obj.tags, obj.hostname, obj.projectPath);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {
@@ -126,6 +144,9 @@ export class Artifact_JsonCodec {
             "totalBytes": value.totalBytes.toString(),
             "fileCount": value.fileCount,
             "contentUrl": value.contentUrl,
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         };
     }
     decode(ctx, json) {
@@ -133,7 +154,7 @@ export class Artifact_JsonCodec {
             return Artifact_JsonCodec.lazyInstance.value.decode(ctx, json);
         }
         const obj = json;
-        return new Artifact(obj["artifactId"], obj["name"], ArtifactKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]), Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]), ArtifactState_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["state"]), obj["createdByUser"], obj["createdAt"], obj["expiresAt"] === undefined || obj["expiresAt"] === null ? undefined : obj["expiresAt"] === undefined || obj["expiresAt"] === null ? undefined : obj["expiresAt"], BaboonInt64.read(obj["totalBytes"], "i64/u64"), obj["fileCount"], obj["contentUrl"]);
+        return new Artifact(obj["artifactId"], obj["name"], ArtifactKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]), Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]), ArtifactState_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["state"]), obj["createdByUser"], obj["createdAt"], obj["expiresAt"] === undefined || obj["expiresAt"] === null ? undefined : obj["expiresAt"] === undefined || obj["expiresAt"] === null ? undefined : obj["expiresAt"], BaboonInt64.read(obj["totalBytes"], "i64/u64"), obj["fileCount"], obj["contentUrl"], obj["tags"].map(item => item), obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"], obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"]);
     }
     static BaboonDomainVersion = '1.0.0';
     baboonDomainVersion() {

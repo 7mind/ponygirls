@@ -14,7 +14,7 @@ import manure.{api => wire}
 abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
   private def run(body: BackendFixture => IO[Unit]): Unit = BackendFixture.resource(postgres).use(body).unsafeRunSync()
   private def query(sort: wire.CatalogueSort = wire.CatalogueSort.Name,direction: wire.SortDirection = wire.SortDirection.Asc): wire.CatalogueQuery =
-    wire.CatalogueQuery("",true,None,None,sort,direction,3,None)
+    wire.CatalogueQuery("",true,None,None,sort,direction,3,None,Nil,None,None)
   private def catalogue(f: BackendFixture) = new Catalogue(f.artifacts,f.config.limits,f.clock)
   private def fixture(f: BackendFixture): Vector[Artifact] =
     val names = Vector("same","same","\ue000","𐀀","İ\u0000X","i\u0307\u0000x","Straße","STRASSE","Σ","σ","a%_'\\\u0000","🦄")
@@ -25,7 +25,7 @@ abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
         Vector("owner\u0000馬","\ue000","𐀀")(i%3),"token",Exact.displayTime(f.clock.now),
         f.clock.now+(i%3),expiry.map(Exact.displayTime),expiry,
         Vector(UploadState.Uploading,UploadState.Publishing,UploadState.Ready)(i%3),
-        (i%3).toLong,(i%2).toLong,(i%3).toLong,None,f.clock.now,"[]")
+        (i%3).toLong,(i%2).toLong,(i%3).toLong,None,f.clock.now,"[]",Vector.empty,None,None)
     }
   private def seed(f: BackendFixture): IO[Vector[Artifact]] =
     val values = fixture(f)
@@ -85,6 +85,30 @@ abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
       }
     yield ()
   }}
+  test("metadata preserves bytes, literal fold search and exact all-tag/provenance filtering before LIMIT") { run { f =>
+    val matching=fixture(f).head.copy(tags=Vector("release", "Straße\u0000馬", " pinned "),hostname=Some("Host.例"),projectPath=Some("/project/𐀀"))
+    val values=Vector(matching,matching.copy(id="f"*32,tags=Vector("release")),matching.copy(id="e"*32,hostname=Some("host.例")))
+    for
+      _ <- f.metadata.transaction(tx => values.foreach(tx.put))
+      _ <- Vector("strasse\u0000馬", "host.例", "/PROJECT/𐀀", " pinned ").traverse_ { text =>
+        walk(f,query().copy(query=text,limit=1)).map(actual => assertEquals(actual,expected(if text == "strasse\u0000馬" || text == " pinned " then values.filter(_.tags.size == 3) else values,query())))
+      }
+      exact <- walk(f,query().copy(tags=List("release","Straße\u0000馬"),hostname=Some("Host.例"),projectPath=Some("/project/𐀀"),limit=1))
+      _ <- IO(assertEquals(exact,Vector(matching)))
+      absent <- walk(f,query().copy(tags=List("Release")))
+      _ <- IO(assertEquals(absent,Vector.empty))
+      stored <- f.metadata.transaction(_.artifact(matching.id))
+      _ <- IO(assertEquals(stored,Some(matching)))
+    yield ()
+  }}
+  test("metadata filter bounds reject before metadata lookup") { run { f =>
+    Vector(query().copy(tags=List("x","x")),query().copy(tags=List("𐀀"*129)),
+      query().copy(hostname=Some("\u00a0\ufeff")),query().copy(projectPath=Some("x"*4097))).traverse_ { q =>
+      catalogue(f).list(f.other,q).attempt.map { result =>
+        assertEquals(result.left.toOption.collect { case e: DomainError => e.code },Some("bad-envelope"))
+      }
+    }
+  }}
   test("expiry authorization and state/visibility filtering happen before keyset LIMIT") { run { f => for
     values <- seed(f)
     combinations = for
@@ -111,7 +135,7 @@ abstract class CatalogueContract(postgres: Boolean) extends FunSuite:
     }
     _ <- Vector(q.copy(query="x"),q.copy(includeExpired=false),q.copy(visibility=Some(wire.Visibility.Public)),
       q.copy(state=Some(wire.ArtifactState.Ready)),q.copy(sort=wire.CatalogueSort.State),
-      q.copy(direction=wire.SortDirection.Desc),q.copy(limit=2)).traverse_ { changed =>
+      q.copy(direction=wire.SortDirection.Desc),q.copy(limit=2),q.copy(tags=List("tag")),q.copy(hostname=Some("host")),q.copy(projectPath=Some("/project"))).traverse_ { changed =>
       catalogue(f).list(f.other,changed.copy(cursor=Some(cursor))).attempt.map { result =>
         assertEquals(result.left.toOption.collect { case e: DomainError => e.code },Some("bad-envelope"))
       }

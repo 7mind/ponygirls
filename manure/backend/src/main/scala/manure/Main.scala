@@ -113,7 +113,7 @@ object Main extends IOApp:
             Require(!unexpected,"migration-required")
           case _ => ()
     })
-    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"),CatalogueProjection.migration,ExternalPasswords.migration))))
+    _ <- Resource.eval(stage("schema",IO.blocking(lease.validate()) *> database.migrate("manure",List(Migration(1,"metadata-byte-exact",schema),Migration(2,"physical-root-binding","CREATE TABLE IF NOT EXISTS manure.root_owner(singleton boolean PRIMARY KEY CHECK(singleton),identity bytea NOT NULL)"),CatalogueProjection.migration,ExternalPasswords.migration,ArtifactMetadataProjection.migration))))
     _ <- Resource.eval(services.database.transaction { c =>
       if recover then
         // File/hash validation above ran without an open DB transaction. Both
@@ -135,6 +135,8 @@ object Main extends IOApp:
       val batch = tx.artifacts(after,1000)
       batch.foreach { a =>
         CatalogueProjection.backfill(c,a)
+        ArtifactMetadataProjection.backfill(c,a)
+        services.projection.backfillSnapshots(c,a.id)
         services.projection.put(c,a)
       }
       batch.lastOption.map(_.id).filter(_ => batch.size == 1000)

@@ -135,9 +135,22 @@ class TargetMigrationTests(unittest.TestCase):
                     M.import_bundle(bundle,destination,pg,identity)
                     database.grant_import_runtime(pg)
                     runtime = "'" + database.user.replace("'", "''") + "'"
-                    for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
-                        self.assertEqual(pg.run("SELECT has_table_privilege(" + runtime + ", 'manure.external_passwords', '" + privilege + "')"), 't',
-                            'import handoff must grant runtime access to the recoverable-password table')
+                    imported_tables = pg.run("SELECT tablename FROM pg_tables WHERE schemaname='manure' ORDER BY tablename").splitlines()
+                    self.assertIn('artifact_tags', imported_tables)
+                    for table in imported_tables:
+                        relation = M.literal('manure.' + M.qname(table))
+                        for privilege in ('SELECT', 'INSERT', 'UPDATE', 'DELETE'):
+                            self.assertEqual(pg.run('SELECT has_table_privilege(' + runtime + ', ' + relation + ", '" + privilege + "')"), 't',
+                                'import handoff must grant runtime ' + privilege + ' on ' + table)
+                    self.assertEqual(pg.run("SELECT bool_and(tableowner=" + runtime + ") FROM pg_tables WHERE schemaname='manure'"), 't',
+                        'runtime must own every imported application table')
+                    self.assertEqual(pg.run('SELECT has_table_privilege(' + runtime + ", 'manure_offline.destination', 'SELECT')"), 't')
+                    if database.helper:
+                        for privilege in ('INSERT', 'UPDATE', 'DELETE'):
+                            self.assertEqual(pg.run('SELECT has_table_privilege(' + runtime + ", 'manure_offline.destination', '" + privilege + "')"), 'f',
+                                'migration control state must remain read-only to runtime')
+                        self.assertEqual(pg.run('SELECT has_schema_privilege(' + runtime + ", 'manure_offline', 'CREATE')"), 'f')
+                        database._verify_runtime_role()
                     self.assertEqual(M.verify_destination(bundle,destination,pg,identity)[0],identity)
                     config['data_dir']=str(destination/'data');config['migration_receipt_dir']=str(destination)
                     # Before explicit boundary, serve refuses rather than mutating a

@@ -665,13 +665,19 @@ export class Command_InitUpload implements BaboonAdtMemberMeta, BaboonGeneratedL
     private readonly _visibility: Visibility;
     private readonly _expiresInSeconds: number | undefined;
     private readonly _files: Array<ManifestEntry>;
+    private readonly _tags: Array<string>;
+    private readonly _hostname: string | undefined;
+    private readonly _projectPath: string | undefined;
 
-    constructor(name: string, kind: ArtifactKind, visibility: Visibility, expiresInSeconds: number | undefined, files: Array<ManifestEntry>) {
+    constructor(name: string, kind: ArtifactKind, visibility: Visibility, expiresInSeconds: number | undefined, files: Array<ManifestEntry>, tags: Array<string>, hostname: string | undefined, projectPath: string | undefined) {
         this._name = name
         this._kind = kind
         this._visibility = visibility
         this._expiresInSeconds = expiresInSeconds
         this._files = files
+        this._tags = tags
+        this._hostname = hostname
+        this._projectPath = projectPath
     }
 
     public get name(): string {
@@ -689,6 +695,15 @@ export class Command_InitUpload implements BaboonAdtMemberMeta, BaboonGeneratedL
     public get files(): Array<ManifestEntry> {
         return this._files;
     }
+    public get tags(): Array<string> {
+        return this._tags;
+    }
+    public get hostname(): string | undefined {
+        return this._hostname;
+    }
+    public get projectPath(): string | undefined {
+        return this._projectPath;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -696,27 +711,36 @@ export class Command_InitUpload implements BaboonAdtMemberMeta, BaboonGeneratedL
             kind: this._kind,
             visibility: this._visibility,
             expiresInSeconds: this._expiresInSeconds !== undefined ? this._expiresInSeconds : undefined,
-            files: this._files
+            files: this._files,
+            tags: this._tags,
+            hostname: this._hostname !== undefined ? this._hostname : undefined,
+            projectPath: this._projectPath !== undefined ? this._projectPath : undefined
         };
     }
 
-    public with(overrides: {name?: string; kind?: ArtifactKind; visibility?: Visibility; expiresInSeconds?: number | undefined; files?: Array<ManifestEntry>}): Command_InitUpload {
+    public with(overrides: {name?: string; kind?: ArtifactKind; visibility?: Visibility; expiresInSeconds?: number | undefined; files?: Array<ManifestEntry>; tags?: Array<string>; hostname?: string | undefined; projectPath?: string | undefined}): Command_InitUpload {
         return new Command_InitUpload(
             'name' in overrides ? overrides.name! : this._name,
             'kind' in overrides ? overrides.kind! : this._kind,
             'visibility' in overrides ? overrides.visibility! : this._visibility,
             'expiresInSeconds' in overrides ? overrides.expiresInSeconds! : this._expiresInSeconds,
-            'files' in overrides ? overrides.files! : this._files
+            'files' in overrides ? overrides.files! : this._files,
+            'tags' in overrides ? overrides.tags! : this._tags,
+            'hostname' in overrides ? overrides.hostname! : this._hostname,
+            'projectPath' in overrides ? overrides.projectPath! : this._projectPath
         );
     }
 
-    public static fromPlain(obj: {name: string; kind: ArtifactKind; visibility: Visibility; expiresInSeconds: number | undefined; files: Array<ManifestEntry>}): Command_InitUpload {
+    public static fromPlain(obj: {name: string; kind: ArtifactKind; visibility: Visibility; expiresInSeconds: number | undefined; files: Array<ManifestEntry>; tags: Array<string>; hostname: string | undefined; projectPath: string | undefined}): Command_InitUpload {
         return new Command_InitUpload(
             obj.name,
             obj.kind,
             obj.visibility,
             obj.expiresInSeconds,
-            obj.files
+            obj.files,
+            obj.tags,
+            obj.hostname,
+            obj.projectPath
         );
     }
 
@@ -766,6 +790,9 @@ export class Command_InitUpload_JsonCodec {
             "visibility": Visibility_JsonCodec.instance.encode(BaboonCodecContext.Default, value.visibility),
             "expiresInSeconds": value.expiresInSeconds === undefined ? null : value.expiresInSeconds,
             "files": Array.from(value.files).map(item => ManifestEntry_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "tags": Array.from(value.tags),
+            "hostname": value.hostname === undefined ? null : value.hostname,
+            "projectPath": value.projectPath === undefined ? null : value.projectPath,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Command_InitUpload {
@@ -780,6 +807,9 @@ export class Command_InitUpload_JsonCodec {
             Visibility_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["visibility"]),
             obj["expiresInSeconds"] === undefined || obj["expiresInSeconds"] === null ? undefined : obj["expiresInSeconds"] === undefined || obj["expiresInSeconds"] === null ? undefined : obj["expiresInSeconds"] as number,
             (obj["files"] as unknown[]).map(item => ManifestEntry_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            (obj["tags"] as unknown[]).map(item => item as string),
+            obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] === undefined || obj["hostname"] === null ? undefined : obj["hostname"] as string,
+            obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] === undefined || obj["projectPath"] === null ? undefined : obj["projectPath"] as string,
         )
     }
 

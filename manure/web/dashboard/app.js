@@ -198,7 +198,7 @@ function expressionInput(input, list, change, compositionChange) {
     var match = /^#\/artifact\/([0-9a-f]{32})(?:\?|$)/.exec(hash);
     var parts = [];
     params.forEach(function (value,key) {
-      if (["mode","access","state","expired","kind","owner","sort","direction","q"].includes(key)) {
+      if (["mode","access","state","expired","kind","owner","sort","direction","tag","hostname","project","q"].includes(key)) {
         parts.push((key === "q" ? "text" : key) + ":" + JSON.stringify(value));
       }
     });
@@ -237,7 +237,7 @@ function expressionInput(input, list, change, compositionChange) {
       button.title = differs ? "Apply or clear the changed draft before sorting" : "Sort applied query";
     });
     setText("sort-summary", state.mode !== "catalogue" ? "Relevance order · not sortable" : "Sorted by " + document.querySelector('[data-sort="' + state.sort + '"]').getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓"));
-    setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width." : "One bounded page in relevance order. Evidence is a pinned name or manifest path, not file contents; opening details fetches fresh metadata.");
+    setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width." : "One bounded page in relevance order. Evidence is pinned artifact metadata or a manifest path, not file contents; opening details fetches fresh metadata.");
     $("catalogue-table").hidden = state.mode !== "catalogue";
     $("retrieval-results").hidden = state.mode === "catalogue";
   }
@@ -413,6 +413,65 @@ function expressionInput(input, list, change, compositionChange) {
     button.addEventListener("click", handler);
     return button;
   }
+  function appendCopyLink(container, item) {
+    var url = contentUrl(item);
+    var label = item.name || item.artifact_id;
+    function unavailable() {
+      return contentUrl(item) === null ? "Content link unavailable" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" :
+        accessMutations.has(item.artifact_id) || deleting.has(item.artifact_id) ? "Artifact update in progress" : null;
+    }
+    var button = rowAction("", "copy-link", item, function (event) {
+      event.preventDefault(); event.stopPropagation();
+      if (button.disabled) { return; }
+      var reason = unavailable();
+      if (reason !== null) {
+        button.disabled = true; button.title = reason;
+        status.textContent = reason + ". Content link unavailable."; fallback.hidden = true; return;
+      }
+      var epoch = sessionEpoch, generation = listGeneration;
+      function active() { return epoch === sessionEpoch && generation === listGeneration && button.isConnected; }
+      function manual(message) {
+        if (!active()) { return; }
+        var reason = unavailable();
+        if (reason !== null) { status.textContent = reason + ". Content link unavailable."; fallback.hidden = true; return; }
+        status.textContent = message + " Select the content link and copy it manually.";
+        fallback.hidden = false; field.focus(); field.select();
+      }
+      fallback.hidden = true;
+      button.setAttribute("aria-label", "Copy content link for " + label);
+      button.title = "Copy content link (no password or access grant)";
+      if (!window.navigator.clipboard || typeof window.navigator.clipboard.writeText !== "function") {
+        manual("Clipboard is unavailable."); return;
+      }
+      button.disabled = true;
+      status.textContent = "Copying content link…";
+      var pending;
+      try { pending = window.navigator.clipboard.writeText(url); }
+      catch (_error) { pending = Promise.reject(_error); }
+      Promise.resolve(pending).then(function () {
+        if (!active()) { return; }
+        status.textContent = "Content link copied.";
+        button.setAttribute("aria-label", "Content link copied for " + label);
+        button.title = "Content link copied";
+      }).catch(function () { manual("Clipboard access was denied."); }).finally(function () {
+        if (active()) { button.disabled = unavailable() !== null; if (button.disabled) { button.title = unavailable(); } }
+      });
+    });
+    button.className = "record-copy";
+    button.setAttribute("aria-label", "Copy content link for " + label);
+    button.title = unavailable() || "Copy content link (no password or access grant)";
+    button.disabled = unavailable() !== null;
+    var icon = element("span", "⧉", null); icon.setAttribute("aria-hidden", "true"); button.appendChild(icon);
+    container.appendChild(button);
+    var status = element("span", "", "record-copy-status"); status.setAttribute("role", "status");
+    var fallback = element("span", null, "record-copy-fallback"); fallback.hidden = true;
+    var field = element("input", null, null); field.type = "text"; field.readOnly = true; field.value = url || "";
+    field.setAttribute("aria-label", "Content link for " + label);
+    var dismiss = element("button", "Dismiss link", null); dismiss.type = "button";
+    dismiss.addEventListener("click", function () { fallback.hidden = true; status.textContent = ""; button.focus(); });
+    fallback.append(field, dismiss);
+    container.append(status, fallback);
+  }
   function renderRetrieval() {
     var list = $("retrieval-results");
     var fragment = document.createDocumentFragment();
@@ -423,15 +482,16 @@ function expressionInput(input, list, change, compositionChange) {
       heading.appendChild(rowAction(item.name || item.artifact_id, "details", item, function () {
         invalidateNavigation(); window.location.hash = routeHash(item.artifact_id);
       }));
+      heading.className = "record-heading"; appendCopyLink(heading, item);
       card.appendChild(heading);
       card.appendChild(element("p", item.artifact_id + " · " + item.kind + " · " + item.visibility + " · created by " + item.created_by_user, null));
       card.appendChild(element("p", "Pinned source " + hit.source_version + " · generation " + hit.generation_id + " · policy " + hit.policy_id, "source-note"));
       var evidence = element("ul", null, "evidence-list");
       hit.evidence.forEach(function (entry) {
-        evidence.appendChild(element("li", entry.field === "manifestpath" ? "Manifest path: " + entry.path : "Name: " + entry.text, null));
+        evidence.appendChild(element("li", ({name:"Name", manifestpath:"Manifest path", tag:"Tag", hostname:"Hostname", projectpath:"Project path"})[entry.field] + ": " + (entry.field === "manifestpath" ? entry.path : entry.text), null));
       });
       card.appendChild(evidence);
-      card.appendChild(element("p", "Representative name/path evidence only; not file bytes. Details fetch current artifact metadata.", "source-note"));
+      card.appendChild(element("p", "Representative metadata/path evidence only; not file bytes. Details fetch current artifact metadata.", "source-note"));
       fragment.appendChild(card);
     }); }
     list.replaceChildren(fragment);
@@ -456,7 +516,9 @@ function expressionInput(input, list, change, compositionChange) {
       var title = element("span", null, null);
       title.appendChild(element("strong", item.name || item.artifact_id, null));
       title.appendChild(element("small", item.artifact_id, null));
-      details.appendChild(title); name.appendChild(details); row.appendChild(name);
+      details.appendChild(title);
+      var nameLine = element("div", null, "record-heading"); nameLine.appendChild(details); appendCopyLink(nameLine, item);
+      name.appendChild(nameLine); row.appendChild(name);
       [[item.kind, "type-badge"], [item.visibility, "type-badge"], [item.state, "status-badge " + item.state]].forEach(function (cell) {
         var td = element("td", null, null); td.appendChild(element("span", cell[0], cell[1])); row.appendChild(td);
       });
@@ -536,7 +598,7 @@ function expressionInput(input, list, change, compositionChange) {
             (body.count_scope === "candidatewindow" && (!Number.isInteger(body.ranking_limit) || body.ranking_limit < 1)) ||
             body.hits.some(function (hit) { return !hit.artifact || !ID_RE.test(hit.artifact.artifact_id) || !Array.isArray(hit.evidence) ||
               hit.evidence.some(function (entry) { return entry.field === "manifestpath" && typeof entry.path !== "string" ||
-                entry.field === "name" && entry.path !== null && entry.path !== undefined; }); })) { throw new Error("bad-response"); }
+                entry.field !== "manifestpath" && entry.path !== null && entry.path !== undefined; }); })) { throw new Error("bad-response"); }
         body.hits.forEach(function (hit) { delete hit.artifact.external_password; });
         searchPage = body;
         nextCursor = null;
@@ -603,6 +665,15 @@ function expressionInput(input, list, change, compositionChange) {
     setText("detail-subtitle", id);
     [["Artifact ID", id], ["Kind", info.kind], ["Access", info.visibility], ["State", info.state], ["Created by", info.created_by_user],
       ["Created", dateText(info.created_at, "Unknown")], ["Expires", dateText(info.expires_at, "Never")], ["Size", bytes(info.total_bytes)], ["Files", String(info.file_count)]].forEach(function (pair) { addDetailRow(pair[0], pair[1]); });
+    addDetailRow("Tags", info.tags.length === 0 ? "None supplied" : "");
+    if (info.tags.length !== 0) {
+      var tags = $("detail-list").lastElementChild; tags.className = "metadata-tags";
+      info.tags.forEach(function (tag) { tags.appendChild(element("span", tag, "type-badge")); });
+    }
+    addDetailRow("Hostname (supplied)", info.hostname === null || info.hostname === undefined ? "Not supplied" : info.hostname);
+    $("detail-list").lastElementChild.className = "metadata-literal";
+    addDetailRow("Project path (supplied)", info.project_path === null || info.project_path === undefined ? "Not supplied" : info.project_path);
+    $("detail-list").lastElementChild.className = "metadata-literal";
     var url = contentUrl(info);
     if (url !== null) { addDetailRow("Content URL", url); }
     $("copy-link-button").disabled = url === null;

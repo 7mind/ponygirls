@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeOption, decodeString}
+import io.circe.Decoder.{decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
@@ -14,7 +14,10 @@ package manure.api {
     expiresAt: Option[String],
     totalBytes: Long,
     fileCount: Int,
-    contentUrl: String
+    contentUrl: String,
+    tags: List[String],
+    hostname: Option[String],
+    projectPath: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = Artifact.baboonDomainVersion
     override def baboonDomainIdentifier: String = Artifact.baboonDomainIdentifier
@@ -54,7 +57,10 @@ package manure.api {
         "expiresAt" -> value.expiresAt.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "totalBytes" -> Json.fromString(value.totalBytes.toString),
         "fileCount" -> Json.fromInt(value.fileCount),
-        "contentUrl" -> Json.fromString(value.contentUrl)
+        "contentUrl" -> Json.fromString(value.contentUrl),
+        "tags" -> Json.fromValues(value.tags.map(e => Json.fromString(e))),
+        "hostname" -> value.hostname.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "projectPath" -> value.projectPath.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
     
@@ -76,7 +82,10 @@ package manure.api {
             totalBytes <- getField(jsonObject, "totalBytes").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             fileCount <- getField(jsonObject, "fileCount").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))
             contentUrl <- getField(jsonObject, "contentUrl").flatMap(v => decodeString(v.hcursor))
-          } yield Artifact(artifactId,name,kind,visibility,state,createdByUser,createdAt,expiresAt,totalBytes,fileCount,contentUrl)
+            tags <- getField(jsonObject, "tags").flatMap(v => decodeList(decodeString)(v.hcursor))
+            hostname <- getField(jsonObject, "hostname").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            projectPath <- getField(jsonObject, "projectPath").flatMap(v => decodeOption(decodeString)(v.hcursor))
+          } yield Artifact(artifactId,name,kind,visibility,state,createdByUser,createdAt,expiresAt,totalBytes,fileCount,contentUrl,tags,hostname,projectPath)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Artifact: object expected"))
       }
     }

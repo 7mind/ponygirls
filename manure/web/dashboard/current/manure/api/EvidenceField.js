@@ -3,10 +3,16 @@ export var EvidenceField;
 (function (EvidenceField) {
     EvidenceField["Name"] = "Name";
     EvidenceField["ManifestPath"] = "ManifestPath";
+    EvidenceField["Tag"] = "Tag";
+    EvidenceField["Hostname"] = "Hostname";
+    EvidenceField["ProjectPath"] = "ProjectPath";
 })(EvidenceField || (EvidenceField = {}));
 export const EvidenceField_values = [
     EvidenceField.Name,
-    EvidenceField.ManifestPath
+    EvidenceField.ManifestPath,
+    EvidenceField.Tag,
+    EvidenceField.Hostname,
+    EvidenceField.ProjectPath
 ];
 export function EvidenceField_parse(s) {
     const found = EvidenceField_values.find(v => v === s);

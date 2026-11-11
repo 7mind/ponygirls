@@ -40,6 +40,21 @@ final class DomainSuite extends FunSuite:
     assertEquals(UploadRules.range("bytes=1-2",4),(1L,3L)); assertEquals(UploadRules.range("bytes=-100",4),(0L,4L))
     Vector("bytes=","bytes=0-0,2-2","bytes=-0","bytes=4-","bytes=2-1","bytes=0-9223372036854775807").foreach(h => intercept[DomainError](UploadRules.range(h,4)))
   }
+  test("explicit metadata uses scalar bounds, exact unique tags and ECMAScript nonblank strings") {
+    val tags=Vector(" release ","Release","release","nul\u0000value","𐀀"*128)
+    MetadataRules.validate(tags,Some("𐀀"*253),Some("𐀀"*4096))
+    assertEquals(MetadataRules.decodeTags(MetadataRules.encodeTags(tags)),tags)
+    MetadataRules.validate(Vector("\u0085"),Some(" Host "),Some(" /project "))
+    val invalid=Vector(
+      (Vector.fill(33)("tag"),None,None), (Vector("x","x"),None,None),
+      (Vector(""),None,None), (Vector("\u00a0\ufeff"),None,None), (Vector("𐀀"*129),None,None),
+      (Vector("\ud800"),None,None), (Vector.empty,Some("\ufeff"),None),
+      (Vector.empty,Some("𐀀"*254),None), (Vector.empty,None,Some(" \t\u3000")),
+      (Vector.empty,None,Some("𐀀"*4097)))
+    invalid.foreach { (tags,hostname,projectPath) =>
+      assertEquals(intercept[DomainError](MetadataRules.validate(tags,hostname,projectPath)).code,"bad-envelope")
+    }
+  }
   test("current Baboon fixtures roundtrip all 76 Scala/TS/Python golden vectors") {
     val fixtures = BackendFixture.source.resolve("manure/models/fixtures")
     var count = 0

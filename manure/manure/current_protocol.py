@@ -72,6 +72,9 @@ class SearchCountScope(Enum):
 class EvidenceField(Enum):
     Name = 'Name'
     ManifestPath = 'ManifestPath'
+    Tag = 'Tag'
+    Hostname = 'Hostname'
+    ProjectPath = 'ProjectPath'
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,9 @@ class Artifact:
     totalBytes: Int64
     fileCount: Int32
     contentUrl: str
+    tags: list[str]
+    hostname: str | None
+    projectPath: str | None
 
 
 @dataclass(frozen=True)
@@ -211,6 +217,9 @@ class CatalogueQuery:
     direction: SortDirection
     limit: Int32
     cursor: str | None
+    tags: list[str]
+    hostname: str | None
+    projectPath: str | None
 
 
 @dataclass(frozen=True)
@@ -224,6 +233,9 @@ class SearchFilter:
     visibility: Visibility | None
     kind: ArtifactKind | None
     createdByUser: str | None
+    tags: list[str]
+    hostname: str | None
+    projectPath: str | None
 
 
 @dataclass(frozen=True)
@@ -351,6 +363,9 @@ class Command_InitUpload(Command):
     visibility: Visibility
     expiresInSeconds: Int32 | None
     files: list[ManifestEntry]
+    tags: list[str]
+    hostname: str | None
+    projectPath: str | None
 
 
 @dataclass(frozen=True)
