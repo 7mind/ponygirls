@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "allowImportingTsExtensions": false,
+    "rootDir": "..",
+    "outDir": ".cache/fixtures"
+  },
+  "include": ["src/contracts.ts", "src/client.ts", "tests-browser/*.ts"]
+}
