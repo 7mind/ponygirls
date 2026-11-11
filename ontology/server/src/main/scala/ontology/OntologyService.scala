@@ -6,20 +6,20 @@ import ontology.api.*
 /** Application boundary shared by REST and MCP. Implementations must recheck
   * credential-derived capabilities, scope, references and operation semantics.
   * Review implementations additionally enforce Human identity and presentation
-  * ownership/applicability. Cookie-only review is a transport policy: Principal
-  * neither carries session transport nor proves physical human presence.
+  * ownership/applicability. ReviewCall retains verified session transport;
+  * neither it nor an authenticated account proves physical human presence.
   */
 trait OntologyService {
-  def scopes(principal: Principal): IO[ScopesResult]
-  def find(principal: Principal, request: FindRequest): IO[FindResult]
-  def read(principal: Principal, request: ReadRequest): IO[ReadResult]
-  def sources(principal: Principal, request: SourceRequest): IO[SourceResult]
-  def status(principal: Principal, request: ScopeRequest): IO[CurationStatus]
-  def present(principal: Principal, request: PresentRequest): IO[Presentation]
-  def judge(principal: Principal, request: JudgmentRequest): IO[Judgment]
-  def judgments(principal: Principal, request: ScopeRequest): IO[JudgmentsResult]
-  def apply(principal: Principal, request: ApplyRequest): IO[ApplyResult]
-  def ingest(principal: Principal, request: IngestRequest): IO[IngestResult]
-  def capsule(principal: Principal, request: CapsuleRequest): IO[Capsule]
-  def delivery(principal: Principal, request: DeliveryRequest): IO[DeliveryReceipt]
+  def scopes(call: ServiceCall): IO[ScopesResult]
+  def find(call: ServiceCall, request: FindRequest): IO[FindResult]
+  def read(call: ServiceCall, request: ReadRequest): IO[ReadResult]
+  def sources(call: ServiceCall, request: SourceRequest): IO[SourceResult]
+  def status(call: ServiceCall, request: ScopeRequest): IO[CurationStatus]
+  def present(call: ReviewCall, request: PresentRequest): IO[Presentation]
+  def judge(call: ReviewCall, request: JudgmentRequest): IO[Judgment]
+  def judgments(call: ServiceCall, request: ScopeRequest): IO[JudgmentsResult]
+  def apply(call: ServiceCall, request: ApplyRequest): IO[ApplyResult]
+  def ingest(call: ServiceCall, request: IngestRequest): IO[IngestResult]
+  def capsule(call: ServiceCall, request: CapsuleRequest): IO[Capsule]
+  def delivery(call: ServiceCall, request: DeliveryRequest): IO[DeliveryReceipt]
 }

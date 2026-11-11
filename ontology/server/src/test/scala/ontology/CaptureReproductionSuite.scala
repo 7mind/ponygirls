@@ -16,7 +16,7 @@ final class CaptureReproductionSuite extends FunSuite {
   private def example(): (IngestRequest, Principal) = {
     val scope = "capture-repro-" + UUID.randomUUID()
     val context = CaptureContext("native-fixture", None, None, LineageStatus.Unknown, "fixture-branch", UUID.randomUUID())
-    val request = IngestRequest(scope, UUID.randomUUID(), UUID.randomUUID(), context, EventOrigin.UserMessage, CaptureMetadata("e", None, None, SourceRepresentation.PiTranscript, Nil, Nil), "A transcript role, not authenticated Human authorship", Observation.None())
+    val request = IngestRequest(scope, UUID.randomUUID(), UUID.randomUUID(), Some(ontology.TestContexts.claim(context)), None, EventOrigin.UserMessage, CaptureMetadata("e", None, None, SourceRepresentation.PiTranscript, Nil, Nil), "A transcript role, not authenticated Human authorship", Observation.None())
     request -> Principal("collector", Actor("collector", ActorKind.Collector), Set(scope), Set(Capability.Capture, Capability.Read))
   }
   private def fault[A](result: Either[Throwable, A], code: String): Unit = assertEquals(result.left.toOption.collect { case f: Fault => f.code }, Some(code))
@@ -24,8 +24,8 @@ final class CaptureReproductionSuite extends FunSuite {
     RepositoryReproductionDatabase.resource.use { db => RepositoryReproductionDatabase.store(db).flatMap { repo =>
       val (request, principal) = example()
       for {
-        first <- repo.ingest(request, principal, recorder, at)
-        _ <- repo.ingest(request.copy(requestId = UUID.randomUUID(), eventId = UUID.randomUUID()), principal, recorder, at)
+        first <- repo.ingest(request, principal, recorder, at, ontology.TestContexts.trace("fixture-ingest"))
+        _ <- repo.ingest(request.copy(requestId = UUID.randomUUID(), eventId = UUID.randomUUID()), principal, recorder, at, ontology.TestContexts.trace("fixture-ingest"))
         original <- repo.sources(SourceRequest(request.scope, 0L, 10))
         event = original.events.head
         _ <- db.transaction { c => Using.resource(c.prepareStatement("DELETE FROM ontology_captures WHERE scope = ? AND frontier = 1")) { s => s.setString(1, request.scope); assertEquals(s.executeUpdate(), 1) } }
@@ -43,7 +43,7 @@ final class CaptureReproductionSuite extends FunSuite {
     RepositoryReproductionDatabase.resource.use { db => RepositoryReproductionDatabase.store(db).flatMap { repo =>
       val (request, principal) = example()
       for {
-        _ <- repo.ingest(request, principal, recorder, at)
+        _ <- repo.ingest(request, principal, recorder, at, ontology.TestContexts.trace("fixture-ingest"))
         original <- repo.sources(SourceRequest(request.scope, 0L, 10))
         event = original.events.head
         altered = event.copy(provenance = event.provenance.copy(contributor = Actor("not-established-human", ActorKind.Human)))
@@ -64,8 +64,8 @@ final class CaptureReproductionSuite extends FunSuite {
         }
       }
       for {
-        _ <- repo.ingest(request, principal, recorder, at)
-        _ <- repo.ingest(request.copy(requestId = UUID.randomUUID(), eventId = UUID.randomUUID()), principal, recorder, at)
+        _ <- repo.ingest(request, principal, recorder, at, ontology.TestContexts.trace("fixture-ingest"))
+        _ <- repo.ingest(request.copy(requestId = UUID.randomUUID(), eventId = UUID.randomUUID()), principal, recorder, at, ontology.TestContexts.trace("fixture-ingest"))
         _ <- setFrontier(1L)
         outcomes <- (for {
           head <- repo.read(request.scope).attempt

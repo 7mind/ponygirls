@@ -39,7 +39,9 @@ const agent = new C.Actor('curator', C.ActorKind.Agent);
 const host = new C.Actor('fixture-service', C.ActorKind.Service);
 const unknown = new C.Actor('unattributed-fixture', C.ActorKind.Unknown);
 const provenance = (actor: C.Actor, receipt: number) => new C.Provenance(actor, host, id(receipt), time);
-const context = new C.CaptureContext('fixture-session', undefined, undefined, C.LineageStatus.Unknown, 'fixture-branch', id(21));
+const context = new C.ContextRecord(new C.OriginContext_ReportedNative(new C.CaptureContext('fixture-session', undefined, undefined, C.LineageStatus.Unknown, 'fixture-branch', id(21))), []);
+const contribution = new C.ContextRecord(new C.OriginContext_ReportedNative(new C.CaptureContext('submission-session-B', undefined, undefined, C.LineageStatus.Unknown, 'submission-branch', id(23))), [new C.ReportedInheritance(C.InheritanceKind.Import, 'source-archive', 2n, 1n, 0n, [], [ref(40)], undefined)]);
+const ingress = new C.RequestTrace(id(24), '/api/v1/ingest', C.RequestTransport.Bearer);
 const metadata = new C.CaptureMetadata('fixture-entry', undefined, undefined, C.SourceRepresentation.PiTranscript, ['Synthetic browser fixture; not a native capture'], []);
 const sourceText = 'Keep the audit trail. This is controlled test content, not a Human study.';
 const source = C.Definition.fromPlain({ ref: ref(20), scope: 'a', applicability: new C.Applicability_Captured(ref(20)), content: C.Content_Source.fromPlain({ text: sourceText, context: [], rawDigest: digest(sourceText), eventId: id(20), sourceNamespace: 'fixture-collector', captureContext: context, metadata, origin: C.EventOrigin.UserMessage, observation: new C.Observation_None() }), standing: C.Standing.Active, basis: [], changeReason: undefined, provenance: provenance(unknown, 91) });
@@ -106,7 +108,9 @@ try {
         for (const [number, actor] of [[90, agent], [91, unknown], [92, host]] as const) {
           if (wanted.has(id(number))) {
             const content = JSON.stringify({ fixture: true, content: number === 90 ? goal.content.text : sourceText });
-            const value = new C.InputReceipt(ref(number), 'a', 1n, C.InputKind.Capture, actor, host, actor, 'controlled browser fixture', content, digest(content), time);
+            const receiptIngress = number === 92 ? new C.RequestTrace(id(25), 'controlled-internal-call', C.RequestTransport.Internal) : ingress;
+            const receiptContext = number === 90 ? new C.ContextRecord(new C.OriginContext_Unknown('No contribution session supplied'), []) : number === 92 ? new C.ContextRecord(new C.OriginContext_ServiceRequest(receiptIngress), []) : contribution;
+            const value = new C.InputReceipt(ref(number), 'a', 1n, C.InputKind.Capture, actor, host, actor, 'controlled browser fixture', content, digest(content), time, receiptContext, receiptIngress);
             selected.push(new C.GraphRecord_Input(value));
           }
         }
@@ -214,6 +218,27 @@ try {
   await page.getByRole('region', { name: 'Captured sources', exact: true }).locator('details').filter({ hasText: 'Reported absence' }).locator(':scope > summary').click();
   await page.getByText('Reported file absence', { exact: true }).waitFor();
   receipts.push('source representation, unknown lineage and typed absence remain inspectable');
+  await recordRegion.getByText('fixture-session', { exact: true }).waitFor();
+  await recordRegion.getByText('Reported native context — not independently observed', { exact: true }).waitFor();
+  await recordRegion.getByRole('button', { name: `Inspect exact revision ${id(91)}@1`, exact: true }).click();
+  const inspection = page.getByRole('dialog', { name: 'Inspect exact historical reference', exact: true });
+  await inspection.getByText('submission-session-B', { exact: true }).waitFor();
+  await inspection.getByText('Contribution context', { exact: true }).waitFor();
+  await inspection.getByText('Actual server ingress', { exact: true }).waitFor();
+  await inspection.getByText('/api/v1/ingest', { exact: true }).waitFor();
+  await inspection.getByText('source-archive', { exact: true }).waitFor();
+  assert.equal(await inspection.getByRole('button', { name: `Inspect exact revision ${id(40)}@1`, exact: true }).count(), 0);
+  await inspection.getByRole('button', { name: 'Close', exact: true }).click();
+  await recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Intent · Outcome', exact: true }) }).getByRole('button', { name: `Inspect exact revision ${id(90)}@1`, exact: true }).click();
+  await inspection.getByText('Context unknown', { exact: true }).waitFor();
+  await inspection.getByText('No session, branch, epoch or lineage is inferred.', { exact: true }).waitFor();
+  assert.equal(await inspection.getByText('Session identifier', { exact: true }).count(), 0);
+  await inspection.getByRole('button', { name: 'Close', exact: true }).click();
+  await page.getByRole('region', { name: 'Captured sources', exact: true }).getByRole('button', { name: `Inspect exact revision ${id(92)}@1`, exact: true }).click();
+  await inspection.getByText('Server-owned request context', { exact: true }).waitFor();
+  assert.equal(await inspection.getByText('Session identifier', { exact: true }).count(), 0);
+  await inspection.getByRole('button', { name: 'Close', exact: true }).click();
+  receipts.push('source occurrence, contribution and server ingress stay separate; unknown context and cross-namespace cuts remain qualified');
   badScope = true;
   await page.getByRole('combobox', { name: 'Authorized scope', exact: true }).selectOption('b');
   await page.getByText('Record response scope mismatch.', { exact: true }).waitFor();

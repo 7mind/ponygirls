@@ -14,7 +14,9 @@ package ontology.api {
     encoding: String,
     content: String,
     digest: String,
-    recordedAt: String
+    recordedAt: String,
+    contributionContext: ContextRecord,
+    ingress: RequestTrace
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = InputReceipt.baboonDomainVersion
     override def baboonDomainIdentifier: String = InputReceipt.baboonDomainIdentifier
@@ -54,7 +56,9 @@ package ontology.api {
         "encoding" -> Json.fromString(value.encoding),
         "content" -> Json.fromString(value.content),
         "digest" -> Json.fromString(value.digest),
-        "recordedAt" -> Json.fromString(value.recordedAt)
+        "recordedAt" -> Json.fromString(value.recordedAt),
+        "contributionContext" -> ContextRecord_JsonCodec.instance.encode(ctx, value.contributionContext),
+        "ingress" -> RequestTrace_JsonCodec.instance.encode(ctx, value.ingress)
       )
     }
     
@@ -76,7 +80,9 @@ package ontology.api {
             content <- getField(jsonObject, "content").flatMap(v => decodeString(v.hcursor))
             digest <- getField(jsonObject, "digest").flatMap(v => decodeString(v.hcursor))
             recordedAt <- getField(jsonObject, "recordedAt").flatMap(v => decodeString(v.hcursor))
-          } yield InputReceipt(ref,scope,generation,kind,contributor,recorder,submitter,encoding,content,digest,recordedAt)
+            contributionContext <- getField(jsonObject, "contributionContext").flatMap(v => ContextRecord_JsonCodec.circeDecoder(v.hcursor))
+            ingress <- getField(jsonObject, "ingress").flatMap(v => RequestTrace_JsonCodec.circeDecoder(v.hcursor))
+          } yield InputReceipt(ref,scope,generation,kind,contributor,recorder,submitter,encoding,content,digest,recordedAt,contributionContext,ingress)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to InputReceipt: object expected"))
       }
     }

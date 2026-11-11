@@ -46,10 +46,15 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
     update(c, "INSERT INTO ontology_inputs(scope, input_id, generation, payload) VALUES (?, ?, ?, ?)")(p => { p.setString(1, receipt.scope); p.setObject(2, receipt.ref.id); p.setLong(3, receipt.generation); p.setString(4, StoredJson.encode(InputReceipt.codecJson, receipt)) })
   }
   def read(scope: String): IO[GraphSnapshot] = database.transaction(c => load(c, scope))
-  def history(scope: String, generation: Long): IO[GraphSnapshot] = database.transaction { c =>
+  private def loadHistory(c: Connection, scope: String, generation: Long): GraphSnapshot =
     query(c, "SELECT snapshot FROM ontology_revisions WHERE scope = ? AND generation = ?")(p => { p.setString(1, scope); p.setLong(2, generation) }) { r =>
       Require(r.next(), "not-found", "graph revision not found"); decodeSnapshot(scope, generation, r.getString(1))
     }
+  def history(scope: String, generation: Long): IO[GraphSnapshot] = database.transaction(c => loadHistory(c, scope, generation))
+  private def validateContexts(c: Connection, principal: Principal, contexts: List[ContextRecord]): Unit = {
+    val keys = ContextAccess.requiredSnapshots(principal, contexts)
+    val snapshots = keys.map(key => loadHistory(c, key.scope, key.generation))
+    ContextAccess.validate(contexts, snapshots)
   }
   def scopes: IO[List[String]] = database.transaction { c => query(c, "SELECT scope FROM ontology_scopes ORDER BY scope")(_ => ()) { r =>
     val items = List.newBuilder[String]; while (r.next()) items += r.getString(1); items.result()
@@ -61,11 +66,15 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
       Require(r.next(), "not-found", "input receipt not found")
       val receipt = StoredJson.decode(InputReceipt.codecJson, r.getString(2))
       Require(receipt.scope == scope && receipt.ref == ref && receipt.generation == r.getLong(1) && receipt.digest == Digests.text(receipt.content), "corrupt", "input receipt binding mismatch")
+      InputReceipts.validateContext(receipt)
       receipt
     }
   }
   def apply(request: ApplyRequest, admission: Admission): IO[ApplyResult] = database.transaction { c =>
     Require(request.requestId == admission.requestId, "request", "request binding mismatch")
+    admission.principal.require(request.scope, Capability.Mutate)
+    val context = Contexts.contribution(request.contributionContext, admission.ingress, Contexts.ProtocolLimits)
+    Contexts.server(admission.ingress, Contexts.ProtocolLimits)
     lock(c, request.scope)
     val content = StoredJson.encode(ApplyRequest.codecJson, request)
     val digest = Digests.text(content)
@@ -79,10 +88,11 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
         Require(stored.scope == request.scope && stored.requestId == request.requestId, "corrupt", "mutation result binding mismatch")
         stored.copy(replayed = true)
       case None =>
+        validateContexts(c, admission.principal, List(context))
         val before = load(c, request.scope)
         val changed = engine(before, request, admission)
         saveGraph(c, before, changed.snapshot)
-        saveInput(c, InputReceipts.create(admission.provenance.input, request.scope, changed.snapshot.generation, InputKind.GraphMutation, admission.actor, admission.recorder, admission.actor, "ontology.api.ApplyRequest/0.1.0 canonical JSON", content, admission.recordedAt))
+        saveInput(c, InputReceipts.create(admission.provenance.input, request.scope, changed.snapshot.generation, InputKind.GraphMutation, admission.actor, admission.recorder, admission.actor, "ontology.api.ApplyRequest/0.1.0 canonical JSON", content, admission.recordedAt, context, admission.ingress))
         update(c, "INSERT INTO ontology_mutations(scope, actor_id, actor_kind, request_id, payload_digest, result) VALUES (?, ?, ?, ?, ?, ?)")(p => {
           p.setString(1, request.scope); p.setString(2, admission.actor.id); p.setString(3, admission.actor.kind.toString); p.setObject(4, request.requestId); p.setString(5, digest); p.setString(6, StoredJson.encode(ApplyResult.codecJson, changed.result))
         })
@@ -106,8 +116,9 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   }
   private def validateResult(event: CapturedEvent, result: IngestResult, eventId: UUID): Unit = Require(result.scope == event.scope && result.eventId == eventId && result.sourceNamespace == event.sourceNamespace && result.source == Ref(event.id, 1) && result.frontier == event.frontier && result.artifacts == CaptureIdentity.artifacts(event), "corrupt", "capture result binding mismatch")
   private def existingEvent(c: Connection, request: IngestRequest, namespace: String): Option[(CapturedEvent, IngestResult, String)] = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND source_namespace = ? AND event_id = ?")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.eventId) })(r => if (r.next()) Some(eventRow(c, request.scope, r)) else None)
-  def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String): IO[IngestResult] = database.transaction { c =>
+  def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult] = database.transaction { c =>
     capture.validateIngress(request, principal)
+    Contexts.server(ingress, Contexts.ProtocolLimits)
     lock(c, request.scope)
     val namespace = principal.credentialId
     val digest = Digests.text(StoredJson.encode(IngestRequest.codecJson, request))
@@ -126,13 +137,14 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
         val result = existingEvent(c, request, namespace) match {
           case Some((_, stored, previous)) => Require(previous == fingerprint, "replay-conflict", "source event ID has different content"); stored.copy(requestId = request.requestId, replayed = true)
           case None =>
+            validateContexts(c, principal, List(CaptureIdentity.occurrence(request), Contexts.contribution(request.contributionContext, ingress, Contexts.ProtocolLimits)))
             val before = load(c, request.scope)
             val observed = before.sourceFrontier
             query(c, "SELECT COUNT(*), COALESCE(MAX(frontier), 0) FROM ontology_captures WHERE scope = ?")(_.setString(1, request.scope)) { r =>
               Require(r.next() && r.getLong(1) == observed && r.getLong(2) == observed, "corrupt", "source frontier range is incomplete")
             }
             val prior = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND source_namespace = ? ORDER BY frontier")(p => { p.setString(1, request.scope); p.setString(2, namespace) }) { r => val rows = List.newBuilder[CapturedEvent]; while (r.next()) rows += eventRow(c, request.scope, r)._1; rows.result() }
-            val changed = capture(before, prior, observed, request, principal, recorder, receivedAt)
+            val changed = capture(before, prior, observed, request, principal, recorder, receivedAt, ingress)
             saveGraph(c, before, changed.snapshot)
             saveInput(c, changed.receipt)
             update(c, "INSERT INTO ontology_captures(scope, source_namespace, event_id, capture_id, frontier, fingerprint, payload, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.eventId); p.setObject(4, changed.event.id); p.setLong(5, changed.event.frontier); p.setString(6, fingerprint); p.setString(7, StoredJson.encode(CapturedEvent.codecJson, changed.event)); p.setString(8, StoredJson.encode(IngestResult.codecJson, changed.result)) })

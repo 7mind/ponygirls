@@ -15,7 +15,7 @@ final class GraphQueriesSuite extends FunSuite {
   private def service(repo: GraphRepository, bytes: Int): GraphQueries = new GraphQueries(repo, new CursorSigner(Array.fill[Byte](32)(7)), QueryLimits(100, 64, bytes, 2048))
   private def change(repo: GraphRepository, generation: Long, operations: List[Operation]): IO[ApplyResult] = {
     val id = UUID.randomUUID()
-    repo.apply(ApplyRequest("a", id, generation, operations), Admission(Actor("writer", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now"))
+    repo.apply(ApplyRequest("a", id, generation, operations, None), Admission(ontology.TestContexts.principal("a", Actor("writer", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply")))
   }
   private def node(alias: String, text: String): Operation = Operation.Create(alias, ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement(text, Modality.Assertion)), Nil)
   private def check(io: IO[Unit]): Unit = io.unsafeRunSync()(using runtime)

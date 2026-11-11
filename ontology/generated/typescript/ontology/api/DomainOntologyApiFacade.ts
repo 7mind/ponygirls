@@ -31,6 +31,8 @@ import { ConflictState, ConflictState_JsonCodec } from './ConflictState.js';
 import { Consumption, Consumption_JsonCodec } from './Consumption.js';
 import { Content, Content_JsonCodec } from './Content.js';
 import { ContentInput, ContentInput_JsonCodec } from './ContentInput.js';
+import { ContextRecord, ContextRecord_JsonCodec } from './ContextRecord.js';
+import { ContextRecordInput, ContextRecordInput_JsonCodec } from './ContextRecordInput.js';
 import { Correction, Correction_JsonCodec } from './Correction.js';
 import { CurationProposal, CurationProposal_JsonCodec } from './CurationProposal.js';
 import { CurationState, CurationState_JsonCodec } from './CurationState.js';
@@ -55,6 +57,8 @@ import { Grouping, Grouping_JsonCodec } from './Grouping.js';
 import { Identity, Identity_JsonCodec } from './Identity.js';
 import { IngestRequest, IngestRequest_JsonCodec } from './IngestRequest.js';
 import { IngestResult, IngestResult_JsonCodec } from './IngestResult.js';
+import { InheritanceAnchor, InheritanceAnchor_JsonCodec } from './InheritanceAnchor.js';
+import { InheritanceKind, InheritanceKind_JsonCodec } from './InheritanceKind.js';
 import { InputKind, InputKind_JsonCodec } from './InputKind.js';
 import { InputReceipt, InputReceipt_JsonCodec } from './InputReceipt.js';
 import { Judgment, Judgment_JsonCodec } from './Judgment.js';
@@ -67,6 +71,8 @@ import { LoginResult, LoginResult_JsonCodec } from './LoginResult.js';
 import { Modality, Modality_JsonCodec } from './Modality.js';
 import { Observation, Observation_JsonCodec } from './Observation.js';
 import { Operation, Operation_JsonCodec } from './Operation.js';
+import { OriginContext, OriginContext_JsonCodec } from './OriginContext.js';
+import { OriginContextInput, OriginContextInput_JsonCodec } from './OriginContextInput.js';
 import { Phase, Phase_JsonCodec } from './Phase.js';
 import { Polarity, Polarity_JsonCodec } from './Polarity.js';
 import { PresentRequest, PresentRequest_JsonCodec } from './PresentRequest.js';
@@ -80,6 +86,9 @@ import { Relation, Relation_JsonCodec } from './Relation.js';
 import { RelationDetail, RelationDetail_JsonCodec } from './RelationDetail.js';
 import { RelationDetailInput, RelationDetailInput_JsonCodec } from './RelationDetailInput.js';
 import { RelationKind, RelationKind_JsonCodec } from './RelationKind.js';
+import { ReportedInheritance, ReportedInheritance_JsonCodec } from './ReportedInheritance.js';
+import { RequestTrace, RequestTrace_JsonCodec } from './RequestTrace.js';
+import { RequestTransport, RequestTransport_JsonCodec } from './RequestTransport.js';
 import { Resolution, Resolution_JsonCodec } from './Resolution.js';
 import { ScopeRequest, ScopeRequest_JsonCodec } from './ScopeRequest.js';
 import { ScopeSummary, ScopeSummary_JsonCodec } from './ScopeSummary.js';
@@ -124,6 +133,8 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(Consumption_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Consumption_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Content_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Content_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ContentInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContentInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ContextRecord_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContextRecord_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ContextRecordInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ContextRecordInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Correction_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Correction_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationProposal_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationProposal_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationState_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationState_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -148,6 +159,8 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(Identity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Identity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(IngestRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => IngestRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(IngestResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => IngestResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(InheritanceAnchor_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => InheritanceAnchor_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(InheritanceKind_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => InheritanceKind_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(InputKind_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => InputKind_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(InputReceipt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => InputReceipt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Judgment_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Judgment_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -160,6 +173,8 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(Modality_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Modality_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Observation_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Observation_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Operation_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Operation_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(OriginContext_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => OriginContext_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(OriginContextInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => OriginContextInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Phase_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Phase_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Polarity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Polarity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(PresentRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -173,6 +188,9 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(RelationDetail_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelationDetail_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RelationDetailInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelationDetailInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RelationKind_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelationKind_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ReportedInheritance_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReportedInheritance_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RequestTrace_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RequestTrace_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(RequestTransport_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RequestTransport_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Resolution_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Resolution_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ScopeRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ScopeRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ScopeSummary_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ScopeSummary_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -230,6 +248,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Consumption": ['0.1.0'],
         "ontology.api/:#Content": ['0.1.0'],
         "ontology.api/:#ContentInput": ['0.1.0'],
+        "ontology.api/:#ContextRecord": ['0.1.0'],
+        "ontology.api/:#ContextRecordInput": ['0.1.0'],
         "ontology.api/:#Correction": ['0.1.0'],
         "ontology.api/:#CurationProposal": ['0.1.0'],
         "ontology.api/:#CurationState": ['0.1.0'],
@@ -254,6 +274,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Identity": ['0.1.0'],
         "ontology.api/:#IngestRequest": ['0.1.0'],
         "ontology.api/:#IngestResult": ['0.1.0'],
+        "ontology.api/:#InheritanceAnchor": ['0.1.0'],
+        "ontology.api/:#InheritanceKind": ['0.1.0'],
         "ontology.api/:#InputKind": ['0.1.0'],
         "ontology.api/:#InputReceipt": ['0.1.0'],
         "ontology.api/:#Judgment": ['0.1.0'],
@@ -266,6 +288,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Modality": ['0.1.0'],
         "ontology.api/:#Observation": ['0.1.0'],
         "ontology.api/:#Operation": ['0.1.0'],
+        "ontology.api/:#OriginContext": ['0.1.0'],
+        "ontology.api/:#OriginContextInput": ['0.1.0'],
         "ontology.api/:#Phase": ['0.1.0'],
         "ontology.api/:#Polarity": ['0.1.0'],
         "ontology.api/:#PresentRequest": ['0.1.0'],
@@ -279,6 +303,9 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#RelationDetail": ['0.1.0'],
         "ontology.api/:#RelationDetailInput": ['0.1.0'],
         "ontology.api/:#RelationKind": ['0.1.0'],
+        "ontology.api/:#ReportedInheritance": ['0.1.0'],
+        "ontology.api/:#RequestTrace": ['0.1.0'],
+        "ontology.api/:#RequestTransport": ['0.1.0'],
         "ontology.api/:#Resolution": ['0.1.0'],
         "ontology.api/:#ScopeRequest": ['0.1.0'],
         "ontology.api/:#ScopeSummary": ['0.1.0'],
@@ -329,6 +356,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#GraphRecord]#Person": ['0.1.0'],
         "ontology.api/[ontology.api/:#GraphRecord]#Progress": ['0.1.0'],
         "ontology.api/[ontology.api/:#GraphRecord]#Selection": ['0.1.0'],
+        "ontology.api/[ontology.api/:#InheritanceAnchor]#ReportedEpoch": ['0.1.0'],
+        "ontology.api/[ontology.api/:#InheritanceAnchor]#ReportedParent": ['0.1.0'],
         "ontology.api/[ontology.api/:#Observation]#Execution": ['0.1.0'],
         "ontology.api/[ontology.api/:#Observation]#FileAbsent": ['0.1.0'],
         "ontology.api/[ontology.api/:#Observation]#FileVersion": ['0.1.0'],
@@ -340,6 +369,11 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#Operation]#ReviseRelation": ['0.1.0'],
         "ontology.api/[ontology.api/:#Operation]#SelectBinding": ['0.1.0'],
         "ontology.api/[ontology.api/:#Operation]#State": ['0.1.0'],
+        "ontology.api/[ontology.api/:#OriginContextInput]#ReportedNative": ['0.1.0'],
+        "ontology.api/[ontology.api/:#OriginContextInput]#Unknown": ['0.1.0'],
+        "ontology.api/[ontology.api/:#OriginContext]#ReportedNative": ['0.1.0'],
+        "ontology.api/[ontology.api/:#OriginContext]#ServiceRequest": ['0.1.0'],
+        "ontology.api/[ontology.api/:#OriginContext]#Unknown": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": ['0.1.0'],
@@ -384,6 +418,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Consumption": { '0.1.0': 'identical' },
         "ontology.api/:#Content": { '0.1.0': 'identical' },
         "ontology.api/:#ContentInput": { '0.1.0': 'identical' },
+        "ontology.api/:#ContextRecord": { '0.1.0': 'identical' },
+        "ontology.api/:#ContextRecordInput": { '0.1.0': 'identical' },
         "ontology.api/:#Correction": { '0.1.0': 'identical' },
         "ontology.api/:#CurationProposal": { '0.1.0': 'identical' },
         "ontology.api/:#CurationState": { '0.1.0': 'identical' },
@@ -408,6 +444,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Identity": { '0.1.0': 'identical' },
         "ontology.api/:#IngestRequest": { '0.1.0': 'identical' },
         "ontology.api/:#IngestResult": { '0.1.0': 'identical' },
+        "ontology.api/:#InheritanceAnchor": { '0.1.0': 'identical' },
+        "ontology.api/:#InheritanceKind": { '0.1.0': 'identical' },
         "ontology.api/:#InputKind": { '0.1.0': 'identical' },
         "ontology.api/:#InputReceipt": { '0.1.0': 'identical' },
         "ontology.api/:#Judgment": { '0.1.0': 'identical' },
@@ -420,6 +458,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Modality": { '0.1.0': 'identical' },
         "ontology.api/:#Observation": { '0.1.0': 'identical' },
         "ontology.api/:#Operation": { '0.1.0': 'identical' },
+        "ontology.api/:#OriginContext": { '0.1.0': 'identical' },
+        "ontology.api/:#OriginContextInput": { '0.1.0': 'identical' },
         "ontology.api/:#Phase": { '0.1.0': 'identical' },
         "ontology.api/:#Polarity": { '0.1.0': 'identical' },
         "ontology.api/:#PresentRequest": { '0.1.0': 'identical' },
@@ -433,6 +473,9 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#RelationDetail": { '0.1.0': 'identical' },
         "ontology.api/:#RelationDetailInput": { '0.1.0': 'identical' },
         "ontology.api/:#RelationKind": { '0.1.0': 'identical' },
+        "ontology.api/:#ReportedInheritance": { '0.1.0': 'identical' },
+        "ontology.api/:#RequestTrace": { '0.1.0': 'identical' },
+        "ontology.api/:#RequestTransport": { '0.1.0': 'identical' },
         "ontology.api/:#Resolution": { '0.1.0': 'identical' },
         "ontology.api/:#ScopeRequest": { '0.1.0': 'identical' },
         "ontology.api/:#ScopeSummary": { '0.1.0': 'identical' },
@@ -483,6 +526,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#GraphRecord]#Person": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#GraphRecord]#Progress": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#GraphRecord]#Selection": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#InheritanceAnchor]#ReportedEpoch": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#InheritanceAnchor]#ReportedParent": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Observation]#Execution": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Observation]#FileAbsent": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Observation]#FileVersion": { '0.1.0': 'identical' },
@@ -494,6 +539,11 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#Operation]#ReviseRelation": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Operation]#SelectBinding": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Operation]#State": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#OriginContextInput]#ReportedNative": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#OriginContextInput]#Unknown": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#OriginContext]#ReportedNative": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#OriginContext]#ServiceRequest": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#OriginContext]#Unknown": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": { '0.1.0': 'identical' },

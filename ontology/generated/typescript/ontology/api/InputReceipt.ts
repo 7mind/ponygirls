@@ -1,8 +1,10 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {Actor, Actor_JsonCodec} from './Actor.js'
+import {ContextRecord, ContextRecord_JsonCodec} from './ContextRecord.js'
 import {InputKind, InputKind_JsonCodec} from './InputKind.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
+import {RequestTrace, RequestTrace_JsonCodec} from './RequestTrace.js'
 
 export class InputReceipt implements BaboonGeneratedLatest {
     private readonly _ref: Ref;
@@ -16,8 +18,10 @@ export class InputReceipt implements BaboonGeneratedLatest {
     private readonly _content: string;
     private readonly _digest: string;
     private readonly _recordedAt: string;
+    private readonly _contributionContext: ContextRecord;
+    private readonly _ingress: RequestTrace;
 
-    constructor(ref: Ref, scope: string, generation: bigint, kind: InputKind, contributor: Actor, recorder: Actor, submitter: Actor, encoding: string, content: string, digest: string, recordedAt: string) {
+    constructor(ref: Ref, scope: string, generation: bigint, kind: InputKind, contributor: Actor, recorder: Actor, submitter: Actor, encoding: string, content: string, digest: string, recordedAt: string, contributionContext: ContextRecord, ingress: RequestTrace) {
         this._ref = ref
         this._scope = scope
         this._generation = generation
@@ -29,6 +33,8 @@ export class InputReceipt implements BaboonGeneratedLatest {
         this._content = content
         this._digest = digest
         this._recordedAt = recordedAt
+        this._contributionContext = contributionContext
+        this._ingress = ingress
     }
 
     public get ref(): Ref {
@@ -64,6 +70,12 @@ export class InputReceipt implements BaboonGeneratedLatest {
     public get recordedAt(): string {
         return this._recordedAt;
     }
+    public get contributionContext(): ContextRecord {
+        return this._contributionContext;
+    }
+    public get ingress(): RequestTrace {
+        return this._ingress;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -77,11 +89,13 @@ export class InputReceipt implements BaboonGeneratedLatest {
             encoding: this._encoding,
             content: this._content,
             digest: this._digest,
-            recordedAt: this._recordedAt
+            recordedAt: this._recordedAt,
+            contributionContext: this._contributionContext,
+            ingress: this._ingress
         };
     }
 
-    public with(overrides: {ref?: Ref; scope?: string; generation?: bigint; kind?: InputKind; contributor?: Actor; recorder?: Actor; submitter?: Actor; encoding?: string; content?: string; digest?: string; recordedAt?: string}): InputReceipt {
+    public with(overrides: {ref?: Ref; scope?: string; generation?: bigint; kind?: InputKind; contributor?: Actor; recorder?: Actor; submitter?: Actor; encoding?: string; content?: string; digest?: string; recordedAt?: string; contributionContext?: ContextRecord; ingress?: RequestTrace}): InputReceipt {
         return new InputReceipt(
             'ref' in overrides ? overrides.ref! : this._ref,
             'scope' in overrides ? overrides.scope! : this._scope,
@@ -93,11 +107,13 @@ export class InputReceipt implements BaboonGeneratedLatest {
             'encoding' in overrides ? overrides.encoding! : this._encoding,
             'content' in overrides ? overrides.content! : this._content,
             'digest' in overrides ? overrides.digest! : this._digest,
-            'recordedAt' in overrides ? overrides.recordedAt! : this._recordedAt
+            'recordedAt' in overrides ? overrides.recordedAt! : this._recordedAt,
+            'contributionContext' in overrides ? overrides.contributionContext! : this._contributionContext,
+            'ingress' in overrides ? overrides.ingress! : this._ingress
         );
     }
 
-    public static fromPlain(obj: {ref: Ref; scope: string; generation: bigint; kind: InputKind; contributor: Actor; recorder: Actor; submitter: Actor; encoding: string; content: string; digest: string; recordedAt: string}): InputReceipt {
+    public static fromPlain(obj: {ref: Ref; scope: string; generation: bigint; kind: InputKind; contributor: Actor; recorder: Actor; submitter: Actor; encoding: string; content: string; digest: string; recordedAt: string; contributionContext: ContextRecord; ingress: RequestTrace}): InputReceipt {
         return new InputReceipt(
             obj.ref,
             obj.scope,
@@ -109,7 +125,9 @@ export class InputReceipt implements BaboonGeneratedLatest {
             obj.encoding,
             obj.content,
             obj.digest,
-            obj.recordedAt
+            obj.recordedAt,
+            obj.contributionContext,
+            obj.ingress
         );
     }
 
@@ -160,6 +178,8 @@ export class InputReceipt_JsonCodec {
             "content": value.content,
             "digest": value.digest,
             "recordedAt": value.recordedAt,
+            "contributionContext": ContextRecord_JsonCodec.instance.encode(BaboonCodecContext.Default, value.contributionContext),
+            "ingress": RequestTrace_JsonCodec.instance.encode(BaboonCodecContext.Default, value.ingress),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): InputReceipt {
@@ -180,6 +200,8 @@ export class InputReceipt_JsonCodec {
             obj["content"] as string,
             obj["digest"] as string,
             obj["recordedAt"] as string,
+            ContextRecord_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["contributionContext"]),
+            RequestTrace_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["ingress"]),
         )
     }
 

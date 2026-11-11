@@ -23,7 +23,7 @@ abstract class RdfCorruptionContract extends FunSuite {
       Operation.Create("b", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("B", Modality.Assertion)), Nil),
       Operation.Create("c", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("C", Modality.Assertion)), Nil),
       Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Supports, List(Target.Created("a")), List(Target.Created("b")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "A supports B, not C")
-    )), Admission(Actor("agent", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now")).snapshot
+    ), None), Admission(ontology.TestContexts.principal("scope", Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"))).snapshot
   }
   List("snapshot", "traversal", "replay", "foreign-payload").foreach { boundary =>
     test(s"$boundary cannot accept RDF index/payload disagreement at a valid checkpoint") {

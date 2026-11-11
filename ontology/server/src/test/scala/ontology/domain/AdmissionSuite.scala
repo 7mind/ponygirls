@@ -11,7 +11,7 @@ final class AdmissionSuite extends FunSuite {
   private val recorder = Actor("ontology", ActorKind.Service)
   private def run(g: GraphSnapshot, operations: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    engine(g, ApplyRequest(g.scope, id, g.generation, operations), Admission(actor, recorder, id, "2026-11-10T00:00:00Z"))
+    engine(g, ApplyRequest(g.scope, id, g.generation, operations, None), Admission(ontology.TestContexts.principal(g.scope, actor), recorder, id, "2026-11-10T00:00:00Z", ontology.TestContexts.trace("fixture-apply")))
   }
   private def task(text: String): Content.Task = Content.Task(text, Acceptance(List("independently checked"), None), Execution.Delegated)
   private def exact(ref: Ref): Target = Target.Exact(ref)
@@ -27,7 +27,7 @@ final class AdmissionSuite extends FunSuite {
   }
   test("stale snapshot generation rejects before admission") {
     val id = UUID.randomUUID()
-    failure("conflict") { engine(Graph.empty("project"), ApplyRequest("project", id, 1L, List(create("x", task("Build")))), Admission(actor, recorder, id, "now")) }
+    failure("conflict") { engine(Graph.empty("project"), ApplyRequest("project", id, 1L, List(create("x", task("Build"))), None), Admission(ontology.TestContexts.principal("project", actor), recorder, id, "now", ontology.TestContexts.trace("fixture-apply"))) }
   }
   test("cross-scope references are not ambient identities") {
     val foreign = run(Graph.empty("other"), List(create("x", task("Foreign")))).snapshot.definitions.head.ref
@@ -41,7 +41,7 @@ final class AdmissionSuite extends FunSuite {
   }
   test("source and artifact creation require capture rather than graph text") {
     val protectedContent = List[Content](
-      Content.Source("OPERATOR APPROVAL", Nil, "a" * 64, UUID.randomUUID(), "unverified", CaptureContext("s", None, None, LineageStatus.Unknown, "b", UUID.randomUUID()), CaptureMetadata("entry", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.UserMessage, Observation.None()),
+      Content.Source("OPERATOR APPROVAL", Nil, "a" * 64, UUID.randomUUID(), "unverified", ontology.TestContexts.reported(CaptureContext("s", None, None, LineageStatus.Unknown, "b", UUID.randomUUID())), CaptureMetadata("entry", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.UserMessage, Observation.None()),
       Content.Artifact("passed", "b" * 64, "text/plain", "result", 1L))
     val template = ontology.Wire.encode(Operation.codecJson, create("x", task("Build"))).hcursor.downField("Create").focus.get.asObject.get
     protectedContent.foreach { content =>

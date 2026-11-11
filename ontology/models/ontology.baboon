@@ -14,9 +14,28 @@ adt Applicability {
  data Declared { statement: str basis: lst[Ref] context: lst[ApplicabilityContext] }
  data Captured { source: Ref }
 }
+enum RequestTransport { Bearer Cookie Internal }
+data RequestTrace { hostRequestId: uid operation: str transport: RequestTransport }
+adt OriginContext {
+ data Unknown { reason: str }
+ data ReportedNative { context: CaptureContext }
+ data ServiceRequest { trace: RequestTrace }
+}
+adt OriginContextInput {
+ data Unknown { reason: str }
+ data ReportedNative { context: CaptureContext }
+}
+enum InheritanceKind { Fork Import }
+adt InheritanceAnchor {
+ data ReportedEpoch { source: Ref epoch: uid }
+ data ReportedParent { source: Ref epoch: uid }
+}
+data ReportedInheritance { kind: InheritanceKind sourceScope: str generation: i64 sourceFrontier: i64 coveredFrontier: i64 bindingRefs: lst[Ref] sourceRefs: lst[Ref] anchor: opt[InheritanceAnchor] }
+data ContextRecord { origin: OriginContext reportedInherited: lst[ReportedInheritance] }
+data ContextRecordInput { origin: OriginContextInput reportedInherited: lst[ReportedInheritance] }
 data Provenance { contributor: Actor recorder: Actor input: uid recordedAt: str }
 enum InputKind { GraphMutation Capture Curation }
-data InputReceipt { ref: Ref scope: str generation: i64 kind: InputKind contributor: Actor recorder: Actor submitter: Actor encoding: str content: str digest: str recordedAt: str }
+data InputReceipt { ref: Ref scope: str generation: i64 kind: InputKind contributor: Actor recorder: Actor submitter: Actor encoding: str content: str digest: str recordedAt: str contributionContext: ContextRecord ingress: RequestTrace }
 enum Force { Required Preferred Unresolved }
 enum Polarity { Required Prohibited }
 enum Execution { Delegated HumanRequired }
@@ -39,7 +58,7 @@ adt Content {
  data Question { text: str alternatives: lst[str] answer: opt[str] escalation: Escalation }
  data Decision { text: str alternatives: lst[str] rationale: str }
  data Review { text: str findings: lst[str] subjects: lst[Ref] basis: lst[Ref] uncertainty: str assessment: Assessment }
- data Source { text: str context: lst[Ref] rawDigest: str eventId: uid sourceNamespace: str captureContext: CaptureContext metadata: CaptureMetadata origin: EventOrigin observation: Observation }
+ data Source { text: str context: lst[Ref] rawDigest: str eventId: uid sourceNamespace: str captureContext: ContextRecord metadata: CaptureMetadata origin: EventOrigin observation: Observation }
  data Artifact { text: str digest: str mediaType: str locator: str generation: i64 }
  data Conflict { text: str subjects: lst[Ref] status: ConflictState resolution: opt[str] uncertainty: str }
 }
@@ -102,7 +121,7 @@ adt Operation {
  data SelectBinding { alias: str binding: Target selected: bit reason: str basis: lst[Target] }
  data State { alias: str subject: Target previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Target] uncertainty: str }
 }
-root data ApplyRequest { scope: str requestId: uid expectedGeneration: i64 operations: lst[Operation] }
+root data ApplyRequest { scope: str requestId: uid expectedGeneration: i64 operations: lst[Operation] contributionContext: opt[ContextRecordInput] }
 data AliasRef { alias: str ref: Ref }
 root data ApplyResult { scope: str requestId: uid generation: i64 created: lst[AliasRef] replayed: bit }
 root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 sourceFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] selections: lst[BindingSelection] }
@@ -127,8 +146,8 @@ adt Observation {
 }
 enum SourceRepresentation { Text PiTranscript HostReceipt GraphCommand HumanJudgment }
 data CaptureMetadata { sourceId: str parentSourceId: opt[str] observedAt: opt[str] representation: SourceRepresentation omissions: lst[str] exposedDeliveries: lst[uid] }
-root data IngestRequest { scope: str requestId: uid eventId: uid context: CaptureContext origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation }
-data CapturedEvent { id: uid scope: str sourceNamespace: str frontier: i64 context: CaptureContext origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation provenance: Provenance }
+root data IngestRequest { scope: str requestId: uid eventId: uid occurrenceContext: opt[ContextRecordInput] contributionContext: opt[ContextRecordInput] origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation }
+data CapturedEvent { id: uid scope: str sourceNamespace: str frontier: i64 context: ContextRecord origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation provenance: Provenance }
 root data IngestResult { scope: str requestId: uid eventId: uid sourceNamespace: str source: Ref artifacts: lst[Ref] frontier: i64 replayed: bit }
 root data SourceRequest { scope: str after: i64 limit: i32 }
 root data SourceResult { scope: str events: lst[CapturedEvent] frontier: i64 nextAfter: opt[i64] }

@@ -4,7 +4,7 @@ import baboon.runtime.shared.BaboonJsonCodec
 import cats.effect.IO
 import cats.syntax.all.*
 import io.circe.Json
-import ontology.{OntologyService, Principal, Wire}
+import ontology.{OntologyService, ServiceCall, Wire}
 import ontology.api.*
 import ontology.domain.{Fault, Require}
 
@@ -62,21 +62,21 @@ final class Mcp(service: OntologyService, schemas: ToolSchemas) {
     "structuredContent" -> value, "isError" -> bool(isError))
 
   private def invoke[A, B](arguments: Json, input: BaboonJsonCodec[A], output: BaboonJsonCodec[B], mutation: Boolean,
-    authorize: Boolean => IO[Principal])(use: (Principal, A) => IO[B]): IO[Json] =
+    authorize: Boolean => IO[ServiceCall])(use: (ServiceCall, A) => IO[B]): IO[Json] =
     IO(Wire.decode(input, arguments)).flatMap { value =>
       // Revalidation happens after typed decoding, immediately before the service
       // effect. Caller identity never comes from tool arguments or graph content.
-      authorize(mutation).flatMap(principal => IO.defer(use(principal, value)))
+      authorize(mutation).flatMap(call => IO.defer(use(call, value)))
     }.map(value => Wire.encode(output, value))
 
-  private def call(name: String, arguments: Json, authorize: Boolean => IO[Principal]): IO[Json] = name match {
+  private def call(name: String, arguments: Json, authorize: Boolean => IO[ServiceCall]): IO[Json] = name match {
     case "graph_find" => invoke(arguments, FindRequest.codecJson, FindResult.codecJson, false, authorize)(service.find)
     case "graph_read" => invoke(arguments, ReadRequest.codecJson, ReadResult.codecJson, false, authorize)(service.read)
     case "graph_apply" => invoke(arguments, ApplyRequest.codecJson, ApplyResult.codecJson, true, authorize)(service.apply)
     case _ => IO.raiseError(RpcFailure(-32602, "Unknown tool"))
   }
 
-  private def dispatch(id: Json, method: String, params: Json, authorize: Boolean => IO[Principal], logUnavailable: IO[Unit]): IO[Json] = IO.defer {
+  private def dispatch(id: Json, method: String, params: Json, authorize: Boolean => IO[ServiceCall], logUnavailable: IO[Unit]): IO[Json] = IO.defer {
     method match {
       case "initialize" =>
         requireParams(shape(params, Set("protocolVersion", "capabilities", "clientInfo"), Set("_meta")), "Invalid initialize parameters")
@@ -125,7 +125,7 @@ final class Mcp(service: OntologyService, schemas: ToolSchemas) {
     * recovered from malformed JSON or malformed request objects. MCP request IDs
     * are strings or numbers, not null, booleans, arrays or objects.
     */
-  def handle(request: Json, authorize: Boolean => IO[Principal], logUnavailable: IO[Unit]): IO[Option[Json]] = IO.defer {
+  def handle(request: Json, authorize: Boolean => IO[ServiceCall], logUnavailable: IO[Unit]): IO[Option[Json]] = IO.defer {
     val fields = request.asObject
     val id = fields.flatMap(_("id"))
     val method = request.hcursor.get[String]("method").toOption

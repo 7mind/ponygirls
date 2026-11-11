@@ -9,7 +9,7 @@ package ontology.api {
     scope: String,
     sourceNamespace: String,
     frontier: Long,
-    context: CaptureContext,
+    context: ContextRecord,
     origin: EventOrigin,
     metadata: CaptureMetadata,
     text: String,
@@ -48,7 +48,7 @@ package ontology.api {
         "scope" -> Json.fromString(value.scope),
         "sourceNamespace" -> Json.fromString(value.sourceNamespace),
         "frontier" -> Json.fromString(value.frontier.toString),
-        "context" -> CaptureContext_JsonCodec.instance.encode(ctx, value.context),
+        "context" -> ContextRecord_JsonCodec.instance.encode(ctx, value.context),
         "origin" -> EventOrigin_JsonCodec.instance.encode(ctx, value.origin),
         "metadata" -> CaptureMetadata_JsonCodec.instance.encode(ctx, value.metadata),
         "text" -> Json.fromString(value.text),
@@ -68,7 +68,7 @@ package ontology.api {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             sourceNamespace <- getField(jsonObject, "sourceNamespace").flatMap(v => decodeString(v.hcursor))
             frontier <- getField(jsonObject, "frontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            context <- getField(jsonObject, "context").flatMap(v => CaptureContext_JsonCodec.circeDecoder(v.hcursor))
+            context <- getField(jsonObject, "context").flatMap(v => ContextRecord_JsonCodec.circeDecoder(v.hcursor))
             origin <- getField(jsonObject, "origin").flatMap(v => EventOrigin_JsonCodec.circeDecoder(v.hcursor))
             metadata <- getField(jsonObject, "metadata").flatMap(v => CaptureMetadata_JsonCodec.circeDecoder(v.hcursor))
             text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))

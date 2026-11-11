@@ -13,7 +13,7 @@ trait GraphRepository {
   def apply(request: ApplyRequest, admission: Admission): IO[ApplyResult]
   def pendingProjections(limit: Int): IO[List[GraphSnapshot]]
   def acknowledgeProjection(scope: String, generation: Long): IO[Unit]
-  def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String): IO[IngestResult]
+  def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult]
   def input(scope: String, ref: Ref): IO[InputReceipt]
   def sources(request: SourceRequest): IO[SourceResult]
 }
@@ -34,19 +34,28 @@ final class MemoryGraphRepository(engine: AdmissionEngine) extends GraphReposito
   private var sourceIndex = Map.empty[SourceKey, (String, IngestResult)]
   private var ingestReceipts = Map.empty[IngestKey, (String, IngestResult)]
   private val capture = new CaptureEngine
+  private def validateContexts(principal: Principal, contexts: List[ContextRecord]): Unit = {
+    val keys = ContextAccess.requiredSnapshots(principal, contexts)
+    val snapshots = keys.map(key => versions.getOrElse((key.scope, key.generation), throw Fault("not-found", "graph revision not found")))
+    ContextAccess.validate(contexts, snapshots)
+  }
   def read(scope: String): IO[GraphSnapshot] = IO(synchronized { heads.getOrElse(scope, Graph.empty(scope)) })
   def history(scope: String, generation: Long): IO[GraphSnapshot] = IO(synchronized { versions.getOrElse((scope, generation), throw Fault("not-found", "graph revision not found")) })
   def scopes: IO[List[String]] = IO(synchronized { heads.keys.toList.sorted })
   def apply(request: ApplyRequest, admission: Admission): IO[ApplyResult] = IO(synchronized {
     Require(request.requestId == admission.requestId, "request", "request binding mismatch")
+    admission.principal.require(request.scope, Capability.Mutate)
+    val context = Contexts.contribution(request.contributionContext, admission.ingress, Contexts.ProtocolLimits)
+    Contexts.server(admission.ingress, Contexts.ProtocolLimits)
     val key = Receipt(request.scope, admission.actor, request.requestId)
     val digest = Digests.text(Wire.encode(ApplyRequest.codecJson, request).noSpaces)
     receipts.get(key) match {
       case Some((previous, result)) => Require(previous == digest, "replay-conflict", "request ID has different content"); result.copy(replayed = true)
       case None =>
+        validateContexts(admission.principal, List(context))
         val before = heads.getOrElse(request.scope, Graph.empty(request.scope))
         val changed = engine(before, request, admission)
-        val receipt = InputReceipts.create(admission.provenance.input, request.scope, changed.snapshot.generation, InputKind.GraphMutation, admission.actor, admission.recorder, admission.actor, "ontology.api.ApplyRequest/0.1.0 canonical JSON", Wire.encode(ApplyRequest.codecJson, request).noSpaces, admission.recordedAt)
+        val receipt = InputReceipts.create(admission.provenance.input, request.scope, changed.snapshot.generation, InputKind.GraphMutation, admission.actor, admission.recorder, admission.actor, "ontology.api.ApplyRequest/0.1.0 canonical JSON", Wire.encode(ApplyRequest.codecJson, request).noSpaces, admission.recordedAt, context, admission.ingress)
         Require(!inputs.contains((request.scope, receipt.ref)), "identity", "input receipt already exists")
         heads = heads.updated(request.scope, changed.snapshot)
         inputs = inputs.updated((request.scope, receipt.ref), receipt)
@@ -56,9 +65,14 @@ final class MemoryGraphRepository(engine: AdmissionEngine) extends GraphReposito
         changed.result
     }
   })
-  def input(scope: String, ref: Ref): IO[InputReceipt] = IO(synchronized { inputs.getOrElse((scope, ref), throw Fault("not-found", "input receipt not found")) })
-  def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String): IO[IngestResult] = IO(synchronized {
+  def input(scope: String, ref: Ref): IO[InputReceipt] = IO(synchronized {
+    val receipt = inputs.getOrElse((scope, ref), throw Fault("not-found", "input receipt not found"))
+    InputReceipts.validateContext(receipt)
+    receipt
+  })
+  def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult] = IO(synchronized {
     capture.validateIngress(request, principal)
+    Contexts.server(ingress, Contexts.ProtocolLimits)
     val receiptKey = IngestKey(request.scope, principal.credentialId, request.requestId)
     val requestDigest = Digests.text(Wire.encode(IngestRequest.codecJson, request).noSpaces)
     ingestReceipts.get(receiptKey) match {
@@ -69,10 +83,11 @@ final class MemoryGraphRepository(engine: AdmissionEngine) extends GraphReposito
         val result = sourceIndex.get(key) match {
           case Some((previous, existing)) => Require(previous == digest, "replay-conflict", "source event ID has different content"); existing.copy(requestId = request.requestId, replayed = true)
           case None =>
+            validateContexts(principal, List(CaptureIdentity.occurrence(request), Contexts.contribution(request.contributionContext, ingress, Contexts.ProtocolLimits)))
             val before = heads.getOrElse(request.scope, Graph.empty(request.scope))
             val events = sourceEvents.getOrElse(request.scope, Nil)
             val frontier = events.lastOption.fold(0L)(_.frontier)
-            val changed = capture(before, events, frontier, request, principal, recorder, receivedAt)
+            val changed = capture(before, events, frontier, request, principal, recorder, receivedAt, ingress)
             Require(!inputs.contains((request.scope, changed.receipt.ref)), "identity", "input receipt already exists")
             inputs = inputs.updated((request.scope, changed.receipt.ref), changed.receipt)
             heads = heads.updated(request.scope, changed.snapshot)

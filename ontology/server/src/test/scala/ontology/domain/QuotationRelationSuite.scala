@@ -9,7 +9,7 @@ final class QuotationRelationSuite extends FunSuite {
   private val applicability = ApplicabilityInput.Unresolved("Fixture does not establish semantic scope", Nil, Nil)
   private def run(graph: GraphSnapshot, operations: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations), Admission(Actor("interpreter", ActorKind.Agent), Actor("fixture-host", ActorKind.Service), id, "fixture"))
+    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("interpreter", ActorKind.Agent)), Actor("fixture-host", ActorKind.Service), id, "fixture", ontology.TestContexts.trace("fixture-apply")))
   }
   private def definition(alias: String, text: String): Operation = Operation.Create(alias, applicability, ContentInput.Statement(text, Modality.Assertion), Nil)
   private def relation(kind: RelationKind, source: Target, target: Target): Operation = Operation.Relate("account", applicability, kind, List(source), List(target), RelationDetailInput.Empty(), "Attributed relation account, not independent verification")

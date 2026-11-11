@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeList, decodeString, decodeUUID}
+import io.circe.Decoder.{decodeList, decodeOption, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -8,7 +8,8 @@ package ontology.api {
     scope: String,
     requestId: UUID,
     expectedGeneration: Long,
-    operations: List[Operation]
+    operations: List[Operation],
+    contributionContext: Option[ContextRecordInput]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = ApplyRequest.baboonDomainVersion
     override def baboonDomainIdentifier: String = ApplyRequest.baboonDomainIdentifier
@@ -41,7 +42,8 @@ package ontology.api {
         "scope" -> Json.fromString(value.scope),
         "requestId" -> Json.fromString(value.requestId.toString()),
         "expectedGeneration" -> Json.fromString(value.expectedGeneration.toString),
-        "operations" -> Json.fromValues(value.operations.map(e => Operation_JsonCodec.instance.encode(ctx, e)))
+        "operations" -> Json.fromValues(value.operations.map(e => Operation_JsonCodec.instance.encode(ctx, e))),
+        "contributionContext" -> value.contributionContext.map(v => ContextRecordInput_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null)
       )
     }
     
@@ -56,7 +58,8 @@ package ontology.api {
             requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
             expectedGeneration <- getField(jsonObject, "expectedGeneration").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             operations <- getField(jsonObject, "operations").flatMap(v => decodeList(Operation_JsonCodec.circeDecoder)(v.hcursor))
-          } yield ApplyRequest(scope,requestId,expectedGeneration,operations)
+            contributionContext <- getField(jsonObject, "contributionContext").flatMap(v => decodeOption(ContextRecordInput_JsonCodec.circeDecoder)(v.hcursor))
+          } yield ApplyRequest(scope,requestId,expectedGeneration,operations,contributionContext)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ApplyRequest: object expected"))
       }
     }

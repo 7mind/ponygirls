@@ -103,7 +103,7 @@ private[http] object Transport {
   }
 }
 
-final class HttpApi(auth: Auth, service: OntologyService, mcp: Mcp, webRoot: Option[Path], logger: IzLogger) {
+final class HttpApi(auth: Auth, service: OntologyService, mcp: Mcp, webRoot: Option[Path], logger: IzLogger, newRequestId: () => java.util.UUID) {
   private val csp = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; font-src 'self'; object-src 'none'; worker-src 'none'; frame-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
 
   private def logUnavailable: IO[Unit] = IO(logger.error("ontology transport unavailable")).handleError(_ => ())
@@ -154,14 +154,14 @@ final class HttpApi(auth: Auth, service: OntologyService, mcp: Mcp, webRoot: Opt
     body(request).flatTap(_ => current(request, captured, mutation, false).void)
 
   private def post[A, B](request: Request[IO], input: BaboonJsonCodec[A], output: BaboonJsonCodec[B], mutation: Boolean, browserReview: Boolean)
-    (use: (Principal, A) => IO[B]): IO[Response[IO]] = handled {
+    (use: (ServiceCall, A) => IO[B]): IO[Response[IO]] = handled {
     authorized(request, mutation) { captured =>
       IO {
         if (browserReview) Require(captured.session && captured.principal.actor.kind == ActorKind.Human,
           "forbidden", "browser Human session required")
       } *> authorizedBody(request, captured, mutation).flatMap(raw => IO(Wire.decode(input, raw))).flatMap { value =>
         current(request, captured, mutation, false).flatMap { checked =>
-          IO.defer(use(checked.principal, value))
+          IO.defer(use(ServiceCall.authenticated(checked, request.uri.path.renderString, newRequestId()), value))
         }
       }.map(value => Transport.encoded(output, value))
     }
@@ -236,7 +236,7 @@ final class HttpApi(auth: Auth, service: OntologyService, mcp: Mcp, webRoot: Opt
             IO.pure(Some(Mcp.error(Json.Null, -32700, "Parse error", None)))
           case Left(error) => IO.raiseError(error)
           case Right(raw) =>
-            mcp.handle(raw, mutation => current(request, captured, mutation, true).map(_.principal), logUnavailable)
+            mcp.handle(raw, mutation => current(request, captured, mutation, true).map(value => ServiceCall.authenticated(value, "/mcp", newRequestId())), logUnavailable)
         }
       }.map {
         case Some(reply) => Transport.json(Status.Ok, reply)
@@ -263,15 +263,15 @@ final class HttpApi(auth: Auth, service: OntologyService, mcp: Mcp, webRoot: Opt
     }
     case request @ GET -> Root / "api" / "v1" / "scopes" => handled {
       authorized(request, false) { captured =>
-        current(request, captured, false, false).flatMap(a => service.scopes(a.principal)).map(v => Transport.encoded(ScopesResult.codecJson, v))
+        current(request, captured, false, false).flatMap(a => service.scopes(ServiceCall.authenticated(a, "/api/v1/scopes", newRequestId()))).map(v => Transport.encoded(ScopesResult.codecJson, v))
       }
     }
     case r @ POST -> Root / "api" / "v1" / "find" => post(r, FindRequest.codecJson, FindResult.codecJson, false, false)(service.find)
     case r @ POST -> Root / "api" / "v1" / "read" => post(r, ReadRequest.codecJson, ReadResult.codecJson, false, false)(service.read)
     case r @ POST -> Root / "api" / "v1" / "sources" => post(r, SourceRequest.codecJson, SourceResult.codecJson, false, false)(service.sources)
     case r @ POST -> Root / "api" / "v1" / "status" => post(r, ScopeRequest.codecJson, CurationStatus.codecJson, false, false)(service.status)
-    case r @ POST -> Root / "api" / "v1" / "present" => post(r, PresentRequest.codecJson, Presentation.codecJson, true, true)(service.present)
-    case r @ POST -> Root / "api" / "v1" / "judge" => post(r, JudgmentRequest.codecJson, Judgment.codecJson, true, true)(service.judge)
+    case r @ POST -> Root / "api" / "v1" / "present" => post(r, PresentRequest.codecJson, Presentation.codecJson, true, true)((call, input) => service.present(ReviewCall.from(call, input.scope), input))
+    case r @ POST -> Root / "api" / "v1" / "judge" => post(r, JudgmentRequest.codecJson, Judgment.codecJson, true, true)((call, input) => service.judge(ReviewCall.from(call, input.scope), input))
     case r @ POST -> Root / "api" / "v1" / "judgments" => post(r, ScopeRequest.codecJson, JudgmentsResult.codecJson, false, false)(service.judgments)
     case r @ POST -> Root / "api" / "v1" / "apply" => post(r, ApplyRequest.codecJson, ApplyResult.codecJson, true, false)(service.apply)
     case r @ POST -> Root / "api" / "v1" / "ingest" => post(r, IngestRequest.codecJson, IngestResult.codecJson, true, false)(service.ingest)

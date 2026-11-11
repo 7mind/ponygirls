@@ -18,8 +18,8 @@ object AssessmentFixture {
     Operation.SelectBinding("st", Target.Created("consumer"), true, "Consumer context", List(Target.Created("task"))),
     Operation.Relate("use", applicability, RelationKind.UsesAssessment, List(Target.Created("assessment")), List(Target.Created("consumer")), RelationDetailInput.AssessmentUse(Target.Created("required"), AssessmentUseDisposition.Applicable, List(Target.Created("condition"))), "Explicit use here"),
     Operation.State("done", Target.Created("consumer"), None, Phase.Completed, Some(Resolution.NotFulfilled), Some("Investigation completed without fulfillment"), Nil, "Reported only"))
-  def admission(request: ApplyRequest): Admission = Admission(Actor("fixture-curator", ActorKind.Agent), Actor("fixture-service", ActorKind.Service), request.requestId, "fixture")
-  def request(scope: String, generation: Long, operations: List[Operation]): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, operations)
+  def admission(request: ApplyRequest): Admission = Admission(ontology.TestContexts.principal(request.scope, Actor("fixture-curator", ActorKind.Agent)), Actor("fixture-service", ActorKind.Service), request.requestId, "fixture", ontology.TestContexts.trace("fixture-apply"))
+  def request(scope: String, generation: Long, operations: List[Operation]): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, operations, None)
   def ref(result: ApplyResult, alias: String): Ref = result.created.find(_.alias == alias).get.ref
   def changedReview(result: ApplyResult): Operation = Operation.Revise("review2", ref(result, "review"), applicability,
     ContentInput.Review("Contradictory revision", List("New contrary information"), List(Target.Exact(ref(result, "cb"))), List(Target.Exact(ref(result, "condition"))), "Needs reassessment", Assessment.Contradicted), Standing.Active, List(Target.Exact(ref(result, "condition"))), "Assessment changed")

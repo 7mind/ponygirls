@@ -1,5 +1,6 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
+import {ContextRecordInput, ContextRecordInput_JsonCodec} from './ContextRecordInput.js'
 import {Operation, Operation_JsonCodec} from './Operation.js'
 
 export class ApplyRequest implements BaboonGeneratedLatest {
@@ -7,12 +8,14 @@ export class ApplyRequest implements BaboonGeneratedLatest {
     private readonly _requestId: string;
     private readonly _expectedGeneration: bigint;
     private readonly _operations: Array<Operation>;
+    private readonly _contributionContext: ContextRecordInput | undefined;
 
-    constructor(scope: string, requestId: string, expectedGeneration: bigint, operations: Array<Operation>) {
+    constructor(scope: string, requestId: string, expectedGeneration: bigint, operations: Array<Operation>, contributionContext: ContextRecordInput | undefined) {
         this._scope = scope
         this._requestId = requestId
         this._expectedGeneration = expectedGeneration
         this._operations = operations
+        this._contributionContext = contributionContext
     }
 
     public get scope(): string {
@@ -27,31 +30,37 @@ export class ApplyRequest implements BaboonGeneratedLatest {
     public get operations(): Array<Operation> {
         return this._operations;
     }
+    public get contributionContext(): ContextRecordInput | undefined {
+        return this._contributionContext;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
             scope: this._scope,
             requestId: this._requestId,
             expectedGeneration: this._expectedGeneration,
-            operations: this._operations
+            operations: this._operations,
+            contributionContext: this._contributionContext !== undefined ? this._contributionContext : undefined
         };
     }
 
-    public with(overrides: {scope?: string; requestId?: string; expectedGeneration?: bigint; operations?: Array<Operation>}): ApplyRequest {
+    public with(overrides: {scope?: string; requestId?: string; expectedGeneration?: bigint; operations?: Array<Operation>; contributionContext?: ContextRecordInput | undefined}): ApplyRequest {
         return new ApplyRequest(
             'scope' in overrides ? overrides.scope! : this._scope,
             'requestId' in overrides ? overrides.requestId! : this._requestId,
             'expectedGeneration' in overrides ? overrides.expectedGeneration! : this._expectedGeneration,
-            'operations' in overrides ? overrides.operations! : this._operations
+            'operations' in overrides ? overrides.operations! : this._operations,
+            'contributionContext' in overrides ? overrides.contributionContext! : this._contributionContext
         );
     }
 
-    public static fromPlain(obj: {scope: string; requestId: string; expectedGeneration: bigint; operations: Array<Operation>}): ApplyRequest {
+    public static fromPlain(obj: {scope: string; requestId: string; expectedGeneration: bigint; operations: Array<Operation>; contributionContext: ContextRecordInput | undefined}): ApplyRequest {
         return new ApplyRequest(
             obj.scope,
             obj.requestId,
             obj.expectedGeneration,
-            obj.operations
+            obj.operations,
+            obj.contributionContext
         );
     }
 
@@ -95,6 +104,7 @@ export class ApplyRequest_JsonCodec {
             "requestId": value.requestId,
             "expectedGeneration": value.expectedGeneration.toString(),
             "operations": Array.from(value.operations).map(item => Operation_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "contributionContext": value.contributionContext === undefined ? null : ContextRecordInput_JsonCodec.instance.encode(BaboonCodecContext.Default, value.contributionContext),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): ApplyRequest {
@@ -108,6 +118,7 @@ export class ApplyRequest_JsonCodec {
             obj["requestId"] as string,
             BaboonInt64.read(obj["expectedGeneration"], "i64/u64"),
             (obj["operations"] as unknown[]).map(item => Operation_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            obj["contributionContext"] === undefined || obj["contributionContext"] === null ? undefined : obj["contributionContext"] === undefined || obj["contributionContext"] === null ? undefined : ContextRecordInput_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["contributionContext"]),
         )
     }
 

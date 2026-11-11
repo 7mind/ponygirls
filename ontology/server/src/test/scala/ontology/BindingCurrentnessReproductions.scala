@@ -14,7 +14,7 @@ final class BindingCurrentnessReproductions extends FunSuite {
   private def task(name: String) = Content.Task(name, Acceptance(List("defined acceptance"), None), Execution.Delegated)
   private def apply(repo: GraphRepository, generation: Long, ops: List[Operation]): IO[ApplyResult] = {
     val id = UUID.randomUUID()
-    repo.apply(ApplyRequest("s", id, generation, ops), Admission(Actor("a", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now"))
+    repo.apply(ApplyRequest("s", id, generation, ops, None), Admission(ontology.TestContexts.principal("s", Actor("a", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply")))
   }
   private def find(result: ApplyResult, name: String): Ref = result.created.find(_.alias == name).get.ref
   private def query(repo: GraphRepository) = new GraphQueries(repo, new CursorSigner(Array.fill[Byte](32)(9)), QueryLimits(100, 100, 65536, 2048))

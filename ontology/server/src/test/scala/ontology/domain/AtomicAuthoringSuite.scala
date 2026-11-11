@@ -31,12 +31,12 @@ final class AtomicAuthoringSuite extends FunSuite {
   private def app(kind: String, field: String, source: Json, subject: Json): Json = j(s"""{"$kind":{"$field":"Qualified scope","basis":[$source],"context":[{"Capture":{"source":$source}},{"Subject":{"ref":$subject}}]}}""")
   private def request(g: GraphSnapshot, ops: List[Json]): ApplyRequest = {
     val id = UUID.randomUUID()
-    Wire.decode(ApplyRequest.codecJson, j(s"""{"scope":"${g.scope}","requestId":"$id","expectedGeneration":"${g.generation}","operations":${Json.arr(ops*)}}"""))
+    Wire.decode(ApplyRequest.codecJson, j(s"""{"scope":"${g.scope}","requestId":"$id","expectedGeneration":"${g.generation}","contributionContext":null,"operations":${Json.arr(ops*)}}"""))
   }
   private def run(g: GraphSnapshot, ops: List[Json]): Applied = {
     val r = request(g, ops)
     assertEquals(Wire.decode(ApplyRequest.codecJson, Wire.encode(ApplyRequest.codecJson, r)), r)
-    val result = engine(g, r, Admission(actor, Actor("fixture-recorder", ActorKind.Unknown), r.requestId, "fixture"))
+    val result = engine(g, r, Admission(ontology.TestContexts.principal(g.scope, actor), Actor("fixture-recorder", ActorKind.Unknown), r.requestId, "fixture", ontology.TestContexts.trace("fixture-apply")))
     assertEquals(Wire.decode(GraphSnapshot.codecJson, Wire.encode(GraphSnapshot.codecJson, result.snapshot)), result.snapshot)
     result
   }
@@ -50,7 +50,7 @@ final class AtomicAuthoringSuite extends FunSuite {
 
   // Synthetic structural fixture only: no native identity, authority or observation claim.
   private val sr = Ref(UUID.randomUUID(), 1)
-  private val source = Content.Source("SYNTHETIC fixture, not native authority", Nil, "a" * 64, sr.id, "synthetic", CaptureContext("fixture", None, None, LineageStatus.Unknown, "fixture", UUID.randomUUID()), CaptureMetadata("fixture", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.WorkerMessage, Observation.None())
+  private val source = Content.Source("SYNTHETIC fixture, not native authority", Nil, "a" * 64, sr.id, "synthetic", ontology.TestContexts.reported(CaptureContext("fixture", None, None, LineageStatus.Unknown, "fixture", UUID.randomUUID())), CaptureMetadata("fixture", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.WorkerMessage, Observation.None())
   private val provenance = Provenance(Actor("fixture", ActorKind.Unknown), Actor("fixture", ActorKind.Unknown), UUID.randomUUID(), "fixture")
   private val seed = Graph.empty("atomic").copy(definitions = List(Definition(sr, "atomic", Applicability.Captured(sr), source, Standing.Active, Nil, None, provenance)))
   private def fresh: List[Json] = List(create("q", q, u), create("t", task(cr("q")), u), bind("tb", cr("t")), select("select-t", cr("tb"), cr("t")), create("c", claim, u), bind("cb", cr("c")), select("select-c", cr("cb"), cr("c")), create("r", review(cr("cb"), cr("c")), app("Declared", "statement", ex(sr), cr("cb"))))

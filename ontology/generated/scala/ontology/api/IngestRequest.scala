@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeString, decodeUUID}
+import io.circe.Decoder.{decodeOption, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -8,7 +8,8 @@ package ontology.api {
     scope: String,
     requestId: UUID,
     eventId: UUID,
-    context: CaptureContext,
+    occurrenceContext: Option[ContextRecordInput],
+    contributionContext: Option[ContextRecordInput],
     origin: EventOrigin,
     metadata: CaptureMetadata,
     text: String,
@@ -45,7 +46,8 @@ package ontology.api {
         "scope" -> Json.fromString(value.scope),
         "requestId" -> Json.fromString(value.requestId.toString()),
         "eventId" -> Json.fromString(value.eventId.toString()),
-        "context" -> CaptureContext_JsonCodec.instance.encode(ctx, value.context),
+        "occurrenceContext" -> value.occurrenceContext.map(v => ContextRecordInput_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
+        "contributionContext" -> value.contributionContext.map(v => ContextRecordInput_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
         "origin" -> EventOrigin_JsonCodec.instance.encode(ctx, value.origin),
         "metadata" -> CaptureMetadata_JsonCodec.instance.encode(ctx, value.metadata),
         "text" -> Json.fromString(value.text),
@@ -63,12 +65,13 @@ package ontology.api {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
             eventId <- getField(jsonObject, "eventId").flatMap(v => decodeUUID(v.hcursor))
-            context <- getField(jsonObject, "context").flatMap(v => CaptureContext_JsonCodec.circeDecoder(v.hcursor))
+            occurrenceContext <- getField(jsonObject, "occurrenceContext").flatMap(v => decodeOption(ContextRecordInput_JsonCodec.circeDecoder)(v.hcursor))
+            contributionContext <- getField(jsonObject, "contributionContext").flatMap(v => decodeOption(ContextRecordInput_JsonCodec.circeDecoder)(v.hcursor))
             origin <- getField(jsonObject, "origin").flatMap(v => EventOrigin_JsonCodec.circeDecoder(v.hcursor))
             metadata <- getField(jsonObject, "metadata").flatMap(v => CaptureMetadata_JsonCodec.circeDecoder(v.hcursor))
             text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
             observation <- getField(jsonObject, "observation").flatMap(v => Observation_JsonCodec.circeDecoder(v.hcursor))
-          } yield IngestRequest(scope,requestId,eventId,context,origin,metadata,text,observation)
+          } yield IngestRequest(scope,requestId,eventId,occurrenceContext,contributionContext,origin,metadata,text,observation)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to IngestRequest: object expected"))
       }
     }

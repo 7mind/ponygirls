@@ -28,8 +28,8 @@ abstract class BindingSelectionContract extends FunSuite {
     val queries = new GraphQueries(repository, new CursorSigner(Array.fill[Byte](32)(1)), QueryLimits(100, 100, 1048576, 4096))
     def apply(operations: List[Json]): IO[ApplyResult] = repository.read(scope).flatMap { graph =>
       val id = UUID.randomUUID()
-      val request = Wire.decode(ApplyRequest.codecJson, json(s"""{"scope":"$scope","requestId":"$id","expectedGeneration":"${graph.generation}","operations":${Json.arr(operations*)}}"""))
-      repository.apply(request, Admission(actor, Actor("fixture-host", ActorKind.Service), id, "2026-11-11T00:00:00Z"))
+      val request = Wire.decode(ApplyRequest.codecJson, json(s"""{"scope":"$scope","requestId":"$id","expectedGeneration":"${graph.generation}","contributionContext":null,"operations":${Json.arr(operations*)}}"""))
+      repository.apply(request, Admission(ontology.TestContexts.principal(scope, actor), Actor("fixture-host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply")))
     }
     def current: IO[ReadResult] = queries.read(principal, ReadRequest(scope, ReadView.Current, Nil, None, 100))
     def history: IO[ReadResult] = queries.read(principal, ReadRequest(scope, ReadView.History, Nil, None, 100))

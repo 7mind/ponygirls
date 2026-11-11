@@ -12,17 +12,18 @@ object CaptureIdentity {
   def source(namespace: String, id: UUID): Ref = Ref(event(namespace, id), 1)
   def artifactKey(scope: String, namespace: String, context: CaptureContext, value: Observation.FileVersion): String = io.circe.Json.arr(io.circe.Json.fromString(scope), io.circe.Json.fromString(namespace), io.circe.Json.fromString(context.epoch.toString), io.circe.Json.fromString(value.path), io.circe.Json.fromString(value.generation.toString), io.circe.Json.fromString(value.digest)).noSpaces
   def artifacts(event: CapturedEvent): List[Ref] = event.observation match {
-    case value: Observation.FileVersion => List(Ref(UUID.nameUUIDFromBytes(("artifact:" + artifactKey(event.scope, event.sourceNamespace, event.context, value)).getBytes(UTF_8)), 1))
+    case value: Observation.FileVersion => List(Ref(UUID.nameUUIDFromBytes(("artifact:" + artifactKey(event.scope, event.sourceNamespace, Contexts.reportedNative(event.context, Contexts.ProtocolLimits), value)).getBytes(UTF_8)), 1))
     case _ => Nil
   }
-  def fingerprint(event: CapturedEvent, eventId: UUID): String = {
-    val payload = io.circe.Json.obj("scope" -> io.circe.Json.fromString(event.scope), "eventId" -> io.circe.Json.fromString(eventId.toString), "context" -> Wire.encode(CaptureContext.codecJson, event.context), "origin" -> Wire.encode(EventOrigin_JsonCodec.instance, event.origin), "metadata" -> Wire.encode(CaptureMetadata.codecJson, event.metadata), "text" -> io.circe.Json.fromString(event.text), "observation" -> Wire.encode(Observation.codecJson, event.observation))
-    Digests.text(io.circe.Json.obj("namespace" -> io.circe.Json.fromString(event.sourceNamespace), "event" -> payload).noSpaces)
-  }
-  def fingerprint(namespace: String, request: IngestRequest): String = {
-    val payload = Wire.encode(IngestRequest.codecJson, request).mapObject(_.remove("requestId"))
-    Digests.text(io.circe.Json.obj("namespace" -> io.circe.Json.fromString(namespace), "event" -> payload).noSpaces)
-  }
+  private def payload(scope: String, eventId: UUID, context: ContextRecord, origin: EventOrigin, metadata: CaptureMetadata, text: String, observation: Observation): io.circe.Json =
+    io.circe.Json.obj("scope" -> io.circe.Json.fromString(scope), "eventId" -> io.circe.Json.fromString(eventId.toString), "context" -> Wire.encode(ContextRecord.codecJson, context), "origin" -> Wire.encode(EventOrigin_JsonCodec.instance, origin), "metadata" -> Wire.encode(CaptureMetadata.codecJson, metadata), "text" -> io.circe.Json.fromString(text), "observation" -> Wire.encode(Observation.codecJson, observation))
+  private def fingerprint(namespace: String, value: io.circe.Json): String =
+    Digests.text(io.circe.Json.obj("namespace" -> io.circe.Json.fromString(namespace), "event" -> value).noSpaces)
+  def fingerprint(event: CapturedEvent, eventId: UUID): String =
+    fingerprint(event.sourceNamespace, payload(event.scope, eventId, event.context, event.origin, event.metadata, event.text, event.observation))
+  def occurrence(request: IngestRequest): ContextRecord = Contexts.normalize(request.occurrenceContext, Contexts.MissingOccurrence, Contexts.ProtocolLimits)
+  def fingerprint(namespace: String, request: IngestRequest): String =
+    fingerprint(namespace, payload(request.scope, request.eventId, occurrence(request), request.origin, request.metadata, request.text, request.observation))
 }
 final class CaptureEngine {
   private def path(value: String): Unit = Require(value.nonEmpty && value.length <= 4096 && !value.startsWith("/") && !value.contains('\\') && value.split("/", -1).forall(p => p.nonEmpty && p != "." && p != ".."), "observation", "portable workspace-relative path required")
@@ -33,10 +34,8 @@ final class CaptureEngine {
   }
   def validateIngress(input: IngestRequest, principal: Principal): Unit = {
     principal.require(input.scope, Capability.Capture)
-    val context = input.context
-    Require(context.sessionId.nonEmpty && context.branch.nonEmpty, "capture", "session and branch identifiers required")
-    Require(context.lineage != LineageStatus.Unknown || context.rootSessionId.isEmpty && context.parentSessionId.isEmpty, "capture", "unknown lineage cannot assert roots or parents")
-    Require(context.lineage != LineageStatus.Recorded || context.rootSessionId.exists(_.nonEmpty), "capture", "recorded lineage requires a recorded root")
+    CaptureIdentity.occurrence(input)
+    Contexts.normalize(input.contributionContext, Contexts.MissingContribution, Contexts.ProtocolLimits)
     Require(input.metadata.sourceId.nonEmpty && input.metadata.sourceId.length <= 1024 && input.metadata.omissions.size <= 64 && input.metadata.omissions.forall(x => x.nonEmpty && x.length <= 1024), "capture", "invalid source metadata")
     input.metadata.observedAt.foreach { value => try Instant.parse(value) catch { case _: Exception => throw Fault("capture", "invalid source-reported timestamp") } }
     val noObservation = input.observation.isInstanceOf[Observation.None]
@@ -47,14 +46,15 @@ final class CaptureEngine {
       case ActorKind.Service =>
         principal.require(input.scope, Capability.HostCapture)
         Require(input.origin == EventOrigin.ToolOutput && input.metadata.representation == SourceRepresentation.HostReceipt && !noObservation, "capture-origin", "host ingress requires an explicit observation")
+        Contexts.reportedNative(CaptureIdentity.occurrence(input), Contexts.ProtocolLimits)
       case _ => throw Fault("capture-origin", "unsupported capture principal")
     }
   }
-  def apply(base: GraphSnapshot, prior: List[CapturedEvent], frontier: Long, input: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String): Captured = {
+  def apply(base: GraphSnapshot, prior: List[CapturedEvent], frontier: Long, input: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): Captured = {
     validateIngress(input, principal)
     Graph.validateCounters(base)
     Require(input.scope == base.scope && frontier == base.sourceFrontier, "scope", "capture scope/frontier mismatch")
-    val context = input.context
+    val context = CaptureIdentity.occurrence(input)
     input.observation match {
       case value: Observation.FileVersion =>
         path(value.path); Require(value.generation > 0 && value.length >= 0 && value.digest.matches("[0-9a-f]{64}"), "observation", "invalid file witness")
@@ -66,7 +66,7 @@ final class CaptureEngine {
       case _: Observation.None => ()
     }
     file(input.observation).foreach { coordinate =>
-      prior.filter(e => e.sourceNamespace == principal.credentialId && e.context.epoch == context.epoch && file(e.observation).contains(coordinate)).foreach { previous =>
+      prior.filter(e => e.sourceNamespace == principal.credentialId && Contexts.nativeOption(e.context).map(_.epoch) == Contexts.nativeOption(context).map(_.epoch) && file(e.observation).contains(coordinate)).foreach { previous =>
         Require(previous.observation == input.observation, "observation-conflict", "one observation generation has conflicting values")
       }
     }
@@ -78,7 +78,7 @@ final class CaptureEngine {
     val event = CapturedEvent(source.id, input.scope, principal.credentialId, Math.addExact(frontier, 1L), context, input.origin, input.metadata, input.text, input.observation, provenance)
     val artifacts = input.observation match {
       case value: Observation.FileVersion =>
-        val key = CaptureIdentity.artifactKey(input.scope, principal.credentialId, context, value)
+        val key = CaptureIdentity.artifactKey(input.scope, principal.credentialId, Contexts.reportedNative(context, Contexts.ProtocolLimits), value)
         val ref = CaptureIdentity.artifacts(event).head
         List(Definition(ref, input.scope, Applicability.Captured(source), Content.Artifact("Host file witness: " + value.path, value.digest, "application/octet-stream", "urn:ontology:observed-file:" + Digests.text(key), value.generation), Standing.Active, Nil, None, provenance))
       case _ => Nil
@@ -90,7 +90,7 @@ final class CaptureEngine {
     val additions = artifacts.filterNot(a => base.definitions.exists(_.ref == a.ref))
     val changed = base.copy(generation = Math.addExact(base.generation, 1L), sourceFrontier = event.frontier, definitions = base.definitions ++ additions :+ definition, actors = base.actors ++ actors)
     (additions :+ definition).foreach(value => Applicabilities.validate(changed, value.applicability, true))
-    val receipt = InputReceipts.create(inputId, input.scope, changed.generation, InputKind.Capture, contributor, recorder, principal.actor, "ontology.api.IngestRequest/0.1.0 canonical JSON", Wire.encode(IngestRequest.codecJson, input).noSpaces, receivedAt)
+    val receipt = InputReceipts.create(inputId, input.scope, changed.generation, InputKind.Capture, contributor, recorder, principal.actor, "ontology.api.IngestRequest/0.1.0 canonical JSON", Wire.encode(IngestRequest.codecJson, input).noSpaces, receivedAt, Contexts.contribution(input.contributionContext, ingress, Contexts.ProtocolLimits), ingress)
     Captured(changed, event, IngestResult(input.scope, input.requestId, input.eventId, principal.credentialId, source, artifactRefs, event.frontier, false), receipt)
   }
 }

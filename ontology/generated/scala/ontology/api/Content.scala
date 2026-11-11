@@ -702,7 +702,7 @@ package ontology.api {
       rawDigest: String,
       eventId: UUID,
       sourceNamespace: String,
-      captureContext: CaptureContext,
+      captureContext: ContextRecord,
       metadata: CaptureMetadata,
       origin: EventOrigin,
       observation: Observation
@@ -744,7 +744,7 @@ package ontology.api {
           "rawDigest" -> Json.fromString(value.rawDigest),
           "eventId" -> Json.fromString(value.eventId.toString()),
           "sourceNamespace" -> Json.fromString(value.sourceNamespace),
-          "captureContext" -> CaptureContext_JsonCodec.instance.encode(ctx, value.captureContext),
+          "captureContext" -> ContextRecord_JsonCodec.instance.encode(ctx, value.captureContext),
           "metadata" -> CaptureMetadata_JsonCodec.instance.encode(ctx, value.metadata),
           "origin" -> EventOrigin_JsonCodec.instance.encode(ctx, value.origin),
           "observation" -> Observation_JsonCodec.instance.encode(ctx, value.observation)
@@ -763,7 +763,7 @@ package ontology.api {
               rawDigest <- getField(jsonObject, "rawDigest").flatMap(v => decodeString(v.hcursor))
               eventId <- getField(jsonObject, "eventId").flatMap(v => decodeUUID(v.hcursor))
               sourceNamespace <- getField(jsonObject, "sourceNamespace").flatMap(v => decodeString(v.hcursor))
-              captureContext <- getField(jsonObject, "captureContext").flatMap(v => CaptureContext_JsonCodec.circeDecoder(v.hcursor))
+              captureContext <- getField(jsonObject, "captureContext").flatMap(v => ContextRecord_JsonCodec.circeDecoder(v.hcursor))
               metadata <- getField(jsonObject, "metadata").flatMap(v => CaptureMetadata_JsonCodec.circeDecoder(v.hcursor))
               origin <- getField(jsonObject, "origin").flatMap(v => EventOrigin_JsonCodec.circeDecoder(v.hcursor))
               observation <- getField(jsonObject, "observation").flatMap(v => Observation_JsonCodec.circeDecoder(v.hcursor))

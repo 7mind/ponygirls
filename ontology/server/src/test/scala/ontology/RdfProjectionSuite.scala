@@ -20,7 +20,7 @@ abstract class RdfProjectionContract extends FunSuite {
       Operation.Create("a", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("α\r\n引用 and \"quotes\"", Modality.Assertion)), Nil),
       Operation.Create("b", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Hypothesis("Competing proposition", "Discriminating prediction")), Nil),
       Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Challenges, List(Target.Created("a")), List(Target.Created("b")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Not a truth verdict")
-    )), Admission(Actor("agent", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now")).snapshot
+    ), None), Admission(ontology.TestContexts.principal(scope, Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"))).snapshot
   }
   test("empty and populated snapshots roundtrip with exact identities and literals") { check { rdf =>
     val graph = sample("s")
@@ -41,7 +41,7 @@ abstract class RdfProjectionContract extends FunSuite {
       Operation.Bind("binding", Target.Exact(definition), Nil, "declared-work-context"),
       Operation.SelectBinding("selected", Target.Created("binding"), true, "Selected context", List(Target.Exact(definition))),
       Operation.SelectBinding("retired", Target.Created("binding"), false, "Retired context, not cancelled work", List(Target.Exact(definition))))
-    val graph = new AdmissionEngine().apply(base, ApplyRequest("s", id, base.generation, ops), Admission(Actor("agent", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now")).snapshot
+    val graph = new AdmissionEngine().apply(base, ApplyRequest("s", id, base.generation, ops, None), Admission(ontology.TestContexts.principal("s", Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"))).snapshot
     for {
       _ <- rdf.publish(graph)
       restored <- rdf.snapshot("s", graph.generation)
@@ -70,9 +70,9 @@ abstract class RdfProjectionContract extends FunSuite {
   } }
   test("captured frontier is projected separately from maintained coverage") { check { rdf =>
     val context = CaptureContext("synthetic-session", None, None, LineageStatus.Unknown, "synthetic-branch", UUID.randomUUID())
-    val request = IngestRequest("s", UUID.randomUUID(), UUID.randomUUID(), context, EventOrigin.UserMessage, CaptureMetadata("synthetic-entry", None, None, SourceRepresentation.Text, Nil, Nil), "Synthetic source", Observation.None())
+    val request = IngestRequest("s", UUID.randomUUID(), UUID.randomUUID(), Some(ontology.TestContexts.claim(context)), None, EventOrigin.UserMessage, CaptureMetadata("synthetic-entry", None, None, SourceRepresentation.Text, Nil, Nil), "Synthetic source", Observation.None())
     val principal = Principal("fixture", Actor("fixture-account", ActorKind.Human), Set("s"), Set(Capability.Capture))
-    val graph = new CaptureEngine().apply(Graph.empty("s"), Nil, 0L, request, principal, Actor("fixture-host", ActorKind.Service), "fixture").snapshot
+    val graph = new CaptureEngine().apply(Graph.empty("s"), Nil, 0L, request, principal, Actor("fixture-host", ActorKind.Service), "fixture", ontology.TestContexts.trace("fixture-ingest")).snapshot
     for {
       _ <- rdf.publish(graph)
       restored <- rdf.snapshot("s", graph.generation)

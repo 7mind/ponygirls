@@ -183,7 +183,7 @@ function RecordDetails({ record, inspect }: { record: C.GraphRecord; inspect: In
   }
   if (record instanceof C.GraphRecord_Input) {
     const value = record.value;
-    return <><dl><Field label='Encoding'>{value.encoding}</Field><Field label='Contributor'>{value.contributor.id} · {value.contributor.kind}</Field><Field label='Recorder'>{value.recorder.id} · {value.recorder.kind}</Field><Field label='Authenticated submitter'>{value.submitter.id} · {value.submitter.kind}</Field><Field label='Graph generation'>{value.generation.toString()}</Field><Field label='Content digest'><code>{value.digest}</code></Field><Field label='Recorded at'>{value.recordedAt}</Field></dl><pre>{value.content}</pre><p className='fine-print'>This retained input is not an independent truth, approval, or execution-permission certificate.</p></>;
+    return <><dl><Field label='Encoding'>{value.encoding}</Field><Field label='Contributor'>{value.contributor.id} · {value.contributor.kind}</Field><Field label='Recorder'>{value.recorder.id} · {value.recorder.kind}</Field><Field label='Authenticated submitter'>{value.submitter.id} · {value.submitter.kind}</Field><Field label='Graph generation'>{value.generation.toString()}</Field><Field label='Content digest'><code>{value.digest}</code></Field><Field label='Recorded at'>{value.recordedAt}</Field></dl><h4>Contribution context</h4><ContextDetails value={value.contributionContext} /><h4>Actual server ingress</h4><TraceDetails value={value.ingress} /><pre>{value.content}</pre><p className='fine-print'>This retained input is not an independent truth, approval, or execution-permission certificate.</p></>;
   }
   return <><dl><Field label='Actor identifier'>{record.value.value.id}</Field><Field label='Recorded actor kind'>{record.value.value.kind}</Field></dl><p className='fine-print'>A graph actor record is not the authenticated browser identity and does not verify other records.</p></>;
 }
@@ -292,15 +292,35 @@ function ObservationDetails({ value, inspect }: { value: C.Observation; inspect:
   if (value instanceof C.Observation_Execution) return <><dl><Field label='Reported action'>{value.action}</Field><Field label='Reported checker'>{value.checker}</Field><Field label='Exit code'>{value.exitCode === undefined ? 'Not recorded' : value.exitCode}</Field><Field label='Capture reports complete'>{value.complete ? 'Yes (reported)' : 'No (reported)'}</Field></dl><Refs label='Observation contract' values={value.contract ? [value.contract] : []} inspect={inspect} /><Refs label='Observed artifact references' values={value.artifacts} inspect={inspect} /></>;
   return <p className='muted'>No structured observation reported.</p>;
 }
-function CaptureDetails({ context, metadata, sourceNamespace, origin, observation, inspect }: { context: C.CaptureContext; metadata: C.CaptureMetadata; sourceNamespace: string; origin: C.EventOrigin; observation: C.Observation; inspect: Inspect }) {
+function TraceDetails({ value }: { value: C.RequestTrace }) {
+  return <dl><Field label='Host request identifier'><code>{value.hostRequestId}</code></Field><Field label='Ingress operation'>{value.operation}</Field><Field label='Ingress transport'>{value.transport}</Field></dl>;
+}
+function ContextDetails({ value }: { value: C.ContextRecord }) {
+  const origin = value.origin;
+  const native = origin instanceof C.OriginContext_ReportedNative ? origin.context : undefined;
+  return <section className='inset'>
+    {origin instanceof C.OriginContext_Unknown && <><strong>Context unknown</strong><p>{origin.reason}</p><p className='fine-print'>No session, branch, epoch or lineage is inferred.</p></>}
+    {origin instanceof C.OriginContext_ServiceRequest && <><strong>Server-owned request context</strong><TraceDetails value={origin.trace} /></>}
+    {native && <><strong>Reported native context — not independently observed</strong><dl><Field label='Lineage status'>{native.lineage}</Field><Field label='Session identifier'>{native.sessionId}</Field><Field label='Root session identifier'>{native.rootSessionId ?? 'Not recorded — not inferred'}</Field><Field label='Parent session identifier'>{native.parentSessionId ?? 'Not recorded — not inferred'}</Field><Field label='Branch'>{native.branch}</Field><Field label='Epoch'><code>{native.epoch}</code></Field></dl><p className='fine-print'>{native.lineage === C.LineageStatus.Unknown ? 'Lineage Unknown: ancestry is not established. No root is guessed from the session or source identifier.' : 'Lineage Recorded describes supplied metadata, not independent verification of ancestry or authorship.'}</p></>}
+    <h4>Reported inherited cuts</h4>
+    {value.reportedInherited.length === 0 && <p className='muted'>None reported — inheritance is not inferred.</p>}
+    {value.reportedInherited.map((cut, index) => <div key={index}>
+      <dl><Field label='Reported inheritance kind'>{cut.kind}</Field><Field label='Source access namespace'>{cut.sourceScope}</Field><Field label='Source generation'>{cut.generation.toString()}</Field><Field label='Captured source frontier'>{cut.sourceFrontier.toString()}</Field><Field label='Covered source frontier'>{cut.coveredFrontier.toString()}</Field></dl>
+      <h4>Exact binding references in source namespace</h4><Texts values={cut.bindingRefs.map(refKey)} />
+      <h4>Exact source references in source namespace</h4><Texts values={cut.sourceRefs.map(refKey)} />
+      {cut.anchor ? <dl><Field label='Reported anchor kind'>{cut.anchor instanceof C.InheritanceAnchor_ReportedParent ? 'Parent' : 'Epoch'}</Field><Field label='Anchor source'><code>{refKey(cut.anchor.source)}</code></Field><Field label='Reported source epoch'><code>{cut.anchor.epoch}</code></Field></dl> : <p>No native linkage anchor reported.</p>}
+    </div>)}
+    <p className='fine-print'>Claim consistency is not proof of actual inheritance, Human intent, semantic applicability or execution permission. Inherited references retain their source namespace.</p>
+  </section>;
+}
+function CaptureDetails({ context, metadata, sourceNamespace, origin, observation, inspect }: { context: C.ContextRecord; metadata: C.CaptureMetadata; sourceNamespace: string; origin: C.EventOrigin; observation: C.Observation; inspect: Inspect }) {
   return <>
     <dl><Field label='Source credential namespace'>{sourceNamespace}</Field><Field label='Recorded event role'>{origin}</Field><Field label='Source format / representation'>{metadata.representation}</Field><Field label='Source identifier'>{metadata.sourceId}</Field><Field label='Parent source identifier'>{metadata.parentSourceId ?? 'Not recorded — not inferred'}</Field><Field label='Source-claimed observation time'>{metadata.observedAt ?? 'Not recorded'}</Field></dl>
     <h4>Reported omissions</h4><Texts values={metadata.omissions} />
     <h4>Reported context candidates</h4><Texts values={metadata.exposedDeliveries} /><p className='fine-print'>Candidate references do not establish provider dispatch or model use.</p>
     <p className='notice warning'>Format and an empty omissions list do not prove full fidelity or native Human authorship. UserMessage is an event role, not an authenticated Human identity. Source-claimed observation time is not an authenticated measurement time.</p>
-    <h4>Capture context and lineage qualifications</h4>
-    <dl><Field label='Lineage status'>{context.lineage}</Field><Field label='Session identifier'>{context.sessionId}</Field><Field label='Root session identifier'>{context.rootSessionId ?? 'Not recorded — not inferred'}</Field><Field label='Parent session identifier'>{context.parentSessionId ?? 'Not recorded — not inferred'}</Field><Field label='Branch'>{context.branch}</Field><Field label='Epoch'><code>{context.epoch}</code></Field></dl>
-    <p className='fine-print'>{context.lineage === C.LineageStatus.Unknown ? 'Lineage Unknown: ancestry is not established. No root is guessed from the session or source identifier.' : 'Lineage Recorded describes the supplied capture context; it is not independent verification of ancestry or authorship.'}</p>
+    <h4>Source occurrence context and lineage qualifications</h4>
+    <ContextDetails value={context} />
     <h4>Structured observation</h4><ObservationDetails value={observation} inspect={inspect} />
   </>;
 }

@@ -30,18 +30,20 @@ final class HttpApiSuite extends FunSuite {
   private final class Service extends OntologyService {
     var reads = 0
     private def unused[A]: IO[A] = IO.raiseError(Fault("test-unexpected", "unexpected test route"))
-    def read(p: Principal, r: ReadRequest): IO[ReadResult] = IO { p.require(r.scope, Capability.Read); reads += 1; ReadResult(r.scope, 0L, Nil, None) }
-    def find(p: Principal, r: FindRequest): IO[FindResult] = unused
-    def scopes(p: Principal): IO[ScopesResult] = IO.pure(ScopesResult(Nil))
-    def sources(p: Principal, r: SourceRequest): IO[SourceResult] = unused
-    def status(p: Principal, r: ScopeRequest): IO[CurationStatus] = unused
-    def present(p: Principal, r: PresentRequest): IO[Presentation] = unused
-    def judge(p: Principal, r: JudgmentRequest): IO[Judgment] = unused
-    def judgments(p: Principal, r: ScopeRequest): IO[JudgmentsResult] = unused
-    def apply(p: Principal, r: ApplyRequest): IO[ApplyResult] = unused
-    def ingest(p: Principal, r: IngestRequest): IO[IngestResult] = unused
-    def capsule(p: Principal, r: CapsuleRequest): IO[Capsule] = unused
-    def delivery(p: Principal, r: DeliveryRequest): IO[DeliveryReceipt] = unused
+    var calls = List.empty[ServiceCall]
+    var reviews = List.empty[ReviewCall]
+    def read(p: ServiceCall, r: ReadRequest): IO[ReadResult] = IO { p.principal.require(r.scope, Capability.Read); calls = calls :+ p; reads += 1; ReadResult(r.scope, 0L, Nil, None) }
+    def find(p: ServiceCall, r: FindRequest): IO[FindResult] = unused
+    def scopes(p: ServiceCall): IO[ScopesResult] = IO.pure(ScopesResult(Nil))
+    def sources(p: ServiceCall, r: SourceRequest): IO[SourceResult] = unused
+    def status(p: ServiceCall, r: ScopeRequest): IO[CurationStatus] = unused
+    def present(p: ReviewCall, r: PresentRequest): IO[Presentation] = IO { reviews = reviews :+ p } *> unused
+    def judge(p: ReviewCall, r: JudgmentRequest): IO[Judgment] = unused
+    def judgments(p: ServiceCall, r: ScopeRequest): IO[JudgmentsResult] = unused
+    def apply(p: ServiceCall, r: ApplyRequest): IO[ApplyResult] = unused
+    def ingest(p: ServiceCall, r: IngestRequest): IO[IngestResult] = unused
+    def capsule(p: ServiceCall, r: CapsuleRequest): IO[Capsule] = unused
+    def delivery(p: ServiceCall, r: DeliveryRequest): IO[DeliveryReceipt] = unused
   }
   private def application(service: Service): HttpApp[IO] = {
     val schemas = new ToolSchemas {
@@ -49,7 +51,7 @@ final class HttpApiSuite extends FunSuite {
       def read: Json = Json.obj("type" -> Json.fromString("object"))
       def apply: Json = Json.obj("type" -> Json.fromString("object"))
     }
-    new HttpApi(authentication(), service, new Mcp(service, schemas), None, logstage.IzLogger()).routes.orNotFound
+    new HttpApi(authentication(), service, new Mcp(service, schemas), None, logstage.IzLogger(), () => java.util.UUID.randomUUID()).routes.orNotFound
   }
   private def request(method: Method, path: String, body: Json, auth: List[String], media: String): Request[IO] = {
     val headers = List(Header.Raw(CIString("Host"), "ontology.example"), Header.Raw(CIString("Origin"), origin), Header.Raw(CIString("X-Ontology-Version"), "0.1.0"), Header.Raw(CIString("Content-Type"), media)) ++ auth.map(Header.Raw(CIString("Authorization"), _))
@@ -95,6 +97,50 @@ final class HttpApiSuite extends FunSuite {
     val body = Wire.encode(PresentRequest.codecJson, PresentRequest("owned", Nil, 0L))
     val response = run(application(new Service)(request(Method.POST, "/api/v1/present", body, List("Bearer " + humanToken), "application/json")))
     assertEquals(response.status, Status.Forbidden)
+  }
+  test("REST ingress creates server request identities rather than adopting client headers") {
+    val service = new Service; val app = application(service)
+    val supplied = java.util.UUID.randomUUID()
+    val input = request(Method.POST, "/api/v1/read", readPayload("owned"), List("Bearer " + agentToken), "application/json")
+      .putHeaders(Header.Raw(CIString("X-Request-ID"), supplied.toString))
+    assertEquals(run(app(input)).status, Status.Ok)
+    assertEquals(run(app(input)).status, Status.Ok)
+    assertEquals(service.calls.size, 2)
+    assert(service.calls.map(_.ingress.hostRequestId).distinct.size == 2)
+    service.calls.foreach { call =>
+      assert(call.ingress.hostRequestId != supplied)
+      assertEquals(call.ingress.transport, RequestTransport.Bearer)
+      assertEquals(call.ingress.operation, "/api/v1/read")
+      assertEquals(call.principal.actor, agent.actor)
+    }
+  }
+  test("MCP tool service calls retain revalidated bearer ingress") {
+    val service = new Service
+    val body = Json.obj("jsonrpc" -> Json.fromString("2.0"), "id" -> Json.fromInt(1), "method" -> Json.fromString("tools/call"),
+      "params" -> Json.obj("name" -> Json.fromString("graph_read"), "arguments" -> readPayload("owned")))
+    val req = request(Method.POST, "/mcp", body, List("Bearer " + agentToken), "application/json")
+      .putHeaders(Header.Raw(CIString("Accept"), "application/json, text/event-stream"))
+    assertEquals(run(application(service)(req)).status, Status.Ok)
+    assertEquals(service.calls.size, 1)
+    assertEquals(service.calls.head.ingress.transport, RequestTransport.Bearer)
+    assertEquals(service.calls.head.ingress.operation, "/mcp")
+  }
+  test("logged-in Human presentation passes a typed cookie review call to the service") {
+    val service = new Service; val app = application(service)
+    val login = request(Method.POST, "/api/v1/login", Wire.encode(LoginRequest.codecJson, LoginRequest(humanToken)), Nil, "application/json")
+    val session = run(app(login))
+    assertEquals(session.status, Status.Ok)
+    val cookie = session.headers.headers.find(_.name == CIString("Set-Cookie")).get.value.takeWhile(_ != ';')
+    val present = request(Method.POST, "/api/v1/present", Wire.encode(PresentRequest.codecJson, PresentRequest("owned", Nil, 0L)), Nil, "application/json")
+      .putHeaders(Header.Raw(CIString("Cookie"), cookie), Header.Raw(CIString("X-Ontology-Actor"), human.actor.id))
+    val missingActor = present.withHeaders(Headers(present.headers.headers.filterNot(_.name == CIString("X-Ontology-Actor"))))
+    assertEquals(run(app(missingActor)).status, Status.Forbidden)
+    assertEquals(service.reviews.size, 0)
+    assertEquals(run(app(present)).status, Status.BadRequest)
+    assertEquals(service.reviews.size, 1)
+    assertEquals(service.reviews.head.ingress.transport, RequestTransport.Cookie)
+    assertEquals(service.reviews.head.principal.actor, human.actor)
+    assertEquals(service.reviews.head.scope, "owned")
   }
   test("MCP rejects even unrelated cookies") {
     val body = Json.obj("jsonrpc" -> Json.fromString("2.0"), "id" -> Json.fromInt(1), "method" -> Json.fromString("tools/list"))

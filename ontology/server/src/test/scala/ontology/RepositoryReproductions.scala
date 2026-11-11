@@ -24,8 +24,8 @@ object RepositoryReproductionDatabase {
 final class RepositoryReproductionSuite extends FunSuite {
   private val runtime = IORuntime.builder().build()
   override def afterAll(): Unit = runtime.shutdown()
-  private def request(scope: String, generation: Long): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("node", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("Bound subject", Modality.Assertion)), Nil)))
-  private def admission(r: ApplyRequest): Admission = Admission(Actor("a", ActorKind.Agent), Actor("h", ActorKind.Service), r.requestId, "now")
+  private def request(scope: String, generation: Long): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("node", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("Bound subject", Modality.Assertion)), Nil)), None)
+  private def admission(r: ApplyRequest): Admission = Admission(ontology.TestContexts.principal(r.scope, Actor("a", ActorKind.Agent)), Actor("h", ActorKind.Service), r.requestId, "now", ontology.TestContexts.trace("fixture-apply"))
   private def scope(): String = "repro-" + UUID.randomUUID()
   private def expectedFault[A](value: Either[Throwable, A], code: String): Unit = assertEquals(value.left.toOption.collect { case f: Fault => f.code }, Some(code))
   private def adapters: List[(String, Resource[IO, GraphRepository])] = List(
