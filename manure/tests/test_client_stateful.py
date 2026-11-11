@@ -49,7 +49,7 @@ class StatefulHandler(http.server.BaseHTTPRequestHandler):
     def _url(self,aid):return f"http://127.0.0.1:{self.server.server_address[1]}/view/{aid}"
     def _artifact(self,aid,a):
         return cp.Artifact(aid,a["name"],a["kind"],a["visibility"],a["state"],"u","2026-10-08T00:00:00Z",None,
-            a["total"],sum(isinstance(e,cp.ManifestEntry_File) for e in a["manifest"]),self._url(aid))
+            a["total"],sum(isinstance(e,cp.ManifestEntry_File) for e in a["manifest"]),self._url(aid),a["tags"],a["hostname"],a["project_path"])
 
     def do_POST(self):
         if self.path!="/api/current":return self._fault(404,cp.ErrorCode.NotFound)
@@ -65,7 +65,7 @@ class StatefulHandler(http.server.BaseHTTPRequestHandler):
             if any(isinstance(e,cp.ManifestEntry_File) and e.size<0 for e in command.files):return self._fault(400,cp.ErrorCode.InvalidManifest,rid)
             aid=os.urandom(16).hex();pw=_b64() if command.visibility is cp.Visibility.External else None
             self.store[aid]={"name":command.name,"kind":command.kind,"visibility":command.visibility,"manifest":command.files,
-                "total":sum(e.size for e in command.files if isinstance(e,cp.ManifestEntry_File)),"chunks":{},"state":cp.ArtifactState.Uploading,"password":pw}
+                "total":sum(e.size for e in command.files if isinstance(e,cp.ManifestEntry_File)),"chunks":{},"state":cp.ArtifactState.Uploading,"password":pw,"tags":command.tags,"hostname":command.hostname,"project_path":command.projectPath}
             result=cp.Result_UploadInitialized(aid,CHUNK,self._url(aid),pw)
         elif a is None:return self._fault(404,cp.ErrorCode.NotFound,rid)
         elif isinstance(command,cp.Command_GetArtifact):result=cp.Result_ArtifactInfo(self._artifact(aid,a))

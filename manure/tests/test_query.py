@@ -40,19 +40,19 @@ class QueryTests(unittest.TestCase):
     def test_catalogue_expression_uses_typed_protocol(self):
         transport = CurrentTransport()
         client = ManureClient(ORIGIN, TOKEN, transport=transport)
-        page = client.search_expression('access:public state:ready expired:true sort:name direction:asc text:"cat: dog"', limit=7, cursor='page')
+        page = client.search_expression('tag:Release tag:release hostname:HOST project:/work access:public state:ready expired:true sort:name direction:asc text:"cat: dog"', limit=7, cursor='page')
         self.assertIn('artifacts', page)
         command = transport.commands[-1]
         self.assertEqual(command, cp.Command_ListArtifacts(cp.CatalogueQuery('cat: dog', True,
-            cp.Visibility.Public, cp.ArtifactState.Ready, cp.CatalogueSort.Name, cp.SortDirection.Asc, 7, 'page')))
+            cp.Visibility.Public, cp.ArtifactState.Ready, cp.CatalogueSort.Name, cp.SortDirection.Asc, 7, 'page', ['Release', 'release'], 'HOST', '/work')))
 
     def test_retrieval_expression_uses_typed_protocol(self):
         transport = CurrentTransport()
         client = ManureClient(ORIGIN, TOKEN, transport=transport)
-        page = client.search_expression('mode:hybrid access:internal kind:dir owner:"Exact User" "cat  dog"', limit=8)
+        page = client.search_expression('mode:hybrid tag:Release tag:release hostname:HOST project:/work access:internal kind:dir owner:"Exact User" "cat  dog"', limit=8)
         self.assertEqual(page['count_scope'], 'exactmatches')
         self.assertEqual(transport.commands[-1], cp.Command_Search(cp.SearchQuery('"cat  dog"',
-            cp.SearchMode.Hybrid, cp.SearchFilter(cp.Visibility.Internal, cp.ArtifactKind.Directory, 'Exact User'), 8, None)))
+            cp.SearchMode.Hybrid, cp.SearchFilter(cp.Visibility.Internal, cp.ArtifactKind.Directory, 'Exact User', ['Release', 'release'], 'HOST', '/work'), 8, None)))
 
     def test_invalid_expression_and_retrieval_cursor_never_start_transport(self):
         transport = CurrentTransport()

@@ -99,8 +99,8 @@ class CurrentProtocolTests(unittest.TestCase):
         self.assertIsNone(head.rankingLimit)
         for hit in [semantic,lexical]:
             self.assertTrue(hit.sourceVersion);self.assertTrue(hit.generationId)
-            self.assertEqual(hit.policyId,'manure-metadata-paths-v1')
-            self.assertEqual([e.field for e in hit.evidence],[p.EvidenceField.Name,p.EvidenceField.ManifestPath])
+            self.assertEqual(hit.policyId,'manure-metadata-paths-v2')
+            self.assertEqual([e.field for e in hit.evidence],[p.EvidenceField.Name,p.EvidenceField.ManifestPath,p.EvidenceField.Tag,p.EvidenceField.Hostname,p.EvidenceField.ProjectPath])
         wire=next(v for v in vectors if 'SearchResults' in v['result'])
         del wire['result']['SearchResults']['page']['hits'][0]['embeddingSpace']
         with self.assertRaises(p.ProtocolError):p.decode(p.ServerEnvelope,wire)

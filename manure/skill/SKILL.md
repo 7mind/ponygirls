@@ -119,13 +119,26 @@ server has been upgraded; verify the deployed instance when that matters.
   Expiry cuts authorization immediately (410 authed / 404 anon+content);
   the sweeper deletes physically later.
 
+## Optional upload metadata
+
+Attach metadata only when explicitly supplied: CLI repeatable `--tag`,
+`--hostname`, `--project-path`; MCP/Python `tags` (string array), `hostname`,
+`project_path`. Defaults are `[]`, `null`, `null`. Hostname/current directory
+are never inferred. Metadata is visible to authorized management/search users
+and included in the search-provider corpus; do not put secrets or sensitive
+local paths in it. Metadata cannot be patched; upload a new artifact to change it.
+
+Values are preserved exactly, without trimming or normalization. Up to 32 unique
+case-sensitive nonblank tags (128 Unicode scalars each), optional nonblank
+hostname (253) and project path (4096). Invalid values fail before network.
+
 ## CLI
 
 ```bash
 manure whoami [--json]
 manure list [--limit N] [--cursor C] [--include-expired] [--visibility V] [--state S] [--json]
 manure info <artifact-id> [--json]
-manure upload <path> --access internal|external|public [--name N] [--expires-in 7d] [--resume ID] [--fresh] [--json]
+manure upload <path> --access internal|external|public [--name N] [--tag T ...] [--hostname H] [--project-path P] [--expires-in 7d] [--resume ID] [--fresh] [--json]
 manure fetch <artifact-id-or-content-url> <dest-dir> [--password P] [--password-file F] [--json]
 manure delete <artifact-id>
 manure rotate-password <artifact-id> [--json]
@@ -137,9 +150,12 @@ manure --cache-dir <dir> <subcommand>...
   depth/length bounds, file/descendant conflicts) is validated client-side.
 - Uploads are chunked, resumable, and published atomically. After every
   successful init the CLI writes `<cache>/uploads/<id>.json`
-  (`artifact_id`, `api_base`, `local_path`, `manifest_sha256`, `access`;
+  (`artifact_id`, `api_base`, `local_path`, `manifest_sha256`, `access`, `tags`, `hostname`, `project_path`;
   never secrets). Plain `upload <path>` auto-resumes when exactly one
-  record matches; `--resume ID` selects; `--fresh` inits anew.
+  record matches, including exact metadata; `--resume ID` selects and rejects
+  metadata mismatch; `--fresh` inits anew. Older cache records mean empty
+  metadata only, not a wildcard. Resume verifies the actual server metadata
+  before mutation or success; changed metadata never reuses the old artifact.
   Changed sources fail `source-changed` (exit 2). A resumed external
   upload prints `external_password: null` plus
   `password_note: "rotate-password to re-issue"`.
@@ -169,21 +185,24 @@ separate filtering arguments. It shares the dashboard query dialect:
 ```text
 access:public state:ready sort:name direction:asc report
 mode:lexical access:internal kind:dir owner:"Exact User" "quarterly report"
-mode:semantic text:"release notes"
+mode:semantic tag:release tag:report hostname:build-host project:"/work/project" text:"release notes"
 ```
 
-Default `mode:catalogue` matches literal name/artifact-ID substrings, hides
+Default `mode:catalogue` matches literal name/artifact-ID/tag/hostname/project substrings, hides
 expired items and sorts `created_at desc`. Catalogue-only fields are `state`,
 `expired`, `sort`, `direction`. Retrieval-only fields are `kind:file|dir` and
-`owner:<exact creator>`. `access:internal|external|public` works in all modes.
+`owner:<exact creator>`. `access:internal|external|public`, repeatable
+`tag:<exact tag>`, `hostname:<exact host>` and `project:<exact path>` work in all
+modes. These metadata values are case-sensitive exact matches; repeated tags
+require all of them (AND), with no duplicates.
 Retrieval modes `lexical`, `semantic`, `hybrid` search artifact metadata/manifest
 paths, not file bytes; retrieval requires nonblank text and rejects cursors.
 Semantic/hybrid use the configured provider without silent mode fallback.
-Fields conjoin; no duplicate fields or Boolean metadata expressions. Field names
-are case-insensitive, closed values lowercase. Quote values with JSON strings.
+Fields conjoin; Boolean metadata expressions are unsupported. Only distinct
+tags may repeat. Field names are case-insensitive, closed values lowercase. Quote values with JSON strings.
 Bare quoted retrieval phrases preserve their quotes for the English search
 engine. Use `text:<JSON string>` for exact text or literal colon/operator-shaped
-data; do not combine it with bare terms. Expressions over 4096 UTF-16 units,
+data; do not combine it with bare terms. Expressions over 131072 UTF-16 units, compiled search text over 4096 UTF-16 units,
 invalid fields/values/escapes and unsupported filter combinations fail explicitly.
 See `docs/query.md` for all sort values and pagination semantics.
 

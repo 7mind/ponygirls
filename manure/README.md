@@ -31,6 +31,31 @@ summary, not a second contract. Where they disagree, `CONTRACT.md` wins.
   hash-only passwords need one explicit rotation first) /
   `public` (anonymous reads); optional TTL on upload.
 
+## Optional tags and provenance metadata
+
+Uploads may explicitly attach tags, source hostname and project path:
+
+```bash
+manure upload ./report.md --access internal --tag release --tag report --hostname build-host --project-path /work/project
+```
+
+Python `init_upload` / `upload_path` and MCP `upload_artifact` accept optional
+`tags` (string array), `hostname`, `project_path`, defaulting to `[]`, `None`,
+`None` (JSON `null`). Hostname/cwd are never discovered automatically. Values
+are preserved exactly: no trimming, host resolution or path normalization.
+Up to 32 exact unique nonblank tags (128 Unicode scalars each); optional
+nonblank hostname (253 scalars) and project path (4096 scalars). Invalid values
+fail before network. Metadata is returned in artifact info/list/search and
+upload results; it is immutable after init, so changing it requires a new upload.
+These are searchable metadata, not secrets: they can reach the configured
+embedding provider. Avoid sensitive hostnames/paths unless authorized.
+
+Resume cache records include this metadata, not only the source manifest.
+Auto-resume selects only an exact metadata match; `--resume ID` rejects a
+mismatch before network and verifies actual server metadata before mutation or
+success. Old records without metadata fields mean empty tags/no hostname/no
+project path, not a wildcard. `--fresh` initializes a new artifact.
+
 ## Convenient file viewers
 
 Opening a standalone Markdown, image (including SVG), PDF, Mermaid (`.mmd`,
@@ -223,7 +248,7 @@ manure rotate-password <hex32> --json                 # re-issues, revokes old p
 
 `--expires-in`: seconds or `<n>s|m|h|d`, within 60..31536000.
 Resumed external uploads print `external_password: null` + a
-`rotate-password` note (cache holds manifests only — never bearer
+`rotate-password` note (cache holds source/manifest/metadata references only — never bearer
 secrets or passwords). Token-free external fetch needs only the
 content URL + `--password[-file]`; public fetch needs no token. No
 secret ever goes in a URL, log, or error.
@@ -242,7 +267,7 @@ Failed batches preserve loaded rows and offer an explicit retry.
 
 One query field holds search text, mode and filters, with caret-aware completion
 and an in-field clear button. The same expression is accepted by the MCP `search`
-tool. Catalogue (literal name/ID substring, nine sorts, state/expiry filters and
+tool. Catalogue (literal name/ID/tag/hostname/project substring, nine sorts, state/expiry filters and
 keyset pages) is the default. `mode:lexical`, `mode:semantic` and `mode:hybrid`
 select retrieval through the current typed Search API over artifact metadata and
 manifest **paths only**, not uploaded file bytes. For example:
@@ -253,9 +278,16 @@ mode:lexical kind:dir text:"release notes"
 mode:hybrid access:public owner:alice text:"deployment guide"
 ```
 
+`tag:release tag:report hostname:build-host project:"/work/project"` works in
+all search modes; tags conjoin (AND), and all three values are exact and
+case-sensitive. Python structured `list_artifacts` / `search` accept `tags`,
+`hostname`, `project_path` keyword filters. Duplicate tags and duplicate
+hostname/project fields are rejected. Expressions allow up to 131072 UTF-16
+units, independently of the 4096 UTF-16-unit compiled search-text limit.
+
 Metadata filters are conjunctive, not Boolean expressions; retrieval text keeps
 its existing search-engine semantics. Use `text:"..."` for literal colons or
-arbitrary retrieval syntax. Unknown, duplicate and incompatible fields are
+arbitrary retrieval syntax. Unknown, duplicate (except distinct tags) and incompatible fields are
 reported rather than ignored. See [the query contract](docs/query.md). Retrieval is
 explicit-submit only; no model call occurs on typing, filter changes or ordinary
 navigation. Availability comes from GetCapabilities: without a provider, lexical
@@ -412,7 +444,7 @@ smind.hm.dev.llm.manure = {
   enable = true;
   url = "http://127.0.0.1:47329";
   tokenFile = /run/keys/manure-token;      # raw 43-char bearer, file-backed
-  cacheDir = /home/alice/.cache/manure;    # upload-session cache, manifests only
+  cacheDir = /home/alice/.cache/manure;    # upload-session cache, source/manifest/metadata references only
 };
 ```
 

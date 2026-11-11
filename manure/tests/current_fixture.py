@@ -19,7 +19,8 @@ def enum(t,value):
 def artifact(value):
     return p.Artifact(value['artifact_id'],value['name'],enum(p.ArtifactKind,value['kind']),
         enum(p.Visibility,value['visibility']),enum(p.ArtifactState,value['state']),value['created_by_user'],
-        value['created_at'],value['expires_at'],value['total_bytes'],value['file_count'],value['content_url'])
+        value['created_at'],value['expires_at'],value['total_bytes'],value['file_count'],value['content_url'],
+        value.get('tags',[]),value.get('hostname'),value.get('project_path'))
 
 
 def manifest(value):

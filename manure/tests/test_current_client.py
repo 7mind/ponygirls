@@ -26,12 +26,13 @@ class CurrentTransport:
     def __init__(self, content_base=CONTENT):
         self.requests=[];self.commands=[];self.files=[];self.received={};self.state=p.ArtifactState.Uploading
         self.visibility=p.Visibility.Internal;self.content_base=content_base;self.name='fixture'
+        self.tags=[];self.hostname=None;self.project_path=None
         self.override=None
 
     def artifact(self):
         return p.Artifact(AID,self.name,p.ArtifactKind.Directory,self.visibility,self.state,'u',
             '2026-11-03T00:00:00Z',None,sum(f.size for f in self.files if isinstance(f,p.ManifestEntry_File)),
-            sum(isinstance(f,p.ManifestEntry_File) for f in self.files),self.content_base)
+            sum(isinstance(f,p.ManifestEntry_File) for f in self.files),self.content_base,self.tags,self.hostname,self.project_path)
 
     def request(self,method,url,headers,body):
         self.requests.append((method,url,dict(headers),body));path=urlsplit(url).path
@@ -58,6 +59,7 @@ class CurrentTransport:
             assert 'Cookie' not in headers
             if isinstance(command,p.Command_InitUpload):
                 self.files=command.files;self.name=command.name;self.visibility=command.visibility
+                self.tags=command.tags;self.hostname=command.hostname;self.project_path=command.projectPath
                 result=p.Result_UploadInitialized(AID,CHUNK,self.content_base,PASSWORD if command.visibility is p.Visibility.External else None)
             elif isinstance(command,p.Command_GetArtifact):result=p.Result_ArtifactInfo(self.artifact())
             elif isinstance(command,p.Command_GetManifest):result=p.Result_ArtifactManifest(p.Manifest(AID,self.state,self.files))

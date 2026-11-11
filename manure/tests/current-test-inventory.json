@@ -616,6 +616,22 @@
       ]
     },
     {
+      "module": "test_metadata_client",
+      "path": "manure/tests/test_metadata_client.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_metadata_client.MetadataClientTests.test_cli_upload_forwards_metadata_and_rejects_duplicates_locally",
+        "test_metadata_client.MetadataClientTests.test_invalid_metadata_rejected_before_any_network",
+        "test_metadata_client.MetadataClientTests.test_mcp_upload_schema_checks_string_array_and_dispatches_metadata",
+        "test_metadata_client.MetadataClientTests.test_metadata_defaults_are_explicitly_empty",
+        "test_metadata_client.MetadataClientTests.test_metadata_scalar_boundaries_and_exact_filters",
+        "test_metadata_client.MetadataClientTests.test_resume_checks_server_metadata_before_mutation",
+        "test_metadata_client.MetadataClientTests.test_resume_metadata_binding_and_old_cache_defaults",
+        "test_metadata_client.MetadataClientTests.test_upload_metadata_round_trips_without_normalization"
+      ]
+    },
+    {
       "module": "test_offline_conversion",
       "path": "manure/tests/test_offline_conversion.py",
       "classification": "current",
@@ -1207,7 +1223,7 @@
     },
     {
       "id": "publication-import",
-      "invariant": "Verify→publishing commit→tree/rename/parent/root fsync→ready commit→cleanup; never serve partial/publishing; ready retry idempotent; matched offline snapshot retains all states/receipts/grants/IEEE epochs and writable fix-forward boundary.",
+      "invariant": "Verify\u2192publishing commit\u2192tree/rename/parent/root fsync\u2192ready commit\u2192cleanup; never serve partial/publishing; ready retry idempotent; matched offline snapshot retains all states/receipts/grants/IEEE epochs and writable fix-forward boundary.",
       "sourceRefs": [
         {
           "path": "manure/manure/storage.py",
@@ -2088,7 +2104,7 @@
       "observedEvidence": {
         "failFirst": "f7d3eb13: actual owned blackbox NUL and LF subtests each returned(3,fixtureInvoked:true), expected(2,false); no PG/model/service launched.",
         "fix": "bfdfd121: actual NUL/LF checks, constant diagnostic, exit2 before fixture. Same two negatives plus valid five-pin positive control pass; all5 harness methods pass0 errors/skips.",
-        "scope": "Portable launcher only, not a compiled/native input; new CURRENT method increases final unfiltered expected IDs334→335, never changes historical141 execution count."
+        "scope": "Portable launcher only, not a compiled/native input; new CURRENT method increases final unfiltered expected IDs334\u2192335, never changes historical141 execution count."
       }
     }
   ],

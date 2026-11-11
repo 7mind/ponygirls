@@ -19,6 +19,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 from manure import current_protocol as cp
+from manure.metadata import validate_metadata
 
 TOKEN_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 ARTIFACT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
@@ -60,6 +61,15 @@ class ManureError(Exception):
         self.message = message
         self.http_status = http_status
         self.retry_after = retry_after
+
+
+def _checked_metadata(tags: list[str] | None, hostname: str | None, project_path: str | None) -> list[str]:
+    values = [] if tags is None else tags
+    try:
+        validate_metadata(values, hostname, project_path)
+    except ValueError as error:
+        raise ManureError("bad-envelope", str(error)) from None
+    return list(values)
 
 
 class AmbiguousCredentials(ManureError):
@@ -1447,7 +1457,10 @@ class ManureClient:
     def list_artifacts(self, limit: int | None = None, cursor: str | None = None,
                        include_expired: bool = False, visibility: str | None = None,
                        state: str | None = None, *, query: str = "",
-                       sort_by: str = "created_at", direction: str = "desc") -> dict[str, Any]:
+                       sort_by: str = "created_at", direction: str = "desc",
+                       tags: list[str] | None = None, hostname: str | None = None,
+                       project_path: str | None = None) -> dict[str, Any]:
+        tags = _checked_metadata(tags, hostname, project_path)
         self._require_token()
         try:
             sort = cp.CatalogueSort("".join(p[:1].upper() + p[1:] for p in sort_by.split("_")))
@@ -1456,7 +1469,7 @@ class ManureClient:
         q = cp.CatalogueQuery(query, include_expired,
             self._enum(cp.Visibility, visibility) if visibility is not None else None,
             self._enum(cp.ArtifactState, state) if state is not None else None,
-            sort, self._enum(cp.SortDirection, direction), 50 if limit is None else limit, cursor or None)
+            sort, self._enum(cp.SortDirection, direction), 50 if limit is None else limit, cursor or None, tags, hostname, project_path)
         return cp.local(self._current(cp.Command_ListArtifacts(q), cp.Result_Catalogue).page)
 
     def search_expression(self, query: str, *, limit: int | None = None,
@@ -1470,11 +1483,13 @@ class ManureClient:
         if plan.mode == 'catalogue':
             return self.list_artifacts(limit=limit, cursor=cursor, query=plan.q,
                 include_expired=plan.include_expired, visibility=plan.visibility,
-                state=plan.item_state, sort_by=plan.sort, direction=plan.direction)
+                state=plan.item_state, sort_by=plan.sort, direction=plan.direction,
+                tags=plan.tags, hostname=plan.hostname, project_path=plan.project_path)
         if cursor is not None:
             raise ManureError('bad-query', 'Retrieval mode does not support cursors; remove cursor.')
         return self.search(plan.q, plan.mode, limit=50 if limit is None else limit,
-            visibility=plan.visibility, kind=plan.kind, created_by_user=plan.created_by_user)
+            visibility=plan.visibility, kind=plan.kind, created_by_user=plan.created_by_user,
+            tags=plan.tags, hostname=plan.hostname, project_path=plan.project_path)
 
     def get_artifact(self, artifact_id: str) -> dict[str, Any]:
         self._require_token(); self._check_id(artifact_id)
@@ -1489,14 +1504,17 @@ class ManureClient:
         return cp.local(self._current(cp.Command_GetUploadStatus(artifact_id), cp.Result_UploadProgress).status)
 
     def init_upload(self, name: str, kind: str, visibility: str,
-                    entries: list[dict[str, Any]], expires_in_s: int | None = None) -> dict[str, Any]:
+                    entries: list[dict[str, Any]], expires_in_s: int | None = None, *,
+                    tags: list[str] | None = None, hostname: str | None = None,
+                    project_path: str | None = None) -> dict[str, Any]:
+        tags = _checked_metadata(tags, hostname, project_path)
         self._require_token()
         _validate_name(name); validate_manifest(entries, kind)
         exp = parse_expires_in(expires_in_s)
         files = [cp.ManifestEntry_Directory(e["path"]) if e["kind"] == "dir" else
                  cp.ManifestEntry_File(e["path"], e["size"], e["sha256"]) for e in entries]
         command = cp.Command_InitUpload(name, self._enum(cp.ArtifactKind, kind),
-            self._enum(cp.Visibility, visibility, "invalid-visibility"), exp, files)
+            self._enum(cp.Visibility, visibility, "invalid-visibility"), exp, files, tags, hostname, project_path)
         return cp.local(self._current(command, cp.Result_UploadInitialized))
 
     def put_chunk(self, artifact_id: str, path: str, offset: int, data: bytes) -> dict[str, Any]:
@@ -1553,10 +1571,13 @@ class ManureClient:
 
     def search(self, query: str, mode: str = "lexical", *, limit: int = 50,
                cursor: str | None = None, visibility: str | None = None,
-               kind: str | None = None, created_by_user: str | None = None) -> dict[str, Any]:
+               kind: str | None = None, created_by_user: str | None = None,
+               tags: list[str] | None = None, hostname: str | None = None,
+               project_path: str | None = None) -> dict[str, Any]:
+        tags = _checked_metadata(tags, hostname, project_path)
         self._require_token()
         filters = cp.SearchFilter(self._enum(cp.Visibility, visibility) if visibility else None,
-            self._enum(cp.ArtifactKind, kind) if kind else None, created_by_user)
+            self._enum(cp.ArtifactKind, kind) if kind else None, created_by_user, tags, hostname, project_path)
         q = cp.SearchQuery(query, self._enum(cp.SearchMode, mode), filters, limit, cursor)
         return cp.local(self._current(cp.Command_Search(q), cp.Result_SearchResults).page)
 
@@ -1574,9 +1595,11 @@ class ManureClient:
     def _cache_path(self, artifact_id: str) -> Path:
         return self._uploads_dir() / f"{artifact_id}.json"
 
-    def _write_cache(self, artifact_id: str, local_path: str, manifest_sha: str, access: str) -> None:
+    def _write_cache(self, artifact_id: str, local_path: str, manifest_sha: str, access: str,
+                     tags: list[str], hostname: str | None, project_path: str | None) -> None:
         rec = {"artifact_id": artifact_id, "api_base": self.api_base,
-               "local_path": local_path, "manifest_sha256": manifest_sha, "access": access}
+               "local_path": local_path, "manifest_sha256": manifest_sha, "access": access,
+               "tags": tags, "hostname": hostname, "project_path": project_path}
         tmp = self._cache_path(artifact_id).with_suffix(".tmp")
         tmp.write_text(json.dumps(rec, sort_keys=True, indent=2))
         os.replace(tmp, self._cache_path(artifact_id))
@@ -1590,7 +1613,8 @@ class ManureClient:
         except Exception:
             return None
 
-    def _find_matching_cache(self, local_path: str, manifest_sha: str) -> list[dict[str, Any]]:
+    def _find_matching_cache(self, local_path: str, manifest_sha: str, tags: list[str],
+                             hostname: str | None, project_path: str | None) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         d = self.cache_dir / "uploads"
         if not d.is_dir():
@@ -1601,9 +1625,22 @@ class ManureClient:
             except Exception:
                 continue
             if (rec.get("api_base") == self.api_base and rec.get("local_path") == local_path
-                    and rec.get("manifest_sha256") == manifest_sha):
+                    and rec.get("manifest_sha256") == manifest_sha
+                    and self._metadata_matches(rec, tags, hostname, project_path)):
                 out.append(rec)
         return out
+
+    @staticmethod
+    def _metadata_matches(record: dict[str, Any], tags: list[str], hostname: str | None,
+                          project_path: str | None) -> bool:
+        # Pre-metadata records describe only empty metadata, never a wildcard.
+        return (record.get("tags", []) == tags and record.get("hostname") == hostname
+                and record.get("project_path") == project_path)
+
+    def _validate_resume_metadata(self, info: dict[str, Any], tags: list[str],
+                                  hostname: str | None, project_path: str | None) -> None:
+        if not self._metadata_matches(info, tags, hostname, project_path):
+            raise ManureError("bad-envelope", "resume metadata mismatch; use --fresh for a new artifact")
 
     def _delete_cache(self, artifact_id: str) -> None:
         try:
@@ -1655,7 +1692,10 @@ class ManureClient:
 
     def upload_path(self, local_path: str | os.PathLike, access: str,
                     name: str | None = None, expires_in_s: str | int | None = None,
-                    resume_id: str | None = None, fresh: bool = False) -> dict[str, Any]:
+                    resume_id: str | None = None, fresh: bool = False, *,
+                    tags: list[str] | None = None, hostname: str | None = None,
+                    project_path: str | None = None) -> dict[str, Any]:
+        tags = _checked_metadata(tags, hostname, project_path)
         if access not in ("internal", "external", "public"):
             raise ManureError("invalid-visibility", "--access must be internal|external|public")
         exp: int | None = None
@@ -1691,12 +1731,13 @@ class ManureClient:
             status: dict[str, Any] | None = None
             server_info: dict[str, Any] | None = None
             if fresh:
-                init = self.init_upload(name, kind, access, entries, exp)
+                init = self.init_upload(name, kind, access, entries, exp,
+                                        tags=tags, hostname=hostname, project_path=project_path)
                 artifact_id = str(init["artifact_id"])
                 self._check_id(artifact_id)
                 chunk_bytes = _validate_chunk_bytes(int(init["chunk_bytes"]))
                 generated_pw = init.get("external_password")
-                self._write_cache(artifact_id, norm_local, msha, access)
+                self._write_cache(artifact_id, norm_local, msha, access, tags, hostname, project_path)
                 status = None
             elif resume_id is not None:
                 rec = self._read_cache(resume_id)
@@ -1709,10 +1750,12 @@ class ManureClient:
                 # B5: cached access must match the requested access before mutation.
                 if rec.get("access") != access:
                     raise ManureError("invalid-visibility", "resume access mismatch")
+                self._validate_resume_metadata(rec, tags, hostname, project_path)
                 artifact_id = resume_id
                 self._check_id(artifact_id)
                 is_resume = True
                 status, server_info = self._resolve_resume_state(artifact_id)
+                self._validate_resume_metadata(server_info, tags, hostname, project_path)
                 # B5: requested access must match actual server visibility.
                 actual_vis = str(server_info.get("visibility", ""))
                 if actual_vis and actual_vis != access:
@@ -1741,7 +1784,7 @@ class ManureClient:
                 else:
                     chunk_bytes = _validate_chunk_bytes(int(status["chunk_bytes"]))
             else:
-                matches = self._find_matching_cache(norm_local, msha)
+                matches = self._find_matching_cache(norm_local, msha, tags, hostname, project_path)
                 status = None
                 server_info = None
                 if len(matches) == 1:
@@ -1751,6 +1794,7 @@ class ManureClient:
                     cand = str(matches[0]["artifact_id"])
                     self._check_id(cand)
                     st, info = self._resolve_resume_state(cand)
+                    self._validate_resume_metadata(info, tags, hostname, project_path)
                     actual_vis = str(info.get("visibility", ""))
                     if actual_vis and actual_vis != access:
                         raise ManureError("invalid-visibility", "resume visibility mismatch")
@@ -1784,12 +1828,13 @@ class ManureClient:
                     else:
                         raise ManureError("state-conflict", "unexpected upload state")
                 if status is None and not is_resume:
-                    init = self.init_upload(name, kind, access, entries, exp)
+                    init = self.init_upload(name, kind, access, entries, exp,
+                                        tags=tags, hostname=hostname, project_path=project_path)
                     artifact_id = str(init["artifact_id"])
                     self._check_id(artifact_id)
                     chunk_bytes = _validate_chunk_bytes(int(init["chunk_bytes"]))
                     generated_pw = init.get("external_password")
-                    self._write_cache(artifact_id, norm_local, msha, access)
+                    self._write_cache(artifact_id, norm_local, msha, access, tags, hostname, project_path)
                     status = None
                     server_info = None
             # build received map
@@ -1887,6 +1932,9 @@ class ManureClient:
             "content_url": info.get("content_url"),
             "access": actual,
             "expires_at": info.get("expires_at"),
+            "tags": info["tags"],
+            "hostname": info["hostname"],
+            "project_path": info["project_path"],
         }
         if actual == "external":
             if generated_pw is not None:

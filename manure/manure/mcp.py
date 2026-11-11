@@ -36,9 +36,9 @@ def _tool_defs() -> list[dict[str, Any]]:
                          "additionalProperties": False},
          "annotations": dict(ro)},
         {"name": "search",
-         "description": "Search artifacts with the dashboard expression syntax (max 4096 UTF-16 units). Default catalogue; fields: mode:catalogue|lexical|semantic|hybrid, access:internal|external|public; catalogue-only state:ready|uploading|publishing, expired:true|false, sort:name|created_at|expires_at|total_bytes|file_count|visibility|state|kind|created_by_user, direction:asc|desc; retrieval-only kind:file|dir, owner:<exact user>. Bare text is search text; text:<JSON string> preserves exact text and literal colons. Metadata fields conjoin, with no duplicates. Retrieval requires text and rejects cursor; quoted retrieval phrases/OR/NOT belong to the search engine, not metadata Boolean syntax. Defaults: expired:false sort:created_at direction:desc.",
+         "description": "Search artifacts with the dashboard expression syntax (max 131072 UTF-16 units; underlying search text max 4096 UTF-16 units). Default catalogue; fields: mode:catalogue|lexical|semantic|hybrid, access:internal|external|public; catalogue-only state:ready|uploading|publishing, expired:true|false, sort:name|created_at|expires_at|total_bytes|file_count|visibility|state|kind|created_by_user, direction:asc|desc; retrieval-only kind:file|dir, owner:<exact user>; all modes tag:<exact tag> (repeatable AND), hostname:<exact host>, project:<exact path>. Bare text is search text; text:<JSON string> preserves exact text and literal colons. Metadata fields conjoin, with no duplicates except up to 32 distinct tag fields. Retrieval requires text and rejects cursor; quoted retrieval phrases/OR/NOT belong to the search engine, not metadata Boolean syntax. Defaults: expired:false sort:created_at direction:desc.",
          "inputSchema": {"type": "object",
-                         "properties": {"query": {"type": "string", "maxLength": 4096},
+                         "properties": {"query": {"type": "string", "maxLength": 131072},
                                         "limit": {"type": "integer", "minimum": 1},
                                         "cursor": {"type": "string"}},
                          "required": ["query"], "additionalProperties": False},
@@ -58,7 +58,10 @@ def _tool_defs() -> list[dict[str, Any]]:
                          "properties": {"local_path": {"type": "string"},
                                         "access": {"type": "string", "enum": ["internal", "external", "public"]},
                                         "expires_in_s": {"type": ["integer", "null"]},
-                                        "name": {"type": "string"}},
+                                        "name": {"type": "string"},
+                                        "tags": {"type": "array", "items": {"type": "string", "minLength": 1, "maxLength": 128}, "maxItems": 32, "uniqueItems": True},
+                                        "hostname": {"type": ["string", "null"], "minLength": 1, "maxLength": 253},
+                                        "project_path": {"type": ["string", "null"], "minLength": 1, "maxLength": 4096}},
                          "required": ["local_path", "access"], "additionalProperties": False},
          "annotations": dict(rw)},
         {"name": "fetch_artifact", "description": "Fetch an artifact to a directory (resumed, verified).",
@@ -144,6 +147,8 @@ def _validate_call_args(name: str, args: Any) -> str | None:
             return f"{k} must be integer"
         if isinstance(t, list) and "integer" in t and not (isinstance(v, int) and not isinstance(v, bool)):
             return f"{k} must be integer"
+        if t == "array" and (not isinstance(v, list) or any(not isinstance(item, str) for item in v)):
+            return f"{k} must be a string array"
         if t == "boolean" and not isinstance(v, bool):
             return f"{k} must be boolean"
         if "minimum" in spec and isinstance(v, int) and not isinstance(v, bool):
@@ -151,6 +156,12 @@ def _validate_call_args(name: str, args: Any) -> str | None:
                 return f"{k} below minimum"
         if k == "access" and v not in ("internal", "external", "public"):
             return "access must be internal|external|public"
+    if name == "upload_artifact":
+        from manure.metadata import validate_metadata
+        try:
+            validate_metadata(args.get("tags", []), args.get("hostname"), args.get("project_path"))
+        except ValueError as error:
+            return str(error)
     return None
 
 
@@ -181,7 +192,8 @@ def handle_tools_call(name: str, arguments: dict[str, Any], client_module: Any |
         elif name == "upload_artifact":
             res = client.upload_path(arguments["local_path"], access=arguments["access"],
                                      name=arguments.get("name"),
-                                     expires_in_s=arguments.get("expires_in_s"))
+                                     expires_in_s=arguments.get("expires_in_s"), tags=arguments.get("tags"),
+                                     hostname=arguments.get("hostname"), project_path=arguments.get("project_path"))
         elif name == "fetch_artifact":
             res = client.fetch_to_dest(arguments["artifact_id"], arguments["dest_dir"],
                                        password=arguments.get("password"))

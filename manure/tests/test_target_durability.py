@@ -319,7 +319,7 @@ class TargetDurabilityTests(unittest.TestCase):
         with fixture(max_connections=1) as (root,config,database,token,_):
             server=TargetServer(config,str(root),owned_database=database,close_database=False);stalled=None
             try:
-                rid=uuid4();payload=cp.dumps(cp.ClientEnvelope(rid,cp.API_VERSION,cp.Command_InitUpload('pending',cp.ArtifactKind.Directory,cp.Visibility.Internal,None,[])))
+                rid=uuid4();payload=cp.dumps(cp.ClientEnvelope(rid,cp.API_VERSION,cp.Command_InitUpload('pending',cp.ArtifactKind.Directory,cp.Visibility.Internal,None,[],[],None,None)))
                 stalled=socket.create_connection(('127.0.0.1',server.bound_port),timeout=10)
                 head=(f'POST /api/current HTTP/1.1\r\nHost: 127.0.0.1:{server.bound_port}\r\nAuthorization: Bearer {token}\r\nContent-Type: application/json\r\nContent-Length: {len(payload)}\r\n\r\n').encode()
                 stalled.sendall(head+payload[:1]);time.sleep(.2)

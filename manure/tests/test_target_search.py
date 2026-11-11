@@ -106,7 +106,8 @@ class TargetSearchTests(unittest.TestCase):
                 payload=b'BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING\0'*9000
                 sha=hashlib.sha256(payload).hexdigest()
                 initialized=client.init_upload('metadata hayneedle','dir','external',[
-                    {'kind':'file','path':'catalogue/hayneedle.bin','size':len(payload),'sha256':sha},{'kind':'dir','path':'empty'}],expires_in_s=60)
+                    {'kind':'file','path':'catalogue/hayneedle.bin','size':len(payload),'sha256':sha},{'kind':'dir','path':'empty'}],expires_in_s=60,
+                    tags=['taghayneedle','Release'],hostname='hosthayneedle',project_path='/projecthayneedle/path')
                 aid=initialized['artifact_id'];password=initialized['external_password']
                 for offset in range(0,len(payload),262144):client.put_chunk(aid,'catalogue/hayneedle.bin',offset,payload[offset:offset+262144])
                 self.assertEqual(model.snapshot(),[],'ordinary upload called the model')
@@ -119,6 +120,15 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertEqual(waiting.exception.code,'search-unavailable')
                 start=time.monotonic();self.assertEqual(client.get_artifact(aid)['state'],'ready')
                 self.assertLess(time.monotonic()-start,2,'model call held the authoritative transaction/root monitor')
+                info=client.get_artifact(aid)
+                self.assertEqual((info['tags'],info['hostname'],info['project_path']),
+                    (['taghayneedle','Release'],'hosthayneedle','/projecthayneedle/path'))
+                for text,field in [('taghayneedle','tag'),('hosthayneedle','hostname'),('projecthayneedle','projectpath')]:
+                    catalogue=client.list_artifacts(query=text)
+                    self.assertEqual([item['artifact_id'] for item in catalogue['artifacts']],[aid])
+                    page=client.search(text,'lexical')
+                    self.assertEqual([item['artifact']['artifact_id'] for item in page['hits']],[aid])
+                    self.assertIn(field,[e['field'] for e in page['hits'][0]['evidence']])
                 lexical=client.search('hayneedle','lexical')
                 self.assertEqual(lexical['count_scope'],'exactmatches');self.assertEqual(lexical['hits'][0]['embedding_space'],None)
                 semantic=eventually(client,'semantic');hybrid=eventually(client,'hybrid')
@@ -141,7 +151,7 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertEqual(hit['artifact']['artifact_id'],aid)
                 for key in ('embedding_profile','embedding_space','source_version'):self.assertRegex(hit[key],r'^[0-9a-f]{64}$')
                 self.assertNotEqual(hit['embedding_profile'],hit['embedding_space'])
-                self.assertEqual(hit['policy_id'],'manure-metadata-paths-v1');self.assertTrue(hit['generation_id'])
+                self.assertEqual(hit['policy_id'],'manure-metadata-paths-v2');self.assertTrue(hit['generation_id'])
                 self.assertEqual(hybrid['hits'][0]['embedding_space'],hit['embedding_space'])
                 path_page=client.search('catalogue/hayneedle.bin','semantic')
                 evidence_hits=semantic['hits']+path_page['hits']
@@ -153,21 +163,37 @@ class TargetSearchTests(unittest.TestCase):
                     self.assertEqual(item['generation_id'],hit['generation_id'])
                     self.assertEqual(item['embedding_space'],hit['embedding_space'])
                     for evidence in item['evidence']:
-                        self.assertIn(evidence['field'],('name','manifestpath'));self.assertTrue(math.isfinite(evidence['score']))
+                        self.assertIn(evidence['field'],('name','manifestpath','tag','hostname','projectpath'));self.assertTrue(math.isfinite(evidence['score']))
                         if evidence['field']=='manifestpath':
                             self.assertIn(evidence['path'],('catalogue/hayneedle.bin','empty'));self.assertEqual(evidence['text'],evidence['path'])
-                        else:self.assertIsNone(evidence['path']);self.assertEqual(evidence['text'],'metadata hayneedle')
-                for filters in ({'visibility':'public'},{'kind':'file'},{'created_by_user':'not-the-creator'}):
+                        else:
+                            self.assertIsNone(evidence['path'])
+                            expected={'name':['metadata hayneedle'],'tag':['taghayneedle','Release'],
+                                'hostname':['hosthayneedle'],'projectpath':['/projecthayneedle/path']}
+                            self.assertIn(evidence['text'],expected[evidence['field']])
+                for mode in ('lexical','semantic','hybrid'):
+                    page=client.search('hayneedle',mode,tags=['Release','taghayneedle'],hostname='hosthayneedle',project_path='/projecthayneedle/path')
+                    self.assertEqual([item['artifact']['artifact_id'] for item in page['hits']],[aid])
+                catalogue=client.list_artifacts(tags=['Release','taghayneedle'],hostname='hosthayneedle',project_path='/projecthayneedle/path')
+                self.assertEqual([item['artifact_id'] for item in catalogue['artifacts']],[aid])
+                for filters in ({'visibility':'public'},{'kind':'file'},{'created_by_user':'not-the-creator'},
+                        {'tags':['Release','missing']},{'tags':['release']},{'hostname':'HOSTHAYNEEDLE'},
+                        {'hostname':'hosthay'},{'project_path':'/Projecthayneedle/path'},{'project_path':'/projecthayneedle'}):
                     for mode in ('lexical','semantic','hybrid'):
                         self.assertEqual(client.search('hayneedle',mode,**filters)['hits'],[])
+                    if 'kind' not in filters and 'created_by_user' not in filters:
+                        self.assertEqual(client.list_artifacts(**filters)['artifacts'],[])
                 encoded=json.dumps(model.snapshot(),ensure_ascii=False)
+                documents='\n'.join(text for call in model.snapshot() for text in call['inputs'] if text.startswith('doc: '))
+                for metadata in ('taghayneedle','Release','hosthayneedle','/projecthayneedle/path'):
+                    self.assertIn(metadata,documents)
                 for secret in (token,password,sha,'BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING'):
                     self.assertNotIn(secret,encoded)
                 self.assertTrue(all(call['authorization'] is None for call in model.snapshot()))
                 # Unauthenticated management search must reject BEFORE model IO.
                 count=len(model.snapshot());rid=uuid4();connection=http.client.HTTPConnection('127.0.0.1',port,timeout=10)
                 try:
-                    command=cp.Command_Search(cp.SearchQuery('hayneedle',cp.SearchMode.Semantic,cp.SearchFilter(None,None,None),20,None))
+                    command=cp.Command_Search(cp.SearchQuery('hayneedle',cp.SearchMode.Semantic,cp.SearchFilter(None,None,None,[],None,None),20,None))
                     connection.request('POST','/api/current',cp.dumps(cp.ClientEnvelope(rid,cp.API_VERSION,command)),{'Content-Type':'application/json'})
                     response=connection.getresponse();response.read();self.assertEqual(response.status,401)
                 finally:connection.close()
