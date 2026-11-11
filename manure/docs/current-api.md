@@ -134,10 +134,19 @@ matches casefolded literal substrings in these fields. Retrieval indexes these
 metadata fields alongside names and manifest paths, not file bytes. Evidence
 uses `Tag`, `Hostname` and `ProjectPath` with null manifest pointers. Metadata
 changes are included in source-version identity. The expanded corpus uses policy
-`manure-metadata-paths-v2`. Search expressions use
+`manure-metadata-paths-v2`. Migration5 adds byte-exact metadata columns and the
+per-artifact tag relation without rewriting earlier migration checksums. Startup
+backfills projections and upgrades historical internal search snapshots only when
+all three metadata fields are absent; partially missing or invalid current
+metadata fails explicitly.
+
+Search expressions use
 `tag:<value>`, `hostname:<value>` and `project:<value>`; only `tag:` may repeat,
 and repeated values must be unique. These filters do not remove retrieval's
-nonblank-text requirement.
+nonblank-text requirement. Expressions allow at most 131072 UTF-16 units, while
+the actual underlying search text remains bounded to 4096 UTF-16 units. The
+separate bounds allow fully escaped maximum-length metadata filters to coexist
+with search text; preserved retrieval phrase quotes count in the text budget.
 
 ## Streaming and browser protocol adapters
 
