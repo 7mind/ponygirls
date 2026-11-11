@@ -138,7 +138,7 @@ final class AdmissionEngine {
       }
       case RelationKind.AssignedTo => task(r.sources.head); Require(g.actors.exists(_.ref == r.targets.head), "kind", "assignment target must be a captured actor"); empty(r)
       case RelationKind.Quotes | RelationKind.Interprets =>
-        Require(Graph.node(g, r.sources.head).content.isInstanceOf[Content.Source], "kind", "lineage source must be captured input")
+        Graph.node(g, r.sources.head)
         Graph.node(g, r.targets.head); empty(r)
       case RelationKind.PlannedOutput =>
         task(r.sources.head)
