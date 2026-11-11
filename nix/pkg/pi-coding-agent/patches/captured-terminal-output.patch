@@ -12,7 +12,7 @@ index 5a9552d..2b8affc 100644
 +	return join(getAgentDir(), `${APP_NAME}-captured-output.log`);
 +}
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index d8e2390..2a7d6f2 100644
+index d8e2390..2b33580 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 @@ -20,6 +20,7 @@ import {
@@ -23,7 +23,15 @@ index d8e2390..2a7d6f2 100644
  	EditorComponent,
  	Keybinding,
  	KeyId,
-@@ -62,6 +63,7 @@ import {
+@@ -42,6 +43,7 @@ import {
+ 	matchesKey,
+ 	Spacer,
+ 	setCapabilityOverrides,
++	stripTerminalSequences,
+ 	setKeybindings,
+ 	type Terminal,
+ 	Text,
+@@ -62,6 +64,7 @@ import {
  	detectInstallChange,
  	getAgentDir,
  	getAuthPath,
@@ -31,7 +39,7 @@ index d8e2390..2a7d6f2 100644
  	getDebugLogPath,
  	getDocsPath,
  	VERSION,
-@@ -519,6 +521,11 @@ export class InteractiveMode {
+@@ -519,6 +522,11 @@ export class InteractiveMode {
  	private lastStatusSpacer: Spacer | undefined = undefined;
  	private lastStatusText: ThemedText | undefined = undefined;
  	private lastStatusMessage = "";
@@ -43,7 +51,7 @@ index d8e2390..2a7d6f2 100644
  	private managedToolStatusStarted = false;
  
  	// Streaming message tracking
-@@ -655,6 +662,7 @@ export class InteractiveMode {
+@@ -655,6 +663,7 @@ export class InteractiveMode {
  			onRightClickPaste: this.onRightClickPaste,
  			fullscreenCopyOnSelect: this.settingsManager.getFullscreenCopyOnSelect(),
  			fullscreenWheelScrollLines: this.settingsManager.getFullscreenWheelScrollLines(),
@@ -51,7 +59,7 @@ index d8e2390..2a7d6f2 100644
  		});
  		this.ui = createInteractiveTuiReference(() => this.renderer);
  		this.ui.setClearOnShrink(this.settingsManager.getClearOnShrink());
-@@ -3983,6 +3991,48 @@ export class InteractiveMode {
+@@ -3983,6 +3992,51 @@ export class InteractiveMode {
  		this.ui.requestRender();
  	}
  
@@ -74,7 +82,10 @@ index d8e2390..2a7d6f2 100644
 +			// the chat entry below still surfaces the output.
 +		}
 +		this.capturedOutputCount += 1;
-+		this.capturedOutputMessage = message;
++		// The log above stays byte-for-byte useful for diagnosis. Only the chat
++		// representation is untrusted terminal text: theme styling belongs to us,
++		// not to captured extension output. Preserve newlines, tabs and Unicode.
++		this.capturedOutputMessage = stripTerminalSequences(message).replace(/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/g, "");
 +		this.capturedOutputStream = stream;
 +		const children = this.chatContainer.children;
 +		const last = children.length > 0 ? children[children.length - 1] : undefined;
@@ -128,6 +139,89 @@ index 6487c1c..a868f4e 100644
  	if (options.tuiMode === "fullscreen") {
  		const styleSearchMatch = (text: string) => theme.bg("searchMatchBg", theme.fg("searchMatchText", text));
  		return new TuiAltScreen(terminal, options.showHardwareCursor, options.logDirectory, {
+diff --git a/packages/coding-agent/test/captured-terminal-output.test.ts b/packages/coding-agent/test/captured-terminal-output.test.ts
+new file mode 100644
+index 0000000..6811f05
+--- /dev/null
++++ b/packages/coding-agent/test/captured-terminal-output.test.ts
+@@ -0,0 +1,77 @@
++import { mkdtempSync, readFileSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { Container, TuiMainScreen } from "@earendil-works/pi-tui";
++import { afterEach, describe, expect, it } from "vitest";
++import { VirtualTerminal } from "../../tui/test/virtual-terminal.ts";
++import { getCapturedOutputLogPath } from "../src/config.ts";
++import { InteractiveMode } from "../src/modes/interactive/interactive-mode.ts";
++import { initTheme } from "../src/modes/interactive/theme/theme.ts";
++
++class RecordingTerminal extends VirtualTerminal {
++	readonly writes: string[] = [];
++
++	override write(data: string): void {
++		this.writes.push(data);
++		super.write(data);
++	}
++}
++
++const originalAgentDir = process.env.PI_CODING_AGENT_DIR;
++const cleanups: Array<() => void> = [];
++
++afterEach(() => {
++	while (cleanups.length) cleanups.pop()?.();
++	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
++	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
++});
++
++describe("captured terminal output rendering", () => {
++	it("logs control sequences verbatim without replaying them through the chat renderer", () => {
++		// Regression: ThemedText preserved captured ANSI/OSC/APC bytes as if they were trusted styling.
++		initTheme("dark");
++		const directory = mkdtempSync(join(tmpdir(), "pi-captured-output-render-"));
++		process.env.PI_CODING_AGENT_DIR = directory;
++		cleanups.push(() => rmSync(directory, { recursive: true, force: true }));
++		const terminal = new RecordingTerminal(100, 16);
++		const renderer = new TuiMainScreen(terminal);
++		const chatContainer = new Container();
++		renderer.addChild(chatContainer);
++		const context = Object.assign(Object.create(InteractiveMode.prototype), {
++			chatContainer,
++			ui: renderer,
++			capturedOutputSpacer: undefined,
++			capturedOutputText: undefined,
++			capturedOutputMessage: "",
++			capturedOutputStream: "stdout",
++			capturedOutputCount: 0,
++		});
++		const payload =
++			"Unicode: Ελληνικά 漢字 🙂\n" +
++			"clear=\x1b[2J; osc=\x1b]777;captured-osc\x07; apc=\x1b_captured-apc\x1b\\; " +
++			"bell=\x07; backspace=\x08; trailing text\n";
++
++		renderer.start();
++		try {
++			renderer.renderNow();
++			terminal.writes.length = 0;
++			(context as { handleCapturedTerminalOutput(text: string, stream: "stdout"): void }).handleCapturedTerminalOutput(
++				payload,
++				"stdout",
++			);
++			renderer.renderNow();
++			const output = terminal.writes.join("");
++
++			expect(output).not.toContain("clear=\x1b[2J");
++			expect(output).not.toContain("captured-osc");
++			expect(output).not.toContain("captured-apc");
++			expect(output).not.toContain("bell=\x07");
++			expect(output).not.toContain("backspace=\x08");
++			expect(output).toContain("Unicode: Ελληνικά 漢字 🙂");
++			expect(output).toContain("trailing text");
++			expect(readFileSync(getCapturedOutputLogPath(), "utf8")).toBe(payload);
++		} finally {
++			renderer.stop();
++		}
++	});
++});
 diff --git a/packages/tui/src/index.ts b/packages/tui/src/index.ts
 index 8b4f9ea..72eef6f 100644
 --- a/packages/tui/src/index.ts

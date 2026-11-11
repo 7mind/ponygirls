@@ -134,11 +134,12 @@ buildNpmPackage (finalAttrs: {
   doCheck = true;
   checkPhase = ''
     runHook preCheck
-    printf '%s\n' '{"extends":"./tsconfig.json","include":["packages/*/src/**/*","packages/coding-agent/test/sdk-stream-options.test.ts","packages/coding-agent/test/compaction-codex-transport.test.ts","packages/coding-agent/test/compaction-codex-transport-wire.test.ts"]}' > tsconfig.compaction-backport.json
+    printf '%s\n' '{"extends":"./tsconfig.json","include":["packages/*/src/**/*","packages/ai/test/openai-codex-stream.test.ts","packages/ai/test/pi-messages.test.ts","packages/coding-agent/test/captured-terminal-output.test.ts","packages/coding-agent/test/retained-custom-message-ingress.test.ts","packages/coding-agent/test/sdk-stream-options.test.ts","packages/coding-agent/test/compaction-codex-transport.test.ts","packages/coding-agent/test/compaction-codex-transport-wire.test.ts"]}' > tsconfig.compaction-backport.json
     ./node_modules/.bin/tsc --noEmit -p tsconfig.compaction-backport.json
     (cd packages/ai && ../../node_modules/.bin/vitest run \
       test/openai-codex-stream.test.ts \
       test/openai-codex-oauth.test.ts \
+      test/pi-messages.test.ts \
       test/retry.test.ts)
     (cd packages/coding-agent && ../../node_modules/.bin/vitest run \
       test/chat-viewport.test.ts \
@@ -161,6 +162,8 @@ buildNpmPackage (finalAttrs: {
       test/agent-session-auto-compaction-queue.test.ts \
       test/branch-summarization.test.ts \
       test/branch-summary-extensions.test.ts \
+      test/captured-terminal-output.test.ts \
+      test/retained-custom-message-ingress.test.ts \
       test/settings-manager-compaction.test.ts \
       test/interactive-mode-compaction.test.ts \
       test/agent-session-retry.test.ts)

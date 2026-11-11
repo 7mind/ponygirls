@@ -1,5 +1,5 @@
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index d5032b7..13ac1be 100644
+index d5032b7..0b3d71b 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
 @@ -378,6 +378,15 @@ interface ToolDefinitionEntry {
@@ -18,7 +18,7 @@ index d5032b7..13ac1be 100644
  function estimateMessagesTokens(messages: AgentMessage[]): number {
  	let tokens = 0;
  	for (const message of messages) {
-@@ -430,8 +439,16 @@ export class AgentSession {
+@@ -430,8 +439,17 @@ export class AgentSession {
  	private _queuedMessagesWithImages = new WeakSet<AgentMessage>();
  	/** Messages queued to be included with the next user prompt as context ("asides"). */
  	private _pendingNextTurnMessages: CustomMessage[] = [];
@@ -32,12 +32,13 @@ index d5032b7..13ac1be 100644
 +	private _customMessageCancellation = 0;
 +	private _flushingCustomMessages = false;
 +	private _drainingCustomMessages = false;
++	private _customMessageReloads = 0;
 +	private _promptPreflights = 0;
 +	private _disposed = false;
  
  	// Compaction state
  	private _compactionAbortController: AbortController | undefined = undefined;
-@@ -492,6 +509,7 @@ export class AgentSession {
+@@ -492,6 +510,7 @@ export class AgentSession {
  	private _sessionStartEvent: SessionStartEvent;
  	private _extensionUIContext?: ExtensionUIContext;
  	private _extensionMode: ExtensionMode = "print";
@@ -45,7 +46,7 @@ index d5032b7..13ac1be 100644
  	private _extensionCommandContextActions?: ExtensionCommandContextActions;
  	private _extensionAbortHandler?: () => void;
  	private _extensionShutdownHandler?: ShutdownHandler;
-@@ -1054,7 +1072,7 @@ export class AgentSession {
+@@ -1054,7 +1073,7 @@ export class AgentSession {
  	}
  
  	private _getPendingBoundaryMessages(): AgentMessage[] {
@@ -54,7 +55,7 @@ index d5032b7..13ac1be 100644
  	}
  
  	private _buildBoundaryContext(
-@@ -1127,6 +1145,7 @@ export class AgentSession {
+@@ -1127,6 +1146,7 @@ export class AgentSession {
  	}
  
  	private _resolveIdleWaitIfIdle(): void {
@@ -62,7 +63,7 @@ index d5032b7..13ac1be 100644
  		if (!this.isIdle || !this._resolveIdleWait) {
  			return;
  		}
-@@ -1137,31 +1156,30 @@ export class AgentSession {
+@@ -1137,31 +1157,30 @@ export class AgentSession {
  	}
  
  	private async _emitAgentSettled(): Promise<void> {
@@ -108,7 +109,7 @@ index d5032b7..13ac1be 100644
  		// An abort requested while the run was starting, e.g. during before_agent_start, stops it
  		// here. agent_start is awaited before the first request.
  		if (event.type === "agent_start" && this._agentRunAbortRequested) this.agent.abort();
-@@ -1258,7 +1276,7 @@ export class AgentSession {
+@@ -1258,7 +1277,7 @@ export class AgentSession {
  		// extension and listener dispatch above also picks up messages that turn_end
  		// handlers queued.
  		if (event.type === "turn_end") {
@@ -117,7 +118,7 @@ index d5032b7..13ac1be 100644
  		}
  	};
  
-@@ -1475,6 +1493,9 @@ export class AgentSession {
+@@ -1475,6 +1494,9 @@ export class AgentSession {
  	 * Call this when completely done with the session.
  	 */
  	dispose(): void {
@@ -127,7 +128,7 @@ index d5032b7..13ac1be 100644
  		try {
  			this.abortRetry();
  			this.abortCompaction();
-@@ -1940,32 +1961,28 @@ export class AgentSession {
+@@ -1940,32 +1962,28 @@ export class AgentSession {
  	 * starting another, and an abort requested meanwhile aborts the run as soon as it exists.
  	 * @param onStarted Called once the run's messages are prepared, before the first request.
  	 */
@@ -178,7 +179,7 @@ index d5032b7..13ac1be 100644
  			await this.agent.prompt(messages);
  			while (!this._agentRunAbortRequested) {
  				if (await this._handlePostAgentRun()) {
-@@ -1981,9 +1998,18 @@ export class AgentSession {
+@@ -1981,9 +1999,18 @@ export class AgentSession {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
  			this._failedResponse = undefined;
  			this._runSystemPromptOptions = undefined;
@@ -200,7 +201,7 @@ index d5032b7..13ac1be 100644
  		}
  	}
  
-@@ -1993,7 +2019,7 @@ export class AgentSession {
+@@ -1993,7 +2020,7 @@ export class AgentSession {
  	 * message followed by pending nextTurn messages (consumed here) and handler messages, with a
  	 * system patch first when the prompt changed.
  	 */
@@ -209,7 +210,7 @@ index d5032b7..13ac1be 100644
  		// Check if we need to compact before sending (catches aborted responses).
  		// The starting message is sent below, so do not call agent.continue() here.
  		const lastAssistant = this._findLastAssistantMessage();
-@@ -2013,7 +2039,7 @@ export class AgentSession {
+@@ -2013,7 +2040,7 @@ export class AgentSession {
  
  		const messages: AgentMessage[] = [];
  		if (trigger.messageType === "custom") {
@@ -218,7 +219,7 @@ index d5032b7..13ac1be 100644
  		} else {
  			// Normalize images after before_agent_start so extension-driven model selection
  			// determines the resize profile used for the request and history.
-@@ -2053,7 +2079,10 @@ export class AgentSession {
+@@ -2053,7 +2080,10 @@ export class AgentSession {
  			this._finishCancelledRetry();
  			return false;
  		}
@@ -230,7 +231,7 @@ index d5032b7..13ac1be 100644
  
  		if (this._isRetryableError(message) && (await this._prepareRetry(message))) {
  			if (this._agentRunAbortRequested) this._finishCancelledRetry();
-@@ -2081,11 +2110,14 @@ export class AgentSession {
+@@ -2081,11 +2111,14 @@ export class AgentSession {
  
  		// The low-level loop drains both queues before agent_end. Messages queued by
  		// agent_end handlers require a fresh run before pre-settlement handlers fire.
@@ -247,7 +248,7 @@ index d5032b7..13ac1be 100644
  		this._isBeforeSettle = true;
  		this._abortDuringBeforeSettle = false;
  		try {
-@@ -2094,10 +2126,10 @@ export class AgentSession {
+@@ -2094,10 +2127,10 @@ export class AgentSession {
  				(entries) => this._buildBoundaryContext(entries, "agent_before_settle"),
  			);
  			this._commitBoundaryDrafts(result.entries);
@@ -260,7 +261,7 @@ index d5032b7..13ac1be 100644
  			if (shouldContinue && !finalContext.canContinue) {
  				if (result.continue) this._reportInvalidBoundaryContinuation("agent_before_settle");
  				return false;
-@@ -2185,24 +2217,27 @@ export class AgentSession {
+@@ -2185,24 +2218,27 @@ export class AgentSession {
  
  		// Reserve the context through async input hooks and auth checks so tree navigation cannot
  		// start meanwhile (#9154). _startRun marks the run active synchronously, so there is no gap.
@@ -297,7 +298,7 @@ index d5032b7..13ac1be 100644
  		// Emit input event for extension interception (before skill/template expansion)
  		const processedInput = await this._runInputHandlers(
  			text,
-@@ -2483,25 +2518,26 @@ export class AgentSession {
+@@ -2483,25 +2519,26 @@ export class AgentSession {
  				this._deferredSettledActions.push(async () => await this.sendCustomMessage(message, options));
  				return;
  			}
@@ -327,7 +328,7 @@ index d5032b7..13ac1be 100644
  		this._refreshFinalizedContext();
  		this._emit({ type: "message_start", message: appMessage });
  		this._emit({ type: "message_end", message: appMessage });
-@@ -2511,13 +2547,112 @@ export class AgentSession {
+@@ -2511,13 +2548,132 @@ export class AgentSession {
  	 * Append custom messages queued while the agent was running.
  	 * Called once the current turn's tool results are in agent state and session history.
  	 */
@@ -419,8 +420,8 @@ index d5032b7..13ac1be 100644
 +	}
 +
 +	private _scheduleCustomMessageDrain(): void {
-+		if (this._disposed || this._customMessageTimer !== undefined || this._drainingCustomMessages || this._promptPreflights > 0 ||
-+			this.isStreaming || this.isCompacting || this._isEmittingAgentSettled || this._flushingCustomMessages ||
++		if (this._disposed || this._customMessageTimer !== undefined || this._drainingCustomMessages || this._customMessageReloads > 0 ||
++			this._promptPreflights > 0 || this.isStreaming || this.isCompacting || this._isEmittingAgentSettled || this._flushingCustomMessages ||
 +			this._customMessageFailures >= CUSTOM_MESSAGE_MAX_ATTEMPTS ||
 +			(this._pendingCustomMessages.length === 0 && !this._pendingCustomTurn)) return;
 +		this._customMessageTimer = setTimeout(() => {
@@ -430,12 +431,32 @@ index d5032b7..13ac1be 100644
 +	}
 +
 +	private async _drainCustomMessages(): Promise<void> {
-+		if (this._disposed || this._promptPreflights > 0 || this.isStreaming || this.isCompacting || this._isEmittingAgentSettled) return;
++		if (
++			this._disposed ||
++			this._customMessageReloads > 0 ||
++			this._promptPreflights > 0 ||
++			this.isStreaming ||
++			this.isCompacting ||
++			this._isEmittingAgentSettled
++		)
++			return;
 +		this._drainingCustomMessages = true;
 +		try {
 +			this._flushCustomMessagesForContinuation();
++			// Appending emits synchronously. Subscribers may begin a prompt or reload before
++			// their async work yields, so the initial admission check is no longer sufficient.
++			if (
++				this._disposed ||
++				this._customMessageReloads > 0 ||
++				this._promptPreflights > 0 ||
++				this.isStreaming ||
++				this.isCompacting ||
++				this._isEmittingAgentSettled
++			) {
++				return;
++			}
 +			const trigger = this._pendingCustomTurn;
-+			if (trigger && !this._disposed) await this._startRun({ messageType: "custom", message: trigger }, undefined, true);
++			if (trigger) await this._startRun({ messageType: "custom", message: trigger }, undefined, true);
 +			if (!this._pendingCustomTurn) this._customMessageFailures = 0;
 +		} catch (error) {
 +			this._customMessageFailures++;
@@ -446,7 +467,7 @@ index d5032b7..13ac1be 100644
  		}
  	}
  
-@@ -2564,6 +2699,7 @@ export class AgentSession {
+@@ -2564,6 +2720,7 @@ export class AgentSession {
  	/**
  	 * Clear all queued messages and return them.
  	 * Useful for restoring to editor when user aborts.
@@ -454,7 +475,7 @@ index d5032b7..13ac1be 100644
  	 * @returns Object with steering and followUp arrays
  	 */
  	clearQueue(): { steering: string[]; followUp: string[] } {
-@@ -2599,6 +2735,7 @@ export class AgentSession {
+@@ -2599,6 +2756,7 @@ export class AgentSession {
  	 * Abort current operation and wait for agent to become idle.
  	 */
  	async abort(): Promise<void> {
@@ -462,7 +483,7 @@ index d5032b7..13ac1be 100644
  		if (this._isAgentRunActive) {
  			this._agentRunAbortRequested = true;
  		}
-@@ -2608,6 +2745,7 @@ export class AgentSession {
+@@ -2608,6 +2766,7 @@ export class AgentSession {
  		if (this._isBeforeSettle) this._abortDuringBeforeSettle = true;
  		this.agent.abort();
  		await this.waitForIdle();
@@ -470,7 +491,7 @@ index d5032b7..13ac1be 100644
  	}
  
  	async waitForIdle(): Promise<void> {
-@@ -3394,7 +3532,11 @@ export class AgentSession {
+@@ -3394,7 +3553,11 @@ export class AgentSession {
  			if (this._autoCompactionAbortController === abortController) {
  				this._autoCompactionAbortController = undefined;
  			}
@@ -483,7 +504,7 @@ index d5032b7..13ac1be 100644
  		}
  	}
  
-@@ -3411,6 +3553,7 @@ export class AgentSession {
+@@ -3411,6 +3574,7 @@ export class AgentSession {
  	}
  
  	async bindExtensions(bindings: ExtensionBindings): Promise<void> {
@@ -491,7 +512,7 @@ index d5032b7..13ac1be 100644
  		if (bindings.uiContext !== undefined) {
  			this._extensionUIContext = bindings.uiContext;
  		}
-@@ -3549,6 +3692,7 @@ export class AgentSession {
+@@ -3549,6 +3713,7 @@ export class AgentSession {
  						});
  					});
  				},
@@ -499,9 +520,66 @@ index d5032b7..13ac1be 100644
  				sendUserMessage: (content, options) => {
  					this.sendUserMessage(content, options).catch((err) => {
  						runner.emitError({
-@@ -3847,12 +3991,7 @@ export class AgentSession {
- 			includeAllExtensionTools: true,
- 		});
+@@ -3820,43 +3985,46 @@ export class AgentSession {
+ 			throw new Error("Wait for compaction to finish before reloading.");
+ 		}
+ 
+-		const oldRunner = this._extensionRunner;
+-		const previousFlagValues = oldRunner.getFlagValues();
+-		await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
+-		oldRunner.invalidate();
+-		const getDefaultTools = () =>
+-			this._usesDefaultTools
+-				? applyToolModifiers(
+-						this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES,
+-						this._defaultToolModifiers,
+-					)
+-				: [];
+-		const previousDefaultTools = new Set(getDefaultTools());
+-		await this.settingsManager.reload();
+-		this.syncQueueModesFromSettings();
+-		resetApiProviders();
+-		await this._resourceLoader.reload();
+-		// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
+-		// during the session stay disabled unless the setting newly adds them.
+-		const addedDefaultTools = getDefaultTools().filter((name) => !previousDefaultTools.has(name));
+-		// Tools the new extensions register later, such as MCP tools, are pending until then.
+-		for (const name of this.getActiveToolNames()) this._pendingToolNames.add(name);
+-		this._buildRuntime({
+-			activeToolNames: [...this.getActiveToolNames(), ...addedDefaultTools],
+-			flagValues: previousFlagValues,
+-			includeAllExtensionTools: true,
+-		});
++		// Accepted retained messages stay queued while extension runners are replaced.
++		// A previously armed zero-delay timer may fire during any reload await.
++		this._customMessageReloads++;
++		try {
++			const oldRunner = this._extensionRunner;
++			const previousFlagValues = oldRunner.getFlagValues();
++			await emitSessionShutdownEvent(oldRunner, { type: "session_shutdown", reason: "reload" });
++			oldRunner.invalidate();
++			const getDefaultTools = () =>
++				this._usesDefaultTools
++					? applyToolModifiers(
++							this.settingsManager.getDefaultTools() ?? DEFAULT_TOOL_NAMES,
++							this._defaultToolModifiers,
++						)
++					: [];
++			const previousDefaultTools = new Set(getDefaultTools());
++			await this.settingsManager.reload();
++			this.syncQueueModesFromSettings();
++			resetApiProviders();
++			await this._resourceLoader.reload();
++			// Activate tools newly added to defaultTools. Removed ones stay active, and tools disabled
++			// during the session stay disabled unless the setting newly adds them.
++			const addedDefaultTools = getDefaultTools().filter((name) => !previousDefaultTools.has(name));
++			// Tools the new extensions register later, such as MCP tools, are pending until then.
++			for (const name of this.getActiveToolNames()) this._pendingToolNames.add(name);
++			this._buildRuntime({
++				activeToolNames: [...this.getActiveToolNames(), ...addedDefaultTools],
++				flagValues: previousFlagValues,
++				includeAllExtensionTools: true,
++			});
  
 -		const hasBindings =
 -			this._extensionUIContext ||
@@ -509,10 +587,22 @@ index d5032b7..13ac1be 100644
 -			this._extensionShutdownHandler ||
 -			this._extensionErrorListener;
 -		if (hasBindings) {
-+		if (this._extensionsBound) {
- 			await options?.beforeSessionStart?.();
- 			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
- 			this._extensionRunner.reportUnhandledMcpServers();
+-			await options?.beforeSessionStart?.();
+-			await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
+-			this._extensionRunner.reportUnhandledMcpServers();
+-			await this.extendResourcesFromExtensions("reload");
++			if (this._extensionsBound) {
++				await options?.beforeSessionStart?.();
++				await this._extensionRunner.emit({ type: "session_start", reason: "reload" });
++				this._extensionRunner.reportUnhandledMcpServers();
++				await this.extendResourcesFromExtensions("reload");
++			}
++		} finally {
++			this._customMessageReloads--;
++			this._scheduleCustomMessageDrain();
+ 		}
+ 	}
+ 
 diff --git a/packages/coding-agent/src/core/extensions/loader.ts b/packages/coding-agent/src/core/extensions/loader.ts
 index e26aeba..1ae65e7 100644
 --- a/packages/coding-agent/src/core/extensions/loader.ts
@@ -682,10 +772,10 @@ index 20b6eda..b3124f1 100644
  
  	private _appendEntry(entry: SessionEntry): void {
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index f2b02e4..7912ed9 100644
+index 941cbbc..36e6fb0 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -647,9 +647,9 @@ export class InteractiveMode {
+@@ -648,9 +648,9 @@ export class InteractiveMode {
  	private readonly extensionOverlays = new Map<OverlayHandle, () => void>();
  	private extensionDialogBorderOwner: object | undefined;
  	private extensionTerminalInputSubscriptions = new Set<{
@@ -713,3 +803,184 @@ index e096ace..8bce769 100644
  		},
  	): Promise<T>;
  	setCustomEditorComponent(
+diff --git a/packages/coding-agent/test/retained-custom-message-ingress.test.ts b/packages/coding-agent/test/retained-custom-message-ingress.test.ts
+new file mode 100644
+index 0000000..349300f
+--- /dev/null
++++ b/packages/coding-agent/test/retained-custom-message-ingress.test.ts
+@@ -0,0 +1,175 @@
++import { mkdtempSync, rmSync } from "node:fs";
++import { tmpdir } from "node:os";
++import { join } from "node:path";
++import { Agent } from "@earendil-works/pi-agent-core";
++import { type AssistantMessage, createAssistantMessageEventStream, getModel } from "@earendil-works/pi-ai/compat";
++import type { TranscriptContext } from "@earendil-works/pi-ai";
++import { afterEach, describe, expect, it, vi } from "vitest";
++import { AgentSession } from "../src/core/agent-session.ts";
++import { AuthStorage } from "../src/core/auth-storage.ts";
++import type { BeforeAgentStartTrigger } from "../src/core/extensions/runner.ts";
++import { convertToLlm } from "../src/core/messages.ts";
++import { SessionManager } from "../src/core/session-manager.ts";
++import { SettingsManager } from "../src/core/settings-manager.ts";
++import { createModelRegistry, getModelRuntime } from "./model-runtime-test-utils.ts";
++import { createTestResourceLoader } from "./utilities.ts";
++
++const cleanups: Array<() => void> = [];
++
++afterEach(() => {
++	while (cleanups.length) cleanups.pop()?.();
++	vi.useRealTimers();
++});
++
++function assistantMessage(text: string): AssistantMessage {
++	return {
++		role: "assistant",
++		content: [{ type: "text", text }],
++		api: "anthropic-messages",
++		provider: "anthropic",
++		model: "mock",
++		usage: {
++			input: 0,
++			output: 0,
++			cacheRead: 0,
++			cacheWrite: 0,
++			totalTokens: 0,
++			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
++		},
++		stopReason: "stop",
++		timestamp: Date.now(),
++	};
++}
++
++async function createSession(resourceLoader = createTestResourceLoader()) {
++	const directory = mkdtempSync(join(tmpdir(), "pi-retained-ingress-"));
++	const requests: TranscriptContext[] = [];
++	const model = getModel("anthropic", "claude-sonnet-4-5")!;
++	const agent = new Agent({
++		getApiKey: () => "test-key",
++		convertToLlm,
++		initialState: { model, systemPrompt: "Test", tools: [] },
++		streamFn: (_model, context) => {
++			requests.push(context);
++			const stream = createAssistantMessageEventStream();
++			queueMicrotask(() => {
++				const message = assistantMessage("Synthetic completion");
++				stream.push({ type: "start", partial: message });
++				stream.push({ type: "done", reason: "stop", message });
++				stream.end();
++			});
++			return stream;
++		},
++	});
++	const sessionManager = SessionManager.inMemory(directory);
++	const settingsManager = SettingsManager.inMemory({ retry: { enabled: false } });
++	const authStorage = AuthStorage.create(join(directory, "auth.json"));
++	await authStorage.modify("anthropic", async () => ({ type: "api_key", key: "test-key" }));
++	const modelRegistry = await createModelRegistry(authStorage, join(directory, "models.json"));
++	const session = new AgentSession({
++		agent,
++		sessionManager,
++		settingsManager,
++		cwd: directory,
++		modelRuntime: getModelRuntime(modelRegistry),
++		resourceLoader,
++	});
++	cleanups.push(() => {
++		session.dispose();
++		rmSync(directory, { recursive: true, force: true });
++	});
++	return { session, requests, resourceLoader };
++}
++
++function enqueueRetainedWake(session: AgentSession): void {
++	// This is the same internal entry point ExtensionRunner exposes as enqueueMessage.
++	(session as unknown as {
++		_enqueueCustomMessage(
++			message: { customType: string; content: string; display: boolean },
++			options: { triggerTurn: boolean; deliverAs: "followUp" },
++		): void;
++	})._enqueueCustomMessage(
++		{ customType: "retained-test", content: "retained context", display: true },
++		{ triggerTurn: true, deliverAs: "followUp" },
++	);
++}
++
++function contextText(context: TranscriptContext): string {
++	return JSON.stringify(context.messages);
++}
++
++describe("retained custom-message lifecycle regressions", () => {
++	it("does not start a retained run when an event subscriber begins a prompt during flush", async () => {
++		// Regression: prompt() yields during preflight after the subscriber returns.
++		const { session, requests } = await createSession();
++		const runStarts: string[] = [];
++		const internal = session as unknown as {
++			_startRun(
++				trigger: BeforeAgentStartTrigger,
++				onStarted: (() => void) | undefined,
++				triggerCommitted: boolean,
++			): Promise<void>;
++		};
++		const originalStartRun = internal._startRun;
++		internal._startRun = async function (trigger, onStarted, triggerCommitted) {
++			runStarts.push(trigger.messageType);
++			return originalStartRun.call(this, trigger, onStarted, triggerCommitted);
++		};
++		let promptResult: Promise<Error | undefined> | undefined;
++		session.subscribe((event) => {
++			if (event.type === "message_start" && event.message.role === "custom" && !promptResult) {
++				promptResult = session.prompt("subscriber prompt").then(
++					() => undefined,
++					(error: unknown) => (error instanceof Error ? error : new Error(String(error))),
++				);
++			}
++		});
++
++		// Hold the accepted message in the real pending/retained state until the
++		// scheduled drain's flush emits message_start to the subscriber above.
++		const flushing = session as unknown as { _flushingCustomMessages: boolean };
++		flushing._flushingCustomMessages = true;
++		enqueueRetainedWake(session);
++		flushing._flushingCustomMessages = false;
++		await (session as unknown as { _drainCustomMessages(): Promise<void> })._drainCustomMessages();
++		const promptError = await promptResult;
++
++		expect(promptError).toBeUndefined();
++		expect(runStarts).toEqual(["user"]);
++		expect(requests).toHaveLength(1);
++		expect(contextText(requests[0])).toContain("subscriber prompt");
++		expect(contextText(requests[0])).toContain("retained context");
++	});
++
++	it("fences the zero-delay retained drain across reload without losing the accepted wake", async () => {
++		// Regression: reload's first idle check succeeds, then its timer races the awaited resource reload.
++		const resourceLoader = createTestResourceLoader();
++		const originalReload = resourceLoader.reload.bind(resourceLoader);
++		let releaseReload!: () => void;
++		const reloadGate = new Promise<void>((resolve) => {
++			releaseReload = resolve;
++		});
++		let markReloadStarted!: () => void;
++		const reloadStarted = new Promise<void>((resolve) => {
++			markReloadStarted = resolve;
++		});
++		resourceLoader.reload = async () => {
++			markReloadStarted();
++			await reloadGate;
++			return originalReload();
++		};
++		const { session, requests } = await createSession(resourceLoader);
++
++		enqueueRetainedWake(session);
++		const reloading = session.reload();
++		await reloadStarted;
++		await new Promise((resolve) => setTimeout(resolve, 30));
++		const callsDuringReload = requests.length;
++		releaseReload();
++		await reloading;
++		await vi.waitFor(() => expect(requests).toHaveLength(1));
++
++		expect(callsDuringReload).toBe(0);
++		expect(contextText(requests[0])).toContain("retained context");
++	});
++});

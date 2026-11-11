@@ -124,7 +124,7 @@ index 69e3f1d..d29ff33 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-codex-responses.ts b/packages/ai/src/api/openai-codex-responses.ts
-index e226805..ea2c592 100644
+index e226805..4d9312b 100644
 --- a/packages/ai/src/api/openai-codex-responses.ts
 +++ b/packages/ai/src/api/openai-codex-responses.ts
 @@ -25,7 +25,7 @@ import {
@@ -136,7 +136,21 @@ index e226805..ea2c592 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
  import { getIdentityHeaders } from "../utils/identity.ts";
-@@ -503,6 +503,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -457,7 +457,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+ 						statusText: response.statusText,
+ 					});
+ 					const info = await parseErrorResponse(fakeResponse);
+-					throw new Error(info.friendlyMessage || info.message);
++					// Provider-level retries are exhausted here. Keep the final HTTP metadata
++					// available to agent/compaction retry policies as well as the display message.
++					throw Object.assign(new Error(info.friendlyMessage || info.message), {
++						status: response.status,
++						headers: response.headers,
++					});
+ 				} catch (error) {
+ 					if (error instanceof Error) {
+ 						if (error.name === "AbortError" || error.message === "Request was aborted") {
+@@ -503,6 +508,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -187,7 +201,7 @@ index 0ff9f8b..21a37a9 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/pi-messages.ts b/packages/ai/src/api/pi-messages.ts
-index 3316a56..913a56f 100644
+index 3316a56..202845a 100644
 --- a/packages/ai/src/api/pi-messages.ts
 +++ b/packages/ai/src/api/pi-messages.ts
 @@ -25,6 +25,7 @@ import type {
@@ -198,7 +212,40 @@ index 3316a56..913a56f 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
  import { getIdentityHeaders } from "../utils/identity.ts";
-@@ -349,6 +350,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
+@@ -102,12 +103,21 @@ type PiMessagesErrorBody = {
+ export class PiMessagesResponseError extends Error {
+ 	code?: string;
+ 	readonly diagnosticDetails: JsonObject;
+-
+-	constructor(message: string, code: string | undefined, diagnosticDetails: JsonObject) {
++	readonly status: number;
++	readonly headers: Headers;
++
++	constructor(
++		message: string,
++		code: string | undefined,
++		diagnosticDetails: JsonObject,
++		response: Pick<Response, "status" | "headers">,
++	) {
+ 		super(message);
+ 		this.name = "PiMessagesResponseError";
+ 		this.code = code;
+ 		this.diagnosticDetails = diagnosticDetails;
++		this.status = response.status;
++		this.headers = response.headers;
+ 	}
+ }
+ 
+@@ -156,7 +166,7 @@ function createPiMessagesResponseError(
+ 		...(errorBody?.error === undefined ? {} : { error: errorBody.error as JsonValue }),
+ 		...(errorBody ? {} : { body: truncateDiagnosticString(body) }),
+ 		timestampMs: Date.now(),
+-	});
++	}, response);
+ }
+ 
+ function createEmptyUsage(): PiMessagesUsage {
+@@ -349,6 +359,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
  		usage: createEmptyUsage(),
  		stopReason: reason,
  		errorMessage: error instanceof Error ? error.message : String(error),
@@ -396,6 +443,102 @@ index b6e2367..bbad7aa 100644
 +		).toBeUndefined();
 +	});
 +});
+diff --git a/packages/ai/test/openai-codex-stream.test.ts b/packages/ai/test/openai-codex-stream.test.ts
+index 23b2608..a2bd53b 100644
+--- a/packages/ai/test/openai-codex-stream.test.ts
++++ b/packages/ai/test/openai-codex-stream.test.ts
+@@ -2650,6 +2650,45 @@ describe("openai-codex streaming", () => {
+ 		expect(fetchMock).toHaveBeenCalledTimes(1);
+ 	});
+ 
++	it.each([429, 503])("preserves the final %i response's Retry-After metadata for agent retries", async (status) => {
++		// Regression: provider retries were exhausted, then a plain Error discarded final response headers.
++		vi.stubGlobal(
++			"fetch",
++			vi.fn(
++				async () =>
++					new Response(JSON.stringify({ error: { message: "retry later" } }), {
++						status,
++						headers: { "content-type": "application/json", "retry-after": "2" },
++					}),
++			),
++		);
++		const model: Model<"openai-codex-responses"> = {
++			id: "gpt-5.1-codex",
++			name: "GPT-5.1 Codex",
++			api: "openai-codex-responses",
++			provider: "openai-codex",
++			baseUrl: "https://chatgpt.com/backend-api",
++			reasoning: true,
++			input: ["text"],
++			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++			contextWindow: 400000,
++			maxTokens: 128000,
++		};
++		const context = normalizeContext({
++			systemPrompt: "Test",
++			messages: [{ role: "user", content: "Hello", timestamp: 1 }],
++		});
++
++		const result = await streamOpenAICodexResponses(model, context, {
++			apiKey: mockToken(),
++			transport: "sse",
++			maxRetries: 0,
++		}).result();
++
++		expect(result.stopReason).toBe("error");
++		expect(result.retryAfterMs).toBe(2000);
++	});
++
+ 	it("zstd-compresses SSE request bodies", async () => {
+ 		const token = mockToken();
+ 		const encoder = new TextEncoder();
+diff --git a/packages/ai/test/pi-messages.test.ts b/packages/ai/test/pi-messages.test.ts
+index 78d7328..c29fe14 100644
+--- a/packages/ai/test/pi-messages.test.ts
++++ b/packages/ai/test/pi-messages.test.ts
+@@ -39,6 +39,9 @@ async function startServer(options: ResponderOptions): Promise<{ baseUrl: string
+ 				body: raw ? JSON.parse(raw) : undefined,
+ 			});
+ 
++			for (const [name, value] of Object.entries(options.headers ?? {})) {
++				response.setHeader(name, value);
++			}
+ 			if (options.status && options.status !== 200) {
+ 				response.statusCode = options.status;
+ 				response.setHeader("content-type", "application/json");
+@@ -48,9 +51,6 @@ async function startServer(options: ResponderOptions): Promise<{ baseUrl: string
+ 
+ 			response.statusCode = 200;
+ 			response.setHeader("content-type", "text/event-stream");
+-			for (const [name, value] of Object.entries(options.headers ?? {})) {
+-				response.setHeader(name, value);
+-			}
+ 			for (const event of options.events ?? []) {
+ 				response.write(`data: ${JSON.stringify(event)}\n\n`);
+ 			}
+@@ -295,6 +295,21 @@ describe("pi-messages", () => {
+ 		expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
+ 	});
+ 
++	it.each([429, 503])("preserves %i Retry-After headers for agent retries", async (status) => {
++		// Regression: PiMessagesResponseError retained diagnostics but discarded response.headers.
++		const { baseUrl } = await startServer({
++			status,
++			headers: { "retry-after-ms": status === 429 ? "2000" : "3000" },
++			rawBody: JSON.stringify({ error: { message: "temporarily unavailable", code: "overloaded" } }),
++		});
++
++		const message = await stream(createModel(baseUrl), normalizeContext(context), { apiKey: "test-key" }).result();
++
++		expect(message.stopReason).toBe("error");
++		expect(message.retryAfterMs).toBe(status === 429 ? 2000 : 3000);
++		expect(message.diagnostics?.[0]?.details?.status).toBe(status);
++	});
++
+ 	it("errors when the stream ends without a terminal event", async () => {
+ 		const { baseUrl } = await startServer({
+ 			events: [
 diff --git a/packages/ai/test/provider-retry.test.ts b/packages/ai/test/provider-retry.test.ts
 index b8e5c21..a7a9c8f 100644
 --- a/packages/ai/test/provider-retry.test.ts
