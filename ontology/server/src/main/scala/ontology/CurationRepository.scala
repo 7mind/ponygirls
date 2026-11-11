@@ -63,15 +63,20 @@ private[ontology] trait CurationEvidence {
   def reviewEvidence(graph: GraphSnapshot, request: ApplyRequest): List[ReviewEvidence]
   def publications(scope: String, throughGeneration: Long): List[CurationAttemptView]
 }
-private[ontology] trait CurationTransaction extends CurationEvidence {
+private[ontology] trait CurationReadTransactions {
+  def run[A](scope: String)(body: CurationReadContext => A): IO[A]
+}
+private[ontology] trait CurationReadContext extends CurationEvidence {
+  def head(scope: String): GraphSnapshot
+  def find(scope: String, id: UUID): Option[CurationAttemptView]
+  def latest(scope: String, publishedOnly: Boolean): Option[CurationAttemptView]
+}
+private[ontology] trait CurationTransaction extends CurationReadContext {
   def now: Instant
   def coordinator: CoordinatorState
   def saveCoordinator(value: CoordinatorState): Unit
   def lock(scope: String): Unit
-  def head(scope: String): GraphSnapshot
   def containsAttempt(id: UUID): Boolean
-  def find(scope: String, id: UUID): Option[CurationAttemptView]
-  def latest(scope: String, publishedOnly: Boolean): Option[CurationAttemptView]
   def olderActive(scopes: Set[String], fence: CoordinatorFence, limit: Int): List[CurationAttemptView]
   def saveAttempt(value: CurationAttempt, insert: Boolean): Unit
   def append(entry: CurationAuditRecord): Unit

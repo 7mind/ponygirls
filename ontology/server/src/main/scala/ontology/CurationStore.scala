@@ -6,8 +6,9 @@ import java.util.UUID
 import ontology.api.*
 import ontology.domain.*
 
-private[ontology] final class CurationStore(transactions: CurationTransactions, settings: CurationStoreSettings, engine: AdmissionEngine) extends CurationRepository {
+private[ontology] final class CurationStore(transactions: CurationTransactions, readTransactions: CurationReadTransactions, settings: CurationStoreSettings, engine: AdmissionEngine) extends CurationRepository {
   private val validation = new CurationValidation(engine)
+  private val reads = new CurationReadModel(validation)
   private def configured(scope: String): Unit = Require(settings.scopes.contains(scope), "forbidden", "scope is not configured for curation")
   private def time(value: String): Instant = try Instant.parse(value) catch { case _: java.time.format.DateTimeParseException => throw Fault("corrupt", "invalid coordinator timestamp") }
   private def state(tx: CurationTransaction): CoordinatorState = {
@@ -65,29 +66,11 @@ private[ontology] final class CurationStore(transactions: CurationTransactions, 
   private def sameFence(value: CurationAttemptView, fence: CoordinatorFence): Unit =
     Require(value.attempt.claim.fence == fence, "coordinator", "attempt belongs to a different fence")
   private def latest(tx: CurationTransaction, scope: String, publishedOnly: Boolean): Option[CurationAttemptView] = tx.latest(scope, publishedOnly).map(validate(tx, _))
-  private def summary(view: CurationAttemptView): CurationAttemptSummary = {
-    val a = view.attempt; val c = a.claim
-    CurationAttemptSummary(c.attemptId, c.baseGeneration, c.frontier, c.previousCoveredFrontier, a.state, a.inputManifest.map(_.inputDigest),
-      view.journal.lastOption.map(_.ordinal), view.journal.lastOption.map(_.stage), a.terminalCode, a.auditUncertain, c.claimedAt, c.deadlineAt, a.finishedAt)
-  }
-  private def current(tx: CurationTransaction, scope: String): CurationStatus = {
-    val head = tx.head(scope); val last = latest(tx, scope, false)
-    Require(last.forall(v => v.attempt.claim.frontier <= head.sourceFrontier && v.attempt.claim.baseGeneration <= head.generation), "corrupt", "attempt is ahead of scope head")
-    val state = if (last.exists(v => CurationGuards.active(v.attempt.state))) CurationState.Running
-      else if (CurationGuards.eligible(head, last.map(_.attempt.claim.frontier), false)) CurationState.Pending
-      else last.map(_.attempt.state) match {
-        case Some(CurationAttemptState.Failed) => CurationState.Failed
-        case Some(CurationAttemptState.Stale) => CurationState.Stale
-        case Some(CurationAttemptState.Interrupted) => CurationState.Interrupted
-        case _ => CurationState.Idle
-      }
-    val published = latest(tx, scope, true).flatMap(_.attempt.publication)
-    Require(published.forall(_.generation <= head.generation) && published.fold(0L)(_.coveredFrontier) == head.coveredFrontier, "corrupt", "scope coverage differs from its last publication")
-    CurationStatus(scope, head.generation, head.sourceFrontier, head.coveredFrontier, state, last.flatMap(_.attempt.terminalCode), published.map(_.generation), last.map(summary))
-  }
+  private def summary(view: CurationAttemptView): CurationAttemptSummary = reads.summary(view)
+  private def current(tx: CurationTransaction, scope: String): CurationStatus = reads.current(tx, scope).status
   def status(principal: Principal, scope: String): IO[CurationStatus] = IO.defer {
     principal.require(scope, Capability.Read)
-    transactions.run { tx => tx.lock(scope); current(tx, scope) }
+    readTransactions.run(scope)(read => reads.current(read, scope).status)
   }
   def inspect(principal: Principal, scope: String, attemptId: UUID): IO[CurationAttemptView] = IO.defer {
     principal.require(scope, Capability.Read)

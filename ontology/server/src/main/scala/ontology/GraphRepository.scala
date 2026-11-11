@@ -45,7 +45,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
   private var curationAttempts = Map.empty[java.util.UUID, CurationAttempt]
   private var curationJournal = Map.empty[java.util.UUID, List[CurationAuditRecord]]
   private val curationValidation = new CurationValidation(engine)
-  private val curationStore = new CurationStore(curationTransactions, curationSettings, engine)
+  private val curationStore = new CurationStore(curationTransactions, curationReadTransactions, curationSettings, engine)
   val curation: CurationRepository = curationStore
   private def verified(graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationEvidence, verifiedPrimary(graph))
   private def verifiedPrimary(graph: GraphSnapshot): GraphSnapshot = {
@@ -280,7 +280,15 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
     Require(outbox.contains((scope, generation)), "not-found", "unknown projected revision")
     outbox = outbox.updated((scope, generation), true)
   })
-  private def curationEvidence: CurationEvidence = new CurationEvidence {
+  private def curationReadTransactions: CurationReadTransactions = new CurationReadTransactions {
+    def run[A](scope: String)(body: CurationReadContext => A): IO[A] = IO(MemoryGraphRepository.this.synchronized { body(curationEvidence) })
+  }
+  private def curationEvidence: CurationReadContext = new CurationReadContext {
+    def head(scope: String): GraphSnapshot = verified(heads.getOrElse(scope, Graph.empty(scope)))
+    private def read(value: CurationAttempt): CurationAttemptView = CurationAttemptView(value, curationJournal.getOrElse(value.claim.attemptId, Nil))
+    def find(scope: String, id: java.util.UUID): Option[CurationAttemptView] = curationAttempts.get(id).filter(_.claim.scope == scope).map(read)
+    def latest(scope: String, publishedOnly: Boolean): Option[CurationAttemptView] = curationAttempts.valuesIterator
+      .filter(value => value.claim.scope == scope && (!publishedOnly || value.state == CurationAttemptState.Published)).toList.sortBy(_.claim.frontier).lastOption.map(read)
     def history(scope: String, generation: Long): GraphSnapshot = verifiedPrimary(versions.getOrElse((scope, generation), throw Fault("not-found", "graph revision not found")))
     def sources(graph: GraphSnapshot, after: Long): List[CapturedEvent] = {
       val events = sourceEvents.getOrElse(graph.scope, Nil).map(_.event).filter(event => event.frontier > after && event.frontier <= graph.sourceFrontier)

@@ -30,6 +30,8 @@ The capsule payload digest and client-reported full-boundary digest are distinct
 
 ## Required persistence work
 
+The read-boundary prerequisite is implemented separately: `CurationReadModel` returns a coherent graph/status pair through a read-only context. Public status now takes only the scope lock, not the coordinator lock. Retained-cut validation binds historical G/F/C and publication generation, validates positively named evidence and explicit journal prefixes, and preserves earlier active observations after later transitions—even at equal timestamps. Included publication times are checked independently of the latest observed attempt. Missing historical metadata observations are not reconstructed from current rows. This does not implement capsule/delivery storage.
+
 Use the existing graph transaction owner, owner-scoped canonical request replay and explicit bounded baseline/history traversal. Historical validation uses retained projection limits. Configuration reductions may exceed operational traversal capacity, but do not make retained artifacts corrupt. Delivery/read/replay do not require that the context remain enabled for new preparation.
 
 Bind historical G/F/C and publication generation to their authoritative records. Mutable attempt summaries are retained server observations; do not reconstruct their earlier state from today's terminal attempt or infer ordering from equal timestamps. Preserve original ingress/time on replay. Avoid scope-to-global coordinator lock inversion. An authorized empty G0 preparation must not invent graph/history activity.

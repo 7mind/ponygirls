@@ -95,6 +95,33 @@ final class PostgresCurationControls extends CurationRepositorySupport {
     }
   } }
 
+  test("scope status reading does not acquire the coordinator lock") { withDatabase(TestCuration.FixtureLease) { (db, repo, settings, scope) =>
+    val entered = new CountDownLatch(1)
+    val release = new CountDownLatch(1)
+    val hold = db.transaction { c =>
+      Using.resource(c.createStatement()) { statement =>
+        Using.resource(statement.executeQuery("SELECT singleton FROM ontology_curation_coordinator WHERE singleton FOR UPDATE")) { rows =>
+          Require(rows.next(), "fixture", "coordinator missing")
+          entered.countDown()
+          Require(release.await(8, TimeUnit.SECONDS), "fixture", "coordinator release deadline exceeded")
+        }
+      }
+    }
+    capture(repo, scope) *> Resource.make(hold.start)(fiber => IO(release.countDown()) *> fiber.joinWithNever).use { _ => for {
+      locked <- IO.blocking(entered.await(5, TimeUnit.SECONDS))
+      _ = assert(locked)
+      done <- cats.effect.Deferred[IO, CurationStatus]
+      _ <- Resource.make(repo.curation.status(settings.principal, scope).flatTap(value => done.complete(value).void).start)(fiber => IO(release.countDown()) *> fiber.cancel).use { fiber => for {
+        _ <- IO.sleep(2.seconds)
+        whileLocked <- done.tryGet
+        _ <- IO(release.countDown())
+        status <- fiber.joinWithNever
+        _ = assertEquals(whileLocked, Some(status), "scope-only observation waited for coordinator ownership")
+        _ = assertEquals((status.generation, status.frontier, status.coveredFrontier), (1L, 1L, 0L))
+      } yield () }
+    } yield () }
+  } }
+
   test("queued publication checks the attempt deadline even while renewed ownership remains valid") { withDatabase(TestCuration.FixtureLease) { (db, repo, settings, scope) =>
     val bounded = settings.copy(attemptDuration = JavaDuration.ofSeconds(3))
     val owner = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain, bounded)

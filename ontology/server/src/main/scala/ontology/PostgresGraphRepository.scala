@@ -13,7 +13,7 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private val capture = new CaptureEngine
   private val commands = new GraphCommandEngine(engine)
   private val curationValidation = new CurationValidation(engine)
-  private val curationStore = new CurationStore(curationTransactions, curationSettings, engine)
+  private val curationStore = new CurationStore(curationTransactions, curationReadTransactions, curationSettings, engine)
   val curation: CurationRepository = curationStore
   def initialize: IO[Unit] = IO.blocking {
     def sql(file: String): String = {
@@ -52,7 +52,7 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private def saveInput(c: Connection, receipt: InputReceipt): Unit = {
     update(c, "INSERT INTO ontology_inputs(scope, input_id, generation, payload) VALUES (?, ?, ?, ?)")(p => { p.setString(1, receipt.scope); p.setObject(2, receipt.ref.id); p.setLong(3, receipt.generation); p.setString(4, StoredJson.encode(InputReceipt.codecJson, receipt)) })
   }
-  private def verified(c: Connection, graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationTransaction(c), verifiedPrimary(c, graph))
+  private def verified(c: Connection, graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationRead(c), verifiedPrimary(c, graph))
   private def verifiedPrimary(c: Connection, graph: GraphSnapshot): GraphSnapshot = {
     val events = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier <= ? ORDER BY frontier")(p => { p.setString(1, graph.scope); p.setLong(2, graph.sourceFrontier) }) { rows =>
       val values = List.newBuilder[PrimaryRecord]
@@ -370,6 +370,13 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   def acknowledgeProjection(scope: String, generation: Long): IO[Unit] = database.transaction { c =>
     val affected = update(c, "UPDATE ontology_outbox SET published = true WHERE scope = ? AND generation = ?")(p => { p.setString(1, scope); p.setLong(2, generation) })
     Require(affected == 1, "not-found", "unknown projected revision")
+  }
+  private def curationRead(c: Connection): CurationReadContext = curationTransaction(c)
+  private def curationReadTransactions: CurationReadTransactions = new CurationReadTransactions {
+    def run[A](scope: String)(body: CurationReadContext => A): IO[A] = database.transaction { c =>
+      lock(c, scope)
+      body(curationRead(c))
+    }
   }
   private def curationTransactions: CurationTransactions = new CurationTransactions {
     def run[A](body: CurationTransaction => A): IO[A] = database.transaction { c =>
