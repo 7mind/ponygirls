@@ -1,5 +1,6 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Applicability, Applicability_JsonCodec} from './Applicability.js'
 import {Content, Content_JsonCodec} from './Content.js'
 import {Provenance, Provenance_JsonCodec} from './Provenance.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
@@ -8,15 +9,17 @@ import {Standing, Standing_JsonCodec} from './Standing.js'
 export class Definition implements BaboonGeneratedLatest {
     private readonly _ref: Ref;
     private readonly _scope: string;
+    private readonly _applicability: Applicability;
     private readonly _content: Content;
     private readonly _standing: Standing;
     private readonly _basis: Array<Ref>;
     private readonly _changeReason: string | undefined;
     private readonly _provenance: Provenance;
 
-    constructor(ref: Ref, scope: string, content: Content, standing: Standing, basis: Array<Ref>, changeReason: string | undefined, provenance: Provenance) {
+    constructor(ref: Ref, scope: string, applicability: Applicability, content: Content, standing: Standing, basis: Array<Ref>, changeReason: string | undefined, provenance: Provenance) {
         this._ref = ref
         this._scope = scope
+        this._applicability = applicability
         this._content = content
         this._standing = standing
         this._basis = basis
@@ -29,6 +32,9 @@ export class Definition implements BaboonGeneratedLatest {
     }
     public get scope(): string {
         return this._scope;
+    }
+    public get applicability(): Applicability {
+        return this._applicability;
     }
     public get content(): Content {
         return this._content;
@@ -50,6 +56,7 @@ export class Definition implements BaboonGeneratedLatest {
         return {
             ref: this._ref,
             scope: this._scope,
+            applicability: this._applicability,
             content: this._content,
             standing: this._standing,
             basis: this._basis,
@@ -58,10 +65,11 @@ export class Definition implements BaboonGeneratedLatest {
         };
     }
 
-    public with(overrides: {ref?: Ref; scope?: string; content?: Content; standing?: Standing; basis?: Array<Ref>; changeReason?: string | undefined; provenance?: Provenance}): Definition {
+    public with(overrides: {ref?: Ref; scope?: string; applicability?: Applicability; content?: Content; standing?: Standing; basis?: Array<Ref>; changeReason?: string | undefined; provenance?: Provenance}): Definition {
         return new Definition(
             'ref' in overrides ? overrides.ref! : this._ref,
             'scope' in overrides ? overrides.scope! : this._scope,
+            'applicability' in overrides ? overrides.applicability! : this._applicability,
             'content' in overrides ? overrides.content! : this._content,
             'standing' in overrides ? overrides.standing! : this._standing,
             'basis' in overrides ? overrides.basis! : this._basis,
@@ -70,10 +78,11 @@ export class Definition implements BaboonGeneratedLatest {
         );
     }
 
-    public static fromPlain(obj: {ref: Ref; scope: string; content: Content; standing: Standing; basis: Array<Ref>; changeReason: string | undefined; provenance: Provenance}): Definition {
+    public static fromPlain(obj: {ref: Ref; scope: string; applicability: Applicability; content: Content; standing: Standing; basis: Array<Ref>; changeReason: string | undefined; provenance: Provenance}): Definition {
         return new Definition(
             obj.ref,
             obj.scope,
+            obj.applicability,
             obj.content,
             obj.standing,
             obj.basis,
@@ -120,6 +129,7 @@ export class Definition_JsonCodec {
         return {
             "ref": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.ref),
             "scope": value.scope,
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
             "content": Content_JsonCodec.instance.encode(BaboonCodecContext.Default, value.content),
             "standing": Standing_JsonCodec.instance.encode(BaboonCodecContext.Default, value.standing),
             "basis": Array.from(value.basis).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
@@ -136,6 +146,7 @@ export class Definition_JsonCodec {
         return new Definition (
             Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["ref"]),
             obj["scope"] as string,
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
             Content_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["content"]),
             Standing_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["standing"]),
             (obj["basis"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),

@@ -5,6 +5,9 @@ import java.util.UUID
 import java.nio.charset.StandardCharsets.UTF_8
 
 final class AdmissionEngine {
+  private val taskPhases = Set(Phase.Planned, Phase.Active, Phase.Blocked, Phase.Completed, Phase.Cancelled)
+  private val inquiryPhases = Set(Phase.Open, Phase.Resolved)
+  private val currentContractPhases = Set(Phase.Active, Phase.Completed, Phase.Resolved)
   def apply(base: GraphSnapshot, request: ApplyRequest, admission: Admission): Applied = {
     Require(request.scope == base.scope, "scope", "scope mismatch")
     Require(request.requestId == admission.requestId, "request", "request binding mismatch")
@@ -30,20 +33,21 @@ final class AdmissionEngine {
       Require(!Graph.exists(graph, fresh), "identity", "new identity already exists")
       val published: Ref = operation match {
         case x: Operation.Create =>
-          writable(x.content); Graph.validateContent(graph, x.content)
-          val d = Definition(fresh, graph.scope, x.content, Standing.Active, refs(x.basis), None, admission.provenance)
+          writable(x.content); Graph.validateContent(graph, x.content); Applicabilities.validate(graph, x.applicability, false)
+          val d = Definition(fresh, graph.scope, x.applicability, x.content, Standing.Active, refs(x.basis), None, admission.provenance)
           graph = graph.copy(definitions = graph.definitions :+ d); fresh
         case x: Operation.Revise =>
           val old = Graph.node(graph, x.ref)
           Require(Graph.definitions(graph).exists(_.ref == x.ref), "conflict", "definition revision changed")
-          writable(old.content); writable(x.content); Graph.validateContent(graph, x.content)
+          writable(old.content); writable(x.content); Graph.validateContent(graph, x.content); Applicabilities.validate(graph, x.applicability, false)
           Require(x.reason.trim.nonEmpty, "content", "revision reason required")
           val basis = refs(x.basis)
           Require(basis.nonEmpty, "basis", "revisions require an inspectable change basis")
           val next = Ref(old.ref.id, Math.addExact(old.ref.revision, 1))
-          graph = graph.copy(definitions = graph.definitions :+ Definition(next, graph.scope, x.content, x.standing, basis, Some(x.reason), admission.provenance)); next
+          graph = graph.copy(definitions = graph.definitions :+ Definition(next, graph.scope, x.applicability, x.content, x.standing, basis, Some(x.reason), admission.provenance)); next
         case x: Operation.Relate =>
-          val r = Relation(fresh, graph.scope, x.kind, refs(x.sources), refs(x.targets), x.detail, x.why, Standing.Active, admission.provenance)
+          Applicabilities.validate(graph, x.applicability, false)
+          val r = Relation(fresh, graph.scope, x.applicability, x.kind, refs(x.sources), refs(x.targets), x.detail, x.why, Standing.Active, admission.provenance)
           validateRelation(graph, r)
           graph = graph.copy(relations = graph.relations :+ r); fresh
         case x: Operation.ReviseRelation =>
@@ -51,7 +55,8 @@ final class AdmissionEngine {
           Require(Graph.relations(graph).exists(_.ref == x.ref), "conflict", "relation revision changed")
           val sources = refs(x.sources); val targets = refs(x.targets)
           Require(old.sources == sources && old.targets == targets && old.detail == x.detail, "identity", "changed relation proposition requires explicit replacement")
-          val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), why = x.why, standing = x.standing, provenance = admission.provenance)
+          Applicabilities.validate(graph, x.applicability, false)
+          val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), applicability = x.applicability, why = x.why, standing = x.standing, provenance = admission.provenance)
           validateRelation(graph, r); graph = graph.copy(relations = graph.relations :+ r); r.ref
         case x: Operation.Bind =>
           val b = Binding(fresh, graph.scope, resolve(x.definition), refs(x.context), admission.provenance)
@@ -59,18 +64,24 @@ final class AdmissionEngine {
           graph = graph.copy(bindings = graph.bindings :+ b); fresh
         case x: Operation.State =>
           val subject = resolve(x.subject); val b = Graph.binding(graph, subject)
-          val task = Graph.node(graph, b.definition).content match { case t: Content.Task => t; case _ => throw Fault("kind", "work progress requires a task binding") }
+          val task = Graph.node(graph, b.definition).content match {
+            case t: Content.Task => Require(taskPhases.contains(x.phase), "state-kind", "task phase required"); Some(t)
+            case _: Content.Question | _: Content.Review => Require(inquiryPhases.contains(x.phase), "state-kind", "question/review phase required"); None
+            case _ => throw Fault("kind", "work progress requires a task, question or review binding")
+          }
           Require(Graph.latestEvent(graph, subject).map(_.ref) == x.previous, "conflict", "previous event is not binding-local current head")
           Require(x.result.nonEmpty == (x.phase == Phase.Completed), "state", "only completed work has a result")
-          Require(!Set(Phase.Completed, Phase.Cancelled, Phase.Blocked).contains(x.phase) || x.resolution.exists(_.trim.nonEmpty), "state", "resolution required")
-          if (x.phase == Phase.Active || x.phase == Phase.Completed) {
-            Graph.validateBinding(graph, b)
-            Require(task.acceptance.clauses.nonEmpty, "acceptance", "unresolved acceptance blocks execution and fulfillment")
-            validateGates(graph, b)
+          Require(!Set(Phase.Completed, Phase.Cancelled, Phase.Blocked, Phase.Resolved).contains(x.phase) || x.resolution.exists(_.trim.nonEmpty), "state", "resolution required")
+          if (currentContractPhases.contains(x.phase)) Graph.validateBinding(graph, b)
+          task.foreach { value =>
+            if (x.phase == Phase.Active || x.phase == Phase.Completed) {
+              Require(value.acceptance.clauses.nonEmpty, "acceptance", "unresolved acceptance blocks execution and fulfillment")
+              validateGates(graph, b)
+              if (value.execution == Execution.HumanRequired) Require(admission.actor.kind == ActorKind.Human, "authority", "Human-required task cannot be performed by an agent report")
+            }
           }
           val evidence = refs(x.evidence)
           Require(!x.result.contains(Resolution.Fulfilled) || evidence.nonEmpty, "evidence", "fulfilled report requires evidence")
-          if (task.execution == Execution.HumanRequired && (x.phase == Phase.Active || x.phase == Phase.Completed)) Require(admission.actor.kind == ActorKind.Human, "authority", "Human-required task cannot be performed by an agent report")
           val e = StateEvent(fresh, graph.scope, subject, x.previous, x.phase, x.result, x.resolution, evidence, x.uncertainty, admission.provenance)
           graph = graph.copy(events = graph.events :+ e); fresh
       }
@@ -79,7 +90,7 @@ final class AdmissionEngine {
     validateCycles(graph)
     // Later operations in the same transaction must not invalidate a new binding or completion.
     graph.bindings.drop(base.bindings.size).foreach(Graph.validateBinding(graph, _))
-    graph.events.drop(base.events.size).filter(e => e.phase == Phase.Active || e.phase == Phase.Completed).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateBinding(graph, b); validateGates(graph, b) })
+    graph.events.drop(base.events.size).filter(e => currentContractPhases.contains(e.phase)).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateBinding(graph, b); validateGates(graph, b) })
     Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(request.scope, request.requestId, Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
   }
 

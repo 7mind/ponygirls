@@ -10,6 +10,8 @@ package ontology.api {
     case object Blocked extends Phase
     case object Completed extends Phase
     case object Cancelled extends Phase
+    case object Open extends Phase
+    case object Resolved extends Phase
     
     def parse(s: String): Option[Phase] = {
       s match {
@@ -18,6 +20,8 @@ package ontology.api {
         case "Blocked" => Some(Blocked)
         case "Completed" => Some(Completed)
         case "Cancelled" => Some(Cancelled)
+        case "Open" => Some(Open)
+        case "Resolved" => Some(Resolved)
         case _ => None
       }
     }
@@ -27,7 +31,9 @@ package ontology.api {
       Active,
       Blocked,
       Completed,
-      Cancelled
+      Cancelled,
+      Open,
+      Resolved
     ) 
   }
   

@@ -1,5 +1,6 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Applicability, Applicability_JsonCodec} from './Applicability.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
 import {Standing, Standing_JsonCodec} from './Standing.js'
 
@@ -8,12 +9,14 @@ export class SearchHit implements BaboonGeneratedLatest {
     private readonly _kind: string;
     private readonly _text: string;
     private readonly _standing: Standing;
+    private readonly _applicability: Applicability;
 
-    constructor(ref: Ref, kind: string, text: string, standing: Standing) {
+    constructor(ref: Ref, kind: string, text: string, standing: Standing, applicability: Applicability) {
         this._ref = ref
         this._kind = kind
         this._text = text
         this._standing = standing
+        this._applicability = applicability
     }
 
     public get ref(): Ref {
@@ -28,31 +31,37 @@ export class SearchHit implements BaboonGeneratedLatest {
     public get standing(): Standing {
         return this._standing;
     }
+    public get applicability(): Applicability {
+        return this._applicability;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
             ref: this._ref,
             kind: this._kind,
             text: this._text,
-            standing: this._standing
+            standing: this._standing,
+            applicability: this._applicability
         };
     }
 
-    public with(overrides: {ref?: Ref; kind?: string; text?: string; standing?: Standing}): SearchHit {
+    public with(overrides: {ref?: Ref; kind?: string; text?: string; standing?: Standing; applicability?: Applicability}): SearchHit {
         return new SearchHit(
             'ref' in overrides ? overrides.ref! : this._ref,
             'kind' in overrides ? overrides.kind! : this._kind,
             'text' in overrides ? overrides.text! : this._text,
-            'standing' in overrides ? overrides.standing! : this._standing
+            'standing' in overrides ? overrides.standing! : this._standing,
+            'applicability' in overrides ? overrides.applicability! : this._applicability
         );
     }
 
-    public static fromPlain(obj: {ref: Ref; kind: string; text: string; standing: Standing}): SearchHit {
+    public static fromPlain(obj: {ref: Ref; kind: string; text: string; standing: Standing; applicability: Applicability}): SearchHit {
         return new SearchHit(
             obj.ref,
             obj.kind,
             obj.text,
-            obj.standing
+            obj.standing,
+            obj.applicability
         );
     }
 
@@ -96,6 +105,7 @@ export class SearchHit_JsonCodec {
             "kind": value.kind,
             "text": value.text,
             "standing": Standing_JsonCodec.instance.encode(BaboonCodecContext.Default, value.standing),
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): SearchHit {
@@ -109,6 +119,7 @@ export class SearchHit_JsonCodec {
             obj["kind"] as string,
             obj["text"] as string,
             Standing_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["standing"]),
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
         )
     }
 

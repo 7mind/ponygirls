@@ -17,7 +17,7 @@ final class GraphQueriesSuite extends FunSuite {
     val id = UUID.randomUUID()
     repo.apply(ApplyRequest("a", id, generation, operations), Admission(Actor("writer", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now"))
   }
-  private def node(alias: String, text: String): Operation = Operation.Create(alias, Content.Statement(text, Modality.Assertion), Nil)
+  private def node(alias: String, text: String): Operation = Operation.Create(alias, ontology.TestApplicability.unresolved, Content.Statement(text, Modality.Assertion), Nil)
   private def check(io: IO[Unit]): Unit = io.unsafeRunSync()(using runtime)
   test("history pagination preserves every exact reference without duplicates") {
     val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
@@ -66,11 +66,11 @@ final class GraphQueriesSuite extends FunSuite {
     val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
     val task = Content.Task("Original", Acceptance(List("accepted behavior"), None), Execution.Delegated)
     check(for {
-      initial <- change(repo, 0L, List(Operation.Create("t", task, Nil), Operation.Bind("b", Target.Created("t"), Nil), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
+      initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestApplicability.unresolved, task, Nil), Operation.Bind("b", Target.Created("t"), Nil), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
       original = initial.created.find(_.alias == "t").get.ref
       before <- queries.read(reader, ReadRequest("a", ReadView.Current, Nil, None, 100))
       _ = assertEquals(before.records.collect { case GraphRecord.Progress(v) => v }.size, 1)
-      _ <- change(repo, 1L, List(Operation.Revise("v2", original, task.copy(text = "Changed"), Standing.Active, List(Target.Exact(original)), "Changed contract")))
+      _ <- change(repo, 1L, List(Operation.Revise("v2", original, ontology.TestApplicability.unresolved, task.copy(text = "Changed"), Standing.Active, List(Target.Exact(original)), "Changed contract")))
       current <- queries.read(reader, ReadRequest("a", ReadView.Current, Nil, None, 100))
       _ = assertEquals(current.records.collect { case GraphRecord.Progress(v) => v }.size, 0)
       historical <- queries.read(reader, ReadRequest("a", ReadView.History, Nil, None, 100))
@@ -81,12 +81,12 @@ final class GraphQueriesSuite extends FunSuite {
     val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
     val task = Content.Task("Work", Acceptance(List("deliver"), None), Execution.Delegated)
     check(for {
-      initial <- change(repo, 0L, List(Operation.Create("t", task, Nil), Operation.Create("o", Content.Outcome("Output", Acceptance(List("matches"), None), Force.Required), Nil), Operation.Relate("r", RelationKind.PlannedOutput, List(Target.Created("t")), List(Target.Created("o")), RelationDetail.Empty(), "Expected output"), Operation.Bind("b", Target.Created("t"), List(Target.Created("r"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
+      initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestApplicability.unresolved, task, Nil), Operation.Create("o", ontology.TestApplicability.unresolved, Content.Outcome("Output", Acceptance(List("matches"), None), Force.Required), Nil), Operation.Relate("r", ontology.TestApplicability.unresolved, RelationKind.PlannedOutput, List(Target.Created("t")), List(Target.Created("o")), RelationDetail.Empty(), "Expected output"), Operation.Bind("b", Target.Created("t"), List(Target.Created("r"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
       graph <- repo.read("a")
       relation = graph.relations.head
       before <- queries.read(reader, ReadRequest("a", ReadView.Current, Nil, None, 100))
       _ = assertEquals(before.records.collect { case GraphRecord.Progress(v) => v }.size, 1)
-      _ <- change(repo, 1L, List(Operation.ReviseRelation("withdraw", relation.ref, relation.sources.map(Target.Exact(_)), relation.targets.map(Target.Exact(_)), relation.detail, "Old plan no longer selected", Standing.Withdrawn)))
+      _ <- change(repo, 1L, List(Operation.ReviseRelation("withdraw", relation.ref, ontology.TestApplicability.unresolved, relation.sources.map(Target.Exact(_)), relation.targets.map(Target.Exact(_)), relation.detail, "Old plan no longer selected", Standing.Withdrawn)))
       current <- queries.read(reader, ReadRequest("a", ReadView.Current, Nil, None, 100))
       _ = assertEquals(current.records.collect { case GraphRecord.Progress(v) => v }.size, 0)
       history <- queries.read(reader, ReadRequest("a", ReadView.History, Nil, None, 100))

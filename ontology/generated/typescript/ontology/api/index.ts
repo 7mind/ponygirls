@@ -7,6 +7,8 @@ export * from './ActorKind.js';
 export * from './ActorRecord.js';
 export * from './AdoptionOrigin.js';
 export * from './AliasRef.js';
+export * from './Applicability.js';
+export * from './ApplicabilityContext.js';
 export * from './ApplyRequest.js';
 export * from './ApplyResult.js';
 export * from './Assessment.js';

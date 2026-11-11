@@ -15,7 +15,7 @@ final class AdmissionSuite extends FunSuite {
   }
   private def task(text: String): Content.Task = Content.Task(text, Acceptance(List("independently checked"), None), Execution.Delegated)
   private def exact(ref: Ref): Target = Target.Exact(ref)
-  private def create(alias: String, content: Content): Operation = Operation.Create(alias, content, Nil)
+  private def create(alias: String, content: Content): Operation = Operation.Create(alias, ontology.TestApplicability.unresolved, content, Nil)
   private def failure(code: String)(f: => Any): Unit = assertEquals(intercept[Fault](f).code, code)
 
   test("create resolves earlier aliases with host-sealed provenance") {
@@ -64,7 +64,7 @@ final class AdmissionSuite extends FunSuite {
     assertEquals(done.snapshot.events.head.result, Some(Resolution.NotFulfilled))
   }
   test("required governing context cannot be omitted") {
-    val x = run(Graph.empty("project"), List(create("pre", task("Probe")), Operation.Bind("preb", Target.Created("pre"), Nil), create("work", task("Implement")), Operation.Relate("gate", RelationKind.DependsOn, List(Target.Created("work")), List(Target.Created("preb")), RelationDetail.Dependency(Gate.Completion, Consumption.Current, None, ""), "Probe first")))
+    val x = run(Graph.empty("project"), List(create("pre", task("Probe")), Operation.Bind("preb", Target.Created("pre"), Nil), create("work", task("Implement")), Operation.Relate("gate", ontology.TestApplicability.unresolved, RelationKind.DependsOn, List(Target.Created("work")), List(Target.Created("preb")), RelationDetail.Dependency(Gate.Completion, Consumption.Current, None, ""), "Probe first")))
     val work = x.result.created.find(_.alias == "work").get.ref
     failure("missing-context") { run(x.snapshot, List(Operation.Bind("b", exact(work), Nil))) }
     val gate = x.snapshot.relations.head.ref
@@ -72,15 +72,15 @@ final class AdmissionSuite extends FunSuite {
     failure("prerequisite") { run(bound.snapshot, List(Operation.State("start", exact(bound.result.created.head.ref), None, Phase.Active, None, None, Nil, ""))) }
   }
   test("relation endpoints cannot be repurposed behind stable identity") {
-    val x = run(Graph.empty("project"), List(create("a", Content.Statement("A", Modality.Assertion)), create("b", Content.Statement("B", Modality.Assertion)), create("c", Content.Statement("C", Modality.Assertion)), Operation.Relate("r", RelationKind.Supports, List(Target.Created("a")), List(Target.Created("b")), RelationDetail.Empty(), "Evidence")))
+    val x = run(Graph.empty("project"), List(create("a", Content.Statement("A", Modality.Assertion)), create("b", Content.Statement("B", Modality.Assertion)), create("c", Content.Statement("C", Modality.Assertion)), Operation.Relate("r", ontology.TestApplicability.unresolved, RelationKind.Supports, List(Target.Created("a")), List(Target.Created("b")), RelationDetail.Empty(), "Evidence")))
     val r = x.snapshot.relations.head
     val c = x.result.created.find(_.alias == "c").get.ref
-    failure("identity") { run(x.snapshot, List(Operation.ReviseRelation("r", r.ref, r.sources.map(exact), List(exact(c)), RelationDetail.Empty(), "New interpretation", Standing.Active))) }
+    failure("identity") { run(x.snapshot, List(Operation.ReviseRelation("r", r.ref, ontology.TestApplicability.unresolved, r.sources.map(exact), List(exact(c)), RelationDetail.Empty(), "New interpretation", Standing.Active))) }
   }
   test("joint inference supports several premises but support is unary") {
     val ops = List(create("a", Content.Statement("A", Modality.Assertion)), create("b", Content.Statement("B", Modality.Assertion)), create("c", Content.Statement("C", Modality.Assertion)))
-    assertEquals(run(Graph.empty("project"), ops :+ Operation.Relate("r", RelationKind.Infers, List(Target.Created("a"), Target.Created("b")), List(Target.Created("c")), RelationDetail.Empty(), "Joint inference")).snapshot.relations.size, 1)
-    failure("arity") { run(Graph.empty("project"), ops :+ Operation.Relate("r", RelationKind.Supports, List(Target.Created("a"), Target.Created("b")), List(Target.Created("c")), RelationDetail.Empty(), "Wrong arity")) }
+    assertEquals(run(Graph.empty("project"), ops :+ Operation.Relate("r", ontology.TestApplicability.unresolved, RelationKind.Infers, List(Target.Created("a"), Target.Created("b")), List(Target.Created("c")), RelationDetail.Empty(), "Joint inference")).snapshot.relations.size, 1)
+    failure("arity") { run(Graph.empty("project"), ops :+ Operation.Relate("r", ontology.TestApplicability.unresolved, RelationKind.Supports, List(Target.Created("a"), Target.Created("b")), List(Target.Created("c")), RelationDetail.Empty(), "Wrong arity")) }
   }
   test("Human-required work cannot be completed by the curator") {
     val x = run(Graph.empty("project"), List(create("h", Content.Task("Approve", Acceptance(List("Human action"), None), Execution.HumanRequired)), Operation.Bind("b", Target.Created("h"), Nil)))

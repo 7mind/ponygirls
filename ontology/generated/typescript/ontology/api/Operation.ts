@@ -1,5 +1,6 @@
 import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Applicability, Applicability_JsonCodec} from './Applicability.js'
 import {Content, Content_JsonCodec} from './Content.js'
 import {Phase, Phase_JsonCodec} from './Phase.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
@@ -27,17 +28,22 @@ export const Operation = {
 export class Operation_Create implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'ontology.api/[ontology.api/:#Operation]#Create' as const;
     private readonly _alias: string;
+    private readonly _applicability: Applicability;
     private readonly _content: Content;
     private readonly _basis: Array<Target>;
 
-    constructor(alias: string, content: Content, basis: Array<Target>) {
+    constructor(alias: string, applicability: Applicability, content: Content, basis: Array<Target>) {
         this._alias = alias
+        this._applicability = applicability
         this._content = content
         this._basis = basis
     }
 
     public get alias(): string {
         return this._alias;
+    }
+    public get applicability(): Applicability {
+        return this._applicability;
     }
     public get content(): Content {
         return this._content;
@@ -49,22 +55,25 @@ export class Operation_Create implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public toJSON(): Record<string, unknown> {
         return {
             alias: this._alias,
+            applicability: this._applicability,
             content: this._content,
             basis: this._basis
         };
     }
 
-    public with(overrides: {alias?: string; content?: Content; basis?: Array<Target>}): Operation_Create {
+    public with(overrides: {alias?: string; applicability?: Applicability; content?: Content; basis?: Array<Target>}): Operation_Create {
         return new Operation_Create(
             'alias' in overrides ? overrides.alias! : this._alias,
+            'applicability' in overrides ? overrides.applicability! : this._applicability,
             'content' in overrides ? overrides.content! : this._content,
             'basis' in overrides ? overrides.basis! : this._basis
         );
     }
 
-    public static fromPlain(obj: {alias: string; content: Content; basis: Array<Target>}): Operation_Create {
+    public static fromPlain(obj: {alias: string; applicability: Applicability; content: Content; basis: Array<Target>}): Operation_Create {
         return new Operation_Create(
             obj.alias,
+            obj.applicability,
             obj.content,
             obj.basis
         );
@@ -112,6 +121,7 @@ export class Operation_Create_JsonCodec {
     
         return {
             "alias": value.alias,
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
             "content": Content_JsonCodec.instance.encode(BaboonCodecContext.Default, value.content),
             "basis": Array.from(value.basis).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
         }
@@ -124,6 +134,7 @@ export class Operation_Create_JsonCodec {
         const obj = json as Record<string, unknown>;
         return new Operation_Create (
             obj["alias"] as string,
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
             Content_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["content"]),
             (obj["basis"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
         )
@@ -156,14 +167,16 @@ export class Operation_Revise implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public readonly $type = 'ontology.api/[ontology.api/:#Operation]#Revise' as const;
     private readonly _alias: string;
     private readonly _ref: Ref;
+    private readonly _applicability: Applicability;
     private readonly _content: Content;
     private readonly _standing: Standing;
     private readonly _basis: Array<Target>;
     private readonly _reason: string;
 
-    constructor(alias: string, ref: Ref, content: Content, standing: Standing, basis: Array<Target>, reason: string) {
+    constructor(alias: string, ref: Ref, applicability: Applicability, content: Content, standing: Standing, basis: Array<Target>, reason: string) {
         this._alias = alias
         this._ref = ref
+        this._applicability = applicability
         this._content = content
         this._standing = standing
         this._basis = basis
@@ -175,6 +188,9 @@ export class Operation_Revise implements BaboonAdtMemberMeta, BaboonGeneratedLat
     }
     public get ref(): Ref {
         return this._ref;
+    }
+    public get applicability(): Applicability {
+        return this._applicability;
     }
     public get content(): Content {
         return this._content;
@@ -193,6 +209,7 @@ export class Operation_Revise implements BaboonAdtMemberMeta, BaboonGeneratedLat
         return {
             alias: this._alias,
             ref: this._ref,
+            applicability: this._applicability,
             content: this._content,
             standing: this._standing,
             basis: this._basis,
@@ -200,10 +217,11 @@ export class Operation_Revise implements BaboonAdtMemberMeta, BaboonGeneratedLat
         };
     }
 
-    public with(overrides: {alias?: string; ref?: Ref; content?: Content; standing?: Standing; basis?: Array<Target>; reason?: string}): Operation_Revise {
+    public with(overrides: {alias?: string; ref?: Ref; applicability?: Applicability; content?: Content; standing?: Standing; basis?: Array<Target>; reason?: string}): Operation_Revise {
         return new Operation_Revise(
             'alias' in overrides ? overrides.alias! : this._alias,
             'ref' in overrides ? overrides.ref! : this._ref,
+            'applicability' in overrides ? overrides.applicability! : this._applicability,
             'content' in overrides ? overrides.content! : this._content,
             'standing' in overrides ? overrides.standing! : this._standing,
             'basis' in overrides ? overrides.basis! : this._basis,
@@ -211,10 +229,11 @@ export class Operation_Revise implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static fromPlain(obj: {alias: string; ref: Ref; content: Content; standing: Standing; basis: Array<Target>; reason: string}): Operation_Revise {
+    public static fromPlain(obj: {alias: string; ref: Ref; applicability: Applicability; content: Content; standing: Standing; basis: Array<Target>; reason: string}): Operation_Revise {
         return new Operation_Revise(
             obj.alias,
             obj.ref,
+            obj.applicability,
             obj.content,
             obj.standing,
             obj.basis,
@@ -265,6 +284,7 @@ export class Operation_Revise_JsonCodec {
         return {
             "alias": value.alias,
             "ref": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.ref),
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
             "content": Content_JsonCodec.instance.encode(BaboonCodecContext.Default, value.content),
             "standing": Standing_JsonCodec.instance.encode(BaboonCodecContext.Default, value.standing),
             "basis": Array.from(value.basis).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
@@ -280,6 +300,7 @@ export class Operation_Revise_JsonCodec {
         return new Operation_Revise (
             obj["alias"] as string,
             Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["ref"]),
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
             Content_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["content"]),
             Standing_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["standing"]),
             (obj["basis"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
@@ -313,14 +334,16 @@ export class Operation_Revise_JsonCodec {
 export class Operation_Relate implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'ontology.api/[ontology.api/:#Operation]#Relate' as const;
     private readonly _alias: string;
+    private readonly _applicability: Applicability;
     private readonly _kind: RelationKind;
     private readonly _sources: Array<Target>;
     private readonly _targets: Array<Target>;
     private readonly _detail: RelationDetail;
     private readonly _why: string;
 
-    constructor(alias: string, kind: RelationKind, sources: Array<Target>, targets: Array<Target>, detail: RelationDetail, why: string) {
+    constructor(alias: string, applicability: Applicability, kind: RelationKind, sources: Array<Target>, targets: Array<Target>, detail: RelationDetail, why: string) {
         this._alias = alias
+        this._applicability = applicability
         this._kind = kind
         this._sources = sources
         this._targets = targets
@@ -330,6 +353,9 @@ export class Operation_Relate implements BaboonAdtMemberMeta, BaboonGeneratedLat
 
     public get alias(): string {
         return this._alias;
+    }
+    public get applicability(): Applicability {
+        return this._applicability;
     }
     public get kind(): RelationKind {
         return this._kind;
@@ -350,6 +376,7 @@ export class Operation_Relate implements BaboonAdtMemberMeta, BaboonGeneratedLat
     public toJSON(): Record<string, unknown> {
         return {
             alias: this._alias,
+            applicability: this._applicability,
             kind: this._kind,
             sources: this._sources,
             targets: this._targets,
@@ -358,9 +385,10 @@ export class Operation_Relate implements BaboonAdtMemberMeta, BaboonGeneratedLat
         };
     }
 
-    public with(overrides: {alias?: string; kind?: RelationKind; sources?: Array<Target>; targets?: Array<Target>; detail?: RelationDetail; why?: string}): Operation_Relate {
+    public with(overrides: {alias?: string; applicability?: Applicability; kind?: RelationKind; sources?: Array<Target>; targets?: Array<Target>; detail?: RelationDetail; why?: string}): Operation_Relate {
         return new Operation_Relate(
             'alias' in overrides ? overrides.alias! : this._alias,
+            'applicability' in overrides ? overrides.applicability! : this._applicability,
             'kind' in overrides ? overrides.kind! : this._kind,
             'sources' in overrides ? overrides.sources! : this._sources,
             'targets' in overrides ? overrides.targets! : this._targets,
@@ -369,9 +397,10 @@ export class Operation_Relate implements BaboonAdtMemberMeta, BaboonGeneratedLat
         );
     }
 
-    public static fromPlain(obj: {alias: string; kind: RelationKind; sources: Array<Target>; targets: Array<Target>; detail: RelationDetail; why: string}): Operation_Relate {
+    public static fromPlain(obj: {alias: string; applicability: Applicability; kind: RelationKind; sources: Array<Target>; targets: Array<Target>; detail: RelationDetail; why: string}): Operation_Relate {
         return new Operation_Relate(
             obj.alias,
+            obj.applicability,
             obj.kind,
             obj.sources,
             obj.targets,
@@ -422,6 +451,7 @@ export class Operation_Relate_JsonCodec {
     
         return {
             "alias": value.alias,
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
             "kind": RelationKind_JsonCodec.instance.encode(BaboonCodecContext.Default, value.kind),
             "sources": Array.from(value.sources).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "targets": Array.from(value.targets).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
@@ -437,6 +467,7 @@ export class Operation_Relate_JsonCodec {
         const obj = json as Record<string, unknown>;
         return new Operation_Relate (
             obj["alias"] as string,
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
             RelationKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]),
             (obj["sources"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             (obj["targets"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
@@ -472,15 +503,17 @@ export class Operation_ReviseRelation implements BaboonAdtMemberMeta, BaboonGene
     public readonly $type = 'ontology.api/[ontology.api/:#Operation]#ReviseRelation' as const;
     private readonly _alias: string;
     private readonly _ref: Ref;
+    private readonly _applicability: Applicability;
     private readonly _sources: Array<Target>;
     private readonly _targets: Array<Target>;
     private readonly _detail: RelationDetail;
     private readonly _why: string;
     private readonly _standing: Standing;
 
-    constructor(alias: string, ref: Ref, sources: Array<Target>, targets: Array<Target>, detail: RelationDetail, why: string, standing: Standing) {
+    constructor(alias: string, ref: Ref, applicability: Applicability, sources: Array<Target>, targets: Array<Target>, detail: RelationDetail, why: string, standing: Standing) {
         this._alias = alias
         this._ref = ref
+        this._applicability = applicability
         this._sources = sources
         this._targets = targets
         this._detail = detail
@@ -493,6 +526,9 @@ export class Operation_ReviseRelation implements BaboonAdtMemberMeta, BaboonGene
     }
     public get ref(): Ref {
         return this._ref;
+    }
+    public get applicability(): Applicability {
+        return this._applicability;
     }
     public get sources(): Array<Target> {
         return this._sources;
@@ -514,6 +550,7 @@ export class Operation_ReviseRelation implements BaboonAdtMemberMeta, BaboonGene
         return {
             alias: this._alias,
             ref: this._ref,
+            applicability: this._applicability,
             sources: this._sources,
             targets: this._targets,
             detail: this._detail,
@@ -522,10 +559,11 @@ export class Operation_ReviseRelation implements BaboonAdtMemberMeta, BaboonGene
         };
     }
 
-    public with(overrides: {alias?: string; ref?: Ref; sources?: Array<Target>; targets?: Array<Target>; detail?: RelationDetail; why?: string; standing?: Standing}): Operation_ReviseRelation {
+    public with(overrides: {alias?: string; ref?: Ref; applicability?: Applicability; sources?: Array<Target>; targets?: Array<Target>; detail?: RelationDetail; why?: string; standing?: Standing}): Operation_ReviseRelation {
         return new Operation_ReviseRelation(
             'alias' in overrides ? overrides.alias! : this._alias,
             'ref' in overrides ? overrides.ref! : this._ref,
+            'applicability' in overrides ? overrides.applicability! : this._applicability,
             'sources' in overrides ? overrides.sources! : this._sources,
             'targets' in overrides ? overrides.targets! : this._targets,
             'detail' in overrides ? overrides.detail! : this._detail,
@@ -534,10 +572,11 @@ export class Operation_ReviseRelation implements BaboonAdtMemberMeta, BaboonGene
         );
     }
 
-    public static fromPlain(obj: {alias: string; ref: Ref; sources: Array<Target>; targets: Array<Target>; detail: RelationDetail; why: string; standing: Standing}): Operation_ReviseRelation {
+    public static fromPlain(obj: {alias: string; ref: Ref; applicability: Applicability; sources: Array<Target>; targets: Array<Target>; detail: RelationDetail; why: string; standing: Standing}): Operation_ReviseRelation {
         return new Operation_ReviseRelation(
             obj.alias,
             obj.ref,
+            obj.applicability,
             obj.sources,
             obj.targets,
             obj.detail,
@@ -589,6 +628,7 @@ export class Operation_ReviseRelation_JsonCodec {
         return {
             "alias": value.alias,
             "ref": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.ref),
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
             "sources": Array.from(value.sources).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "targets": Array.from(value.targets).map(item => Target_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "detail": RelationDetail_JsonCodec.instance.encode(BaboonCodecContext.Default, value.detail),
@@ -605,6 +645,7 @@ export class Operation_ReviseRelation_JsonCodec {
         return new Operation_ReviseRelation (
             obj["alias"] as string,
             Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["ref"]),
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
             (obj["sources"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             (obj["targets"] as unknown[]).map(item => Target_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             RelationDetail_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["detail"]),

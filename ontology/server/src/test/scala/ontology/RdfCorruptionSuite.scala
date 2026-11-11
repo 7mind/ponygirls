@@ -19,10 +19,10 @@ abstract class RdfCorruptionContract extends FunSuite {
   private def sample: GraphSnapshot = {
     val id = UUID.randomUUID()
     new AdmissionEngine().apply(Graph.empty("scope"), ApplyRequest("scope", id, 0L, List(
-      Operation.Create("a", Content.Statement("A", Modality.Assertion), Nil),
-      Operation.Create("b", Content.Statement("B", Modality.Assertion), Nil),
-      Operation.Create("c", Content.Statement("C", Modality.Assertion), Nil),
-      Operation.Relate("r", RelationKind.Supports, List(Target.Created("a")), List(Target.Created("b")), RelationDetail.Empty(), "A supports B, not C")
+      Operation.Create("a", ontology.TestApplicability.unresolved, Content.Statement("A", Modality.Assertion), Nil),
+      Operation.Create("b", ontology.TestApplicability.unresolved, Content.Statement("B", Modality.Assertion), Nil),
+      Operation.Create("c", ontology.TestApplicability.unresolved, Content.Statement("C", Modality.Assertion), Nil),
+      Operation.Relate("r", ontology.TestApplicability.unresolved, RelationKind.Supports, List(Target.Created("a")), List(Target.Created("b")), RelationDetail.Empty(), "A supports B, not C")
     )), Admission(Actor("agent", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now")).snapshot
   }
   List("snapshot", "traversal", "replay", "foreign-payload").foreach { boundary =>

@@ -9,7 +9,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 final class StoredJsonSuite extends FunSuite {
   test("stored graph bytes may exceed a single admitted HTTP request") {
     val id = UUID.randomUUID()
-    val snapshot = new AdmissionEngine().apply(Graph.empty("s"), ApplyRequest("s", id, 0L, List(Operation.Create("node", Content.Statement("x" * (Wire.MaxBodyBytes + 1), Modality.Assertion), Nil))), Admission(Actor("a", ActorKind.Agent), Actor("r", ActorKind.Service), id, "now")).snapshot
+    val snapshot = new AdmissionEngine().apply(Graph.empty("s"), ApplyRequest("s", id, 0L, List(Operation.Create("node", ontology.TestApplicability.unresolved, Content.Statement("x" * (Wire.MaxBodyBytes + 1), Modality.Assertion), Nil))), Admission(Actor("a", ActorKind.Agent), Actor("r", ActorKind.Service), id, "now")).snapshot
     val raw = StoredJson.encode(GraphSnapshot.codecJson, snapshot)
     assertEquals(StoredJson.decode(GraphSnapshot.codecJson, raw), snapshot)
     assertEquals(intercept[Fault](Wire.parse(raw.getBytes(UTF_8))).code, "bad-envelope")

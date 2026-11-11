@@ -89,7 +89,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine) extends GraphReposito
   def sources(request: SourceRequest): IO[SourceResult] = IO(synchronized {
     val events = sourceEvents.getOrElse(request.scope, Nil)
     val frontier = events.lastOption.fold(0L)(_.frontier)
-    Require(request.after >= 0 && request.after <= frontier && request.limit > 0, "source-page", "invalid source page")
+    Require(request.after >= 0 && request.after <= frontier && request.limit > 0 && request.limit < Int.MaxValue, "source-page", "invalid source page")
     val remaining = events.filter(_.frontier > request.after)
     val page = remaining.take(request.limit)
     SourceResult(request.scope, page, frontier, if (remaining.size > page.size) Some(page.last.frontier) else None)

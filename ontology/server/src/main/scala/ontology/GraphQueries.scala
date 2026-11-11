@@ -99,12 +99,17 @@ final class GraphQueries(repository: GraphRepository, cursors: CursorSigner, lim
           Require(request.targets.nonEmpty, "targets", "binding context requires explicit targets")
           val wanted = request.targets.flatMap { ref =>
             graph.bindings.find(_.ref == ref) match {
-              case Some(b) => List(b.ref, b.definition) ++ b.context ++ Graph.context(graph, b.definition)
-              case None => Graph.node(graph, ref); List(ref) ++ Graph.context(graph, ref)
+              case Some(b) => List(b.ref, b.definition) ++ Graph.definitions(graph).filter(_.ref.id == b.definition.id).map(_.ref) ++ b.context ++ Graph.context(graph, b.definition)
+              case None => Graph.node(graph, ref); List(ref) ++ Graph.definitions(graph).filter(_.ref.id == ref.id).map(_.ref) ++ Graph.context(graph, ref)
             }
           }.distinct
           val related = graph.relations.filter(r => wanted.contains(r.ref)).flatMap(r => r.sources ++ r.targets)
-          all.filter(r => (wanted ++ related).contains(Graph.recordRef(r)))
+          val anchors = all.filter(r => (wanted ++ related).contains(Graph.recordRef(r))).flatMap {
+            case GraphRecord.Node(value) => Applicabilities.references(value.applicability)
+            case GraphRecord.Edge(value) => Applicabilities.references(value.applicability)
+            case _ => Nil
+          }
+          all.filter(r => (wanted ++ related ++ anchors).contains(Graph.recordRef(r)))
       }
       val records = ordered(selected)
       val digest = Digests.text(Wire.encode(ReadRequest.codecJson, request.copy(cursor = None)).noSpaces)
@@ -118,7 +123,7 @@ final class GraphQueries(repository: GraphRepository, cursors: CursorSigner, lim
     principal.require(request.scope, Capability.Read); limit(request.limit)
     Require(request.query.getBytes(UTF_8).length <= limits.maxQueryBytes, "query", "query exceeds declared bound")
     repository.read(request.scope).map { graph =>
-      val items = Graph.definitions(graph).filter(d => request.kind.forall(kind => kind.toString.toLowerCase(java.util.Locale.ROOT) == Graph.kind(d.content)) && Graph.text(d.content).contains(request.query)).map(d => SearchHit(d.ref, Graph.kind(d.content), Graph.text(d.content), d.standing))
+      val items = Graph.definitions(graph).filter(d => request.kind.forall(kind => kind.toString.toLowerCase(java.util.Locale.ROOT) == Graph.kind(d.content)) && Graph.text(d.content).contains(request.query)).map(d => SearchHit(d.ref, Graph.kind(d.content), Graph.text(d.content), d.standing, d.applicability))
       val digest = Digests.text(Wire.encode(FindRequest.codecJson, request.copy(cursor = None)).noSpaces)
       val offset = start(request.cursor, digest, graph.generation, items.size)
       val (values, position) = page(items, offset, request.limit, (item: SearchHit) => Wire.encode(SearchHit.codecJson, item).noSpaces.getBytes(UTF_8).length)

@@ -6,6 +6,7 @@ package ontology.api {
   final case class Relation(
     ref: Ref,
     scope: String,
+    applicability: Applicability,
     kind: RelationKind,
     sources: List[Ref],
     targets: List[Ref],
@@ -44,6 +45,7 @@ package ontology.api {
       Json.obj(
         "ref" -> Ref_JsonCodec.instance.encode(ctx, value.ref),
         "scope" -> Json.fromString(value.scope),
+        "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability),
         "kind" -> RelationKind_JsonCodec.instance.encode(ctx, value.kind),
         "sources" -> Json.fromValues(value.sources.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
         "targets" -> Json.fromValues(value.targets.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
@@ -63,6 +65,7 @@ package ontology.api {
         case Some(jsonObject) => for {
             ref <- getField(jsonObject, "ref").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
+            applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
             kind <- getField(jsonObject, "kind").flatMap(v => RelationKind_JsonCodec.circeDecoder(v.hcursor))
             sources <- getField(jsonObject, "sources").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
             targets <- getField(jsonObject, "targets").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
@@ -70,7 +73,7 @@ package ontology.api {
             why <- getField(jsonObject, "why").flatMap(v => decodeString(v.hcursor))
             standing <- getField(jsonObject, "standing").flatMap(v => Standing_JsonCodec.circeDecoder(v.hcursor))
             provenance <- getField(jsonObject, "provenance").flatMap(v => Provenance_JsonCodec.circeDecoder(v.hcursor))
-          } yield Relation(ref,scope,kind,sources,targets,detail,why,standing,provenance)
+          } yield Relation(ref,scope,applicability,kind,sources,targets,detail,why,standing,provenance)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Relation: object expected"))
       }
     }

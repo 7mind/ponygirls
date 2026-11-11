@@ -6,6 +6,7 @@ package ontology.api {
   final case class Definition(
     ref: Ref,
     scope: String,
+    applicability: Applicability,
     content: Content,
     standing: Standing,
     basis: List[Ref],
@@ -42,6 +43,7 @@ package ontology.api {
       Json.obj(
         "ref" -> Ref_JsonCodec.instance.encode(ctx, value.ref),
         "scope" -> Json.fromString(value.scope),
+        "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability),
         "content" -> Content_JsonCodec.instance.encode(ctx, value.content),
         "standing" -> Standing_JsonCodec.instance.encode(ctx, value.standing),
         "basis" -> Json.fromValues(value.basis.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
@@ -59,12 +61,13 @@ package ontology.api {
         case Some(jsonObject) => for {
             ref <- getField(jsonObject, "ref").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
+            applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
             content <- getField(jsonObject, "content").flatMap(v => Content_JsonCodec.circeDecoder(v.hcursor))
             standing <- getField(jsonObject, "standing").flatMap(v => Standing_JsonCodec.circeDecoder(v.hcursor))
             basis <- getField(jsonObject, "basis").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
             changeReason <- getField(jsonObject, "changeReason").flatMap(v => decodeOption(decodeString)(v.hcursor))
             provenance <- getField(jsonObject, "provenance").flatMap(v => Provenance_JsonCodec.circeDecoder(v.hcursor))
-          } yield Definition(ref,scope,content,standing,basis,changeReason,provenance)
+          } yield Definition(ref,scope,applicability,content,standing,basis,changeReason,provenance)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Definition: object expected"))
       }
     }

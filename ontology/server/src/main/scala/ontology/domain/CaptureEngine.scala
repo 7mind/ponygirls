@@ -79,15 +79,16 @@ final class CaptureEngine {
       case value: Observation.FileVersion =>
         val key = CaptureIdentity.artifactKey(input.scope, principal.credentialId, context, value)
         val ref = CaptureIdentity.artifacts(event).head
-        List(Definition(ref, input.scope, Content.Artifact("Host file witness: " + value.path, value.digest, "application/octet-stream", "urn:ontology:observed-file:" + Digests.text(key), value.generation), Standing.Active, Nil, None, provenance))
+        List(Definition(ref, input.scope, Applicability.Captured(source), Content.Artifact("Host file witness: " + value.path, value.digest, "application/octet-stream", "urn:ontology:observed-file:" + Digests.text(key), value.generation), Standing.Active, Nil, None, provenance))
       case _ => Nil
     }
     val artifactRefs = artifacts.map(_.ref)
     val executionRefs = input.observation match { case value: Observation.Execution => value.contract.toList ++ value.artifacts; case _ => Nil }
-    val definition = Definition(source, input.scope, Content.Source(input.text, (artifactRefs ++ executionRefs).distinct, Digests.text(input.text), source.id, principal.credentialId, context, input.metadata, input.origin, input.observation), Standing.Active, Nil, None, provenance)
+    val definition = Definition(source, input.scope, Applicability.Captured(source), Content.Source(input.text, (artifactRefs ++ executionRefs).distinct, Digests.text(input.text), source.id, principal.credentialId, context, input.metadata, input.origin, input.observation), Standing.Active, Nil, None, provenance)
     val actors = List(contributor, recorder, principal.actor).distinct.filterNot(a => base.actors.exists(_.value == a)).map { actor => ActorRecord(Ref(UUID.nameUUIDFromBytes(("actor:" + actor.kind + ":" + actor.id).getBytes(UTF_8)), 1), actor) }
     val additions = artifacts.filterNot(a => base.definitions.exists(_.ref == a.ref))
     val changed = base.copy(generation = Math.addExact(base.generation, 1L), definitions = base.definitions ++ additions :+ definition, actors = base.actors ++ actors)
+    (additions :+ definition).foreach(value => Applicabilities.validate(changed, value.applicability, true))
     val receipt = InputReceipts.create(inputId, input.scope, changed.generation, InputKind.Capture, contributor, recorder, principal.actor, "ontology.api.IngestRequest/0.1.0 canonical JSON", Wire.encode(IngestRequest.codecJson, input).noSpaces, receivedAt)
     Captured(changed, event, IngestResult(input.scope, input.requestId, input.eventId, principal.credentialId, source, artifactRefs, event.frontier, false), receipt)
   }

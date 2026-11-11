@@ -13,7 +13,7 @@ abstract class GraphRepositoryContract extends FunSuite {
   protected def repository: Resource[IO, GraphRepository]
   override def afterAll(): Unit = runtime.shutdown()
   private def check(f: GraphRepository => IO[Unit]): Unit = repository.use(f).unsafeRunSync()(runtime)
-  protected def request(scope: String, generation: Long, text: String): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("claim", Content.Statement(text, Modality.Assertion), Nil)))
+  protected def request(scope: String, generation: Long, text: String): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("claim", ontology.TestApplicability.unresolved, Content.Statement(text, Modality.Assertion), Nil)))
   protected def admission(r: ApplyRequest): Admission = Admission(Actor("test-agent", ActorKind.Agent), Actor("test-host", ActorKind.Service), r.requestId, "2026-11-10T00:00:00Z")
   private def scope(): String = "contract-" + UUID.randomUUID()
 
@@ -130,6 +130,31 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(StoredJson.decode(ApplyRequest.codecJson, input.content), r)
     } yield ()
   } }
+  test("question work resolution persists separately from its unresolved answer") { check { repo =>
+    val name = scope()
+    val question = Content.Question("Which evidence is missing?", Nil, None, Escalation.HumanRequired)
+    val opened = ApplyRequest(name, UUID.randomUUID(), 0L, List(
+      Operation.Create("question", TestApplicability.unresolved, question, Nil),
+      Operation.Bind("binding", Target.Created("question"), Nil),
+      Operation.State("open", Target.Created("binding"), None, Phase.Open, None, None, Nil, "Unanswered")))
+    for {
+      first <- repo.apply(opened, admission(opened))
+      binding = first.created.find(_.alias == "binding").get.ref
+      previous = first.created.find(_.alias == "open").get.ref
+      close = ApplyRequest(name, UUID.randomUUID(), first.generation, List(Operation.State("resolved", Target.Exact(binding), Some(previous), Phase.Resolved, None, Some("Investigation concluded without an answer"), Nil, "Human clarification remains necessary")))
+      result <- repo.apply(close, admission(close))
+      current <- repo.read(name)
+      historical <- repo.history(name, first.generation)
+      persisted <- repo.history(name, result.generation)
+      _ = assertEquals(persisted, current)
+      _ = assertEquals(Graph.latestEvent(historical, binding).get.phase, Phase.Open)
+      _ = assertEquals(Graph.latestEvent(current, binding).get.phase, Phase.Resolved)
+      _ = assertEquals(Graph.latestEvent(current, binding).get.result, None)
+      _ = assertEquals(current.definitions.head.content, question)
+      receipt <- repo.input(name, Ref(current.events.last.provenance.input, 1))
+      _ = assertEquals(StoredJson.decode(ApplyRequest.codecJson, receipt.content), close)
+    } yield ()
+  } }
   test("atomic snapshot, exact history and outbox agree") { check { repo =>
     val r = request(scope(), 0L, "First assertion")
     for {
@@ -165,7 +190,7 @@ abstract class GraphRepositoryContract extends FunSuite {
     val r = request(scope(), 0L, "Original")
     for {
       _ <- repo.apply(r, admission(r))
-      bad <- repo.apply(r.copy(operations = List(Operation.Create("claim", Content.Statement("Changed", Modality.Assertion), Nil))), admission(r)).attempt
+      bad <- repo.apply(r.copy(operations = List(Operation.Create("claim", ontology.TestApplicability.unresolved, Content.Statement("Changed", Modality.Assertion), Nil))), admission(r)).attempt
       head <- repo.read(r.scope)
       _ = assertEquals(bad.left.toOption.collect { case f: Fault => f.code }, Some("replay-conflict"))
       _ = assertEquals(Graph.text(head.definitions.head.content), "Original")

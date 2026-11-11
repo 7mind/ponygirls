@@ -8,6 +8,12 @@ enum ActorKind { Human Agent Collector Service Unknown }
 data Actor { id: str kind: ActorKind }
 data Ref { id: uid revision: i32 }
 data ActorRecord { ref: Ref value: Actor }
+adt ApplicabilityContext { data Capture { source: Ref } data Subject { ref: Ref } }
+adt Applicability {
+ data Unresolved { reason: str basis: lst[Ref] context: lst[ApplicabilityContext] }
+ data Declared { statement: str basis: lst[Ref] context: lst[ApplicabilityContext] }
+ data Captured { source: Ref }
+}
 data Provenance { contributor: Actor recorder: Actor input: uid recordedAt: str }
 enum InputKind { GraphMutation Capture Curation }
 data InputReceipt { ref: Ref scope: str generation: i64 kind: InputKind contributor: Actor recorder: Actor submitter: Actor encoding: str content: str digest: str recordedAt: str }
@@ -49,19 +55,19 @@ adt RelationDetail {
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Ref] }
  data Adoption { presentationId: uid origin: AdoptionOrigin }
 }
-data Definition { ref: Ref scope: str content: Content standing: Standing basis: lst[Ref] changeReason: opt[str] provenance: Provenance }
-data Relation { ref: Ref scope: str kind: RelationKind sources: lst[Ref] targets: lst[Ref] detail: RelationDetail why: str standing: Standing provenance: Provenance }
+data Definition { ref: Ref scope: str applicability: Applicability content: Content standing: Standing basis: lst[Ref] changeReason: opt[str] provenance: Provenance }
+data Relation { ref: Ref scope: str applicability: Applicability kind: RelationKind sources: lst[Ref] targets: lst[Ref] detail: RelationDetail why: str standing: Standing provenance: Provenance }
 data Binding { ref: Ref scope: str definition: Ref context: lst[Ref] provenance: Provenance }
-enum Phase { Planned Active Blocked Completed Cancelled }
+enum Phase { Planned Active Blocked Completed Cancelled Open Resolved }
 enum Resolution { Fulfilled NotFulfilled Inconclusive }
 data StateEvent { ref: Ref scope: str subject: Ref previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Ref] uncertainty: str provenance: Provenance }
 
 adt Target { data Exact { ref: Ref } data Created { alias: str } }
 adt Operation {
- data Create { alias: str content: Content basis: lst[Target] }
- data Revise { alias: str ref: Ref content: Content standing: Standing basis: lst[Target] reason: str }
- data Relate { alias: str kind: RelationKind sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str }
- data ReviseRelation { alias: str ref: Ref sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str standing: Standing }
+ data Create { alias: str applicability: Applicability content: Content basis: lst[Target] }
+ data Revise { alias: str ref: Ref applicability: Applicability content: Content standing: Standing basis: lst[Target] reason: str }
+ data Relate { alias: str applicability: Applicability kind: RelationKind sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str }
+ data ReviseRelation { alias: str ref: Ref applicability: Applicability sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str standing: Standing }
  data Bind { alias: str definition: Target context: lst[Target] }
  data State { alias: str subject: Target previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Target] uncertainty: str }
 }
@@ -75,7 +81,7 @@ adt GraphRecord { data Input { value: InputReceipt } data Person { value: ActorR
 root data ReadResult { scope: str generation: i64 records: lst[GraphRecord] cursor: opt[str] }
 enum DefinitionKind { Outcome Constraint Task Statement Hypothesis Defect Question Decision Review Source Artifact Conflict }
 root data FindRequest { scope: str kind: opt[DefinitionKind] query: str cursor: opt[str] limit: i32 }
-data SearchHit { ref: Ref kind: str text: str standing: Standing }
+data SearchHit { ref: Ref kind: str text: str standing: Standing applicability: Applicability }
 root data FindResult { scope: str generation: i64 items: lst[SearchHit] cursor: opt[str] }
 
 // Capture is a separate trusted ingress; these actor claims are not graph mutations.

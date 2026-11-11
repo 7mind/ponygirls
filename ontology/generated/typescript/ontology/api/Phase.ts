@@ -5,7 +5,9 @@ export enum Phase {
     Active = "Active",
     Blocked = "Blocked",
     Completed = "Completed",
-    Cancelled = "Cancelled"
+    Cancelled = "Cancelled",
+    Open = "Open",
+    Resolved = "Resolved"
 }
 
 export const Phase_values: ReadonlyArray<Phase> = [
@@ -13,7 +15,9 @@ export const Phase_values: ReadonlyArray<Phase> = [
     Phase.Active,
     Phase.Blocked,
     Phase.Completed,
-    Phase.Cancelled
+    Phase.Cancelled,
+    Phase.Open,
+    Phase.Resolved
 ] as const;
 
 export function Phase_parse(s: string): Phase {

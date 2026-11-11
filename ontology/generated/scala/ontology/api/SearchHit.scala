@@ -7,7 +7,8 @@ package ontology.api {
     ref: Ref,
     kind: String,
     text: String,
-    standing: Standing
+    standing: Standing,
+    applicability: Applicability
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = SearchHit.baboonDomainVersion
     override def baboonDomainIdentifier: String = SearchHit.baboonDomainIdentifier
@@ -40,7 +41,8 @@ package ontology.api {
         "ref" -> Ref_JsonCodec.instance.encode(ctx, value.ref),
         "kind" -> Json.fromString(value.kind),
         "text" -> Json.fromString(value.text),
-        "standing" -> Standing_JsonCodec.instance.encode(ctx, value.standing)
+        "standing" -> Standing_JsonCodec.instance.encode(ctx, value.standing),
+        "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability)
       )
     }
     
@@ -55,7 +57,8 @@ package ontology.api {
             kind <- getField(jsonObject, "kind").flatMap(v => decodeString(v.hcursor))
             text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
             standing <- getField(jsonObject, "standing").flatMap(v => Standing_JsonCodec.circeDecoder(v.hcursor))
-          } yield SearchHit(ref,kind,text,standing)
+            applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
+          } yield SearchHit(ref,kind,text,standing,applicability)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to SearchHit: object expected"))
       }
     }

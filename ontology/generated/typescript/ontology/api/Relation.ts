@@ -1,5 +1,6 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Applicability, Applicability_JsonCodec} from './Applicability.js'
 import {Provenance, Provenance_JsonCodec} from './Provenance.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
 import {RelationDetail, RelationDetail_JsonCodec} from './RelationDetail.js'
@@ -9,6 +10,7 @@ import {Standing, Standing_JsonCodec} from './Standing.js'
 export class Relation implements BaboonGeneratedLatest {
     private readonly _ref: Ref;
     private readonly _scope: string;
+    private readonly _applicability: Applicability;
     private readonly _kind: RelationKind;
     private readonly _sources: Array<Ref>;
     private readonly _targets: Array<Ref>;
@@ -17,9 +19,10 @@ export class Relation implements BaboonGeneratedLatest {
     private readonly _standing: Standing;
     private readonly _provenance: Provenance;
 
-    constructor(ref: Ref, scope: string, kind: RelationKind, sources: Array<Ref>, targets: Array<Ref>, detail: RelationDetail, why: string, standing: Standing, provenance: Provenance) {
+    constructor(ref: Ref, scope: string, applicability: Applicability, kind: RelationKind, sources: Array<Ref>, targets: Array<Ref>, detail: RelationDetail, why: string, standing: Standing, provenance: Provenance) {
         this._ref = ref
         this._scope = scope
+        this._applicability = applicability
         this._kind = kind
         this._sources = sources
         this._targets = targets
@@ -34,6 +37,9 @@ export class Relation implements BaboonGeneratedLatest {
     }
     public get scope(): string {
         return this._scope;
+    }
+    public get applicability(): Applicability {
+        return this._applicability;
     }
     public get kind(): RelationKind {
         return this._kind;
@@ -61,6 +67,7 @@ export class Relation implements BaboonGeneratedLatest {
         return {
             ref: this._ref,
             scope: this._scope,
+            applicability: this._applicability,
             kind: this._kind,
             sources: this._sources,
             targets: this._targets,
@@ -71,10 +78,11 @@ export class Relation implements BaboonGeneratedLatest {
         };
     }
 
-    public with(overrides: {ref?: Ref; scope?: string; kind?: RelationKind; sources?: Array<Ref>; targets?: Array<Ref>; detail?: RelationDetail; why?: string; standing?: Standing; provenance?: Provenance}): Relation {
+    public with(overrides: {ref?: Ref; scope?: string; applicability?: Applicability; kind?: RelationKind; sources?: Array<Ref>; targets?: Array<Ref>; detail?: RelationDetail; why?: string; standing?: Standing; provenance?: Provenance}): Relation {
         return new Relation(
             'ref' in overrides ? overrides.ref! : this._ref,
             'scope' in overrides ? overrides.scope! : this._scope,
+            'applicability' in overrides ? overrides.applicability! : this._applicability,
             'kind' in overrides ? overrides.kind! : this._kind,
             'sources' in overrides ? overrides.sources! : this._sources,
             'targets' in overrides ? overrides.targets! : this._targets,
@@ -85,10 +93,11 @@ export class Relation implements BaboonGeneratedLatest {
         );
     }
 
-    public static fromPlain(obj: {ref: Ref; scope: string; kind: RelationKind; sources: Array<Ref>; targets: Array<Ref>; detail: RelationDetail; why: string; standing: Standing; provenance: Provenance}): Relation {
+    public static fromPlain(obj: {ref: Ref; scope: string; applicability: Applicability; kind: RelationKind; sources: Array<Ref>; targets: Array<Ref>; detail: RelationDetail; why: string; standing: Standing; provenance: Provenance}): Relation {
         return new Relation(
             obj.ref,
             obj.scope,
+            obj.applicability,
             obj.kind,
             obj.sources,
             obj.targets,
@@ -137,6 +146,7 @@ export class Relation_JsonCodec {
         return {
             "ref": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.ref),
             "scope": value.scope,
+            "applicability": Applicability_JsonCodec.instance.encode(BaboonCodecContext.Default, value.applicability),
             "kind": RelationKind_JsonCodec.instance.encode(BaboonCodecContext.Default, value.kind),
             "sources": Array.from(value.sources).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "targets": Array.from(value.targets).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
@@ -155,6 +165,7 @@ export class Relation_JsonCodec {
         return new Relation (
             Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["ref"]),
             obj["scope"] as string,
+            Applicability_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["applicability"]),
             RelationKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]),
             (obj["sources"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             (obj["targets"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
