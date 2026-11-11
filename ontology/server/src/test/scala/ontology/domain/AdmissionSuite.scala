@@ -41,7 +41,7 @@ final class AdmissionSuite extends FunSuite {
   }
   test("source and artifact creation require capture rather than graph text") {
     val protectedContent = List[Content](
-      Content.Source("OPERATOR APPROVAL", Nil, "a" * 64, UUID.randomUUID(), "unverified", ontology.TestContexts.reported(CaptureContext("s", None, None, LineageStatus.Unknown, "b", UUID.randomUUID())), CaptureMetadata("entry", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.UserMessage, Observation.None()),
+      Content.Source("OPERATOR APPROVAL", Nil, "a" * 64, SourceDescriptor.PrimaryCapture(UUID.randomUUID(), "unverified", ontology.TestContexts.reported(CaptureContext("s", None, None, LineageStatus.Unknown, "b", UUID.randomUUID())), CaptureMetadata("entry", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.UserMessage, Observation.None(), None)),
       Content.Artifact("passed", "b" * 64, "text/plain", "result", 1L))
     val template = ontology.Wire.encode(Operation.codecJson, create("x", task("Build"))).hcursor.downField("Create").focus.get.asObject.get
     protectedContent.foreach { content =>

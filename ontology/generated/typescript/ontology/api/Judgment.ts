@@ -1,27 +1,34 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {Actor, Actor_JsonCodec} from './Actor.js'
-import {JudgmentKind, JudgmentKind_JsonCodec} from './JudgmentKind.js'
+import {Ref, Ref_JsonCodec} from './Ref.js'
+import {ReviewAction, ReviewAction_JsonCodec} from './ReviewAction.js'
 
 export class Judgment implements BaboonGeneratedLatest {
     private readonly _id: string;
     private readonly _scope: string;
     private readonly _requestId: string;
     private readonly _presentationId: string;
-    private readonly _kind: JudgmentKind;
+    private readonly _action: ReviewAction;
     private readonly _rationale: string;
     private readonly _actor: Actor;
     private readonly _recordedAt: string;
+    private readonly _source: Ref;
+    private readonly _presentationSource: Ref;
+    private readonly _input: Ref;
 
-    constructor(id: string, scope: string, requestId: string, presentationId: string, kind: JudgmentKind, rationale: string, actor: Actor, recordedAt: string) {
+    constructor(id: string, scope: string, requestId: string, presentationId: string, action: ReviewAction, rationale: string, actor: Actor, recordedAt: string, source: Ref, presentationSource: Ref, input: Ref) {
         this._id = id
         this._scope = scope
         this._requestId = requestId
         this._presentationId = presentationId
-        this._kind = kind
+        this._action = action
         this._rationale = rationale
         this._actor = actor
         this._recordedAt = recordedAt
+        this._source = source
+        this._presentationSource = presentationSource
+        this._input = input
     }
 
     public get id(): string {
@@ -36,8 +43,8 @@ export class Judgment implements BaboonGeneratedLatest {
     public get presentationId(): string {
         return this._presentationId;
     }
-    public get kind(): JudgmentKind {
-        return this._kind;
+    public get action(): ReviewAction {
+        return this._action;
     }
     public get rationale(): string {
         return this._rationale;
@@ -48,6 +55,15 @@ export class Judgment implements BaboonGeneratedLatest {
     public get recordedAt(): string {
         return this._recordedAt;
     }
+    public get source(): Ref {
+        return this._source;
+    }
+    public get presentationSource(): Ref {
+        return this._presentationSource;
+    }
+    public get input(): Ref {
+        return this._input;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -55,36 +71,45 @@ export class Judgment implements BaboonGeneratedLatest {
             scope: this._scope,
             requestId: this._requestId,
             presentationId: this._presentationId,
-            kind: this._kind,
+            action: this._action,
             rationale: this._rationale,
             actor: this._actor,
-            recordedAt: this._recordedAt
+            recordedAt: this._recordedAt,
+            source: this._source,
+            presentationSource: this._presentationSource,
+            input: this._input
         };
     }
 
-    public with(overrides: {id?: string; scope?: string; requestId?: string; presentationId?: string; kind?: JudgmentKind; rationale?: string; actor?: Actor; recordedAt?: string}): Judgment {
+    public with(overrides: {id?: string; scope?: string; requestId?: string; presentationId?: string; action?: ReviewAction; rationale?: string; actor?: Actor; recordedAt?: string; source?: Ref; presentationSource?: Ref; input?: Ref}): Judgment {
         return new Judgment(
             'id' in overrides ? overrides.id! : this._id,
             'scope' in overrides ? overrides.scope! : this._scope,
             'requestId' in overrides ? overrides.requestId! : this._requestId,
             'presentationId' in overrides ? overrides.presentationId! : this._presentationId,
-            'kind' in overrides ? overrides.kind! : this._kind,
+            'action' in overrides ? overrides.action! : this._action,
             'rationale' in overrides ? overrides.rationale! : this._rationale,
             'actor' in overrides ? overrides.actor! : this._actor,
-            'recordedAt' in overrides ? overrides.recordedAt! : this._recordedAt
+            'recordedAt' in overrides ? overrides.recordedAt! : this._recordedAt,
+            'source' in overrides ? overrides.source! : this._source,
+            'presentationSource' in overrides ? overrides.presentationSource! : this._presentationSource,
+            'input' in overrides ? overrides.input! : this._input
         );
     }
 
-    public static fromPlain(obj: {id: string; scope: string; requestId: string; presentationId: string; kind: JudgmentKind; rationale: string; actor: Actor; recordedAt: string}): Judgment {
+    public static fromPlain(obj: {id: string; scope: string; requestId: string; presentationId: string; action: ReviewAction; rationale: string; actor: Actor; recordedAt: string; source: Ref; presentationSource: Ref; input: Ref}): Judgment {
         return new Judgment(
             obj.id,
             obj.scope,
             obj.requestId,
             obj.presentationId,
-            obj.kind,
+            obj.action,
             obj.rationale,
             obj.actor,
-            obj.recordedAt
+            obj.recordedAt,
+            obj.source,
+            obj.presentationSource,
+            obj.input
         );
     }
 
@@ -128,10 +153,13 @@ export class Judgment_JsonCodec {
             "scope": value.scope,
             "requestId": value.requestId,
             "presentationId": value.presentationId,
-            "kind": JudgmentKind_JsonCodec.instance.encode(BaboonCodecContext.Default, value.kind),
+            "action": ReviewAction_JsonCodec.instance.encode(BaboonCodecContext.Default, value.action),
             "rationale": value.rationale,
             "actor": Actor_JsonCodec.instance.encode(BaboonCodecContext.Default, value.actor),
             "recordedAt": value.recordedAt,
+            "source": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.source),
+            "presentationSource": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.presentationSource),
+            "input": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.input),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Judgment {
@@ -145,10 +173,13 @@ export class Judgment_JsonCodec {
             obj["scope"] as string,
             obj["requestId"] as string,
             obj["presentationId"] as string,
-            JudgmentKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]),
+            ReviewAction_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["action"]),
             obj["rationale"] as string,
             Actor_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["actor"]),
             obj["recordedAt"] as string,
+            Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["source"]),
+            Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["presentationSource"]),
+            Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["input"]),
         )
     }
 

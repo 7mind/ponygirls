@@ -77,6 +77,11 @@ import { Phase, Phase_JsonCodec } from './Phase.js';
 import { Polarity, Polarity_JsonCodec } from './Polarity.js';
 import { PresentRequest, PresentRequest_JsonCodec } from './PresentRequest.js';
 import { Presentation, Presentation_JsonCodec } from './Presentation.js';
+import { PresentationManifest, PresentationManifest_JsonCodec } from './PresentationManifest.js';
+import { PresentationPayload, PresentationPayload_JsonCodec } from './PresentationPayload.js';
+import { PresentationPublication, PresentationPublication_JsonCodec } from './PresentationPublication.js';
+import { PresentedSelection, PresentedSelection_JsonCodec } from './PresentedSelection.js';
+import { PresentedSelectionInput, PresentedSelectionInput_JsonCodec } from './PresentedSelectionInput.js';
 import { Provenance, Provenance_JsonCodec } from './Provenance.js';
 import { ReadRequest, ReadRequest_JsonCodec } from './ReadRequest.js';
 import { ReadResult, ReadResult_JsonCodec } from './ReadResult.js';
@@ -90,10 +95,13 @@ import { ReportedInheritance, ReportedInheritance_JsonCodec } from './ReportedIn
 import { RequestTrace, RequestTrace_JsonCodec } from './RequestTrace.js';
 import { RequestTransport, RequestTransport_JsonCodec } from './RequestTransport.js';
 import { Resolution, Resolution_JsonCodec } from './Resolution.js';
+import { ReviewAction, ReviewAction_JsonCodec } from './ReviewAction.js';
+import { ReviewResponseLink, ReviewResponseLink_JsonCodec } from './ReviewResponseLink.js';
 import { ScopeRequest, ScopeRequest_JsonCodec } from './ScopeRequest.js';
 import { ScopeSummary, ScopeSummary_JsonCodec } from './ScopeSummary.js';
 import { ScopesResult, ScopesResult_JsonCodec } from './ScopesResult.js';
 import { SearchHit, SearchHit_JsonCodec } from './SearchHit.js';
+import { SourceDescriptor, SourceDescriptor_JsonCodec } from './SourceDescriptor.js';
 import { SourceRepresentation, SourceRepresentation_JsonCodec } from './SourceRepresentation.js';
 import { SourceRequest, SourceRequest_JsonCodec } from './SourceRequest.js';
 import { SourceResult, SourceResult_JsonCodec } from './SourceResult.js';
@@ -179,6 +187,11 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(Polarity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Polarity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(PresentRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Presentation_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Presentation_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(PresentationManifest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentationManifest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(PresentationPayload_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentationPayload_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(PresentationPublication_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentationPublication_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(PresentedSelection_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentedSelection_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(PresentedSelectionInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentedSelectionInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Provenance_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Provenance_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -192,10 +205,13 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(RequestTrace_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RequestTrace_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RequestTransport_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RequestTransport_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Resolution_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Resolution_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ReviewAction_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReviewAction_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ReviewResponseLink_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReviewResponseLink_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ScopeRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ScopeRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ScopeSummary_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ScopeSummary_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ScopesResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ScopesResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(SearchHit_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SearchHit_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(SourceDescriptor_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceDescriptor_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(SourceRepresentation_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceRepresentation_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(SourceRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(SourceResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => SourceResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -294,6 +310,11 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Polarity": ['0.1.0'],
         "ontology.api/:#PresentRequest": ['0.1.0'],
         "ontology.api/:#Presentation": ['0.1.0'],
+        "ontology.api/:#PresentationManifest": ['0.1.0'],
+        "ontology.api/:#PresentationPayload": ['0.1.0'],
+        "ontology.api/:#PresentationPublication": ['0.1.0'],
+        "ontology.api/:#PresentedSelection": ['0.1.0'],
+        "ontology.api/:#PresentedSelectionInput": ['0.1.0'],
         "ontology.api/:#Provenance": ['0.1.0'],
         "ontology.api/:#ReadRequest": ['0.1.0'],
         "ontology.api/:#ReadResult": ['0.1.0'],
@@ -307,10 +328,13 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#RequestTrace": ['0.1.0'],
         "ontology.api/:#RequestTransport": ['0.1.0'],
         "ontology.api/:#Resolution": ['0.1.0'],
+        "ontology.api/:#ReviewAction": ['0.1.0'],
+        "ontology.api/:#ReviewResponseLink": ['0.1.0'],
         "ontology.api/:#ScopeRequest": ['0.1.0'],
         "ontology.api/:#ScopeSummary": ['0.1.0'],
         "ontology.api/:#ScopesResult": ['0.1.0'],
         "ontology.api/:#SearchHit": ['0.1.0'],
+        "ontology.api/:#SourceDescriptor": ['0.1.0'],
         "ontology.api/:#SourceRepresentation": ['0.1.0'],
         "ontology.api/:#SourceRequest": ['0.1.0'],
         "ontology.api/:#SourceResult": ['0.1.0'],
@@ -374,6 +398,10 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#OriginContext]#ReportedNative": ['0.1.0'],
         "ontology.api/[ontology.api/:#OriginContext]#ServiceRequest": ['0.1.0'],
         "ontology.api/[ontology.api/:#OriginContext]#Unknown": ['0.1.0'],
+        "ontology.api/[ontology.api/:#PresentedSelectionInput]#Alternative": ['0.1.0'],
+        "ontology.api/[ontology.api/:#PresentedSelectionInput]#Whole": ['0.1.0'],
+        "ontology.api/[ontology.api/:#PresentedSelection]#Alternative": ['0.1.0'],
+        "ontology.api/[ontology.api/:#PresentedSelection]#Whole": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": ['0.1.0'],
@@ -386,6 +414,11 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#RelationDetail]#Delegation": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetail]#Dependency": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetail]#Empty": ['0.1.0'],
+        "ontology.api/[ontology.api/:#ReviewAction]#Adopt": ['0.1.0'],
+        "ontology.api/[ontology.api/:#ReviewAction]#Choose": ['0.1.0'],
+        "ontology.api/[ontology.api/:#ReviewAction]#Review": ['0.1.0'],
+        "ontology.api/[ontology.api/:#SourceDescriptor]#DerivedPresentation": ['0.1.0'],
+        "ontology.api/[ontology.api/:#SourceDescriptor]#PrimaryCapture": ['0.1.0'],
         "ontology.api/[ontology.api/:#Target]#Created": ['0.1.0'],
         "ontology.api/[ontology.api/:#Target]#Exact": ['0.1.0'],
     };
@@ -464,6 +497,11 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Polarity": { '0.1.0': 'identical' },
         "ontology.api/:#PresentRequest": { '0.1.0': 'identical' },
         "ontology.api/:#Presentation": { '0.1.0': 'identical' },
+        "ontology.api/:#PresentationManifest": { '0.1.0': 'identical' },
+        "ontology.api/:#PresentationPayload": { '0.1.0': 'identical' },
+        "ontology.api/:#PresentationPublication": { '0.1.0': 'identical' },
+        "ontology.api/:#PresentedSelection": { '0.1.0': 'identical' },
+        "ontology.api/:#PresentedSelectionInput": { '0.1.0': 'identical' },
         "ontology.api/:#Provenance": { '0.1.0': 'identical' },
         "ontology.api/:#ReadRequest": { '0.1.0': 'identical' },
         "ontology.api/:#ReadResult": { '0.1.0': 'identical' },
@@ -477,10 +515,13 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#RequestTrace": { '0.1.0': 'identical' },
         "ontology.api/:#RequestTransport": { '0.1.0': 'identical' },
         "ontology.api/:#Resolution": { '0.1.0': 'identical' },
+        "ontology.api/:#ReviewAction": { '0.1.0': 'identical' },
+        "ontology.api/:#ReviewResponseLink": { '0.1.0': 'identical' },
         "ontology.api/:#ScopeRequest": { '0.1.0': 'identical' },
         "ontology.api/:#ScopeSummary": { '0.1.0': 'identical' },
         "ontology.api/:#ScopesResult": { '0.1.0': 'identical' },
         "ontology.api/:#SearchHit": { '0.1.0': 'identical' },
+        "ontology.api/:#SourceDescriptor": { '0.1.0': 'identical' },
         "ontology.api/:#SourceRepresentation": { '0.1.0': 'identical' },
         "ontology.api/:#SourceRequest": { '0.1.0': 'identical' },
         "ontology.api/:#SourceResult": { '0.1.0': 'identical' },
@@ -544,6 +585,10 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#OriginContext]#ReportedNative": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#OriginContext]#ServiceRequest": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#OriginContext]#Unknown": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#PresentedSelectionInput]#Alternative": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#PresentedSelectionInput]#Whole": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#PresentedSelection]#Alternative": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#PresentedSelection]#Whole": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": { '0.1.0': 'identical' },
@@ -556,6 +601,11 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#RelationDetail]#Delegation": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetail]#Dependency": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetail]#Empty": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#ReviewAction]#Adopt": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#ReviewAction]#Choose": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#ReviewAction]#Review": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#SourceDescriptor]#DerivedPresentation": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#SourceDescriptor]#PrimaryCapture": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Target]#Created": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Target]#Exact": { '0.1.0': 'identical' },
     };

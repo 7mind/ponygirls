@@ -302,7 +302,9 @@ package ontology.api {
     
     final case class Adoption(
       presentationId: UUID,
-      origin: AdoptionOrigin
+      origin: AdoptionOrigin,
+      response: Target,
+      selection: PresentedSelectionInput
     ) extends RelationDetailInput with BaboonAdtMemberMeta with BaboonGeneratedLatest {
       override def baboonDomainVersion: String = RelationDetailInput.Adoption.baboonDomainVersion
       override def baboonDomainIdentifier: String = RelationDetailInput.Adoption.baboonDomainIdentifier
@@ -337,7 +339,9 @@ package ontology.api {
         
         Json.obj(
           "presentationId" -> Json.fromString(value.presentationId.toString()),
-          "origin" -> AdoptionOrigin_JsonCodec.instance.encode(ctx, value.origin)
+          "origin" -> AdoptionOrigin_JsonCodec.instance.encode(ctx, value.origin),
+          "response" -> Target_JsonCodec.instance.encode(ctx, value.response),
+          "selection" -> PresentedSelectionInput_JsonCodec.instance.encode(ctx, value.selection)
         )
       }
       
@@ -350,7 +354,9 @@ package ontology.api {
           case Some(jsonObject) => for {
               presentationId <- getField(jsonObject, "presentationId").flatMap(v => decodeUUID(v.hcursor))
               origin <- getField(jsonObject, "origin").flatMap(v => AdoptionOrigin_JsonCodec.circeDecoder(v.hcursor))
-            } yield RelationDetailInput.Adoption(presentationId,origin)
+              response <- getField(jsonObject, "response").flatMap(v => Target_JsonCodec.circeDecoder(v.hcursor))
+              selection <- getField(jsonObject, "selection").flatMap(v => PresentedSelectionInput_JsonCodec.circeDecoder(v.hcursor))
+            } yield RelationDetailInput.Adoption(presentationId,origin,response,selection)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to Adoption: object expected"))
         }
       }

@@ -44,13 +44,16 @@ const contribution = new C.ContextRecord(new C.OriginContext_ReportedNative(new 
 const ingress = new C.RequestTrace(id(24), '/api/v1/ingest', C.RequestTransport.Bearer);
 const metadata = new C.CaptureMetadata('fixture-entry', undefined, undefined, C.SourceRepresentation.PiTranscript, ['Synthetic browser fixture; not a native capture'], []);
 const sourceText = 'Keep the audit trail. This is controlled test content, not a Human study.';
-const source = C.Definition.fromPlain({ ref: ref(20), scope: 'a', applicability: new C.Applicability_Captured(ref(20)), content: C.Content_Source.fromPlain({ text: sourceText, context: [], rawDigest: digest(sourceText), eventId: id(20), sourceNamespace: 'fixture-collector', captureContext: context, metadata, origin: C.EventOrigin.UserMessage, observation: new C.Observation_None() }), standing: C.Standing.Active, basis: [], changeReason: undefined, provenance: provenance(unknown, 91) });
+const source = C.Definition.fromPlain({ ref: ref(20), scope: 'a', applicability: new C.Applicability_Captured(ref(20)), content: C.Content_Source.fromPlain({ text: sourceText, context: [], rawDigest: digest(sourceText), descriptor: new C.SourceDescriptor_PrimaryCapture(id(20), 'fixture-collector', context, metadata, C.EventOrigin.UserMessage, new C.Observation_None(), undefined) }), standing: C.Standing.Active, basis: [], changeReason: undefined, provenance: provenance(unknown, 91) });
 const goal = C.Definition.fromPlain({ ref: ref(1), scope: 'a', applicability: new C.Applicability_Unresolved('Fixture has not established semantic applicability', [], []), content: C.Content_Outcome.fromPlain({ text: 'Preserve the audit trail', acceptance: new C.Acceptance(['Retain evidence and unresolved intent'], undefined), force: C.Force.Required }), standing: C.Standing.Active, basis: [source.ref], changeReason: undefined, provenance: provenance(agent, 90) });
 const contract = new C.Binding(ref(30), 'a', goal.ref, [], 'worker-fixture', provenance(agent, 90));
 const selected = new C.BindingSelection(ref(31), 'a', contract.ref, true, 'Explicit synthetic contract selection', [goal.ref], provenance(agent, 90));
-const records: C.GraphRecord[] = [new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected), ...assessmentRecords('a', ref, provenance(agent, 90))];
-const sourceEvent = C.CapturedEvent.fromPlain({ id: id(20), scope: 'a', sourceNamespace: 'fixture-collector', frontier: 1n, context, origin: C.EventOrigin.UserMessage, metadata, text: sourceText, observation: new C.Observation_None(), provenance: source.provenance });
-const absentEvent = C.CapturedEvent.fromPlain({ id: id(22), scope: 'a', sourceNamespace: 'fixture-host', frontier: 2n, context, origin: C.EventOrigin.ToolOutput, metadata: new C.CaptureMetadata('absence-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic witness, not a physical measurement'], []), text: 'Reported absence', observation: new C.Observation_FileAbsent('report.txt', 2n), provenance: provenance(host, 92) });
+const question = new C.Definition(ref(70), 'a', new C.Applicability_Unresolved('Controlled choice fixture', [], []), new C.Content_Question('Choose an exact alternative', ['A', 'B'], undefined, C.Escalation.HumanRequired), C.Standing.Active, [source.ref], undefined, provenance(agent, 90));
+const questionBinding = new C.Binding(ref(71), 'a', question.ref, [], 'alternative-work', provenance(agent, 90));
+const questionSelection = new C.BindingSelection(ref(72), 'a', questionBinding.ref, true, 'Controlled question binding selection', [question.ref], provenance(agent, 90));
+const records: C.GraphRecord[] = [new C.GraphRecord_Contract(questionBinding), new C.GraphRecord_Selection(questionSelection), new C.GraphRecord_Node(question), new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected), ...assessmentRecords('a', ref, provenance(agent, 90))];
+const sourceEvent = C.CapturedEvent.fromPlain({ id: id(20), scope: 'a', sourceNamespace: 'fixture-collector', frontier: 1n, context, origin: C.EventOrigin.UserMessage, metadata, text: sourceText, observation: new C.Observation_None(), reviewResponse: undefined, provenance: source.provenance });
+const absentEvent = C.CapturedEvent.fromPlain({ id: id(22), scope: 'a', sourceNamespace: 'fixture-host', frontier: 2n, context, origin: C.EventOrigin.ToolOutput, metadata: new C.CaptureMetadata('absence-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic witness, not a physical measurement'], []), text: 'Reported absence', observation: new C.Observation_FileAbsent('report.txt', 2n), reviewResponse: undefined, provenance: provenance(host, 92) });
 const identity = new C.Identity(human, ['a', 'b'], [C.Capability.Read, C.Capability.Review]);
 const versions = new C.VersionInfo('0.1.0', '0.1.0', ['0.1.0']);
 const errors: string[] = [];
@@ -61,6 +64,9 @@ let authenticated = false;
 let generation = 5n;
 let saved: C.Presentation | undefined;
 let droppedAcknowledgment = false;
+let mismatchedChoice = false;
+let preparedCount = 0;
+const committed = new Map<string, { input: unknown; judgment: C.Judgment }>();
 let badScope = false;
 const submissions: unknown[] = [];
 const encode = <T>(codec: Codec<T>, value: T): unknown => codec.encode(C.BaboonCodecContext.Default, value);
@@ -128,7 +134,17 @@ try {
     }
     if (operation === 'present') {
       const input = decode(C.PresentRequest.jsonCodec(), data);
-      saved = new C.Presentation(id(40), input.scope, input.expectedGeneration, input.targets, records.filter(value => input.targets.some(target => target.id === value.value.ref.id)), [source.ref], time);
+      const reserved = ref(140 + preparedCount);
+      const choices: C.PresentedSelection[] = [];
+      const adoptionTargets: C.Ref[] = [];
+      for (const target of input.targets) {
+        if (target.id === question.ref.id) question.content instanceof C.Content_Question && question.content.alternatives.forEach((label, index) => choices.push(new C.PresentedSelection_Alternative(reserved, question.ref, index, label)));
+        if (target.id === questionBinding.ref.id) question.content instanceof C.Content_Question && question.content.alternatives.forEach((label, index) => choices.push(new C.PresentedSelection_Alternative(questionBinding.ref, question.ref, index, label)));
+        if ([source.ref.id, contract.ref.id, questionBinding.ref.id].includes(target.id)) { choices.push(new C.PresentedSelection_Whole(target)); adoptionTargets.push(target); }
+      }
+      const payload = new C.PresentationPayload(input.scope, input.expectedGeneration, input.targets, records.filter(value => input.targets.some(target => target.id === value.value.ref.id) || [goal.ref.id, source.ref.id].includes(value.value.ref.id)), [source.ref], new C.PresentationManifest(choices, adoptionTargets));
+      saved = new C.Presentation(id(40 + preparedCount), human, reserved, payload, digest(JSON.stringify(encode(C.PresentationPayload.jsonCodec(), payload))), time, new C.RequestTrace(id(240 + preparedCount), '/api/v1/present', C.RequestTransport.Cookie));
+      preparedCount += 1;
       return reply(route, C.Presentation.jsonCodec(), saved, 200);
     }
     if (operation === 'judge') {
@@ -136,9 +152,20 @@ try {
       assert(saved !== undefined);
       assert.equal(input.presentationId, saved.id);
       submissions.push(data);
-      const judgment = new C.Judgment(id(50), input.scope, input.requestId, input.presentationId, input.kind, input.rationale, human, time);
+      let retained = committed.get(input.requestId);
+      if (retained === undefined) {
+        const number = committed.size;
+        retained = { input: data, judgment: new C.Judgment(id(50 + number), input.scope, input.requestId, input.presentationId, input.action, input.rationale, human, time, ref(350 + number), saved.reservedSourceRef, ref(450 + number)) };
+        committed.set(input.requestId, retained);
+      } else assert.deepEqual(data, retained.input);
+      const judgment = retained.judgment;
       if (!droppedAcknowledgment) { droppedAcknowledgment = true; return route.abort('failed'); }
-      assert.deepEqual(submissions[1], submissions[0]);
+      if (input.action instanceof C.ReviewAction_Choose && input.action.selection instanceof C.PresentedSelection_Alternative && !mismatchedChoice) {
+        mismatchedChoice = true;
+        const selected = input.action.selection;
+        const wrong = new C.ReviewAction_Choose(new C.PresentedSelection_Alternative(selected.target, selected.definition, selected.index, 'Wrong acknowledgement label'));
+        return reply(route, C.Judgment.jsonCodec(), new C.Judgment(judgment.id, judgment.scope, judgment.requestId, judgment.presentationId, wrong, judgment.rationale, judgment.actor, judgment.recordedAt, judgment.source, judgment.presentationSource, judgment.input), 200);
+      }
       return reply(route, C.Judgment.jsonCodec(), judgment, 200);
     }
     if (operation === 'judgments') return reply(route, C.JudgmentsResult.jsonCodec(), new C.JudgmentsResult([]), 200);
@@ -202,7 +229,7 @@ try {
   await page.getByRole('button', { name: 'Refresh status', exact: true }).click();
   await page.getByText('This review remains pinned to 5;', { exact: false }).waitFor();
   assert(saved !== undefined);
-  assert.equal(saved.generation, 5n);
+  assert.equal(saved.payload.generation, 5n);
   await page.getByRole('radio', { name: 'Need evidence State what evidence or qualification is missing.', exact: true }).check();
   await page.getByRole('button', { name: 'Submit Human judgment', exact: true }).click();
   await page.getByRole('button', { name: 'Retry same judgment', exact: true }).waitFor();
@@ -211,8 +238,59 @@ try {
   await page.getByRole('heading', { name: 'Judgment acknowledged by the server', exact: true }).waitFor();
   assert.equal(submissions.length, 2);
   receipts.push('uncertain judgment retry preserves request ID and complete payload');
-  await page.getByRole('button', { name: 'Close acknowledged review…', exact: true }).click();
-  await page.getByRole('dialog', { name: 'Close this acknowledged review?', exact: true }).getByRole('button', { name: 'Close acknowledged review', exact: true }).click();
+  const closeReview = async (): Promise<void> => {
+    await page.getByRole('button', { name: 'Close acknowledged review…', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Close this acknowledged review?', exact: true }).getByRole('button', { name: 'Close acknowledged review', exact: true }).click();
+  };
+  await closeReview();
+  await recordRegion.getByRole('button', { name: 'First page / refresh', exact: true }).click();
+  await recordRegion.getByText('6', { exact: true }).waitFor();
+  await recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Question', exact: true }) }).getByLabel('Include exact revision in review', { exact: true }).check();
+  await recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Binding · context', exact: true }) }).filter({ has: page.getByRole('button', { name: `Inspect exact revision ${id(71)}@1`, exact: true }) }).getByLabel('Include exact revision in review', { exact: true }).check();
+  await page.getByRole('button', { name: 'Prepare exact presentation', exact: true }).click();
+  await page.getByRole('radio', { name: /^Choose Alternative 2: B .*target 00000000-0000-4000-8000-000000000047@1 / }).waitFor();
+  const alternative = page.getByRole('radio', { name: new RegExp(`^Choose Alternative 2: B .*target ${saved.reservedSourceRef.id}@1 `) });
+  await alternative.waitFor();
+  assert.equal(await page.locator('input[type="radio"]:checked').count(), 0);
+  await rationale.fill('Select B from this exact presented question, not from later revisions.');
+  await alternative.check();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await alternative.scrollIntoViewIfNeeded();
+  await checkNarrowLayout(page);
+  await page.screenshot({ path: path.join(report, 'narrow-light-choice.png') });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.waitForFunction(() => getComputedStyle(document.documentElement).colorScheme === 'dark');
+  assert.equal(await alternative.isChecked(), true);
+  assert.equal(await rationale.inputValue(), 'Select B from this exact presented question, not from later revisions.');
+  await checkNarrowLayout(page);
+  await page.screenshot({ path: path.join(report, 'narrow-dark-choice.png') });
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.getByRole('button', { name: 'Submit Human judgment', exact: true }).click();
+  await page.getByText('The judgment acknowledgement did not match this request and authenticated Human.', { exact: false }).waitFor();
+  await page.getByRole('button', { name: 'Retry same judgment', exact: true }).click();
+  await page.getByRole('heading', { name: 'Judgment acknowledged by the server', exact: true }).waitFor();
+  assert.equal(submissions.length, 4);
+  assert.deepEqual(submissions[2], submissions[3]);
+  const chosen = decode(C.JudgmentRequest.jsonCodec(), submissions[3]);
+  assert(chosen.action instanceof C.ReviewAction_Choose && chosen.action.selection instanceof C.PresentedSelection_Alternative);
+  assert.equal(chosen.action.selection.label, 'B');
+  assert.equal(chosen.action.selection.index, 1);
+  assert.equal(chosen.action.selection.definition.id, question.ref.id);
+  assert.equal(chosen.action.selection.target.id, saved.reservedSourceRef.id);
+  receipts.push('explicit alternative selection is not preselected; full-action acknowledgement mismatch retains the exact retry payload');
+  await closeReview();
+  const bindingCard = recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Binding · context', exact: true }) }).filter({ has: page.getByRole('button', { name: `Inspect exact revision ${id(30)}@1`, exact: true }) });
+  await bindingCard.getByLabel('Include exact revision in review', { exact: true }).check();
+  await page.getByRole('button', { name: 'Prepare exact presentation', exact: true }).click();
+  await page.getByRole('radio', { name: new RegExp(`^Adopt presented target ${id(30)}@1 `) }).check();
+  await rationale.fill('Adopt this exact displayed binding only; no execution permission is supplied.');
+  await page.getByRole('button', { name: 'Submit Human judgment', exact: true }).click();
+  await page.getByRole('heading', { name: 'Judgment acknowledged by the server', exact: true }).waitFor();
+  const adopted = decode(C.JudgmentRequest.jsonCodec(), submissions[4]);
+  assert(adopted.action instanceof C.ReviewAction_Adopt);
+  assert.equal(adopted.action.target.id, contract.ref.id);
+  receipts.push('explicit adoption remains distinct from generic Accept and exact alternative choice');
+  await closeReview();
   await page.getByRole('button', { name: 'Load captured sources', exact: true }).click();
   await page.getByText('Reported absence', { exact: true }).waitFor({ state: 'attached' });
   await page.getByRole('region', { name: 'Captured sources', exact: true }).locator('details').filter({ hasText: 'Reported absence' }).locator(':scope > summary').click();
@@ -272,7 +350,7 @@ try {
   await browserContext.close();
 } catch (error) {
   await writeFile(path.join(report, 'failure.txt'), String(error instanceof Error ? error.stack : error) + '\n');
-  await writeFile(path.join(report, 'failure-observations.json'), JSON.stringify({ receipts, errors, submissions, savedGeneration: saved === undefined ? null : saved.generation.toString() }, null, 2) + '\n');
+  await writeFile(path.join(report, 'failure-observations.json'), JSON.stringify({ receipts, errors, submissions, savedGeneration: saved === undefined ? null : saved.payload.generation.toString() }, null, 2) + '\n');
   if (activePage !== null && !activePage.isClosed()) {
     await writeFile(path.join(report, 'failure.html'), await activePage.content());
     await activePage.screenshot({ path: path.join(report, 'failure.png'), fullPage: true });

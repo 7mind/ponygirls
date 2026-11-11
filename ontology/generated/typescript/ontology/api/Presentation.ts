@@ -1,82 +1,84 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
-import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
-import {GraphRecord, GraphRecord_JsonCodec} from './GraphRecord.js'
+import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Actor, Actor_JsonCodec} from './Actor.js'
+import {PresentationPayload, PresentationPayload_JsonCodec} from './PresentationPayload.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
+import {RequestTrace, RequestTrace_JsonCodec} from './RequestTrace.js'
 
 export class Presentation implements BaboonGeneratedLatest {
     private readonly _id: string;
-    private readonly _scope: string;
-    private readonly _generation: bigint;
-    private readonly _targets: Array<Ref>;
-    private readonly _records: Array<GraphRecord>;
-    private readonly _sourceRefs: Array<Ref>;
+    private readonly _owner: Actor;
+    private readonly _reservedSourceRef: Ref;
+    private readonly _payload: PresentationPayload;
+    private readonly _payloadDigest: string;
     private readonly _createdAt: string;
+    private readonly _preparationTrace: RequestTrace;
 
-    constructor(id: string, scope: string, generation: bigint, targets: Array<Ref>, records: Array<GraphRecord>, sourceRefs: Array<Ref>, createdAt: string) {
+    constructor(id: string, owner: Actor, reservedSourceRef: Ref, payload: PresentationPayload, payloadDigest: string, createdAt: string, preparationTrace: RequestTrace) {
         this._id = id
-        this._scope = scope
-        this._generation = generation
-        this._targets = targets
-        this._records = records
-        this._sourceRefs = sourceRefs
+        this._owner = owner
+        this._reservedSourceRef = reservedSourceRef
+        this._payload = payload
+        this._payloadDigest = payloadDigest
         this._createdAt = createdAt
+        this._preparationTrace = preparationTrace
     }
 
     public get id(): string {
         return this._id;
     }
-    public get scope(): string {
-        return this._scope;
+    public get owner(): Actor {
+        return this._owner;
     }
-    public get generation(): bigint {
-        return this._generation;
+    public get reservedSourceRef(): Ref {
+        return this._reservedSourceRef;
     }
-    public get targets(): Array<Ref> {
-        return this._targets;
+    public get payload(): PresentationPayload {
+        return this._payload;
     }
-    public get records(): Array<GraphRecord> {
-        return this._records;
-    }
-    public get sourceRefs(): Array<Ref> {
-        return this._sourceRefs;
+    public get payloadDigest(): string {
+        return this._payloadDigest;
     }
     public get createdAt(): string {
         return this._createdAt;
+    }
+    public get preparationTrace(): RequestTrace {
+        return this._preparationTrace;
     }
 
     public toJSON(): Record<string, unknown> {
         return {
             id: this._id,
-            scope: this._scope,
-            generation: this._generation,
-            targets: this._targets,
-            records: this._records,
-            sourceRefs: this._sourceRefs,
-            createdAt: this._createdAt
+            owner: this._owner,
+            reservedSourceRef: this._reservedSourceRef,
+            payload: this._payload,
+            payloadDigest: this._payloadDigest,
+            createdAt: this._createdAt,
+            preparationTrace: this._preparationTrace
         };
     }
 
-    public with(overrides: {id?: string; scope?: string; generation?: bigint; targets?: Array<Ref>; records?: Array<GraphRecord>; sourceRefs?: Array<Ref>; createdAt?: string}): Presentation {
+    public with(overrides: {id?: string; owner?: Actor; reservedSourceRef?: Ref; payload?: PresentationPayload; payloadDigest?: string; createdAt?: string; preparationTrace?: RequestTrace}): Presentation {
         return new Presentation(
             'id' in overrides ? overrides.id! : this._id,
-            'scope' in overrides ? overrides.scope! : this._scope,
-            'generation' in overrides ? overrides.generation! : this._generation,
-            'targets' in overrides ? overrides.targets! : this._targets,
-            'records' in overrides ? overrides.records! : this._records,
-            'sourceRefs' in overrides ? overrides.sourceRefs! : this._sourceRefs,
-            'createdAt' in overrides ? overrides.createdAt! : this._createdAt
+            'owner' in overrides ? overrides.owner! : this._owner,
+            'reservedSourceRef' in overrides ? overrides.reservedSourceRef! : this._reservedSourceRef,
+            'payload' in overrides ? overrides.payload! : this._payload,
+            'payloadDigest' in overrides ? overrides.payloadDigest! : this._payloadDigest,
+            'createdAt' in overrides ? overrides.createdAt! : this._createdAt,
+            'preparationTrace' in overrides ? overrides.preparationTrace! : this._preparationTrace
         );
     }
 
-    public static fromPlain(obj: {id: string; scope: string; generation: bigint; targets: Array<Ref>; records: Array<GraphRecord>; sourceRefs: Array<Ref>; createdAt: string}): Presentation {
+    public static fromPlain(obj: {id: string; owner: Actor; reservedSourceRef: Ref; payload: PresentationPayload; payloadDigest: string; createdAt: string; preparationTrace: RequestTrace}): Presentation {
         return new Presentation(
             obj.id,
-            obj.scope,
-            obj.generation,
-            obj.targets,
-            obj.records,
-            obj.sourceRefs,
-            obj.createdAt
+            obj.owner,
+            obj.reservedSourceRef,
+            obj.payload,
+            obj.payloadDigest,
+            obj.createdAt,
+            obj.preparationTrace
         );
     }
 
@@ -117,12 +119,12 @@ export class Presentation_JsonCodec {
     
         return {
             "id": value.id,
-            "scope": value.scope,
-            "generation": value.generation.toString(),
-            "targets": Array.from(value.targets).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
-            "records": Array.from(value.records).map(item => GraphRecord_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
-            "sourceRefs": Array.from(value.sourceRefs).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+            "owner": Actor_JsonCodec.instance.encode(BaboonCodecContext.Default, value.owner),
+            "reservedSourceRef": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.reservedSourceRef),
+            "payload": PresentationPayload_JsonCodec.instance.encode(BaboonCodecContext.Default, value.payload),
+            "payloadDigest": value.payloadDigest,
             "createdAt": value.createdAt,
+            "preparationTrace": RequestTrace_JsonCodec.instance.encode(BaboonCodecContext.Default, value.preparationTrace),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Presentation {
@@ -133,12 +135,12 @@ export class Presentation_JsonCodec {
         const obj = json as Record<string, unknown>;
         return new Presentation (
             obj["id"] as string,
-            obj["scope"] as string,
-            BaboonInt64.read(obj["generation"], "i64/u64"),
-            (obj["targets"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
-            (obj["records"] as unknown[]).map(item => GraphRecord_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
-            (obj["sourceRefs"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+            Actor_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["owner"]),
+            Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["reservedSourceRef"]),
+            PresentationPayload_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["payload"]),
+            obj["payloadDigest"] as string,
             obj["createdAt"] as string,
+            RequestTrace_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["preparationTrace"]),
         )
     }
 

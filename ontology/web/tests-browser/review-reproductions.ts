@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { chromium, type Page, type Route } from 'playwright-core';
 import { preview } from 'vite';
 import * as C from '../src/contracts.js';
@@ -45,7 +46,11 @@ class Fixture {
       }
       if (name === 'read') return reply(route, C.ReadResult.jsonCodec(), new C.ReadResult('a', 1n, this.records, undefined), 200);
       if (name === 'status') return reply(route, C.CurationStatus.jsonCodec(), new C.CurationStatus('a', 1n, 0n, 0n, C.CurationState.Idle, undefined), 200);
-      if (name === 'present') return reply(route, C.Presentation.jsonCodec(), new C.Presentation(id(3), 'a', 1n, [new C.Ref(id(1), 1)], this.records, [], when), 200);
+      if (name === 'present') {
+        const payload = new C.PresentationPayload('a', 1n, [new C.Ref(id(1), 1)], this.records, [], new C.PresentationManifest([], []));
+        const digest = createHash('sha256').update(JSON.stringify(C.PresentationPayload.jsonCodec().encode(C.BaboonCodecContext.Default, payload))).digest('hex');
+        return reply(route, C.Presentation.jsonCodec(), new C.Presentation(id(3), this.actor, new C.Ref(id(13), 1), payload, digest, when, new C.RequestTrace(id(14), '/api/v1/present', C.RequestTransport.Cookie)), 200);
+      }
       if (name === 'judge') {
         const input = C.JudgmentRequest.jsonCodec().decode(C.BaboonCodecContext.Default, data);
         this.submissions.push(input);
@@ -53,7 +58,7 @@ class Fixture {
           assert.deepEqual(input, this.submissions[0]);
           return reply(route, C.Judgment.jsonCodec(), this.committed, 200);
         }
-        this.committed = new C.Judgment(id(4), input.scope, input.requestId, input.presentationId, input.kind, input.rationale, this.actor, when);
+        this.committed = new C.Judgment(id(4), input.scope, input.requestId, input.presentationId, input.action, input.rationale, this.actor, when, new C.Ref(id(15), 1), new C.Ref(id(13), 1), new C.Ref(id(16), 1));
         if (this.expireAfterCommit) { this.authenticated = false; return route.abort('failed'); }
         return reply(route, C.Judgment.jsonCodec(), this.committed, 200);
       }
@@ -62,7 +67,7 @@ class Fixture {
         this.authenticated = false;
         return reply(route, C.Ack.jsonCodec(), new C.Ack(true), 200);
       }
-      if (name === 'judgments') return reply(route, C.JudgmentsResult.jsonCodec(), new C.JudgmentsResult(this.foreignHistory ? [new C.Judgment(id(5), 'b', id(6), id(7), C.JudgmentKind.Accept, 'Foreign scope history must not appear here', this.actor, when)] : []), 200);
+      if (name === 'judgments') return reply(route, C.JudgmentsResult.jsonCodec(), new C.JudgmentsResult(this.foreignHistory ? [new C.Judgment(id(5), 'b', id(6), id(7), new C.ReviewAction_Review(C.JudgmentKind.Accept), 'Foreign scope history must not appear here', this.actor, when, new C.Ref(id(17), 1), new C.Ref(id(18), 1), new C.Ref(id(19), 1))] : []), 200);
       throw new Error(`Unexpected fixture operation: ${name}`);
     });
   }

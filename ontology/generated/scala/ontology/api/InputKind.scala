@@ -8,12 +8,16 @@ package ontology.api {
     case object GraphMutation extends InputKind
     case object Capture extends InputKind
     case object Curation extends InputKind
+    case object PresentationPublication extends InputKind
+    case object Judgment extends InputKind
     
     def parse(s: String): Option[InputKind] = {
       s match {
         case "GraphMutation" => Some(GraphMutation)
         case "Capture" => Some(Capture)
         case "Curation" => Some(Curation)
+        case "PresentationPublication" => Some(PresentationPublication)
+        case "Judgment" => Some(Judgment)
         case _ => None
       }
     }
@@ -21,7 +25,9 @@ package ontology.api {
     def all: List[InputKind] = List(
       GraphMutation,
       Capture,
-      Curation
+      Curation,
+      PresentationPublication,
+      Judgment
     ) 
   }
   

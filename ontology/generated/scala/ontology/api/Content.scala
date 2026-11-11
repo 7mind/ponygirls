@@ -1,8 +1,7 @@
-import io.circe.Decoder.{decodeList, decodeOption, decodeString, decodeUUID}
+import io.circe.Decoder.{decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonAdtMemberMeta, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
-import java.util.UUID
 
 package ontology.api {
   sealed trait Content extends BaboonGeneratedLatest {
@@ -700,12 +699,7 @@ package ontology.api {
       text: String,
       context: List[Ref],
       rawDigest: String,
-      eventId: UUID,
-      sourceNamespace: String,
-      captureContext: ContextRecord,
-      metadata: CaptureMetadata,
-      origin: EventOrigin,
-      observation: Observation
+      descriptor: SourceDescriptor
     ) extends Content with BaboonAdtMemberMeta with BaboonGeneratedLatest {
       override def baboonDomainVersion: String = Content.Source.baboonDomainVersion
       override def baboonDomainIdentifier: String = Content.Source.baboonDomainIdentifier
@@ -742,12 +736,7 @@ package ontology.api {
           "text" -> Json.fromString(value.text),
           "context" -> Json.fromValues(value.context.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
           "rawDigest" -> Json.fromString(value.rawDigest),
-          "eventId" -> Json.fromString(value.eventId.toString()),
-          "sourceNamespace" -> Json.fromString(value.sourceNamespace),
-          "captureContext" -> ContextRecord_JsonCodec.instance.encode(ctx, value.captureContext),
-          "metadata" -> CaptureMetadata_JsonCodec.instance.encode(ctx, value.metadata),
-          "origin" -> EventOrigin_JsonCodec.instance.encode(ctx, value.origin),
-          "observation" -> Observation_JsonCodec.instance.encode(ctx, value.observation)
+          "descriptor" -> SourceDescriptor_JsonCodec.instance.encode(ctx, value.descriptor)
         )
       }
       
@@ -761,13 +750,8 @@ package ontology.api {
               text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
               context <- getField(jsonObject, "context").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
               rawDigest <- getField(jsonObject, "rawDigest").flatMap(v => decodeString(v.hcursor))
-              eventId <- getField(jsonObject, "eventId").flatMap(v => decodeUUID(v.hcursor))
-              sourceNamespace <- getField(jsonObject, "sourceNamespace").flatMap(v => decodeString(v.hcursor))
-              captureContext <- getField(jsonObject, "captureContext").flatMap(v => ContextRecord_JsonCodec.circeDecoder(v.hcursor))
-              metadata <- getField(jsonObject, "metadata").flatMap(v => CaptureMetadata_JsonCodec.circeDecoder(v.hcursor))
-              origin <- getField(jsonObject, "origin").flatMap(v => EventOrigin_JsonCodec.circeDecoder(v.hcursor))
-              observation <- getField(jsonObject, "observation").flatMap(v => Observation_JsonCodec.circeDecoder(v.hcursor))
-            } yield Content.Source(text,context,rawDigest,eventId,sourceNamespace,captureContext,metadata,origin,observation)
+              descriptor <- getField(jsonObject, "descriptor").flatMap(v => SourceDescriptor_JsonCodec.circeDecoder(v.hcursor))
+            } yield Content.Source(text,context,rawDigest,descriptor)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to Source: object expected"))
         }
       }

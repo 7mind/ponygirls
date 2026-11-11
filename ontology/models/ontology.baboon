@@ -34,7 +34,8 @@ data ReportedInheritance { kind: InheritanceKind sourceScope: str generation: i6
 data ContextRecord { origin: OriginContext reportedInherited: lst[ReportedInheritance] }
 data ContextRecordInput { origin: OriginContextInput reportedInherited: lst[ReportedInheritance] }
 data Provenance { contributor: Actor recorder: Actor input: uid recordedAt: str }
-enum InputKind { GraphMutation Capture Curation }
+enum InputKind { GraphMutation Capture Curation PresentationPublication Judgment }
+root data PresentationPublication { presentationId: uid reservedSourceRef: Ref payloadDigest: str }
 data InputReceipt { ref: Ref scope: str generation: i64 kind: InputKind contributor: Actor recorder: Actor submitter: Actor encoding: str content: str digest: str recordedAt: str contributionContext: ContextRecord ingress: RequestTrace }
 enum Force { Required Preferred Unresolved }
 enum Polarity { Required Prohibited }
@@ -48,6 +49,12 @@ enum ConflictState { Open Resolved }
 enum Standing { Active Superseded Withdrawn }
 data Acceptance { clauses: lst[str] question: opt[Ref] }
 
+data ReviewResponseLink { presentationId: uid judgmentId: uid presentationSource: Ref payloadDigest: str }
+adt SourceDescriptor {
+ data PrimaryCapture { eventId: uid sourceNamespace: str captureContext: ContextRecord metadata: CaptureMetadata origin: EventOrigin observation: Observation reviewResponse: opt[ReviewResponseLink] }
+ data DerivedPresentation { presentationId: uid generation: i64 payloadDigest: str preparedAt: str preparationTrace: RequestTrace }
+}
+
 adt Content {
  data Outcome { text: str acceptance: Acceptance force: Force }
  data Constraint { text: str polarity: Polarity force: Force }
@@ -58,7 +65,7 @@ adt Content {
  data Question { text: str alternatives: lst[str] answer: opt[str] escalation: Escalation }
  data Decision { text: str alternatives: lst[str] rationale: str }
  data Review { text: str findings: lst[str] subjects: lst[Ref] basis: lst[Ref] uncertainty: str assessment: Assessment }
- data Source { text: str context: lst[Ref] rawDigest: str eventId: uid sourceNamespace: str captureContext: ContextRecord metadata: CaptureMetadata origin: EventOrigin observation: Observation }
+ data Source { text: str context: lst[Ref] rawDigest: str descriptor: SourceDescriptor }
  data Artifact { text: str digest: str mediaType: str locator: str generation: i64 }
  data Conflict { text: str subjects: lst[Ref] status: ConflictState resolution: opt[str] uncertainty: str }
 }
@@ -73,7 +80,7 @@ adt RelationDetail {
  data Dependency { gate: Gate consumption: Consumption event: opt[Ref] applicability: str }
  data Decomposition { grouping: Grouping }
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Ref] }
- data Adoption { presentationId: uid origin: AdoptionOrigin }
+ data Adoption { presentationId: uid origin: AdoptionOrigin response: Ref selection: PresentedSelection }
  data AssessmentUse { requirement: Ref disposition: AssessmentUseDisposition basis: lst[Ref] }
 }
 data Definition { ref: Ref scope: str applicability: Applicability content: Content standing: Standing basis: lst[Ref] changeReason: opt[str] provenance: Provenance }
@@ -104,12 +111,16 @@ adt ContentInput {
  data Review { text: str findings: lst[str] subjects: lst[Target] basis: lst[Target] uncertainty: str assessment: Assessment }
  data Conflict { text: str subjects: lst[Target] status: ConflictState resolution: opt[str] uncertainty: str }
 }
+adt PresentedSelectionInput {
+ data Whole { target: Target }
+ data Alternative { target: Target definition: Target index: i32 label: str }
+}
 adt RelationDetailInput {
  data Empty {}
  data Dependency { gate: Gate consumption: Consumption event: opt[Target] applicability: str }
  data Decomposition { grouping: Grouping }
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Target] }
- data Adoption { presentationId: uid origin: AdoptionOrigin }
+ data Adoption { presentationId: uid origin: AdoptionOrigin response: Target selection: PresentedSelectionInput }
  data AssessmentUse { requirement: Target disposition: AssessmentUseDisposition basis: lst[Target] }
 }
 adt Operation {
@@ -147,7 +158,7 @@ adt Observation {
 enum SourceRepresentation { Text PiTranscript HostReceipt GraphCommand HumanJudgment }
 data CaptureMetadata { sourceId: str parentSourceId: opt[str] observedAt: opt[str] representation: SourceRepresentation omissions: lst[str] exposedDeliveries: lst[uid] }
 root data IngestRequest { scope: str requestId: uid eventId: uid occurrenceContext: opt[ContextRecordInput] contributionContext: opt[ContextRecordInput] origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation }
-data CapturedEvent { id: uid scope: str sourceNamespace: str frontier: i64 context: ContextRecord origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation provenance: Provenance }
+data CapturedEvent { id: uid scope: str sourceNamespace: str frontier: i64 context: ContextRecord origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation reviewResponse: opt[ReviewResponseLink] provenance: Provenance }
 root data IngestResult { scope: str requestId: uid eventId: uid sourceNamespace: str source: Ref artifacts: lst[Ref] frontier: i64 replayed: bit }
 root data SourceRequest { scope: str after: i64 limit: i32 }
 root data SourceResult { scope: str events: lst[CapturedEvent] frontier: i64 nextAfter: opt[i64] }
@@ -166,9 +177,20 @@ root data DeliveryReceipt { id: uid capsuleId: uid generation: i64 frontier: i64
 
 enum JudgmentKind { Accept RequestCorrection NeedEvidence ReviseIntent }
 root data PresentRequest { scope: str targets: lst[Ref] expectedGeneration: i64 }
-root data Presentation { id: uid scope: str generation: i64 targets: lst[Ref] records: lst[GraphRecord] sourceRefs: lst[Ref] createdAt: str }
-root data JudgmentRequest { scope: str requestId: uid presentationId: uid kind: JudgmentKind rationale: str }
-data Judgment { id: uid scope: str requestId: uid presentationId: uid kind: JudgmentKind rationale: str actor: Actor recordedAt: str }
+adt PresentedSelection {
+ data Whole { target: Ref }
+ data Alternative { target: Ref definition: Ref index: i32 label: str }
+}
+adt ReviewAction {
+ data Review { kind: JudgmentKind }
+ data Choose { selection: PresentedSelection }
+ data Adopt { target: Ref }
+}
+data PresentationManifest { choices: lst[PresentedSelection] adoptionTargets: lst[Ref] }
+data PresentationPayload { scope: str generation: i64 targets: lst[Ref] records: lst[GraphRecord] sourceRefs: lst[Ref] manifest: PresentationManifest }
+root data Presentation { id: uid owner: Actor reservedSourceRef: Ref payload: PresentationPayload payloadDigest: str createdAt: str preparationTrace: RequestTrace }
+root data JudgmentRequest { scope: str requestId: uid presentationId: uid action: ReviewAction rationale: str }
+data Judgment { id: uid scope: str requestId: uid presentationId: uid action: ReviewAction rationale: str actor: Actor recordedAt: str source: Ref presentationSource: Ref input: Ref }
 root data JudgmentsResult { items: lst[Judgment] }
 root data LoginRequest { token: str }
 enum Capability { Read Mutate Capture Review HostCapture }

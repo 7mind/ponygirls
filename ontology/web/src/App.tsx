@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type { ApiClient } from './client.js';
 import * as C from './contracts.js';
+import { actionKey, actionLabel, selectionLabel } from './actions.js';
 
 interface AppProps { client: ApiClient; newRequestId: () => string }
 interface Load<T> { data: T | null; pending: boolean; error: string | null }
@@ -135,7 +136,7 @@ function ContentDetails({ value, inspect }: { value: C.Content; inspect: Inspect
   } else if (value instanceof C.Content_Review) {
     detail = <><h4>Reported findings</h4><Texts values={value.findings} /><dl><Field label='Recorded assessment'>{value.assessment}</Field><Field label='Uncertainty'>{value.uncertainty}</Field></dl><Refs label='Review subjects' values={value.subjects} inspect={inspect} /><Refs label='Review basis' values={value.basis} inspect={inspect} /></>;
   } else if (value instanceof C.Content_Source) {
-    detail = <><dl><Field label='Captured event identifier'><code>{value.eventId}</code></Field><Field label='Raw digest'><code>{value.rawDigest}</code></Field></dl><CaptureDetails context={value.captureContext} metadata={value.metadata} sourceNamespace={value.sourceNamespace} origin={value.origin} observation={value.observation} inspect={inspect} /><Refs label='Source context' values={value.context} inspect={inspect} /></>;
+    detail = <><dl><Field label='Raw digest'><code>{value.rawDigest}</code></Field></dl><SourceDescriptorDetails value={value.descriptor} inspect={inspect} /><Refs label='Source context' values={value.context} inspect={inspect} /></>;
   } else if (value instanceof C.Content_Artifact) {
     detail = <dl><Field label='Digest'><code>{value.digest}</code></Field><Field label='Media type'>{value.mediaType}</Field><Field label='Recorded locator (not fetched)'>{value.locator}</Field><Field label='Artifact generation'>{value.generation.toString()}</Field></dl>;
   } else if (value instanceof C.Content_Conflict) {
@@ -148,7 +149,7 @@ function RelationDetails({ value, inspect }: { value: C.RelationDetail; inspect:
   if (value instanceof C.RelationDetail_Decomposition) return <dl><Field label='Grouping'>{value.grouping}</Field></dl>;
   if (value instanceof C.RelationDetail_Delegation) return <><h4>Recorded delegation actors</h4><Texts values={value.actors} /><h4>Recorded operations</h4><Texts values={value.operations} /><Refs label='Delegated outcomes' values={value.outcomes} inspect={inspect} /><p className='fine-print'>Displaying a delegation is not permission to execute it.</p></>;
   if (value instanceof C.RelationDetail_AssessmentUse) return <><dl><Field label='Declared assessment use'>{value.disposition}</Field></dl><Refs label='Exact requirement' values={[value.requirement]} inspect={inspect} /><Refs label='Applicability-use basis' values={value.basis} inspect={inspect} /><p className='fine-print'>Applicability use is an attributed account, not a truth or permission certificate. Exclusion does not refute the original assessment.</p></>;
-  if (value instanceof C.RelationDetail_Adoption) return <dl><Field label='Presentation identifier'><code>{value.presentationId}</code></Field><Field label='Adoption origin'>{value.origin}</Field></dl>;
+  if (value instanceof C.RelationDetail_Adoption) return <><dl><Field label='Presentation identifier'><code>{value.presentationId}</code></Field><Field label='Adoption origin'>{value.origin}</Field><Field label='Exact presented selection'>{selectionLabel(value.selection)}</Field></dl><Refs label='Linked response Source' values={[value.response]} inspect={inspect} /><Refs label='Presented target' values={[value.selection.target]} inspect={inspect} />{value.selection instanceof C.PresentedSelection_Alternative && <Refs label='Exact alternative definition' values={[value.selection.definition]} inspect={inspect} />}<p className='fine-print'>An attributed interpretation is not a captured Human act; neither grants execution permission or proves physical Human presence.</p></>;
   return null;
 }
 function recordTitle(record: C.GraphRecord): string {
@@ -292,6 +293,10 @@ function ObservationDetails({ value, inspect }: { value: C.Observation; inspect:
   if (value instanceof C.Observation_Execution) return <><dl><Field label='Reported action'>{value.action}</Field><Field label='Reported checker'>{value.checker}</Field><Field label='Exit code'>{value.exitCode === undefined ? 'Not recorded' : value.exitCode}</Field><Field label='Capture reports complete'>{value.complete ? 'Yes (reported)' : 'No (reported)'}</Field></dl><Refs label='Observation contract' values={value.contract ? [value.contract] : []} inspect={inspect} /><Refs label='Observed artifact references' values={value.artifacts} inspect={inspect} /></>;
   return <p className='muted'>No structured observation reported.</p>;
 }
+function SourceDescriptorDetails({ value, inspect }: { value: C.SourceDescriptor; inspect: Inspect }) {
+  if (value instanceof C.SourceDescriptor_PrimaryCapture) return <><dl><Field label='Captured event identifier'><code>{value.eventId}</code></Field></dl><CaptureDetails context={value.captureContext} metadata={value.metadata} sourceNamespace={value.sourceNamespace} origin={value.origin} observation={value.observation} inspect={inspect} />{value.reviewResponse && <><h4>Protected review-response linkage</h4><dl><Field label='Presentation identifier'><code>{value.reviewResponse.presentationId}</code></Field><Field label='Judgment identifier'><code>{value.reviewResponse.judgmentId}</code></Field></dl><Refs label='Published presentation Source' values={[value.reviewResponse.presentationSource]} inspect={inspect} /></>}</>;
+  return <><h4>Derived presentation Source — not a primary event</h4><dl><Field label='Presentation identifier'><code>{value.presentationId}</code></Field><Field label='Original presented generation'>{value.generation.toString()}</Field><Field label='Prepared at'>{value.preparedAt}</Field><Field label='Payload digest'><code>{value.payloadDigest}</code></Field></dl><TraceDetails value={value.preparationTrace} /><p className='fine-print'>Retained offered content, not proof of Human perception, adoption or execution permission.</p></>;
+}
 function TraceDetails({ value }: { value: C.RequestTrace }) {
   return <dl><Field label='Host request identifier'><code>{value.hostRequestId}</code></Field><Field label='Ingress operation'>{value.operation}</Field><Field label='Ingress transport'>{value.transport}</Field></dl>;
 }
@@ -358,7 +363,7 @@ function JudgmentsPane({ client, scope }: { client: ApiClient; scope: string }) 
     }, undefined, true)}>Load / refresh judgments</button></div>
     <p className='fine-print'>Judgments concern presented snapshots. They do not independently authorize execution or establish completion.</p>
     <RequestState job={judgments} label='Loading judgments' />
-    {judgments.data && <>{!judgments.data.items.length && <p className='empty'>No judgments returned.</p>}<div className='card-list'>{judgments.data.items.map(value => <article className='record-card' key={value.id}><h3>{value.kind}</h3><dl><Field label='Judgment identifier'><code>{value.id}</code></Field><Field label='Presentation identifier'><code>{value.presentationId}</code></Field><Field label='Actor'>{value.actor.id} · {value.actor.kind}</Field><Field label='Recorded at'>{value.recordedAt}</Field></dl><p className='record-text'>{value.rationale}</p></article>)}</div></>}
+    {judgments.data && <>{!judgments.data.items.length && <p className='empty'>No judgments returned.</p>}<div className='card-list'>{judgments.data.items.map(value => <article className='record-card' key={value.id}><h3>{actionLabel(value.action)}</h3><dl><Field label='Judgment identifier'><code>{value.id}</code></Field><Field label='Presentation identifier'><code>{value.presentationId}</code></Field><Field label='Actor'>{value.actor.id} · {value.actor.kind}</Field><Field label='Recorded at'>{value.recordedAt}</Field></dl><p className='record-text'>{value.rationale}</p></article>)}</div></>}
   </section>;
 }
 
@@ -374,7 +379,7 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
   const [exactId, setExactId] = useState('');
   const [exactRevision, setExactRevision] = useState('1');
   const [rationale, setRationale] = useState('');
-  const [choice, setChoice] = useState<C.JudgmentKind | null>(null);
+  const [choice, setChoice] = useState<C.ReviewAction | null>(null);
   const [attempt, setAttempt] = useState<C.JudgmentRequest | null>(null);
   const [draftError, setDraftError] = useState<string | null>(null);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -430,12 +435,13 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
     presenting.current = true;
     void presented.run(async signal => {
       const value = await client.post('present', request, C.PresentRequest.jsonCodec(), C.Presentation.jsonCodec(), signal);
-      if (value.scope !== request.scope || value.generation !== request.expectedGeneration || !sameRefs(value.targets, request.targets)) throw new Error('The presentation did not match the pinned scope, generation, and exact targets. It cannot be judged.');
+      if (value.payload.scope !== request.scope || value.payload.generation !== request.expectedGeneration || !sameRefs(value.payload.targets, request.targets) || value.owner.id !== identity.actor.id || value.owner.kind !== identity.actor.kind) throw new Error('The presentation did not match the pinned scope, generation, and exact targets. It cannot be judged.');
       return value;
     }, undefined, true).finally(() => { presenting.current = false; });
   };
   const submit = () => {
     if (!canReview || !presented.data || submitting.current || judged.data !== null) return;
+    const retainedPresentation = presented.data;
     let request = pinnedJudgment.current;
     if (request === null) {
       if (choice === null || !rationale.trim()) return;
@@ -454,7 +460,7 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
     setDraftError(null);
     void judged.run(async signal => {
       const value = await client.post('judge', immutableRequest, C.JudgmentRequest.jsonCodec(), C.Judgment.jsonCodec(), signal);
-      if (value.scope !== immutableRequest.scope || value.requestId !== immutableRequest.requestId || value.presentationId !== immutableRequest.presentationId || value.kind !== immutableRequest.kind || value.rationale !== immutableRequest.rationale || value.actor.id !== identity.actor.id || value.actor.kind !== C.ActorKind.Human) throw new Error('The judgment acknowledgement did not match this request and authenticated Human. Keep the pinned request and retry it; do not create a replacement act.');
+      if (value.scope !== immutableRequest.scope || value.requestId !== immutableRequest.requestId || value.presentationId !== immutableRequest.presentationId || refKey(value.presentationSource) !== refKey(retainedPresentation.reservedSourceRef) || actionKey(value.action) !== actionKey(immutableRequest.action) || value.rationale !== immutableRequest.rationale || value.actor.id !== identity.actor.id || value.actor.kind !== C.ActorKind.Human) throw new Error('The judgment acknowledgement did not match this request and authenticated Human. Keep the pinned request and retry it; do not create a replacement act.');
       return value;
     }, undefined, true).finally(() => { submitting.current = false; });
   };
@@ -471,7 +477,8 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
     setDraftError(null);
     setConfirmDiscard(false);
   };
-  const snapshot = presented.data;
+  const presentation = presented.data;
+  const snapshot = presentation === null ? null : presentation.payload;
   const curation = status.data;
   return <>
     <section className='panel status-panel' aria-labelledby='status-heading'>
@@ -511,9 +518,9 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
           {!snapshot && <button type='button' className='primary' disabled={!canReview || presented.pending} onClick={present}>{presented.error ? 'Retry the same presentation request' : 'Prepare exact presentation'}</button>}
         </>}
         <RequestState job={presented} label='Preparing pinned presentation' />
-        {snapshot && <>
+        {snapshot && presentation && <>
           <h3>Presented snapshot</h3>
-          <dl><Field label='Presentation identifier'><code>{snapshot.id}</code></Field><Field label='Scope'>{snapshot.scope}</Field><Field label='Generation'>{snapshot.generation.toString()}</Field><Field label='Created at'>{snapshot.createdAt}</Field></dl>
+          <dl><Field label='Presentation identifier'><code>{presentation.id}</code></Field><Field label='Scope'>{snapshot.scope}</Field><Field label='Generation'>{snapshot.generation.toString()}</Field><Field label='Created at'>{presentation.createdAt}</Field><Field label='Presentation owner'>{presentation.owner.id} · {presentation.owner.kind}</Field><Field label='Server-reported payload digest'><code>{presentation.payloadDigest}</code></Field><Field label='Reserved presentation Source'><code>{refKey(presentation.reservedSourceRef)}</code></Field></dl><p className='fine-print'>Preparation reserves this Source reference without publishing a graph record or primary event. A later linked Human action may publish the derived Source.</p>
           <Refs label='Returned exact targets' values={snapshot.targets} inspect={inspect} />
           <h4>Returned records ({snapshot.records.length})</h4>
           <div className='card-list compact'>{snapshot.records.map((record, index) => <details key={`${refKey(record.value.ref)}:${index}`}><summary>{recordTitle(record)} · <code>{refKey(record.value.ref)}</code></summary><RecordCard record={record} inspect={inspect} /></details>)}</div>
@@ -523,18 +530,26 @@ function Workspace({ client, identity, scope, newRequestId, onDirty }: AppProps 
           <form onSubmit={event => { event.preventDefault(); submit(); }}>
             <fieldset disabled={!canReview || attempt !== null || judged.pending || judged.data !== null}>
               <legend>Choose one explicit judgment</legend>
-              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.Accept} checked={choice === C.JudgmentKind.Accept} onChange={() => setChoice(C.JudgmentKind.Accept)} /><span><strong>Accept</strong><small>Accept this presented interpretation, without granting execution permission.</small></span></label>
-              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.RequestCorrection} checked={choice === C.JudgmentKind.RequestCorrection} onChange={() => setChoice(C.JudgmentKind.RequestCorrection)} /><span><strong>Request correction</strong><small>Identify what needs correcting in the presented snapshot.</small></span></label>
-              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.NeedEvidence} checked={choice === C.JudgmentKind.NeedEvidence} onChange={() => setChoice(C.JudgmentKind.NeedEvidence)} /><span><strong>Need evidence</strong><small>State what evidence or qualification is missing.</small></span></label>
-              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.ReviseIntent} checked={choice === C.JudgmentKind.ReviseIntent} onChange={() => setChoice(C.JudgmentKind.ReviseIntent)} /><span><strong>Revise intent</strong><small>Explain the desired change to intent; this does not directly edit graph definitions.</small></span></label>
+              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.Accept} checked={choice instanceof C.ReviewAction_Review && choice.kind === C.JudgmentKind.Accept} onChange={() => setChoice(new C.ReviewAction_Review(C.JudgmentKind.Accept))} /><span><strong>Accept</strong><small>Accept this presented interpretation, without granting execution permission.</small></span></label>
+              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.RequestCorrection} checked={choice instanceof C.ReviewAction_Review && choice.kind === C.JudgmentKind.RequestCorrection} onChange={() => setChoice(new C.ReviewAction_Review(C.JudgmentKind.RequestCorrection))} /><span><strong>Request correction</strong><small>Identify what needs correcting in the presented snapshot.</small></span></label>
+              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.NeedEvidence} checked={choice instanceof C.ReviewAction_Review && choice.kind === C.JudgmentKind.NeedEvidence} onChange={() => setChoice(new C.ReviewAction_Review(C.JudgmentKind.NeedEvidence))} /><span><strong>Need evidence</strong><small>State what evidence or qualification is missing.</small></span></label>
+              <label className='choice'><input type='radio' name='judgment-kind' value={C.JudgmentKind.ReviseIntent} checked={choice instanceof C.ReviewAction_Review && choice.kind === C.JudgmentKind.ReviseIntent} onChange={() => setChoice(new C.ReviewAction_Review(C.JudgmentKind.ReviseIntent))} /><span><strong>Revise intent</strong><small>Explain the desired change to intent; this does not directly edit graph definitions.</small></span></label>
+              {snapshot.manifest.choices.map((selection, index) => {
+                const action = new C.ReviewAction_Choose(selection);
+                return <label className='choice' key={`choose-${index}`}><input type='radio' name='judgment-kind' checked={choice !== null && actionKey(choice) === actionKey(action)} onChange={() => setChoice(action)} /><span><strong>Choose {selectionLabel(selection)}</strong><small>Only this exact presented alternative or target; not execution permission.</small></span></label>;
+              })}
+              {snapshot.manifest.adoptionTargets.map(target => {
+                const action = new C.ReviewAction_Adopt(target);
+                return <label className='choice' key={`adopt-${refKey(target)}`}><input type='radio' name='judgment-kind' checked={choice !== null && actionKey(choice) === actionKey(action)} onChange={() => setChoice(action)} /><span><strong>Adopt presented target {refKey(target)}</strong><small>Explicit adoption of this exact presented Source or Binding; not execution permission.</small></span></label>;
+              })}
               <label>Rationale<textarea required rows={6} value={rationale} onChange={event => setRationale(event.target.value)} placeholder='Explain your judgment of this specific snapshot.' /></label>
             </fieldset>
             {attempt === null && judged.data === null && <button type='submit' className='primary' disabled={!canReview || choice === null || !rationale.trim() || judged.pending || !snapshot.records.length}>Submit Human judgment</button>}
           </form>
         </>}
         <RequestState job={judged} label='Awaiting judgment acknowledgement' />
-        {unresolved && attempt && <div className='notice warning'><h3>Acknowledgement unresolved</h3><p>The server may already have recorded this act. No success is assumed. Keep this tab open; do not create a replacement judgment.</p><p>Request ID: <code>{attempt.requestId}</code></p><p>The kind, rationale, presentation, and request ID are locked. A retry resends this same operation.</p><button type='button' disabled={judged.pending || !canReview} onClick={submit}>Retry same judgment</button></div>}
-        {judged.data && <div role='status' className='receipt'><h3>Judgment acknowledged by the server</h3><dl><Field label='Judgment identifier'><code>{judged.data.id}</code></Field><Field label='Request identifier'><code>{attempt?.requestId}</code></Field><Field label='Kind'>{judged.data.kind}</Field><Field label='Actor'>{judged.data.actor.id} · {judged.data.actor.kind}</Field><Field label='Recorded at'>{judged.data.recordedAt}</Field></dl><p className='fine-print'>This acknowledgement is not a task-completion or execution-authorization signal.</p></div>}
+        {unresolved && attempt && <div className='notice warning'><h3>Acknowledgement unresolved</h3><p>The server may already have recorded this act. No success is assumed. Keep this tab open; do not create a replacement judgment.</p><p>Request ID: <code>{attempt.requestId}</code></p><p>The complete action, rationale, presentation, and request ID are locked. A retry resends this same operation.</p><button type='button' disabled={judged.pending || !canReview} onClick={submit}>Retry same judgment</button></div>}
+        {judged.data && <div role='status' className='receipt'><h3>Judgment acknowledged by the server</h3><dl><Field label='Judgment identifier'><code>{judged.data.id}</code></Field><Field label='Request identifier'><code>{attempt?.requestId}</code></Field><Field label='Action'>{actionLabel(judged.data.action)}</Field><Field label='Actor'>{judged.data.actor.id} · {judged.data.actor.kind}</Field><Field label='Recorded at'>{judged.data.recordedAt}</Field></dl><p className='fine-print'>This acknowledgement is not a task-completion or execution-authorization signal.</p></div>}
         {dirty && <button type='button' className='discard-button' disabled={unresolved || presented.pending || judged.pending} onClick={() => setConfirmDiscard(true)}>{judged.data ? 'Close acknowledged review…' : 'Discard selected review and rationale…'}</button>}
         <p className='fine-print'>Drafts stay in this tab only. Private sources, tokens, and rationales are not placed in URLs or local storage.</p>
       </aside>

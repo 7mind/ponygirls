@@ -15,15 +15,15 @@ object CaptureIdentity {
     case value: Observation.FileVersion => List(Ref(UUID.nameUUIDFromBytes(("artifact:" + artifactKey(event.scope, event.sourceNamespace, Contexts.reportedNative(event.context, Contexts.ProtocolLimits), value)).getBytes(UTF_8)), 1))
     case _ => Nil
   }
-  private def payload(scope: String, eventId: UUID, context: ContextRecord, origin: EventOrigin, metadata: CaptureMetadata, text: String, observation: Observation): io.circe.Json =
-    io.circe.Json.obj("scope" -> io.circe.Json.fromString(scope), "eventId" -> io.circe.Json.fromString(eventId.toString), "context" -> Wire.encode(ContextRecord.codecJson, context), "origin" -> Wire.encode(EventOrigin_JsonCodec.instance, origin), "metadata" -> Wire.encode(CaptureMetadata.codecJson, metadata), "text" -> io.circe.Json.fromString(text), "observation" -> Wire.encode(Observation.codecJson, observation))
+  private def payload(scope: String, eventId: UUID, context: ContextRecord, origin: EventOrigin, metadata: CaptureMetadata, text: String, observation: Observation, reviewResponse: Option[ReviewResponseLink]): io.circe.Json =
+    io.circe.Json.obj("scope" -> io.circe.Json.fromString(scope), "eventId" -> io.circe.Json.fromString(eventId.toString), "context" -> Wire.encode(ContextRecord.codecJson, context), "origin" -> Wire.encode(EventOrigin_JsonCodec.instance, origin), "metadata" -> Wire.encode(CaptureMetadata.codecJson, metadata), "text" -> io.circe.Json.fromString(text), "observation" -> Wire.encode(Observation.codecJson, observation), "reviewResponse" -> reviewResponse.fold(io.circe.Json.Null)(Wire.encode(ReviewResponseLink.codecJson, _)))
   private def fingerprint(namespace: String, value: io.circe.Json): String =
     Digests.text(io.circe.Json.obj("namespace" -> io.circe.Json.fromString(namespace), "event" -> value).noSpaces)
   def fingerprint(event: CapturedEvent, eventId: UUID): String =
-    fingerprint(event.sourceNamespace, payload(event.scope, eventId, event.context, event.origin, event.metadata, event.text, event.observation))
+    fingerprint(event.sourceNamespace, payload(event.scope, eventId, event.context, event.origin, event.metadata, event.text, event.observation, event.reviewResponse))
   def occurrence(request: IngestRequest): ContextRecord = Contexts.normalize(request.occurrenceContext, Contexts.MissingOccurrence, Contexts.ProtocolLimits)
   def fingerprint(namespace: String, request: IngestRequest): String =
-    fingerprint(namespace, payload(request.scope, request.eventId, occurrence(request), request.origin, request.metadata, request.text, request.observation))
+    fingerprint(namespace, payload(request.scope, request.eventId, occurrence(request), request.origin, request.metadata, request.text, request.observation, None))
 }
 final class CaptureEngine {
   private def path(value: String): Unit = Require(value.nonEmpty && value.length <= 4096 && !value.startsWith("/") && !value.contains('\\') && value.split("/", -1).forall(p => p.nonEmpty && p != "." && p != ".."), "observation", "portable workspace-relative path required")
@@ -75,7 +75,7 @@ final class CaptureEngine {
     val contributor = if (principal.actor.kind == ActorKind.Collector) Actor("unattributed:" + source.id, ActorKind.Unknown) else principal.actor
     val inputId = InputReceipts.id(InputKind.Capture, principal.credentialId, input.requestId)
     val provenance = Provenance(contributor, recorder, inputId, receivedAt)
-    val event = CapturedEvent(source.id, input.scope, principal.credentialId, Math.addExact(frontier, 1L), context, input.origin, input.metadata, input.text, input.observation, provenance)
+    val event = CapturedEvent(source.id, input.scope, principal.credentialId, Math.addExact(frontier, 1L), context, input.origin, input.metadata, input.text, input.observation, None, provenance)
     val artifacts = input.observation match {
       case value: Observation.FileVersion =>
         val key = CaptureIdentity.artifactKey(input.scope, principal.credentialId, Contexts.reportedNative(context, Contexts.ProtocolLimits), value)
@@ -85,7 +85,7 @@ final class CaptureEngine {
     }
     val artifactRefs = artifacts.map(_.ref)
     val executionRefs = input.observation match { case value: Observation.Execution => value.contract.toList ++ value.artifacts; case _ => Nil }
-    val definition = Definition(source, input.scope, Applicability.Captured(source), Content.Source(input.text, (artifactRefs ++ executionRefs).distinct, Digests.text(input.text), source.id, principal.credentialId, context, input.metadata, input.origin, input.observation), Standing.Active, Nil, None, provenance)
+    val definition = Definition(source, input.scope, Applicability.Captured(source), Content.Source(input.text, (artifactRefs ++ executionRefs).distinct, Digests.text(input.text), SourceDescriptor.PrimaryCapture(source.id, principal.credentialId, context, input.metadata, input.origin, input.observation, None)), Standing.Active, Nil, None, provenance)
     val actors = List(contributor, recorder, principal.actor).distinct.filterNot(a => base.actors.exists(_.value == a)).map { actor => ActorRecord(Ref(UUID.nameUUIDFromBytes(("actor:" + actor.kind + ":" + actor.id).getBytes(UTF_8)), 1), actor) }
     val additions = artifacts.filterNot(a => base.definitions.exists(_.ref == a.ref))
     val changed = base.copy(generation = Math.addExact(base.generation, 1L), sourceFrontier = event.frontier, definitions = base.definitions ++ additions :+ definition, actors = base.actors ++ actors)

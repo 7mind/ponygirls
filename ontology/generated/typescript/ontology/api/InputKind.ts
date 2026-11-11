@@ -3,13 +3,17 @@ import {BaboonCodecContext, BaboonDecoderFailure, Lazy} from '../../BaboonShared
 export enum InputKind {
     GraphMutation = "GraphMutation",
     Capture = "Capture",
-    Curation = "Curation"
+    Curation = "Curation",
+    PresentationPublication = "PresentationPublication",
+    Judgment = "Judgment"
 }
 
 export const InputKind_values: ReadonlyArray<InputKind> = [
     InputKind.GraphMutation,
     InputKind.Capture,
-    InputKind.Curation
+    InputKind.Curation,
+    InputKind.PresentationPublication,
+    InputKind.Judgment
 ] as const;
 
 export function InputKind_parse(s: string): InputKind {

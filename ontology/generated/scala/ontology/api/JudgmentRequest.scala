@@ -8,7 +8,7 @@ package ontology.api {
     scope: String,
     requestId: UUID,
     presentationId: UUID,
-    kind: JudgmentKind,
+    action: ReviewAction,
     rationale: String
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = JudgmentRequest.baboonDomainVersion
@@ -42,7 +42,7 @@ package ontology.api {
         "scope" -> Json.fromString(value.scope),
         "requestId" -> Json.fromString(value.requestId.toString()),
         "presentationId" -> Json.fromString(value.presentationId.toString()),
-        "kind" -> JudgmentKind_JsonCodec.instance.encode(ctx, value.kind),
+        "action" -> ReviewAction_JsonCodec.instance.encode(ctx, value.action),
         "rationale" -> Json.fromString(value.rationale)
       )
     }
@@ -57,9 +57,9 @@ package ontology.api {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
             presentationId <- getField(jsonObject, "presentationId").flatMap(v => decodeUUID(v.hcursor))
-            kind <- getField(jsonObject, "kind").flatMap(v => JudgmentKind_JsonCodec.circeDecoder(v.hcursor))
+            action <- getField(jsonObject, "action").flatMap(v => ReviewAction_JsonCodec.circeDecoder(v.hcursor))
             rationale <- getField(jsonObject, "rationale").flatMap(v => decodeString(v.hcursor))
-          } yield JudgmentRequest(scope,requestId,presentationId,kind,rationale)
+          } yield JudgmentRequest(scope,requestId,presentationId,action,rationale)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to JudgmentRequest: object expected"))
       }
     }

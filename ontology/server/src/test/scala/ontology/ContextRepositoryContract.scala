@@ -30,7 +30,7 @@ abstract class ContextRepositoryContract extends GraphRepositoryContract {
       graph <- repo.read(scope)
       definition = Graph.node(graph, captured.source)
       receipt <- repo.input(scope, Ref(definition.provenance.input, 1))
-      _ = assertEquals(definition.content.asInstanceOf[Content.Source].captureContext, ContextRecord(OriginContext.Unknown(Contexts.MissingOccurrence), Nil))
+      _ = assertEquals(definition.content.asInstanceOf[Content.Source].descriptor.asInstanceOf[SourceDescriptor.PrimaryCapture].captureContext, ContextRecord(OriginContext.Unknown(Contexts.MissingOccurrence), Nil))
       _ = assertEquals(receipt.contributionContext, ContextRecord(OriginContext.Unknown(Contexts.MissingContribution), Nil))
       _ = assertEquals(receipt.ingress, ingress)
       _ = assertEquals(receipt.contributor.kind, ActorKind.Unknown)

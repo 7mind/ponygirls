@@ -109,13 +109,17 @@ object Contexts {
           case _ => throw Fault("context", "inherited source reference is not a Source")
         }
       }
+      def sourceNative(ref: Ref): CaptureContext = source(ref).descriptor match {
+        case value: SourceDescriptor.PrimaryCapture => reportedNative(value.captureContext, limits)
+        case _: SourceDescriptor.DerivedPresentation => throw Fault("context-unknown", "derived presentation has no native occurrence context")
+      }
       cut.sourceRefs.foreach(ref => { source(ref); () })
       cut.anchor.foreach {
         case a: InheritanceAnchor.ReportedEpoch =>
-          val original = reportedNative(source(a.source).captureContext, limits)
+          val original = sourceNative(a.source)
           check(original.epoch == a.epoch, "reported source epoch mismatch")
         case a: InheritanceAnchor.ReportedParent =>
-          val original = reportedNative(source(a.source).captureContext, limits)
+          val original = sourceNative(a.source)
           val destination = reportedNative(value, limits)
           check(original.epoch == a.epoch, "reported parent source epoch mismatch")
           Require(original.lineage == LineageStatus.Recorded && destination.lineage == LineageStatus.Recorded, "context-unknown", "parent/root matching requires recorded lineage on both reported contexts")

@@ -1,19 +1,19 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
-import {JudgmentKind, JudgmentKind_JsonCodec} from './JudgmentKind.js'
+import {ReviewAction, ReviewAction_JsonCodec} from './ReviewAction.js'
 
 export class JudgmentRequest implements BaboonGeneratedLatest {
     private readonly _scope: string;
     private readonly _requestId: string;
     private readonly _presentationId: string;
-    private readonly _kind: JudgmentKind;
+    private readonly _action: ReviewAction;
     private readonly _rationale: string;
 
-    constructor(scope: string, requestId: string, presentationId: string, kind: JudgmentKind, rationale: string) {
+    constructor(scope: string, requestId: string, presentationId: string, action: ReviewAction, rationale: string) {
         this._scope = scope
         this._requestId = requestId
         this._presentationId = presentationId
-        this._kind = kind
+        this._action = action
         this._rationale = rationale
     }
 
@@ -26,8 +26,8 @@ export class JudgmentRequest implements BaboonGeneratedLatest {
     public get presentationId(): string {
         return this._presentationId;
     }
-    public get kind(): JudgmentKind {
-        return this._kind;
+    public get action(): ReviewAction {
+        return this._action;
     }
     public get rationale(): string {
         return this._rationale;
@@ -38,27 +38,27 @@ export class JudgmentRequest implements BaboonGeneratedLatest {
             scope: this._scope,
             requestId: this._requestId,
             presentationId: this._presentationId,
-            kind: this._kind,
+            action: this._action,
             rationale: this._rationale
         };
     }
 
-    public with(overrides: {scope?: string; requestId?: string; presentationId?: string; kind?: JudgmentKind; rationale?: string}): JudgmentRequest {
+    public with(overrides: {scope?: string; requestId?: string; presentationId?: string; action?: ReviewAction; rationale?: string}): JudgmentRequest {
         return new JudgmentRequest(
             'scope' in overrides ? overrides.scope! : this._scope,
             'requestId' in overrides ? overrides.requestId! : this._requestId,
             'presentationId' in overrides ? overrides.presentationId! : this._presentationId,
-            'kind' in overrides ? overrides.kind! : this._kind,
+            'action' in overrides ? overrides.action! : this._action,
             'rationale' in overrides ? overrides.rationale! : this._rationale
         );
     }
 
-    public static fromPlain(obj: {scope: string; requestId: string; presentationId: string; kind: JudgmentKind; rationale: string}): JudgmentRequest {
+    public static fromPlain(obj: {scope: string; requestId: string; presentationId: string; action: ReviewAction; rationale: string}): JudgmentRequest {
         return new JudgmentRequest(
             obj.scope,
             obj.requestId,
             obj.presentationId,
-            obj.kind,
+            obj.action,
             obj.rationale
         );
     }
@@ -102,7 +102,7 @@ export class JudgmentRequest_JsonCodec {
             "scope": value.scope,
             "requestId": value.requestId,
             "presentationId": value.presentationId,
-            "kind": JudgmentKind_JsonCodec.instance.encode(BaboonCodecContext.Default, value.kind),
+            "action": ReviewAction_JsonCodec.instance.encode(BaboonCodecContext.Default, value.action),
             "rationale": value.rationale,
         }
     }
@@ -116,7 +116,7 @@ export class JudgmentRequest_JsonCodec {
             obj["scope"] as string,
             obj["requestId"] as string,
             obj["presentationId"] as string,
-            JudgmentKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]),
+            ReviewAction_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["action"]),
             obj["rationale"] as string,
         )
     }

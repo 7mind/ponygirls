@@ -5,6 +5,7 @@ import {ContextRecord, ContextRecord_JsonCodec} from './ContextRecord.js'
 import {EventOrigin, EventOrigin_JsonCodec} from './EventOrigin.js'
 import {Observation, Observation_JsonCodec} from './Observation.js'
 import {Provenance, Provenance_JsonCodec} from './Provenance.js'
+import {ReviewResponseLink, ReviewResponseLink_JsonCodec} from './ReviewResponseLink.js'
 
 export class CapturedEvent implements BaboonGeneratedLatest {
     private readonly _id: string;
@@ -16,9 +17,10 @@ export class CapturedEvent implements BaboonGeneratedLatest {
     private readonly _metadata: CaptureMetadata;
     private readonly _text: string;
     private readonly _observation: Observation;
+    private readonly _reviewResponse: ReviewResponseLink | undefined;
     private readonly _provenance: Provenance;
 
-    constructor(id: string, scope: string, sourceNamespace: string, frontier: bigint, context: ContextRecord, origin: EventOrigin, metadata: CaptureMetadata, text: string, observation: Observation, provenance: Provenance) {
+    constructor(id: string, scope: string, sourceNamespace: string, frontier: bigint, context: ContextRecord, origin: EventOrigin, metadata: CaptureMetadata, text: string, observation: Observation, reviewResponse: ReviewResponseLink | undefined, provenance: Provenance) {
         this._id = id
         this._scope = scope
         this._sourceNamespace = sourceNamespace
@@ -28,6 +30,7 @@ export class CapturedEvent implements BaboonGeneratedLatest {
         this._metadata = metadata
         this._text = text
         this._observation = observation
+        this._reviewResponse = reviewResponse
         this._provenance = provenance
     }
 
@@ -58,6 +61,9 @@ export class CapturedEvent implements BaboonGeneratedLatest {
     public get observation(): Observation {
         return this._observation;
     }
+    public get reviewResponse(): ReviewResponseLink | undefined {
+        return this._reviewResponse;
+    }
     public get provenance(): Provenance {
         return this._provenance;
     }
@@ -73,11 +79,12 @@ export class CapturedEvent implements BaboonGeneratedLatest {
             metadata: this._metadata,
             text: this._text,
             observation: this._observation,
+            reviewResponse: this._reviewResponse !== undefined ? this._reviewResponse : undefined,
             provenance: this._provenance
         };
     }
 
-    public with(overrides: {id?: string; scope?: string; sourceNamespace?: string; frontier?: bigint; context?: ContextRecord; origin?: EventOrigin; metadata?: CaptureMetadata; text?: string; observation?: Observation; provenance?: Provenance}): CapturedEvent {
+    public with(overrides: {id?: string; scope?: string; sourceNamespace?: string; frontier?: bigint; context?: ContextRecord; origin?: EventOrigin; metadata?: CaptureMetadata; text?: string; observation?: Observation; reviewResponse?: ReviewResponseLink | undefined; provenance?: Provenance}): CapturedEvent {
         return new CapturedEvent(
             'id' in overrides ? overrides.id! : this._id,
             'scope' in overrides ? overrides.scope! : this._scope,
@@ -88,11 +95,12 @@ export class CapturedEvent implements BaboonGeneratedLatest {
             'metadata' in overrides ? overrides.metadata! : this._metadata,
             'text' in overrides ? overrides.text! : this._text,
             'observation' in overrides ? overrides.observation! : this._observation,
+            'reviewResponse' in overrides ? overrides.reviewResponse! : this._reviewResponse,
             'provenance' in overrides ? overrides.provenance! : this._provenance
         );
     }
 
-    public static fromPlain(obj: {id: string; scope: string; sourceNamespace: string; frontier: bigint; context: ContextRecord; origin: EventOrigin; metadata: CaptureMetadata; text: string; observation: Observation; provenance: Provenance}): CapturedEvent {
+    public static fromPlain(obj: {id: string; scope: string; sourceNamespace: string; frontier: bigint; context: ContextRecord; origin: EventOrigin; metadata: CaptureMetadata; text: string; observation: Observation; reviewResponse: ReviewResponseLink | undefined; provenance: Provenance}): CapturedEvent {
         return new CapturedEvent(
             obj.id,
             obj.scope,
@@ -103,6 +111,7 @@ export class CapturedEvent implements BaboonGeneratedLatest {
             obj.metadata,
             obj.text,
             obj.observation,
+            obj.reviewResponse,
             obj.provenance
         );
     }
@@ -152,6 +161,7 @@ export class CapturedEvent_JsonCodec {
             "metadata": CaptureMetadata_JsonCodec.instance.encode(BaboonCodecContext.Default, value.metadata),
             "text": value.text,
             "observation": Observation_JsonCodec.instance.encode(BaboonCodecContext.Default, value.observation),
+            "reviewResponse": value.reviewResponse === undefined ? null : ReviewResponseLink_JsonCodec.instance.encode(BaboonCodecContext.Default, value.reviewResponse),
             "provenance": Provenance_JsonCodec.instance.encode(BaboonCodecContext.Default, value.provenance),
         }
     }
@@ -171,6 +181,7 @@ export class CapturedEvent_JsonCodec {
             CaptureMetadata_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["metadata"]),
             obj["text"] as string,
             Observation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["observation"]),
+            obj["reviewResponse"] === undefined || obj["reviewResponse"] === null ? undefined : obj["reviewResponse"] === undefined || obj["reviewResponse"] === null ? undefined : ReviewResponseLink_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["reviewResponse"]),
             Provenance_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["provenance"]),
         )
     }

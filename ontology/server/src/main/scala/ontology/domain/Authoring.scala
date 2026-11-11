@@ -30,12 +30,17 @@ object Authoring {
     case v: ApplicabilityInput.Declared => Applicability.Declared(v.statement, v.basis.map(resolve), v.context.map(applicabilityContext(_, resolve)))
   }
 
+  def selection(value: PresentedSelectionInput, resolve: Target => Ref): PresentedSelection = value match {
+    case v: PresentedSelectionInput.Whole => PresentedSelection.Whole(resolve(v.target))
+    case v: PresentedSelectionInput.Alternative => PresentedSelection.Alternative(resolve(v.target), resolve(v.definition), v.index, v.label)
+  }
+
   def relationDetail(value: RelationDetailInput, resolve: Target => Ref): RelationDetail = value match {
     case _: RelationDetailInput.Empty => RelationDetail.Empty()
     case v: RelationDetailInput.Dependency => RelationDetail.Dependency(v.gate, v.consumption, v.event.map(resolve), v.applicability)
     case v: RelationDetailInput.Decomposition => RelationDetail.Decomposition(v.grouping)
     case v: RelationDetailInput.Delegation => RelationDetail.Delegation(v.actors, v.operations, v.outcomes.map(resolve))
-    case v: RelationDetailInput.Adoption => RelationDetail.Adoption(v.presentationId, v.origin)
+    case v: RelationDetailInput.Adoption => RelationDetail.Adoption(v.presentationId, v.origin, resolve(v.response), selection(v.selection, resolve))
     case v: RelationDetailInput.AssessmentUse => RelationDetail.AssessmentUse(resolve(v.requirement), v.disposition, v.basis.map(resolve))
   }
 }

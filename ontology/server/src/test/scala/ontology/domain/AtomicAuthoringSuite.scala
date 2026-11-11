@@ -50,7 +50,7 @@ final class AtomicAuthoringSuite extends FunSuite {
 
   // Synthetic structural fixture only: no native identity, authority or observation claim.
   private val sr = Ref(UUID.randomUUID(), 1)
-  private val source = Content.Source("SYNTHETIC fixture, not native authority", Nil, "a" * 64, sr.id, "synthetic", ontology.TestContexts.reported(CaptureContext("fixture", None, None, LineageStatus.Unknown, "fixture", UUID.randomUUID())), CaptureMetadata("fixture", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.WorkerMessage, Observation.None())
+  private val source = Content.Source("SYNTHETIC fixture, not native authority", Nil, "a" * 64, SourceDescriptor.PrimaryCapture(sr.id, "synthetic", ontology.TestContexts.reported(CaptureContext("fixture", None, None, LineageStatus.Unknown, "fixture", UUID.randomUUID())), CaptureMetadata("fixture", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.WorkerMessage, Observation.None(), None))
   private val provenance = Provenance(Actor("fixture", ActorKind.Unknown), Actor("fixture", ActorKind.Unknown), UUID.randomUUID(), "fixture")
   private val seed = Graph.empty("atomic").copy(definitions = List(Definition(sr, "atomic", Applicability.Captured(sr), source, Standing.Active, Nil, None, provenance)))
   private def fresh: List[Json] = List(create("q", q, u), create("t", task(cr("q")), u), bind("tb", cr("t")), select("select-t", cr("tb"), cr("t")), create("c", claim, u), bind("cb", cr("c")), select("select-c", cr("cb"), cr("c")), create("r", review(cr("cb"), cr("c")), app("Declared", "statement", ex(sr), cr("cb"))))

@@ -2,18 +2,15 @@ import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../Baboon
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {Acceptance, Acceptance_JsonCodec} from './Acceptance.js'
 import {Assessment, Assessment_JsonCodec} from './Assessment.js'
-import {CaptureMetadata, CaptureMetadata_JsonCodec} from './CaptureMetadata.js'
 import {ConflictState, ConflictState_JsonCodec} from './ConflictState.js'
-import {ContextRecord, ContextRecord_JsonCodec} from './ContextRecord.js'
 import {Correction, Correction_JsonCodec} from './Correction.js'
 import {Escalation, Escalation_JsonCodec} from './Escalation.js'
-import {EventOrigin, EventOrigin_JsonCodec} from './EventOrigin.js'
 import {Execution, Execution_JsonCodec} from './Execution.js'
 import {Force, Force_JsonCodec} from './Force.js'
 import {Modality, Modality_JsonCodec} from './Modality.js'
-import {Observation, Observation_JsonCodec} from './Observation.js'
 import {Polarity, Polarity_JsonCodec} from './Polarity.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
+import {SourceDescriptor, SourceDescriptor_JsonCodec} from './SourceDescriptor.js'
 
 export type Content = Content_Outcome | Content_Constraint | Content_Task | Content_Statement | Content_Hypothesis | Content_Defect | Content_Question | Content_Decision | Content_Review | Content_Source | Content_Artifact | Content_Conflict
 
@@ -1237,23 +1234,13 @@ export class Content_Source implements BaboonAdtMemberMeta, BaboonGeneratedLates
     private readonly _text: string;
     private readonly _context: Array<Ref>;
     private readonly _rawDigest: string;
-    private readonly _eventId: string;
-    private readonly _sourceNamespace: string;
-    private readonly _captureContext: ContextRecord;
-    private readonly _metadata: CaptureMetadata;
-    private readonly _origin: EventOrigin;
-    private readonly _observation: Observation;
+    private readonly _descriptor: SourceDescriptor;
 
-    constructor(text: string, context: Array<Ref>, rawDigest: string, eventId: string, sourceNamespace: string, captureContext: ContextRecord, metadata: CaptureMetadata, origin: EventOrigin, observation: Observation) {
+    constructor(text: string, context: Array<Ref>, rawDigest: string, descriptor: SourceDescriptor) {
         this._text = text
         this._context = context
         this._rawDigest = rawDigest
-        this._eventId = eventId
-        this._sourceNamespace = sourceNamespace
-        this._captureContext = captureContext
-        this._metadata = metadata
-        this._origin = origin
-        this._observation = observation
+        this._descriptor = descriptor
     }
 
     public get text(): string {
@@ -1265,23 +1252,8 @@ export class Content_Source implements BaboonAdtMemberMeta, BaboonGeneratedLates
     public get rawDigest(): string {
         return this._rawDigest;
     }
-    public get eventId(): string {
-        return this._eventId;
-    }
-    public get sourceNamespace(): string {
-        return this._sourceNamespace;
-    }
-    public get captureContext(): ContextRecord {
-        return this._captureContext;
-    }
-    public get metadata(): CaptureMetadata {
-        return this._metadata;
-    }
-    public get origin(): EventOrigin {
-        return this._origin;
-    }
-    public get observation(): Observation {
-        return this._observation;
+    public get descriptor(): SourceDescriptor {
+        return this._descriptor;
     }
 
     public toJSON(): Record<string, unknown> {
@@ -1289,40 +1261,25 @@ export class Content_Source implements BaboonAdtMemberMeta, BaboonGeneratedLates
             text: this._text,
             context: this._context,
             rawDigest: this._rawDigest,
-            eventId: this._eventId,
-            sourceNamespace: this._sourceNamespace,
-            captureContext: this._captureContext,
-            metadata: this._metadata,
-            origin: this._origin,
-            observation: this._observation
+            descriptor: this._descriptor
         };
     }
 
-    public with(overrides: {text?: string; context?: Array<Ref>; rawDigest?: string; eventId?: string; sourceNamespace?: string; captureContext?: ContextRecord; metadata?: CaptureMetadata; origin?: EventOrigin; observation?: Observation}): Content_Source {
+    public with(overrides: {text?: string; context?: Array<Ref>; rawDigest?: string; descriptor?: SourceDescriptor}): Content_Source {
         return new Content_Source(
             'text' in overrides ? overrides.text! : this._text,
             'context' in overrides ? overrides.context! : this._context,
             'rawDigest' in overrides ? overrides.rawDigest! : this._rawDigest,
-            'eventId' in overrides ? overrides.eventId! : this._eventId,
-            'sourceNamespace' in overrides ? overrides.sourceNamespace! : this._sourceNamespace,
-            'captureContext' in overrides ? overrides.captureContext! : this._captureContext,
-            'metadata' in overrides ? overrides.metadata! : this._metadata,
-            'origin' in overrides ? overrides.origin! : this._origin,
-            'observation' in overrides ? overrides.observation! : this._observation
+            'descriptor' in overrides ? overrides.descriptor! : this._descriptor
         );
     }
 
-    public static fromPlain(obj: {text: string; context: Array<Ref>; rawDigest: string; eventId: string; sourceNamespace: string; captureContext: ContextRecord; metadata: CaptureMetadata; origin: EventOrigin; observation: Observation}): Content_Source {
+    public static fromPlain(obj: {text: string; context: Array<Ref>; rawDigest: string; descriptor: SourceDescriptor}): Content_Source {
         return new Content_Source(
             obj.text,
             obj.context,
             obj.rawDigest,
-            obj.eventId,
-            obj.sourceNamespace,
-            obj.captureContext,
-            obj.metadata,
-            obj.origin,
-            obj.observation
+            obj.descriptor
         );
     }
 
@@ -1370,12 +1327,7 @@ export class Content_Source_JsonCodec {
             "text": value.text,
             "context": Array.from(value.context).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "rawDigest": value.rawDigest,
-            "eventId": value.eventId,
-            "sourceNamespace": value.sourceNamespace,
-            "captureContext": ContextRecord_JsonCodec.instance.encode(BaboonCodecContext.Default, value.captureContext),
-            "metadata": CaptureMetadata_JsonCodec.instance.encode(BaboonCodecContext.Default, value.metadata),
-            "origin": EventOrigin_JsonCodec.instance.encode(BaboonCodecContext.Default, value.origin),
-            "observation": Observation_JsonCodec.instance.encode(BaboonCodecContext.Default, value.observation),
+            "descriptor": SourceDescriptor_JsonCodec.instance.encode(BaboonCodecContext.Default, value.descriptor),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Content_Source {
@@ -1388,12 +1340,7 @@ export class Content_Source_JsonCodec {
             obj["text"] as string,
             (obj["context"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["rawDigest"] as string,
-            obj["eventId"] as string,
-            obj["sourceNamespace"] as string,
-            ContextRecord_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["captureContext"]),
-            CaptureMetadata_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["metadata"]),
-            EventOrigin_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["origin"]),
-            Observation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["observation"]),
+            SourceDescriptor_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["descriptor"]),
         )
     }
 

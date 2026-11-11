@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeList, decodeString, decodeUUID}
+import io.circe.Decoder.{decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -6,12 +6,12 @@ import java.util.UUID
 package ontology.api {
   final case class Presentation(
     id: UUID,
-    scope: String,
-    generation: Long,
-    targets: List[Ref],
-    records: List[GraphRecord],
-    sourceRefs: List[Ref],
-    createdAt: String
+    owner: Actor,
+    reservedSourceRef: Ref,
+    payload: PresentationPayload,
+    payloadDigest: String,
+    createdAt: String,
+    preparationTrace: RequestTrace
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = Presentation.baboonDomainVersion
     override def baboonDomainIdentifier: String = Presentation.baboonDomainIdentifier
@@ -42,12 +42,12 @@ package ontology.api {
       
       Json.obj(
         "id" -> Json.fromString(value.id.toString()),
-        "scope" -> Json.fromString(value.scope),
-        "generation" -> Json.fromString(value.generation.toString),
-        "targets" -> Json.fromValues(value.targets.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
-        "records" -> Json.fromValues(value.records.map(e => GraphRecord_JsonCodec.instance.encode(ctx, e))),
-        "sourceRefs" -> Json.fromValues(value.sourceRefs.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
-        "createdAt" -> Json.fromString(value.createdAt)
+        "owner" -> Actor_JsonCodec.instance.encode(ctx, value.owner),
+        "reservedSourceRef" -> Ref_JsonCodec.instance.encode(ctx, value.reservedSourceRef),
+        "payload" -> PresentationPayload_JsonCodec.instance.encode(ctx, value.payload),
+        "payloadDigest" -> Json.fromString(value.payloadDigest),
+        "createdAt" -> Json.fromString(value.createdAt),
+        "preparationTrace" -> RequestTrace_JsonCodec.instance.encode(ctx, value.preparationTrace)
       )
     }
     
@@ -59,13 +59,13 @@ package ontology.api {
       wire.asObject match {
         case Some(jsonObject) => for {
             id <- getField(jsonObject, "id").flatMap(v => decodeUUID(v.hcursor))
-            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
-            generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            targets <- getField(jsonObject, "targets").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
-            records <- getField(jsonObject, "records").flatMap(v => decodeList(GraphRecord_JsonCodec.circeDecoder)(v.hcursor))
-            sourceRefs <- getField(jsonObject, "sourceRefs").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
+            owner <- getField(jsonObject, "owner").flatMap(v => Actor_JsonCodec.circeDecoder(v.hcursor))
+            reservedSourceRef <- getField(jsonObject, "reservedSourceRef").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
+            payload <- getField(jsonObject, "payload").flatMap(v => PresentationPayload_JsonCodec.circeDecoder(v.hcursor))
+            payloadDigest <- getField(jsonObject, "payloadDigest").flatMap(v => decodeString(v.hcursor))
             createdAt <- getField(jsonObject, "createdAt").flatMap(v => decodeString(v.hcursor))
-          } yield Presentation(id,scope,generation,targets,records,sourceRefs,createdAt)
+            preparationTrace <- getField(jsonObject, "preparationTrace").flatMap(v => RequestTrace_JsonCodec.circeDecoder(v.hcursor))
+          } yield Presentation(id,owner,reservedSourceRef,payload,payloadDigest,createdAt,preparationTrace)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Presentation: object expected"))
       }
     }

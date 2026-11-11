@@ -5,6 +5,7 @@ import {AssessmentUseDisposition, AssessmentUseDisposition_JsonCodec} from './As
 import {Consumption, Consumption_JsonCodec} from './Consumption.js'
 import {Gate, Gate_JsonCodec} from './Gate.js'
 import {Grouping, Grouping_JsonCodec} from './Grouping.js'
+import {PresentedSelection, PresentedSelection_JsonCodec} from './PresentedSelection.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
 
 export type RelationDetail = RelationDetail_Empty | RelationDetail_Dependency | RelationDetail_Decomposition | RelationDetail_Delegation | RelationDetail_Adoption | RelationDetail_AssessmentUse
@@ -505,10 +506,14 @@ export class RelationDetail_Adoption implements BaboonAdtMemberMeta, BaboonGener
     public readonly $type = 'ontology.api/[ontology.api/:#RelationDetail]#Adoption' as const;
     private readonly _presentationId: string;
     private readonly _origin: AdoptionOrigin;
+    private readonly _response: Ref;
+    private readonly _selection: PresentedSelection;
 
-    constructor(presentationId: string, origin: AdoptionOrigin) {
+    constructor(presentationId: string, origin: AdoptionOrigin, response: Ref, selection: PresentedSelection) {
         this._presentationId = presentationId
         this._origin = origin
+        this._response = response
+        this._selection = selection
     }
 
     public get presentationId(): string {
@@ -517,25 +522,37 @@ export class RelationDetail_Adoption implements BaboonAdtMemberMeta, BaboonGener
     public get origin(): AdoptionOrigin {
         return this._origin;
     }
+    public get response(): Ref {
+        return this._response;
+    }
+    public get selection(): PresentedSelection {
+        return this._selection;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
             presentationId: this._presentationId,
-            origin: this._origin
+            origin: this._origin,
+            response: this._response,
+            selection: this._selection
         };
     }
 
-    public with(overrides: {presentationId?: string; origin?: AdoptionOrigin}): RelationDetail_Adoption {
+    public with(overrides: {presentationId?: string; origin?: AdoptionOrigin; response?: Ref; selection?: PresentedSelection}): RelationDetail_Adoption {
         return new RelationDetail_Adoption(
             'presentationId' in overrides ? overrides.presentationId! : this._presentationId,
-            'origin' in overrides ? overrides.origin! : this._origin
+            'origin' in overrides ? overrides.origin! : this._origin,
+            'response' in overrides ? overrides.response! : this._response,
+            'selection' in overrides ? overrides.selection! : this._selection
         );
     }
 
-    public static fromPlain(obj: {presentationId: string; origin: AdoptionOrigin}): RelationDetail_Adoption {
+    public static fromPlain(obj: {presentationId: string; origin: AdoptionOrigin; response: Ref; selection: PresentedSelection}): RelationDetail_Adoption {
         return new RelationDetail_Adoption(
             obj.presentationId,
-            obj.origin
+            obj.origin,
+            obj.response,
+            obj.selection
         );
     }
 
@@ -582,6 +599,8 @@ export class RelationDetail_Adoption_JsonCodec {
         return {
             "presentationId": value.presentationId,
             "origin": AdoptionOrigin_JsonCodec.instance.encode(BaboonCodecContext.Default, value.origin),
+            "response": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.response),
+            "selection": PresentedSelection_JsonCodec.instance.encode(BaboonCodecContext.Default, value.selection),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): RelationDetail_Adoption {
@@ -593,6 +612,8 @@ export class RelationDetail_Adoption_JsonCodec {
         return new RelationDetail_Adoption (
             obj["presentationId"] as string,
             AdoptionOrigin_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["origin"]),
+            Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["response"]),
+            PresentedSelection_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["selection"]),
         )
     }
 

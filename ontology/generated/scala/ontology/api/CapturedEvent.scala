@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeString, decodeUUID}
+import io.circe.Decoder.{decodeOption, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -14,6 +14,7 @@ package ontology.api {
     metadata: CaptureMetadata,
     text: String,
     observation: Observation,
+    reviewResponse: Option[ReviewResponseLink],
     provenance: Provenance
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CapturedEvent.baboonDomainVersion
@@ -53,6 +54,7 @@ package ontology.api {
         "metadata" -> CaptureMetadata_JsonCodec.instance.encode(ctx, value.metadata),
         "text" -> Json.fromString(value.text),
         "observation" -> Observation_JsonCodec.instance.encode(ctx, value.observation),
+        "reviewResponse" -> value.reviewResponse.map(v => ReviewResponseLink_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
         "provenance" -> Provenance_JsonCodec.instance.encode(ctx, value.provenance)
       )
     }
@@ -73,8 +75,9 @@ package ontology.api {
             metadata <- getField(jsonObject, "metadata").flatMap(v => CaptureMetadata_JsonCodec.circeDecoder(v.hcursor))
             text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
             observation <- getField(jsonObject, "observation").flatMap(v => Observation_JsonCodec.circeDecoder(v.hcursor))
+            reviewResponse <- getField(jsonObject, "reviewResponse").flatMap(v => decodeOption(ReviewResponseLink_JsonCodec.circeDecoder)(v.hcursor))
             provenance <- getField(jsonObject, "provenance").flatMap(v => Provenance_JsonCodec.circeDecoder(v.hcursor))
-          } yield CapturedEvent(id,scope,sourceNamespace,frontier,context,origin,metadata,text,observation,provenance)
+          } yield CapturedEvent(id,scope,sourceNamespace,frontier,context,origin,metadata,text,observation,reviewResponse,provenance)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CapturedEvent: object expected"))
       }
     }
