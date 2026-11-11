@@ -250,7 +250,7 @@ abstract class RdfProjectionContract extends FunSuite {
   } }
 }
 final class MemoryRdfProjectionSuite extends RdfProjectionContract {
-  protected def projection: Resource[IO, RdfProjection] = RdfProjection.resource(RdfStorage.Memory, 10)
+  protected def projection: Resource[IO, RdfProjection] = RdfProjection.resource(RdfStorage.Memory, "fixture-rdf", 10, IO(UUID.randomUUID()))
 }
 object RdfTestDirectory {
   def resource: Resource[IO, Path] = Resource.make(IO.blocking(Files.createTempDirectory("ontology-rdf-")))(path => IO.blocking {
@@ -259,15 +259,15 @@ object RdfTestDirectory {
   })
 }
 final class NativeRdfProjectionSuite extends RdfProjectionContract {
-  protected def projection: Resource[IO, RdfProjection] = RdfTestDirectory.resource.flatMap(path => RdfProjection.resource(RdfStorage.Native(path), 10))
+  protected def projection: Resource[IO, RdfProjection] = RdfTestDirectory.resource.flatMap(path => RdfProjection.resource(RdfStorage.Native(path), "fixture-rdf", 10, IO(UUID.randomUUID())))
 }
 final class NativeRdfRestartSuite extends FunSuite {
   private val runtime = IORuntime.builder().build()
   override def afterAll(): Unit = runtime.shutdown()
   test("native projection survives close and reopen") {
     RdfTestDirectory.resource.use { path =>
-      RdfProjection.resource(RdfStorage.Native(path), 10).use(_.publish(Graph.empty("persisted"))) *>
-        RdfProjection.resource(RdfStorage.Native(path), 10).use(_.snapshot("persisted", 0L)).map(value => assertEquals(value, Graph.empty("persisted")))
+      RdfProjection.resource(RdfStorage.Native(path), "fixture-rdf", 10, IO(UUID.randomUUID())).use(_.publish(Graph.empty("persisted"))) *>
+        RdfProjection.resource(RdfStorage.Native(path), "fixture-rdf", 10, IO(UUID.randomUUID())).use(_.snapshot("persisted", 0L)).map(value => assertEquals(value, Graph.empty("persisted")))
     }.unsafeRunSync()(using runtime)
   }
 }

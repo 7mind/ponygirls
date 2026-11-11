@@ -4,8 +4,8 @@ export const wirePlan: WirePlan = {
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "73458e4acd57d491d736a174548ea6054723e55d19963096a3b748f248a6a29c",
-  "rawDigest": "33467ad548ec3aae1c63015ce4c690aeb441116e214811dee9a8790713660736",
+  "modelDigest": "b6a26053d617354b4355ef9b07533ff9b71f1020e6aa5305ad57555143bde327",
+  "rawDigest": "4faeb5da37f3bc42a12322af30c988245057c0d599ab7249478e1b74a2053c03",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -861,6 +861,30 @@ export const wirePlan: WirePlan = {
       "version": "0.1.0",
       "component": "ontology_api_PresentedSelectionInput",
       "parent": "ontology.api/:#PresentedSelectionInput",
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionCheckpoint",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionCheckpoint",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionInstance",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionInstance",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionStoreIdentity",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionStoreIdentity",
+      "parent": null,
       "tag": null
     },
     {
@@ -3867,6 +3891,47 @@ export const wirePlan: WirePlan = {
       "members": {
         "Alternative": "ontology_api_PresentedSelectionInput_Alternative",
         "Whole": "ontology_api_PresentedSelectionInput_Whole"
+      }
+    },
+    "ontology_api_ProjectionCheckpoint": {
+      "kind": "object",
+      "fields": {
+        "digest": {
+          "kind": "string"
+        },
+        "generation": {
+          "kind": "i64"
+        },
+        "instance": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionInstance"
+        },
+        "scope": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_ProjectionInstance": {
+      "kind": "object",
+      "fields": {
+        "incarnation": {
+          "kind": "uuid"
+        },
+        "targetId": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_ProjectionStoreIdentity": {
+      "kind": "object",
+      "fields": {
+        "format": {
+          "kind": "i32"
+        },
+        "instance": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionInstance"
+        }
       }
     },
     "ontology_api_Provenance": {

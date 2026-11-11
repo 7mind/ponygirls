@@ -25,11 +25,11 @@ abstract class RdfCorruptionContract extends FunSuite {
       Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Supports, List(Target.Created("a")), List(Target.Created("b")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "A supports B, not C")
     ), None), Admission(ontology.TestContexts.principal("scope", Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"), Nil)).snapshot
   }
-  for (boundary <- List("snapshot", "readiness"); invalid <- List("missing", "negative")) test(s"$boundary rejects a nonempty RDF dataset with $invalid generation metadata") {
+  for (boundary <- List("snapshot", "readiness", "publication", "observation"); invalid <- List("missing", "negative")) test(s"$boundary rejects a nonempty RDF dataset with $invalid generation metadata") {
     rawRepository.use { repo =>
       val graph = sample
-      val projected = new Rdf4jProjection(repo, 10)
       for {
+        projected <- Rdf4jProjection.open(repo, "fixture-corruption", 10, IO(UUID.randomUUID()))
         _ <- projected.publish(graph)
         _ <- IO.blocking { Using.resource(repo.getConnection) { connection =>
           connection.begin()
@@ -40,18 +40,20 @@ abstract class RdfCorruptionContract extends FunSuite {
           connection.commit()
         } }
         result <- (if (boundary == "snapshot") projected.snapshot(graph.scope, graph.generation).void
+          else if (boundary == "publication") projected.publish(graph).void
+          else if (boundary == "observation") projected.observe(graph.scope).void
           else new LocalExactRdfReadiness(projected).generation(graph).void).attempt
         _ = assertEquals(result.left.toOption.collect { case f: Fault => f.code }, Some("corrupt"))
       } yield ()
     }.unsafeRunSync()(using runtime)
   }
-  List("snapshot", "traversal", "replay", "foreign-payload", "readiness").foreach { boundary =>
+  List("snapshot", "traversal", "replay", "foreign-payload", "readiness", "observation").foreach { boundary =>
     test(s"$boundary cannot accept RDF index/payload disagreement at a valid checkpoint") {
       rawRepository.use { repo =>
         val graph = sample
-        val projected = new Rdf4jProjection(repo, 10)
         val cRef = graph.definitions.find(d => Graph.text(d.content) == "C").get.ref
         for {
+          projected <- Rdf4jProjection.open(repo, "fixture-corruption", 10, IO(UUID.randomUUID()))
           _ <- projected.publish(graph)
           _ <- IO.blocking {
             Using.resource(repo.getConnection) { connection =>
@@ -75,6 +77,7 @@ abstract class RdfCorruptionContract extends FunSuite {
           result <- (boundary match {
             case "snapshot" => projected.snapshot("scope", 1L).void
             case "readiness" => new LocalExactRdfReadiness(projected).generation(graph).void
+            case "observation" => projected.observe(graph.scope).void
             case "traversal" => projected.subjects("scope", 1L, "target", cRef).void
             case "replay" => projected.publish(graph).void
             case "foreign-payload" => projected.subjects("scope", 1L, "target", graph.relations.head.targets.head).void

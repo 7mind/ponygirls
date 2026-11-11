@@ -23,7 +23,7 @@ abstract class OntologyServiceContract extends CurationRepositorySupport {
   private val workerToken = token(1)
   private val humanToken = token(2)
   private final case class Fixture(service: DefaultOntologyService, app: HttpApp[IO], rdf: RdfProjection, principal: Principal, allocated: AtomicInteger)
-  private def fixture(repo: GraphRepository, scope: String): Resource[IO, Fixture] = RdfProjection.resource(RdfStorage.Memory, 10).map { rdf =>
+  private def fixture(repo: GraphRepository, scope: String): Resource[IO, Fixture] = RdfProjection.resource(RdfStorage.Memory, "fixture-service-rdf", 10, IO(UUID.randomUUID())).map { rdf =>
     val agentCredential = CredentialConfig("worker", worker, Set(scope), Set(Capability.Read, Capability.Mutate, Capability.Capture), Path.of("/fixture/worker"))
     val humanCredential = CredentialConfig("human", human, Set(scope), Set(Capability.Read, Capability.Review), Path.of("/fixture/human"))
     val auth = new Auth(AuthConfig(origin, false, List(agentCredential, humanCredential), 60L, 10), new CredentialDigests {
@@ -32,7 +32,7 @@ abstract class OntologyServiceContract extends CurationRepositorySupport {
     val principal = Principal("worker", worker, Set(scope), agentCredential.capabilities)
     val allocated = new AtomicInteger(0)
     val ids = IO { allocated.incrementAndGet(); UUID.randomUUID() }
-    val catalog = new ScopeCatalog { def scopes(value: Principal): IO[List[String]] = IO.pure(List(scope)) }
+    val catalog = new GrantedScopeCatalog
     val service = new DefaultOntologyService(repo, new CursorSigner(Array.fill[Byte](32)(3)), QueryLimits(100, 64, 1048576, 2048),
       CapsuleStoreSettings(CapsuleSettings(Set(WorkContextKey(scope, "work")), CapsuleLimits(256, 1048576)), 4, 8), catalog,
       new LocalExactRdfReadiness(rdf), recorder, Clock.fixed(Instant.parse("2026-11-11T00:00:00Z"), ZoneOffset.UTC), ids)
@@ -108,6 +108,28 @@ abstract class OntologyServiceContract extends CurationRepositorySupport {
     _ = assertEquals((exact.items.head.frontier, exact.items.head.coveredFrontier), (graph.sourceFrontier, graph.coveredFrontier))
     after <- repo.read(scope)
     _ = assertEquals(after, graph)
+  } yield () } } }
+
+  test("granted scope catalog includes sorted empty scopes but excludes ungranted persisted scopes without writes") { check { (repo, _, scope) => fixture(repo, scope).use { f => for {
+    _ <- f.service.apply(call(f), command(scope, 0L))
+    privateRequest = command(scope + "-private", 0L)
+    _ <- repo.apply(privateRequest, Admission(TestContexts.principal(privateRequest.scope, worker), recorder, privateRequest.requestId,
+      "2026-11-11T00:00:00Z", TestContexts.trace("private-fixture"), Nil))
+    names = Set(scope, "z-" + scope, "a-" + scope)
+    granted = ServiceCall.internal(f.principal.copy(scopes = names), "catalog", UUID.randomUUID())
+    before <- repo.scopes
+    graphBefore <- repo.read(scope)
+    listed <- f.service.scopes(granted)
+    after <- repo.scopes
+    graphAfter <- repo.read(scope)
+    _ = assertEquals(listed.items.map(_.scope), names.toList.sorted)
+    _ = assert(listed.items.filterNot(_.scope == scope).forall(s => s.generation == 0L && s.frontier == 0L && s.coveredFrontier == 0L))
+    _ = assertEquals(after, before)
+    _ = assertEquals(graphAfter, graphBefore)
+    noGrants <- f.service.scopes(ServiceCall.internal(f.principal.copy(scopes = Set.empty), "catalog", UUID.randomUUID()))
+    _ = assertEquals(noGrants.items, Nil)
+    denied <- new GrantedScopeCatalog().scopes(f.principal.copy(capabilities = Set(Capability.Mutate))).attempt
+    _ = fault(denied, "forbidden")
   } yield () } } }
 
   test("actual cookie review routes retain generic Human action without inventing adoption") { check { (repo, _, scope) => fixture(repo, scope).use { f => for {

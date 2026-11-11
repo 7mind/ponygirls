@@ -20,25 +20,31 @@ object RdfStorage {
   case object Memory extends RdfStorage
   final case class Native(path: Path) extends RdfStorage
 }
+final case class ProjectionObservation(checkpoint: ProjectionCheckpoint, snapshot: GraphSnapshot)
 trait RdfProjection {
+  def instance: ProjectionInstance
+  def observe(scope: String): IO[Option[ProjectionObservation]]
   def publish(snapshot: GraphSnapshot): IO[Long]
   def snapshot(scope: String, expectedGeneration: Long): IO[GraphSnapshot]
   def subjects(scope: String, expectedGeneration: Long, predicate: String, target: Ref): IO[List[Ref]]
 }
 object RdfProjection {
-  def resource(storage: RdfStorage, queryDeadlineSeconds: Int): Resource[IO, RdfProjection] = {
+  def resource(storage: RdfStorage, targetId: String, queryDeadlineSeconds: Int, newIncarnation: IO[java.util.UUID]): Resource[IO, RdfProjection] =
+    Resource.make(IO.blocking(new SailRepository(storage match {
+      case RdfStorage.Memory => new MemoryStore()
+      case RdfStorage.Native(path) => new NativeStore(path.toFile)
+    })))(repository => IO.blocking(repository.shutDown()))
+      .evalTap(repository => IO.blocking(repository.init()))
+      .evalMap(repository => Rdf4jProjection.open(repository, targetId, queryDeadlineSeconds, newIncarnation))
+}
+object Rdf4jProjection {
+  def open(repository: Repository, targetId: String, queryDeadlineSeconds: Int, newIncarnation: IO[java.util.UUID]): IO[RdfProjection] = IO.defer {
     Require(queryDeadlineSeconds > 0, "config", "positive RDF query deadline required")
-    Resource.make(IO.blocking {
-      val repository = new SailRepository(storage match {
-        case RdfStorage.Memory => new MemoryStore()
-        case RdfStorage.Native(path) => new NativeStore(path.toFile)
-      })
-      repository.init()
-      repository
-    })(repository => IO.blocking(repository.shutDown())).map(repository => new Rdf4jProjection(repository, queryDeadlineSeconds))
+    val identity = new RdfStoreIdentity(repository)
+    identity.open(targetId, newIncarnation).map(instance => new Rdf4jProjection(repository, queryDeadlineSeconds, identity, instance))
   }
 }
-final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) extends RdfProjection {
+final class Rdf4jProjection private (repository: Repository, queryDeadlineSeconds: Int, identity: RdfStoreIdentity, val instance: ProjectionInstance) extends RdfProjection {
   private val values = repository.getValueFactory
   private def property(name: String): IRI = values.createIRI("urn:ontology:property:" + name)
   private def graph(scope: String): IRI = values.createIRI("urn:ontology:scope:" + Digests.text(scope))
@@ -47,6 +53,7 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
   private def transaction[A](write: Boolean)(f: RepositoryConnection => A): IO[A] = IO.blocking {
     Using.resource(repository.getConnection) { c =>
       c.begin(IsolationLevels.SERIALIZABLE)
+      identity.verify(c, instance)
       val result = f(c)
       if (write) c.commit() else c.rollback()
       result
@@ -61,15 +68,22 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
         Some(value)
       }
     }
-  private def generation(c: RepositoryConnection, scope: String): Option[Long] = field(c, scope, "generation").map { value =>
-    val parsed = try value.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF generation") }
-    Require(parsed >= 0L, "corrupt", "negative RDF generation")
-    parsed
-  }
-  private def requireGeneration(c: RepositoryConnection, scope: String, expected: Long): Unit = {
-    val actual = generation(c, scope)
+  private def generation(c: RepositoryConnection, scope: String): Option[Long] = {
+    val actual = field(c, scope, "generation").map { value =>
+      val parsed = try value.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF generation") }
+      Require(parsed >= 0L, "corrupt", "negative RDF generation")
+      parsed
+    }
     Require(actual.nonEmpty || !c.hasStatement(null, null, null, false, graph(scope)), "corrupt", "nonempty RDF dataset has no generation checkpoint")
-    Require(actual.contains(expected), "projection-lag", "requested graph revision is not projected")
+    actual
+  }
+  private def requireGeneration(c: RepositoryConnection, scope: String, expected: Long): Unit =
+    Require(generation(c, scope).contains(expected), "projection-lag", "requested graph revision is not projected")
+  def observe(scope: String): IO[Option[ProjectionObservation]] = transaction(false) { c =>
+    generation(c, scope).map { current =>
+      val snapshot = readSnapshot(c, scope, current)
+      ProjectionObservation(ProjectionCheckpoint(instance, scope, current, Digests.text(StoredJson.encode(GraphSnapshot.codecJson, snapshot))), snapshot)
+    }
   }
   private def requireScope(snapshot: GraphSnapshot): Unit = {
     Graph.validateCounters(snapshot)

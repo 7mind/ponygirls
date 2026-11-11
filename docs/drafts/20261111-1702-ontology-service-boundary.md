@@ -6,7 +6,7 @@ External apply delegates to repository primary-command publication. The service 
 
 ## Scope catalog decision
 
-Q57 is pending. `ScopeCatalog` is a required interface, with no production policy implementation or silent default. Tests inject explicit fixture names. This does not select granted-name or persisted-only advertisement on the user's behalf.
+Q57 revision 2 selects sorted explicitly granted names for principals with Read, including authorized empty G0 scopes. `GrantedScopeCatalog` implements that policy without consulting materialized graph inventory or creating state. The service still checks each advertised scope before loading details. This does not grant additional access or expose ungranted persisted scope names.
 
 ## Exact local RDF observation
 

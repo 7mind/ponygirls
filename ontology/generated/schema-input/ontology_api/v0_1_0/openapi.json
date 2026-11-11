@@ -4095,6 +4095,62 @@
         ],
         "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Whole, Alternative."
       },
+      "ontology_api_ProjectionCheckpoint" : {
+        "type" : "object",
+        "required" : [
+          "instance",
+          "scope",
+          "generation",
+          "digest"
+        ],
+        "properties" : {
+          "instance" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ProjectionInstance" : {
+        "type" : "object",
+        "required" : [
+          "targetId",
+          "incarnation"
+        ],
+        "properties" : {
+          "targetId" : {
+            "type" : "string"
+          },
+          "incarnation" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_ProjectionStoreIdentity" : {
+        "type" : "object",
+        "required" : [
+          "format",
+          "instance"
+        ],
+        "properties" : {
+          "format" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "instance" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
+          }
+        }
+      },
       "ontology_api_Provenance" : {
         "type" : "object",
         "required" : [
