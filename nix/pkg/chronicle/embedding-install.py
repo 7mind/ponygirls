@@ -9,7 +9,7 @@ import sys
 import zipfile
 
 known_collision = {
-    "flashinfer_python": "e02446b7d8276825d5761b209f46d39ea09c4a5e9db7e97dc641654f3cae6317",
+    "flashinfer_python": "54a69428da79de604d4b7d21d96cfa7574ca37c48191bcd391669af5cb28b20d",
     "torch_c_dlpack_ext": "59480145c7bb8be2bb86d4dda092763953d22d550056ff03bfe704b5af204f89",
 }
 

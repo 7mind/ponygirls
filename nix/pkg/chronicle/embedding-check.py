@@ -34,7 +34,7 @@ constraints = (Path(sys.prefix) / "share/chronicle-embedding/reference-constrain
 reference = {canonicalize_name(requirement.name): requirement
              for line in constraints.splitlines() if line and not line.startswith("#")
              for requirement in [Requirement(line)]}
-allowed_deviations = {"pyjwt": "2.15.1", "nvidia-nccl-cu13": "2.29.7"}
+allowed_deviations = {"pyjwt": "2.15.1", "nvidia-nccl-cu13": "2.30.7", "orjson": "3.13.0"}
 for wheel in expected:
     name = canonicalize_name(wheel["name"])
     actual = importlib.metadata.version(wheel["name"])
@@ -52,19 +52,19 @@ import torchaudio
 import torchcodec
 from torchcodec._core import ffmpeg_major_version, get_ffmpeg_library_versions
 
-assert torchvision.__version__ == "0.28.0+cu130", torchvision.__version__
+assert torchvision.__version__ == "0.29.0+cu130", torchvision.__version__
 assert torchaudio.__version__ == "2.11.0+cu130", torchaudio.__version__
 assert ffmpeg_major_version == 8, ffmpeg_major_version
 print(json.dumps({"torchcodec_ffmpeg_libraries": get_ffmpeg_library_versions()}))
 from vllm.model_executor.models import ModelRegistry
 
-assert torch.__version__.split("+")[0] == "2.13.0", torch.__version__
+assert torch.__version__.split("+")[0] == "2.14.0", torch.__version__
 assert torch.version.cuda == "13.0", torch.version.cuda
 assert transformers.__version__ == "5.19.0"
-assert vllm.__version__ == "0.32.0"
+assert vllm.__version__ == "0.33.0"
 assert "EmbeddingGemma2Model" in ModelRegistry.get_supported_archs()
 backend_hash = hashlib.sha256((Path(sys.prefix) / "lib/python3.12/site-packages/build_backend.py").read_bytes()).hexdigest()
-assert backend_hash == "e02446b7d8276825d5761b209f46d39ea09c4a5e9db7e97dc641654f3cae6317", backend_hash
+assert backend_hash == "54a69428da79de604d4b7d21d96cfa7574ca37c48191bcd391669af5cb28b20d", backend_hash
 import triton
 import tokenspeed_triton
 
