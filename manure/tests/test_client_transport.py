@@ -613,6 +613,95 @@ class LoopbackFixtureHandler(http.server.BaseHTTPRequestHandler):
 
 
 class TestLoopbackFixture(unittest.TestCase):
+    def test_maximum_metadata_pages_survive_actual_http_transport(self):
+        from manure.client import ManureClient
+        from manure.metadata import validate_metadata
+        page_rows = 200
+        retired_response_limit = 8 * 1024 * 1024 + 1024
+        response_limit = 32 * 1024 * 1024
+        for character in ('\x01', '🦄'):
+            tags = [character * 127 + chr(0x10000 + index) for index in range(32)]
+            hostname = character * 253
+            project_path = character * 4096
+            validate_metadata(tags, hostname, project_path)
+            artifacts = [cp.Artifact(f'{index:032x}', 'report', cp.ArtifactKind.File,
+                cp.Visibility.Internal, cp.ArtifactState.Ready, 'u', '2026-11-11T00:00:00Z',
+                None, 1, 1, 'http://127.0.0.1/view/report', tags, hostname, project_path)
+                for index in range(page_rows)]
+            catalogue = cp.Result_Catalogue(cp.CataloguePage(artifacts, None))
+            search = cp.Result_SearchResults(cp.SearchPage([cp.SearchHit(artifact,
+                'a' * 64, 'generation', 'manure-metadata-paths-v2', None, None, [], 1.0)
+                for artifact in artifacts], page_rows, cp.SearchCountScope.ExactMatches, None, None))
+            for result in (catalogue, search):
+                with self.subTest(character=ord(character), result=type(result).__name__):
+                    wire = cp.dumps(cp.ServerEnvelope(UUID(int=0), result))
+                    self.assertGreater(len(wire), retired_response_limit)
+                    self.assertLessEqual(len(wire), response_limit)
+                    # Prove the large peer response is valid before exercising transport.
+                    self.assertEqual(cp.response(wire, UUID(int=0), type(result)), result)
+                    print(f'metadata HTTP fixture: {type(result).__name__} scalar={ord(character)} rows={page_rows} bytes={len(wire)}')
+                    class PageHandler(LoopbackFixtureHandler):
+                        def do_POST(peer):
+                            self.assertEqual(peer.path, '/api/current')
+                            self.assertEqual(peer.headers.get('Authorization'), f'Bearer {VALID_TOKEN}')
+                            request = cp.decode(cp.ClientEnvelope, cp.loads(peer.rfile.read(int(peer.headers['Content-Length']))))
+                            self.assertIsInstance(request.command, cp.Command_ListArtifacts if isinstance(result, cp.Result_Catalogue) else cp.Command_Search)
+                            self.assertEqual(request.command.query.limit, page_rows)
+                            try:
+                                peer._send_json(200, cp.ServerEnvelope(request.requestId, result))
+                            except (BrokenPipeError, ConnectionResetError):
+                                pass
+                    server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), PageHandler)
+                    thread = threading.Thread(target=server.serve_forever, daemon=True)
+                    thread.start()
+                    try:
+                        client = ManureClient(f'http://127.0.0.1:{server.server_port}', token=VALID_TOKEN)
+                        if isinstance(result, cp.Result_Catalogue):
+                            rows = client.list_artifacts(limit=page_rows)['artifacts']
+                        else:
+                            rows = [hit['artifact'] for hit in client.search('report', limit=page_rows)['hits']]
+                        self.assertEqual(len(rows), page_rows)
+                        for artifact, row in zip(artifacts, rows, strict=True):
+                            self.assertEqual(row, cp.local(artifact))
+                    finally:
+                        server.shutdown(); server.server_close(); thread.join(timeout=5)
+                        self.assertFalse(thread.is_alive())
+
+    def test_oversized_http_responses_still_fail_with_and_without_content_length(self):
+        from manure.client import ManureClient, ManureError
+        response_limit = 32 * 1024 * 1024
+        chunk_bytes = 64 * 1024
+        for declared_length in (True, False):
+            with self.subTest(content_length=declared_length):
+                class OversizedHandler(LoopbackFixtureHandler):
+                    def do_POST(peer):
+                        peer.rfile.read(int(peer.headers['Content-Length']))
+                        peer.send_response(200)
+                        if declared_length:
+                            peer.send_header('Content-Length', str(response_limit + 1))
+                        peer.end_headers()
+                        if not declared_length:
+                            remaining = response_limit + 1
+                            try:
+                                while remaining:
+                                    part = b'x' * min(chunk_bytes, remaining)
+                                    peer.wfile.write(part)
+                                    remaining -= len(part)
+                            except (BrokenPipeError, ConnectionResetError):
+                                pass
+                server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), OversizedHandler)
+                thread = threading.Thread(target=server.serve_forever, daemon=True)
+                thread.start()
+                try:
+                    client = ManureClient(f'http://127.0.0.1:{server.server_port}', token=VALID_TOKEN)
+                    with self.assertRaises(ManureError) as error:
+                        client.list_artifacts()
+                    self.assertEqual(error.exception.code, 'too-large')
+                    self.assertEqual(error.exception.message, 'response too large')
+                finally:
+                    server.shutdown(); server.server_close(); thread.join(timeout=5)
+                    self.assertFalse(thread.is_alive())
+
     def test_fixture_verifies_bearer_and_range(self):
         (ManureClient, *_r) = _import_client()
         LoopbackFixtureHandler.log = []

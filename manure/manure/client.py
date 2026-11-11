@@ -34,10 +34,9 @@ MAX_REDIRECTS = 3
 FETCH_RANGE_BYTES = 1048576
 MIN_CHUNK_BYTES = 262144
 MAX_CHUNK_BYTES = 4194304
-# Transport-level safety cap: largest legitimate single response is a 4 MiB
-# chunk or 4 MiB JSON body; 8 MiB + slack aborts hostile oversized replies
-# before any write.
-MAX_TRANSPORT_BYTES = 8 * 1024 * 1024 + 1024
+# A default-maximum 200-row metadata page needs about 20 MiB when JSON escapes
+# astral scalars. Keep reads bounded, including replies without Content-Length.
+MAX_TRANSPORT_BYTES = 32 * 1024 * 1024
 # Reference-file representation ceilings, not a new URL grammar/normalization.
 # Token: canonical 43 ASCII bytes and one optional LF. URL: the existing 64 KiB
 # HTTP request-line ceiling (CONTRACT §7.7 / stdlib HTTP server), deliberately

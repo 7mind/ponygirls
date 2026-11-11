@@ -447,6 +447,8 @@
         "test_client_transport.TestCredentialIsolation.test_cross_origin_redirect_drops_credentials",
         "test_client_transport.TestCredentialIsolation.test_grant_jar_exact_host",
         "test_client_transport.TestLoopbackFixture.test_fixture_verifies_bearer_and_range",
+        "test_client_transport.TestLoopbackFixture.test_maximum_metadata_pages_survive_actual_http_transport",
+        "test_client_transport.TestLoopbackFixture.test_oversized_http_responses_still_fail_with_and_without_content_length",
         "test_client_transport.TestLoopbackHttps.test_http_loopback_allowed",
         "test_client_transport.TestLoopbackHttps.test_http_non_loopback_rejected_before_network",
         "test_client_transport.TestLoopbackHttps.test_https_non_loopback_allowed",

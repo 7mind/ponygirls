@@ -50,6 +50,12 @@ upload results; it is immutable after init, so changing it requires a new upload
 These are searchable metadata, not secrets: they can reach the configured
 embedding provider. Avoid sensitive hostnames/paths unless authorized.
 
+Python/CLI/MCP HTTP responses have a finite 32 MiB transport ceiling, checked
+both against `Content-Length` and while reading. This accommodates the default
+maximum 200-row catalogue/search pages even when maximum-size metadata uses
+12-byte JSON surrogate-pair escapes per Unicode scalar; oversized replies still
+fail with `too-large`.
+
 Resume cache records include this metadata, not only the source manifest.
 Auto-resume selects only an exact metadata match; `--resume ID` rejects a
 mismatch before network and verifies actual server metadata before mutation or
