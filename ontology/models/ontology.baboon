@@ -211,11 +211,41 @@ root data ScopesResult { items: lst[ScopeSummary] }
 root data CurationStatus { scope: str generation: i64 frontier: i64 coveredFrontier: i64 state: CurationState failure: opt[str] lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }
 root data CurationProposal { expectedGeneration: i64 frontier: i64 operations: lst[Operation] }
 
-root data CapsuleRequest { scope: str context: CaptureContext expectedFrontier: i64 }
-data GoverningChange { previous: Ref current: Ref reason: str humanBasis: lst[CapturedEvent] }
-root data Capsule { id: uid scope: str generation: i64 frontier: i64 coveredFrontier: i64 context: CaptureContext current: lst[Definition] relations: lst[Relation] observations: lst[CapturedEvent] changes: lst[GoverningChange] qualifications: lst[str] text: str }
-root data DeliveryRequest { scope: str requestId: uid capsuleId: uid generation: i64 frontier: i64 context: CaptureContext payloadDigest: str }
-root data DeliveryReceipt { id: uid capsuleId: uid generation: i64 frontier: i64 payloadDigest: str recordedAt: str }
+data CapsuleLimits { maxRecords: i32 maxPayloadBytes: i32 }
+data CapsulePolicyIdentity { id: str digest: str }
+data CapsuleCut { generation: i64 frontier: i64 coveredFrontier: i64 lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }
+enum CapsulePartition { SelectedWorkContext UnresolvedScopeContext SupportingContext HistoricalContext }
+enum CapsuleRole { RecordAccount IntentAccount HumanBasisAccount DerivedAccount Observation Binding Selection Progress Relation SourceBasis Artifact Attribution }
+enum CapsuleQualificationCode {
+ CoverageLag NoCurationPublication GraphChangedAfterCuration ReportedContextUnknown UnresolvedApplicability
+ UnboundIntent StaleBinding StaleWarrant MissingHumanBasis AmbiguousHumanBasis UnresolvedConflict UnresolvedChange HistoricalEvidence
+}
+data CapsuleQualification { code: CapsuleQualificationCode subjects: lst[Ref] }
+data CapsuleManifestEntry { ref: Ref partition: CapsulePartition roles: lst[CapsuleRole] evidence: lst[Ref] }
+data CapsuleChange { previous: opt[Ref] current: opt[Ref] account: Ref reason: opt[str] basis: lst[Ref] humanBasis: lst[Ref] }
+data CapsuleManifest { entries: lst[CapsuleManifestEntry] changes: lst[CapsuleChange] qualifications: lst[CapsuleQualification] }
+root data CapsuleRequest {
+ scope: str requestId: uid workContext: str reportedContext: opt[ContextRecordInput] expectedFrontier: i64 previousCapsuleId: opt[uid]
+}
+data CapsulePayload {
+ scope: str workContext: str reportedContext: ContextRecord cut: CapsuleCut previousCapsuleId: opt[uid]
+ policy: CapsulePolicyIdentity records: lst[GraphRecord] manifest: CapsuleManifest text: str
+}
+root data Capsule {
+ id: uid requestId: uid owner: Actor payload: CapsulePayload payloadDigest: str limits: CapsuleLimits preparedAt: str preparationTrace: RequestTrace
+}
+enum DeliveryBoundary { ClientContext ExtensionContext }
+data ReportedBoundaryDigest { encoding: str digest: str }
+enum DeliveryCutComparison { SameGraphAndCoverage ChangedGraphOrCoverage }
+root data DeliveryRequest {
+ scope: str requestId: uid capsuleId: uid capsulePayloadDigest: str workContext: str reportedContext: opt[ContextRecordInput]
+ boundary: DeliveryBoundary reportedAt: opt[str] reportedBoundaryPayload: opt[ReportedBoundaryDigest]
+}
+root data DeliveryReceipt {
+ id: uid requestId: uid owner: Actor scope: str capsuleId: uid capsulePayloadDigest: str workContext: str reportedContext: ContextRecord
+ boundary: DeliveryBoundary reportedAt: opt[str] reportedBoundaryPayload: opt[ReportedBoundaryDigest] receivedAt: str ingress: RequestTrace
+ observedCut: CapsuleCut cutComparison: DeliveryCutComparison
+}
 
 enum JudgmentKind { Accept RequestCorrection NeedEvidence ReviseIntent }
 root data PresentRequest { scope: str targets: lst[Ref] expectedGeneration: i64 }

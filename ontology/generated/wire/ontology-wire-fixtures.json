@@ -1018,647 +1018,1275 @@
     "label": "base",
     "wire": {
       "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
       },
-      "current": [],
-      "relations": [],
-      "observations": [],
-      "changes": [],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
+      "payload": {
+        "scope": "controlled-codec-fixture",
+        "workContext": "controlled-codec-fixture",
+        "reportedContext": {
+          "origin": {
+            "ReportedNative": {
+              "context": {
+                "sessionId": "controlled-codec-fixture",
+                "rootSessionId": null,
+                "parentSessionId": null,
+                "lineage": "Unknown",
+                "branch": "controlled-codec-fixture",
+                "epoch": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          },
+          "reportedInherited": []
+        },
+        "cut": {
+          "generation": "9223372036854775807",
+          "frontier": "9223372036854775807",
+          "coveredFrontier": "9223372036854775807",
+          "lastPublicationGeneration": null,
+          "attempt": null
+        },
+        "previousCapsuleId": null,
+        "policy": {
+          "id": "controlled-codec-fixture",
+          "digest": "controlled-codec-fixture"
+        },
+        "records": [],
+        "manifest": {
+          "entries": [],
+          "changes": [],
+          "qualifications": []
+        },
+        "text": "controlled-codec-fixture"
+      },
+      "payloadDigest": "controlled-codec-fixture",
+      "limits": {
+        "maxRecords": 1,
+        "maxPayloadBytes": 1
+      },
+      "preparedAt": "controlled-codec-fixture",
+      "preparationTrace": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      }
     },
     "scalaTypeId": "ontology.api/:#Capsule",
     "scalaWire": {
       "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
       },
-      "current": [],
-      "relations": [],
-      "observations": [],
-      "changes": [],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
+      "payload": {
+        "scope": "controlled-codec-fixture",
+        "workContext": "controlled-codec-fixture",
+        "reportedContext": {
+          "origin": {
+            "ReportedNative": {
+              "context": {
+                "sessionId": "controlled-codec-fixture",
+                "rootSessionId": null,
+                "parentSessionId": null,
+                "lineage": "Unknown",
+                "branch": "controlled-codec-fixture",
+                "epoch": "00000000-0000-4000-8000-000000000001"
+              }
+            }
+          },
+          "reportedInherited": []
+        },
+        "cut": {
+          "generation": "9223372036854775807",
+          "frontier": "9223372036854775807",
+          "coveredFrontier": "9223372036854775807",
+          "lastPublicationGeneration": null,
+          "attempt": null
+        },
+        "previousCapsuleId": null,
+        "policy": {
+          "id": "controlled-codec-fixture",
+          "digest": "controlled-codec-fixture"
+        },
+        "records": [],
+        "manifest": {
+          "entries": [],
+          "changes": [],
+          "qualifications": []
+        },
+        "text": "controlled-codec-fixture"
+      },
+      "payloadDigest": "controlled-codec-fixture",
+      "limits": {
+        "maxRecords": 1,
+        "maxPayloadBytes": 1
+      },
+      "preparedAt": "controlled-codec-fixture",
+      "preparationTrace": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      }
     }
   },
   {
-    "typeId": "ontology.api/:#Capsule",
+    "typeId": "ontology.api/:#CapsuleChange",
+    "label": "base",
+    "wire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleChange",
+    "scalaWire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleChange",
+    "label": "field:basis:item",
+    "wire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ],
+      "humanBasis": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleChange",
+    "scalaWire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ],
+      "humanBasis": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleChange",
+    "label": "field:current:present",
+    "wire": {
+      "previous": null,
+      "current": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleChange",
+    "scalaWire": {
+      "previous": null,
+      "current": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleChange",
+    "label": "field:humanBasis:item",
+    "wire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ]
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleChange",
+    "scalaWire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ]
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleChange",
+    "label": "field:previous:present",
+    "wire": {
+      "previous": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleChange",
+    "scalaWire": {
+      "previous": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": null,
+      "basis": [],
+      "humanBasis": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleChange",
+    "label": "field:reason:present",
+    "wire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": "controlled-codec-fixture",
+      "basis": [],
+      "humanBasis": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleChange",
+    "scalaWire": {
+      "previous": null,
+      "current": null,
+      "account": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "reason": "controlled-codec-fixture",
+      "basis": [],
+      "humanBasis": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleCut",
+    "label": "base",
+    "wire": {
+      "generation": "9223372036854775807",
+      "frontier": "9223372036854775807",
+      "coveredFrontier": "9223372036854775807",
+      "lastPublicationGeneration": null,
+      "attempt": null
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleCut",
+    "scalaWire": {
+      "generation": "9223372036854775807",
+      "frontier": "9223372036854775807",
+      "coveredFrontier": "9223372036854775807",
+      "lastPublicationGeneration": null,
+      "attempt": null
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleCut",
+    "label": "field:attempt:present",
+    "wire": {
+      "generation": "9223372036854775807",
+      "frontier": "9223372036854775807",
+      "coveredFrontier": "9223372036854775807",
+      "lastPublicationGeneration": null,
+      "attempt": {
+        "attemptId": "00000000-0000-4000-8000-000000000001",
+        "baseGeneration": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "previousCoveredFrontier": "9223372036854775807",
+        "state": "Claimed",
+        "inputDigest": null,
+        "lastOrdinal": null,
+        "lastStage": null,
+        "terminalCode": null,
+        "auditUncertain": true,
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture",
+        "finishedAt": null
+      }
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleCut",
+    "scalaWire": {
+      "generation": "9223372036854775807",
+      "frontier": "9223372036854775807",
+      "coveredFrontier": "9223372036854775807",
+      "lastPublicationGeneration": null,
+      "attempt": {
+        "attemptId": "00000000-0000-4000-8000-000000000001",
+        "baseGeneration": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "previousCoveredFrontier": "9223372036854775807",
+        "state": "Claimed",
+        "inputDigest": null,
+        "lastOrdinal": null,
+        "lastStage": null,
+        "terminalCode": null,
+        "auditUncertain": true,
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture",
+        "finishedAt": null
+      }
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleCut",
+    "label": "field:lastPublicationGeneration:present",
+    "wire": {
+      "generation": "9223372036854775807",
+      "frontier": "9223372036854775807",
+      "coveredFrontier": "9223372036854775807",
+      "lastPublicationGeneration": "9223372036854775807",
+      "attempt": null
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleCut",
+    "scalaWire": {
+      "generation": "9223372036854775807",
+      "frontier": "9223372036854775807",
+      "coveredFrontier": "9223372036854775807",
+      "lastPublicationGeneration": "9223372036854775807",
+      "attempt": null
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleLimits",
+    "label": "base",
+    "wire": {
+      "maxRecords": 1,
+      "maxPayloadBytes": 1
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleLimits",
+    "scalaWire": {
+      "maxRecords": 1,
+      "maxPayloadBytes": 1
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleManifest",
+    "label": "base",
+    "wire": {
+      "entries": [],
+      "changes": [],
+      "qualifications": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleManifest",
+    "scalaWire": {
+      "entries": [],
+      "changes": [],
+      "qualifications": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleManifest",
     "label": "field:changes:item",
     "wire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [],
-      "observations": [],
+      "entries": [],
       "changes": [
         {
-          "previous": {
+          "previous": null,
+          "current": null,
+          "account": {
             "id": "00000000-0000-4000-8000-000000000001",
             "revision": 1
           },
-          "current": {
-            "id": "00000000-0000-4000-8000-000000000001",
-            "revision": 1
-          },
-          "reason": "controlled-codec-fixture",
+          "reason": null,
+          "basis": [],
           "humanBasis": []
         }
       ],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
+      "qualifications": []
     },
-    "scalaTypeId": "ontology.api/:#Capsule",
+    "scalaTypeId": "ontology.api/:#CapsuleManifest",
     "scalaWire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [],
-      "observations": [],
+      "entries": [],
       "changes": [
         {
-          "previous": {
+          "previous": null,
+          "current": null,
+          "account": {
             "id": "00000000-0000-4000-8000-000000000001",
             "revision": 1
           },
-          "current": {
-            "id": "00000000-0000-4000-8000-000000000001",
-            "revision": 1
-          },
-          "reason": "controlled-codec-fixture",
+          "reason": null,
+          "basis": [],
           "humanBasis": []
         }
       ],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
+      "qualifications": []
     }
   },
   {
-    "typeId": "ontology.api/:#Capsule",
-    "label": "field:current:item",
+    "typeId": "ontology.api/:#CapsuleManifest",
+    "label": "field:entries:item",
     "wire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [
+      "entries": [
         {
           "ref": {
             "id": "00000000-0000-4000-8000-000000000001",
             "revision": 1
           },
-          "scope": "controlled-codec-fixture",
-          "applicability": {
-            "Captured": {
-              "source": {
-                "id": "00000000-0000-4000-8000-000000000001",
-                "revision": 1
-              }
-            }
-          },
-          "content": {
-            "Artifact": {
-              "text": "controlled-codec-fixture",
-              "digest": "controlled-codec-fixture",
-              "mediaType": "controlled-codec-fixture",
-              "locator": "controlled-codec-fixture",
-              "generation": "9223372036854775807"
-            }
-          },
-          "standing": "Active",
-          "basis": [],
-          "changeReason": null,
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
-          }
+          "partition": "SelectedWorkContext",
+          "roles": [],
+          "evidence": []
         }
       ],
-      "relations": [],
-      "observations": [],
       "changes": [],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
+      "qualifications": []
     },
-    "scalaTypeId": "ontology.api/:#Capsule",
+    "scalaTypeId": "ontology.api/:#CapsuleManifest",
     "scalaWire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [
+      "entries": [
         {
           "ref": {
             "id": "00000000-0000-4000-8000-000000000001",
             "revision": 1
           },
-          "scope": "controlled-codec-fixture",
-          "applicability": {
-            "Captured": {
-              "source": {
-                "id": "00000000-0000-4000-8000-000000000001",
-                "revision": 1
-              }
-            }
-          },
-          "content": {
-            "Artifact": {
-              "text": "controlled-codec-fixture",
-              "digest": "controlled-codec-fixture",
-              "mediaType": "controlled-codec-fixture",
-              "locator": "controlled-codec-fixture",
-              "generation": "9223372036854775807"
-            }
-          },
-          "standing": "Active",
-          "basis": [],
-          "changeReason": null,
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
-          }
+          "partition": "SelectedWorkContext",
+          "roles": [],
+          "evidence": []
         }
       ],
-      "relations": [],
-      "observations": [],
       "changes": [],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
+      "qualifications": []
     }
   },
   {
-    "typeId": "ontology.api/:#Capsule",
-    "label": "field:observations:item",
-    "wire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [],
-      "observations": [
-        {
-          "id": "00000000-0000-4000-8000-000000000001",
-          "scope": "controlled-codec-fixture",
-          "sourceNamespace": "controlled-codec-fixture",
-          "frontier": "9223372036854775807",
-          "context": {
-            "origin": {
-              "ReportedNative": {
-                "context": {
-                  "sessionId": "controlled-codec-fixture",
-                  "rootSessionId": null,
-                  "parentSessionId": null,
-                  "lineage": "Unknown",
-                  "branch": "controlled-codec-fixture",
-                  "epoch": "00000000-0000-4000-8000-000000000001"
-                }
-              }
-            },
-            "reportedInherited": []
-          },
-          "origin": "UserMessage",
-          "metadata": {
-            "sourceId": "controlled-codec-fixture",
-            "parentSourceId": null,
-            "observedAt": null,
-            "representation": "Text",
-            "omissions": [],
-            "exposedDeliveries": []
-          },
-          "text": "controlled-codec-fixture",
-          "observation": {
-            "Execution": {
-              "action": "controlled-codec-fixture",
-              "checker": "controlled-codec-fixture",
-              "contract": null,
-              "inputs": [],
-              "outputs": [],
-              "exitCode": null,
-              "complete": true
-            }
-          },
-          "reviewResponse": null,
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
-          }
-        }
-      ],
-      "changes": [],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
-    },
-    "scalaTypeId": "ontology.api/:#Capsule",
-    "scalaWire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [],
-      "observations": [
-        {
-          "id": "00000000-0000-4000-8000-000000000001",
-          "scope": "controlled-codec-fixture",
-          "sourceNamespace": "controlled-codec-fixture",
-          "frontier": "9223372036854775807",
-          "context": {
-            "origin": {
-              "ReportedNative": {
-                "context": {
-                  "sessionId": "controlled-codec-fixture",
-                  "rootSessionId": null,
-                  "parentSessionId": null,
-                  "lineage": "Unknown",
-                  "branch": "controlled-codec-fixture",
-                  "epoch": "00000000-0000-4000-8000-000000000001"
-                }
-              }
-            },
-            "reportedInherited": []
-          },
-          "origin": "UserMessage",
-          "metadata": {
-            "sourceId": "controlled-codec-fixture",
-            "parentSourceId": null,
-            "observedAt": null,
-            "representation": "Text",
-            "omissions": [],
-            "exposedDeliveries": []
-          },
-          "text": "controlled-codec-fixture",
-          "observation": {
-            "Execution": {
-              "action": "controlled-codec-fixture",
-              "checker": "controlled-codec-fixture",
-              "contract": null,
-              "inputs": [],
-              "outputs": [],
-              "exitCode": null,
-              "complete": true
-            }
-          },
-          "reviewResponse": null,
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
-          }
-        }
-      ],
-      "changes": [],
-      "qualifications": [],
-      "text": "controlled-codec-fixture"
-    }
-  },
-  {
-    "typeId": "ontology.api/:#Capsule",
+    "typeId": "ontology.api/:#CapsuleManifest",
     "label": "field:qualifications:item",
     "wire": {
-      "id": "00000000-0000-4000-8000-000000000001",
-      "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [],
-      "observations": [],
+      "entries": [],
       "changes": [],
       "qualifications": [
-        "controlled-codec-fixture"
+        {
+          "code": "CoverageLag",
+          "subjects": []
+        }
+      ]
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleManifest",
+    "scalaWire": {
+      "entries": [],
+      "changes": [],
+      "qualifications": [
+        {
+          "code": "CoverageLag",
+          "subjects": []
+        }
+      ]
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleManifestEntry",
+    "label": "base",
+    "wire": {
+      "ref": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "partition": "SelectedWorkContext",
+      "roles": [],
+      "evidence": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleManifestEntry",
+    "scalaWire": {
+      "ref": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "partition": "SelectedWorkContext",
+      "roles": [],
+      "evidence": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleManifestEntry",
+    "label": "field:evidence:item",
+    "wire": {
+      "ref": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "partition": "SelectedWorkContext",
+      "roles": [],
+      "evidence": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ]
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleManifestEntry",
+    "scalaWire": {
+      "ref": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "partition": "SelectedWorkContext",
+      "roles": [],
+      "evidence": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ]
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleManifestEntry",
+    "label": "field:roles:item",
+    "wire": {
+      "ref": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "partition": "SelectedWorkContext",
+      "roles": [
+        "RecordAccount"
       ],
+      "evidence": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleManifestEntry",
+    "scalaWire": {
+      "ref": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "revision": 1
+      },
+      "partition": "SelectedWorkContext",
+      "roles": [
+        "RecordAccount"
+      ],
+      "evidence": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePartition",
+    "label": "base",
+    "wire": "SelectedWorkContext",
+    "scalaTypeId": "ontology.api/:#CapsulePartition",
+    "scalaWire": "SelectedWorkContext"
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePartition",
+    "label": "enum:SelectedWorkContext",
+    "wire": "SelectedWorkContext",
+    "scalaTypeId": "ontology.api/:#CapsulePartition",
+    "scalaWire": "SelectedWorkContext"
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePartition",
+    "label": "enum:UnresolvedScopeContext",
+    "wire": "UnresolvedScopeContext",
+    "scalaTypeId": "ontology.api/:#CapsulePartition",
+    "scalaWire": "UnresolvedScopeContext"
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePartition",
+    "label": "enum:SupportingContext",
+    "wire": "SupportingContext",
+    "scalaTypeId": "ontology.api/:#CapsulePartition",
+    "scalaWire": "SupportingContext"
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePartition",
+    "label": "enum:HistoricalContext",
+    "wire": "HistoricalContext",
+    "scalaTypeId": "ontology.api/:#CapsulePartition",
+    "scalaWire": "HistoricalContext"
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePayload",
+    "label": "base",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "cut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "previousCapsuleId": null,
+      "policy": {
+        "id": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "records": [],
+      "manifest": {
+        "entries": [],
+        "changes": [],
+        "qualifications": []
+      },
       "text": "controlled-codec-fixture"
     },
-    "scalaTypeId": "ontology.api/:#Capsule",
+    "scalaTypeId": "ontology.api/:#CapsulePayload",
     "scalaWire": {
-      "id": "00000000-0000-4000-8000-000000000001",
       "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
       },
-      "current": [],
-      "relations": [],
-      "observations": [],
-      "changes": [],
-      "qualifications": [
-        "controlled-codec-fixture"
-      ],
+      "cut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "previousCapsuleId": null,
+      "policy": {
+        "id": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "records": [],
+      "manifest": {
+        "entries": [],
+        "changes": [],
+        "qualifications": []
+      },
       "text": "controlled-codec-fixture"
     }
   },
   {
-    "typeId": "ontology.api/:#Capsule",
-    "label": "field:relations:item",
+    "typeId": "ontology.api/:#CapsulePayload",
+    "label": "field:previousCapsuleId:present",
     "wire": {
-      "id": "00000000-0000-4000-8000-000000000001",
       "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [
-        {
-          "ref": {
-            "id": "00000000-0000-4000-8000-000000000001",
-            "revision": 1
-          },
-          "scope": "controlled-codec-fixture",
-          "applicability": {
-            "Captured": {
-              "source": {
-                "id": "00000000-0000-4000-8000-000000000001",
-                "revision": 1
-              }
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
             }
-          },
-          "kind": "Quotes",
-          "sources": [],
-          "targets": [],
-          "detail": {
-            "Adoption": {
-              "presentationId": "00000000-0000-4000-8000-000000000001",
-              "origin": "Interpretation",
-              "response": {
-                "id": "00000000-0000-4000-8000-000000000001",
-                "revision": 1
-              },
-              "selection": {
-                "Alternative": {
-                  "target": {
-                    "id": "00000000-0000-4000-8000-000000000001",
-                    "revision": 1
-                  },
-                  "definition": {
-                    "id": "00000000-0000-4000-8000-000000000001",
-                    "revision": 1
-                  },
-                  "index": 1,
-                  "label": "controlled-codec-fixture"
-                }
-              }
-            }
-          },
-          "why": "controlled-codec-fixture",
-          "standing": "Active",
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
           }
-        }
-      ],
-      "observations": [],
-      "changes": [],
-      "qualifications": [],
+        },
+        "reportedInherited": []
+      },
+      "cut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "previousCapsuleId": "00000000-0000-4000-8000-000000000001",
+      "policy": {
+        "id": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "records": [],
+      "manifest": {
+        "entries": [],
+        "changes": [],
+        "qualifications": []
+      },
       "text": "controlled-codec-fixture"
     },
-    "scalaTypeId": "ontology.api/:#Capsule",
+    "scalaTypeId": "ontology.api/:#CapsulePayload",
     "scalaWire": {
-      "id": "00000000-0000-4000-8000-000000000001",
       "scope": "controlled-codec-fixture",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "coveredFrontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "current": [],
-      "relations": [
-        {
-          "ref": {
-            "id": "00000000-0000-4000-8000-000000000001",
-            "revision": 1
-          },
-          "scope": "controlled-codec-fixture",
-          "applicability": {
-            "Captured": {
-              "source": {
-                "id": "00000000-0000-4000-8000-000000000001",
-                "revision": 1
-              }
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
             }
-          },
-          "kind": "Quotes",
-          "sources": [],
-          "targets": [],
-          "detail": {
-            "Adoption": {
-              "presentationId": "00000000-0000-4000-8000-000000000001",
-              "origin": "Interpretation",
-              "response": {
+          }
+        },
+        "reportedInherited": []
+      },
+      "cut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "previousCapsuleId": "00000000-0000-4000-8000-000000000001",
+      "policy": {
+        "id": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "records": [],
+      "manifest": {
+        "entries": [],
+        "changes": [],
+        "qualifications": []
+      },
+      "text": "controlled-codec-fixture"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePayload",
+    "label": "field:records:item",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "cut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "previousCapsuleId": null,
+      "policy": {
+        "id": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "records": [
+        {
+          "Contract": {
+            "value": {
+              "ref": {
                 "id": "00000000-0000-4000-8000-000000000001",
                 "revision": 1
               },
-              "selection": {
-                "Alternative": {
-                  "target": {
-                    "id": "00000000-0000-4000-8000-000000000001",
-                    "revision": 1
-                  },
-                  "definition": {
-                    "id": "00000000-0000-4000-8000-000000000001",
-                    "revision": 1
-                  },
-                  "index": 1,
-                  "label": "controlled-codec-fixture"
-                }
+              "scope": "controlled-codec-fixture",
+              "definition": {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "revision": 1
+              },
+              "context": [],
+              "workContext": "controlled-codec-fixture",
+              "provenance": {
+                "contributor": {
+                  "id": "controlled-codec-fixture",
+                  "kind": "Human"
+                },
+                "recorder": {
+                  "id": "controlled-codec-fixture",
+                  "kind": "Human"
+                },
+                "input": "00000000-0000-4000-8000-000000000001",
+                "recordedAt": "controlled-codec-fixture"
               }
             }
-          },
-          "why": "controlled-codec-fixture",
-          "standing": "Active",
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
           }
         }
       ],
-      "observations": [],
-      "changes": [],
-      "qualifications": [],
+      "manifest": {
+        "entries": [],
+        "changes": [],
+        "qualifications": []
+      },
+      "text": "controlled-codec-fixture"
+    },
+    "scalaTypeId": "ontology.api/:#CapsulePayload",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "cut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "previousCapsuleId": null,
+      "policy": {
+        "id": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "records": [
+        {
+          "Contract": {
+            "value": {
+              "ref": {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "revision": 1
+              },
+              "scope": "controlled-codec-fixture",
+              "definition": {
+                "id": "00000000-0000-4000-8000-000000000001",
+                "revision": 1
+              },
+              "context": [],
+              "workContext": "controlled-codec-fixture",
+              "provenance": {
+                "contributor": {
+                  "id": "controlled-codec-fixture",
+                  "kind": "Human"
+                },
+                "recorder": {
+                  "id": "controlled-codec-fixture",
+                  "kind": "Human"
+                },
+                "input": "00000000-0000-4000-8000-000000000001",
+                "recordedAt": "controlled-codec-fixture"
+              }
+            }
+          }
+        }
+      ],
+      "manifest": {
+        "entries": [],
+        "changes": [],
+        "qualifications": []
+      },
       "text": "controlled-codec-fixture"
     }
+  },
+  {
+    "typeId": "ontology.api/:#CapsulePolicyIdentity",
+    "label": "base",
+    "wire": {
+      "id": "controlled-codec-fixture",
+      "digest": "controlled-codec-fixture"
+    },
+    "scalaTypeId": "ontology.api/:#CapsulePolicyIdentity",
+    "scalaWire": {
+      "id": "controlled-codec-fixture",
+      "digest": "controlled-codec-fixture"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualification",
+    "label": "base",
+    "wire": {
+      "code": "CoverageLag",
+      "subjects": []
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleQualification",
+    "scalaWire": {
+      "code": "CoverageLag",
+      "subjects": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualification",
+    "label": "field:subjects:item",
+    "wire": {
+      "code": "CoverageLag",
+      "subjects": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ]
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleQualification",
+    "scalaWire": {
+      "code": "CoverageLag",
+      "subjects": [
+        {
+          "id": "00000000-0000-4000-8000-000000000001",
+          "revision": 1
+        }
+      ]
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "base",
+    "wire": "CoverageLag",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "CoverageLag"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:CoverageLag",
+    "wire": "CoverageLag",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "CoverageLag"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:NoCurationPublication",
+    "wire": "NoCurationPublication",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "NoCurationPublication"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:GraphChangedAfterCuration",
+    "wire": "GraphChangedAfterCuration",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "GraphChangedAfterCuration"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:ReportedContextUnknown",
+    "wire": "ReportedContextUnknown",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "ReportedContextUnknown"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:UnresolvedApplicability",
+    "wire": "UnresolvedApplicability",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "UnresolvedApplicability"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:UnboundIntent",
+    "wire": "UnboundIntent",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "UnboundIntent"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:StaleBinding",
+    "wire": "StaleBinding",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "StaleBinding"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:StaleWarrant",
+    "wire": "StaleWarrant",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "StaleWarrant"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:MissingHumanBasis",
+    "wire": "MissingHumanBasis",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "MissingHumanBasis"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:AmbiguousHumanBasis",
+    "wire": "AmbiguousHumanBasis",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "AmbiguousHumanBasis"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:UnresolvedConflict",
+    "wire": "UnresolvedConflict",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "UnresolvedConflict"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:UnresolvedChange",
+    "wire": "UnresolvedChange",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "UnresolvedChange"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleQualificationCode",
+    "label": "enum:HistoricalEvidence",
+    "wire": "HistoricalEvidence",
+    "scalaTypeId": "ontology.api/:#CapsuleQualificationCode",
+    "scalaWire": "HistoricalEvidence"
   },
   {
     "typeId": "ontology.api/:#CapsuleRequest",
     "label": "base",
     "wire": {
       "scope": "controlled-codec-fixture",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "expectedFrontier": "9223372036854775807"
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "expectedFrontier": "9223372036854775807",
+      "previousCapsuleId": null
     },
     "scalaTypeId": "ontology.api/:#CapsuleRequest",
     "scalaWire": {
       "scope": "controlled-codec-fixture",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "expectedFrontier": "9223372036854775807"
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "expectedFrontier": "9223372036854775807",
+      "previousCapsuleId": null
     }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRequest",
+    "label": "field:previousCapsuleId:present",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "expectedFrontier": "9223372036854775807",
+      "previousCapsuleId": "00000000-0000-4000-8000-000000000001"
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleRequest",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "expectedFrontier": "9223372036854775807",
+      "previousCapsuleId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRequest",
+    "label": "field:reportedContext:present",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "expectedFrontier": "9223372036854775807",
+      "previousCapsuleId": null
+    },
+    "scalaTypeId": "ontology.api/:#CapsuleRequest",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "expectedFrontier": "9223372036854775807",
+      "previousCapsuleId": null
+    }
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "base",
+    "wire": "RecordAccount",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "RecordAccount"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:RecordAccount",
+    "wire": "RecordAccount",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "RecordAccount"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:IntentAccount",
+    "wire": "IntentAccount",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "IntentAccount"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:HumanBasisAccount",
+    "wire": "HumanBasisAccount",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "HumanBasisAccount"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:DerivedAccount",
+    "wire": "DerivedAccount",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "DerivedAccount"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Observation",
+    "wire": "Observation",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Observation"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Binding",
+    "wire": "Binding",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Binding"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Selection",
+    "wire": "Selection",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Selection"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Progress",
+    "wire": "Progress",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Progress"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Relation",
+    "wire": "Relation",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Relation"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:SourceBasis",
+    "wire": "SourceBasis",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "SourceBasis"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Artifact",
+    "wire": "Artifact",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Artifact"
+  },
+  {
+    "typeId": "ontology.api/:#CapsuleRole",
+    "label": "enum:Attribution",
+    "wire": "Attribution",
+    "scalaTypeId": "ontology.api/:#CapsuleRole",
+    "scalaWire": "Attribution"
   },
   {
     "typeId": "ontology.api/:#CaptureContext",
@@ -4767,24 +5395,330 @@
     "scalaWire": "Conflict"
   },
   {
+    "typeId": "ontology.api/:#DeliveryBoundary",
+    "label": "base",
+    "wire": "ClientContext",
+    "scalaTypeId": "ontology.api/:#DeliveryBoundary",
+    "scalaWire": "ClientContext"
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryBoundary",
+    "label": "enum:ClientContext",
+    "wire": "ClientContext",
+    "scalaTypeId": "ontology.api/:#DeliveryBoundary",
+    "scalaWire": "ClientContext"
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryBoundary",
+    "label": "enum:ExtensionContext",
+    "wire": "ExtensionContext",
+    "scalaTypeId": "ontology.api/:#DeliveryBoundary",
+    "scalaWire": "ExtensionContext"
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryCutComparison",
+    "label": "base",
+    "wire": "SameGraphAndCoverage",
+    "scalaTypeId": "ontology.api/:#DeliveryCutComparison",
+    "scalaWire": "SameGraphAndCoverage"
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryCutComparison",
+    "label": "enum:SameGraphAndCoverage",
+    "wire": "SameGraphAndCoverage",
+    "scalaTypeId": "ontology.api/:#DeliveryCutComparison",
+    "scalaWire": "SameGraphAndCoverage"
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryCutComparison",
+    "label": "enum:ChangedGraphOrCoverage",
+    "wire": "ChangedGraphOrCoverage",
+    "scalaTypeId": "ontology.api/:#DeliveryCutComparison",
+    "scalaWire": "ChangedGraphOrCoverage"
+  },
+  {
     "typeId": "ontology.api/:#DeliveryReceipt",
     "label": "base",
     "wire": {
       "id": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scope": "controlled-codec-fixture",
       "capsuleId": "00000000-0000-4000-8000-000000000001",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "payloadDigest": "controlled-codec-fixture",
-      "recordedAt": "controlled-codec-fixture"
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": null,
+      "receivedAt": "controlled-codec-fixture",
+      "ingress": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      },
+      "observedCut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "cutComparison": "SameGraphAndCoverage"
     },
     "scalaTypeId": "ontology.api/:#DeliveryReceipt",
     "scalaWire": {
       "id": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scope": "controlled-codec-fixture",
       "capsuleId": "00000000-0000-4000-8000-000000000001",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "payloadDigest": "controlled-codec-fixture",
-      "recordedAt": "controlled-codec-fixture"
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": null,
+      "receivedAt": "controlled-codec-fixture",
+      "ingress": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      },
+      "observedCut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "cutComparison": "SameGraphAndCoverage"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryReceipt",
+    "label": "field:reportedAt:present",
+    "wire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scope": "controlled-codec-fixture",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": "controlled-codec-fixture",
+      "reportedBoundaryPayload": null,
+      "receivedAt": "controlled-codec-fixture",
+      "ingress": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      },
+      "observedCut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "cutComparison": "SameGraphAndCoverage"
+    },
+    "scalaTypeId": "ontology.api/:#DeliveryReceipt",
+    "scalaWire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scope": "controlled-codec-fixture",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": "controlled-codec-fixture",
+      "reportedBoundaryPayload": null,
+      "receivedAt": "controlled-codec-fixture",
+      "ingress": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      },
+      "observedCut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "cutComparison": "SameGraphAndCoverage"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryReceipt",
+    "label": "field:reportedBoundaryPayload:present",
+    "wire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scope": "controlled-codec-fixture",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": {
+        "encoding": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "receivedAt": "controlled-codec-fixture",
+      "ingress": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      },
+      "observedCut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "cutComparison": "SameGraphAndCoverage"
+    },
+    "scalaTypeId": "ontology.api/:#DeliveryReceipt",
+    "scalaWire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "owner": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scope": "controlled-codec-fixture",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": {
+        "encoding": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      },
+      "receivedAt": "controlled-codec-fixture",
+      "ingress": {
+        "hostRequestId": "00000000-0000-4000-8000-000000000001",
+        "operation": "controlled-codec-fixture",
+        "transport": "Bearer"
+      },
+      "observedCut": {
+        "generation": "9223372036854775807",
+        "frontier": "9223372036854775807",
+        "coveredFrontier": "9223372036854775807",
+        "lastPublicationGeneration": null,
+        "attempt": null
+      },
+      "cutComparison": "SameGraphAndCoverage"
     }
   },
   {
@@ -4794,34 +5728,139 @@
       "scope": "controlled-codec-fixture",
       "requestId": "00000000-0000-4000-8000-000000000001",
       "capsuleId": "00000000-0000-4000-8000-000000000001",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
-      },
-      "payloadDigest": "controlled-codec-fixture"
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": null
     },
     "scalaTypeId": "ontology.api/:#DeliveryRequest",
     "scalaWire": {
       "scope": "controlled-codec-fixture",
       "requestId": "00000000-0000-4000-8000-000000000001",
       "capsuleId": "00000000-0000-4000-8000-000000000001",
-      "generation": "9223372036854775807",
-      "frontier": "9223372036854775807",
-      "context": {
-        "sessionId": "controlled-codec-fixture",
-        "rootSessionId": null,
-        "parentSessionId": null,
-        "lineage": "Unknown",
-        "branch": "controlled-codec-fixture",
-        "epoch": "00000000-0000-4000-8000-000000000001"
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": null
+    }
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryRequest",
+    "label": "field:reportedAt:present",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "boundary": "ClientContext",
+      "reportedAt": "controlled-codec-fixture",
+      "reportedBoundaryPayload": null
+    },
+    "scalaTypeId": "ontology.api/:#DeliveryRequest",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "boundary": "ClientContext",
+      "reportedAt": "controlled-codec-fixture",
+      "reportedBoundaryPayload": null
+    }
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryRequest",
+    "label": "field:reportedBoundaryPayload:present",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": {
+        "encoding": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      }
+    },
+    "scalaTypeId": "ontology.api/:#DeliveryRequest",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": null,
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": {
+        "encoding": "controlled-codec-fixture",
+        "digest": "controlled-codec-fixture"
+      }
+    }
+  },
+  {
+    "typeId": "ontology.api/:#DeliveryRequest",
+    "label": "field:reportedContext:present",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
       },
-      "payloadDigest": "controlled-codec-fixture"
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": null
+    },
+    "scalaTypeId": "ontology.api/:#DeliveryRequest",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "capsuleId": "00000000-0000-4000-8000-000000000001",
+      "capsulePayloadDigest": "controlled-codec-fixture",
+      "workContext": "controlled-codec-fixture",
+      "reportedContext": {
+        "origin": {
+          "ReportedNative": {
+            "context": {
+              "sessionId": "controlled-codec-fixture",
+              "rootSessionId": null,
+              "parentSessionId": null,
+              "lineage": "Unknown",
+              "branch": "controlled-codec-fixture",
+              "epoch": "00000000-0000-4000-8000-000000000001"
+            }
+          }
+        },
+        "reportedInherited": []
+      },
+      "boundary": "ClientContext",
+      "reportedAt": null,
+      "reportedBoundaryPayload": null
     }
   },
   {
@@ -5162,176 +6201,6 @@
         {
           "id": "00000000-0000-4000-8000-000000000001",
           "revision": 1
-        }
-      ]
-    }
-  },
-  {
-    "typeId": "ontology.api/:#GoverningChange",
-    "label": "base",
-    "wire": {
-      "previous": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "current": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "reason": "controlled-codec-fixture",
-      "humanBasis": []
-    },
-    "scalaTypeId": "ontology.api/:#GoverningChange",
-    "scalaWire": {
-      "previous": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "current": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "reason": "controlled-codec-fixture",
-      "humanBasis": []
-    }
-  },
-  {
-    "typeId": "ontology.api/:#GoverningChange",
-    "label": "field:humanBasis:item",
-    "wire": {
-      "previous": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "current": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "reason": "controlled-codec-fixture",
-      "humanBasis": [
-        {
-          "id": "00000000-0000-4000-8000-000000000001",
-          "scope": "controlled-codec-fixture",
-          "sourceNamespace": "controlled-codec-fixture",
-          "frontier": "9223372036854775807",
-          "context": {
-            "origin": {
-              "ReportedNative": {
-                "context": {
-                  "sessionId": "controlled-codec-fixture",
-                  "rootSessionId": null,
-                  "parentSessionId": null,
-                  "lineage": "Unknown",
-                  "branch": "controlled-codec-fixture",
-                  "epoch": "00000000-0000-4000-8000-000000000001"
-                }
-              }
-            },
-            "reportedInherited": []
-          },
-          "origin": "UserMessage",
-          "metadata": {
-            "sourceId": "controlled-codec-fixture",
-            "parentSourceId": null,
-            "observedAt": null,
-            "representation": "Text",
-            "omissions": [],
-            "exposedDeliveries": []
-          },
-          "text": "controlled-codec-fixture",
-          "observation": {
-            "Execution": {
-              "action": "controlled-codec-fixture",
-              "checker": "controlled-codec-fixture",
-              "contract": null,
-              "inputs": [],
-              "outputs": [],
-              "exitCode": null,
-              "complete": true
-            }
-          },
-          "reviewResponse": null,
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
-          }
-        }
-      ]
-    },
-    "scalaTypeId": "ontology.api/:#GoverningChange",
-    "scalaWire": {
-      "previous": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "current": {
-        "id": "00000000-0000-4000-8000-000000000001",
-        "revision": 1
-      },
-      "reason": "controlled-codec-fixture",
-      "humanBasis": [
-        {
-          "id": "00000000-0000-4000-8000-000000000001",
-          "scope": "controlled-codec-fixture",
-          "sourceNamespace": "controlled-codec-fixture",
-          "frontier": "9223372036854775807",
-          "context": {
-            "origin": {
-              "ReportedNative": {
-                "context": {
-                  "sessionId": "controlled-codec-fixture",
-                  "rootSessionId": null,
-                  "parentSessionId": null,
-                  "lineage": "Unknown",
-                  "branch": "controlled-codec-fixture",
-                  "epoch": "00000000-0000-4000-8000-000000000001"
-                }
-              }
-            },
-            "reportedInherited": []
-          },
-          "origin": "UserMessage",
-          "metadata": {
-            "sourceId": "controlled-codec-fixture",
-            "parentSourceId": null,
-            "observedAt": null,
-            "representation": "Text",
-            "omissions": [],
-            "exposedDeliveries": []
-          },
-          "text": "controlled-codec-fixture",
-          "observation": {
-            "Execution": {
-              "action": "controlled-codec-fixture",
-              "checker": "controlled-codec-fixture",
-              "contract": null,
-              "inputs": [],
-              "outputs": [],
-              "exitCode": null,
-              "complete": true
-            }
-          },
-          "reviewResponse": null,
-          "provenance": {
-            "contributor": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "recorder": {
-              "id": "controlled-codec-fixture",
-              "kind": "Human"
-            },
-            "input": "00000000-0000-4000-8000-000000000001",
-            "recordedAt": "controlled-codec-fixture"
-          }
         }
       ]
     }
@@ -10075,6 +10944,19 @@
     "wire": "UsesAssessment",
     "scalaTypeId": "ontology.api/:#RelationKind",
     "scalaWire": "UsesAssessment"
+  },
+  {
+    "typeId": "ontology.api/:#ReportedBoundaryDigest",
+    "label": "base",
+    "wire": {
+      "encoding": "controlled-codec-fixture",
+      "digest": "controlled-codec-fixture"
+    },
+    "scalaTypeId": "ontology.api/:#ReportedBoundaryDigest",
+    "scalaWire": {
+      "encoding": "controlled-codec-fixture",
+      "digest": "controlled-codec-fixture"
+    }
   },
   {
     "typeId": "ontology.api/:#ReportedInheritance",

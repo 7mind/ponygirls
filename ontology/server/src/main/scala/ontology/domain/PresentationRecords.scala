@@ -4,57 +4,13 @@ import ontology.api.*
 
 private[domain] object PresentationRecords {
   private def check(value: Boolean, message: String): Unit = Require(value, "presentation", message)
-  private def selectionRefs(value: PresentedSelection): List[Ref] = value match {
-    case v: PresentedSelection.Whole => List(v.target)
-    case v: PresentedSelection.Alternative => List(v.target, v.definition)
-  }
-  private def contentRefs(value: Content): List[Ref] = value match {
-    case v: Content.Outcome => v.acceptance.question.toList
-    case _: Content.Constraint => Nil
-    case v: Content.Task => v.acceptance.question.toList
-    case _: Content.Statement => Nil
-    case _: Content.Hypothesis => Nil
-    case v: Content.Defect => v.affected
-    case _: Content.Question => Nil
-    case _: Content.Decision => Nil
-    case v: Content.Review => v.subjects ++ v.basis
-    case v: Content.Conflict => v.subjects
-    case _: Content.Artifact => Nil
-    case v: Content.Source =>
-      val captured = v.descriptor match {
-        case p: SourceDescriptor.PrimaryCapture =>
-          val observation = p.observation match {
-            case e: Observation.Execution => e.contract.toList ++ e.inputs ++ e.outputs
-            case _: Observation.None | _: Observation.FileVersion | _: Observation.FileAbsent => Nil
-          }
-          observation ++ p.reviewResponse.toList.map(_.presentationSource)
-        case _: SourceDescriptor.DerivedPresentation => Nil
-      }
-      v.context ++ captured
-  }
-  private def detailRefs(value: RelationDetail): List[Ref] = value match {
-    case _: RelationDetail.Empty => Nil
-    case v: RelationDetail.Dependency => v.event.toList
-    case _: RelationDetail.Decomposition | _: RelationDetail.PlanRequirement => Nil
-    case v: RelationDetail.Delegation => v.outcomes
-    case v: RelationDetail.Adoption => v.response :: selectionRefs(v.selection)
-    case v: RelationDetail.AssessmentUse => v.requirement :: v.basis
-  }
   // Inheritance cuts name their own namespaces; input receipts are outside GraphSnapshot.
   def references(record: GraphRecord, scope: String): List[Ref] = {
-    def scoped(actual: String, refs: List[Ref]): List[Ref] = {
-      check(actual == scope, "record scope mismatch")
-      refs
-    }
     record match {
-      case GraphRecord.Node(v) => scoped(v.scope, v.basis ++ Applicabilities.references(v.applicability) ++ contentRefs(v.content))
-      case GraphRecord.Edge(v) => scoped(v.scope, v.sources ++ v.targets ++ detailRefs(v.detail) ++ Applicabilities.references(v.applicability))
-      case GraphRecord.Contract(v) => scoped(v.scope, v.definition :: v.context)
-      case GraphRecord.Progress(v) => scoped(v.scope, v.subject :: (v.previous.toList ++ v.evidence ++ v.gateBasis.references ++ v.gateBasis.selectionWitnesses))
-      case GraphRecord.Selection(v) => scoped(v.scope, v.binding :: v.basis)
-      case GraphRecord.Person(_) => Nil
       case GraphRecord.Input(_) => throw Fault("presentation", "input receipt bodies are outside GraphSnapshot")
+      case _ => check(RecordLinks.scope(record).forall(_ == scope), "record scope mismatch")
     }
+    RecordLinks.references(record)
   }
   def lookup(records: List[GraphRecord]): Ref => GraphRecord = {
     val pairs = records.map(record => Graph.recordRef(record) -> record)

@@ -1,72 +1,151 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
-import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
+import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Actor, Actor_JsonCodec} from './Actor.js'
+import {CapsuleCut, CapsuleCut_JsonCodec} from './CapsuleCut.js'
+import {ContextRecord, ContextRecord_JsonCodec} from './ContextRecord.js'
+import {DeliveryBoundary, DeliveryBoundary_JsonCodec} from './DeliveryBoundary.js'
+import {DeliveryCutComparison, DeliveryCutComparison_JsonCodec} from './DeliveryCutComparison.js'
+import {ReportedBoundaryDigest, ReportedBoundaryDigest_JsonCodec} from './ReportedBoundaryDigest.js'
+import {RequestTrace, RequestTrace_JsonCodec} from './RequestTrace.js'
 
 export class DeliveryReceipt implements BaboonGeneratedLatest {
     private readonly _id: string;
+    private readonly _requestId: string;
+    private readonly _owner: Actor;
+    private readonly _scope: string;
     private readonly _capsuleId: string;
-    private readonly _generation: bigint;
-    private readonly _frontier: bigint;
-    private readonly _payloadDigest: string;
-    private readonly _recordedAt: string;
+    private readonly _capsulePayloadDigest: string;
+    private readonly _workContext: string;
+    private readonly _reportedContext: ContextRecord;
+    private readonly _boundary: DeliveryBoundary;
+    private readonly _reportedAt: string | undefined;
+    private readonly _reportedBoundaryPayload: ReportedBoundaryDigest | undefined;
+    private readonly _receivedAt: string;
+    private readonly _ingress: RequestTrace;
+    private readonly _observedCut: CapsuleCut;
+    private readonly _cutComparison: DeliveryCutComparison;
 
-    constructor(id: string, capsuleId: string, generation: bigint, frontier: bigint, payloadDigest: string, recordedAt: string) {
+    constructor(id: string, requestId: string, owner: Actor, scope: string, capsuleId: string, capsulePayloadDigest: string, workContext: string, reportedContext: ContextRecord, boundary: DeliveryBoundary, reportedAt: string | undefined, reportedBoundaryPayload: ReportedBoundaryDigest | undefined, receivedAt: string, ingress: RequestTrace, observedCut: CapsuleCut, cutComparison: DeliveryCutComparison) {
         this._id = id
+        this._requestId = requestId
+        this._owner = owner
+        this._scope = scope
         this._capsuleId = capsuleId
-        this._generation = generation
-        this._frontier = frontier
-        this._payloadDigest = payloadDigest
-        this._recordedAt = recordedAt
+        this._capsulePayloadDigest = capsulePayloadDigest
+        this._workContext = workContext
+        this._reportedContext = reportedContext
+        this._boundary = boundary
+        this._reportedAt = reportedAt
+        this._reportedBoundaryPayload = reportedBoundaryPayload
+        this._receivedAt = receivedAt
+        this._ingress = ingress
+        this._observedCut = observedCut
+        this._cutComparison = cutComparison
     }
 
     public get id(): string {
         return this._id;
     }
+    public get requestId(): string {
+        return this._requestId;
+    }
+    public get owner(): Actor {
+        return this._owner;
+    }
+    public get scope(): string {
+        return this._scope;
+    }
     public get capsuleId(): string {
         return this._capsuleId;
     }
-    public get generation(): bigint {
-        return this._generation;
+    public get capsulePayloadDigest(): string {
+        return this._capsulePayloadDigest;
     }
-    public get frontier(): bigint {
-        return this._frontier;
+    public get workContext(): string {
+        return this._workContext;
     }
-    public get payloadDigest(): string {
-        return this._payloadDigest;
+    public get reportedContext(): ContextRecord {
+        return this._reportedContext;
     }
-    public get recordedAt(): string {
-        return this._recordedAt;
+    public get boundary(): DeliveryBoundary {
+        return this._boundary;
+    }
+    public get reportedAt(): string | undefined {
+        return this._reportedAt;
+    }
+    public get reportedBoundaryPayload(): ReportedBoundaryDigest | undefined {
+        return this._reportedBoundaryPayload;
+    }
+    public get receivedAt(): string {
+        return this._receivedAt;
+    }
+    public get ingress(): RequestTrace {
+        return this._ingress;
+    }
+    public get observedCut(): CapsuleCut {
+        return this._observedCut;
+    }
+    public get cutComparison(): DeliveryCutComparison {
+        return this._cutComparison;
     }
 
     public toJSON(): Record<string, unknown> {
         return {
             id: this._id,
+            requestId: this._requestId,
+            owner: this._owner,
+            scope: this._scope,
             capsuleId: this._capsuleId,
-            generation: this._generation,
-            frontier: this._frontier,
-            payloadDigest: this._payloadDigest,
-            recordedAt: this._recordedAt
+            capsulePayloadDigest: this._capsulePayloadDigest,
+            workContext: this._workContext,
+            reportedContext: this._reportedContext,
+            boundary: this._boundary,
+            reportedAt: this._reportedAt !== undefined ? this._reportedAt : undefined,
+            reportedBoundaryPayload: this._reportedBoundaryPayload !== undefined ? this._reportedBoundaryPayload : undefined,
+            receivedAt: this._receivedAt,
+            ingress: this._ingress,
+            observedCut: this._observedCut,
+            cutComparison: this._cutComparison
         };
     }
 
-    public with(overrides: {id?: string; capsuleId?: string; generation?: bigint; frontier?: bigint; payloadDigest?: string; recordedAt?: string}): DeliveryReceipt {
+    public with(overrides: {id?: string; requestId?: string; owner?: Actor; scope?: string; capsuleId?: string; capsulePayloadDigest?: string; workContext?: string; reportedContext?: ContextRecord; boundary?: DeliveryBoundary; reportedAt?: string | undefined; reportedBoundaryPayload?: ReportedBoundaryDigest | undefined; receivedAt?: string; ingress?: RequestTrace; observedCut?: CapsuleCut; cutComparison?: DeliveryCutComparison}): DeliveryReceipt {
         return new DeliveryReceipt(
             'id' in overrides ? overrides.id! : this._id,
+            'requestId' in overrides ? overrides.requestId! : this._requestId,
+            'owner' in overrides ? overrides.owner! : this._owner,
+            'scope' in overrides ? overrides.scope! : this._scope,
             'capsuleId' in overrides ? overrides.capsuleId! : this._capsuleId,
-            'generation' in overrides ? overrides.generation! : this._generation,
-            'frontier' in overrides ? overrides.frontier! : this._frontier,
-            'payloadDigest' in overrides ? overrides.payloadDigest! : this._payloadDigest,
-            'recordedAt' in overrides ? overrides.recordedAt! : this._recordedAt
+            'capsulePayloadDigest' in overrides ? overrides.capsulePayloadDigest! : this._capsulePayloadDigest,
+            'workContext' in overrides ? overrides.workContext! : this._workContext,
+            'reportedContext' in overrides ? overrides.reportedContext! : this._reportedContext,
+            'boundary' in overrides ? overrides.boundary! : this._boundary,
+            'reportedAt' in overrides ? overrides.reportedAt! : this._reportedAt,
+            'reportedBoundaryPayload' in overrides ? overrides.reportedBoundaryPayload! : this._reportedBoundaryPayload,
+            'receivedAt' in overrides ? overrides.receivedAt! : this._receivedAt,
+            'ingress' in overrides ? overrides.ingress! : this._ingress,
+            'observedCut' in overrides ? overrides.observedCut! : this._observedCut,
+            'cutComparison' in overrides ? overrides.cutComparison! : this._cutComparison
         );
     }
 
-    public static fromPlain(obj: {id: string; capsuleId: string; generation: bigint; frontier: bigint; payloadDigest: string; recordedAt: string}): DeliveryReceipt {
+    public static fromPlain(obj: {id: string; requestId: string; owner: Actor; scope: string; capsuleId: string; capsulePayloadDigest: string; workContext: string; reportedContext: ContextRecord; boundary: DeliveryBoundary; reportedAt: string | undefined; reportedBoundaryPayload: ReportedBoundaryDigest | undefined; receivedAt: string; ingress: RequestTrace; observedCut: CapsuleCut; cutComparison: DeliveryCutComparison}): DeliveryReceipt {
         return new DeliveryReceipt(
             obj.id,
+            obj.requestId,
+            obj.owner,
+            obj.scope,
             obj.capsuleId,
-            obj.generation,
-            obj.frontier,
-            obj.payloadDigest,
-            obj.recordedAt
+            obj.capsulePayloadDigest,
+            obj.workContext,
+            obj.reportedContext,
+            obj.boundary,
+            obj.reportedAt,
+            obj.reportedBoundaryPayload,
+            obj.receivedAt,
+            obj.ingress,
+            obj.observedCut,
+            obj.cutComparison
         );
     }
 
@@ -107,11 +186,20 @@ export class DeliveryReceipt_JsonCodec {
     
         return {
             "id": value.id,
+            "requestId": value.requestId,
+            "owner": Actor_JsonCodec.instance.encode(BaboonCodecContext.Default, value.owner),
+            "scope": value.scope,
             "capsuleId": value.capsuleId,
-            "generation": value.generation.toString(),
-            "frontier": value.frontier.toString(),
-            "payloadDigest": value.payloadDigest,
-            "recordedAt": value.recordedAt,
+            "capsulePayloadDigest": value.capsulePayloadDigest,
+            "workContext": value.workContext,
+            "reportedContext": ContextRecord_JsonCodec.instance.encode(BaboonCodecContext.Default, value.reportedContext),
+            "boundary": DeliveryBoundary_JsonCodec.instance.encode(BaboonCodecContext.Default, value.boundary),
+            "reportedAt": value.reportedAt === undefined ? null : value.reportedAt,
+            "reportedBoundaryPayload": value.reportedBoundaryPayload === undefined ? null : ReportedBoundaryDigest_JsonCodec.instance.encode(BaboonCodecContext.Default, value.reportedBoundaryPayload),
+            "receivedAt": value.receivedAt,
+            "ingress": RequestTrace_JsonCodec.instance.encode(BaboonCodecContext.Default, value.ingress),
+            "observedCut": CapsuleCut_JsonCodec.instance.encode(BaboonCodecContext.Default, value.observedCut),
+            "cutComparison": DeliveryCutComparison_JsonCodec.instance.encode(BaboonCodecContext.Default, value.cutComparison),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): DeliveryReceipt {
@@ -122,11 +210,20 @@ export class DeliveryReceipt_JsonCodec {
         const obj = json as Record<string, unknown>;
         return new DeliveryReceipt (
             obj["id"] as string,
+            obj["requestId"] as string,
+            Actor_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["owner"]),
+            obj["scope"] as string,
             obj["capsuleId"] as string,
-            BaboonInt64.read(obj["generation"], "i64/u64"),
-            BaboonInt64.read(obj["frontier"], "i64/u64"),
-            obj["payloadDigest"] as string,
-            obj["recordedAt"] as string,
+            obj["capsulePayloadDigest"] as string,
+            obj["workContext"] as string,
+            ContextRecord_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["reportedContext"]),
+            DeliveryBoundary_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["boundary"]),
+            obj["reportedAt"] === undefined || obj["reportedAt"] === null ? undefined : obj["reportedAt"] === undefined || obj["reportedAt"] === null ? undefined : obj["reportedAt"] as string,
+            obj["reportedBoundaryPayload"] === undefined || obj["reportedBoundaryPayload"] === null ? undefined : obj["reportedBoundaryPayload"] === undefined || obj["reportedBoundaryPayload"] === null ? undefined : ReportedBoundaryDigest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["reportedBoundaryPayload"]),
+            obj["receivedAt"] as string,
+            RequestTrace_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["ingress"]),
+            CapsuleCut_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["observedCut"]),
+            DeliveryCutComparison_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["cutComparison"]),
         )
     }
 

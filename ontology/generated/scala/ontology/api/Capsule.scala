@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeList, decodeString, decodeUUID}
+import io.circe.Decoder.{decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -6,17 +6,13 @@ import java.util.UUID
 package ontology.api {
   final case class Capsule(
     id: UUID,
-    scope: String,
-    generation: Long,
-    frontier: Long,
-    coveredFrontier: Long,
-    context: CaptureContext,
-    current: List[Definition],
-    relations: List[Relation],
-    observations: List[CapturedEvent],
-    changes: List[GoverningChange],
-    qualifications: List[String],
-    text: String
+    requestId: UUID,
+    owner: Actor,
+    payload: CapsulePayload,
+    payloadDigest: String,
+    limits: CapsuleLimits,
+    preparedAt: String,
+    preparationTrace: RequestTrace
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = Capsule.baboonDomainVersion
     override def baboonDomainIdentifier: String = Capsule.baboonDomainIdentifier
@@ -47,17 +43,13 @@ package ontology.api {
       
       Json.obj(
         "id" -> Json.fromString(value.id.toString()),
-        "scope" -> Json.fromString(value.scope),
-        "generation" -> Json.fromString(value.generation.toString),
-        "frontier" -> Json.fromString(value.frontier.toString),
-        "coveredFrontier" -> Json.fromString(value.coveredFrontier.toString),
-        "context" -> CaptureContext_JsonCodec.instance.encode(ctx, value.context),
-        "current" -> Json.fromValues(value.current.map(e => Definition_JsonCodec.instance.encode(ctx, e))),
-        "relations" -> Json.fromValues(value.relations.map(e => Relation_JsonCodec.instance.encode(ctx, e))),
-        "observations" -> Json.fromValues(value.observations.map(e => CapturedEvent_JsonCodec.instance.encode(ctx, e))),
-        "changes" -> Json.fromValues(value.changes.map(e => GoverningChange_JsonCodec.instance.encode(ctx, e))),
-        "qualifications" -> Json.fromValues(value.qualifications.map(e => Json.fromString(e))),
-        "text" -> Json.fromString(value.text)
+        "requestId" -> Json.fromString(value.requestId.toString()),
+        "owner" -> Actor_JsonCodec.instance.encode(ctx, value.owner),
+        "payload" -> CapsulePayload_JsonCodec.instance.encode(ctx, value.payload),
+        "payloadDigest" -> Json.fromString(value.payloadDigest),
+        "limits" -> CapsuleLimits_JsonCodec.instance.encode(ctx, value.limits),
+        "preparedAt" -> Json.fromString(value.preparedAt),
+        "preparationTrace" -> RequestTrace_JsonCodec.instance.encode(ctx, value.preparationTrace)
       )
     }
     
@@ -69,18 +61,14 @@ package ontology.api {
       wire.asObject match {
         case Some(jsonObject) => for {
             id <- getField(jsonObject, "id").flatMap(v => decodeUUID(v.hcursor))
-            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
-            generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            frontier <- getField(jsonObject, "frontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            coveredFrontier <- getField(jsonObject, "coveredFrontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            context <- getField(jsonObject, "context").flatMap(v => CaptureContext_JsonCodec.circeDecoder(v.hcursor))
-            current <- getField(jsonObject, "current").flatMap(v => decodeList(Definition_JsonCodec.circeDecoder)(v.hcursor))
-            relations <- getField(jsonObject, "relations").flatMap(v => decodeList(Relation_JsonCodec.circeDecoder)(v.hcursor))
-            observations <- getField(jsonObject, "observations").flatMap(v => decodeList(CapturedEvent_JsonCodec.circeDecoder)(v.hcursor))
-            changes <- getField(jsonObject, "changes").flatMap(v => decodeList(GoverningChange_JsonCodec.circeDecoder)(v.hcursor))
-            qualifications <- getField(jsonObject, "qualifications").flatMap(v => decodeList(decodeString)(v.hcursor))
-            text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
-          } yield Capsule(id,scope,generation,frontier,coveredFrontier,context,current,relations,observations,changes,qualifications,text)
+            requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
+            owner <- getField(jsonObject, "owner").flatMap(v => Actor_JsonCodec.circeDecoder(v.hcursor))
+            payload <- getField(jsonObject, "payload").flatMap(v => CapsulePayload_JsonCodec.circeDecoder(v.hcursor))
+            payloadDigest <- getField(jsonObject, "payloadDigest").flatMap(v => decodeString(v.hcursor))
+            limits <- getField(jsonObject, "limits").flatMap(v => CapsuleLimits_JsonCodec.circeDecoder(v.hcursor))
+            preparedAt <- getField(jsonObject, "preparedAt").flatMap(v => decodeString(v.hcursor))
+            preparationTrace <- getField(jsonObject, "preparationTrace").flatMap(v => RequestTrace_JsonCodec.circeDecoder(v.hcursor))
+          } yield Capsule(id,requestId,owner,payload,payloadDigest,limits,preparedAt,preparationTrace)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Capsule: object expected"))
       }
     }

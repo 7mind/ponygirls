@@ -1,24 +1,30 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
-import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
-import {CaptureContext, CaptureContext_JsonCodec} from './CaptureContext.js'
+import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {ContextRecordInput, ContextRecordInput_JsonCodec} from './ContextRecordInput.js'
+import {DeliveryBoundary, DeliveryBoundary_JsonCodec} from './DeliveryBoundary.js'
+import {ReportedBoundaryDigest, ReportedBoundaryDigest_JsonCodec} from './ReportedBoundaryDigest.js'
 
 export class DeliveryRequest implements BaboonGeneratedLatest {
     private readonly _scope: string;
     private readonly _requestId: string;
     private readonly _capsuleId: string;
-    private readonly _generation: bigint;
-    private readonly _frontier: bigint;
-    private readonly _context: CaptureContext;
-    private readonly _payloadDigest: string;
+    private readonly _capsulePayloadDigest: string;
+    private readonly _workContext: string;
+    private readonly _reportedContext: ContextRecordInput | undefined;
+    private readonly _boundary: DeliveryBoundary;
+    private readonly _reportedAt: string | undefined;
+    private readonly _reportedBoundaryPayload: ReportedBoundaryDigest | undefined;
 
-    constructor(scope: string, requestId: string, capsuleId: string, generation: bigint, frontier: bigint, context: CaptureContext, payloadDigest: string) {
+    constructor(scope: string, requestId: string, capsuleId: string, capsulePayloadDigest: string, workContext: string, reportedContext: ContextRecordInput | undefined, boundary: DeliveryBoundary, reportedAt: string | undefined, reportedBoundaryPayload: ReportedBoundaryDigest | undefined) {
         this._scope = scope
         this._requestId = requestId
         this._capsuleId = capsuleId
-        this._generation = generation
-        this._frontier = frontier
-        this._context = context
-        this._payloadDigest = payloadDigest
+        this._capsulePayloadDigest = capsulePayloadDigest
+        this._workContext = workContext
+        this._reportedContext = reportedContext
+        this._boundary = boundary
+        this._reportedAt = reportedAt
+        this._reportedBoundaryPayload = reportedBoundaryPayload
     }
 
     public get scope(): string {
@@ -30,17 +36,23 @@ export class DeliveryRequest implements BaboonGeneratedLatest {
     public get capsuleId(): string {
         return this._capsuleId;
     }
-    public get generation(): bigint {
-        return this._generation;
+    public get capsulePayloadDigest(): string {
+        return this._capsulePayloadDigest;
     }
-    public get frontier(): bigint {
-        return this._frontier;
+    public get workContext(): string {
+        return this._workContext;
     }
-    public get context(): CaptureContext {
-        return this._context;
+    public get reportedContext(): ContextRecordInput | undefined {
+        return this._reportedContext;
     }
-    public get payloadDigest(): string {
-        return this._payloadDigest;
+    public get boundary(): DeliveryBoundary {
+        return this._boundary;
+    }
+    public get reportedAt(): string | undefined {
+        return this._reportedAt;
+    }
+    public get reportedBoundaryPayload(): ReportedBoundaryDigest | undefined {
+        return this._reportedBoundaryPayload;
     }
 
     public toJSON(): Record<string, unknown> {
@@ -48,34 +60,40 @@ export class DeliveryRequest implements BaboonGeneratedLatest {
             scope: this._scope,
             requestId: this._requestId,
             capsuleId: this._capsuleId,
-            generation: this._generation,
-            frontier: this._frontier,
-            context: this._context,
-            payloadDigest: this._payloadDigest
+            capsulePayloadDigest: this._capsulePayloadDigest,
+            workContext: this._workContext,
+            reportedContext: this._reportedContext !== undefined ? this._reportedContext : undefined,
+            boundary: this._boundary,
+            reportedAt: this._reportedAt !== undefined ? this._reportedAt : undefined,
+            reportedBoundaryPayload: this._reportedBoundaryPayload !== undefined ? this._reportedBoundaryPayload : undefined
         };
     }
 
-    public with(overrides: {scope?: string; requestId?: string; capsuleId?: string; generation?: bigint; frontier?: bigint; context?: CaptureContext; payloadDigest?: string}): DeliveryRequest {
+    public with(overrides: {scope?: string; requestId?: string; capsuleId?: string; capsulePayloadDigest?: string; workContext?: string; reportedContext?: ContextRecordInput | undefined; boundary?: DeliveryBoundary; reportedAt?: string | undefined; reportedBoundaryPayload?: ReportedBoundaryDigest | undefined}): DeliveryRequest {
         return new DeliveryRequest(
             'scope' in overrides ? overrides.scope! : this._scope,
             'requestId' in overrides ? overrides.requestId! : this._requestId,
             'capsuleId' in overrides ? overrides.capsuleId! : this._capsuleId,
-            'generation' in overrides ? overrides.generation! : this._generation,
-            'frontier' in overrides ? overrides.frontier! : this._frontier,
-            'context' in overrides ? overrides.context! : this._context,
-            'payloadDigest' in overrides ? overrides.payloadDigest! : this._payloadDigest
+            'capsulePayloadDigest' in overrides ? overrides.capsulePayloadDigest! : this._capsulePayloadDigest,
+            'workContext' in overrides ? overrides.workContext! : this._workContext,
+            'reportedContext' in overrides ? overrides.reportedContext! : this._reportedContext,
+            'boundary' in overrides ? overrides.boundary! : this._boundary,
+            'reportedAt' in overrides ? overrides.reportedAt! : this._reportedAt,
+            'reportedBoundaryPayload' in overrides ? overrides.reportedBoundaryPayload! : this._reportedBoundaryPayload
         );
     }
 
-    public static fromPlain(obj: {scope: string; requestId: string; capsuleId: string; generation: bigint; frontier: bigint; context: CaptureContext; payloadDigest: string}): DeliveryRequest {
+    public static fromPlain(obj: {scope: string; requestId: string; capsuleId: string; capsulePayloadDigest: string; workContext: string; reportedContext: ContextRecordInput | undefined; boundary: DeliveryBoundary; reportedAt: string | undefined; reportedBoundaryPayload: ReportedBoundaryDigest | undefined}): DeliveryRequest {
         return new DeliveryRequest(
             obj.scope,
             obj.requestId,
             obj.capsuleId,
-            obj.generation,
-            obj.frontier,
-            obj.context,
-            obj.payloadDigest
+            obj.capsulePayloadDigest,
+            obj.workContext,
+            obj.reportedContext,
+            obj.boundary,
+            obj.reportedAt,
+            obj.reportedBoundaryPayload
         );
     }
 
@@ -118,10 +136,12 @@ export class DeliveryRequest_JsonCodec {
             "scope": value.scope,
             "requestId": value.requestId,
             "capsuleId": value.capsuleId,
-            "generation": value.generation.toString(),
-            "frontier": value.frontier.toString(),
-            "context": CaptureContext_JsonCodec.instance.encode(BaboonCodecContext.Default, value.context),
-            "payloadDigest": value.payloadDigest,
+            "capsulePayloadDigest": value.capsulePayloadDigest,
+            "workContext": value.workContext,
+            "reportedContext": value.reportedContext === undefined ? null : ContextRecordInput_JsonCodec.instance.encode(BaboonCodecContext.Default, value.reportedContext),
+            "boundary": DeliveryBoundary_JsonCodec.instance.encode(BaboonCodecContext.Default, value.boundary),
+            "reportedAt": value.reportedAt === undefined ? null : value.reportedAt,
+            "reportedBoundaryPayload": value.reportedBoundaryPayload === undefined ? null : ReportedBoundaryDigest_JsonCodec.instance.encode(BaboonCodecContext.Default, value.reportedBoundaryPayload),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): DeliveryRequest {
@@ -134,10 +154,12 @@ export class DeliveryRequest_JsonCodec {
             obj["scope"] as string,
             obj["requestId"] as string,
             obj["capsuleId"] as string,
-            BaboonInt64.read(obj["generation"], "i64/u64"),
-            BaboonInt64.read(obj["frontier"], "i64/u64"),
-            CaptureContext_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["context"]),
-            obj["payloadDigest"] as string,
+            obj["capsulePayloadDigest"] as string,
+            obj["workContext"] as string,
+            obj["reportedContext"] === undefined || obj["reportedContext"] === null ? undefined : obj["reportedContext"] === undefined || obj["reportedContext"] === null ? undefined : ContextRecordInput_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["reportedContext"]),
+            DeliveryBoundary_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["boundary"]),
+            obj["reportedAt"] === undefined || obj["reportedAt"] === null ? undefined : obj["reportedAt"] === undefined || obj["reportedAt"] === null ? undefined : obj["reportedAt"] as string,
+            obj["reportedBoundaryPayload"] === undefined || obj["reportedBoundaryPayload"] === null ? undefined : obj["reportedBoundaryPayload"] === undefined || obj["reportedBoundaryPayload"] === null ? undefined : ReportedBoundaryDigest_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["reportedBoundaryPayload"]),
         )
     }
 

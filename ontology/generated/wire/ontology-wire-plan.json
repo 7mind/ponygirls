@@ -3,8 +3,8 @@
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "cc162213539c8b8ec81881bc999bce0520e791bf2fd768faf857458986567172",
-  "rawDigest": "fd99a5c03873f5676f6c94072a9492fe40a00d978cd429f5f9df6476f327fec9",
+  "modelDigest": "b7de1039c545317fc6e18a624ddc94349e228e5cdbf86a0c2e072d5831e7dc04",
+  "rawDigest": "04625c7523f33b8b1e194deec5ca4a7594fed2a886b80e6fe67fd9b298036cf2",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -167,10 +167,98 @@
       "tag": null
     },
     {
+      "typeId": "ontology.api/:#CapsuleChange",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleChange",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleCut",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleCut",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleLimits",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleLimits",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleManifest",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleManifest",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleManifestEntry",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleManifestEntry",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsulePartition",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsulePartition",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsulePayload",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsulePayload",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsulePolicyIdentity",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsulePolicyIdentity",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleQualification",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleQualification",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleQualificationCode",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleQualificationCode",
+      "parent": null,
+      "tag": null
+    },
+    {
       "typeId": "ontology.api/:#CapsuleRequest",
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_CapsuleRequest",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CapsuleRole",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CapsuleRole",
       "parent": null,
       "tag": null
     },
@@ -423,6 +511,22 @@
       "tag": null
     },
     {
+      "typeId": "ontology.api/:#DeliveryBoundary",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_DeliveryBoundary",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#DeliveryCutComparison",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_DeliveryCutComparison",
+      "parent": null,
+      "tag": null
+    },
+    {
       "typeId": "ontology.api/:#DeliveryReceipt",
       "domain": "ontology.api",
       "version": "0.1.0",
@@ -507,14 +611,6 @@
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_GateBasis",
-      "parent": null,
-      "tag": null
-    },
-    {
-      "typeId": "ontology.api/:#GoverningChange",
-      "domain": "ontology.api",
-      "version": "0.1.0",
-      "component": "ontology_api_GoverningChange",
       "parent": null,
       "tag": null
     },
@@ -835,6 +931,14 @@
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_RelationKind",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ReportedBoundaryDigest",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ReportedBoundaryDigest",
       "parent": null,
       "tag": null
     },
@@ -1904,26 +2008,91 @@
     "ontology_api_Capsule": {
       "kind": "object",
       "fields": {
-        "changes": {
+        "id": {
+          "kind": "uuid"
+        },
+        "limits": {
+          "kind": "ref",
+          "component": "ontology_api_CapsuleLimits"
+        },
+        "owner": {
+          "kind": "ref",
+          "component": "ontology_api_Actor"
+        },
+        "payload": {
+          "kind": "ref",
+          "component": "ontology_api_CapsulePayload"
+        },
+        "payloadDigest": {
+          "kind": "string"
+        },
+        "preparationTrace": {
+          "kind": "ref",
+          "component": "ontology_api_RequestTrace"
+        },
+        "preparedAt": {
+          "kind": "string"
+        },
+        "requestId": {
+          "kind": "uuid"
+        }
+      }
+    },
+    "ontology_api_CapsuleChange": {
+      "kind": "object",
+      "fields": {
+        "account": {
+          "kind": "ref",
+          "component": "ontology_api_Ref"
+        },
+        "basis": {
           "kind": "array",
           "element": {
             "kind": "ref",
-            "component": "ontology_api_GoverningChange"
+            "component": "ontology_api_Ref"
           }
         },
-        "context": {
-          "kind": "ref",
-          "component": "ontology_api_CaptureContext"
+        "current": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_Ref"
+          }
+        },
+        "humanBasis": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_Ref"
+          }
+        },
+        "previous": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_Ref"
+          }
+        },
+        "reason": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        }
+      }
+    },
+    "ontology_api_CapsuleCut": {
+      "kind": "object",
+      "fields": {
+        "attempt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_CurationAttemptSummary"
+          }
         },
         "coveredFrontier": {
           "kind": "i64"
-        },
-        "current": {
-          "kind": "array",
-          "element": {
-            "kind": "ref",
-            "component": "ontology_api_Definition"
-          }
         },
         "frontier": {
           "kind": "i64"
@@ -1931,51 +2100,221 @@
         "generation": {
           "kind": "i64"
         },
-        "id": {
-          "kind": "uuid"
+        "lastPublicationGeneration": {
+          "kind": "nullable",
+          "value": {
+            "kind": "i64"
+          }
+        }
+      }
+    },
+    "ontology_api_CapsuleLimits": {
+      "kind": "object",
+      "fields": {
+        "maxPayloadBytes": {
+          "kind": "i32"
         },
-        "observations": {
+        "maxRecords": {
+          "kind": "i32"
+        }
+      }
+    },
+    "ontology_api_CapsuleManifest": {
+      "kind": "object",
+      "fields": {
+        "changes": {
           "kind": "array",
           "element": {
             "kind": "ref",
-            "component": "ontology_api_CapturedEvent"
+            "component": "ontology_api_CapsuleChange"
+          }
+        },
+        "entries": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_CapsuleManifestEntry"
           }
         },
         "qualifications": {
           "kind": "array",
           "element": {
-            "kind": "string"
+            "kind": "ref",
+            "component": "ontology_api_CapsuleQualification"
           }
-        },
-        "relations": {
+        }
+      }
+    },
+    "ontology_api_CapsuleManifestEntry": {
+      "kind": "object",
+      "fields": {
+        "evidence": {
           "kind": "array",
           "element": {
             "kind": "ref",
-            "component": "ontology_api_Relation"
+            "component": "ontology_api_Ref"
           }
+        },
+        "partition": {
+          "kind": "ref",
+          "component": "ontology_api_CapsulePartition"
+        },
+        "ref": {
+          "kind": "ref",
+          "component": "ontology_api_Ref"
+        },
+        "roles": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_CapsuleRole"
+          }
+        }
+      }
+    },
+    "ontology_api_CapsulePartition": {
+      "kind": "enum",
+      "values": [
+        "SelectedWorkContext",
+        "UnresolvedScopeContext",
+        "SupportingContext",
+        "HistoricalContext"
+      ]
+    },
+    "ontology_api_CapsulePayload": {
+      "kind": "object",
+      "fields": {
+        "cut": {
+          "kind": "ref",
+          "component": "ontology_api_CapsuleCut"
+        },
+        "manifest": {
+          "kind": "ref",
+          "component": "ontology_api_CapsuleManifest"
+        },
+        "policy": {
+          "kind": "ref",
+          "component": "ontology_api_CapsulePolicyIdentity"
+        },
+        "previousCapsuleId": {
+          "kind": "nullable",
+          "value": {
+            "kind": "uuid"
+          }
+        },
+        "records": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_GraphRecord"
+          }
+        },
+        "reportedContext": {
+          "kind": "ref",
+          "component": "ontology_api_ContextRecord"
         },
         "scope": {
           "kind": "string"
         },
         "text": {
           "kind": "string"
+        },
+        "workContext": {
+          "kind": "string"
         }
       }
+    },
+    "ontology_api_CapsulePolicyIdentity": {
+      "kind": "object",
+      "fields": {
+        "digest": {
+          "kind": "string"
+        },
+        "id": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_CapsuleQualification": {
+      "kind": "object",
+      "fields": {
+        "code": {
+          "kind": "ref",
+          "component": "ontology_api_CapsuleQualificationCode"
+        },
+        "subjects": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_Ref"
+          }
+        }
+      }
+    },
+    "ontology_api_CapsuleQualificationCode": {
+      "kind": "enum",
+      "values": [
+        "CoverageLag",
+        "NoCurationPublication",
+        "GraphChangedAfterCuration",
+        "ReportedContextUnknown",
+        "UnresolvedApplicability",
+        "UnboundIntent",
+        "StaleBinding",
+        "StaleWarrant",
+        "MissingHumanBasis",
+        "AmbiguousHumanBasis",
+        "UnresolvedConflict",
+        "UnresolvedChange",
+        "HistoricalEvidence"
+      ]
     },
     "ontology_api_CapsuleRequest": {
       "kind": "object",
       "fields": {
-        "context": {
-          "kind": "ref",
-          "component": "ontology_api_CaptureContext"
-        },
         "expectedFrontier": {
           "kind": "i64"
         },
+        "previousCapsuleId": {
+          "kind": "nullable",
+          "value": {
+            "kind": "uuid"
+          }
+        },
+        "reportedContext": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_ContextRecordInput"
+          }
+        },
+        "requestId": {
+          "kind": "uuid"
+        },
         "scope": {
+          "kind": "string"
+        },
+        "workContext": {
           "kind": "string"
         }
       }
+    },
+    "ontology_api_CapsuleRole": {
+      "kind": "enum",
+      "values": [
+        "RecordAccount",
+        "IntentAccount",
+        "HumanBasisAccount",
+        "DerivedAccount",
+        "Observation",
+        "Binding",
+        "Selection",
+        "Progress",
+        "Relation",
+        "SourceBasis",
+        "Artifact",
+        "Attribution"
+      ]
     },
     "ontology_api_CaptureContext": {
       "kind": "object",
@@ -2726,25 +3065,79 @@
         "Conflict"
       ]
     },
+    "ontology_api_DeliveryBoundary": {
+      "kind": "enum",
+      "values": [
+        "ClientContext",
+        "ExtensionContext"
+      ]
+    },
+    "ontology_api_DeliveryCutComparison": {
+      "kind": "enum",
+      "values": [
+        "SameGraphAndCoverage",
+        "ChangedGraphOrCoverage"
+      ]
+    },
     "ontology_api_DeliveryReceipt": {
       "kind": "object",
       "fields": {
+        "boundary": {
+          "kind": "ref",
+          "component": "ontology_api_DeliveryBoundary"
+        },
         "capsuleId": {
           "kind": "uuid"
         },
-        "frontier": {
-          "kind": "i64"
+        "capsulePayloadDigest": {
+          "kind": "string"
         },
-        "generation": {
-          "kind": "i64"
+        "cutComparison": {
+          "kind": "ref",
+          "component": "ontology_api_DeliveryCutComparison"
         },
         "id": {
           "kind": "uuid"
         },
-        "payloadDigest": {
+        "ingress": {
+          "kind": "ref",
+          "component": "ontology_api_RequestTrace"
+        },
+        "observedCut": {
+          "kind": "ref",
+          "component": "ontology_api_CapsuleCut"
+        },
+        "owner": {
+          "kind": "ref",
+          "component": "ontology_api_Actor"
+        },
+        "receivedAt": {
           "kind": "string"
         },
-        "recordedAt": {
+        "reportedAt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        },
+        "reportedBoundaryPayload": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_ReportedBoundaryDigest"
+          }
+        },
+        "reportedContext": {
+          "kind": "ref",
+          "component": "ontology_api_ContextRecord"
+        },
+        "requestId": {
+          "kind": "uuid"
+        },
+        "scope": {
+          "kind": "string"
+        },
+        "workContext": {
           "kind": "string"
         }
       }
@@ -2752,26 +3145,43 @@
     "ontology_api_DeliveryRequest": {
       "kind": "object",
       "fields": {
+        "boundary": {
+          "kind": "ref",
+          "component": "ontology_api_DeliveryBoundary"
+        },
         "capsuleId": {
           "kind": "uuid"
         },
-        "context": {
-          "kind": "ref",
-          "component": "ontology_api_CaptureContext"
-        },
-        "frontier": {
-          "kind": "i64"
-        },
-        "generation": {
-          "kind": "i64"
-        },
-        "payloadDigest": {
+        "capsulePayloadDigest": {
           "kind": "string"
+        },
+        "reportedAt": {
+          "kind": "nullable",
+          "value": {
+            "kind": "string"
+          }
+        },
+        "reportedBoundaryPayload": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_ReportedBoundaryDigest"
+          }
+        },
+        "reportedContext": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_ContextRecordInput"
+          }
         },
         "requestId": {
           "kind": "uuid"
         },
         "scope": {
+          "kind": "string"
+        },
+        "workContext": {
           "kind": "string"
         }
       }
@@ -2892,29 +3302,6 @@
             "kind": "ref",
             "component": "ontology_api_Ref"
           }
-        }
-      }
-    },
-    "ontology_api_GoverningChange": {
-      "kind": "object",
-      "fields": {
-        "current": {
-          "kind": "ref",
-          "component": "ontology_api_Ref"
-        },
-        "humanBasis": {
-          "kind": "array",
-          "element": {
-            "kind": "ref",
-            "component": "ontology_api_CapturedEvent"
-          }
-        },
-        "previous": {
-          "kind": "ref",
-          "component": "ontology_api_Ref"
-        },
-        "reason": {
-          "kind": "string"
         }
       }
     },
@@ -3668,6 +4055,17 @@
         "Assesses",
         "UsesAssessment"
       ]
+    },
+    "ontology_api_ReportedBoundaryDigest": {
+      "kind": "object",
+      "fields": {
+        "digest": {
+          "kind": "string"
+        },
+        "encoding": {
+          "kind": "string"
+        }
+      }
     },
     "ontology_api_ReportedInheritance": {
       "kind": "object",

@@ -1,125 +1,92 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
-import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
-import {CaptureContext, CaptureContext_JsonCodec} from './CaptureContext.js'
-import {CapturedEvent, CapturedEvent_JsonCodec} from './CapturedEvent.js'
-import {Definition, Definition_JsonCodec} from './Definition.js'
-import {GoverningChange, GoverningChange_JsonCodec} from './GoverningChange.js'
-import {Relation, Relation_JsonCodec} from './Relation.js'
+import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {Actor, Actor_JsonCodec} from './Actor.js'
+import {CapsuleLimits, CapsuleLimits_JsonCodec} from './CapsuleLimits.js'
+import {CapsulePayload, CapsulePayload_JsonCodec} from './CapsulePayload.js'
+import {RequestTrace, RequestTrace_JsonCodec} from './RequestTrace.js'
 
 export class Capsule implements BaboonGeneratedLatest {
     private readonly _id: string;
-    private readonly _scope: string;
-    private readonly _generation: bigint;
-    private readonly _frontier: bigint;
-    private readonly _coveredFrontier: bigint;
-    private readonly _context: CaptureContext;
-    private readonly _current: Array<Definition>;
-    private readonly _relations: Array<Relation>;
-    private readonly _observations: Array<CapturedEvent>;
-    private readonly _changes: Array<GoverningChange>;
-    private readonly _qualifications: Array<string>;
-    private readonly _text: string;
+    private readonly _requestId: string;
+    private readonly _owner: Actor;
+    private readonly _payload: CapsulePayload;
+    private readonly _payloadDigest: string;
+    private readonly _limits: CapsuleLimits;
+    private readonly _preparedAt: string;
+    private readonly _preparationTrace: RequestTrace;
 
-    constructor(id: string, scope: string, generation: bigint, frontier: bigint, coveredFrontier: bigint, context: CaptureContext, current: Array<Definition>, relations: Array<Relation>, observations: Array<CapturedEvent>, changes: Array<GoverningChange>, qualifications: Array<string>, text: string) {
+    constructor(id: string, requestId: string, owner: Actor, payload: CapsulePayload, payloadDigest: string, limits: CapsuleLimits, preparedAt: string, preparationTrace: RequestTrace) {
         this._id = id
-        this._scope = scope
-        this._generation = generation
-        this._frontier = frontier
-        this._coveredFrontier = coveredFrontier
-        this._context = context
-        this._current = current
-        this._relations = relations
-        this._observations = observations
-        this._changes = changes
-        this._qualifications = qualifications
-        this._text = text
+        this._requestId = requestId
+        this._owner = owner
+        this._payload = payload
+        this._payloadDigest = payloadDigest
+        this._limits = limits
+        this._preparedAt = preparedAt
+        this._preparationTrace = preparationTrace
     }
 
     public get id(): string {
         return this._id;
     }
-    public get scope(): string {
-        return this._scope;
+    public get requestId(): string {
+        return this._requestId;
     }
-    public get generation(): bigint {
-        return this._generation;
+    public get owner(): Actor {
+        return this._owner;
     }
-    public get frontier(): bigint {
-        return this._frontier;
+    public get payload(): CapsulePayload {
+        return this._payload;
     }
-    public get coveredFrontier(): bigint {
-        return this._coveredFrontier;
+    public get payloadDigest(): string {
+        return this._payloadDigest;
     }
-    public get context(): CaptureContext {
-        return this._context;
+    public get limits(): CapsuleLimits {
+        return this._limits;
     }
-    public get current(): Array<Definition> {
-        return this._current;
+    public get preparedAt(): string {
+        return this._preparedAt;
     }
-    public get relations(): Array<Relation> {
-        return this._relations;
-    }
-    public get observations(): Array<CapturedEvent> {
-        return this._observations;
-    }
-    public get changes(): Array<GoverningChange> {
-        return this._changes;
-    }
-    public get qualifications(): Array<string> {
-        return this._qualifications;
-    }
-    public get text(): string {
-        return this._text;
+    public get preparationTrace(): RequestTrace {
+        return this._preparationTrace;
     }
 
     public toJSON(): Record<string, unknown> {
         return {
             id: this._id,
-            scope: this._scope,
-            generation: this._generation,
-            frontier: this._frontier,
-            coveredFrontier: this._coveredFrontier,
-            context: this._context,
-            current: this._current,
-            relations: this._relations,
-            observations: this._observations,
-            changes: this._changes,
-            qualifications: this._qualifications,
-            text: this._text
+            requestId: this._requestId,
+            owner: this._owner,
+            payload: this._payload,
+            payloadDigest: this._payloadDigest,
+            limits: this._limits,
+            preparedAt: this._preparedAt,
+            preparationTrace: this._preparationTrace
         };
     }
 
-    public with(overrides: {id?: string; scope?: string; generation?: bigint; frontier?: bigint; coveredFrontier?: bigint; context?: CaptureContext; current?: Array<Definition>; relations?: Array<Relation>; observations?: Array<CapturedEvent>; changes?: Array<GoverningChange>; qualifications?: Array<string>; text?: string}): Capsule {
+    public with(overrides: {id?: string; requestId?: string; owner?: Actor; payload?: CapsulePayload; payloadDigest?: string; limits?: CapsuleLimits; preparedAt?: string; preparationTrace?: RequestTrace}): Capsule {
         return new Capsule(
             'id' in overrides ? overrides.id! : this._id,
-            'scope' in overrides ? overrides.scope! : this._scope,
-            'generation' in overrides ? overrides.generation! : this._generation,
-            'frontier' in overrides ? overrides.frontier! : this._frontier,
-            'coveredFrontier' in overrides ? overrides.coveredFrontier! : this._coveredFrontier,
-            'context' in overrides ? overrides.context! : this._context,
-            'current' in overrides ? overrides.current! : this._current,
-            'relations' in overrides ? overrides.relations! : this._relations,
-            'observations' in overrides ? overrides.observations! : this._observations,
-            'changes' in overrides ? overrides.changes! : this._changes,
-            'qualifications' in overrides ? overrides.qualifications! : this._qualifications,
-            'text' in overrides ? overrides.text! : this._text
+            'requestId' in overrides ? overrides.requestId! : this._requestId,
+            'owner' in overrides ? overrides.owner! : this._owner,
+            'payload' in overrides ? overrides.payload! : this._payload,
+            'payloadDigest' in overrides ? overrides.payloadDigest! : this._payloadDigest,
+            'limits' in overrides ? overrides.limits! : this._limits,
+            'preparedAt' in overrides ? overrides.preparedAt! : this._preparedAt,
+            'preparationTrace' in overrides ? overrides.preparationTrace! : this._preparationTrace
         );
     }
 
-    public static fromPlain(obj: {id: string; scope: string; generation: bigint; frontier: bigint; coveredFrontier: bigint; context: CaptureContext; current: Array<Definition>; relations: Array<Relation>; observations: Array<CapturedEvent>; changes: Array<GoverningChange>; qualifications: Array<string>; text: string}): Capsule {
+    public static fromPlain(obj: {id: string; requestId: string; owner: Actor; payload: CapsulePayload; payloadDigest: string; limits: CapsuleLimits; preparedAt: string; preparationTrace: RequestTrace}): Capsule {
         return new Capsule(
             obj.id,
-            obj.scope,
-            obj.generation,
-            obj.frontier,
-            obj.coveredFrontier,
-            obj.context,
-            obj.current,
-            obj.relations,
-            obj.observations,
-            obj.changes,
-            obj.qualifications,
-            obj.text
+            obj.requestId,
+            obj.owner,
+            obj.payload,
+            obj.payloadDigest,
+            obj.limits,
+            obj.preparedAt,
+            obj.preparationTrace
         );
     }
 
@@ -160,17 +127,13 @@ export class Capsule_JsonCodec {
     
         return {
             "id": value.id,
-            "scope": value.scope,
-            "generation": value.generation.toString(),
-            "frontier": value.frontier.toString(),
-            "coveredFrontier": value.coveredFrontier.toString(),
-            "context": CaptureContext_JsonCodec.instance.encode(BaboonCodecContext.Default, value.context),
-            "current": Array.from(value.current).map(item => Definition_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
-            "relations": Array.from(value.relations).map(item => Relation_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
-            "observations": Array.from(value.observations).map(item => CapturedEvent_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
-            "changes": Array.from(value.changes).map(item => GoverningChange_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
-            "qualifications": Array.from(value.qualifications),
-            "text": value.text,
+            "requestId": value.requestId,
+            "owner": Actor_JsonCodec.instance.encode(BaboonCodecContext.Default, value.owner),
+            "payload": CapsulePayload_JsonCodec.instance.encode(BaboonCodecContext.Default, value.payload),
+            "payloadDigest": value.payloadDigest,
+            "limits": CapsuleLimits_JsonCodec.instance.encode(BaboonCodecContext.Default, value.limits),
+            "preparedAt": value.preparedAt,
+            "preparationTrace": RequestTrace_JsonCodec.instance.encode(BaboonCodecContext.Default, value.preparationTrace),
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): Capsule {
@@ -181,17 +144,13 @@ export class Capsule_JsonCodec {
         const obj = json as Record<string, unknown>;
         return new Capsule (
             obj["id"] as string,
-            obj["scope"] as string,
-            BaboonInt64.read(obj["generation"], "i64/u64"),
-            BaboonInt64.read(obj["frontier"], "i64/u64"),
-            BaboonInt64.read(obj["coveredFrontier"], "i64/u64"),
-            CaptureContext_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["context"]),
-            (obj["current"] as unknown[]).map(item => Definition_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
-            (obj["relations"] as unknown[]).map(item => Relation_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
-            (obj["observations"] as unknown[]).map(item => CapturedEvent_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
-            (obj["changes"] as unknown[]).map(item => GoverningChange_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
-            (obj["qualifications"] as unknown[]).map(item => item as string),
-            obj["text"] as string,
+            obj["requestId"] as string,
+            Actor_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["owner"]),
+            CapsulePayload_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["payload"]),
+            obj["payloadDigest"] as string,
+            CapsuleLimits_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["limits"]),
+            obj["preparedAt"] as string,
+            RequestTrace_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["preparationTrace"]),
         )
     }
 

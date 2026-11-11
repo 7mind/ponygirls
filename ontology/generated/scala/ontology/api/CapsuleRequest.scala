@@ -1,12 +1,16 @@
-import io.circe.Decoder.decodeString
+import io.circe.Decoder.{decodeOption, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
+import java.util.UUID
 
 package ontology.api {
   final case class CapsuleRequest(
     scope: String,
-    context: CaptureContext,
-    expectedFrontier: Long
+    requestId: UUID,
+    workContext: String,
+    reportedContext: Option[ContextRecordInput],
+    expectedFrontier: Long,
+    previousCapsuleId: Option[UUID]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CapsuleRequest.baboonDomainVersion
     override def baboonDomainIdentifier: String = CapsuleRequest.baboonDomainIdentifier
@@ -37,8 +41,11 @@ package ontology.api {
       
       Json.obj(
         "scope" -> Json.fromString(value.scope),
-        "context" -> CaptureContext_JsonCodec.instance.encode(ctx, value.context),
-        "expectedFrontier" -> Json.fromString(value.expectedFrontier.toString)
+        "requestId" -> Json.fromString(value.requestId.toString()),
+        "workContext" -> Json.fromString(value.workContext),
+        "reportedContext" -> value.reportedContext.map(v => ContextRecordInput_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
+        "expectedFrontier" -> Json.fromString(value.expectedFrontier.toString),
+        "previousCapsuleId" -> value.previousCapsuleId.map(v => Json.fromString(v.toString())).getOrElse(Json.Null)
       )
     }
     
@@ -50,9 +57,12 @@ package ontology.api {
       wire.asObject match {
         case Some(jsonObject) => for {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
-            context <- getField(jsonObject, "context").flatMap(v => CaptureContext_JsonCodec.circeDecoder(v.hcursor))
+            requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
+            workContext <- getField(jsonObject, "workContext").flatMap(v => decodeString(v.hcursor))
+            reportedContext <- getField(jsonObject, "reportedContext").flatMap(v => decodeOption(ContextRecordInput_JsonCodec.circeDecoder)(v.hcursor))
             expectedFrontier <- getField(jsonObject, "expectedFrontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-          } yield CapsuleRequest(scope,context,expectedFrontier)
+            previousCapsuleId <- getField(jsonObject, "previousCapsuleId").flatMap(v => decodeOption(decodeUUID)(v.hcursor))
+          } yield CapsuleRequest(scope,requestId,workContext,reportedContext,expectedFrontier,previousCapsuleId)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CapsuleRequest: object expected"))
       }
     }

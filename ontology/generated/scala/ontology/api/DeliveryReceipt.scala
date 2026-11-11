@@ -1,4 +1,4 @@
-import io.circe.Decoder.{decodeString, decodeUUID}
+import io.circe.Decoder.{decodeOption, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 import java.util.UUID
@@ -6,11 +6,20 @@ import java.util.UUID
 package ontology.api {
   final case class DeliveryReceipt(
     id: UUID,
+    requestId: UUID,
+    owner: Actor,
+    scope: String,
     capsuleId: UUID,
-    generation: Long,
-    frontier: Long,
-    payloadDigest: String,
-    recordedAt: String
+    capsulePayloadDigest: String,
+    workContext: String,
+    reportedContext: ContextRecord,
+    boundary: DeliveryBoundary,
+    reportedAt: Option[String],
+    reportedBoundaryPayload: Option[ReportedBoundaryDigest],
+    receivedAt: String,
+    ingress: RequestTrace,
+    observedCut: CapsuleCut,
+    cutComparison: DeliveryCutComparison
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = DeliveryReceipt.baboonDomainVersion
     override def baboonDomainIdentifier: String = DeliveryReceipt.baboonDomainIdentifier
@@ -41,11 +50,20 @@ package ontology.api {
       
       Json.obj(
         "id" -> Json.fromString(value.id.toString()),
+        "requestId" -> Json.fromString(value.requestId.toString()),
+        "owner" -> Actor_JsonCodec.instance.encode(ctx, value.owner),
+        "scope" -> Json.fromString(value.scope),
         "capsuleId" -> Json.fromString(value.capsuleId.toString()),
-        "generation" -> Json.fromString(value.generation.toString),
-        "frontier" -> Json.fromString(value.frontier.toString),
-        "payloadDigest" -> Json.fromString(value.payloadDigest),
-        "recordedAt" -> Json.fromString(value.recordedAt)
+        "capsulePayloadDigest" -> Json.fromString(value.capsulePayloadDigest),
+        "workContext" -> Json.fromString(value.workContext),
+        "reportedContext" -> ContextRecord_JsonCodec.instance.encode(ctx, value.reportedContext),
+        "boundary" -> DeliveryBoundary_JsonCodec.instance.encode(ctx, value.boundary),
+        "reportedAt" -> value.reportedAt.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "reportedBoundaryPayload" -> value.reportedBoundaryPayload.map(v => ReportedBoundaryDigest_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
+        "receivedAt" -> Json.fromString(value.receivedAt),
+        "ingress" -> RequestTrace_JsonCodec.instance.encode(ctx, value.ingress),
+        "observedCut" -> CapsuleCut_JsonCodec.instance.encode(ctx, value.observedCut),
+        "cutComparison" -> DeliveryCutComparison_JsonCodec.instance.encode(ctx, value.cutComparison)
       )
     }
     
@@ -57,12 +75,21 @@ package ontology.api {
       wire.asObject match {
         case Some(jsonObject) => for {
             id <- getField(jsonObject, "id").flatMap(v => decodeUUID(v.hcursor))
+            requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
+            owner <- getField(jsonObject, "owner").flatMap(v => Actor_JsonCodec.circeDecoder(v.hcursor))
+            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             capsuleId <- getField(jsonObject, "capsuleId").flatMap(v => decodeUUID(v.hcursor))
-            generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            frontier <- getField(jsonObject, "frontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
-            payloadDigest <- getField(jsonObject, "payloadDigest").flatMap(v => decodeString(v.hcursor))
-            recordedAt <- getField(jsonObject, "recordedAt").flatMap(v => decodeString(v.hcursor))
-          } yield DeliveryReceipt(id,capsuleId,generation,frontier,payloadDigest,recordedAt)
+            capsulePayloadDigest <- getField(jsonObject, "capsulePayloadDigest").flatMap(v => decodeString(v.hcursor))
+            workContext <- getField(jsonObject, "workContext").flatMap(v => decodeString(v.hcursor))
+            reportedContext <- getField(jsonObject, "reportedContext").flatMap(v => ContextRecord_JsonCodec.circeDecoder(v.hcursor))
+            boundary <- getField(jsonObject, "boundary").flatMap(v => DeliveryBoundary_JsonCodec.circeDecoder(v.hcursor))
+            reportedAt <- getField(jsonObject, "reportedAt").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            reportedBoundaryPayload <- getField(jsonObject, "reportedBoundaryPayload").flatMap(v => decodeOption(ReportedBoundaryDigest_JsonCodec.circeDecoder)(v.hcursor))
+            receivedAt <- getField(jsonObject, "receivedAt").flatMap(v => decodeString(v.hcursor))
+            ingress <- getField(jsonObject, "ingress").flatMap(v => RequestTrace_JsonCodec.circeDecoder(v.hcursor))
+            observedCut <- getField(jsonObject, "observedCut").flatMap(v => CapsuleCut_JsonCodec.circeDecoder(v.hcursor))
+            cutComparison <- getField(jsonObject, "cutComparison").flatMap(v => DeliveryCutComparison_JsonCodec.circeDecoder(v.hcursor))
+          } yield DeliveryReceipt(id,requestId,owner,scope,capsuleId,capsulePayloadDigest,workContext,reportedContext,boundary,reportedAt,reportedBoundaryPayload,receivedAt,ingress,observedCut,cutComparison)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to DeliveryReceipt: object expected"))
       }
     }

@@ -23,7 +23,18 @@ import { Binding, Binding_JsonCodec } from './Binding.js';
 import { BindingSelection, BindingSelection_JsonCodec } from './BindingSelection.js';
 import { Capability, Capability_JsonCodec } from './Capability.js';
 import { Capsule, Capsule_JsonCodec } from './Capsule.js';
+import { CapsuleChange, CapsuleChange_JsonCodec } from './CapsuleChange.js';
+import { CapsuleCut, CapsuleCut_JsonCodec } from './CapsuleCut.js';
+import { CapsuleLimits, CapsuleLimits_JsonCodec } from './CapsuleLimits.js';
+import { CapsuleManifest, CapsuleManifest_JsonCodec } from './CapsuleManifest.js';
+import { CapsuleManifestEntry, CapsuleManifestEntry_JsonCodec } from './CapsuleManifestEntry.js';
+import { CapsulePartition, CapsulePartition_JsonCodec } from './CapsulePartition.js';
+import { CapsulePayload, CapsulePayload_JsonCodec } from './CapsulePayload.js';
+import { CapsulePolicyIdentity, CapsulePolicyIdentity_JsonCodec } from './CapsulePolicyIdentity.js';
+import { CapsuleQualification, CapsuleQualification_JsonCodec } from './CapsuleQualification.js';
+import { CapsuleQualificationCode, CapsuleQualificationCode_JsonCodec } from './CapsuleQualificationCode.js';
 import { CapsuleRequest, CapsuleRequest_JsonCodec } from './CapsuleRequest.js';
+import { CapsuleRole, CapsuleRole_JsonCodec } from './CapsuleRole.js';
 import { CaptureContext, CaptureContext_JsonCodec } from './CaptureContext.js';
 import { CaptureMetadata, CaptureMetadata_JsonCodec } from './CaptureMetadata.js';
 import { CapturedEvent, CapturedEvent_JsonCodec } from './CapturedEvent.js';
@@ -55,6 +66,8 @@ import { CurationState, CurationState_JsonCodec } from './CurationState.js';
 import { CurationStatus, CurationStatus_JsonCodec } from './CurationStatus.js';
 import { Definition, Definition_JsonCodec } from './Definition.js';
 import { DefinitionKind, DefinitionKind_JsonCodec } from './DefinitionKind.js';
+import { DeliveryBoundary, DeliveryBoundary_JsonCodec } from './DeliveryBoundary.js';
+import { DeliveryCutComparison, DeliveryCutComparison_JsonCodec } from './DeliveryCutComparison.js';
 import { DeliveryReceipt, DeliveryReceipt_JsonCodec } from './DeliveryReceipt.js';
 import { DeliveryRequest, DeliveryRequest_JsonCodec } from './DeliveryRequest.js';
 import { Escalation, Escalation_JsonCodec } from './Escalation.js';
@@ -66,7 +79,6 @@ import { FindResult, FindResult_JsonCodec } from './FindResult.js';
 import { Force, Force_JsonCodec } from './Force.js';
 import { Gate, Gate_JsonCodec } from './Gate.js';
 import { GateBasis, GateBasis_JsonCodec } from './GateBasis.js';
-import { GoverningChange, GoverningChange_JsonCodec } from './GoverningChange.js';
 import { GraphRecord, GraphRecord_JsonCodec } from './GraphRecord.js';
 import { GraphSnapshot, GraphSnapshot_JsonCodec } from './GraphSnapshot.js';
 import { Grouping, Grouping_JsonCodec } from './Grouping.js';
@@ -107,6 +119,7 @@ import { Relation, Relation_JsonCodec } from './Relation.js';
 import { RelationDetail, RelationDetail_JsonCodec } from './RelationDetail.js';
 import { RelationDetailInput, RelationDetailInput_JsonCodec } from './RelationDetailInput.js';
 import { RelationKind, RelationKind_JsonCodec } from './RelationKind.js';
+import { ReportedBoundaryDigest, ReportedBoundaryDigest_JsonCodec } from './ReportedBoundaryDigest.js';
 import { ReportedInheritance, ReportedInheritance_JsonCodec } from './ReportedInheritance.js';
 import { RequestTrace, RequestTrace_JsonCodec } from './RequestTrace.js';
 import { RequestTransport, RequestTransport_JsonCodec } from './RequestTransport.js';
@@ -149,7 +162,18 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(BindingSelection_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => BindingSelection_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Capability_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Capability_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Capsule_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Capsule_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleChange_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleChange_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleCut_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleCut_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleLimits_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleLimits_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleManifest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleManifest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleManifestEntry_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleManifestEntry_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsulePartition_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsulePartition_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsulePayload_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsulePayload_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsulePolicyIdentity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsulePolicyIdentity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleQualification_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleQualification_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleQualificationCode_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleQualificationCode_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CapsuleRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CapsuleRole_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapsuleRole_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CaptureContext_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CaptureContext_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CaptureMetadata_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CaptureMetadata_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CapturedEvent_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CapturedEvent_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -181,6 +205,8 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(CurationStatus_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationStatus_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Definition_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Definition_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(DefinitionKind_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => DefinitionKind_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(DeliveryBoundary_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => DeliveryBoundary_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(DeliveryCutComparison_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => DeliveryCutComparison_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(DeliveryReceipt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => DeliveryReceipt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(DeliveryRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => DeliveryRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Escalation_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Escalation_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -192,7 +218,6 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(Force_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Force_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Gate_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Gate_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(GateBasis_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GateBasis_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
-        this.register(GoverningChange_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GoverningChange_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(GraphRecord_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GraphRecord_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(GraphSnapshot_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GraphSnapshot_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Grouping_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Grouping_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -233,6 +258,7 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(RelationDetail_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelationDetail_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RelationDetailInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelationDetailInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RelationKind_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RelationKind_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ReportedBoundaryDigest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReportedBoundaryDigest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReportedInheritance_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReportedInheritance_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RequestTrace_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RequestTrace_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(RequestTransport_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => RequestTransport_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -288,7 +314,18 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#BindingSelection": ['0.1.0'],
         "ontology.api/:#Capability": ['0.1.0'],
         "ontology.api/:#Capsule": ['0.1.0'],
+        "ontology.api/:#CapsuleChange": ['0.1.0'],
+        "ontology.api/:#CapsuleCut": ['0.1.0'],
+        "ontology.api/:#CapsuleLimits": ['0.1.0'],
+        "ontology.api/:#CapsuleManifest": ['0.1.0'],
+        "ontology.api/:#CapsuleManifestEntry": ['0.1.0'],
+        "ontology.api/:#CapsulePartition": ['0.1.0'],
+        "ontology.api/:#CapsulePayload": ['0.1.0'],
+        "ontology.api/:#CapsulePolicyIdentity": ['0.1.0'],
+        "ontology.api/:#CapsuleQualification": ['0.1.0'],
+        "ontology.api/:#CapsuleQualificationCode": ['0.1.0'],
         "ontology.api/:#CapsuleRequest": ['0.1.0'],
+        "ontology.api/:#CapsuleRole": ['0.1.0'],
         "ontology.api/:#CaptureContext": ['0.1.0'],
         "ontology.api/:#CaptureMetadata": ['0.1.0'],
         "ontology.api/:#CapturedEvent": ['0.1.0'],
@@ -320,6 +357,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#CurationStatus": ['0.1.0'],
         "ontology.api/:#Definition": ['0.1.0'],
         "ontology.api/:#DefinitionKind": ['0.1.0'],
+        "ontology.api/:#DeliveryBoundary": ['0.1.0'],
+        "ontology.api/:#DeliveryCutComparison": ['0.1.0'],
         "ontology.api/:#DeliveryReceipt": ['0.1.0'],
         "ontology.api/:#DeliveryRequest": ['0.1.0'],
         "ontology.api/:#Escalation": ['0.1.0'],
@@ -331,7 +370,6 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Force": ['0.1.0'],
         "ontology.api/:#Gate": ['0.1.0'],
         "ontology.api/:#GateBasis": ['0.1.0'],
-        "ontology.api/:#GoverningChange": ['0.1.0'],
         "ontology.api/:#GraphRecord": ['0.1.0'],
         "ontology.api/:#GraphSnapshot": ['0.1.0'],
         "ontology.api/:#Grouping": ['0.1.0'],
@@ -372,6 +410,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#RelationDetail": ['0.1.0'],
         "ontology.api/:#RelationDetailInput": ['0.1.0'],
         "ontology.api/:#RelationKind": ['0.1.0'],
+        "ontology.api/:#ReportedBoundaryDigest": ['0.1.0'],
         "ontology.api/:#ReportedInheritance": ['0.1.0'],
         "ontology.api/:#RequestTrace": ['0.1.0'],
         "ontology.api/:#RequestTransport": ['0.1.0'],
@@ -493,7 +532,18 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#BindingSelection": { '0.1.0': 'identical' },
         "ontology.api/:#Capability": { '0.1.0': 'identical' },
         "ontology.api/:#Capsule": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleChange": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleCut": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleLimits": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleManifest": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleManifestEntry": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsulePartition": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsulePayload": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsulePolicyIdentity": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleQualification": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleQualificationCode": { '0.1.0': 'identical' },
         "ontology.api/:#CapsuleRequest": { '0.1.0': 'identical' },
+        "ontology.api/:#CapsuleRole": { '0.1.0': 'identical' },
         "ontology.api/:#CaptureContext": { '0.1.0': 'identical' },
         "ontology.api/:#CaptureMetadata": { '0.1.0': 'identical' },
         "ontology.api/:#CapturedEvent": { '0.1.0': 'identical' },
@@ -525,6 +575,8 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#CurationStatus": { '0.1.0': 'identical' },
         "ontology.api/:#Definition": { '0.1.0': 'identical' },
         "ontology.api/:#DefinitionKind": { '0.1.0': 'identical' },
+        "ontology.api/:#DeliveryBoundary": { '0.1.0': 'identical' },
+        "ontology.api/:#DeliveryCutComparison": { '0.1.0': 'identical' },
         "ontology.api/:#DeliveryReceipt": { '0.1.0': 'identical' },
         "ontology.api/:#DeliveryRequest": { '0.1.0': 'identical' },
         "ontology.api/:#Escalation": { '0.1.0': 'identical' },
@@ -536,7 +588,6 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#Force": { '0.1.0': 'identical' },
         "ontology.api/:#Gate": { '0.1.0': 'identical' },
         "ontology.api/:#GateBasis": { '0.1.0': 'identical' },
-        "ontology.api/:#GoverningChange": { '0.1.0': 'identical' },
         "ontology.api/:#GraphRecord": { '0.1.0': 'identical' },
         "ontology.api/:#GraphSnapshot": { '0.1.0': 'identical' },
         "ontology.api/:#Grouping": { '0.1.0': 'identical' },
@@ -577,6 +628,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#RelationDetail": { '0.1.0': 'identical' },
         "ontology.api/:#RelationDetailInput": { '0.1.0': 'identical' },
         "ontology.api/:#RelationKind": { '0.1.0': 'identical' },
+        "ontology.api/:#ReportedBoundaryDigest": { '0.1.0': 'identical' },
         "ontology.api/:#ReportedInheritance": { '0.1.0': 'identical' },
         "ontology.api/:#RequestTrace": { '0.1.0': 'identical' },
         "ontology.api/:#RequestTransport": { '0.1.0': 'identical' },
