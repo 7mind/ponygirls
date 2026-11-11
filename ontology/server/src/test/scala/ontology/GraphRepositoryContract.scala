@@ -45,7 +45,7 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(receipt.submitter, principal.actor)
       _ = assertEquals(StoredJson.decode(IngestRequest.codecJson, receipt.content), request)
       _ = assertEquals(source.content.asInstanceOf[Content.Source].rawDigest, Digests.text(request.text))
-      outbox <- repo.pendingProjections(100000)
+      outbox <- repo.outboxSnapshots(100000)
       _ = assert(outbox.contains(graph))
     } yield ()
   } }
@@ -175,7 +175,7 @@ abstract class GraphRepositoryContract extends FunSuite {
       afterPage <- repo.sources(SourceRequest(r.scope, 0L, 10))
       _ = assertEquals(after, graph)
       _ = assertEquals(afterPage, page)
-      outbox <- repo.pendingProjections(100000)
+      outbox <- repo.outboxSnapshots(100000)
       _ = assertEquals(outbox.filter(_.scope == r.scope), List(graph))
     } yield ()
   } }
@@ -342,15 +342,13 @@ abstract class GraphRepositoryContract extends FunSuite {
       current <- repo.read(r.scope)
       historical <- repo.history(r.scope, 0L)
       published <- repo.history(r.scope, result.generation)
-      pending <- repo.pendingProjections(100000)
+      pending <- repo.outboxSnapshots(100000)
       _ = assertEquals(before, historical)
       _ = assertEquals(current, published)
       _ = assertEquals(current.generation, 1L)
       _ = assert(pending.contains(current))
-      _ <- repo.acknowledgeProjection(r.scope, 1L)
-      _ <- repo.acknowledgeProjection(r.scope, 1L)
-      after <- repo.pendingProjections(100000)
-      _ = assert(!after.exists(_.scope == r.scope))
+      after <- repo.outboxSnapshots(100000)
+      _ = assertEquals(after.filter(_.scope == r.scope), pending.filter(_.scope == r.scope))
     } yield ()
   } }
   test("idempotency replays original result before stale-generation checks") { check { repo =>

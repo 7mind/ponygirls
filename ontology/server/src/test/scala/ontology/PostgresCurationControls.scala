@@ -201,7 +201,7 @@ final class PostgresCurationControls extends CurationRepositorySupport {
     probe: IO[Unit] = boundary match {
       case "head" => repo.read(scope).void
       case "history" => repo.history(scope, receipt.generation).void
-      case "outbox" => repo.pendingProjections(10000).void
+      case "outbox" => repo.outboxSnapshots(10000).void
       case "attempt" => repo.curation.inspect(settings.principal, scope, value.attempt.claim.attemptId).void
       case "input" => repo.input(scope, receipt.input).void
       case "status" => repo.curation.status(settings.principal, scope).void

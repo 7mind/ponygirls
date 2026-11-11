@@ -11,19 +11,8 @@ private[ontology] final class CurationStore(transactions: CurationTransactions, 
   private val reads = new CurationReadModel(validation)
   private def configured(scope: String): Unit = Require(settings.scopes.contains(scope), "forbidden", "scope is not configured for curation")
   private def time(value: String): Instant = try Instant.parse(value) catch { case _: java.time.format.DateTimeParseException => throw Fault("corrupt", "invalid coordinator timestamp") }
-  private def state(tx: CurationTransaction): CoordinatorState = {
-    val value = tx.coordinator
-    Require(value.epoch >= 0 && value.lease.forall(_.fence.epoch == value.epoch), "corrupt", "coordinator epoch mismatch")
-    value.lease.foreach { lease =>
-      Require(lease.fence.epoch > 0 && !time(lease.renewedAt).isBefore(time(lease.acquiredAt)) && time(lease.expiresAt).isAfter(time(lease.renewedAt)), "corrupt", "invalid coordinator lease")
-    }
-    value
-  }
-  private def live(tx: CurationTransaction, fence: CoordinatorFence, now: Instant): CoordinatorLease = {
-    val lease = state(tx).lease.getOrElse(throw Fault("coordinator", "coordinator is not held"))
-    Require(lease.fence == fence && !now.isBefore(time(lease.renewedAt)) && now.isBefore(time(lease.expiresAt)), "coordinator", "coordinator fence or lease is unavailable")
-    lease
-  }
+  private def state(tx: CurationTransaction): CoordinatorState = CoordinatorLeases.validate(tx.coordinator)
+  private def live(tx: CurationTransaction, fence: CoordinatorFence, now: Instant): CoordinatorLease = CoordinatorLeases.live(tx.coordinator, fence, now)
   private def owned(tx: CurationTransaction, scope: String, fence: CoordinatorFence): (CoordinatorLease, Instant) = {
     configured(scope); tx.lock(scope)
     val now = tx.now

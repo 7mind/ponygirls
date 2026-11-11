@@ -59,7 +59,7 @@ final class PostgresCommandControls extends FunSuite {
       altered = if (extra) graph.copy(definitions = graph.definitions :+ original.copy(ref = Ref(UUID.randomUUID(), 1)))
         else graph.copy(definitions = graph.definitions.map(value => if (value.ref == original.ref) value.copy(content = Content.Statement("Not the retained command output", Modality.Assertion)) else value))
       probes = List(repo.read(r.scope).void, repo.history(r.scope, graph.generation).void, repo.sources(SourceRequest(r.scope, 0L, 10)).void,
-        repo.input(r.scope, Ref(a.provenance.input, 1)).void, repo.apply(r, a).void, repo.pendingProjections(100000).void)
+        repo.input(r.scope, Ref(a.provenance.input, 1)).void, repo.apply(r, a).void, repo.outboxSnapshots(100000).void)
       observed <- (snapshots(db, altered) *> probes.traverse(_.attempt)).guarantee(snapshots(db, graph))
       _ = observed.foreach(value => assertEquals(value.left.toOption.collect { case e: Fault => e.code }, Some("corrupt")))
       restored <- repo.read(r.scope)
@@ -79,7 +79,7 @@ final class PostgresCommandControls extends FunSuite {
       actors = if (relabel) graph.actors.map(value => if (value.value == a.actor) value.copy(value = a.actor.copy(id = "relabeled")) else value)
         else graph.actors.filterNot(_.value == a.actor)
       probes = List(repo.read(r.scope).void, repo.history(r.scope, graph.generation).void, repo.sources(SourceRequest(r.scope, 0L, 10)).void,
-        repo.input(r.scope, Ref(a.provenance.input, 1)).void, repo.apply(r, a).void, repo.pendingProjections(100000).void)
+        repo.input(r.scope, Ref(a.provenance.input, 1)).void, repo.apply(r, a).void, repo.outboxSnapshots(100000).void)
       observed <- (snapshots(db, graph.copy(actors = actors)) *> probes.traverse(_.attempt).flatMap { values =>
         repo.history(r.scope, first.generation).map(older => (values, older))
       }).guarantee(snapshots(db, graph))
@@ -150,7 +150,7 @@ final class PostgresCommandControls extends FunSuite {
       original <- resultBytes(db, r)
       altered = StoredJson.encode(ApplyResult.codecJson, result.copy(created = Nil))
       probes = List(repo.read(r.scope).void, repo.history(r.scope, result.generation).void, repo.sources(SourceRequest(r.scope, 0L, 10)).void,
-        repo.input(r.scope, Ref(a.provenance.input, 1)).void, repo.apply(r, a).void, repo.pendingProjections(100000).void)
+        repo.input(r.scope, Ref(a.provenance.input, 1)).void, repo.apply(r, a).void, repo.outboxSnapshots(100000).void)
       observed <- (replaceResult(db, r, altered) *> probes.traverse(_.attempt)).guarantee(replaceResult(db, r, original))
       _ = observed.foreach(value => assertEquals(value.left.toOption.collect { case e: Fault => e.code }, Some("corrupt")))
       restored <- repo.read(r.scope)

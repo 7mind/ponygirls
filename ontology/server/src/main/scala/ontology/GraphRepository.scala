@@ -9,11 +9,11 @@ import java.nio.charset.StandardCharsets.UTF_8
 trait GraphRepository extends GraphReadRepository {
   def curation: CurationRepository
   def capsules(settings: CapsuleStoreSettings): CapsuleRepository
+  def projections(settings: ProjectionSettings): ProjectionRepository
   def history(scope: String, generation: Long): IO[GraphSnapshot]
   def scopes: IO[List[String]]
   def apply(request: ApplyRequest, admission: Admission): IO[ApplyResult]
-  def pendingProjections(limit: Int): IO[List[GraphSnapshot]]
-  def acknowledgeProjection(scope: String, generation: Long): IO[Unit]
+  def outboxSnapshots(limit: Int): IO[List[GraphSnapshot]]
   def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult]
   def sources(request: SourceRequest): IO[SourceResult]
   def prepare(request: PresentRequest, call: ReviewCall, id: java.util.UUID, at: String): IO[Presentation]
@@ -32,13 +32,16 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
   private var inputs = Map.empty[(String, Ref), InputReceipt]
   private var versions = Map.empty[(String, Long), GraphSnapshot]
   private var receipts = Map.empty[Receipt, (String, ApplyResult)]
-  private var outbox = Map.empty[(String, Long), Boolean]
+  private var outbox = Set.empty[(String, Long)]
   private final case class SourceKey(scope: String, namespace: String, eventId: java.util.UUID)
   private final case class IngestKey(scope: String, namespace: String, requestId: java.util.UUID)
   private var sourceEvents = Map.empty[String, List[PrimaryRecord]]
   private var presentations = Map.empty[(String, java.util.UUID), Presentation]
   private var capsuleRows = Map.empty[(String, java.util.UUID), CapsuleRow]
   private var deliveryRows = Map.empty[(String, java.util.UUID), DeliveryRow]
+  private var projectionSessions = Map.empty[java.util.UUID, ProjectionSessionRow]
+  private var projectionAcks = Map.empty[(java.util.UUID, java.util.UUID), ProjectionAckReceipt]
+  private var projectionCheckpoints = Map.empty[(ProjectionInstance, String), ProjectionCheckpointWitness]
   private var judgmentIndex = Map.empty[Receipt, (String, java.util.UUID)]
   private var sourceIndex = Map.empty[SourceKey, (String, IngestResult)]
   private var ingestReceipts = Map.empty[IngestKey, (String, IngestResult)]
@@ -50,6 +53,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
   private val curationValidation = new CurationValidation(engine)
   private val curationStore = new CurationStore(curationTransactions, curationReadTransactions, curationSettings, engine)
   val curation: CurationRepository = curationStore
+  def projections(settings: ProjectionSettings): ProjectionRepository = new ProjectionStore(projectionTransactions, settings)
   def capsules(settings: CapsuleStoreSettings): CapsuleRepository = new CapsuleStore(capsuleTransactions, settings, new CurationReadModel(curationValidation), curationValidation)
   private def verified(graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationEvidence, verifiedPrimary(graph))
   private def verifiedPrimary(graph: GraphSnapshot): GraphSnapshot = {
@@ -154,7 +158,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
         val nextVersions = versions.updated((request.scope, before.generation), before).updated((request.scope, changed.snapshot.generation), changed.snapshot)
         val nextReceipts = receipts.updated(key, (digest, changed.result))
         val nextEvents = sourceEvents.updated(request.scope, events)
-        val nextOutbox = outbox.updated((request.scope, changed.snapshot.generation), false)
+        val nextOutbox = outbox + ((request.scope, changed.snapshot.generation))
         heads = nextHeads
         inputs = nextInputs
         versions = nextVersions
@@ -201,7 +205,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
             inputs = inputs.updated((request.scope, changed.receipt.ref), changed.receipt)
             heads = heads.updated(request.scope, changed.snapshot)
             versions = versions.updated((request.scope, before.generation), before).updated((request.scope, changed.snapshot.generation), changed.snapshot)
-            outbox = outbox.updated((request.scope, changed.snapshot.generation), false)
+            outbox = outbox + ((request.scope, changed.snapshot.generation))
             sourceEvents = sourceEvents.updated(request.scope, events :+ PrimaryRecord(request.eventId, changed.event, digest, PrimaryOutcome.Captured(changed.result)))
             sourceIndex = sourceIndex.updated(key, (digest, changed.result))
             changed.result
@@ -257,7 +261,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
         val nextInputs = inputs ++ additions.map(input => (request.scope, input.ref) -> input)
         val nextHeads = heads.updated(request.scope, changed.snapshot)
         val nextVersions = versions.updated((request.scope, before.generation), before).updated((request.scope, changed.snapshot.generation), changed.snapshot)
-        val nextOutbox = outbox.updated((request.scope, changed.snapshot.generation), false)
+        val nextOutbox = outbox + ((request.scope, changed.snapshot.generation))
         val nextEvents = sourceEvents.updated(request.scope, events)
         val nextIndex = judgmentIndex.updated(key, (digest, changed.event.id))
         inputs = nextInputs; heads = nextHeads; versions = nextVersions; outbox = nextOutbox; sourceEvents = nextEvents; judgmentIndex = nextIndex
@@ -276,14 +280,72 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
     verified(heads.getOrElse(scope, Graph.empty(scope)))
     sourceEvents.getOrElse(scope, Nil).collect { case PrimaryRecord(_, _, _, PrimaryOutcome.Reviewed(value)) => value }
   })
-  def pendingProjections(limit: Int): IO[List[GraphSnapshot]] = IO(synchronized {
-    Require(limit > 0, "limit", "positive projection batch required")
-    outbox.toList.collect { case (key, false) => key }.sortBy(x => (x._1, x._2)).take(limit).map(key => verified(versions(key)))
+  def outboxSnapshots(limit: Int): IO[List[GraphSnapshot]] = IO(synchronized {
+    Require(limit > 0, "limit", "positive outbox inventory limit required")
+    outbox.toList.sorted.take(limit).map(key => verified(versions(key)))
   })
-  def acknowledgeProjection(scope: String, generation: Long): IO[Unit] = IO(synchronized {
-    Require(outbox.contains((scope, generation)), "not-found", "unknown projected revision")
-    outbox = outbox.updated((scope, generation), true)
-  })
+  private def projectionTransactions: ProjectionTransactions = new ProjectionTransactions {
+    def run[A](body: ProjectionTransaction => A): IO[A] = IO(MemoryGraphRepository.this.synchronized {
+      var sessions = projectionSessions
+      var acknowledgments = projectionAcks
+      var checkpoints = projectionCheckpoints
+      val tx = new ProjectionTransaction {
+        def now: java.time.Instant = clock.instant()
+        def coordinator: CoordinatorState = MemoryGraphRepository.this.coordinator
+        def lock(scope: String): Unit = ()
+        def head(scope: String): GraphSnapshot = verified(heads.getOrElse(scope, Graph.empty(scope)))
+        def history(scope: String, generation: Long): GraphSnapshot = verified(versions.getOrElse((scope, generation), throw Fault("not-found", "projection revision not found")))
+        def session(id: java.util.UUID): Option[ProjectionSessionRow] = sessions.get(id).map { row =>
+          Require(row.session.id == id, "corrupt", "projection session map key differs")
+          ProjectionProtocol.session(row.session); row
+        }
+        def acquisition(instance: ProjectionInstance, fence: CoordinatorFence): Option[ProjectionSessionRow] = {
+          val values = sessions.valuesIterator.filter(row => row.session.instance == instance && row.session.fence.epoch == fence.epoch).toList
+          Require(values.size <= 1, "corrupt", "duplicate projection acquisition")
+          values.headOption
+        }
+        def insertSession(row: ProjectionSessionRow): Unit = {
+          Require(!sessions.contains(row.session.id) && acquisition(row.session.instance, row.session.fence).isEmpty, "identity", "projection session already exists")
+          ProjectionProtocol.reconciliation(row.session, row.progress, Nil)
+          sessions = sessions.updated(row.session.id, row)
+        }
+        def saveProgress(id: java.util.UUID, value: ProjectionProgress): Unit = {
+          val row = session(id).getOrElse(throw Fault("corrupt", "projection session missing"))
+          ProjectionProtocol.reconciliation(row.session, value, headAcknowledgments(id))
+          sessions = sessions.updated(id, row.copy(progress = value))
+        }
+        def acknowledgment(sessionId: java.util.UUID, requestId: java.util.UUID): Option[ProjectionAckReceipt] = acknowledgments.get((sessionId, requestId)).map { value =>
+          Require(value.input.sessionId == sessionId && value.input.requestId == requestId, "corrupt", "projection acknowledgment map key differs")
+          value
+        }
+        def headAcknowledgments(sessionId: java.util.UUID): List[ProjectionAckReceipt] = acknowledgments.valuesIterator
+          .filter(value => value.input.sessionId == sessionId && value.input.target.origin == ProjectionTargetOrigin.Head).toList.sortBy(_.input.target.scope)
+        def accepted(instance: ProjectionInstance, scope: String): List[ProjectionAckReceipt] = acknowledgments.valuesIterator
+          .filter(value => value.input.observed.instance == instance && value.input.target.scope == scope).toList
+        def insertAcknowledgment(value: ProjectionAckReceipt): Unit = {
+          Require(acknowledgment(value.input.sessionId, value.input.requestId).isEmpty, "identity", "projection acknowledgment already exists")
+          if (value.input.target.origin == ProjectionTargetOrigin.Head) Require(!headAcknowledgments(value.input.sessionId).exists(_.input.target.scope == value.input.target.scope),
+            "identity", "scope head already acknowledged in session")
+          acknowledgments = acknowledgments.updated((value.input.sessionId, value.input.requestId), value)
+        }
+        def checkpoint(instance: ProjectionInstance, scope: String): Option[ProjectionCheckpointWitness] = checkpoints.get((instance, scope))
+        def saveCheckpoint(value: ProjectionCheckpointWitness): Unit = {
+          Require(acknowledgment(value.sessionId, value.requestId).exists(_.input.observed == value.checkpoint), "corrupt", "checkpoint witness missing")
+          val key = (value.checkpoint.instance, value.checkpoint.scope)
+          Require(checkpoints.get(key).forall(_.checkpoint.generation <= value.checkpoint.generation), "projection-stale", "checkpoint cannot regress")
+          checkpoints = checkpoints.updated(key, value)
+        }
+        def outbox(scope: String, afterGeneration: Long, limit: Int): List[Long] = MemoryGraphRepository.this.outbox.iterator
+          .collect { case (`scope`, generation) if generation > afterGeneration => generation }.toList.sorted.take(limit)
+        def containsOutbox(scope: String, generation: Long): Boolean = MemoryGraphRepository.this.outbox.contains((scope, generation))
+      }
+      val result = body(tx)
+      projectionSessions = sessions
+      projectionAcks = acknowledgments
+      projectionCheckpoints = checkpoints
+      result
+    })
+  }
   private def capsuleTransactions: CapsuleTransactions = new CapsuleTransactions {
     def run[A](scope: String)(body: CapsuleTransaction => A): IO[A] = IO(MemoryGraphRepository.this.synchronized {
       var nextCapsules = capsuleRows
@@ -422,7 +484,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
           nextHeads = nextHeads.updated(before.scope, graph)
           nextInputs = nextInputs.updated((before.scope, value.receipt.ref), value.receipt)
           nextVersions = nextVersions.updated((before.scope, graph.generation), graph)
-          nextOutbox = nextOutbox.updated((before.scope, graph.generation), false)
+          nextOutbox = nextOutbox + ((before.scope, graph.generation))
           saveAttempt(value.attempt, false)
         }
       }

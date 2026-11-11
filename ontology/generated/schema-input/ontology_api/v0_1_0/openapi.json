@@ -4095,6 +4095,50 @@
         ],
         "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Whole, Alternative."
       },
+      "ontology_api_ProjectionAckInput" : {
+        "type" : "object",
+        "required" : [
+          "sessionId",
+          "requestId",
+          "target",
+          "observed"
+        ],
+        "properties" : {
+          "sessionId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionTarget"
+          },
+          "observed" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionCheckpoint"
+          }
+        }
+      },
+      "ontology_api_ProjectionAckReceipt" : {
+        "type" : "object",
+        "required" : [
+          "input",
+          "disposition",
+          "recordedAt"
+        ],
+        "properties" : {
+          "input" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionAckInput"
+          },
+          "disposition" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionDisposition"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          }
+        }
+      },
       "ontology_api_ProjectionCheckpoint" : {
         "type" : "object",
         "required" : [
@@ -4119,6 +4163,34 @@
           }
         }
       },
+      "ontology_api_ProjectionCheckpointWitness" : {
+        "type" : "object",
+        "required" : [
+          "checkpoint",
+          "sessionId",
+          "requestId"
+        ],
+        "properties" : {
+          "checkpoint" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionCheckpoint"
+          },
+          "sessionId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_ProjectionDisposition" : {
+        "type" : "string",
+        "enum" : [
+          "ExactCheckpoint",
+          "SupersededByCheckpoint"
+        ]
+      },
       "ontology_api_ProjectionInstance" : {
         "type" : "object",
         "required" : [
@@ -4132,6 +4204,87 @@
           "incarnation" : {
             "type" : "string",
             "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_ProjectionIssuedBatch" : {
+        "type" : "object",
+        "required" : [
+          "startIndex",
+          "targets"
+        ],
+        "properties" : {
+          "startIndex" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ProjectionTarget"
+            }
+          }
+        }
+      },
+      "ontology_api_ProjectionProgress" : {
+        "type" : "object",
+        "required" : [
+          "issuedThrough"
+        ],
+        "properties" : {
+          "issuedThrough" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "batch" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ProjectionIssuedBatch"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_ProjectionSession" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "fence",
+          "instance",
+          "actor",
+          "scopes",
+          "batchLimit",
+          "openedAt"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "instance" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
+          },
+          "actor" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "scopes" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "batchLimit" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "openedAt" : {
+            "type" : "string"
           }
         }
       },
@@ -4150,6 +4303,37 @@
             "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
           }
         }
+      },
+      "ontology_api_ProjectionTarget" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "digest",
+          "origin"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionTargetOrigin"
+          }
+        }
+      },
+      "ontology_api_ProjectionTargetOrigin" : {
+        "type" : "string",
+        "enum" : [
+          "Head",
+          "Outbox"
+        ]
       },
       "ontology_api_Provenance" : {
         "type" : "object",

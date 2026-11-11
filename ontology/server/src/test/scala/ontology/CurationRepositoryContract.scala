@@ -157,7 +157,7 @@ abstract class CurationRepositoryContract extends CurationRepositorySupport {
         _ = assertEquals(input.kind, InputKind.Curation)
         history <- repo.history(scope, receipt.generation)
         _ = assertEquals(history, graph)
-        projections <- repo.pendingProjections(10000)
+        projections <- repo.outboxSnapshots(10000)
         _ = assert(projections.exists(g => g.scope == scope && g.generation == receipt.generation))
         status <- repo.curation.status(settings.principal, scope)
         _ = assertEquals(status.state, CurationState.Idle)

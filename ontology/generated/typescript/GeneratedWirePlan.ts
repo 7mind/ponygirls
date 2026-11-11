@@ -4,8 +4,8 @@ export const wirePlan: WirePlan = {
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "b6a26053d617354b4355ef9b07533ff9b71f1020e6aa5305ad57555143bde327",
-  "rawDigest": "4faeb5da37f3bc42a12322af30c988245057c0d599ab7249478e1b74a2053c03",
+  "modelDigest": "df290e830db9b06d8d79bd06e004404a0f96a325b12da42d1f11f3c65d691424",
+  "rawDigest": "1af46457a379b4f1fa37a433a25194431651a28269b9decbbb57e0deebb1a0a5",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -864,10 +864,42 @@ export const wirePlan: WirePlan = {
       "tag": null
     },
     {
+      "typeId": "ontology.api/:#ProjectionAckInput",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionAckInput",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionAckReceipt",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionAckReceipt",
+      "parent": null,
+      "tag": null
+    },
+    {
       "typeId": "ontology.api/:#ProjectionCheckpoint",
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_ProjectionCheckpoint",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionCheckpointWitness",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionCheckpointWitness",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionDisposition",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionDisposition",
       "parent": null,
       "tag": null
     },
@@ -880,10 +912,50 @@ export const wirePlan: WirePlan = {
       "tag": null
     },
     {
+      "typeId": "ontology.api/:#ProjectionIssuedBatch",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionIssuedBatch",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionProgress",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionProgress",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionSession",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionSession",
+      "parent": null,
+      "tag": null
+    },
+    {
       "typeId": "ontology.api/:#ProjectionStoreIdentity",
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_ProjectionStoreIdentity",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionTarget",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionTarget",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#ProjectionTargetOrigin",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_ProjectionTargetOrigin",
       "parent": null,
       "tag": null
     },
@@ -3893,6 +3965,41 @@ export const wirePlan: WirePlan = {
         "Whole": "ontology_api_PresentedSelectionInput_Whole"
       }
     },
+    "ontology_api_ProjectionAckInput": {
+      "kind": "object",
+      "fields": {
+        "observed": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionCheckpoint"
+        },
+        "requestId": {
+          "kind": "uuid"
+        },
+        "sessionId": {
+          "kind": "uuid"
+        },
+        "target": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionTarget"
+        }
+      }
+    },
+    "ontology_api_ProjectionAckReceipt": {
+      "kind": "object",
+      "fields": {
+        "disposition": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionDisposition"
+        },
+        "input": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionAckInput"
+        },
+        "recordedAt": {
+          "kind": "string"
+        }
+      }
+    },
     "ontology_api_ProjectionCheckpoint": {
       "kind": "object",
       "fields": {
@@ -3911,6 +4018,28 @@ export const wirePlan: WirePlan = {
         }
       }
     },
+    "ontology_api_ProjectionCheckpointWitness": {
+      "kind": "object",
+      "fields": {
+        "checkpoint": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionCheckpoint"
+        },
+        "requestId": {
+          "kind": "uuid"
+        },
+        "sessionId": {
+          "kind": "uuid"
+        }
+      }
+    },
+    "ontology_api_ProjectionDisposition": {
+      "kind": "enum",
+      "values": [
+        "ExactCheckpoint",
+        "SupersededByCheckpoint"
+      ]
+    },
     "ontology_api_ProjectionInstance": {
       "kind": "object",
       "fields": {
@@ -3919,6 +4048,68 @@ export const wirePlan: WirePlan = {
         },
         "targetId": {
           "kind": "string"
+        }
+      }
+    },
+    "ontology_api_ProjectionIssuedBatch": {
+      "kind": "object",
+      "fields": {
+        "startIndex": {
+          "kind": "i32"
+        },
+        "targets": {
+          "kind": "array",
+          "element": {
+            "kind": "ref",
+            "component": "ontology_api_ProjectionTarget"
+          }
+        }
+      }
+    },
+    "ontology_api_ProjectionProgress": {
+      "kind": "object",
+      "fields": {
+        "batch": {
+          "kind": "nullable",
+          "value": {
+            "kind": "ref",
+            "component": "ontology_api_ProjectionIssuedBatch"
+          }
+        },
+        "issuedThrough": {
+          "kind": "i32"
+        }
+      }
+    },
+    "ontology_api_ProjectionSession": {
+      "kind": "object",
+      "fields": {
+        "actor": {
+          "kind": "ref",
+          "component": "ontology_api_Actor"
+        },
+        "batchLimit": {
+          "kind": "i32"
+        },
+        "fence": {
+          "kind": "ref",
+          "component": "ontology_api_CoordinatorFence"
+        },
+        "id": {
+          "kind": "uuid"
+        },
+        "instance": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionInstance"
+        },
+        "openedAt": {
+          "kind": "string"
+        },
+        "scopes": {
+          "kind": "array",
+          "element": {
+            "kind": "string"
+          }
         }
       }
     },
@@ -3933,6 +4124,31 @@ export const wirePlan: WirePlan = {
           "component": "ontology_api_ProjectionInstance"
         }
       }
+    },
+    "ontology_api_ProjectionTarget": {
+      "kind": "object",
+      "fields": {
+        "digest": {
+          "kind": "string"
+        },
+        "generation": {
+          "kind": "i64"
+        },
+        "origin": {
+          "kind": "ref",
+          "component": "ontology_api_ProjectionTargetOrigin"
+        },
+        "scope": {
+          "kind": "string"
+        }
+      }
+    },
+    "ontology_api_ProjectionTargetOrigin": {
+      "kind": "enum",
+      "values": [
+        "Head",
+        "Outbox"
+      ]
     },
     "ontology_api_Provenance": {
       "kind": "object",

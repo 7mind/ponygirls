@@ -30,7 +30,7 @@ abstract class ReviewRepositoryContract extends ContextRepositoryContract {
 
   test("preparation persists separately without graph frontier history or outbox publication") { check { repo => for {
     f <- seed(repo)
-    outbox <- repo.pendingProjections(100000)
+    outbox <- repo.outboxSnapshots(100000)
     originalSources <- repo.sources(SourceRequest(f.scope, 0L, 10))
     p <- prepare(repo, f)
     stored <- repo.presentation(f.call.principal, f.scope, p.id)
@@ -38,7 +38,7 @@ abstract class ReviewRepositoryContract extends ContextRepositoryContract {
     after <- repo.read(f.scope)
     history <- repo.history(f.scope, f.graph.generation)
     sources <- repo.sources(SourceRequest(f.scope, 0L, 10))
-    pending <- repo.pendingProjections(100000)
+    pending <- repo.outboxSnapshots(100000)
     _ = assertEquals(stored, p)
     _ = assert(second.id != p.id && second.reservedSourceRef != p.reservedSourceRef)
     _ = assertEquals(after, f.graph)
@@ -246,7 +246,7 @@ abstract class ReviewRepositoryContract extends ContextRepositoryContract {
   test("invalid owner scope and exact selections leave all publication state unchanged") { check { repo => for {
     f <- seed(repo)
     p <- prepare(repo, f)
-    before <- repo.pendingProjections(100000)
+    before <- repo.outboxSnapshots(100000)
     request = input(p, ReviewAction.Adopt(f.question))
     wrong <- repo.judge(request, f.call, service, at).attempt
     owner <- repo.judge(request.copy(action = ReviewAction.Review(JudgmentKind.Accept)), call(f.scope, "other", Actor("other", ActorKind.Human)), service, at).attempt
@@ -254,7 +254,7 @@ abstract class ReviewRepositoryContract extends ContextRepositoryContract {
     after <- repo.read(f.scope)
     sources <- repo.sources(SourceRequest(f.scope, 0L, 10))
     judgments <- repo.judgments(f.call.principal, f.scope)
-    pending <- repo.pendingProjections(100000)
+    pending <- repo.outboxSnapshots(100000)
     _ = assertEquals(code(wrong), Some("presentation"))
     _ = assertEquals(code(owner), Some("forbidden"))
     _ = assertEquals(code(denied), Some("forbidden"))

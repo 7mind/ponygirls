@@ -9742,6 +9742,100 @@
     }
   },
   {
+    "typeId": "ontology.api/:#ProjectionAckInput",
+    "label": "base",
+    "wire": {
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "target": {
+        "scope": "controlled-codec-fixture",
+        "generation": "9223372036854775807",
+        "digest": "controlled-codec-fixture",
+        "origin": "Head"
+      },
+      "observed": {
+        "instance": {
+          "targetId": "controlled-codec-fixture",
+          "incarnation": "00000000-0000-4000-8000-000000000001"
+        },
+        "scope": "controlled-codec-fixture",
+        "generation": "9223372036854775807",
+        "digest": "controlled-codec-fixture"
+      }
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionAckInput",
+    "scalaWire": {
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001",
+      "target": {
+        "scope": "controlled-codec-fixture",
+        "generation": "9223372036854775807",
+        "digest": "controlled-codec-fixture",
+        "origin": "Head"
+      },
+      "observed": {
+        "instance": {
+          "targetId": "controlled-codec-fixture",
+          "incarnation": "00000000-0000-4000-8000-000000000001"
+        },
+        "scope": "controlled-codec-fixture",
+        "generation": "9223372036854775807",
+        "digest": "controlled-codec-fixture"
+      }
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionAckReceipt",
+    "label": "base",
+    "wire": {
+      "input": {
+        "sessionId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000001",
+        "target": {
+          "scope": "controlled-codec-fixture",
+          "generation": "9223372036854775807",
+          "digest": "controlled-codec-fixture",
+          "origin": "Head"
+        },
+        "observed": {
+          "instance": {
+            "targetId": "controlled-codec-fixture",
+            "incarnation": "00000000-0000-4000-8000-000000000001"
+          },
+          "scope": "controlled-codec-fixture",
+          "generation": "9223372036854775807",
+          "digest": "controlled-codec-fixture"
+        }
+      },
+      "disposition": "ExactCheckpoint",
+      "recordedAt": "controlled-codec-fixture"
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionAckReceipt",
+    "scalaWire": {
+      "input": {
+        "sessionId": "00000000-0000-4000-8000-000000000001",
+        "requestId": "00000000-0000-4000-8000-000000000001",
+        "target": {
+          "scope": "controlled-codec-fixture",
+          "generation": "9223372036854775807",
+          "digest": "controlled-codec-fixture",
+          "origin": "Head"
+        },
+        "observed": {
+          "instance": {
+            "targetId": "controlled-codec-fixture",
+            "incarnation": "00000000-0000-4000-8000-000000000001"
+          },
+          "scope": "controlled-codec-fixture",
+          "generation": "9223372036854775807",
+          "digest": "controlled-codec-fixture"
+        }
+      },
+      "disposition": "ExactCheckpoint",
+      "recordedAt": "controlled-codec-fixture"
+    }
+  },
+  {
     "typeId": "ontology.api/:#ProjectionCheckpoint",
     "label": "base",
     "wire": {
@@ -9765,6 +9859,58 @@
     }
   },
   {
+    "typeId": "ontology.api/:#ProjectionCheckpointWitness",
+    "label": "base",
+    "wire": {
+      "checkpoint": {
+        "instance": {
+          "targetId": "controlled-codec-fixture",
+          "incarnation": "00000000-0000-4000-8000-000000000001"
+        },
+        "scope": "controlled-codec-fixture",
+        "generation": "9223372036854775807",
+        "digest": "controlled-codec-fixture"
+      },
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001"
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionCheckpointWitness",
+    "scalaWire": {
+      "checkpoint": {
+        "instance": {
+          "targetId": "controlled-codec-fixture",
+          "incarnation": "00000000-0000-4000-8000-000000000001"
+        },
+        "scope": "controlled-codec-fixture",
+        "generation": "9223372036854775807",
+        "digest": "controlled-codec-fixture"
+      },
+      "sessionId": "00000000-0000-4000-8000-000000000001",
+      "requestId": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionDisposition",
+    "label": "base",
+    "wire": "ExactCheckpoint",
+    "scalaTypeId": "ontology.api/:#ProjectionDisposition",
+    "scalaWire": "ExactCheckpoint"
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionDisposition",
+    "label": "enum:ExactCheckpoint",
+    "wire": "ExactCheckpoint",
+    "scalaTypeId": "ontology.api/:#ProjectionDisposition",
+    "scalaWire": "ExactCheckpoint"
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionDisposition",
+    "label": "enum:SupersededByCheckpoint",
+    "wire": "SupersededByCheckpoint",
+    "scalaTypeId": "ontology.api/:#ProjectionDisposition",
+    "scalaWire": "SupersededByCheckpoint"
+  },
+  {
     "typeId": "ontology.api/:#ProjectionInstance",
     "label": "base",
     "wire": {
@@ -9775,6 +9921,164 @@
     "scalaWire": {
       "targetId": "controlled-codec-fixture",
       "incarnation": "00000000-0000-4000-8000-000000000001"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionIssuedBatch",
+    "label": "base",
+    "wire": {
+      "startIndex": 1,
+      "targets": []
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionIssuedBatch",
+    "scalaWire": {
+      "startIndex": 1,
+      "targets": []
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionIssuedBatch",
+    "label": "field:targets:item",
+    "wire": {
+      "startIndex": 1,
+      "targets": [
+        {
+          "scope": "controlled-codec-fixture",
+          "generation": "9223372036854775807",
+          "digest": "controlled-codec-fixture",
+          "origin": "Head"
+        }
+      ]
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionIssuedBatch",
+    "scalaWire": {
+      "startIndex": 1,
+      "targets": [
+        {
+          "scope": "controlled-codec-fixture",
+          "generation": "9223372036854775807",
+          "digest": "controlled-codec-fixture",
+          "origin": "Head"
+        }
+      ]
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionProgress",
+    "label": "base",
+    "wire": {
+      "issuedThrough": 1,
+      "batch": null
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionProgress",
+    "scalaWire": {
+      "issuedThrough": 1,
+      "batch": null
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionProgress",
+    "label": "field:batch:present",
+    "wire": {
+      "issuedThrough": 1,
+      "batch": {
+        "startIndex": 1,
+        "targets": []
+      }
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionProgress",
+    "scalaWire": {
+      "issuedThrough": 1,
+      "batch": {
+        "startIndex": 1,
+        "targets": []
+      }
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionSession",
+    "label": "base",
+    "wire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "fence": {
+        "ownerId": "00000000-0000-4000-8000-000000000001",
+        "epoch": "9223372036854775807"
+      },
+      "instance": {
+        "targetId": "controlled-codec-fixture",
+        "incarnation": "00000000-0000-4000-8000-000000000001"
+      },
+      "actor": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scopes": [],
+      "batchLimit": 1,
+      "openedAt": "controlled-codec-fixture"
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionSession",
+    "scalaWire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "fence": {
+        "ownerId": "00000000-0000-4000-8000-000000000001",
+        "epoch": "9223372036854775807"
+      },
+      "instance": {
+        "targetId": "controlled-codec-fixture",
+        "incarnation": "00000000-0000-4000-8000-000000000001"
+      },
+      "actor": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scopes": [],
+      "batchLimit": 1,
+      "openedAt": "controlled-codec-fixture"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionSession",
+    "label": "field:scopes:item",
+    "wire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "fence": {
+        "ownerId": "00000000-0000-4000-8000-000000000001",
+        "epoch": "9223372036854775807"
+      },
+      "instance": {
+        "targetId": "controlled-codec-fixture",
+        "incarnation": "00000000-0000-4000-8000-000000000001"
+      },
+      "actor": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scopes": [
+        "controlled-codec-fixture"
+      ],
+      "batchLimit": 1,
+      "openedAt": "controlled-codec-fixture"
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionSession",
+    "scalaWire": {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "fence": {
+        "ownerId": "00000000-0000-4000-8000-000000000001",
+        "epoch": "9223372036854775807"
+      },
+      "instance": {
+        "targetId": "controlled-codec-fixture",
+        "incarnation": "00000000-0000-4000-8000-000000000001"
+      },
+      "actor": {
+        "id": "controlled-codec-fixture",
+        "kind": "Human"
+      },
+      "scopes": [
+        "controlled-codec-fixture"
+      ],
+      "batchLimit": 1,
+      "openedAt": "controlled-codec-fixture"
     }
   },
   {
@@ -9795,6 +10099,44 @@
         "incarnation": "00000000-0000-4000-8000-000000000001"
       }
     }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionTarget",
+    "label": "base",
+    "wire": {
+      "scope": "controlled-codec-fixture",
+      "generation": "9223372036854775807",
+      "digest": "controlled-codec-fixture",
+      "origin": "Head"
+    },
+    "scalaTypeId": "ontology.api/:#ProjectionTarget",
+    "scalaWire": {
+      "scope": "controlled-codec-fixture",
+      "generation": "9223372036854775807",
+      "digest": "controlled-codec-fixture",
+      "origin": "Head"
+    }
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionTargetOrigin",
+    "label": "base",
+    "wire": "Head",
+    "scalaTypeId": "ontology.api/:#ProjectionTargetOrigin",
+    "scalaWire": "Head"
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionTargetOrigin",
+    "label": "enum:Head",
+    "wire": "Head",
+    "scalaTypeId": "ontology.api/:#ProjectionTargetOrigin",
+    "scalaWire": "Head"
+  },
+  {
+    "typeId": "ontology.api/:#ProjectionTargetOrigin",
+    "label": "enum:Outbox",
+    "wire": "Outbox",
+    "scalaTypeId": "ontology.api/:#ProjectionTargetOrigin",
+    "scalaWire": "Outbox"
   },
   {
     "typeId": "ontology.api/:#Provenance",

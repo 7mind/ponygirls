@@ -110,9 +110,18 @@ import { PresentationPayload, PresentationPayload_JsonCodec } from './Presentati
 import { PresentationPublication, PresentationPublication_JsonCodec } from './PresentationPublication.js';
 import { PresentedSelection, PresentedSelection_JsonCodec } from './PresentedSelection.js';
 import { PresentedSelectionInput, PresentedSelectionInput_JsonCodec } from './PresentedSelectionInput.js';
+import { ProjectionAckInput, ProjectionAckInput_JsonCodec } from './ProjectionAckInput.js';
+import { ProjectionAckReceipt, ProjectionAckReceipt_JsonCodec } from './ProjectionAckReceipt.js';
 import { ProjectionCheckpoint, ProjectionCheckpoint_JsonCodec } from './ProjectionCheckpoint.js';
+import { ProjectionCheckpointWitness, ProjectionCheckpointWitness_JsonCodec } from './ProjectionCheckpointWitness.js';
+import { ProjectionDisposition, ProjectionDisposition_JsonCodec } from './ProjectionDisposition.js';
 import { ProjectionInstance, ProjectionInstance_JsonCodec } from './ProjectionInstance.js';
+import { ProjectionIssuedBatch, ProjectionIssuedBatch_JsonCodec } from './ProjectionIssuedBatch.js';
+import { ProjectionProgress, ProjectionProgress_JsonCodec } from './ProjectionProgress.js';
+import { ProjectionSession, ProjectionSession_JsonCodec } from './ProjectionSession.js';
 import { ProjectionStoreIdentity, ProjectionStoreIdentity_JsonCodec } from './ProjectionStoreIdentity.js';
+import { ProjectionTarget, ProjectionTarget_JsonCodec } from './ProjectionTarget.js';
+import { ProjectionTargetOrigin, ProjectionTargetOrigin_JsonCodec } from './ProjectionTargetOrigin.js';
 import { Provenance, Provenance_JsonCodec } from './Provenance.js';
 import { ReadRequest, ReadRequest_JsonCodec } from './ReadRequest.js';
 import { ReadResult, ReadResult_JsonCodec } from './ReadResult.js';
@@ -252,9 +261,18 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(PresentationPublication_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentationPublication_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(PresentedSelection_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentedSelection_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(PresentedSelectionInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => PresentedSelectionInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionAckInput_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionAckInput_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionAckReceipt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionAckReceipt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ProjectionCheckpoint_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionCheckpoint_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionCheckpointWitness_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionCheckpointWitness_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionDisposition_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionDisposition_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ProjectionInstance_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionInstance_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionIssuedBatch_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionIssuedBatch_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionProgress_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionProgress_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionSession_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionSession_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ProjectionStoreIdentity_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionStoreIdentity_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionTarget_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionTarget_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(ProjectionTargetOrigin_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionTargetOrigin_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Provenance_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Provenance_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -407,9 +425,18 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#PresentationPublication": ['0.1.0'],
         "ontology.api/:#PresentedSelection": ['0.1.0'],
         "ontology.api/:#PresentedSelectionInput": ['0.1.0'],
+        "ontology.api/:#ProjectionAckInput": ['0.1.0'],
+        "ontology.api/:#ProjectionAckReceipt": ['0.1.0'],
         "ontology.api/:#ProjectionCheckpoint": ['0.1.0'],
+        "ontology.api/:#ProjectionCheckpointWitness": ['0.1.0'],
+        "ontology.api/:#ProjectionDisposition": ['0.1.0'],
         "ontology.api/:#ProjectionInstance": ['0.1.0'],
+        "ontology.api/:#ProjectionIssuedBatch": ['0.1.0'],
+        "ontology.api/:#ProjectionProgress": ['0.1.0'],
+        "ontology.api/:#ProjectionSession": ['0.1.0'],
         "ontology.api/:#ProjectionStoreIdentity": ['0.1.0'],
+        "ontology.api/:#ProjectionTarget": ['0.1.0'],
+        "ontology.api/:#ProjectionTargetOrigin": ['0.1.0'],
         "ontology.api/:#Provenance": ['0.1.0'],
         "ontology.api/:#ReadRequest": ['0.1.0'],
         "ontology.api/:#ReadResult": ['0.1.0'],
@@ -628,9 +655,18 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#PresentationPublication": { '0.1.0': 'identical' },
         "ontology.api/:#PresentedSelection": { '0.1.0': 'identical' },
         "ontology.api/:#PresentedSelectionInput": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionAckInput": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionAckReceipt": { '0.1.0': 'identical' },
         "ontology.api/:#ProjectionCheckpoint": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionCheckpointWitness": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionDisposition": { '0.1.0': 'identical' },
         "ontology.api/:#ProjectionInstance": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionIssuedBatch": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionProgress": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionSession": { '0.1.0': 'identical' },
         "ontology.api/:#ProjectionStoreIdentity": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionTarget": { '0.1.0': 'identical' },
+        "ontology.api/:#ProjectionTargetOrigin": { '0.1.0': 'identical' },
         "ontology.api/:#Provenance": { '0.1.0': 'identical' },
         "ontology.api/:#ReadRequest": { '0.1.0': 'identical' },
         "ontology.api/:#ReadResult": { '0.1.0': 'identical' },

@@ -15,6 +15,11 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private val curationValidation = new CurationValidation(engine)
   private val curationStore = new CurationStore(curationTransactions, curationReadTransactions, curationSettings, engine)
   val curation: CurationRepository = curationStore
+  def projections(settings: ProjectionSettings): ProjectionRepository = {
+    val transactions = new PostgresProjectionTransactions(database, lock, (c, scope) => verified(c, load(c, scope)), loadHistory,
+      c => curationTransaction(c).coordinator, c => curationTransaction(c).now)
+    new ProjectionStore(transactions, settings)
+  }
   def capsules(settings: CapsuleStoreSettings): CapsuleRepository = {
     val transactions = new PostgresCapsuleTransactions(database, lock, curationRead, c => curationTransaction(c).now, loadAdoptions)
     new CapsuleStore(transactions, settings, new CurationReadModel(curationValidation), curationValidation)
@@ -24,7 +29,7 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
       val stream = Option(getClass.getResourceAsStream("/" + file)).getOrElse(throw Fault("config", "migration resource missing"))
       Using.resource(stream)(s => new String(s.readAllBytes(), UTF_8))
     }
-    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")), Migration(3, "curation", sql("003_curation.sql")), Migration(4, "graph-commands", sql("004_graph_commands.sql")), Migration(5, "capsules", sql("005_capsules.sql")))
+    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")), Migration(3, "curation", sql("003_curation.sql")), Migration(4, "graph-commands", sql("004_graph_commands.sql")), Migration(5, "capsules", sql("005_capsules.sql")), Migration(6, "projection-sessions", sql("006_projection_sessions.sql")))
   }.flatMap(migrations => database.migrate("ontology", migrations))
   private def query[A](c: Connection, sql: String)(bind: PreparedStatement => Unit)(read: ResultSet => A): A =
     Using.resource(c.prepareStatement(sql)) { p => bind(p); Using.resource(p.executeQuery())(read) }
@@ -365,15 +370,11 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
       values.result()
     }
   }
-  def pendingProjections(limit: Int): IO[List[GraphSnapshot]] = database.transaction { c =>
+  def outboxSnapshots(limit: Int): IO[List[GraphSnapshot]] = database.transaction { c =>
     Require(limit > 0, "limit", "positive projection batch required")
-    query(c, "SELECT r.scope, r.generation, r.snapshot FROM ontology_outbox o JOIN ontology_revisions r USING(scope, generation) WHERE NOT o.published ORDER BY o.scope, o.generation LIMIT ?")(_.setInt(1, limit)) { r =>
+    query(c, "SELECT r.scope, r.generation, r.snapshot FROM ontology_outbox o JOIN ontology_revisions r USING(scope, generation) ORDER BY o.scope, o.generation LIMIT ?")(_.setInt(1, limit)) { r =>
       val rows = List.newBuilder[GraphSnapshot]; while (r.next()) rows += verified(c, decodeSnapshot(r.getString(1), r.getLong(2), r.getString(3))); rows.result()
     }
-  }
-  def acknowledgeProjection(scope: String, generation: Long): IO[Unit] = database.transaction { c =>
-    val affected = update(c, "UPDATE ontology_outbox SET published = true WHERE scope = ? AND generation = ?")(p => { p.setString(1, scope); p.setLong(2, generation) })
-    Require(affected == 1, "not-found", "unknown projected revision")
   }
   private def curationRead(c: Connection): CurationReadContext = curationTransaction(c)
   private def curationReadTransactions: CurationReadTransactions = new CurationReadTransactions {

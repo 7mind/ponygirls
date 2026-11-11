@@ -171,6 +171,15 @@ enum CurationAuditStage { RequestPrepared DispatchPossible ResponseObserved }
 data ProjectionInstance { targetId: str incarnation: uid }
 root data ProjectionStoreIdentity { format: i32 instance: ProjectionInstance }
 root data ProjectionCheckpoint { instance: ProjectionInstance scope: str generation: i64 digest: str }
+root data ProjectionSession { id: uid fence: CoordinatorFence instance: ProjectionInstance actor: Actor scopes: lst[str] batchLimit: i32 openedAt: str }
+enum ProjectionTargetOrigin { Head Outbox }
+data ProjectionTarget { scope: str generation: i64 digest: str origin: ProjectionTargetOrigin }
+data ProjectionIssuedBatch { startIndex: i32 targets: lst[ProjectionTarget] }
+root data ProjectionProgress { issuedThrough: i32 batch: opt[ProjectionIssuedBatch] }
+root data ProjectionAckInput { sessionId: uid requestId: uid target: ProjectionTarget observed: ProjectionCheckpoint }
+enum ProjectionDisposition { ExactCheckpoint SupersededByCheckpoint }
+root data ProjectionAckReceipt { input: ProjectionAckInput disposition: ProjectionDisposition recordedAt: str }
+root data ProjectionCheckpointWitness { checkpoint: ProjectionCheckpoint sessionId: uid requestId: uid }
 
 data CoordinatorFence { ownerId: uid epoch: i64 }
 root data CoordinatorLease { fence: CoordinatorFence acquiredAt: str renewedAt: str expiresAt: str }

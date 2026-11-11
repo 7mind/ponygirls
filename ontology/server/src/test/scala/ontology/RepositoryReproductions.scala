@@ -39,10 +39,10 @@ final class RepositoryReproductionSuite extends FunSuite {
         repo.apply(r, admission(r)) *> repo.apply(r, admission(r).copy(requestId = UUID.randomUUID())).attempt.map(result => expectedFault(result, "request"))
       }.unsafeRunSync()(using runtime)
     }
-    test(s"$name cannot acknowledge retained but never-enqueued generation zero") {
+    test(s"$name publication inventory excludes retained but never-enqueued generation zero") {
       factory.use { repo =>
         val r = request(scope(), 0L)
-        repo.apply(r, admission(r)) *> repo.acknowledgeProjection(r.scope, 0L).attempt.map(result => expectedFault(result, "not-found"))
+        repo.apply(r, admission(r)) *> repo.outboxSnapshots(100000).map(result => assertEquals(result.filter(_.scope == r.scope).map(_.generation), List(1L)))
       }.unsafeRunSync()(using runtime)
     }
   }
@@ -66,7 +66,7 @@ final class RepositoryReproductionSuite extends FunSuite {
             result <- (boundary match {
               case "head" => repo.read(a.scope).void
               case "history" => repo.history(a.scope, 1L).void
-              case "outbox" => repo.pendingProjections(100000).void
+              case "outbox" => repo.outboxSnapshots(100000).void
               case _ => IO.raiseError(new AssertionError("unknown test boundary"))
             }).attempt.guarantee(db.transaction { c =>
               val sql = if (boundary == "head") "UPDATE ontology_scopes SET snapshot = ? WHERE scope = ?" else "UPDATE ontology_revisions SET snapshot = ? WHERE scope = ? AND generation = 1"

@@ -93,12 +93,23 @@ abstract class OntologyServiceContract extends CurationRepositorySupport {
     _ = assertEquals(graph, Graph.empty(scope))
   } yield () } } }
 
-  test("scope summaries use an exact local RDF probe rather than global acknowledgment") { check { (repo, _, scope) => fixture(repo, scope).use { f => for {
+  test("scope summaries use an exact local RDF probe rather than another incarnation acknowledgment") { check { (repo, _, scope) => fixture(repo, scope).use { f => for {
     empty <- f.service.scopes(call(f))
     _ = assertEquals(empty.items.map(_.rdfGeneration), List(None))
     _ <- f.service.apply(call(f), command(scope, 0L))
     graph <- repo.read(scope)
-    _ <- repo.acknowledgeProjection(scope, graph.generation)
+    _ <- RdfProjection.resource(RdfStorage.Memory, f.rdf.instance.targetId, 10, IO(UUID.randomUUID())).use { other => leased(repo) { lease =>
+      val principal = Principal("projector", Actor("projector", ActorKind.Service), Set(scope), Set(Capability.Read))
+      val owner = repo.projections(ProjectionSettings(principal, other.instance.targetId, Set(scope), 1))
+      for {
+        session <- owner.open(UUID.randomUUID(), lease.fence, other.instance)
+        batch <- owner.reconcileHeads(session.id)
+        _ <- other.publish(batch.work.head.snapshot)
+        observation <- other.observe(scope).map(_.get)
+        _ <- owner.acknowledge(ProjectionAckInput(session.id, UUID.randomUUID(), batch.work.head.target, observation.checkpoint), observation)
+        _ = assert(other.instance != f.rdf.instance)
+      } yield ()
+    } }
     absent <- f.service.scopes(call(f))
     _ = assertEquals(absent.items.head.rdfGeneration, None)
     _ = assertEquals(absent.items.head.generation, graph.generation)

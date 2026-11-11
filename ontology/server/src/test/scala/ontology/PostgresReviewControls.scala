@@ -179,7 +179,7 @@ final class PostgresReviewControls extends FunSuite {
     remove = db.transaction { c => Using.resource(c.prepareStatement("DELETE FROM ontology_judgments WHERE scope = ? AND judgment_id = ?")) { s =>
       s.setString(1, f.scope); s.setObject(2, fakeId); Require(s.executeUpdate() == 1, "fixture", "expected one owned index")
     } }
-    probes = List(repo.read(f.scope).void, repo.history(f.scope, graph.generation).void, repo.pendingProjections(100000).void,
+    probes = List(repo.read(f.scope).void, repo.history(f.scope, graph.generation).void, repo.outboxSnapshots(100000).void,
       repo.sources(SourceRequest(f.scope, 0L, 10)).void, repo.input(f.scope, inputRef).void,
       repo.judgments(principal, f.scope).void, repo.judgment(principal, f.scope, fakeId).void)
     results <- (insert *> probes.traverse(_.attempt)).guarantee(remove)
@@ -198,7 +198,7 @@ final class PostgresReviewControls extends FunSuite {
       List(judgment.source), List(target), RelationDetail.Adoption(f.presentation.id, AdoptionOrigin.CapturedAction, judgment.source, selected),
       "A generic review did not choose this alternative", Standing.Active, Graph.node(graph, judgment.source).provenance)
     altered = graph.copy(relations = graph.relations :+ unbacked)
-    probes = List(repo.read(f.scope).void, repo.history(f.scope, graph.generation).void, repo.pendingProjections(100000).void,
+    probes = List(repo.read(f.scope).void, repo.history(f.scope, graph.generation).void, repo.outboxSnapshots(100000).void,
       repo.input(f.scope, judgment.input).void, repo.judgments(f.call.principal, f.scope).void, repo.judgment(f.call.principal, f.scope, judgment.id).void)
     results <- (snapshots(db, altered) *> probes.traverse(_.attempt)).guarantee(snapshots(db, graph))
     restored <- repo.read(f.scope)
@@ -236,7 +236,7 @@ final class PostgresReviewControls extends FunSuite {
     }
     probes = List(repo.read(f.scope).void, repo.history(f.scope, graph.generation).void, repo.sources(SourceRequest(f.scope, 0L, 10)).void,
       repo.input(f.scope, judgment.input).void, repo.input(f.scope, pub.ref).void, repo.judgment(f.call.principal, f.scope, judgment.id).void,
-      repo.judgments(f.call.principal, f.scope).void, repo.pendingProjections(100000).void) ++
+      repo.judgments(f.call.principal, f.scope).void, repo.outboxSnapshots(100000).void) ++
       (if (kind == Corruption.Manifest) List(repo.presentation(f.call.principal, f.scope, f.presentation.id).void) else Nil)
     observed <- (change.install *> probes.traverse(_.attempt)).guarantee(change.restore)
     healthy <- repo.read(f.scope)
