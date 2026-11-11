@@ -5,7 +5,7 @@ let
     src = ../../../manure;
     filter = path: type:
       let relative = lib.removePrefix "${toString ../../../manure}/" (toString path);
-      in toString path == toString ../../../manure || builtins.elem relative [ "manure" "manure/__init__.py" "manure/client.py" "manure/current_protocol.py" "manure/cli.py" "manure/mcp.py" "manure/query.py" "skill" "skill/SKILL.md" ];
+      in toString path == toString ../../../manure || builtins.elem relative [ "manure" "manure/__init__.py" "manure/client.py" "manure/current_protocol.py" "manure/cli.py" "manure/mcp.py" "manure/query.py" "manure/metadata.py" "skill" "skill/SKILL.md" ];
   };
 in runCommand "manure-clients-0.2.0" {
   pname = "manure-clients";
