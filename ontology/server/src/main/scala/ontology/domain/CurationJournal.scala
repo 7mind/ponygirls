@@ -35,7 +35,7 @@ object CurationJournal {
     }
   }
 
-  private[domain] def existing(entries: List[CurationAuditRecord], incoming: CurationAuditRecord): Boolean = {
+  private[ontology] def existing(entries: List[CurationAuditRecord], incoming: CurationAuditRecord): Boolean = {
     entries.find(value => value.ordinal == incoming.ordinal && value.stage == incoming.stage) match {
       case None => false
       case Some(value) =>

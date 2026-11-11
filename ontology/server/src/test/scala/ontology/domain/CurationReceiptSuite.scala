@@ -11,7 +11,7 @@ final class CurationReceiptSuite extends FunSuite {
   private val service = Actor("fixture-service", ActorKind.Service)
   private val curator = Actor("fixture-curator", ActorKind.Agent)
   private val trace = RequestTrace(UUID.randomUUID(), "curation.publish", RequestTransport.Internal)
-  private val claim = CurationClaim(UUID.randomUUID(), "controlled-curation", CoordinatorFence(UUID.randomUUID(), 1L), 1L, 1L, 0L,
+  private val claim = CurationClaim(UUID.randomUUID(), "controlled-curation", CoordinatorFence(UUID.randomUUID(), 1L), 1L, 1L, 0L, CurationGuardLimits(3, 65536, 1048576L, 128, 128).toWire,
     "fixture", "1" * 64, "2" * 64, "3" * 64, "4" * 64, "2026-11-11T00:00:00Z")
   private val manifest = CurationInputManifest(claim.attemptId, Nil, List(CurationSourcePin(Ref(UUID.randomUUID(), 1), 1L, "5" * 64)),
     CurationInputs.Encoding, "6" * 64, 2L, "2026-11-11T00:00:01Z")

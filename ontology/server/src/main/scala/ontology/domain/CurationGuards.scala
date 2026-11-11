@@ -19,6 +19,7 @@ object CurationGuards {
     !hasActive && head.sourceFrontier > head.coveredFrontier && maximumAttempted.forall(head.sourceFrontier > _)
   }
   private def claimShape(value: CurationClaim, limits: CurationGuardLimits): Unit = {
+    check(value.admissionLimits == limits.toWire, "claim admission limits differ")
     label(value.scope, limits); label(value.profileId, limits)
     check(value.baseGeneration >= 0 && value.previousCoveredFrontier >= 0 && value.frontier > value.previousCoveredFrontier && value.fence.epoch > 0, "invalid claim coordinates")
     List(value.profileDigest, value.schemaDigest, value.graphDigest, value.sourceCutDigest).foreach(digest)

@@ -31,6 +31,7 @@ object CurationMaterial {
   }
 
   def seal(claim: CurationClaim, graph: GraphSnapshot, sources: List[CapturedEvent], at: Instant, limits: CurationGuardLimits): SealedCurationInput = {
+    check(claim.admissionLimits == limits.toWire, "seal admission limits differ from claim")
     frozen(claim, graph, sources)
     check(!at.isBefore(instant(claim.claimedAt)), "input seal precedes claim")
     val seed = Graph.records(graph)

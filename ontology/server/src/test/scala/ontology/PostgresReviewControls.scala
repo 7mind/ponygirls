@@ -145,7 +145,7 @@ final class PostgresReviewControls extends FunSuite {
         val password = java.nio.file.Path.of(sys.env.getOrElse("ONTOLOGY_TEST_PASSWORD_FILE", throw new IllegalStateException("owned PostgreSQL password file required")))
         val config = JdbcConfig(barrier.jdbcUrl, "postgres", password, JdbcLimits(4, 16, 10.seconds, 10.seconds, 30.seconds, 35.seconds, 60.seconds, 35.seconds))
         JdbcDatabase.resource(config).use { readerDb =>
-          val reader = new PostgresGraphRepository(readerDb, new AdmissionEngine, TestReview.domain)
+          val reader = new PostgresGraphRepository(readerDb, new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")))
           val read = if (boundary == "listing") reader.judgments(f.call.principal, f.scope).map(values => assertEquals(values, Nil))
             else reader.judgment(f.call.principal, f.scope, ReviewIdentity.judgment(f.scope, f.call.principal.actor, f.request.requestId)).attempt.map(result =>
               assertEquals(result.left.toOption.collect { case error: Fault => error.code }, Some("not-found")))

@@ -33,6 +33,7 @@ export * from './ContextRecordInput.js';
 export * from './CoordinatorFence.js';
 export * from './CoordinatorLease.js';
 export * from './Correction.js';
+export * from './CurationAdmissionLimits.js';
 export * from './CurationAttempt.js';
 export * from './CurationAttemptState.js';
 export * from './CurationAttemptSummary.js';

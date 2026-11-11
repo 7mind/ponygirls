@@ -102,7 +102,7 @@ abstract class BindingSelectionContract extends FunSuite {
   } yield () } }
 }
 final class MemoryBindingSelectionSuite extends BindingSelectionContract {
-  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)))
+  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC())))
 }
 final class PostgresBindingSelectionSuite extends BindingSelectionContract {
   protected def repository: Resource[IO, GraphRepository] = {
@@ -113,7 +113,7 @@ final class PostgresBindingSelectionSuite extends BindingSelectionContract {
     val config = JdbcConfig(required("ONTOLOGY_TEST_JDBC_URL"), "postgres", Path.of(required("ONTOLOGY_TEST_PASSWORD_FILE")),
       JdbcLimits(4, 16, 10.seconds, 10.seconds, 30.seconds, 35.seconds, 60.seconds, 35.seconds))
     JdbcDatabase.resource(config).evalMap { db =>
-      val store = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain)
+      val store = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")))
       store.initialize.as(store: GraphRepository)
     }
   }

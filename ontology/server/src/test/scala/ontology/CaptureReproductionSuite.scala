@@ -139,7 +139,7 @@ final class CaptureReproductionSuite extends FunSuite {
     val scope = "empty-" + UUID.randomUUID()
     val request = SourceRequest(scope, 0L, Int.MaxValue)
     (for {
-      memory <- new MemoryGraphRepository(new AdmissionEngine, TestReview.domain).sources(request).attempt
+      memory <- new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC()).sources(request).attempt
       postgres <- RepositoryReproductionDatabase.resource.evalMap(RepositoryReproductionDatabase.store).use(_.sources(request).attempt)
       _ = fault(memory, "source-page")
       _ = fault(postgres, "source-page")

@@ -1,6 +1,7 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {CoordinatorFence, CoordinatorFence_JsonCodec} from './CoordinatorFence.js'
+import {CurationAdmissionLimits, CurationAdmissionLimits_JsonCodec} from './CurationAdmissionLimits.js'
 
 export class CurationClaim implements BaboonGeneratedLatest {
     private readonly _attemptId: string;
@@ -9,6 +10,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
     private readonly _baseGeneration: bigint;
     private readonly _frontier: bigint;
     private readonly _previousCoveredFrontier: bigint;
+    private readonly _admissionLimits: CurationAdmissionLimits;
     private readonly _profileId: string;
     private readonly _profileDigest: string;
     private readonly _schemaDigest: string;
@@ -16,13 +18,14 @@ export class CurationClaim implements BaboonGeneratedLatest {
     private readonly _sourceCutDigest: string;
     private readonly _claimedAt: string;
 
-    constructor(attemptId: string, scope: string, fence: CoordinatorFence, baseGeneration: bigint, frontier: bigint, previousCoveredFrontier: bigint, profileId: string, profileDigest: string, schemaDigest: string, graphDigest: string, sourceCutDigest: string, claimedAt: string) {
+    constructor(attemptId: string, scope: string, fence: CoordinatorFence, baseGeneration: bigint, frontier: bigint, previousCoveredFrontier: bigint, admissionLimits: CurationAdmissionLimits, profileId: string, profileDigest: string, schemaDigest: string, graphDigest: string, sourceCutDigest: string, claimedAt: string) {
         this._attemptId = attemptId
         this._scope = scope
         this._fence = fence
         this._baseGeneration = baseGeneration
         this._frontier = frontier
         this._previousCoveredFrontier = previousCoveredFrontier
+        this._admissionLimits = admissionLimits
         this._profileId = profileId
         this._profileDigest = profileDigest
         this._schemaDigest = schemaDigest
@@ -48,6 +51,9 @@ export class CurationClaim implements BaboonGeneratedLatest {
     }
     public get previousCoveredFrontier(): bigint {
         return this._previousCoveredFrontier;
+    }
+    public get admissionLimits(): CurationAdmissionLimits {
+        return this._admissionLimits;
     }
     public get profileId(): string {
         return this._profileId;
@@ -76,6 +82,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
             baseGeneration: this._baseGeneration,
             frontier: this._frontier,
             previousCoveredFrontier: this._previousCoveredFrontier,
+            admissionLimits: this._admissionLimits,
             profileId: this._profileId,
             profileDigest: this._profileDigest,
             schemaDigest: this._schemaDigest,
@@ -85,7 +92,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
         };
     }
 
-    public with(overrides: {attemptId?: string; scope?: string; fence?: CoordinatorFence; baseGeneration?: bigint; frontier?: bigint; previousCoveredFrontier?: bigint; profileId?: string; profileDigest?: string; schemaDigest?: string; graphDigest?: string; sourceCutDigest?: string; claimedAt?: string}): CurationClaim {
+    public with(overrides: {attemptId?: string; scope?: string; fence?: CoordinatorFence; baseGeneration?: bigint; frontier?: bigint; previousCoveredFrontier?: bigint; admissionLimits?: CurationAdmissionLimits; profileId?: string; profileDigest?: string; schemaDigest?: string; graphDigest?: string; sourceCutDigest?: string; claimedAt?: string}): CurationClaim {
         return new CurationClaim(
             'attemptId' in overrides ? overrides.attemptId! : this._attemptId,
             'scope' in overrides ? overrides.scope! : this._scope,
@@ -93,6 +100,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
             'baseGeneration' in overrides ? overrides.baseGeneration! : this._baseGeneration,
             'frontier' in overrides ? overrides.frontier! : this._frontier,
             'previousCoveredFrontier' in overrides ? overrides.previousCoveredFrontier! : this._previousCoveredFrontier,
+            'admissionLimits' in overrides ? overrides.admissionLimits! : this._admissionLimits,
             'profileId' in overrides ? overrides.profileId! : this._profileId,
             'profileDigest' in overrides ? overrides.profileDigest! : this._profileDigest,
             'schemaDigest' in overrides ? overrides.schemaDigest! : this._schemaDigest,
@@ -102,7 +110,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
         );
     }
 
-    public static fromPlain(obj: {attemptId: string; scope: string; fence: CoordinatorFence; baseGeneration: bigint; frontier: bigint; previousCoveredFrontier: bigint; profileId: string; profileDigest: string; schemaDigest: string; graphDigest: string; sourceCutDigest: string; claimedAt: string}): CurationClaim {
+    public static fromPlain(obj: {attemptId: string; scope: string; fence: CoordinatorFence; baseGeneration: bigint; frontier: bigint; previousCoveredFrontier: bigint; admissionLimits: CurationAdmissionLimits; profileId: string; profileDigest: string; schemaDigest: string; graphDigest: string; sourceCutDigest: string; claimedAt: string}): CurationClaim {
         return new CurationClaim(
             obj.attemptId,
             obj.scope,
@@ -110,6 +118,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
             obj.baseGeneration,
             obj.frontier,
             obj.previousCoveredFrontier,
+            obj.admissionLimits,
             obj.profileId,
             obj.profileDigest,
             obj.schemaDigest,
@@ -161,6 +170,7 @@ export class CurationClaim_JsonCodec {
             "baseGeneration": value.baseGeneration.toString(),
             "frontier": value.frontier.toString(),
             "previousCoveredFrontier": value.previousCoveredFrontier.toString(),
+            "admissionLimits": CurationAdmissionLimits_JsonCodec.instance.encode(BaboonCodecContext.Default, value.admissionLimits),
             "profileId": value.profileId,
             "profileDigest": value.profileDigest,
             "schemaDigest": value.schemaDigest,
@@ -182,6 +192,7 @@ export class CurationClaim_JsonCodec {
             BaboonInt64.read(obj["baseGeneration"], "i64/u64"),
             BaboonInt64.read(obj["frontier"], "i64/u64"),
             BaboonInt64.read(obj["previousCoveredFrontier"], "i64/u64"),
+            CurationAdmissionLimits_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["admissionLimits"]),
             obj["profileId"] as string,
             obj["profileDigest"] as string,
             obj["schemaDigest"] as string,

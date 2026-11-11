@@ -11,6 +11,7 @@ package ontology.api {
     baseGeneration: Long,
     frontier: Long,
     previousCoveredFrontier: Long,
+    admissionLimits: CurationAdmissionLimits,
     profileId: String,
     profileDigest: String,
     schemaDigest: String,
@@ -52,6 +53,7 @@ package ontology.api {
         "baseGeneration" -> Json.fromString(value.baseGeneration.toString),
         "frontier" -> Json.fromString(value.frontier.toString),
         "previousCoveredFrontier" -> Json.fromString(value.previousCoveredFrontier.toString),
+        "admissionLimits" -> CurationAdmissionLimits_JsonCodec.instance.encode(ctx, value.admissionLimits),
         "profileId" -> Json.fromString(value.profileId),
         "profileDigest" -> Json.fromString(value.profileDigest),
         "schemaDigest" -> Json.fromString(value.schemaDigest),
@@ -74,13 +76,14 @@ package ontology.api {
             baseGeneration <- getField(jsonObject, "baseGeneration").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             frontier <- getField(jsonObject, "frontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             previousCoveredFrontier <- getField(jsonObject, "previousCoveredFrontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+            admissionLimits <- getField(jsonObject, "admissionLimits").flatMap(v => CurationAdmissionLimits_JsonCodec.circeDecoder(v.hcursor))
             profileId <- getField(jsonObject, "profileId").flatMap(v => decodeString(v.hcursor))
             profileDigest <- getField(jsonObject, "profileDigest").flatMap(v => decodeString(v.hcursor))
             schemaDigest <- getField(jsonObject, "schemaDigest").flatMap(v => decodeString(v.hcursor))
             graphDigest <- getField(jsonObject, "graphDigest").flatMap(v => decodeString(v.hcursor))
             sourceCutDigest <- getField(jsonObject, "sourceCutDigest").flatMap(v => decodeString(v.hcursor))
             claimedAt <- getField(jsonObject, "claimedAt").flatMap(v => decodeString(v.hcursor))
-          } yield CurationClaim(attemptId,scope,fence,baseGeneration,frontier,previousCoveredFrontier,profileId,profileDigest,schemaDigest,graphDigest,sourceCutDigest,claimedAt)
+          } yield CurationClaim(attemptId,scope,fence,baseGeneration,frontier,previousCoveredFrontier,admissionLimits,profileId,profileDigest,schemaDigest,graphDigest,sourceCutDigest,claimedAt)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CurationClaim: object expected"))
       }
     }

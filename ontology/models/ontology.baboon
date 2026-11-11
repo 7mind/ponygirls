@@ -170,8 +170,10 @@ enum CurationAuditStage { RequestPrepared DispatchPossible ResponseObserved }
 
 data CoordinatorFence { ownerId: uid epoch: i64 }
 root data CoordinatorLease { fence: CoordinatorFence acquiredAt: str renewedAt: str expiresAt: str }
+data CurationAdmissionLimits { maxOrdinals: i32 maxAuditBytes: i32 maxInputBytes: i64 maxPins: i32 maxLabelChars: i32 }
 root data CurationClaim {
  attemptId: uid scope: str fence: CoordinatorFence baseGeneration: i64 frontier: i64 previousCoveredFrontier: i64
+ admissionLimits: CurationAdmissionLimits
  profileId: str profileDigest: str schemaDigest: str graphDigest: str sourceCutDigest: str claimedAt: str
 }
 data CurationRecordPin { ref: Ref digest: str }

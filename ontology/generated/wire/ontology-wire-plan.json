@@ -3,8 +3,8 @@
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "414c1f3c32d630a6a399fec08a481ba504da0b39965599ec58706b1b0d92c1fd",
-  "rawDigest": "a62dd548c6673640150ebaee9880d0803faea93092b0de2d9892fdd63fca44ac",
+  "modelDigest": "73c8585c383208932d4a42d53343ba6702a5f839057c2ed30bde8959c6a5ecb3",
+  "rawDigest": "6d5cc1645db8a17d80bb0b5ff1af42ab9117ee0acb096a717916d228bb0bbf7d",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -267,6 +267,14 @@
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_Correction",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#CurationAdmissionLimits",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_CurationAdmissionLimits",
       "parent": null,
       "tag": null
     },
@@ -2199,6 +2207,26 @@
         "Unresolved"
       ]
     },
+    "ontology_api_CurationAdmissionLimits": {
+      "kind": "object",
+      "fields": {
+        "maxAuditBytes": {
+          "kind": "i32"
+        },
+        "maxInputBytes": {
+          "kind": "i64"
+        },
+        "maxLabelChars": {
+          "kind": "i32"
+        },
+        "maxOrdinals": {
+          "kind": "i32"
+        },
+        "maxPins": {
+          "kind": "i32"
+        }
+      }
+    },
     "ontology_api_CurationAttempt": {
       "kind": "object",
       "fields": {
@@ -2405,6 +2433,10 @@
     "ontology_api_CurationClaim": {
       "kind": "object",
       "fields": {
+        "admissionLimits": {
+          "kind": "ref",
+          "component": "ontology_api_CurationAdmissionLimits"
+        },
         "attemptId": {
           "kind": "uuid"
         },

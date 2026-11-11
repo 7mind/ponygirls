@@ -84,7 +84,7 @@ abstract class RdfProjectionContract extends FunSuite {
     } yield ()
   } }
   test("review publication preserves separate derived and primary Sources and exact action links") { check { rdf =>
-    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC())
     val actor = Actor("fixture-human", ActorKind.Human)
     val service = Actor("fixture-service", ActorKind.Service)
     val principal = Principal("fixture-review", actor, Set("s"), Set(Capability.Read, Capability.Review))
@@ -114,7 +114,7 @@ abstract class RdfProjectionContract extends FunSuite {
     } yield ()
   } }
   test("execution input and output roles roundtrip and traverse independently") { check { rdf =>
-    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC())
     val host = Actor("host", ActorKind.Service)
     val principal = Principal("host", host, Set("s"), Set(Capability.Capture, Capability.HostCapture))
     val context = TestContexts.claim(CaptureContext("fixture", None, None, LineageStatus.Unknown, "branch", UUID.randomUUID()))

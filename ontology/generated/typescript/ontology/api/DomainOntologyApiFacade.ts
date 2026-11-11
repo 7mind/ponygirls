@@ -36,6 +36,7 @@ import { ContextRecordInput, ContextRecordInput_JsonCodec } from './ContextRecor
 import { CoordinatorFence, CoordinatorFence_JsonCodec } from './CoordinatorFence.js';
 import { CoordinatorLease, CoordinatorLease_JsonCodec } from './CoordinatorLease.js';
 import { Correction, Correction_JsonCodec } from './Correction.js';
+import { CurationAdmissionLimits, CurationAdmissionLimits_JsonCodec } from './CurationAdmissionLimits.js';
 import { CurationAttempt, CurationAttempt_JsonCodec } from './CurationAttempt.js';
 import { CurationAttemptState, CurationAttemptState_JsonCodec } from './CurationAttemptState.js';
 import { CurationAttemptSummary, CurationAttemptSummary_JsonCodec } from './CurationAttemptSummary.js';
@@ -161,6 +162,7 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(CoordinatorFence_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CoordinatorFence_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CoordinatorLease_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CoordinatorLease_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Correction_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Correction_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(CurationAdmissionLimits_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAdmissionLimits_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationAttempt_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAttempt_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationAttemptState_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAttemptState_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(CurationAttemptSummary_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => CurationAttemptSummary_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -299,6 +301,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#CoordinatorFence": ['0.1.0'],
         "ontology.api/:#CoordinatorLease": ['0.1.0'],
         "ontology.api/:#Correction": ['0.1.0'],
+        "ontology.api/:#CurationAdmissionLimits": ['0.1.0'],
         "ontology.api/:#CurationAttempt": ['0.1.0'],
         "ontology.api/:#CurationAttemptState": ['0.1.0'],
         "ontology.api/:#CurationAttemptSummary": ['0.1.0'],
@@ -503,6 +506,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#CoordinatorFence": { '0.1.0': 'identical' },
         "ontology.api/:#CoordinatorLease": { '0.1.0': 'identical' },
         "ontology.api/:#Correction": { '0.1.0': 'identical' },
+        "ontology.api/:#CurationAdmissionLimits": { '0.1.0': 'identical' },
         "ontology.api/:#CurationAttempt": { '0.1.0': 'identical' },
         "ontology.api/:#CurationAttemptState": { '0.1.0': 'identical' },
         "ontology.api/:#CurationAttemptSummary": { '0.1.0': 'identical' },

@@ -20,7 +20,7 @@ final class CurationGuardsSuite extends FunSuite {
     Principal("collector", actor, Set("s"), Set(Capability.Capture)), Actor("host", ActorKind.Service), at.toString, TestContexts.trace("fixture"))
   private val graph = captured.snapshot
   private val sources = List(captured.event)
-  private val claim = CurationClaim(UUID.randomUUID(), "s", fence, graph.generation, 1L, 0L, "fixture", "a" * 64, "b" * 64,
+  private val claim = CurationClaim(UUID.randomUUID(), "s", fence, graph.generation, 1L, 0L, limits.toWire, "fixture", "a" * 64, "b" * 64,
     CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), at.toString)
   private val claimed = CurationAttempt(claim, CurationAttemptState.Claimed, None, None, None, None, false, None)
   private val material = CurationMaterial.seal(claim, graph, sources, at.plusSeconds(1), limits)
@@ -62,8 +62,8 @@ final class CurationGuardsSuite extends FunSuite {
     List(material.manifest.copy(inputBytes = 1L), material.manifest.copy(inputDigest = "c" * 64), material.manifest.copy(seed = material.manifest.seed.reverse)).foreach { altered =>
       assertEquals(intercept[Fault](CurationMaterial.verify(claim, graph, sources, altered, limits)).code, "curation")
     }
-    assertEquals(intercept[Fault](CurationMaterial.seal(claim, graph, sources, at.plusSeconds(1), limits.copy(maxInputBytes = 1L))).code, "curation")
-    assertEquals(intercept[Fault](CurationMaterial.seal(claim, graph, sources, at.plusSeconds(1), limits.copy(maxPins = 1))).code, "curation")
+    assertEquals(intercept[Fault](CurationMaterial.seal(claim.copy(admissionLimits = limits.copy(maxInputBytes = 1L).toWire), graph, sources, at.plusSeconds(1), limits.copy(maxInputBytes = 1L))).code, "curation")
+    assertEquals(intercept[Fault](CurationMaterial.seal(claim.copy(admissionLimits = limits.copy(maxPins = 1).toWire), graph, sources, at.plusSeconds(1), limits.copy(maxPins = 1))).code, "curation")
   }
 
   test("journal ordering and idempotency preserve original evidence without dispatch inference") {
@@ -116,7 +116,7 @@ final class CurationGuardsSuite extends FunSuite {
   }
 
   test("a seal transition cannot return a manifest rejected by its configured validation bounds") {
-    assertEquals(intercept[Fault](CurationGuards.seal(claimed, Nil, graph, sources, lease, at.plusSeconds(1), limits.copy(maxLabelChars = 7))).code, "curation")
+    assertEquals(intercept[Fault](CurationGuards.seal(claimed.copy(claim = claim.copy(admissionLimits = limits.copy(maxLabelChars = 7).toWire)), Nil, graph, sources, lease, at.plusSeconds(1), limits.copy(maxLabelChars = 7))).code, "curation")
   }
 
   test("prepared input checks run before dispatch and on every continuation") {

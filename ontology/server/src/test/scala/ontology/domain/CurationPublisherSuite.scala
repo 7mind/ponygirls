@@ -27,7 +27,7 @@ final class CurationPublisherSuite extends FunSuite {
   private val sources = List(captured.event)
   private val fence = CoordinatorFence(UUID.randomUUID(), 1L)
   private val lease = CoordinatorLease(fence, at.toString, at.toString, at.plusSeconds(60).toString)
-  private val claim = CurationClaim(UUID.randomUUID(), scope, fence, graph.generation, graph.sourceFrontier, graph.coveredFrontier, "fixture",
+  private val claim = CurationClaim(UUID.randomUUID(), scope, fence, graph.generation, graph.sourceFrontier, graph.coveredFrontier, limits.toWire, "fixture",
     "a" * 64, "b" * 64, CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), at.toString)
   private val material = CurationMaterial.seal(claim, graph, sources, at.plusSeconds(1), limits)
   private def payload(json: Json): CurationAuditPayload = {

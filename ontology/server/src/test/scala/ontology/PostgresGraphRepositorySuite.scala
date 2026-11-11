@@ -12,7 +12,7 @@ final class PostgresGraphRepositorySuite extends RelationCoverageContract {
     val config = JdbcConfig(required("ONTOLOGY_TEST_JDBC_URL"), "postgres", Path.of(required("ONTOLOGY_TEST_PASSWORD_FILE")),
       JdbcLimits(4, 16, 10.seconds, 10.seconds, 30.seconds, 35.seconds, 60.seconds, 35.seconds))
     JdbcDatabase.resource(config).evalMap { db =>
-      val store = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain)
+      val store = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")))
       store.initialize.as(store: GraphRepository)
     }
   }

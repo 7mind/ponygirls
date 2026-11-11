@@ -356,5 +356,5 @@ abstract class GraphRepositoryContract extends FunSuite {
   } }
 }
 final class MemoryGraphRepositorySuite extends RelationCoverageContract {
-  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)))
+  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC())))
 }

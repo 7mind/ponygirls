@@ -17,7 +17,7 @@ object RepositoryReproductionDatabase {
     JdbcDatabase.resource(JdbcConfig(required("ONTOLOGY_TEST_JDBC_URL"), "postgres", Path.of(required("ONTOLOGY_TEST_PASSWORD_FILE")), JdbcLimits(4, 16, 10.seconds, 10.seconds, 30.seconds, 35.seconds, 60.seconds, 35.seconds)))
   }
   def store(db: JdbcDatabase): IO[GraphRepository] = {
-    val repo = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain)
+    val repo = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")))
     repo.initialize.as(repo: GraphRepository)
   }
 }
@@ -29,7 +29,7 @@ final class RepositoryReproductionSuite extends FunSuite {
   private def scope(): String = "repro-" + UUID.randomUUID()
   private def expectedFault[A](value: Either[Throwable, A], code: String): Unit = assertEquals(value.left.toOption.collect { case f: Fault => f.code }, Some(code))
   private def adapters: List[(String, Resource[IO, GraphRepository])] = List(
-    "memory" -> Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain): GraphRepository)),
+    "memory" -> Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC()): GraphRepository)),
     "postgres" -> RepositoryReproductionDatabase.resource.evalMap(RepositoryReproductionDatabase.store)
   )
   adapters.foreach { case (name, factory) =>

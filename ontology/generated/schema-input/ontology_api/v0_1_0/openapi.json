@@ -1480,6 +1480,38 @@
           "Unresolved"
         ]
       },
+      "ontology_api_CurationAdmissionLimits" : {
+        "type" : "object",
+        "required" : [
+          "maxOrdinals",
+          "maxAuditBytes",
+          "maxInputBytes",
+          "maxPins",
+          "maxLabelChars"
+        ],
+        "properties" : {
+          "maxOrdinals" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxAuditBytes" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxInputBytes" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "maxPins" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxLabelChars" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
       "ontology_api_CurationAttempt" : {
         "type" : "object",
         "required" : [
@@ -1772,6 +1804,7 @@
           "baseGeneration",
           "frontier",
           "previousCoveredFrontier",
+          "admissionLimits",
           "profileId",
           "profileDigest",
           "schemaDigest",
@@ -1801,6 +1834,9 @@
           "previousCoveredFrontier" : {
             "type" : "string",
             "format" : "int64"
+          },
+          "admissionLimits" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAdmissionLimits"
           },
           "profileId" : {
             "type" : "string"

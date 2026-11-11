@@ -21,7 +21,7 @@ final class BindingCurrentnessReproductions extends FunSuite {
   private enum ContextChange { case Revision, Retirement }
   for (consumption <- List(Consumption.Current, Consumption.Historical); change <- ContextChange.values.toList) {
     test(s"$consumption prerequisite $change has explicit applicability semantics") {
-      val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = query(repo)
+      val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC()); val queries = query(repo)
       (for {
         p <- apply(repo, 0L, List(Operation.Create("p", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task("Prerequisite")), Nil), Operation.Create("evidence", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("Reported result", Modality.Assertion)), Nil), Operation.Bind("pb", Target.Created("p"), Nil, "fixture"), Operation.SelectBinding("pb-selection", Target.Created("pb"), true, "Selected by this fixture", List(Target.Created("p"))), Operation.State("pe", Target.Created("pb"), None, Phase.Completed, Some(Resolution.Fulfilled), Some("done"), List(Target.Created("evidence")), "reported, not independently attested")))
         dependent <- apply(repo, 1L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task("Dependent")), Nil), Operation.Relate("dependency", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.DependsOn, List(Target.Created("t")), List(Target.Exact(find(p, "pb"))), ontology.TestAuthoring.detail(RelationDetail.Dependency(Gate.Fulfillment, consumption, if (consumption == Consumption.Historical) Some(find(p, "pe")) else None, "Bound earlier result")), "Prerequisite"), Operation.Bind("tb", Target.Created("t"), List(Target.Created("dependency")), "fixture"), Operation.SelectBinding("tb-selection", Target.Created("tb"), true, "Selected by this fixture", List(Target.Created("t"))), Operation.State("te", Target.Created("tb"), None, Phase.Active, None, None, Nil, "")))
@@ -39,7 +39,7 @@ final class BindingCurrentnessReproductions extends FunSuite {
     }
   }
   test("revised required-condition binding invalidates dependent current progress") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = query(repo)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC()); val queries = query(repo)
     val applicability = ApplicabilityInput.Declared("This condition-revision fixture", Nil, Nil)
     (for {
       condition <- apply(repo, 0L, List(Operation.Create("c", applicability, ontology.TestAuthoring.content(Content.Statement("Condition v1", Modality.Assertion)), Nil), Operation.Bind("cb", Target.Created("c"), Nil, "fixture"), Operation.SelectBinding("cb-selection", Target.Created("cb"), true, "Selected by this fixture", List(Target.Created("c")))))
@@ -52,7 +52,7 @@ final class BindingCurrentnessReproductions extends FunSuite {
     } yield ()).unsafeRunSync()(using runtime)
   }
   test("unsatisfied completion gate does not hide a structurally current planned binding") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = query(repo)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain, TestCuration.settings(Set("curation-fixture")), java.time.Clock.systemUTC()); val queries = query(repo)
     (for {
       p <- apply(repo, 0L, List(Operation.Create("p", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task("Unfinished prerequisite")), Nil), Operation.Bind("pb", Target.Created("p"), Nil, "fixture"), Operation.SelectBinding("pb-selection", Target.Created("pb"), true, "Selected by this fixture", List(Target.Created("p")))))
       t <- apply(repo, 1L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task("Planned")), Nil), Operation.Relate("dependency", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.DependsOn, List(Target.Created("t")), List(Target.Exact(find(p, "pb"))), ontology.TestAuthoring.detail(RelationDetail.Dependency(Gate.Completion, Consumption.Current, None, "")), "Wait for predecessor"), Operation.Bind("tb", Target.Created("t"), List(Target.Created("dependency")), "fixture"), Operation.SelectBinding("tb-selection", Target.Created("tb"), true, "Selected by this fixture", List(Target.Created("t"))), Operation.State("planned", Target.Created("tb"), None, Phase.Planned, None, None, Nil, "Prerequisite not completed")))

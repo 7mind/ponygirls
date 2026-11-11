@@ -1,12 +1,14 @@
 # Ontology curation protocol foundation
 
-This is an implemented protocol/domain/transport slice, **not a completed live curation service**. Durable attempts, lease acquisition/recovery, authoritative publication, concrete service composition and the worker sidecar remain unfinished. No deployment, Human study or private-source model traffic is authorized or established by these checks.
+This is an implemented protocol/domain/storage/transport slice, **not a completed live curation service**. Durable repository operations for attempts, leases, recovery and publication are implemented. The automatic coordinator loop, concrete service composition and worker sidecar remain unfinished. No deployment, Human study or private-source model traffic is authorized or established by these checks.
 
 ## Ownership and coordinates
 
-PostgreSQL remains the intended transaction owner. RDF remains rebuildable derived data. The pure curation guards describe allowed transitions; they do not acquire leases, authenticate callers, read durable state or commit graph changes.
+PostgreSQL is the authoritative transaction owner. RDF remains rebuildable derived data. The pure curation guards describe allowed transitions; they do not acquire leases, authenticate callers, read durable state or commit graph changes.
 
-A claim pins the coordinator fence, scope, graph generation G, retained primary frontier F, previous covered frontier C, profile/schema identities and exact graph/source-cut digests. Eligibility requires F > C, F greater than every prior attempted frontier, and no active attempt. A failed frontier is not automatically retried after restart or profile changes. A later primary frontier includes the full still-uncovered interval (C,F]. External graph_apply trigger classification remains unresolved; this slice does not change it.
+A claim pins the coordinator fence, scope, graph generation G, retained primary frontier F, previous covered frontier C, profile/schema identities, admission limits and exact graph/source-cut digests. Eligibility requires F > C, F greater than every prior attempted frontier, and no active attempt. A failed frontier is not automatically retried after restart or profile changes. A later primary frontier includes the full still-uncovered interval (C,F]. External graph_apply trigger classification remains unresolved; this slice does not change it.
+
+Each attempt retains its own admission limits. Historical validation, journal loading, material reconstruction and recovery use those pinned limits; lowering current configuration does not turn valid retained records into corruption. New claims use the new limits.
 
 CurationMaterial reconstructs the entire ordered source cut and graph seed. Source records must correspond to their exact frozen graph definitions. The input manifest pins every seed/source record and the deterministic UTF-8 input encoding, digest and byte count. Capacity failure is explicit; no source truncation or hidden subset is substituted.
 
@@ -26,7 +28,7 @@ AuditedProposal carries the exact final response ordinal and normalized-response
 
 ## Pure publication admission
 
-CurationPublisher now produces an uncommitted publication value: the proposed graph snapshot, Curation input receipt, terminal attempt and publication receipt. Only the future repository transaction may make that value authoritative.
+CurationPublisher now produces an uncommitted publication value: the proposed graph snapshot, Curation input receipt, terminal attempt and publication receipt. Only the repository transaction makes that value authoritative.
 
 Ordinary Admission retains its existing constructor and graph-command identity rules. A separate internal CurationAdmission supplies Curation provenance to the same semantic admission engine. It requires an Agent contributor, Service recorder and submitter, scoped Read and Mutate grants, and an Internal `curation.publish` trace. The public repository's graph_apply path cannot select this admission type. New operation-record identities are disjoint from ordinary commands even for the same request UUID and alias; revisions of existing entities retain their identity semantics.
 
@@ -34,14 +36,20 @@ For empty deltas, all graph collections remain unchanged; only generation and co
 
 CurationReceipts validates canonical publication input and its receipt-local identity, scope, generation, timestamp, attribution, internal context and proposal digest. Published attempts must refer to their deterministic Curation input identity. These local checks do not replace the persistence owner's attempt/journal/history/material correspondence checks.
 
-## Remaining persistence obligations
+## Transaction ownership and remaining runtime
 
-The future owner must enforce one fenced coordinator, explicit lease/cadence/capacity configuration, fresh owner-side time after potentially blocking locks, and one transaction for graph/history/input receipt/attempt/outbox publication. Model and network operations stay outside transactions. Profile selection, source-sharing authorization and frozen reader ownership remain explicit service responsibilities; their digest labels are not attestations.
+CurationRepository is a facade of the existing graph owner. Shared CurationStore policy runs through an application-specific transaction context, not an independent graph writer. Memory stages affected maps and commits them under its existing monitor, using an explicit Clock. PostgreSQL locks the coordinator row before the scope and obtains database time after blocking locks. Graph, history, input receipt, terminal attempt and outbox commit atomically. No model or network operation occurs inside these transactions.
 
-Terminal failures and stale results must be committed as outcomes, not thrown away with their transaction. Infrastructure failures can leave recording uncertain. Exact committed replay returns the original publication without another provider invocation. Recovery must fence old owners and preserve unanswered-dispatch uncertainty, never automatically redispatch the same frontier.
+The singleton lease retains a monotonic fencing epoch across release. Identical live-owner acquisition returns the original lease without renewing it. Recovery marks older active fences Interrupted and preserves unanswered-dispatch uncertainty. Terminal domain rejection and staleness are committed outcomes; storage mutations occur outside that rejection catch so a late storage failure rolls back the entire publication. Infrastructure failures can leave recording uncertain.
+
+Exact committed publication replay validates the retained result and returns the original receipt before fresh-head admission. Claim replay is a distinct result, not a new work grant. Replayed request or dispatch audit entries acknowledge retained evidence; the future runtime adapter must not interpret them as permission for another provider invocation.
+
+Head, history and projection-outbox validation use the published-attempt inventory bounded by the requested generation. At a publication generation the snapshot must match its retained revision exactly. Later snapshots must preserve the exact content and multiplicity of records attributed to each Curation input, while legitimate later ordinary edits remain allowed. Receipt/attempt validation reconstructs the recorded graph outcome; it does not fabricate historical credentials or a lease.
+
+Automatic renewal/polling, execution cadence/concurrency, profile selection, source-sharing authorization and frozen reader composition remain runtime responsibilities. Configuration must be explicit; digest labels are not attestations.
 
 ## Status and verification limits
 
 The API/UI distinguish the current G/F/C, last publication generation and the latest attempt's pinned coordinates and journal stage. Equal C/F means source coverage, not review of subsequent graph edits.
 
-Tests cover pure state/material invariants and controlled loopback-provider transport ordering, deadlines and exact input/response linkage. Browser tests use built assets and scripted APIs. These checks do not establish durable curation, real-backend browser acceptance, semantic classification quality, Human benefit or deployment.
+The same repository contract runs against memory and owned PostgreSQL. Additional controls exercise queued lease expiry, clock rollback, old-fence recovery, late SQL failure rollback, discarded commit acknowledgements, retained-limit changes, historical cuts and canonical-but-miswired or extra records. Separate loopback-provider checks cover transport ordering, deadlines and input/response linkage. Browser tests use built assets and scripted APIs. These checks do not establish an automatically running curation service, real-backend browser acceptance, semantic classification quality, Human benefit or deployment.

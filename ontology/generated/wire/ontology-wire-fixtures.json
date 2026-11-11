@@ -2933,6 +2933,25 @@
     "scalaWire": "Unresolved"
   },
   {
+    "typeId": "ontology.api/:#CurationAdmissionLimits",
+    "label": "base",
+    "wire": {
+      "maxOrdinals": 1,
+      "maxAuditBytes": 1,
+      "maxInputBytes": "9223372036854775807",
+      "maxPins": 1,
+      "maxLabelChars": 1
+    },
+    "scalaTypeId": "ontology.api/:#CurationAdmissionLimits",
+    "scalaWire": {
+      "maxOrdinals": 1,
+      "maxAuditBytes": 1,
+      "maxInputBytes": "9223372036854775807",
+      "maxPins": 1,
+      "maxLabelChars": 1
+    }
+  },
+  {
     "typeId": "ontology.api/:#CurationAttempt",
     "label": "base",
     "wire": {
@@ -2946,6 +2965,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -2973,6 +2999,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3003,6 +3036,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3041,6 +3081,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3082,6 +3129,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3109,6 +3163,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3139,6 +3200,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3174,6 +3242,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3212,6 +3287,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3250,6 +3332,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3291,6 +3380,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3318,6 +3414,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3747,6 +3850,13 @@
       "baseGeneration": "9223372036854775807",
       "frontier": "9223372036854775807",
       "previousCoveredFrontier": "9223372036854775807",
+      "admissionLimits": {
+        "maxOrdinals": 1,
+        "maxAuditBytes": 1,
+        "maxInputBytes": "9223372036854775807",
+        "maxPins": 1,
+        "maxLabelChars": 1
+      },
       "profileId": "controlled-codec-fixture",
       "profileDigest": "controlled-codec-fixture",
       "schemaDigest": "controlled-codec-fixture",
@@ -3765,6 +3875,13 @@
       "baseGeneration": "9223372036854775807",
       "frontier": "9223372036854775807",
       "previousCoveredFrontier": "9223372036854775807",
+      "admissionLimits": {
+        "maxOrdinals": 1,
+        "maxAuditBytes": 1,
+        "maxInputBytes": "9223372036854775807",
+        "maxPins": 1,
+        "maxLabelChars": 1
+      },
       "profileId": "controlled-codec-fixture",
       "profileDigest": "controlled-codec-fixture",
       "schemaDigest": "controlled-codec-fixture",
@@ -3946,6 +4063,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",
@@ -3984,6 +4108,13 @@
         "baseGeneration": "9223372036854775807",
         "frontier": "9223372036854775807",
         "previousCoveredFrontier": "9223372036854775807",
+        "admissionLimits": {
+          "maxOrdinals": 1,
+          "maxAuditBytes": 1,
+          "maxInputBytes": "9223372036854775807",
+          "maxPins": 1,
+          "maxLabelChars": 1
+        },
         "profileId": "controlled-codec-fixture",
         "profileDigest": "controlled-codec-fixture",
         "schemaDigest": "controlled-codec-fixture",

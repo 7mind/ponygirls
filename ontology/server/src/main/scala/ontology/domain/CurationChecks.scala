@@ -9,6 +9,14 @@ import java.time.format.DateTimeParseException
 final case class CurationGuardLimits(maxOrdinals: Int, maxAuditBytes: Int, maxInputBytes: Long, maxPins: Int, maxLabelChars: Int) {
   Require(maxOrdinals > 0 && maxAuditBytes > 0 && maxInputBytes > 0 && maxPins > 0 && maxLabelChars > 0,
     "config", "positive curation bounds required")
+  def toWire: CurationAdmissionLimits = CurationAdmissionLimits(maxOrdinals, maxAuditBytes, maxInputBytes, maxPins, maxLabelChars)
+}
+object CurationGuardLimits {
+  def retained(claim: CurationClaim): CurationGuardLimits = {
+    val v = claim.admissionLimits
+    try CurationGuardLimits(v.maxOrdinals, v.maxAuditBytes, v.maxInputBytes, v.maxPins, v.maxLabelChars)
+    catch { case _: Fault => throw Fault("corrupt", "invalid retained curation limits") }
+  }
 }
 final case class CurationPublicationPlan(generation: Long, frontier: Long, coveredFrontier: Long)
 

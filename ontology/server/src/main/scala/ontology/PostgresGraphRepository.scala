@@ -9,14 +9,17 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.UUID
 import scala.util.Using
 
-final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEngine, review: ReviewDomain) extends GraphRepository {
+final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEngine, review: ReviewDomain, curationSettings: CurationStoreSettings) extends GraphRepository {
   private val capture = new CaptureEngine
+  private val curationValidation = new CurationValidation(engine)
+  private val curationStore = new CurationStore(curationTransactions, curationSettings, engine)
+  val curation: CurationRepository = curationStore
   def initialize: IO[Unit] = IO.blocking {
     def sql(file: String): String = {
       val stream = Option(getClass.getResourceAsStream("/" + file)).getOrElse(throw Fault("config", "migration resource missing"))
       Using.resource(stream)(s => new String(s.readAllBytes(), UTF_8))
     }
-    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")))
+    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")), Migration(3, "curation", sql("003_curation.sql")))
   }.flatMap(migrations => database.migrate("ontology", migrations))
   private def query[A](c: Connection, sql: String)(bind: PreparedStatement => Unit)(read: ResultSet => A): A =
     Using.resource(c.prepareStatement(sql)) { p => bind(p); Using.resource(p.executeQuery())(read) }
@@ -48,7 +51,8 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private def saveInput(c: Connection, receipt: InputReceipt): Unit = {
     update(c, "INSERT INTO ontology_inputs(scope, input_id, generation, payload) VALUES (?, ?, ?, ?)")(p => { p.setString(1, receipt.scope); p.setObject(2, receipt.ref.id); p.setLong(3, receipt.generation); p.setString(4, StoredJson.encode(InputReceipt.codecJson, receipt)) })
   }
-  private def verified(c: Connection, graph: GraphSnapshot): GraphSnapshot = {
+  private def verified(c: Connection, graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationTransaction(c), verifiedPrimary(c, graph))
+  private def verifiedPrimary(c: Connection, graph: GraphSnapshot): GraphSnapshot = {
     val events = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier <= ? ORDER BY frontier")(p => { p.setString(1, graph.scope); p.setLong(2, graph.sourceFrontier) }) { rows =>
       val values = List.newBuilder[PrimaryRecord]
       while (rows.next()) values += eventRow(c, graph, rows)
@@ -59,9 +63,10 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
     graph
   }
   def read(scope: String): IO[GraphSnapshot] = database.transaction(c => verified(c, load(c, scope)))
-  private def loadHistory(c: Connection, scope: String, generation: Long): GraphSnapshot =
+  private def loadHistory(c: Connection, scope: String, generation: Long): GraphSnapshot = verified(c, loadHistoryPrimary(c, scope, generation))
+  private def loadHistoryPrimary(c: Connection, scope: String, generation: Long): GraphSnapshot =
     query(c, "SELECT snapshot FROM ontology_revisions WHERE scope = ? AND generation = ?")(p => { p.setString(1, scope); p.setLong(2, generation) }) { r =>
-      Require(r.next(), "not-found", "graph revision not found"); verified(c, decodeSnapshot(scope, generation, r.getString(1)))
+      Require(r.next(), "not-found", "graph revision not found"); verifiedPrimary(c, decodeSnapshot(scope, generation, r.getString(1)))
     }
   def history(scope: String, generation: Long): IO[GraphSnapshot] = database.transaction(c => loadHistory(c, scope, generation))
   private def validateContexts(c: Connection, principal: Principal, contexts: List[ContextRecord]): Unit = {
@@ -79,7 +84,7 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
       SourceIntegrity.linkedInput(graph, receipt)
     }
     receipt
-  }
+  }.flatMap(receipt => if (receipt.kind == InputKind.Curation) curationStore.validateInput(receipt).map(_ => receipt) else IO.pure(receipt))
   private def loadInput(c: Connection, scope: String, ref: Ref): InputReceipt = {
     Require(ref.revision == 1, "not-found", "input receipts are immutable")
     query(c, "SELECT generation, payload FROM ontology_inputs WHERE scope = ? AND input_id = ?")(p => { p.setString(1, scope); p.setObject(2, ref.id) }) { r =>
@@ -332,5 +337,120 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   def acknowledgeProjection(scope: String, generation: Long): IO[Unit] = database.transaction { c =>
     val affected = update(c, "UPDATE ontology_outbox SET published = true WHERE scope = ? AND generation = ?")(p => { p.setString(1, scope); p.setLong(2, generation) })
     Require(affected == 1, "not-found", "unknown projected revision")
+  }
+  private def curationTransactions: CurationTransactions = new CurationTransactions {
+    def run[A](body: CurationTransaction => A): IO[A] = database.transaction { c =>
+      query(c, "SELECT singleton FROM ontology_curation_coordinator WHERE singleton FOR UPDATE")(_ => ())(r => Require(r.next(), "corrupt", "coordinator row missing"))
+      body(curationTransaction(c))
+    }
+  }
+  private def curationTransaction(c: Connection): CurationTransaction = new CurationTransaction {
+    def now: java.time.Instant = query(c, "SELECT clock_timestamp()")(_ => ()) { r =>
+      Require(r.next(), "database", "database clock unavailable")
+      r.getObject(1, classOf[java.time.OffsetDateTime]).toInstant
+    }
+    def coordinator: CoordinatorState = query(c, "SELECT epoch, payload FROM ontology_curation_coordinator WHERE singleton")(_ => ()) { r =>
+      Require(r.next(), "corrupt", "coordinator row missing")
+      CoordinatorState(r.getLong(1), Option(r.getString(2)).map(StoredJson.decode(CoordinatorLease.codecJson, _)))
+    }
+    def saveCoordinator(value: CoordinatorState): Unit = {
+      val changed = update(c, "UPDATE ontology_curation_coordinator SET epoch = ?, payload = ? WHERE singleton") { p =>
+        p.setLong(1, value.epoch)
+        value.lease match {
+          case Some(lease) => p.setString(2, StoredJson.encode(CoordinatorLease.codecJson, lease))
+          case None => p.setNull(2, java.sql.Types.VARCHAR)
+        }
+      }
+      Require(changed == 1, "corrupt", "coordinator row missing")
+    }
+    def lock(scope: String): Unit = PostgresGraphRepository.this.lock(c, scope)
+    def head(scope: String): GraphSnapshot = verified(c, load(c, scope))
+    def history(scope: String, generation: Long): GraphSnapshot = loadHistoryPrimary(c, scope, generation)
+    def sources(graph: GraphSnapshot, after: Long): List[CapturedEvent] = {
+      Require(after >= 0 && after <= graph.sourceFrontier, "corrupt", "invalid frozen source interval")
+      val values = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier > ? AND frontier <= ? ORDER BY frontier")(p => {
+        p.setString(1, graph.scope); p.setLong(2, after); p.setLong(3, graph.sourceFrontier)
+      }) { r => val result = List.newBuilder[CapturedEvent]; while (r.next()) result += eventRow(c, graph, r).event; result.result() }
+      Require(values.size.toLong == graph.sourceFrontier - after, "corrupt", "incomplete frozen source interval")
+      values
+    }
+    def containsAttempt(id: UUID): Boolean = query(c, "SELECT 1 FROM ontology_curation_attempts WHERE attempt_id = ?")(_.setObject(1, id))(_.next())
+    private def journal(claim: CurationClaim): List[CurationAuditRecord] = {
+      val id = claim.attemptId
+      val maximum = CurationGuardLimits.retained(claim).maxOrdinals.toLong * 3L
+      query(c,
+      "SELECT ordinal, stage, payload FROM ontology_curation_audit WHERE attempt_id = ? ORDER BY ordinal, CASE stage WHEN 'RequestPrepared' THEN 0 WHEN 'DispatchPossible' THEN 1 WHEN 'ResponseObserved' THEN 2 END LIMIT ?")(
+      p => { p.setObject(1, id); p.setLong(2, maximum + 1L) }) { r =>
+      val result = List.newBuilder[CurationAuditRecord]
+      while (r.next()) {
+        val entry = StoredJson.decode(CurationAuditRecord.codecJson, r.getString(3))
+        Require(entry.attemptId == id && entry.ordinal == r.getInt(1) && entry.stage.toString == r.getString(2), "corrupt", "audit row binding mismatch")
+        result += entry
+      }
+      val values = result.result()
+      Require(values.size.toLong <= maximum, "corrupt", "retained journal exceeds capacity")
+      values
+      }
+    }
+    private def read(r: ResultSet): CurationAttemptView = {
+      val value = StoredJson.decode(CurationAttempt.codecJson, r.getString("payload"))
+      val claim = value.claim
+      val publicationGeneration = Option(r.getObject("publication_generation", classOf[java.lang.Long])).map(_.longValue())
+      Require(value.publication.map(_.generation) == publicationGeneration, "corrupt", "publication generation row mismatch")
+      Require(claim.attemptId == r.getObject("attempt_id", classOf[UUID]) && claim.scope == r.getString("scope") && claim.frontier == r.getLong("frontier") &&
+        claim.fence.ownerId == r.getObject("owner_id", classOf[UUID]) && claim.fence.epoch == r.getLong("fence_epoch") && value.state.toString == r.getString("state"),
+        "corrupt", "attempt row binding mismatch")
+      CurationAttemptView(value, journal(claim))
+    }
+    def publications(scope: String, throughGeneration: Long): List[CurationAttemptView] = query(c,
+      "SELECT * FROM ontology_curation_attempts WHERE scope = ? AND state = 'Published' AND publication_generation <= ? ORDER BY publication_generation")(
+      p => { p.setString(1, scope); p.setLong(2, throughGeneration) }) { r =>
+      val values = List.newBuilder[CurationAttemptView]; while (r.next()) values += read(r); values.result()
+    }
+    def find(scope: String, id: UUID): Option[CurationAttemptView] = query(c, "SELECT * FROM ontology_curation_attempts WHERE scope = ? AND attempt_id = ?")(
+      p => { p.setString(1, scope); p.setObject(2, id) })(r => if (r.next()) Some(read(r)) else None)
+    def latest(scope: String, publishedOnly: Boolean): Option[CurationAttemptView] = query(c,
+      "SELECT * FROM ontology_curation_attempts WHERE scope = ? AND (NOT ? OR state = 'Published') ORDER BY frontier DESC LIMIT 1")(
+      p => { p.setString(1, scope); p.setBoolean(2, publishedOnly) })(r => if (r.next()) Some(read(r)) else None)
+    def olderActive(scopes: Set[String], fence: CoordinatorFence, limit: Int): List[CurationAttemptView] = {
+      val names = c.createArrayOf("text", scopes.toList.sorted.toArray[AnyRef])
+      try query(c, "SELECT * FROM ontology_curation_attempts WHERE scope = ANY (?) AND (owner_id <> ? OR fence_epoch <> ?) AND state IN ('Claimed', 'InputSealed', 'Running') ORDER BY scope, frontier LIMIT ?")(
+        p => { p.setArray(1, names); p.setObject(2, fence.ownerId); p.setLong(3, fence.epoch); p.setInt(4, limit) }) { r =>
+        val values = List.newBuilder[CurationAttemptView]; while (r.next()) values += read(r); values.result()
+      } finally names.free()
+    }
+    def saveAttempt(value: CurationAttempt, insert: Boolean): Unit = {
+      val claim = value.claim
+      CurationGuards.validate(value, journal(claim), CurationGuardLimits.retained(claim))
+      if (insert) {
+        update(c, "INSERT INTO ontology_curation_attempts(attempt_id, scope, frontier, owner_id, fence_epoch, state, payload, publication_generation) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(p => {
+          p.setObject(1, claim.attemptId); p.setString(2, claim.scope); p.setLong(3, claim.frontier); p.setObject(4, claim.fence.ownerId)
+          p.setLong(5, claim.fence.epoch); p.setString(6, value.state.toString); p.setString(7, StoredJson.encode(CurationAttempt.codecJson, value))
+          value.publication match { case Some(v) => p.setLong(8, v.generation); case None => p.setNull(8, java.sql.Types.BIGINT) }
+        })
+      } else {
+        Require(find(claim.scope, claim.attemptId).exists(_.attempt.claim == claim), "corrupt", "attempt claim changed")
+        val changed = update(c, "UPDATE ontology_curation_attempts SET state = ?, payload = ?, publication_generation = ? WHERE scope = ? AND attempt_id = ?")(p => {
+          p.setString(1, value.state.toString); p.setString(2, StoredJson.encode(CurationAttempt.codecJson, value))
+          value.publication match { case Some(v) => p.setLong(3, v.generation); case None => p.setNull(3, java.sql.Types.BIGINT) }
+          p.setString(4, claim.scope); p.setObject(5, claim.attemptId)
+        })
+        Require(changed == 1, "corrupt", "attempt disappeared")
+      }
+      ()
+    }
+    def append(entry: CurationAuditRecord): Unit = {
+      update(c, "INSERT INTO ontology_curation_audit(attempt_id, ordinal, stage, payload) VALUES (?, ?, ?, ?)")(p => {
+        p.setObject(1, entry.attemptId); p.setInt(2, entry.ordinal); p.setString(3, entry.stage.toString); p.setString(4, StoredJson.encode(CurationAuditRecord.codecJson, entry))
+      })
+      ()
+    }
+    def input(scope: String, ref: Ref): InputReceipt = loadInput(c, scope, ref)
+    def reviewEvidence(graph: GraphSnapshot, request: ApplyRequest): List[ReviewEvidence] = loadAdoptions(c, graph, Adoptions.claims(request))
+    def savePublication(before: GraphSnapshot, value: PublishedCuration): Unit = {
+      saveGraph(c, before, value.snapshot)
+      saveInput(c, value.receipt)
+      saveAttempt(value.attempt, false)
+    }
   }
 }

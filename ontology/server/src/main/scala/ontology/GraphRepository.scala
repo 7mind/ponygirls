@@ -7,6 +7,7 @@ import java.security.MessageDigest
 import java.nio.charset.StandardCharsets.UTF_8
 
 trait GraphRepository {
+  def curation: CurationRepository
   def read(scope: String): IO[GraphSnapshot]
   def history(scope: String, generation: Long): IO[GraphSnapshot]
   def scopes: IO[List[String]]
@@ -26,7 +27,7 @@ object Digests {
   def bytes(value: Array[Byte]): String = java.util.HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256").digest(value))
   def text(value: String): String = bytes(value.getBytes(UTF_8))
 }
-final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain) extends GraphRepository {
+final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain, curationSettings: CurationStoreSettings, clock: java.time.Clock) extends GraphRepository {
   private final case class Receipt(scope: String, actor: Actor, id: java.util.UUID)
   private var heads = Map.empty[String, GraphSnapshot]
   private var inputs = Map.empty[(String, Ref), InputReceipt]
@@ -41,7 +42,14 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain)
   private var sourceIndex = Map.empty[SourceKey, (String, IngestResult)]
   private var ingestReceipts = Map.empty[IngestKey, (String, IngestResult)]
   private val capture = new CaptureEngine
-  private def verified(graph: GraphSnapshot): GraphSnapshot = {
+  private var coordinator = CoordinatorState(0L, None)
+  private var curationAttempts = Map.empty[java.util.UUID, CurationAttempt]
+  private var curationJournal = Map.empty[java.util.UUID, List[CurationAuditRecord]]
+  private val curationValidation = new CurationValidation(engine)
+  private val curationStore = new CurationStore(curationTransactions, curationSettings, engine)
+  val curation: CurationRepository = curationStore
+  private def verified(graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationEvidence, verifiedPrimary(graph))
+  private def verifiedPrimary(graph: GraphSnapshot): GraphSnapshot = {
     val events = sourceEvents.getOrElse(graph.scope, Nil).filter(_.event.frontier <= graph.sourceFrontier)
     SourceIntegrity.frontier(graph, events.map(_.event))
     events.foreach(validatePrimary(graph, _))
@@ -125,7 +133,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain)
       SourceIntegrity.linkedInput(graph, receipt)
     }
     receipt
-  })
+  }).flatMap(receipt => if (receipt.kind == InputKind.Curation) curationStore.validateInput(receipt).map(_ => receipt) else IO.pure(receipt))
   def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult] = IO(synchronized {
     capture.validateIngress(request, principal)
     Contexts.server(ingress, Contexts.ProtocolLimits)
@@ -237,4 +245,88 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain)
     Require(outbox.contains((scope, generation)), "not-found", "unknown projected revision")
     outbox = outbox.updated((scope, generation), true)
   })
+  private def curationEvidence: CurationEvidence = new CurationEvidence {
+    def history(scope: String, generation: Long): GraphSnapshot = verifiedPrimary(versions.getOrElse((scope, generation), throw Fault("not-found", "graph revision not found")))
+    def sources(graph: GraphSnapshot, after: Long): List[CapturedEvent] = {
+      val events = sourceEvents.getOrElse(graph.scope, Nil).map(_.event).filter(event => event.frontier > after && event.frontier <= graph.sourceFrontier)
+      Require(after >= 0 && events.size.toLong == graph.sourceFrontier - after, "corrupt", "incomplete frozen source interval")
+      events
+    }
+    def input(scope: String, ref: Ref): InputReceipt = rawInput(scope, ref)
+    def reviewEvidence(graph: GraphSnapshot, request: ApplyRequest): List[ReviewEvidence] = loadAdoptions(graph, Adoptions.claims(request))
+    def publications(scope: String, throughGeneration: Long): List[CurationAttemptView] = curationAttempts.valuesIterator
+      .filter(a => a.claim.scope == scope && a.state == CurationAttemptState.Published && a.publication.exists(_.generation <= throughGeneration))
+      .toList.sortBy(_.claim.baseGeneration).map(a => CurationAttemptView(a, curationJournal.getOrElse(a.claim.attemptId, Nil)))
+  }
+  private def curationTransactions: CurationTransactions = new CurationTransactions {
+    def run[A](body: CurationTransaction => A): IO[A] = IO(MemoryGraphRepository.this.synchronized {
+      var nextCoordinator = coordinator
+      var nextAttempts = curationAttempts
+      var nextJournal = curationJournal
+      var nextHeads = heads
+      var nextInputs = inputs
+      var nextVersions = versions
+      var nextOutbox = outbox
+      val transaction = new CurationTransaction {
+        def now: java.time.Instant = clock.instant()
+        def coordinator: CoordinatorState = nextCoordinator
+        def saveCoordinator(value: CoordinatorState): Unit = { nextCoordinator = value }
+        def lock(scope: String): Unit = ()
+        def head(scope: String): GraphSnapshot = verified(nextHeads.getOrElse(scope, Graph.empty(scope)))
+        def history(scope: String, generation: Long): GraphSnapshot = verifiedPrimary(nextVersions.getOrElse((scope, generation), throw Fault("not-found", "graph revision not found")))
+        def sources(graph: GraphSnapshot, after: Long): List[CapturedEvent] = {
+          Require(after >= 0 && after <= graph.sourceFrontier, "corrupt", "invalid frozen source interval")
+          val events = sourceEvents.getOrElse(graph.scope, Nil).map(_.event).filter(event => event.frontier > after && event.frontier <= graph.sourceFrontier)
+          Require(events.size.toLong == graph.sourceFrontier - after, "corrupt", "incomplete frozen source interval")
+          events
+        }
+        def publications(scope: String, throughGeneration: Long): List[CurationAttemptView] = nextAttempts.valuesIterator
+          .filter(a => a.claim.scope == scope && a.state == CurationAttemptState.Published && a.publication.exists(_.generation <= throughGeneration))
+          .toList.sortBy(_.claim.baseGeneration).map(a => CurationAttemptView(a, nextJournal.getOrElse(a.claim.attemptId, Nil)))
+        def containsAttempt(id: java.util.UUID): Boolean = nextAttempts.contains(id)
+        private def read(value: CurationAttempt): CurationAttemptView = CurationAttemptView(value, nextJournal.getOrElse(value.claim.attemptId, Nil))
+        def find(scope: String, id: java.util.UUID): Option[CurationAttemptView] = nextAttempts.get(id).filter(_.claim.scope == scope).map(read)
+        def latest(scope: String, publishedOnly: Boolean): Option[CurationAttemptView] = nextAttempts.valuesIterator
+          .filter(value => value.claim.scope == scope && (!publishedOnly || value.state == CurationAttemptState.Published)).toList.sortBy(_.claim.frontier).lastOption.map(read)
+        def olderActive(scopes: Set[String], fence: CoordinatorFence, limit: Int): List[CurationAttemptView] = nextAttempts.valuesIterator
+          .filter(value => scopes.contains(value.claim.scope) && value.claim.fence != fence && CurationGuards.active(value.state)).toList
+          .sortBy(value => (value.claim.scope, value.claim.frontier)).take(limit).map(read)
+        def saveAttempt(value: CurationAttempt, insert: Boolean): Unit = {
+          val id = value.claim.attemptId
+          if (insert) Require(!nextAttempts.contains(id) && !nextAttempts.valuesIterator.exists(old => old.claim.scope == value.claim.scope &&
+            (old.claim.frontier == value.claim.frontier || CurationGuards.active(old.state))), "identity", "curation claim already exists")
+          else Require(nextAttempts.get(id).exists(_.claim == value.claim), "corrupt", "attempt claim changed")
+          CurationGuards.validate(value, nextJournal.getOrElse(id, Nil), CurationGuardLimits.retained(value.claim))
+          nextAttempts = nextAttempts.updated(id, value)
+        }
+        def append(entry: CurationAuditRecord): Unit = {
+          Require(nextAttempts.contains(entry.attemptId), "corrupt", "audit attempt missing")
+          val prior = nextJournal.getOrElse(entry.attemptId, Nil)
+          Require(!prior.exists(value => value.ordinal == entry.ordinal && value.stage == entry.stage), "identity", "audit entry already exists")
+          nextJournal = nextJournal.updated(entry.attemptId, prior :+ entry)
+        }
+        def input(scope: String, ref: Ref): InputReceipt = {
+          val value = nextInputs.getOrElse((scope, ref), throw Fault("not-found", "input receipt not found"))
+          Require(value.ref == ref && value.scope == scope && value.digest == Digests.text(value.content), "corrupt", "input receipt binding mismatch")
+          InputReceipts.validateContext(value)
+          value
+        }
+        def reviewEvidence(graph: GraphSnapshot, request: ApplyRequest): List[ReviewEvidence] = loadAdoptions(graph, Adoptions.claims(request))
+        def savePublication(before: GraphSnapshot, value: PublishedCuration): Unit = {
+          val graph = value.snapshot
+          Require(nextHeads.get(before.scope).contains(before) && graph.generation == Math.addExact(before.generation, 1L), "invariant", "invalid curation graph publication")
+          Require(!nextInputs.contains((before.scope, value.receipt.ref)) && !nextVersions.contains((before.scope, graph.generation)), "identity", "curation publication already exists")
+          nextHeads = nextHeads.updated(before.scope, graph)
+          nextInputs = nextInputs.updated((before.scope, value.receipt.ref), value.receipt)
+          nextVersions = nextVersions.updated((before.scope, graph.generation), graph)
+          nextOutbox = nextOutbox.updated((before.scope, graph.generation), false)
+          saveAttempt(value.attempt, false)
+        }
+      }
+      val result = body(transaction)
+      coordinator = nextCoordinator; curationAttempts = nextAttempts; curationJournal = nextJournal
+      heads = nextHeads; inputs = nextInputs; versions = nextVersions; outbox = nextOutbox
+      result
+    })
+  }
 }
