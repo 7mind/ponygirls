@@ -11,10 +11,10 @@ Backport f3a5defc79f7cbca98b07765d2b7cebd2ea22895 onto the pinned 1.4.0 runtime 
  3 files changed, 174 insertions(+), 15 deletions(-)
 
 diff --git a/packages/tui/src/tui-main-screen.ts b/packages/tui/src/tui-main-screen.ts
-index 518d4e0..54ab5cb 100644
+index 55b3902..5f96a56 100644
 --- a/packages/tui/src/tui-main-screen.ts
 +++ b/packages/tui/src/tui-main-screen.ts
-@@ -270,6 +270,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -273,6 +273,15 @@ export class TuiMainScreen extends TuiBase implements TUI {
  		return reservedRows;
  	}
  
@@ -30,7 +30,7 @@ index 518d4e0..54ab5cb 100644
  	private expandChangedRangeForKittyImages(
  		firstChanged: number,
  		lastChanged: number,
-@@ -358,23 +367,40 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -362,23 +371,40 @@ export class TuiMainScreen extends TuiBase implements TUI {
  
  		newLines = this.applyLineResets(newLines);
  
@@ -76,7 +76,7 @@ index 518d4e0..54ab5cb 100644
  					}
  					output.append(`\x1b[${imageReservedRows - 1}A`);
  					output.append(line);
-@@ -384,6 +410,12 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -388,6 +414,12 @@ export class TuiMainScreen extends TuiBase implements TUI {
  				}
  				output.append(line);
  			}
@@ -89,7 +89,7 @@ index 518d4e0..54ab5cb 100644
  			output.append("\x1b[?2026l"); // End synchronized output
  			output.flush();
  			this.cursorRow = Math.max(0, newLines.length - 1);
-@@ -396,7 +428,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -400,7 +432,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
  			}
  			const bufferLength = Math.max(height, newLines.length);
  			this.previousViewportTop = Math.max(0, bufferLength - height);
@@ -98,7 +98,7 @@ index 518d4e0..54ab5cb 100644
  			this.positionHardwareCursor(cursorPos, newLines.length);
  			this.previousLines = newLines;
  			this.previousKittyImageIds = this.collectKittyImageIds(newLines);
-@@ -416,14 +448,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -420,14 +452,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
  		// First render - just output everything without clearing (assumes clean screen)
  		if (this.previousLines.length === 0 && !widthChanged && !heightChanged) {
  			logRedraw("first render");
@@ -115,7 +115,7 @@ index 518d4e0..54ab5cb 100644
  			return;
  		}
  
-@@ -432,7 +464,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -436,7 +468,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
  		// In that environment, a full redraw causes the entire history to replay on every toggle.
  		if (heightChanged && !isTermuxSession()) {
  			logRedraw(`terminal height changed (${this.previousHeight} -> ${height})`);
@@ -124,7 +124,7 @@ index 518d4e0..54ab5cb 100644
  			return;
  		}
  
-@@ -441,7 +473,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -445,7 +477,14 @@ export class TuiMainScreen extends TuiBase implements TUI {
  		// Configurable via setClearOnShrink()
  		if (this.getClearOnShrink() && newLines.length < this.maxLinesRendered && !this.hasOverlayEntries) {
  			logRedraw(`clearOnShrink (maxLinesRendered=${this.maxLinesRendered})`);
@@ -140,7 +140,7 @@ index 518d4e0..54ab5cb 100644
  			return;
  		}
  
-@@ -492,7 +531,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -496,7 +535,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
  				const targetRow = Math.max(0, newLines.length - 1);
  				if (targetRow < prevViewportTop) {
  					logRedraw(`deleted lines moved viewport up (${targetRow} < ${prevViewportTop})`);
@@ -149,7 +149,7 @@ index 518d4e0..54ab5cb 100644
  					return;
  				}
  				const lineDiff = computeLineDiff(targetRow);
-@@ -503,7 +542,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -507,7 +546,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
  				const extraLines = this.previousLines.length - newLines.length;
  				if (extraLines > height) {
  					logRedraw(`extraLines > height (${extraLines} > ${height})`);
@@ -158,7 +158,7 @@ index 518d4e0..54ab5cb 100644
  					return;
  				}
  				const clearStartOffset = newLines.length === 0 ? 0 : 1;
-@@ -536,7 +575,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -540,7 +579,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
  		// If the first changed line is above the previous viewport, we need a full redraw.
  		if (firstChanged < prevViewportTop) {
  			logRedraw(`firstChanged < viewportTop (${firstChanged} < ${prevViewportTop})`);
@@ -167,7 +167,7 @@ index 518d4e0..54ab5cb 100644
  			return;
  		}
  
-@@ -584,7 +623,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
+@@ -588,7 +627,7 @@ export class TuiMainScreen extends TuiBase implements TUI {
  					logRedraw(
  						`kitty image pre-clear would scroll (${imageStartScreenRow} + ${imageReservedRows} > ${height})`,
  					);
@@ -191,10 +191,10 @@ index 4f83924..8074625 100644
  		terminal.sendInput(`\x1b[<0;2;${row + 1}M`);
  		tui.renderNow();
 diff --git a/packages/tui/test/tui-render.test.ts b/packages/tui/test/tui-render.test.ts
-index 3749eac..49573dd 100644
+index 39fa9bb..66d4ae1 100644
 --- a/packages/tui/test/tui-render.test.ts
 +++ b/packages/tui/test/tui-render.test.ts
-@@ -590,6 +590,125 @@ describe("TUI resize handling", () => {
+@@ -642,6 +642,125 @@ describe("TUI resize handling", () => {
  });
  
  describe("TUI content shrinkage", () => {
@@ -320,6 +320,3 @@ index 3749eac..49573dd 100644
  	it("clears empty rows when content shrinks significantly", async () => {
  		const terminal = new VirtualTerminal(40, 10);
  		const tui: TUI = new TuiMainScreen(terminal);
--- 
-2.56.0
-

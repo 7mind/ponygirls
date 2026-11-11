@@ -4,12 +4,14 @@ Backport of the relevant parts of denispol/pi commit
 04bab8e2cdfd54d6bd09eda1be97c25562725c31 (Pi #10781 / #11202),
 including the transport work from ioki-smore/pi commit
 61577508ae95de8a88e029fc9387f5b6ccd960b7.
-Adapted to our pinned Pi 1.5.0; regression coverage extended locally.
+Adapted to our pinned Pi 1.5.2; regression coverage extended locally.
 The unrelated endpoint-affinity and auth-test changes are excluded.
 
+diff --git a/packages/coding-agent/src/core/sdk.ts b/packages/coding-agent/src/core/sdk.ts
+index dbab1d1..5a0160d 100644
 --- a/packages/coding-agent/src/core/sdk.ts
 +++ b/packages/coding-agent/src/core/sdk.ts
-@@ -344,6 +344,7 @@
+@@ -344,6 +344,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
  		const headerRunner = extensionRunnerRef.current;
  		return {
  			...options,
@@ -17,9 +19,11 @@ The unrelated endpoint-affinity and auth-test changes are excluded.
  			timeoutMs: options.timeoutMs ?? providerRetrySettings.timeoutMs ?? effectiveTimeoutMs,
  			websocketConnectTimeoutMs: options.websocketConnectTimeoutMs ?? settingsManager.getWebSocketConnectTimeoutMs(),
  			maxRetries: options.maxRetries ?? providerRetrySettings.maxRetries,
+diff --git a/packages/coding-agent/test/sdk-stream-options.test.ts b/packages/coding-agent/test/sdk-stream-options.test.ts
+index 143b0ad..c5e15d4 100644
 --- a/packages/coding-agent/test/sdk-stream-options.test.ts
 +++ b/packages/coding-agent/test/sdk-stream-options.test.ts
-@@ -10,7 +10,9 @@
+@@ -10,7 +10,9 @@ import {
  	type SimpleStreamOptions,
  } from "@earendil-works/pi-ai";
  import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -29,7 +33,7 @@ The unrelated endpoint-affinity and auth-test changes are excluded.
  import type { ExtensionFactory } from "../src/core/extensions/types.ts";
  import { DefaultResourceLoader } from "../src/core/resource-loader.ts";
  import { createAgentSession } from "../src/core/sdk.ts";
-@@ -85,6 +87,7 @@
+@@ -85,6 +87,7 @@ describe("createAgentSession stream options", () => {
  		requestOptions: SimpleStreamOptions = {},
  		extensionFactory?: ExtensionFactory,
  		providerEvent?: unknown,
@@ -37,7 +41,7 @@ The unrelated endpoint-affinity and auth-test changes are excluded.
  	): Promise<SimpleStreamOptions | undefined> {
  		const model = createModel(api);
  		const settingsManager = SettingsManager.inMemory(settings);
-@@ -130,7 +133,9 @@
+@@ -130,7 +133,9 @@ describe("createAgentSession stream options", () => {
  		});
  
  		try {
@@ -48,7 +52,7 @@ The unrelated endpoint-affinity and auth-test changes are excluded.
  				const stream = await session.agent.streamFunction(
  					model,
  					normalizeContext({ messages: [] }),
-@@ -221,6 +226,49 @@
+@@ -221,6 +226,49 @@ describe("createAgentSession stream options", () => {
  		}
  	});
  

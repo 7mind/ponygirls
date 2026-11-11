@@ -1,25 +1,25 @@
 diff --git a/packages/ai/src/api/anthropic-messages.ts b/packages/ai/src/api/anthropic-messages.ts
-index 9d6a8bd..ab9103a 100644
+index b031c28..d106599 100644
 --- a/packages/ai/src/api/anthropic-messages.ts
 +++ b/packages/ai/src/api/anthropic-messages.ts
-@@ -36,6 +36,7 @@ import type {
- 	ToolResultMessage,
+@@ -38,6 +38,7 @@ import type {
  } from "../types.ts";
  import { appendAssistantMessageDiagnostic } from "../utils/diagnostics.ts";
+ import { withCauseDetail } from "../utils/error-body.ts";
 +import { extractRetryAfterMs } from "../utils/error-body.ts";
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
+ import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
- import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
-@@ -918,6 +919,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
+@@ -1170,6 +1171,7 @@ export const stream: StreamFunction<"anthropic-messages", AnthropicOptions> = (
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
- 			output.errorMessage = error instanceof Error ? error.message : JSON.stringify(error);
+ 			output.errorMessage = error instanceof Error ? withCauseDetail(error) : JSON.stringify(error);
 +			output.retryAfterMs = extractRetryAfterMs(error);
  			stream.push({ type: "error", reason: output.stopReason, error: output });
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/azure-openai-responses.ts b/packages/ai/src/api/azure-openai-responses.ts
-index 24e73fd..92af519 100644
+index ec98e33..9175002 100644
 --- a/packages/ai/src/api/azure-openai-responses.ts
 +++ b/packages/ai/src/api/azure-openai-responses.ts
 @@ -2,7 +2,7 @@ import { AzureOpenAI } from "openai";
@@ -40,7 +40,7 @@ index 24e73fd..92af519 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/bedrock-converse-stream.ts b/packages/ai/src/api/bedrock-converse-stream.ts
-index 0ed88be..d291aab 100644
+index 6f6facf..4457968 100644
 --- a/packages/ai/src/api/bedrock-converse-stream.ts
 +++ b/packages/ai/src/api/bedrock-converse-stream.ts
 @@ -49,7 +49,7 @@ import type {
@@ -52,7 +52,7 @@ index 0ed88be..d291aab 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { providerHeadersToRecord } from "../utils/headers.ts";
  import { type ClientIdentity, getClientVersion } from "../utils/identity.ts";
-@@ -387,6 +387,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
+@@ -392,6 +392,7 @@ export const stream: StreamFunction<"bedrock-converse-stream", BedrockOptions> =
  			flushOpenBlocks(openBlocks, output);
  			output.stopReason = options.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatBedrockError(error);
@@ -124,7 +124,7 @@ index 69e3f1d..d29ff33 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-codex-responses.ts b/packages/ai/src/api/openai-codex-responses.ts
-index 5165e1c..1f14369 100644
+index e226805..4d9312b 100644
 --- a/packages/ai/src/api/openai-codex-responses.ts
 +++ b/packages/ai/src/api/openai-codex-responses.ts
 @@ -25,7 +25,7 @@ import {
@@ -136,7 +136,21 @@ index 5165e1c..1f14369 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
  import { getIdentityHeaders } from "../utils/identity.ts";
-@@ -499,6 +499,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+@@ -457,7 +457,12 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
+ 						statusText: response.statusText,
+ 					});
+ 					const info = await parseErrorResponse(fakeResponse);
+-					throw new Error(info.friendlyMessage || info.message);
++					// Provider-level retries are exhausted here. Keep the final HTTP metadata
++					// available to agent/compaction retry policies as well as the display message.
++					throw Object.assign(new Error(info.friendlyMessage || info.message), {
++						status: response.status,
++						headers: response.headers,
++					});
+ 				} catch (error) {
+ 					if (error instanceof Error) {
+ 						if (error.name === "AbortError" || error.message === "Request was aborted") {
+@@ -503,6 +508,7 @@ export const stream: StreamFunction<"openai-codex-responses", OpenAICodexRespons
  		} catch (error) {
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -145,7 +159,7 @@ index 5165e1c..1f14369 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/openai-completions.ts b/packages/ai/src/api/openai-completions.ts
-index 0e5b606..191ab0f 100644
+index 7255249..15f463f 100644
 --- a/packages/ai/src/api/openai-completions.ts
 +++ b/packages/ai/src/api/openai-completions.ts
 @@ -35,7 +35,7 @@ import type {
@@ -157,7 +171,7 @@ index 0e5b606..191ab0f 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { shortHash } from "../utils/hash.ts";
  import { headersToRecord } from "../utils/headers.ts";
-@@ -699,6 +699,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
+@@ -701,6 +701,7 @@ export const stream: StreamFunction<"openai-completions", OpenAICompletionsOptio
  			}
  			output.stopReason = options?.signal?.aborted ? "aborted" : "error";
  			output.errorMessage = formatProviderError(normalizeProviderError(error));
@@ -166,7 +180,7 @@ index 0e5b606..191ab0f 100644
  			// normalizeProviderError already stringifies the parsed body (error.error)
  			// into errorMessage, so only append the raw metadata when it is not already
 diff --git a/packages/ai/src/api/openai-responses.ts b/packages/ai/src/api/openai-responses.ts
-index c29e6ad..bec1ee3 100644
+index 0ff9f8b..21a37a9 100644
 --- a/packages/ai/src/api/openai-responses.ts
 +++ b/packages/ai/src/api/openai-responses.ts
 @@ -15,7 +15,7 @@ import type {
@@ -178,7 +192,7 @@ index c29e6ad..bec1ee3 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord } from "../utils/headers.ts";
  import { type ClientIdentity, getIdentityHeaders } from "../utils/identity.ts";
-@@ -263,6 +263,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
+@@ -264,6 +264,7 @@ export const stream: StreamFunction<"openai-responses", OpenAIResponsesOptions>
  			} else {
  				output.errorMessage = errorMessage;
  			}
@@ -187,7 +201,7 @@ index c29e6ad..bec1ee3 100644
  			stream.end();
  		}
 diff --git a/packages/ai/src/api/pi-messages.ts b/packages/ai/src/api/pi-messages.ts
-index 3316a56..913a56f 100644
+index 3316a56..202845a 100644
 --- a/packages/ai/src/api/pi-messages.ts
 +++ b/packages/ai/src/api/pi-messages.ts
 @@ -25,6 +25,7 @@ import type {
@@ -198,7 +212,40 @@ index 3316a56..913a56f 100644
  import { AssistantMessageEventStream } from "../utils/event-stream.ts";
  import { headersToRecord, providerHeadersToRecord } from "../utils/headers.ts";
  import { getIdentityHeaders } from "../utils/identity.ts";
-@@ -349,6 +350,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
+@@ -102,12 +103,21 @@ type PiMessagesErrorBody = {
+ export class PiMessagesResponseError extends Error {
+ 	code?: string;
+ 	readonly diagnosticDetails: JsonObject;
+-
+-	constructor(message: string, code: string | undefined, diagnosticDetails: JsonObject) {
++	readonly status: number;
++	readonly headers: Headers;
++
++	constructor(
++		message: string,
++		code: string | undefined,
++		diagnosticDetails: JsonObject,
++		response: Pick<Response, "status" | "headers">,
++	) {
+ 		super(message);
+ 		this.name = "PiMessagesResponseError";
+ 		this.code = code;
+ 		this.diagnosticDetails = diagnosticDetails;
++		this.status = response.status;
++		this.headers = response.headers;
+ 	}
+ }
+ 
+@@ -156,7 +166,7 @@ function createPiMessagesResponseError(
+ 		...(errorBody?.error === undefined ? {} : { error: errorBody.error as JsonValue }),
+ 		...(errorBody ? {} : { body: truncateDiagnosticString(body) }),
+ 		timestampMs: Date.now(),
+-	});
++	}, response);
+ }
+ 
+ function createEmptyUsage(): PiMessagesUsage {
+@@ -349,6 +359,7 @@ function createErrorEvent(model: Model<"pi-messages">, error: unknown, aborted:
  		usage: createEmptyUsage(),
  		stopReason: reason,
  		errorMessage: error instanceof Error ? error.message : String(error),
@@ -227,10 +274,10 @@ index 87797db..d967b5e 100644
  		timestamp: options.timestamp ?? Date.now(),
  	};
 diff --git a/packages/ai/src/types.ts b/packages/ai/src/types.ts
-index e435126..ebe848e 100644
+index 5aad0e8..0b77b48 100644
 --- a/packages/ai/src/types.ts
 +++ b/packages/ai/src/types.ts
-@@ -599,6 +599,11 @@ export interface AssistantMessage {
+@@ -607,6 +607,11 @@ export interface AssistantMessage {
  	stopReason: StopReason;
  	deferred?: DeferredHandle;
  	errorMessage?: string;
@@ -243,7 +290,7 @@ index e435126..ebe848e 100644
  	/**
  	 * Provider indication of whether the model explicitly ended its turn.
 diff --git a/packages/ai/src/utils/error-body.ts b/packages/ai/src/utils/error-body.ts
-index d35f51a..bedd405 100644
+index f94a029..20fa8da 100644
 --- a/packages/ai/src/utils/error-body.ts
 +++ b/packages/ai/src/utils/error-body.ts
 @@ -13,6 +13,7 @@
@@ -262,10 +309,10 @@ index d35f51a..bedd405 100644
  	$metadata?: { httpStatusCode?: unknown };
  	$response?: { statusCode?: unknown; body?: unknown };
  };
-@@ -55,6 +57,17 @@ export function normalizeProviderError(error: unknown): NormalizedProviderError
- 	} satisfies NormalizedProviderError;
+@@ -81,6 +83,16 @@ export function withCauseDetail(error: Error): string {
+ 	if (!detail || error.message.includes(detail)) return error.message;
+ 	return error.message ? `${error.message}: ${detail}` : detail;
  }
- 
 +/**
 + * Server-requested retry delay (`Retry-After` / `retry-after-ms`) in milliseconds
 + * from a provider error that carries response headers (OpenAI/Anthropic SDK errors).
@@ -276,10 +323,9 @@ index d35f51a..bedd405 100644
 +	const headers = (error as SdkErrorShape).headers;
 +	return headers instanceof Headers ? parseRetryAfterMs(headers) : undefined;
 +}
-+
+ 
  /**
   * Probe the HTTP status, first numeric hit wins, in SDK-field order:
-  * `statusCode` (Mistral) → `status` (`openai`, `@google/genai`) →
 diff --git a/packages/ai/src/utils/provider-retry.ts b/packages/ai/src/utils/provider-retry.ts
 index 9d7ef81..78c1bc2 100644
 --- a/packages/ai/src/utils/provider-retry.ts
@@ -323,10 +369,10 @@ index 9d7ef81..78c1bc2 100644
  
  	const exponentialDelay = Math.min(0.5 * 2 ** retryIndex, 8) * 1000;
 diff --git a/packages/ai/src/utils/retry.ts b/packages/ai/src/utils/retry.ts
-index eabf6c7..948eb5e 100644
+index ec893e1..2f02792 100644
 --- a/packages/ai/src/utils/retry.ts
 +++ b/packages/ai/src/utils/retry.ts
-@@ -143,10 +143,24 @@ export interface RetryPolicy {
+@@ -146,10 +146,24 @@ export interface RetryPolicy {
  
  export const DEFAULT_MAX_AGENT_RETRY_DELAY_MS = 60_000;
  
@@ -353,7 +399,7 @@ index eabf6c7..948eb5e 100644
  }
  
  /** Optional callbacks emitted by {@link retryAssistantCall} around each retry. */
-@@ -239,7 +253,7 @@ export async function retryAssistantCall(
+@@ -242,7 +256,7 @@ export async function retryAssistantCall(
  
  		attempt++;
  		lastRetry = { attempt, errorMessage: response.errorMessage || "Unknown error" };
@@ -363,22 +409,21 @@ index eabf6c7..948eb5e 100644
  
  		// Normalize aborts during retry backoff to the same AssistantMessage shape as
 diff --git a/packages/ai/test/error-body.test.ts b/packages/ai/test/error-body.test.ts
-index c2824e8..f4e71cb 100644
+index b6e2367..bbad7aa 100644
 --- a/packages/ai/test/error-body.test.ts
 +++ b/packages/ai/test/error-body.test.ts
-@@ -8,6 +8,7 @@
- import { getHeapStatistics } from "node:v8";
+@@ -11,6 +11,7 @@ import { getHeapStatistics } from "node:v8";
+ import OpenAI from "openai";
  import { describe, expect, it } from "vitest";
  import {
 +	extractRetryAfterMs,
  	formatProviderError,
  	MAX_PROVIDER_ERROR_BODY_CHARS,
  	normalizeProviderError,
-@@ -248,3 +249,23 @@ describe("truncateErrorText", () => {
- 		expect(getHeapStatistics().used_heap_size - before).toBeLessThan(1_000_000);
+@@ -291,3 +292,22 @@ describe("connection error cause detail", () => {
+ 		);
  	});
  });
-+
 +describe("extractRetryAfterMs", () => {
 +	it("reads a server-requested delay off provider error headers", () => {
 +		// Regression for #9595.
@@ -398,6 +443,102 @@ index c2824e8..f4e71cb 100644
 +		).toBeUndefined();
 +	});
 +});
+diff --git a/packages/ai/test/openai-codex-stream.test.ts b/packages/ai/test/openai-codex-stream.test.ts
+index 23b2608..a2bd53b 100644
+--- a/packages/ai/test/openai-codex-stream.test.ts
++++ b/packages/ai/test/openai-codex-stream.test.ts
+@@ -2650,6 +2650,45 @@ describe("openai-codex streaming", () => {
+ 		expect(fetchMock).toHaveBeenCalledTimes(1);
+ 	});
+ 
++	it.each([429, 503])("preserves the final %i response's Retry-After metadata for agent retries", async (status) => {
++		// Regression: provider retries were exhausted, then a plain Error discarded final response headers.
++		vi.stubGlobal(
++			"fetch",
++			vi.fn(
++				async () =>
++					new Response(JSON.stringify({ error: { message: "retry later" } }), {
++						status,
++						headers: { "content-type": "application/json", "retry-after": "2" },
++					}),
++			),
++		);
++		const model: Model<"openai-codex-responses"> = {
++			id: "gpt-5.1-codex",
++			name: "GPT-5.1 Codex",
++			api: "openai-codex-responses",
++			provider: "openai-codex",
++			baseUrl: "https://chatgpt.com/backend-api",
++			reasoning: true,
++			input: ["text"],
++			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
++			contextWindow: 400000,
++			maxTokens: 128000,
++		};
++		const context = normalizeContext({
++			systemPrompt: "Test",
++			messages: [{ role: "user", content: "Hello", timestamp: 1 }],
++		});
++
++		const result = await streamOpenAICodexResponses(model, context, {
++			apiKey: mockToken(),
++			transport: "sse",
++			maxRetries: 0,
++		}).result();
++
++		expect(result.stopReason).toBe("error");
++		expect(result.retryAfterMs).toBe(2000);
++	});
++
+ 	it("zstd-compresses SSE request bodies", async () => {
+ 		const token = mockToken();
+ 		const encoder = new TextEncoder();
+diff --git a/packages/ai/test/pi-messages.test.ts b/packages/ai/test/pi-messages.test.ts
+index 78d7328..c29fe14 100644
+--- a/packages/ai/test/pi-messages.test.ts
++++ b/packages/ai/test/pi-messages.test.ts
+@@ -39,6 +39,9 @@ async function startServer(options: ResponderOptions): Promise<{ baseUrl: string
+ 				body: raw ? JSON.parse(raw) : undefined,
+ 			});
+ 
++			for (const [name, value] of Object.entries(options.headers ?? {})) {
++				response.setHeader(name, value);
++			}
+ 			if (options.status && options.status !== 200) {
+ 				response.statusCode = options.status;
+ 				response.setHeader("content-type", "application/json");
+@@ -48,9 +51,6 @@ async function startServer(options: ResponderOptions): Promise<{ baseUrl: string
+ 
+ 			response.statusCode = 200;
+ 			response.setHeader("content-type", "text/event-stream");
+-			for (const [name, value] of Object.entries(options.headers ?? {})) {
+-				response.setHeader(name, value);
+-			}
+ 			for (const event of options.events ?? []) {
+ 				response.write(`data: ${JSON.stringify(event)}\n\n`);
+ 			}
+@@ -295,6 +295,21 @@ describe("pi-messages", () => {
+ 		expect(([] as unknown as Record<string, unknown>).polluted).toBeUndefined();
+ 	});
+ 
++	it.each([429, 503])("preserves %i Retry-After headers for agent retries", async (status) => {
++		// Regression: PiMessagesResponseError retained diagnostics but discarded response.headers.
++		const { baseUrl } = await startServer({
++			status,
++			headers: { "retry-after-ms": status === 429 ? "2000" : "3000" },
++			rawBody: JSON.stringify({ error: { message: "temporarily unavailable", code: "overloaded" } }),
++		});
++
++		const message = await stream(createModel(baseUrl), normalizeContext(context), { apiKey: "test-key" }).result();
++
++		expect(message.stopReason).toBe("error");
++		expect(message.retryAfterMs).toBe(status === 429 ? 2000 : 3000);
++		expect(message.diagnostics?.[0]?.details?.status).toBe(status);
++	});
++
+ 	it("errors when the stream ends without a terminal event", async () => {
+ 		const { baseUrl } = await startServer({
+ 			events: [
 diff --git a/packages/ai/test/provider-retry.test.ts b/packages/ai/test/provider-retry.test.ts
 index b8e5c21..a7a9c8f 100644
 --- a/packages/ai/test/provider-retry.test.ts
@@ -437,10 +578,10 @@ index b8e5c21..a7a9c8f 100644
 +	});
 +});
 diff --git a/packages/ai/test/retry.test.ts b/packages/ai/test/retry.test.ts
-index e943767..23a7653 100644
+index 4b3395c..58e7b4e 100644
 --- a/packages/ai/test/retry.test.ts
 +++ b/packages/ai/test/retry.test.ts
-@@ -173,6 +173,16 @@ describe("retryDelayMs", () => {
+@@ -179,6 +179,16 @@ describe("retryDelayMs", () => {
  		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 5000 }, 5)).toBe(5000);
  		expect(retryDelayMs({ baseDelayMs: 2000, maxAgentDelayMs: 0 }, 5)).toBe(0);
  	});
@@ -457,7 +598,7 @@ index e943767..23a7653 100644
  });
  
  describe("retryAssistantCall", () => {
-@@ -236,6 +246,23 @@ describe("retryAssistantCall", () => {
+@@ -242,6 +252,23 @@ describe("retryAssistantCall", () => {
  		expect(onRetryScheduled.mock.calls.map((call) => call[2])).toEqual([10, 15, 15, 15]);
  	});
  
@@ -482,10 +623,10 @@ index e943767..23a7653 100644
  		let n = 0;
  		const produce = vi.fn(async () => {
 diff --git a/packages/coding-agent/src/core/agent-session.ts b/packages/coding-agent/src/core/agent-session.ts
-index dbe36c3..f7b2acb 100644
+index f76247d..d5032b7 100644
 --- a/packages/coding-agent/src/core/agent-session.ts
 +++ b/packages/coding-agent/src/core/agent-session.ts
-@@ -3837,7 +3837,8 @@ export class AgentSession {
+@@ -3918,7 +3918,8 @@ export class AgentSession {
  	}
  
  	/**
@@ -495,7 +636,7 @@ index dbe36c3..f7b2acb 100644
  	 * @returns true if the caller should continue the agent, false otherwise
  	 */
  	private async _prepareRetry(message: AssistantMessage): Promise<boolean> {
-@@ -3854,7 +3855,7 @@ export class AgentSession {
+@@ -3935,7 +3936,7 @@ export class AgentSession {
  			return false;
  		}
  
@@ -548,10 +689,10 @@ index 206b25b..97c5fce 100644
  		const created = await createSession({ failCount: 1, delayAssistantMessageEndMs: 40 });
  
 diff --git a/packages/durable/src/harness/compaction.ts b/packages/durable/src/harness/compaction.ts
-index e11830f..4880ec7 100644
+index 65b855d..561b689 100644
 --- a/packages/durable/src/harness/compaction.ts
 +++ b/packages/durable/src/harness/compaction.ts
-@@ -195,7 +195,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint,
+@@ -197,7 +197,7 @@ export const CompactionTask = defineTask<CompactionInput, CompactionCheckpoint,
  				isRetryableAssistantError(message) &&
  				policy.enabled &&
  				attempt <= policy.maxRetries;
@@ -561,10 +702,10 @@ index e11830f..4880ec7 100644
  				await recordUsage(
  					tx,
 diff --git a/packages/durable/src/harness/generation.ts b/packages/durable/src/harness/generation.ts
-index 17c28db..565e29d 100644
+index 6e6e0f4..e13c625 100644
 --- a/packages/durable/src/harness/generation.ts
 +++ b/packages/durable/src/harness/generation.ts
-@@ -824,7 +824,7 @@ async function classify(
+@@ -834,7 +834,7 @@ async function classify(
  		isRetryableAssistantError(message) &&
  		policy.enabled &&
  		attempt <= policy.maxRetries;

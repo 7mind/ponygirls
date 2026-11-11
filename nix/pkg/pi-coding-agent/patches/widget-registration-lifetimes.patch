@@ -18,7 +18,7 @@ Surgical Pi 1.4.0 backport; preserves pinned APIs and the eight active fullscree
  create mode 100644 packages/coding-agent/test/interactive-widget-reconciliation.test.ts
 
 diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
-index f40b45d..4b07a37 100644
+index 18a91ff..2774125 100644
 --- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 +++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
 @@ -40,30 +40,65 @@ export interface BorderContentSpan {
@@ -316,10 +316,10 @@ index f40b45d..4b07a37 100644
  		if (left.length === 0 && right.length === 0) return undefined;
  		const label = hiddenLineCount > 0 ? ` ${direction} ${hiddenLineCount} more ` : undefined;
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index b0dc4a2..de230e8 100644
+index 07e2cfd..7def125 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -275,6 +275,8 @@ interface ExtensionWidget {
+@@ -285,6 +285,8 @@ interface ExtensionWidget {
  	placement: WidgetPlacement;
  	/** Rendered above/below the editor, and the fallback for border placements on editors without border slots. */
  	component: Component & { dispose?(): void };
@@ -328,7 +328,7 @@ index b0dc4a2..de230e8 100644
  	/** One-line rendering used by border placements. */
  	borderContent: EditorBorderContent;
  }
-@@ -630,6 +632,13 @@ export class InteractiveMode {
+@@ -656,6 +658,13 @@ export class InteractiveMode {
  	private extensionWidgets = new Map<string, ExtensionWidget>();
  	private widgetContainerAbove!: Container;
  	private widgetContainerBelow!: Container;
@@ -342,7 +342,7 @@ index b0dc4a2..de230e8 100644
  
  	// Custom footer from extension (undefined = use built-in footer)
  	private customFooter: (Component & { dispose?(): void }) | undefined = undefined;
-@@ -2522,7 +2531,9 @@ export class InteractiveMode {
+@@ -2660,7 +2669,9 @@ export class InteractiveMode {
  			};
  		}
  
@@ -353,7 +353,7 @@ index b0dc4a2..de230e8 100644
  		this.renderWidgets();
  	}
  
-@@ -2574,22 +2585,41 @@ export class InteractiveMode {
+@@ -2714,22 +2725,41 @@ export class InteractiveMode {
  	 */
  	private renderWidgets(): void {
  		if (!this.widgetContainerAbove || !this.widgetContainerBelow) return;
@@ -400,7 +400,7 @@ index b0dc4a2..de230e8 100644
  		}
  		this.renderWidgetContainer(this.widgetContainerAbove, above, true, true);
  		this.renderWidgetContainer(this.widgetContainerBelow, below, false, false);
-@@ -2602,21 +2632,15 @@ export class InteractiveMode {
+@@ -2742,21 +2772,15 @@ export class InteractiveMode {
  		spacerWhenEmpty: boolean,
  		leadingSpacer: boolean,
  	): void {
@@ -430,7 +430,7 @@ index b0dc4a2..de230e8 100644
  	}
  
  	/**
-@@ -2951,6 +2975,13 @@ export class InteractiveMode {
+@@ -3094,6 +3118,13 @@ export class InteractiveMode {
  	 * Pass undefined to restore the default editor.
  	 */
  	private setCustomEditorComponent(factory: EditorFactory | undefined): void {
@@ -1029,6 +1029,3 @@ index 0000000..c6b4698
 +		},
 +	);
 +});
--- 
-2.56.0
-

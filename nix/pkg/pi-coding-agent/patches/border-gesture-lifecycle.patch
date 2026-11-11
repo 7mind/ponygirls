@@ -9,7 +9,7 @@ Keep press identity through release and synthesized click, revoke stale ownershi
 Focused tests and scoped source/test typechecking and lint pass. Full check is blocked by unchanged baseline noUnsafeFinally in agent-session.ts; full typecheck also reports unchanged baseline test errors. Parent authorized this documented partial-validation local commit.
 
 diff --git a/packages/coding-agent/docs/tui.md b/packages/coding-agent/docs/tui.md
-index de84533..1541a6a 100644
+index afd0197..dd70ab8 100644
 --- a/packages/coding-agent/docs/tui.md
 +++ b/packages/coding-agent/docs/tui.md
 @@ -147,7 +147,7 @@ Finish the interaction with the completion callback supplied to the component fa
@@ -251,10 +251,10 @@ index 8dcc734..18a91ff 100644
  		}
  		return super.handleMouse(event);
 diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-index d5359e9..3f6aeaf 100644
+index 7912ed9..32f5cc0 100644
 --- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
 +++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
-@@ -51,8 +51,8 @@ import {
+@@ -52,8 +52,8 @@ import {
  	TuiMainScreen,
  	type TuiMouseEvent,
  	type TuiMouseEventResult,
@@ -264,7 +264,7 @@ index d5359e9..3f6aeaf 100644
  } from "@earendil-works/pi-tui";
  import chalk from "chalk";
  import { spawn } from "child_process";
-@@ -2895,10 +2895,15 @@ export class InteractiveMode {
+@@ -2936,10 +2936,15 @@ export class InteractiveMode {
  		this.editorContainer.clear();
  		const editor = this.editor;
  		const retainBorders = top?.retainEditorBorders === true;
@@ -283,7 +283,7 @@ index d5359e9..3f6aeaf 100644
  		this.ui.setFocus(component);
  		this.programStatus.setBlocked("extension-dialog", top?.blocked);
  		this.ui.requestRender();
-@@ -3101,7 +3106,8 @@ export class InteractiveMode {
+@@ -3145,7 +3150,8 @@ export class InteractiveMode {
  			}
  		}
  		this.renderWidgets();
@@ -459,7 +459,7 @@ index 0000000..2a4e865
 +	});
 +});
 diff --git a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
-index 0c3187e..130d663 100644
+index 8bce769..0271a90 100644
 --- a/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 +++ b/packages/coding-agent/test/interactive-mode-extension-dialogs.test.ts
 @@ -1,4 +1,4 @@
@@ -468,7 +468,7 @@ index 0c3187e..130d663 100644
  import { beforeAll, describe, expect, it, vi } from "vitest";
  import { CustomEditor } from "../src/modes/interactive/components/custom-editor.ts";
  import { KeybindingsManager } from "../src/core/keybindings.ts";
-@@ -125,12 +125,62 @@ describe("InteractiveMode extension dialogs", () => {
+@@ -150,12 +150,62 @@ describe("InteractiveMode extension dialogs", () => {
  			return new Text(Array.from({ length: 30 }, (_, i) => `detail ${i}`).join("\n"), 0, 0);
  		}, { retainEditorBorders: true });
  		await vi.waitFor(() => expect(context.editorContainer.children.length).toBe(3));

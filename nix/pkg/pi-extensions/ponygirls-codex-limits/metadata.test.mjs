@@ -81,7 +81,7 @@ test("base catalog failure cannot suppress metadata publication or hide either f
 
 test("metadata refresh publishes live state but preserves inherited auth and both streaming paths", async () => {
   const calls = [];
-  const base = { ...builtin,
+  const base = { ...builtin, refreshModelsAuth: "configured",
     stream: (...args) => { calls.push(["stream", ...args]); throw new Error("fixture transport"); },
     streamSimple: (...args) => { calls.push(["simple", ...args]); throw new Error("fixture transport"); },
   };
@@ -90,6 +90,7 @@ test("metadata refresh publishes live state but preserves inherited auth and bot
     await context.publish({ update: () => { overrides = new Map([[model.id, { contextWindow: 1234567 }]]); } });
   } };
   const provider = composeModelProvider(base.id, base, configured(undefined), { modelMetadata: overlay });
+  assert.equal(provider.refreshModelsAuth, undefined, "metadata discovery must receive the effective credential");
   const context = { credential: undefined, allowNetwork: false, signal: new AbortController().signal,
     publish: async ({ update }) => { update(); return true; } };
   await provider.refreshModels({ ...context, publish: async () => false });
@@ -103,6 +104,7 @@ test("metadata refresh publishes live state but preserves inherited auth and bot
   assert.equal(provider.auth.oauth.refresh, builtin.auth.oauth.refresh);
   const credential = { type: "oauth", access: "synthetic", refresh: "synthetic", expires: Date.now() + 3600000 };
   const undecorated = composeModelProvider(base.id, base, configured(undefined), undefined);
+  assert.equal(undecorated.refreshModelsAuth, "configured", "undecorated providers retain the base refresh policy");
   assert.deepEqual(await provider.auth.oauth.toAuth(credential), await undecorated.auth.oauth.toAuth(credential));
   const transcript = { messages: [] };
   const options = { apiKey: "synthetic" };

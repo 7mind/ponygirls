@@ -79,7 +79,7 @@ index dfeb030..e8981f3 100644
  		throw new ModelsError("oauth", `OAuth auth derivation failed for ${providerId}`, { cause: error });
  	}
 diff --git a/packages/ai/src/models.ts b/packages/ai/src/models.ts
-index ac0396f..42f3890 100644
+index 03b9a64..4c9c6ca 100644
 --- a/packages/ai/src/models.ts
 +++ b/packages/ai/src/models.ts
 @@ -27,6 +27,7 @@ import type {
@@ -90,7 +90,7 @@ index ac0396f..42f3890 100644
  	AssistantMessageEventStream,
  	ClassifierApi,
  	ClassifierContext,
-@@ -859,6 +860,10 @@ class ModelsImpl implements MutableModels {
+@@ -887,6 +888,10 @@ class ModelsImpl implements MutableModels {
  	>(
  		model: TModel,
  		options: TOptions | undefined,
@@ -101,7 +101,7 @@ index ac0396f..42f3890 100644
  	): Promise<{
  		requestModel: TModel;
  		requestOptions: Omit<TOptions, "transformHeaders"> & ProviderRequestOptions<TModel>;
-@@ -868,6 +873,9 @@ class ModelsImpl implements MutableModels {
+@@ -896,6 +901,9 @@ class ModelsImpl implements MutableModels {
  			apiKey: options?.apiKey,
  			env: options?.env,
  			signal: options?.signal,
@@ -111,7 +111,7 @@ index ac0396f..42f3890 100644
  		});
  		if (!resolution) {
  			throw new ModelsError("auth", `Provider is not configured: ${model.provider}`);
-@@ -898,26 +906,65 @@ class ModelsImpl implements MutableModels {
+@@ -926,27 +934,66 @@ class ModelsImpl implements MutableModels {
  		return { requestModel, requestOptions };
  	}
  
@@ -166,6 +166,7 @@ index ac0396f..42f3890 100644
 +				return rejectedOAuthAccessToken === undefined ? first : oauth401RetryIterable(first, () => runOnce(true));
  			},
  			observeModelRequest(model, options, false),
+ 			options?.signal,
  		);
  	}
  
@@ -185,7 +186,7 @@ index ac0396f..42f3890 100644
  	async complete<TApi extends Api>(
  		model: Model<TApi>,
  		context: Context,
-@@ -927,16 +974,7 @@ class ModelsImpl implements MutableModels {
+@@ -956,17 +1003,7 @@ class ModelsImpl implements MutableModels {
  	}
  
  	streamSimple(model: Model<Api>, context: Context, options?: ModelsSimpleStreamOptions): AssistantMessageEventStream {
@@ -198,12 +199,13 @@ index ac0396f..42f3890 100644
 -				return provider.streamSimple(requestModel, transcript, requestOptions as SimpleStreamOptions);
 -			},
 -			observeModelRequest(model, options, false),
+-			options?.signal,
 -		);
 +		return this.streamWithOAuth401Retry(model, context, options, "streamSimple");
  	}
  
  	async completeSimple(
-@@ -1025,6 +1063,53 @@ class ModelsImpl implements MutableModels {
+@@ -1056,6 +1093,53 @@ class ModelsImpl implements MutableModels {
  	}
  }
  
@@ -258,10 +260,10 @@ index ac0396f..42f3890 100644
  	return new ModelsImpl(options);
  }
 diff --git a/packages/ai/test/models-runtime.test.ts b/packages/ai/test/models-runtime.test.ts
-index 0789f94..64b09f1 100644
+index 4ce0b7d..9bcd58b 100644
 --- a/packages/ai/test/models-runtime.test.ts
 +++ b/packages/ai/test/models-runtime.test.ts
-@@ -1212,3 +1212,95 @@ describe("Models runtime", () => {
+@@ -1267,3 +1267,95 @@ describe("Models runtime", () => {
  		expect(message.stopReason).toBe("stop");
  	});
  });
