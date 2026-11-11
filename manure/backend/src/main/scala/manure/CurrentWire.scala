@@ -62,5 +62,5 @@ object CurrentWire:
       case Visibility.Internal => wire.Visibility.Internal
       case Visibility.External => wire.Visibility.External
       case Visibility.Public => wire.Visibility.Public,
-    state(a.state),a.createdByUser,a.createdAt,a.expiresAt,a.totalBytes,a.fileCount.toInt,url)
+    state(a.state),a.createdByUser,a.createdAt,a.expiresAt,a.totalBytes,a.fileCount.toInt,url,a.tags.toList,a.hostname,a.projectPath)
   def principal(i: Identity): wire.Principal = wire.Principal(i.userId,i.tokenId,if i.userType == "human" then wire.PrincipalType.Human else wire.PrincipalType.Agent)

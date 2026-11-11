@@ -23,8 +23,9 @@ private[manure] object ManagementSearchPrincipal:
   * dereferencing, HTML execution, passwords, token/grant/hash or secret fields.
   */
 final class SearchProjection(config: Config, engine: PostgresRetrieval):
-  val policy = "manure-metadata-paths-v1"
+  val policy = "manure-metadata-paths-v2"
   private def attribute(key: String,value: String): ProjectionAttribute = ProjectionAttribute(AttributeKey.parse(key),AttributeValue(value))
+  def tagKey(tag: String): String = "tag-" + SecretCodec.sha256(Exact.utf8(tag))
   def snapshot(a: Artifact): wire.Artifact = CurrentWire.artifact(a,config.contentUrl(a.id,config.apiOrigin))
   def version(a: Artifact): String = SecretCodec.sha256(Json.arr(
     CurrentWire.encode(wire.Artifact.codecJson,snapshot(a)),
@@ -37,19 +38,38 @@ final class SearchProjection(config: Config, engine: PostgresRetrieval):
     if a.state != UploadState.Ready then engine.remove(c,a.id)
     else
       val revision = version(a)
-      val chunks = InputChunk("name",a.name,ChunkProvenance("name",None,None,None)) :: a.manifest.zipWithIndex.map { (e,i) =>
+      val chunks = List(InputChunk("name",a.name,ChunkProvenance("name",None,None,None))) ++ a.manifest.zipWithIndex.map { (e,i) =>
         InputChunk("path-" + i,e.path,ChunkProvenance("manifest-path",Some(e.path),None,None))
-      }.toList
+      } ++ a.tags.zipWithIndex.map { (tag,i) => InputChunk("tag-" + i,tag,ChunkProvenance("tag",None,None,None)) } ++
+        a.hostname.map(value => InputChunk("hostname",value,ChunkProvenance("hostname",None,None,None))) ++
+        a.projectPath.map(value => InputChunk("project-path",value,ChunkProvenance("project-path",None,None,None)))
       val source = SourceProjection(a.id,revision,chunks,
-        Vector(attribute("visibility",a.visibility.wire),attribute("kind",a.kind.wire),attribute("createdByUser",a.createdByUser)),
+        Vector(attribute("visibility",a.visibility.wire),attribute("kind",a.kind.wire),attribute("createdByUser",a.createdByUser)) ++
+          a.tags.map(tag => attribute(tagKey(tag),tag)) ++ a.hostname.map(attribute("hostname",_)) ++ a.projectPath.map(attribute("projectPath",_)),
         config.users.map(u => ManagementSearchPrincipal.fromUser(u.id).value).toSet,true,false,a.expiresAtSeconds.map(EpochSeconds.fromDouble))
       engine.put(c,source)
       Jdbc.exec(c,"INSERT INTO manure.search_versions(artifact_id,version,metadata) VALUES(?,?,?) ON CONFLICT DO NOTHING",
         Exact.utf8(a.id),Exact.utf8(revision),Exact.utf8(CurrentWire.encode(wire.Artifact.codecJson,snapshot(a)).noSpaces))
   def remove(c: Connection,id: String): Unit = engine.remove(c,id)
+  private[manure] def storedSnapshot(value: Json): wire.Artifact =
+    val obj = value.asObject.getOrElse(throw DomainError("unavailable"))
+    val metadata = Set("tags","hostname","projectPath")
+    val present = obj.keys.toSet.intersect(metadata)
+    Require(present.isEmpty || present == metadata,"unavailable")
+    val current = if present.nonEmpty then value else Json.fromJsonObject(obj.add("tags",Json.arr()).add("hostname",Json.Null).add("projectPath",Json.Null))
+    val decoded = CurrentWire.decode(wire.Artifact.codecJson,current)
+    MetadataRules.validate(decoded.tags,decoded.hostname,decoded.projectPath)
+    decoded
+  def backfillSnapshots(c: Connection,id: String): Unit =
+    Jdbc.rows(c,"SELECT version,metadata FROM manure.search_versions WHERE artifact_id=?",Exact.utf8(id)) { r =>
+      (Exact.string(r.getBytes(1)),CurrentWire.parse(Exact.string(r.getBytes(2))))
+    }.foreach { (version,value) =>
+      val current = CurrentWire.encode(wire.Artifact.codecJson,storedSnapshot(value))
+      if current != value then Jdbc.exec(c,"UPDATE manure.search_versions SET metadata=? WHERE artifact_id=? AND version=?",Exact.utf8(current.noSpaces),Exact.utf8(id),Exact.utf8(version))
+    }
   def pinned(c: Connection,id: String,version: String): wire.Artifact =
     Jdbc.rows(c,"SELECT metadata FROM manure.search_versions WHERE artifact_id=? AND version=?",Exact.utf8(id),Exact.utf8(version)) { r =>
-      CurrentWire.decode(wire.Artifact.codecJson,CurrentWire.parse(Exact.string(r.getBytes(1))))
+      storedSnapshot(CurrentWire.parse(Exact.string(r.getBytes(1))))
     }.headOption.getOrElse(throw DomainError("search-not-ready"))
 
 final class Search(database: JdbcTransactions, root: manure.storage.RootLease, config: Config,
@@ -60,13 +80,15 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
   def query(identity: Identity,q: wire.SearchQuery,origin: ApiOrigin): IO[wire.SearchPage] = IO {
     Require(auth.live(identity), "unauthorized")
     Require(q.query.nonEmpty && q.query.length <= 4096 && q.limit > 0 && q.limit <= config.limits.maxListLimit && q.cursor.isEmpty, "bad-envelope")
+    MetadataRules.validate(q.filter.tags,q.filter.hostname,q.filter.projectPath)
     val mode = q.mode match
       case wire.SearchMode.Lexical => RetrievalMode.Lexical
       case wire.SearchMode.Semantic => RetrievalMode.Semantic
       case wire.SearchMode.Hybrid => RetrievalMode.Hybrid
     Require(mode == RetrievalMode.Lexical || embedding.nonEmpty, "search-unavailable")
     val filters = q.filter.visibility.map(v => filter("visibility",CurrentWire.visibility(v).wire)).toVector ++
-      q.filter.kind.map(k => filter("kind",CurrentWire.kind(k).wire)).toVector ++ q.filter.createdByUser.map(u => filter("createdByUser",u)).toVector
+      q.filter.kind.map(k => filter("kind",CurrentWire.kind(k).wire)).toVector ++ q.filter.createdByUser.map(u => filter("createdByUser",u)).toVector ++
+      q.filter.tags.map(tag => filter(projection.tagKey(tag),tag)) ++ q.filter.hostname.map(filter("hostname",_)) ++ q.filter.projectPath.map(filter("projectPath",_))
     (mode,filters)
   }.flatMap { (mode,filters) =>
     val vector = if mode == RetrievalMode.Lexical then IO.pure(None) else embedding.get.query(q.query).map(Some(_))
@@ -79,7 +101,13 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
         if !auth.live(identity) || !engine.visible(c,query.copy(now=EpochSeconds.fromDouble(clock.now)),hit.id) then None
         else
           val a = projection.pinned(c,hit.id,hit.version).copy(contentUrl=config.contentUrl(hit.id,origin))
-          val field = if hit.chunk.provenance.field == "name" then wire.EvidenceField.Name else wire.EvidenceField.ManifestPath
+          val field = hit.chunk.provenance.field match
+            case "name" => wire.EvidenceField.Name
+            case "manifest-path" => wire.EvidenceField.ManifestPath
+            case "tag" => wire.EvidenceField.Tag
+            case "hostname" => wire.EvidenceField.Hostname
+            case "project-path" => wire.EvidenceField.ProjectPath
+            case _ => throw DomainError("unavailable")
           Some(wire.SearchHit(a,hit.version,hit.generation,projection.policy,hit.profile,hit.embeddingSpace,
             List(wire.SearchEvidence(field,hit.chunk.provenance.pointer,hit.chunk.text,hit.score)),hit.score))
       }

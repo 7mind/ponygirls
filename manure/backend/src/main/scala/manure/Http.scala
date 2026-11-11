@@ -181,8 +181,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       case _: wire.Command.Logout =>
         IO(mutation(req,ctx,c)) *> artifacts.logout(required(c)).as(wire.Result.Ok())
       case wire.Command.ListArtifacts(q) => catalogue.list(required(c),q).map { (items,next) => wire.Result.Catalogue(wire.CataloguePage(items.map(summary(ctx,_)).toList,next)) }
-      case wire.Command.InitUpload(name,kind,visibility,expiry,files) =>
-        IO(mutation(req,ctx,c)) *> artifacts.init(required(c),InitUpload(name,CurrentWire.kind(kind),CurrentWire.visibility(visibility),CurrentWire.manifest(files),expiry.map(_.toLong)))
+      case wire.Command.InitUpload(name,kind,visibility,expiry,files,tags,hostname,projectPath) =>
+        IO(mutation(req,ctx,c)) *> artifacts.init(required(c),InitUpload(name,CurrentWire.kind(kind),CurrentWire.visibility(visibility),CurrentWire.manifest(files),expiry.map(_.toLong),tags.toVector,hostname,projectPath))
           .map(a => wire.Result.UploadInitialized(a.artifact.id,config.limits.chunkBytes,url(ctx,a.artifact.id),a.externalPassword))
       case wire.Command.GetArtifact(id) => artifacts.info(required(c),id).map(a => wire.Result.ArtifactInfo(summary(ctx,a)))
       case wire.Command.GetManifest(id) =>

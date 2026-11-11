@@ -77,6 +77,7 @@ object CataloguePolicy:
     catch case _: IllegalArgumentException | _: java.nio.charset.CharacterCodingException => throw DomainError("bad-envelope")
   def prepare(q: wire.CatalogueQuery,limits: Limits,now: Double): Selection =
     Require(q.limit > 0 && q.limit <= limits.maxListLimit && q.limit < Int.MaxValue, "bad-envelope")
+    MetadataRules.validate(q.tags,q.hostname,q.projectPath)
     try Exact.utf8(q.query) catch case _: java.nio.charset.CharacterCodingException => throw DomainError("bad-envelope")
     Selection(q,q.cursor.map(decode(_,q)),now)
   def select(values: Iterable[Artifact],selection: Selection): Vector[Artifact] =
@@ -85,7 +86,8 @@ object CataloguePolicy:
       (q.includeExpired || !a.expired(selection.now)) &&
       q.visibility.forall(v => v.toString.toLowerCase(java.util.Locale.ROOT) == a.visibility.wire) &&
       q.state.forall(s => s.toString.toLowerCase(java.util.Locale.ROOT) == a.state.wire) &&
-      (q.query.isEmpty || Exact.matching(a.name).contains(selection.matching) || Exact.matching(a.id).contains(selection.matching)) &&
+      q.tags.forall(a.tags.contains) && q.hostname.forall(v => a.hostname.contains(v)) && q.projectPath.forall(v => a.projectPath.contains(v)) &&
+      (q.query.isEmpty || (Vector(a.name,a.id) ++ a.tags ++ a.hostname ++ a.projectPath).exists(v => Exact.matching(v).contains(selection.matching))) &&
       selection.boundary.forall(b => compare(position(a,q),b,q) > 0)
     }.toVector.sortWith((a,b) => compare(position(a,q),position(b,q),q) < 0).take(selection.fetch)
 

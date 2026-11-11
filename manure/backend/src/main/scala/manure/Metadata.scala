@@ -109,9 +109,15 @@ private[manure] object CatalogueSql:
       params :+= s.now
     q.visibility.foreach { v => clauses :+= "a.visibility=?"; params :+= Exact.utf8(v.toString.toLowerCase(java.util.Locale.ROOT)) }
     q.state.foreach { v => clauses :+= "a.state=?"; params :+= Exact.utf8(v.toString.toLowerCase(java.util.Locale.ROOT)) }
+    q.tags.foreach { tag =>
+      clauses :+= "EXISTS(SELECT 1 FROM manure.artifact_tags t WHERE t.artifact_id=a.id AND t.tag=?)"
+      params :+= Exact.utf8(tag)
+    }
+    q.hostname.foreach { value => clauses :+= "a.hostname=?"; params :+= Exact.utf8(value) }
+    q.projectPath.foreach { value => clauses :+= "a.project_path=?"; params :+= Exact.utf8(value) }
     if q.query.nonEmpty then
-      clauses :+= "(position(?::bytea in a.name_match)>0 OR position(?::bytea in a.id)>0)"
-      params ++= Vector(Exact.utf8(s.matching),Exact.utf8(s.matching))
+      clauses :+= "(position(?::bytea in a.name_match)>0 OR position(?::bytea in a.id)>0 OR position(?::bytea in a.hostname_match)>0 OR position(?::bytea in a.project_path_match)>0 OR EXISTS(SELECT 1 FROM manure.artifact_tags t WHERE t.artifact_id=a.id AND position(?::bytea in t.tag_match)>0))"
+      params ++= Vector.fill(5)(Exact.utf8(s.matching))
     s.boundary.foreach { b =>
       b.value match
         case Value.Never =>
@@ -146,7 +152,7 @@ private[manure] final class PostgresTxn(c: Connection,projection: SearchProjecti
     text(r,"created_by_user"),text(r,"created_by_token"),text(r,"created_at"),time(r,"created_at_s"),
     optional(r,"expires_at"),optionalTime(r,"expires_at_s"),UploadState.parse(text(r,"state")),
     r.getLong("total_bytes"),r.getLong("file_count"),r.getLong("reserved_bytes"),optional(r,"ext_pwd_hash"),
-    time(r,"last_activity_at"),text(r,"manifest_json"))
+    time(r,"last_activity_at"),text(r,"manifest_json"),MetadataRules.decodeTags(text(r,"tags_json")),optional(r,"hostname"),optional(r,"project_path"))
   def artifact(id: String): Option[Artifact] = rows(c,"SELECT * FROM manure.artifacts WHERE id=? FOR UPDATE",Exact.utf8(id))(readArtifact).headOption
   def artifacts(after: Option[String], limit: Int): Vector[Artifact] =
     Require(limit > 0 && limit <= 10000, "bad-envelope")
@@ -158,16 +164,18 @@ private[manure] final class PostgresTxn(c: Connection,projection: SearchProjecti
     rows(c,sql,params*)(readArtifact)
   def put(a: Artifact): Unit =
     exec(c,"""INSERT INTO manure.artifacts
-    (id,name,kind,visibility,created_by_user,created_by_token,created_at,created_at_s,expires_at,expires_at_s,state,total_bytes,file_count,reserved_bytes,ext_pwd_hash,last_activity_at,manifest_json,created_at_s_value,expires_at_s_value,last_activity_at_value)
-    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
+    (id,name,kind,visibility,created_by_user,created_by_token,created_at,created_at_s,expires_at,expires_at_s,state,total_bytes,file_count,reserved_bytes,ext_pwd_hash,last_activity_at,manifest_json,tags_json,hostname,project_path,created_at_s_value,expires_at_s_value,last_activity_at_value)
+    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET
     name=excluded.name,kind=excluded.kind,visibility=excluded.visibility,created_by_user=excluded.created_by_user,
     created_by_token=excluded.created_by_token,created_at=excluded.created_at,created_at_s=excluded.created_at_s,
     expires_at=excluded.expires_at,expires_at_s=excluded.expires_at_s,state=excluded.state,total_bytes=excluded.total_bytes,
     file_count=excluded.file_count,reserved_bytes=excluded.reserved_bytes,ext_pwd_hash=excluded.ext_pwd_hash,
     last_activity_at=excluded.last_activity_at,manifest_json=excluded.manifest_json,
+    tags_json=excluded.tags_json,hostname=excluded.hostname,project_path=excluded.project_path,
     created_at_s_value=excluded.created_at_s_value,expires_at_s_value=excluded.expires_at_s_value,last_activity_at_value=excluded.last_activity_at_value""",
-    Exact.utf8(a.id),Exact.utf8(a.name),Exact.utf8(a.kind.wire),Exact.utf8(a.visibility.wire),Exact.utf8(a.createdByUser),Exact.utf8(a.createdByToken),Exact.utf8(a.createdAt),Exact.timestamp(a.createdAtSeconds),bytes(a.expiresAt),bits(a.expiresAtSeconds),Exact.utf8(a.state.wire),a.totalBytes,a.fileCount,a.reservedBytes,bytes(a.externalPasswordHash),Exact.timestamp(a.lastActivityAt),Exact.utf8(a.manifestJson),a.createdAtSeconds,double(a.expiresAtSeconds),a.lastActivityAt)
+    Exact.utf8(a.id),Exact.utf8(a.name),Exact.utf8(a.kind.wire),Exact.utf8(a.visibility.wire),Exact.utf8(a.createdByUser),Exact.utf8(a.createdByToken),Exact.utf8(a.createdAt),Exact.timestamp(a.createdAtSeconds),bytes(a.expiresAt),bits(a.expiresAtSeconds),Exact.utf8(a.state.wire),a.totalBytes,a.fileCount,a.reservedBytes,bytes(a.externalPasswordHash),Exact.timestamp(a.lastActivityAt),Exact.utf8(a.manifestJson),Exact.utf8(MetadataRules.encodeTags(a.tags)),bytes(a.hostname),bytes(a.projectPath),a.createdAtSeconds,double(a.expiresAtSeconds),a.lastActivityAt)
     CatalogueProjection.backfill(c,a)
+    ArtifactMetadataProjection.backfill(c,a)
     projection.put(c,a)
   def delete(id: String): Unit =
     projection.remove(c,id); revokeArtifact(id); clearReceipts(id); exec(c,"DELETE FROM manure.artifacts WHERE id=?",Exact.utf8(id))

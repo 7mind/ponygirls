@@ -31,7 +31,7 @@ final class HttpSuite extends FunSuite:
       .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
   private def run(body: (BackendFixture,Http) => IO[Unit]): Unit = BackendFixture.resource(true).use(f => body(f,app(f))).unsafeRunSync()
   test("password retrieval is explicit, live-authenticated and strict cookie-Origin guarded") { run { (f,h) => for
-    a <- f.artifacts.init(f.identity,InitUpload("external",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+    a <- f.artifacts.init(f.identity,InitUpload("external",ArtifactKind.Directory,Visibility.External,Vector.empty,None,Vector.empty,None,None))
     c = wire.Command.GetExternalPassword(a.artifact.id)
     anonymous <- h.app.run(command(c,None))
     _ <- IO(assertEquals(anonymous.status.code,401))
@@ -51,14 +51,14 @@ final class HttpSuite extends FunSuite:
     _ <- IO(assertEquals(revoked.status.code,401))
   yield () }}
   test("recoverable password never enters ordinary management responses or sidecars") { run { (f,h) => for
-    a <- f.artifacts.init(f.identity,InitUpload("no secret metadata",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+    a <- f.artifacts.init(f.identity,InitUpload("no secret metadata",ArtifactKind.Directory,Visibility.External,Vector.empty,None,Vector.empty,None,None))
     _ <- IO.blocking {
       val sidecar=java.nio.file.Files.readString(f.rootPath.resolve("staging/"+a.artifact.id+".json"))
       assert(!sidecar.contains(a.externalPassword.get))
     }
     _ <- f.artifacts.finish(f.identity,a.artifact.id)
     _ <- Vector[wire.Command](wire.Command.GetArtifact(a.artifact.id),wire.Command.GetManifest(a.artifact.id),
-      wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None))).traverse_ { c =>
+      wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None,Nil,None,None))).traverse_ { c =>
       h.app.run(command(c,Some(f.token))).flatMap(r => r.as[String].map { text =>
         assertEquals(r.status.code,200);assert(!text.contains(a.externalPassword.get));assert(!text.contains("externalPassword"))
       })
@@ -82,7 +82,7 @@ final class HttpSuite extends FunSuite:
     response <- h.app.run(command(wire.Command.GetCapabilities(),None))
     body <- response.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
     capabilities = body.result.asInstanceOf[wire.Result.CapabilityInfo].capabilities
-    query = wire.CatalogueQuery("Straße",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,1,None)
+    query = wire.CatalogueQuery("Straße",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,1,None,Nil,None,None)
     cursor = CataloguePolicy.encode(CataloguePolicy.Position(CataloguePolicy.Value.Text("Straße"),"a"*32),query)
     policy = CurrentWire.parse(Exact.string(java.util.Base64.getUrlDecoder.decode(cursor))).hcursor.get[String]("policy").toOption.get
     _ <- IO { assertEquals(response.status.code,200);assertEquals(policy,"utf8-casefold-16.0.0-v1");assertEquals(capabilities.cataloguePolicy,policy) }
@@ -100,7 +100,7 @@ final class HttpSuite extends FunSuite:
     _ <- IO(assertEquals(traversal.status.code,404))
   yield () }}
   test("generated management mutations require exact Origin for cookie but absent allowed bearer") { run { (f,h) =>
-    val init = wire.Command.InitUpload("empty",wire.ArtifactKind.Directory,wire.Visibility.Internal,None,Nil)
+    val init = wire.Command.InitUpload("empty",wire.ArtifactKind.Directory,wire.Visibility.Internal,None,Nil,Nil,None,None)
     for
       bearer <- h.app.run(command(init,Some(f.token)))
       _ <- IO(assertEquals(bearer.status.code,200))
@@ -140,7 +140,7 @@ final class HttpSuite extends FunSuite:
         who <- h.app.run(command(wire.Command.Whoami(),Some(agentToken)))
         principal <- who.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
         _ <- IO { assertEquals(who.status.code,200); assert(principal.result.isInstanceOf[wire.Result.Identity]) }
-        listed <- h.app.run(command(wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None)),Some(agentToken)))
+        listed <- h.app.run(command(wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None,Nil,None,None)),Some(agentToken)))
         _ <- IO(assertEquals(listed.status.code,200))
         rejected <- h.app.run(login(agentToken))
         _ <- IO { assert(cookies(rejected).isEmpty,"rejected browser login must not set cookies"); assertEquals(rejected.status.code,403) }
@@ -156,7 +156,7 @@ final class HttpSuite extends FunSuite:
       cookie.fold(r)(v => r.putHeaders(Header.Raw(CIString("Cookie"),v)))
     for
       a <- f.artifacts.init(f.identity,InitUpload("navigation",ArtifactKind.Directory,Visibility.Internal,
-        Vector(ManifestEntry("index.html",false,bytes.length,SecretCodec.sha256(bytes)),ManifestEntry("nested/secret.md",false,bytes.length,SecretCodec.sha256(bytes))),None))
+        Vector(ManifestEntry("index.html",false,bytes.length,SecretCodec.sha256(bytes)),ManifestEntry("nested/secret.md",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       id = a.artifact.id
       _ <- f.artifacts.putChunk(f.identity,id,"nested/secret.md",0,bytes,SecretCodec.sha256(bytes))
       _ <- f.artifacts.putChunk(f.identity,id,"index.html",0,bytes,SecretCodec.sha256(bytes))
@@ -240,7 +240,7 @@ final class HttpSuite extends FunSuite:
       sub = app(f,_.copy(contentMode="subdomain",contentSuffix="localhost"))
       isolated <- sub.app.run(navigate("/",Some(session)).putHeaders(Header.Raw(CIString("Host"),id+".localhost:47329")))
       _ <- IO { assertEquals(isolated.status.code,401); assert(!isolated.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
-      other <- f.artifacts.init(f.identity,InitUpload("other internal",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
+      other <- f.artifacts.init(f.identity,InitUpload("other internal",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
       _ <- f.artifacts.finish(f.identity,other.artifact.id)
       wrongArtifact <- h.app.run(navigate(s"/view/${other.artifact.id}/",Some(grant)))
       _ <- IO { assertEquals(wrongArtifact.status.code,200); assert(!wrongArtifact.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
@@ -266,7 +266,7 @@ final class HttpSuite extends FunSuite:
   test("raw chunks/download byte ranges stream current contract and no secret in manifests") { run { (f,h) =>
     val bytes = Exact.utf8("0123456789")
     for
-      initialized <- f.artifacts.init(f.identity,InitUpload("range",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry("a+b.txt",false,bytes.length,SecretCodec.sha256(bytes))),None))
+      initialized <- f.artifacts.init(f.identity,InitUpload("range",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry("a+b.txt",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       id = initialized.artifact.id
       put <- h.app.run(request(Method.PUT,s"/api/current/artifacts/$id/chunks?path=a%2Bb.txt&offset=0",Some(f.token))
         .withEntity(bytes).putHeaders(Header.Raw(CIString("X-Chunk-SHA256"),SecretCodec.sha256(bytes))))
@@ -286,7 +286,7 @@ final class HttpSuite extends FunSuite:
   test("content hosting preserves user styles, inline scripts, no API and security headers") { run { (f,h) =>
     val bytes = Exact.utf8("user css")
     for
-      a <- f.artifacts.init(f.identity,InitUpload("site",ArtifactKind.Directory,Visibility.Public,Vector(ManifestEntry("styles.css",false,bytes.length,SecretCodec.sha256(bytes))),None))
+      a <- f.artifacts.init(f.identity,InitUpload("site",ArtifactKind.Directory,Visibility.Public,Vector(ManifestEntry("styles.css",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       _ <- f.artifacts.putChunk(f.identity,a.artifact.id,"styles.css",0,bytes,SecretCodec.sha256(bytes))
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
       response <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/styles.css"))
@@ -309,7 +309,7 @@ final class HttpSuite extends FunSuite:
       response.headers.headers.find(_.name==CIString("Set-Cookie")).get.value.split(";",2)(0)
     }
     for
-      external <- f.artifacts.init(f.identity,InitUpload("external forms",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+      external <- f.artifacts.init(f.identity,InitUpload("external forms",ArtifactKind.Directory,Visibility.External,Vector.empty,None,Vector.empty,None,None))
       _ <- f.artifacts.finish(f.identity,external.artifact.id)
       unlocked <- h.app.run(form(external.artifact.id,"unlock","password="+external.externalPassword.get))
       cookie <- emptyRedirect(unlocked)
@@ -317,7 +317,7 @@ final class HttpSuite extends FunSuite:
       loggedOut <- h.app.run(form(external.artifact.id,"logout","",Some(cookie)))
       _ <- emptyRedirect(loggedOut)
       _ <- IO(assert(loggedOut.headers.headers.exists(x => x.name==CIString("Set-Cookie") && x.value.contains("Max-Age=0"))))
-      internal <- f.artifacts.init(f.identity,InitUpload("internal forms",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
+      internal <- f.artifacts.init(f.identity,InitUpload("internal forms",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
       _ <- f.artifacts.finish(f.identity,internal.artifact.id)
       handoff <- f.artifacts.createGrant(f.identity,internal.artifact.id)
       redeemed <- h.app.run(form(internal.artifact.id,"grant","grant="+handoff))
@@ -327,7 +327,7 @@ final class HttpSuite extends FunSuite:
   test("locked external landing alone prompts; unknown assets and revoked file grants are never a 200 password form") { run { (f,h) =>
     val bytes=Exact.utf8("private artifact bytes")
     for
-      initialized <- f.artifacts.init(f.identity,InitUpload("locked",ArtifactKind.File,Visibility.External,Vector(ManifestEntry("e.txt",false,bytes.length,SecretCodec.sha256(bytes))),None))
+      initialized <- f.artifacts.init(f.identity,InitUpload("locked",ArtifactKind.File,Visibility.External,Vector(ManifestEntry("e.txt",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       id=initialized.artifact.id
       _ <- f.artifacts.putChunk(f.identity,id,"e.txt",0,bytes,SecretCodec.sha256(bytes))
       _ <- f.artifacts.finish(f.identity,id)
@@ -359,7 +359,7 @@ final class HttpSuite extends FunSuite:
     def navigate(path: String): Request[IO] = request(Method.GET,path).putHeaders(
       Header.Raw(CIString("Sec-Fetch-Mode"),"navigate"),Header.Raw(CIString("Sec-Fetch-Dest"),"document"))
     for
-      a <- f.artifacts.init(f.identity,InitUpload("external navigation",ArtifactKind.Directory,Visibility.External,Vector.empty,None))
+      a <- f.artifacts.init(f.identity,InitUpload("external navigation",ArtifactKind.Directory,Visibility.External,Vector.empty,None,Vector.empty,None,None))
       id = a.artifact.id
       _ <- f.artifacts.finish(f.identity,id)
       _ <- Vector(h,app(f,_.copy(unlockShellDir=None))).zipWithIndex.traverse_ { (handler,index) =>
@@ -390,10 +390,10 @@ final class HttpSuite extends FunSuite:
   test("metadata-only management retrieval filters ready/expiry and excludes payload secrets") { run { (f,h) =>
     val bytes = Exact.utf8("secret payload body no index")
     for
-      a <- f.artifacts.init(f.identity,InitUpload("Purple hayneedle",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry("hayneedle.txt",false,bytes.length,SecretCodec.sha256(bytes))),None))
+      a <- f.artifacts.init(f.identity,InitUpload("Purple hayneedle",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry("hayneedle.txt",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       _ <- f.artifacts.putChunk(f.identity,a.artifact.id,"hayneedle.txt",0,bytes,SecretCodec.sha256(bytes))
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
-      query = wire.SearchQuery("hayneedle",wire.SearchMode.Lexical,wire.SearchFilter(None,None,None),20,None)
+      query = wire.SearchQuery("hayneedle",wire.SearchMode.Lexical,wire.SearchFilter(None,None,None,Nil,None,None),20,None)
       unauthorized <- h.app.run(command(wire.Command.Search(query),None))
       _ <- IO(assertEquals(unauthorized.status.code,401))
       response <- h.app.run(command(wire.Command.Search(query),Some(f.token)))
@@ -402,6 +402,38 @@ final class HttpSuite extends FunSuite:
       missing <- h.app.run(command(wire.Command.Search(query.copy(query="secret")),Some(f.token)))
       absent <- missing.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
       _ <- IO(assertEquals(absent.result.asInstanceOf[wire.Result.SearchResults].page.hits,Nil))
+    yield ()
+  }}
+
+  test("current HTTP init/catalogue/search roundtrip explicit metadata with closed validation and evidence") { run { (f,h) =>
+    val tags=List("tagneedle"," release ","CASE")
+    val host="hostneedle.例"
+    val project="/projectneedle/𐀀"
+    def result(response: org.http4s.Response[IO]): IO[wire.Result] = response.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)).result)
+    def search(q: wire.SearchQuery): IO[wire.SearchPage] = h.app.run(command(wire.Command.Search(q),Some(f.token))).flatMap(result).map(_.asInstanceOf[wire.Result.SearchResults].page)
+    for
+      response <- h.app.run(command(wire.Command.InitUpload("artifact",wire.ArtifactKind.Directory,wire.Visibility.Internal,None,Nil,tags,Some(host),Some(project)),Some(f.token)))
+      initialized <- result(response)
+      id=initialized.asInstanceOf[wire.Result.UploadInitialized].artifactId
+      info <- h.app.run(command(wire.Command.GetArtifact(id),Some(f.token))).flatMap(result)
+      artifact=info.asInstanceOf[wire.Result.ArtifactInfo].artifact
+      _ <- IO { assertEquals(artifact.tags,tags); assertEquals(artifact.hostname,Some(host)); assertEquals(artifact.projectPath,Some(project)) }
+      _ <- f.artifacts.finish(f.identity,artifact.artifactId)
+      _ <- Vector(("tagneedle",wire.EvidenceField.Tag),(host,wire.EvidenceField.Hostname),(project,wire.EvidenceField.ProjectPath)).traverse_ { (text,field) =>
+        search(wire.SearchQuery(text,wire.SearchMode.Lexical,wire.SearchFilter(None,None,None,tags,Some(host),Some(project)),1,None)).map { page =>
+          assertEquals(page.total,1L,clue(text)); assertEquals(page.hits.map(_.artifact.artifactId),List(artifact.artifactId))
+          assertEquals(page.hits.head.evidence.map(_.field),List(field))
+          assertEquals(page.hits.head.artifact.tags,tags)
+        }
+      }
+      _ <- Vector(wire.SearchFilter(None,None,None,List("case"),None,None),wire.SearchFilter(None,None,None,Nil,Some(host.toUpperCase(java.util.Locale.ROOT)),None),wire.SearchFilter(None,None,None,Nil,None,Some(project+"/"))).traverse_ { filter =>
+        search(wire.SearchQuery("tagneedle",wire.SearchMode.Lexical,filter,1,None)).map(page => assertEquals(page.total,0L))
+      }
+      bad <- h.app.run(command(wire.Command.Search(wire.SearchQuery("tagneedle",wire.SearchMode.Lexical,wire.SearchFilter(None,None,None,List("\ufeff"),None,None),1,None)),Some(f.token)))
+      _ <- IO(assertEquals(bad.status.code,400))
+      listed <- h.app.run(command(wire.Command.ListArtifacts(wire.CatalogueQuery("PROJECTNEEDLE",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,1,None,tags,Some(host),Some(project))),Some(f.token)))
+      page <- result(listed)
+      _ <- IO(assertEquals(page.asInstanceOf[wire.Result.Catalogue].page.artifacts.map(_.artifactId),List(artifact.artifactId)))
     yield ()
   }}
 
@@ -420,7 +452,7 @@ final class HttpSuite extends FunSuite:
         dir
       }
       h = app(f,_.copy(viewerDir=Some(dir)))
-      a <- f.artifacts.init(f.identity,InitUpload("viewer",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry(name,false,bytes.length,SecretCodec.sha256(bytes))),None))
+      a <- f.artifacts.init(f.identity,InitUpload("viewer",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry(name,false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       id = a.artifact.id
       base = s"/view/$id"
       _ <- f.artifacts.putChunk(f.identity,id,name,0,bytes,SecretCodec.sha256(bytes))
@@ -468,7 +500,7 @@ final class HttpSuite extends FunSuite:
       absent <- app(f,_.copy(viewerDir=Some(dir.resolve("missing")))).app.run(request(Method.GET,base + "/").putHeaders(hdr("Accept","text/html")))
       _ <- IO(assertEquals(absent.status.code,404))
       site <- f.artifacts.init(f.identity,InitUpload("directory",ArtifactKind.Directory,Visibility.Public,
-        Vector("index.html","note.md").map(n => ManifestEntry(n,false,bytes.length,SecretCodec.sha256(bytes))),None))
+        Vector("index.html","note.md").map(n => ManifestEntry(n,false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       _ <- Vector("index.html","note.md").traverse_(n => f.artifacts.putChunk(f.identity,site.artifact.id,n,0,bytes,SecretCodec.sha256(bytes)))
       _ <- f.artifacts.finish(f.identity,site.artifact.id)
       _ <- Vector("/","/note.md").traverse_ { suffix =>
@@ -505,7 +537,7 @@ final class HttpSuite extends FunSuite:
     for
       a <- f.artifacts.init(f.identity,InitUpload("directory",ArtifactKind.Directory,Visibility.Public,
         Vector(ManifestEntry("nested",true,0,""),ManifestEntry("empty",true,0,""),
-          ManifestEntry("nested/leaf",true,0,""),ManifestEntry("a & <b>.md",false,0,SecretCodec.sha256(Array.emptyByteArray))),None))
+          ManifestEntry("nested/leaf",true,0,""),ManifestEntry("a & <b>.md",false,0,SecretCodec.sha256(Array.emptyByteArray))),None,Vector.empty,None,None))
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
       base = s"/view/${a.artifact.id}"
       root <- h.app.run(request(Method.GET,base + "/"))
@@ -535,7 +567,7 @@ final class HttpSuite extends FunSuite:
     val h = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))))
     for
       a <- f.artifacts.init(f.identity,InitUpload("<directory>",ArtifactKind.Directory,Visibility.Public,
-        files.map { (p,b) => ManifestEntry(p,false,Exact.utf8(b).length,SecretCodec.sha256(Exact.utf8(b))) },None))
+        files.map { (p,b) => ManifestEntry(p,false,Exact.utf8(b).length,SecretCodec.sha256(Exact.utf8(b))) },None,Vector.empty,None,None))
       _ <- files.traverse_ { (p,b) => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,Exact.utf8(b),SecretCodec.sha256(Exact.utf8(b))) }
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
       base = s"/view/${a.artifact.id}"
@@ -563,7 +595,7 @@ final class HttpSuite extends FunSuite:
       response <- sub.app.run(request(Method.GET,"/").putHeaders(Header.Raw(CIString("Host"),a.artifact.id+".localhost:47329")))
       subHtml <- response.as[String]
       _ <- IO { assertEquals(response.status.code,200); assert(subHtml.contains("href=\"/site/\"")); assert(subHtml.contains("data-raw-url=\"/__manure/raw/README.md\"")) }
-      empty <- f.artifacts.init(f.identity,InitUpload("empty",ArtifactKind.Directory,Visibility.Public,Vector.empty,None))
+      empty <- f.artifacts.init(f.identity,InitUpload("empty",ArtifactKind.Directory,Visibility.Public,Vector.empty,None,Vector.empty,None,None))
       _ <- f.artifacts.finish(f.identity,empty.artifact.id)
       emptyResponse <- h.app.run(request(Method.GET,s"/view/${empty.artifact.id}/"))
       emptyHtml <- emptyResponse.as[String]
@@ -580,7 +612,7 @@ final class HttpSuite extends FunSuite:
     val h = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))))
     for
       a <- f.artifacts.init(f.identity,InitUpload("readme cases",ArtifactKind.Directory,Visibility.Public,
-        files.map(p => ManifestEntry(p,false,bytes.length,SecretCodec.sha256(bytes))),None))
+        files.map(p => ManifestEntry(p,false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
       _ <- files.traverse_(p => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,bytes,SecretCodec.sha256(bytes)))
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
       base = s"/view/${a.artifact.id}"

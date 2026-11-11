@@ -14,7 +14,7 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
   private def run(body: BackendFixture => IO[Unit]): Unit = BackendFixture.resource(postgres).use(body).unsafeRunSync()
   private val bytes = Exact.utf8("durable 馬 payload")
   private def request(visibility: Visibility = Visibility.Internal,data: Array[Byte] = bytes): InitUpload =
-    InitUpload("name\u0000É",ArtifactKind.File,visibility,Vector(ManifestEntry("資料/file.txt",false,data.length,SecretCodec.sha256(data))),None)
+    InitUpload("name\u0000É",ArtifactKind.File,visibility,Vector(ManifestEntry("資料/file.txt",false,data.length,SecretCodec.sha256(data))),None,Vector.empty,None,None)
   private def uploaded(f: BackendFixture,visibility: Visibility = Visibility.Internal): IO[Artifact] = for
     initialized <- f.artifacts.init(f.identity,request(visibility))
     _ <- f.artifacts.putChunk(f.identity,initialized.artifact.id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
@@ -24,6 +24,26 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     case Left(error: DomainError) => assertEquals(error.code,code)
     case result => fail("expected sanitized " + code + ", got " + result.map(_ => "success"))
   }
+  test("init-only metadata persists through publication and ordinary patches without automatic provenance") { run { f =>
+    val input=request().copy(tags=Vector("tag\u0000馬"," Release ","𐀀"*128),hostname=Some(" Host "),projectPath=Some(" /資料/𐀀 "))
+    for
+      a <- f.artifacts.init(f.identity,input)
+      _ <- f.artifacts.putChunk(f.identity,a.artifact.id,"資料/file.txt",0,bytes,SecretCodec.sha256(bytes))
+      ready <- f.artifacts.finish(f.identity,a.artifact.id)
+      changed <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(Some("renamed"),Some(Visibility.Public),TtlPatch.Unchanged))
+      stored <- f.artifacts.info(f.other,a.artifact.id)
+      _ <- IO {
+        Vector(a.artifact,ready,changed.artifact,stored).foreach { value =>
+          assertEquals(value.tags,input.tags); assertEquals(value.hostname,input.hostname); assertEquals(value.projectPath,input.projectPath)
+        }
+      }
+      omitted <- f.artifacts.init(f.identity,request())
+      _ <- IO { assertEquals(omitted.artifact.tags,Vector.empty); assertEquals(omitted.artifact.hostname,None); assertEquals(omitted.artifact.projectPath,None) }
+      _ <- Vector(input.copy(tags=Vector("duplicate","duplicate")),input.copy(hostname=Some("\ufeff")),input.copy(projectPath=Some("𐀀"*4097))).traverse_ { bad =>
+        fails("bad-envelope",f.artifacts.init(f.identity,bad))
+      }
+    yield ()
+  }}
   test("recoverable password lifecycle is shared and read-only across incomplete and expired states") { run { f => for
     a <- f.artifacts.init(f.identity,request(Visibility.External))
     copied <- f.artifacts.externalPassword(f.other,a.artifact.id)
@@ -116,7 +136,7 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     _ <- IO(assertEquals(visible.id,a.artifact.id))
     status <- f.artifacts.status(f.other,a.artifact.id)
     _ <- IO(assertEquals(status.state,UploadState.Uploading))
-    page <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,manure.api.CatalogueQuery("",false,None,None,manure.api.CatalogueSort.CreatedAt,manure.api.SortDirection.Desc,20,None))
+    page <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,manure.api.CatalogueQuery("",false,None,None,manure.api.CatalogueSort.CreatedAt,manure.api.SortDirection.Desc,20,None,Nil,None,None))
     _ <- IO(assert(page._1.exists(_.id == a.artifact.id)))
     _ <- fails("session-not-owned",f.artifacts.patch(f.other,a.artifact.id,ArtifactPatch(Some("forbidden"),None,TtlPatch.Unchanged)))
     updated <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(Some("owner patch"),None,TtlPatch.Unchanged))
@@ -143,7 +163,7 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
     _ <- IO { f.clock.now += 10 }
     _ <- f.artifacts.info(f.other,id)
     _ <- f.artifacts.status(f.other,id)
-    _ <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,manure.api.CatalogueQuery("",true,None,None,manure.api.CatalogueSort.Name,manure.api.SortDirection.Asc,20,None))
+    _ <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,manure.api.CatalogueQuery("",true,None,None,manure.api.CatalogueSort.Name,manure.api.SortDirection.Asc,20,None,Nil,None,None))
     _ <- f.artifacts.rotate(f.other,id)
     untouched <- f.metadata.transaction(_.artifact(id).get.lastActivityAt)
     _ <- IO(assertEquals(untouched,original))
@@ -230,7 +250,7 @@ abstract class ArtifactsContract(postgres: Boolean) extends FunSuite:
   test("directory-only, zero-byte and nested manifests preserve real empty topology") { run { f =>
     val entries = Vector(ManifestEntry("empty/deep",true),ManifestEntry("zero",false,0,SecretCodec.sha256(Array.emptyByteArray)))
     for
-      a <- f.artifacts.init(f.identity,InitUpload("dirs",ArtifactKind.Directory,Visibility.Public,entries,None))
+      a <- f.artifacts.init(f.identity,InitUpload("dirs",ArtifactKind.Directory,Visibility.Public,entries,None,Vector.empty,None,None))
       ready <- f.artifacts.finish(f.identity,a.artifact.id)
       _ <- IO { assert(Files.isDirectory(f.rootPath.resolve("live/"+ready.id+"/empty/deep"))); assertEquals(Files.size(f.rootPath.resolve("live/"+ready.id+"/zero")),0L) }
     yield ()

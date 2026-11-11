@@ -42,7 +42,7 @@ final class WideAudienceAuditSuite extends FunSuite:
     }
   yield ()
   private def publish(s: RuntimeServices,identity: Identity): IO[Artifact] = for
-    initialized <- s.artifacts.init(identity,InitUpload("audienceprobe",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None))
+    initialized <- s.artifacts.init(identity,InitUpload("audienceprobe",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
     result <- s.artifacts.finish(identity,initialized.artifact.id).attempt
     state <- s.database.transaction(c => Jdbc.rows(c,"SELECT state FROM manure.artifacts WHERE id=?",Exact.utf8(initialized.artifact.id))(r => Exact.string(r.getBytes(1))).head)
     _ <- IO(println("WIDE_AUDIENCE_PUBLICATION "+status(result)+" persistedState="+state))
@@ -50,7 +50,7 @@ final class WideAudienceAuditSuite extends FunSuite:
     _ <- IO(assertEquals(ready.state,UploadState.Ready))
   yield ready
   private def hits(s: RuntimeServices,config: Config,identity: Identity,owner: String): IO[wire.SearchPage] =
-    s.search.query(identity,wire.SearchQuery("audienceprobe",wire.SearchMode.Lexical,wire.SearchFilter(None,None,Some(owner)),20,None),config.apiOrigin)
+    s.search.query(identity,wire.SearchQuery("audienceprobe",wire.SearchMode.Lexical,wire.SearchFilter(None,None,Some(owner),Nil,None,None),20,None),config.apiOrigin)
   private def visible(s: RuntimeServices,config: Config,identity: Identity,a: Artifact): IO[Unit] = for
     page <- hits(s,config,identity,a.createdByUser)
     info <- s.artifacts.info(identity,a.id)

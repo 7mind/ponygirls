@@ -26,7 +26,7 @@ final class PostgresAdmissionSuite extends FunSuite:
     DriverManager.getConnection(cfg.jdbcUrl,cfg.user,password)
   })(c => IO.blocking(c.close()))
   private def request(size: Int): InitUpload = InitUpload("reservation",ArtifactKind.File,Visibility.Internal,
-    Vector(ManifestEntry("file",false,size,SecretCodec.sha256(Array.fill[Byte](size)(0)))),None)
+    Vector(ManifestEntry("file",false,size,SecretCodec.sha256(Array.fill[Byte](size)(0)))),None,Vector.empty,None,None)
   private def successes[A](results: Vector[Either[Throwable,A]],count: Int,code: String): Unit =
     assertEquals(results.count(_.isRight),count)
     assertEquals(results.collect { case Left(e: DomainError) => e.code },Vector.fill(results.size-count)(code))
@@ -238,7 +238,7 @@ final class PostgresAdmissionSuite extends FunSuite:
   test("forward catalogue projection bootstrap/backfill preserves original bytea and timestamp bits") { run { f =>
     val time=Math.nextUp(f.clock.now)
     val a=Artifact("a"*32,"İ\u0000Straße𐀀",ArtifactKind.Directory,Visibility.Internal,f.identity.userId,"token",
-      Exact.displayTime(time),time,None,None,UploadState.Uploading,0,0,0,None,time,"[]")
+      Exact.displayTime(time),time,None,None,UploadState.Uploading,0,0,0,None,time,"[]",Vector.empty,None,None)
     for
       _ <- f.metadata.transaction(_.put(a))
       _ <- f.database.get.transaction { c =>
@@ -256,12 +256,12 @@ final class PostgresAdmissionSuite extends FunSuite:
         assertEquals(after._2,Exact.utf8(Exact.matching(a.name)).toVector)
       }
       result <- new Catalogue(f.artifacts,f.config.limits,f.clock).list(f.other,
-        api.CatalogueQuery("i\u0307\u0000straße𐀀",true,None,None,api.CatalogueSort.Name,api.SortDirection.Asc,1,None))
+        api.CatalogueQuery("i\u0307\u0000straße𐀀",true,None,None,api.CatalogueSort.Name,api.SortDirection.Asc,1,None,Nil,None,None))
       _ <- IO(assertEquals(result._1,Vector(a)))
     yield ()
   }}
   test("trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL") { run { f =>
-    val q=api.CatalogueQuery("%_'\\\u0000 OR true --",true,None,None,api.CatalogueSort.Name,api.SortDirection.Desc,2,None)
+    val q=api.CatalogueQuery("%_'\\\u0000 OR true --",true,None,None,api.CatalogueSort.Name,api.SortDirection.Desc,2,None,Nil,None,None)
     val selection=CataloguePolicy.prepare(q,f.config.limits,f.clock.now)
     val (sql,params)=CatalogueSql.page(selection)
     for

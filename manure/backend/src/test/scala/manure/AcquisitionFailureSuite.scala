@@ -37,7 +37,7 @@ final class AcquisitionFailureSuite extends FunSuite:
         }
       val bytes = Exact.utf8("real committed bytes")
       val work = for
-        a <- f.artifacts.init(f.identity,InitUpload("commit-fault",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry("file",false,bytes.length,SecretCodec.sha256(bytes))),None))
+        a <- f.artifacts.init(f.identity,InitUpload("commit-fault",ArtifactKind.File,Visibility.Public,Vector(ManifestEntry("file",false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
         _ <- f.artifacts.putChunk(f.identity,a.artifact.id,"file",0,bytes,SecretCodec.sha256(bytes))
         _ <- f.artifacts.finish(f.identity,a.artifact.id)
         gate <- Semaphore[IO](1L)

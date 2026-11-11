@@ -35,6 +35,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   def init(identity: Identity, request: InitUpload): IO[Initialized] = serialized {
     IO {
       UploadRules.name(request.name); UploadRules.ttl(request.expiresInSeconds)
+      MetadataRules.validate(request.tags,request.hostname,request.projectPath)
       Manifest.validate(request.files,request.kind,limits)
     }.flatMap { total =>
       val password = if request.visibility == Visibility.External then Some(SecretCodec.token()) else None
@@ -43,7 +44,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       val a = Artifact(SecretCodec.artifactId(),request.name,request.kind,request.visibility,
         identity.userId,identity.tokenId,Exact.displayTime(math.floor(now)),math.floor(now),
         expiry.map(Exact.displayTime),expiry,UploadState.Uploading,total,request.files.size,total,
-        password.map(SecretCodec.sha256),now,Manifest.encode(request.files))
+        password.map(SecretCodec.sha256),now,Manifest.encode(request.files),request.tags,request.hostname,request.projectPath)
       metadata.transaction { tx =>
         Require(auth.live(identity), "unauthorized")
         Require(total <= limits.storageQuotaBytes - tx.reservation, "quota-exceeded")
