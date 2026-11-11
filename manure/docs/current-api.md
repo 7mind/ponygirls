@@ -121,7 +121,8 @@ server's hostname or a client's working directory, and cannot change through
 
 Tags are unique exact strings: at most 32, each nonblank and at most 128 Unicode
 scalars. A supplied hostname is nonblank and at most 253 scalars; a supplied
-project path is nonblank and at most 4096 scalars. Values are retained without
+project path is nonblank and at most 4096 scalars. Blank means containing only
+the query dialect's ECMAScript whitespace characters. Values are retained without
 trimming, normalization or filesystem resolution. Invalid metadata or filters
 return `BadEnvelope`. These are descriptive labels, not verified host identities
 or server-accessible filesystem locations. Avoid sensitive provenance in public
@@ -132,7 +133,8 @@ metadata filters; every requested tag must be present. Catalogue free text also
 matches casefolded literal substrings in these fields. Retrieval indexes these
 metadata fields alongside names and manifest paths, not file bytes. Evidence
 uses `Tag`, `Hostname` and `ProjectPath` with null manifest pointers. Metadata
-changes are included in source-version identity. Search expressions use
+changes are included in source-version identity. The expanded corpus uses policy
+`manure-metadata-paths-v2`. Search expressions use
 `tag:<value>`, `hostname:<value>` and `project:<value>`; only `tag:` may repeat,
 and repeated values must be unique. These filters do not remove retrieval's
 nonblank-text requirement.

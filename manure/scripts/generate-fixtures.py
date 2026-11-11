@@ -54,7 +54,7 @@ def search_fixture(published):
         ['release:2026', 'é𐐀'], 'build.example.invalid', '/work/é project')
     hit=p.SearchHit(artifact,'d'*64 if published else 'e'*64,
         '11111111-1111-4111-8111-111111111111' if published else '22222222-2222-4222-8222-222222222222',
-        'manure-metadata-paths-v1','b'*64 if published else None,'c'*64 if published else None,
+        'manure-metadata-paths-v2','b'*64 if published else None,'c'*64 if published else None,
         [p.SearchEvidence(p.EvidenceField.Name,None,artifact.name,0.625),
          p.SearchEvidence(p.EvidenceField.ManifestPath,'é/𐐀.txt','é/𐐀.txt',0.5),
          p.SearchEvidence(p.EvidenceField.Tag,None,'release:2026',0.5),
