@@ -95,6 +95,24 @@ function headingLinks(article) {
     }
     used.add(id);
     heading.id = id;
+  }
+  for (const heading of headings) {
+    const title = heading.textContent.trim();
+    const id = heading.id;
+    const authoredLabel = heading.getAttribute('aria-label');
+    const authoredReferences = heading.getAttribute('aria-labelledby');
+    const references = authoredReferences ? authoredReferences.trim().split(/\s+/u).filter(reference => used.has(reference)) : [];
+    if (references.includes(id) || (!references.length && !(authoredLabel && authoredLabel.trim()))) {
+      const label = element('span');
+      if (references.includes(id) && authoredLabel && authoredLabel.trim()) label.setAttribute('aria-label', authoredLabel);
+      let labelId = `${id}-heading-text`;
+      for (let suffix = 1; used.has(labelId); suffix++) labelId = `${id}-heading-text-${suffix}`;
+      used.add(labelId);
+      label.id = labelId;
+      label.append(...heading.childNodes);
+      heading.append(label);
+      heading.setAttribute('aria-labelledby', references.length ? references.map(reference => reference === id ? labelId : reference).join(' ') : labelId);
+    }
     const link = element('a', '#', 'heading-anchor');
     link.href = `#${encodeURIComponent(id)}`;
     link.setAttribute('aria-label', `Link to section: ${title || 'Untitled section'}`);
