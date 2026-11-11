@@ -12,6 +12,22 @@ import java.util.Base64
 
 final case class CredentialConfig(id: String, actor: Actor, scopes: Set[String], capabilities: Set[Capability], hashFile: Path)
 final case class AuthConfig(publicOrigin: String, loopbackDevelopment: Boolean, credentials: List[CredentialConfig], sessionTtlSeconds: Long, maxSessions: Int)
+object AuthConfig {
+  def validate(config: AuthConfig): URI = {
+    val uri = try new URI(config.publicOrigin) catch { case _: Exception => throw Fault("config", "invalid public origin") }
+    Require(Set("http", "https").contains(uri.getScheme) && uri.getHost != null && uri.getRawUserInfo == null && uri.getRawQuery == null && uri.getRawFragment == null && Option(uri.getRawPath).forall(_.isEmpty) && uri.getPort <= 65535, "config", "absolute origin without path required")
+    CanonicalOrigin.requireSerialized(uri, config.publicOrigin)
+    Require(uri.getScheme == "https" || config.loopbackDevelopment && Set("localhost", "127.0.0.1", "[::1]", "::1").contains(uri.getHost), "config", "HTTP is restricted to explicit loopback development")
+    Require(config.sessionTtlSeconds > 0 && config.sessionTtlSeconds <= 604800 && config.maxSessions > 0, "config", "invalid session bounds")
+    Require(config.credentials.nonEmpty && config.credentials.map(_.id).distinct.size == config.credentials.size, "config", "unique credential identities required")
+    config.credentials.foreach { c =>
+      Require(c.id.nonEmpty && c.actor.id.nonEmpty && c.scopes.nonEmpty && c.scopes.forall(_.trim.nonEmpty) && c.capabilities.nonEmpty, "config", "invalid credential grants")
+      Require(!c.capabilities.contains(Capability.Review) || c.actor.kind == ActorKind.Human, "config", "review capability requires a Human principal")
+      Require(!c.capabilities.contains(Capability.HostCapture) || c.actor.kind == ActorKind.Service, "config", "host capture requires a trusted service principal")
+    }
+    uri
+  }
+}
 final case class Principal(credentialId: String, actor: Actor, scopes: Set[String], capabilities: Set[Capability]) {
   def require(scope: String, capability: Capability): Unit = Require(scopes.contains(scope) && capabilities.contains(capability), "forbidden", "scope or capability denied")
   def identity: Identity = Identity(actor, scopes.toList.sorted, capabilities.toList.sortBy(_.toString))
@@ -37,7 +53,11 @@ final case class LoginSession(principal: Principal, cookie: String)
 final class Auth(config: AuthConfig, digests: CredentialDigests, secrets: SessionSecrets, clock: Clock) {
   private final case class Session(credentialId: String, digest: String, expiresAt: Instant)
   private var sessions = Map.empty[String, Session]
-  private val origin = validateConfig()
+  private val origin = {
+    val validated = AuthConfig.validate(config)
+    current()
+    validated
+  }
   private val secure = origin.getScheme == "https"
   val cookieName: String = if (secure) "__Host-ontology" else "ontology-dev"
   private val otherCookieName: String = if (secure) "ontology-dev" else "__Host-ontology"
@@ -56,20 +76,6 @@ final class Auth(config: AuthConfig, digests: CredentialDigests, secrets: Sessio
     entries
   }
   private def principal(c: CredentialConfig): Principal = Principal(c.id, c.actor, c.scopes, c.capabilities)
-  private def validateConfig(): URI = {
-    val uri = try new URI(config.publicOrigin) catch { case _: Exception => throw Fault("config", "invalid public origin") }
-    Require(Set("http", "https").contains(uri.getScheme) && uri.getHost != null && uri.getRawUserInfo == null && uri.getRawQuery == null && uri.getRawFragment == null && Option(uri.getRawPath).forall(_.isEmpty) && uri.getPort <= 65535, "config", "absolute origin without path required")
-    Require(uri.getScheme == "https" || config.loopbackDevelopment && Set("localhost", "127.0.0.1", "[::1]", "::1").contains(uri.getHost), "config", "HTTP is restricted to explicit loopback development")
-    Require(config.sessionTtlSeconds > 0 && config.sessionTtlSeconds <= 604800 && config.maxSessions > 0, "config", "invalid session bounds")
-    Require(config.credentials.nonEmpty && config.credentials.map(_.id).distinct.size == config.credentials.size, "config", "unique credential identities required")
-    config.credentials.foreach { c =>
-      Require(c.id.nonEmpty && c.actor.id.nonEmpty && c.scopes.nonEmpty && c.scopes.forall(_.trim.nonEmpty) && c.capabilities.nonEmpty, "config", "invalid credential grants")
-      Require(!c.capabilities.contains(Capability.Review) || c.actor.kind == ActorKind.Human, "config", "review capability requires a Human principal")
-      Require(!c.capabilities.contains(Capability.HostCapture) || c.actor.kind == ActorKind.Service, "config", "host capture requires a trusted service principal")
-    }
-    current()
-    uri
-  }
   def validateTransport(headers: RequestAuthority, mutateCookie: Boolean): Unit = {
     Require(headers.hosts.size == 1 && headers.hosts.head.equalsIgnoreCase(origin.getRawAuthority), "forbidden", "host mismatch")
     Require(headers.origins.size <= 1 && headers.origins.forall(_ == config.publicOrigin), "forbidden", "origin mismatch")

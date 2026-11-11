@@ -1,0 +1,33 @@
+{
+  "http": {"listenHost":"127.0.0.1","listenPort":19090,"maxConnections":32,"maxHeaderBytes":16384,"shutdownMs":2000,"webRoot":null},
+  "database": {
+    "jdbcUrl":"jdbc:postgresql://127.0.0.1:19092/ontology_fixture","user":"postgres","passwordFile":"/tmp/ontology-fixture/pg.password",
+    "limits":{"maxConnections":4,"maxQueued":16,"queueTimeoutMs":1000,"connectTimeoutMs":1000,"statementTimeoutMs":3000,"lockTimeoutMs":1000,"idleTransactionTimeoutMs":5000,"socketTimeoutMs":4000}
+  },
+  "auth": {
+    "publicOrigin":"http://127.0.0.1:19090","loopbackDevelopment":true,"sessionTtlSeconds":900,"maxSessions":8,
+    "credentials":[
+      {"id":"fixture-human","actor":{"id":"fixture-human","kind":"Human"},"scopes":["fixture"],"capabilities":["Read","Mutate","Capture","Review"],"hashFile":"/tmp/ontology-fixture/human.sha256"},
+      {"id":"fixture-worker","actor":{"id":"fixture-worker","kind":"Agent"},"scopes":["fixture"],"capabilities":["Read","Mutate","Capture"],"hashFile":"/tmp/ontology-fixture/worker.sha256"}
+    ]
+  },
+  "serviceActor":{"id":"fixture-service","kind":"Service"},
+  "cursorKeyFile":"/tmp/ontology-fixture/cursor.hex",
+  "query":{"maxPageRecords":32,"maxTargets":64,"maxPageBytes":262144,"maxQueryBytes":1024},
+  "review":{"presentation":{"maxTargets":32,"maxRecords":512,"maxPayloadBytes":524288},"maxRationaleBytes":4096,"maxRequestBytes":65536},
+  "capsule":{"projection":{"contexts":[{"scope":"fixture","name":"fixture-work"}],"limits":{"maxRecords":1024,"maxPayloadBytes":1048576}},"maxBaselineChain":8,"maxMaterialSnapshots":64},
+  "curation":{
+    "principal":{"credentialId":"fixture-curator-internal","actor":{"id":"fixture-curator","kind":"Agent"},"scopes":["fixture"],"capabilities":["Read","Mutate"]},
+    "scopes":["fixture"],"leaseDurationMs":10000,"attemptDurationMs":30000,
+    "guards":{"maxOrdinals":8,"maxAuditBytes":2097152,"maxInputBytes":524288,"maxPins":4096,"maxLabelChars":256},
+    "maxScanScopes":4,"maxRecoveryAttempts":8
+  },
+  "cycle":{"scanLimit":2,"recoveryLimit":2,"cleanupBudgetMs":2000},
+  "runner":{"pollEveryMs":1000,"renewEveryMs":2000,"cleanupBudgetMs":2000},
+  "curator":{"profileId":"fixture-profile","operationUrl":"http://127.0.0.1:19091/v1/chat/completions","model":"synthetic-curator","credentialFile":"/tmp/ontology-fixture/model.credential","deadlineMs":5000,"maxInputBytes":1048576,"maxResponseBytes":1048576,"maxOutputTokens":1024,"reasoningEffort":null,"allowSourceSharing":true,"outputTokenField":"MaxCompletionTokens","responseFormat":"JsonSchema"},
+  "projection":{
+    "principal":{"credentialId":"fixture-projector-internal","actor":{"id":"fixture-projector","kind":"Service"},"scopes":["fixture"],"capabilities":["Read"]},
+    "targetId":"fixture-rdf","scopes":["fixture"],"batchLimit":1,"storage":{"Memory":{}},
+    "resource":{"queryDeadlineSeconds":5,"observationBudgetMs":2000,"closeBudgetMs":2000},"step":{"ioObservationBudgetMs":2000}
+  }
+}

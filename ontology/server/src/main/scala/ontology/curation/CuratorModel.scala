@@ -108,7 +108,7 @@ object CuratorModel {
       JsonHttp.client(config.deadline).map(client => new HttpCurator(config, supplied, client): CuratorModel)
     }
 
-  private def validateConfig(config: CuratorConfig): Unit = {
+  private[ontology] def validateConfig(config: CuratorConfig): Unit = {
     Require(config.deadline > Duration.Zero && config.maxInputBytes > 0 &&
       config.maxResponseBytes > 0 && config.maxOutputTokens > 0,
       "curator-config", "positive finite curator execution bounds required")

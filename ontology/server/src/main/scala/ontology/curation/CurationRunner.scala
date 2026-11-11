@@ -23,13 +23,18 @@ enum RunnerEvent {
 final case class CurationRunResult(reason: CycleStop, stopped: Option[CycleStop])
 trait CurationRunnerDiagnostics { def emit(event: RunnerEvent): IO[Unit] }
 
+object CurationRunner {
+  def validate(settings: CurationStoreSettings, cycle: CurationCycleConfig, config: CurationRunnerConfig): Unit = {
+    val renewalDuration = java.time.Duration.of(config.renewEvery.length, config.renewEvery.unit.toChronoUnit)
+    Require(renewalDuration.compareTo(settings.leaseDuration) < 0 && cycle.scanLimit < Int.MaxValue && cycle.recoveryLimit < Int.MaxValue &&
+      cycle.scanLimit <= settings.maxScanScopes && cycle.recoveryLimit <= settings.maxRecoveryAttempts, "config", "runner intervals or cycle bounds exceed store contract")
+  }
+}
 final class CurationRunner(repo: CurationRepository, settings: CurationStoreSettings, cycleConfig: CurationCycleConfig,
   config: CurationRunnerConfig, ownerIds: IO[UUID], freshKernel: CurationCycleConfig => IO[CurationCoordinator],
   cleanup: CurationCleanup, diagnostics: CurationRunnerDiagnostics, projection: ProjectionFactory,
   child: ProjectionAttachment => Resource[IO, Unit]) {
-  private val renewalDuration = java.time.Duration.of(config.renewEvery.length, config.renewEvery.unit.toChronoUnit)
-  Require(renewalDuration.compareTo(settings.leaseDuration) < 0 && cycleConfig.scanLimit <= settings.maxScanScopes &&
-    cycleConfig.recoveryLimit <= settings.maxRecoveryAttempts, "config", "runner intervals or cycle bounds exceed store contract")
+  CurationRunner.validate(settings, cycleConfig, config)
   private def report(kernel: CurationCoordinator, event: RunnerEvent): IO[Unit] = diagnostics.emit(event).handleErrorWith(_ =>
     kernel.diagnosticFailure *> IO.raiseError(Fault("curation-diagnostic", "lifecycle diagnostic failed")))
   private def uncertainty(code: String, detail: String, diagnosticFailed: Boolean): Fault = {

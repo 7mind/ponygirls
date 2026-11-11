@@ -36,6 +36,13 @@ final class AuthSuite extends FunSuite {
   private def cookie(login: LoginSession): String = login.cookie.takeWhile(_ != ';')
   private def denied(code: String)(f: => Any): Unit = assertEquals(intercept[Fault](f).code, code)
 
+  test("structural config validation is separate from runtime credential loading") {
+    val config = AuthConfig(origin, false, List(human, agent), 60L, 10)
+    assertEquals(AuthConfig.validate(config).toString, origin)
+    val unavailable = new CredentialDigests { def read(config: CredentialConfig): String = throw Fault("fixture-secret-read", "controlled credential read") }
+    denied("fixture-secret-read") { new Auth(config, unavailable, new SecretsFixture, new ClockFixture) }
+    denied("config") { AuthConfig.validate(config.copy(credentials = List(agent.copy(capabilities = Set(Capability.Review))))) }
+  }
   test("browser session preserves actual actor and explicit scope grants") {
     val (auth, _, _) = fixture(); val login = auth.login(humanToken, headers)
     assert(login.cookie.contains("HttpOnly; SameSite=Strict")); assert(login.cookie.endsWith("; Secure"))
