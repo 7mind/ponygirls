@@ -22,6 +22,14 @@ FrozenCurationReader reuses GraphQueries through a narrow read-only repository c
 
 RepositoryCurationAudit serializes each attempt's callbacks and uses the confirmed prepared-request digest for later stages. Replayed preparation/possible-dispatch acknowledgment is not permission to call the provider again. Any hook error or cancellation stops that adapter invocation, including uncertain acknowledgments before or after storage commit. Stop transitions are coordinated with callback serialization, and in-flight hooks recheck stopped state before returning continuation. This adapter is implemented, but the automatic coordinator lifecycle is not yet composed.
 
+## Cycle kernel and supervised cleanup
+
+CurationCoordinator.cycle operates under a caller-owned fence and serializes cycles. It performs one bounded recovery batch, defers new claims if recovery remains, then scans a bounded scope batch. Only a fresh Claimed result reaches model invocation. Replayed claims do not authorize invocation or terminalize existing work. Partial observed outcomes remain in the report if a later step fails.
+
+Claim-recording uncertainty stops further admission. Publication uncertainty is reconciled by inspecting retained state and, when needed, one exact candidate replay; it never causes another model invocation. Known terminal and Published outcomes survive cleanup. Diagnostics failure is itself observable in the stop state.
+
+SupervisedCurationCleanup owns its operation. A budget alarm stops/reports further admission, then waits for that operation to settle; it neither detaches it nor fabricates a failure or completion. Cancellation remains cooperative. The automatic acquisition/renewal/polling/release lifecycle is not yet implemented.
+
 ## Journal, input and candidate correspondence
 
 The stages are RequestPrepared, DispatchPossible and ResponseObserved, with consecutive request ordinals. Their meanings are deliberately different:
