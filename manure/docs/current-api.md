@@ -1,8 +1,8 @@
 # Manure current API — 1.0.0
 
 Normative schema: [`../models/manure.baboon`](../models/manure.baboon).
-Pinned compiler: Baboon 0.0.198, SHA256
-`6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36`.
+Pinned compiler: Baboon 0.0.200, SHA256
+`1d0debf771b8a22334e68cf7e6f99d55443f2451279eae3713ad1b155a96cfc4`.
 One current contract only. No old REST dispatch, versioned codecs or cursor
 conversion. This is a coordinated server/owned-client replacement, **not** a
 production activation approval. The historical Python implementation remains

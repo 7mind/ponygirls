@@ -3,19 +3,19 @@ let
   binaries = {
     x86_64-linux = {
       name = "baboon-linux-amd64";
-      hash = "sha256-ZHD1mdR8w/aF78TM9N3MhJK/0NzYeoi/du17/uD3fzY=";
+      hash = "sha256-HQ3r93G4oiM05oz35vmdVUQ/JFEnnq43E60bFVqWz8Q=";
     };
     aarch64-darwin = {
       name = "baboon-macos-aarch64-14";
-      hash = "sha256-5dnrem6+iD+BlzdCH3pGxHdCI1IZwijkAxf8wkMJGzc=";
+      hash = "sha256-BC9+PN3OTN0rbae5vw3C16MWg/b1CyPRXy6QL4FVMn4=";
     };
   };
   binary = binaries.${stdenvNoCC.hostPlatform.system};
   baboon = stdenvNoCC.mkDerivation {
     pname = "chronicle-baboon";
-    version = "0.0.198";
+    version = "0.0.200";
     src = fetchurl {
-      url = "https://github.com/7mind/baboon/releases/download/v0.0.198/${binary.name}";
+      url = "https://github.com/7mind/baboon/releases/download/v0.0.200/${binary.name}";
       inherit (binary) hash;
     };
     dontUnpack = true;

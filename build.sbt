@@ -18,7 +18,7 @@ def contractSettings = Seq(
     val canonical = (file("shared/baboon-runtime/src/main/scala") * "Baboon*.scala").get().sortBy(_.getName)
     val generated = (baseDirectory.value.getParentFile / "scala" * "Baboon*.scala").get().sortBy(_.getName)
     require(canonical.nonEmpty, "missing canonical Baboon runtime")
-    // --runtime without is supported by pinned 0.0.198. With-runtime domains must
+    // --runtime without is supported by pinned 0.0.200. With-runtime domains must
     // prove complete byte identity, not silently select duplicate class definitions.
     if (generated.nonEmpty) {
       require(canonical.map(_.getName) == generated.map(_.getName), "Baboon runtime file set differs")

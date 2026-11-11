@@ -1,7 +1,7 @@
 # Haystack — sole current API (Scala port)
 
 Authoritative model: [`models/current.baboon`](../models/current.baboon),
-`haystack.api` **1.0.0**. Pinned Baboon0.0.198 generates Scala2.13 and TypeScript;
+`haystack.api` **1.0.0**. Pinned Baboon0.0.200 generates Scala2.13 and TypeScript;
 handwritten code never patches generated codecs. Only this version is registered.
 No independent deployments require old DTOs/routes/codecs/cursors. Stored data,
 credentials, history and acknowledged outcomes are separately preserved.
