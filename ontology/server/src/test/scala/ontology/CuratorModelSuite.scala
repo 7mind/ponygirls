@@ -45,7 +45,7 @@ final class CuratorModelSuite extends munit.FunSuite {
   private def fixture(app: HttpApp[IO]): Resource[IO, CuratorConfig] = for {
     credential <- Resource.make(IO.blocking(Files.createTempFile("ontology-curator-fixture-", ".txt")))(path => IO.blocking(Files.deleteIfExists(path)).void)
     server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpApp(app).build
-  } yield CuratorConfig(s"http://127.0.0.1:${server.address.getPort}/model", "controlled-model", credential.toString, 3.seconds, 1048576, 1048576, 1024, Some("max"), true, CuratorOutputTokenField.MaxCompletionTokens, CuratorResponseFormat.JsonObject)
+  } yield CuratorConfig("controlled-profile", s"http://127.0.0.1:${server.address.getPort}/model", "controlled-model", credential.toString, 3.seconds, 1048576, 1048576, 1024, Some("max"), true, CuratorOutputTokenField.MaxCompletionTokens, CuratorResponseFormat.JsonObject)
   private def response(body: String, status: Status): HttpApp[IO] = cats.data.Kleisli(_ => IO.pure(Response[IO](status).withEntity(body)))
 
   test("source sharing is denied before credentials, requests or model dispatch") { run(for {
@@ -145,6 +145,51 @@ final class CuratorModelSuite extends munit.FunSuite {
       dispatched <- calls.get
       _ = assertEquals(dispatched, 0)
     } yield () } }
+  } yield ()) }
+
+  test("model-owned profile binds actual request settings without reading credential contents") { run(for {
+    calls <- IORef.of[IO, Int](0)
+    app: HttpApp[IO] = cats.data.Kleisli(_ => calls.update(_ + 1).as(Response[IO](Status.Ok).withEntity(finalReply(proposal))))
+    _ <- fixture(app).use { cfg => for {
+      original <- CuratorModel.resource(cfg, schemas).use(model => IO.pure(model.profile))
+      same <- CuratorModel.resource(cfg, schemas).use(model => IO.pure(model.profile))
+      variants = List(cfg.copy(model = "different"), cfg.copy(operationUrl = cfg.operationUrl + "-other"), cfg.copy(deadline = 4.seconds),
+        cfg.copy(maxInputBytes = cfg.maxInputBytes + 1), cfg.copy(maxResponseBytes = cfg.maxResponseBytes + 1), cfg.copy(maxOutputTokens = 2048),
+        cfg.copy(reasoningEffort = None), cfg.copy(allowSourceSharing = false), cfg.copy(outputTokenField = CuratorOutputTokenField.MaxTokens),
+        cfg.copy(responseFormat = CuratorResponseFormat.JsonSchema), cfg.copy(credentialFile = cfg.credentialFile + "-absent"), cfg.copy(profileId = "another-profile"))
+      changed <- variants.traverse(config => CuratorModel.resource(config, schemas).use(model => IO.pure(model.profile)))
+      _ = assertEquals(original, same)
+      _ = assertEquals(original.id, cfg.profileId)
+      _ = assert(original.profileDigest.matches("[0-9a-f]{64}"))
+      _ = assert(changed.forall(_.profileDigest != original.profileDigest))
+      _ = assert(changed.forall(_.schemaDigest == original.schemaDigest))
+    } yield () }
+    count <- calls.get
+    _ = assertEquals(count, 0)
+  } yield ()) }
+
+  test("profile and sent schemas use the same captured schema values") { run(for {
+    requests <- IORef.of[IO, List[Json]](Nil); responses <- IORef.of[IO, List[Json]](Nil); reads <- IORef.of[IO, Int](0)
+    _ <- fixture(response(finalReply(proposal), Status.Ok)).use { cfg =>
+      val original = schemas.find
+      val mutable = new java.util.concurrent.atomic.AtomicReference(original)
+      val supplied = new CurationSchemas {
+        def find: Json = mutable.get()
+        def read: Json = schemas.read
+        def proposal: Json = schemas.proposal
+      }
+      CuratorModel.resource(cfg, supplied).use { model => for {
+        before <- IO.pure(model.profile)
+        _ <- IO(mutable.set(Json.obj("type" -> Json.fromString("object"), "description" -> Json.fromString("Changed after resource creation"))))
+        _ <- model.propose(input, reader(reads, 7L), new Audit(requests, responses, Duration.Zero))
+        sent <- requests.get
+        _ = assertEquals(model.profile, before)
+        _ = assertEquals(sent.head.hcursor.downField("tools").downArray.downField("function").downField("parameters").focus, Some(original))
+        current <- CuratorModel.resource(cfg, supplied).use(next => IO.pure(next.profile))
+        _ = assert(current.schemaDigest != before.schemaDigest)
+        _ = assert(current.profileDigest != before.profileDigest)
+      } yield () }
+    }
   } yield ()) }
 
   test("total deadline remains effective while the response audit waits") { run(for {

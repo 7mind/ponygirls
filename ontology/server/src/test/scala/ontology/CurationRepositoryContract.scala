@@ -7,8 +7,9 @@ import io.circe.Json
 import java.nio.charset.StandardCharsets.UTF_8
 import java.util.UUID
 import munit.FunSuite
+import scala.concurrent.duration.*
 import ontology.api.*
-import ontology.curation.CurationInputs
+import ontology.curation.{CurationInputs, FrozenCurationReader, RepositoryCurationAudit}
 import ontology.domain.*
 
 private[ontology] final case class PreparedCuration(attempt: CurationAttempt, candidate: CurationCandidate, request: CurationAuditPayload, response: CurationAuditPayload)
@@ -45,6 +46,17 @@ abstract class CurationRepositorySupport extends FunSuite {
     val text = json.noSpaces
     CurationAuditPayload(CurationJournal.JsonEncoding, text, Digests.text(text), text.getBytes(UTF_8).length.toLong)
   }
+  protected def sealedView(repo: GraphRepository, settings: CurationStoreSettings, scope: String, lease: CoordinatorLease): IO[CurationFrozenView] = for {
+    id <- IO(UUID.randomUUID())
+    claimed <- repo.curation.claim(lease.fence, scope, id, profile)
+    _ = assert(claimed.isInstanceOf[CurationClaimResult.Claimed])
+    sealedResult <- repo.curation.seal(lease.fence, scope, id)
+    _ = assert(sealedResult.isInstanceOf[CurationWriteResult.Advanced])
+    frozen <- repo.curation.frozen(settings.principal, scope, id)
+  } yield frozen
+  protected def preparedRequest(frozen: CurationFrozenView): Json = Json.obj("messages" -> Json.arr(
+    Json.obj("role" -> Json.fromString("system"), "content" -> Json.fromString("Controlled policy")),
+    Json.obj("role" -> Json.fromString("user"), "content" -> Json.fromString(CurationInputs.json(frozen.material.input).noSpaces))))
   protected def begin(repo: GraphRepository, settings: CurationStoreSettings, scope: String, lease: CoordinatorLease, operations: List[Operation]): IO[PreparedCuration] = for {
     result <- repo.curation.claim(lease.fence, scope, UUID.randomUUID(), profile)
     attempt = result match { case CurationClaimResult.Claimed(value) => value; case other => fail(s"Expected new claim, got $other") }
@@ -257,6 +269,196 @@ abstract class CurationRepositoryContract extends CurationRepositorySupport {
     status <- repo.curation.status(settings.principal, scope)
     _ = assertEquals((status.frontier, status.coveredFrontier), (2L, 2L))
     _ = assertEquals(status.lastPublicationGeneration, Some(published(b).generation))
+  } yield () } } }
+
+  test("repository audit adapter retains the exact request digest through all stages") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    frozen <- sealedView(repo, settings, scope, lease)
+    audit <- RepositoryCurationAudit.create(repo.curation, frozen)
+    request = preparedRequest(frozen)
+    proposal = CurationProposal(frozen.claim.baseGeneration, frozen.claim.frontier, Nil)
+    response = Json.obj("choices" -> Json.arr(Json.obj("finish_reason" -> Json.fromString("stop"), "message" -> Json.obj(
+      "role" -> Json.fromString("assistant"), "content" -> Json.fromString(StoredJson.encode(CurationProposal.codecJson, proposal))))))
+    _ <- audit.request(1, request)
+    _ <- audit.dispatchPossible(1)
+    possible <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+    _ = assert(possible.attempt.auditUncertain)
+    _ <- audit.response(1, response)
+    observed <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+    _ = assertEquals(observed.journal.map(_.requestDigest).distinct, List(Digests.text(request.noSpaces)))
+    _ = assertEquals(observed.journal.map(_.stage), List(CurationAuditStage.RequestPrepared, CurationAuditStage.DispatchPossible, CurationAuditStage.ResponseObserved))
+    candidate = CurationCandidate(frozen.claim.attemptId, frozen.material.manifest.inputDigest, 1, Digests.text(response.noSpaces), proposal, Digests.text(StoredJson.encode(CurationProposal.codecJson, proposal)))
+    result <- repo.curation.publish(lease.fence, scope, frozen.claim.attemptId, candidate, UUID.randomUUID())
+    _ = assertEquals(published(result).coveredFrontier, 1L)
+  } yield () } } }
+
+  test("replayed preparation is not permission for another dispatch") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    value <- begin(repo, settings, scope, lease, Nil)
+    frozen <- repo.curation.frozen(settings.principal, scope, value.attempt.claim.attemptId)
+    audit <- RepositoryCurationAudit.create(repo.curation, frozen)
+    replay <- audit.request(1, io.circe.parser.parse(value.request.content).toOption.get).attempt
+    _ = fault(replay, "curator-audit-replay")
+    halted <- audit.dispatchPossible(1).attempt
+    _ = fault(halted, "curator-audit")
+    retained <- repo.curation.inspect(settings.principal, scope, value.attempt.claim.attemptId)
+    _ = assertEquals(retained.journal.size, 2)
+    _ = assert(retained.attempt.auditUncertain)
+  } yield () } } }
+
+  test("a stale terminal outcome halts the adapter without replacing that outcome") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    frozen <- sealedView(repo, settings, scope, lease)
+    audit <- RepositoryCurationAudit.create(repo.curation, frozen)
+    _ <- mutate(repo, scope)
+    stopped <- audit.request(1, preparedRequest(frozen)).attempt
+    _ = fault(stopped, "curator-terminal")
+    retained <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+    _ = assertEquals(retained.attempt.state, CurationAttemptState.Stale)
+    _ = assertEquals(retained.journal, Nil)
+  } yield () } } }
+
+  for (afterCommit <- List(false, true)) test(s"failed audit acknowledgment stops the invocation with afterCommit=$afterCommit") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    frozen <- sealedView(repo, settings, scope, lease)
+    calls <- cats.effect.Ref.of[IO, Int](0)
+    writer = new CurationAuditWriter {
+      def appendAudit(fence: CoordinatorFence, value: String, id: UUID, ordinal: Int, stage: CurationAuditStage, digest: String, body: Option[CurationAuditPayload]): IO[CurationWriteResult] =
+        calls.update(_ + 1) *> (if (afterCommit) repo.curation.appendAudit(fence, value, id, ordinal, stage, digest, body).void else IO.unit) *>
+          IO.raiseError(new java.io.IOException("controlled audit acknowledgment failure"))
+    }
+    audit <- RepositoryCurationAudit.create(writer, frozen)
+    failed <- audit.request(1, preparedRequest(frozen)).attempt
+    _ = assert(failed.left.toOption.exists(_.isInstanceOf[java.io.IOException]))
+    repeated <- audit.request(1, preparedRequest(frozen)).attempt
+    _ = fault(repeated, "curator-audit")
+    count <- calls.get
+    _ = assertEquals(count, 1)
+    retained <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+    _ = assertEquals(retained.journal.size, if (afterCommit) 1 else 0)
+    _ = assert(!retained.attempt.auditUncertain)
+  } yield () } } }
+
+  test("cancelled audit hook cannot later authorize dispatch") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    frozen <- sealedView(repo, settings, scope, lease)
+    entered <- cats.effect.Deferred[IO, Unit]
+    writer = new CurationAuditWriter {
+      def appendAudit(fence: CoordinatorFence, value: String, id: UUID, ordinal: Int, stage: CurationAuditStage, digest: String, body: Option[CurationAuditPayload]): IO[CurationWriteResult] =
+        entered.complete(()).void *> IO.never[CurationWriteResult]
+    }
+    audit <- RepositoryCurationAudit.create(writer, frozen)
+    fiber <- audit.request(1, preparedRequest(frozen)).start
+    _ <- entered.get
+    _ <- fiber.cancel
+    stopped <- audit.dispatchPossible(1).attempt
+    _ = fault(stopped, "curator-audit")
+    retained <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+    _ = assertEquals(retained.journal, Nil)
+  } yield () } } }
+
+  test("a queued preparation cannot start a new write after the preceding hook fails") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    frozen <- sealedView(repo, settings, scope, lease)
+    entered <- cats.effect.Deferred[IO, Unit]
+    release <- cats.effect.Deferred[IO, Unit]
+    calls <- cats.effect.Ref.of[IO, Int](0)
+    writer = new CurationAuditWriter {
+      def appendAudit(fence: CoordinatorFence, value: String, id: UUID, ordinal: Int, stage: CurationAuditStage, digest: String, body: Option[CurationAuditPayload]): IO[CurationWriteResult] =
+        calls.updateAndGet(_ + 1).flatMap { count =>
+          if (count == 1) entered.complete(()).void *> release.get *> IO.raiseError(new java.io.IOException("controlled preparation failure"))
+          else repo.curation.appendAudit(fence, value, id, ordinal, stage, digest, body)
+        }
+    }
+    audit <- RepositoryCurationAudit.create(writer, frozen)
+    _ <- Resource.make(audit.request(1, preparedRequest(frozen)).attempt.start)(fiber => release.complete(()).void *> fiber.cancel).use { first =>
+      entered.get *> Resource.make(audit.request(1, preparedRequest(frozen)).attempt.start)(fiber => release.complete(()).void *> fiber.cancel).use { queued => for {
+        _ <- IO.sleep(100.millis)
+        _ <- release.complete(())
+        failed <- first.joinWithNever
+        rejected <- queued.joinWithNever
+        _ = assert(failed.left.toOption.exists(_.isInstanceOf[java.io.IOException]))
+        _ = fault(rejected, "curator-audit")
+        count <- calls.get
+        _ = assertEquals(count, 1)
+        retained <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+        _ = assertEquals(retained.journal, Nil)
+      } yield () }
+    }
+  } yield () } } }
+
+  test("cancelling a queued callback prevents an in-flight hook from returning dispatch authorization") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    frozen <- sealedView(repo, settings, scope, lease)
+    entered <- cats.effect.Deferred[IO, Unit]
+    release <- cats.effect.Deferred[IO, Unit]
+    writer = new CurationAuditWriter {
+      def appendAudit(fence: CoordinatorFence, value: String, id: UUID, ordinal: Int, stage: CurationAuditStage, digest: String, body: Option[CurationAuditPayload]): IO[CurationWriteResult] = {
+        val gate = if (stage == CurationAuditStage.DispatchPossible) entered.complete(()).void *> release.get else IO.unit
+        gate *> repo.curation.appendAudit(fence, value, id, ordinal, stage, digest, body)
+      }
+    }
+    audit <- RepositoryCurationAudit.create(writer, frozen)
+    _ <- audit.request(1, preparedRequest(frozen))
+    _ <- Resource.make(audit.dispatchPossible(1).attempt.start)(fiber => release.complete(()).void *> fiber.cancel).use { holder =>
+      entered.get *> Resource.make(audit.request(2, preparedRequest(frozen)).start)(_.cancel).use { waiting => for {
+        _ <- IO.sleep(100.millis)
+        _ <- waiting.cancel
+        _ <- release.complete(())
+        authorization <- holder.joinWithNever
+        stopped <- audit.response(1, Json.obj()).attempt
+        _ = assertEquals(stopped.left.toOption.collect { case error: Fault => error.detail }, Some("audit invocation has stopped"), "fixture must observe the stopped invocation")
+        _ = fault(authorization, "curator-audit")
+        retained <- repo.curation.inspect(settings.principal, scope, frozen.claim.attemptId)
+        _ = assertEquals(retained.journal.size, 2)
+        _ = assert(retained.attempt.auditUncertain)
+      } yield () }
+    }
+  } yield () } } }
+
+  test("curator reader pages and receipt access stay on the exact frozen generation") { check { (repo, settings, scope) => leased(repo) { lease => for {
+    _ <- capture(repo, scope)
+    id = UUID.randomUUID()
+    _ <- repo.curation.claim(lease.fence, scope, id, profile)
+    _ <- repo.curation.seal(lease.fence, scope, id)
+    frozen <- repo.curation.frozen(settings.principal, scope, id)
+    reader = new FrozenCurationReader(frozen, repo, settings.principal, new CursorSigner(Array.fill[Byte](32)(1)), QueryLimits(100, 64, 65536, 2048))
+    request = ReadRequest(scope, ReadView.History, Nil, None, 1)
+    first <- reader.read(request)
+    _ = assert(first.cursor.nonEmpty)
+    _ <- capture(repo, scope)
+    _ <- mutate(repo, scope)
+    rest <- {
+      def all(cursor: Option[String], records: List[GraphRecord]): IO[List[GraphRecord]] = cursor match {
+        case None => IO.pure(records)
+        case Some(value) => reader.read(request.copy(cursor = Some(value))).flatMap { page =>
+          assertEquals(page.generation, frozen.claim.baseGeneration)
+          all(page.cursor, records ++ page.records)
+        }
+      }
+      all(first.cursor, first.records)
+    }
+    _ = assertEquals(rest.toSet, Graph.records(frozen.snapshot).toSet)
+    _ = assertEquals(rest.distinct.size, rest.size)
+    absent <- reader.find(FindRequest(scope, None, "An ordinary graph edit", None, 10))
+    _ = assertEquals(absent.items, Nil)
+    oldInput = Ref(frozen.material.input.sources.head.provenance.input, 1)
+    older <- reader.read(ReadRequest(scope, ReadView.History, List(oldInput), None, 10))
+    _ = assert(older.records.exists { case GraphRecord.Input(value) => value.ref == oldInput; case _ => false })
+    newer <- repo.sources(SourceRequest(scope, frozen.claim.frontier, 10))
+    denied <- reader.read(ReadRequest(scope, ReadView.History, List(Ref(newer.events.head.provenance.input, 1)), None, 10)).attempt
+    _ = fault(denied, "stale-reference")
+    foreign <- reader.find(FindRequest(scope + "-other", None, "", None, 10)).attempt
+    _ = fault(foreign, "curator-snapshot")
+    miswired = new GraphReadRepository {
+      def read(value: String): IO[GraphSnapshot] = IO.raiseError(new AssertionError("Frozen reader must not consult a live head"))
+      def input(value: String, ref: Ref): IO[InputReceipt] = repo.input(value, ref).map(_.copy(ref = Ref(UUID.randomUUID(), 1)))
+    }
+    miswiredReader = new FrozenCurationReader(frozen, miswired, settings.principal, new CursorSigner(Array.fill[Byte](32)(1)), QueryLimits(100, 64, 65536, 2048))
+    wrongReceipt <- miswiredReader.read(ReadRequest(scope, ReadView.History, List(oldInput), None, 10)).attempt
+    _ = fault(wrongReceipt, "stale-reference")
+    _ = assertEquals(intercept[Fault](new FrozenCurationReader(frozen.copy(material = frozen.material.copy(input = frozen.material.input.copy(seed = Nil))), repo,
+      settings.principal, new CursorSigner(Array.fill[Byte](32)(1)), QueryLimits(100, 64, 65536, 2048))).code, "curation")
   } yield () } } }
 
   test("read authorization precedes discovery and scan bounds are enforced") { check { (repo, settings, scope) => leased(repo) { lease =>

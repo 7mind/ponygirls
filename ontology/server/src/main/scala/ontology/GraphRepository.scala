@@ -6,16 +6,14 @@ import ontology.domain.*
 import java.security.MessageDigest
 import java.nio.charset.StandardCharsets.UTF_8
 
-trait GraphRepository {
+trait GraphRepository extends GraphReadRepository {
   def curation: CurationRepository
-  def read(scope: String): IO[GraphSnapshot]
   def history(scope: String, generation: Long): IO[GraphSnapshot]
   def scopes: IO[List[String]]
   def apply(request: ApplyRequest, admission: Admission): IO[ApplyResult]
   def pendingProjections(limit: Int): IO[List[GraphSnapshot]]
   def acknowledgeProjection(scope: String, generation: Long): IO[Unit]
   def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult]
-  def input(scope: String, ref: Ref): IO[InputReceipt]
   def sources(request: SourceRequest): IO[SourceResult]
   def prepare(request: PresentRequest, call: ReviewCall, id: java.util.UUID, at: String): IO[Presentation]
   def presentation(principal: Principal, scope: String, id: java.util.UUID): IO[Presentation]

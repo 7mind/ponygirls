@@ -6,7 +6,7 @@ import io.circe.{Json, JsonObject}
 import java.net.{URI, URISyntaxException}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{InvalidPathException, Path}
-import ontology.{Digests, Wire}
+import ontology.{CurationProfilePin, Digests, Wire}
 import ontology.api.*
 import ontology.domain.{Fault, Require}
 import org.http4s.client.Client
@@ -22,6 +22,7 @@ enum CuratorResponseFormat {
 
 /** Explicit execution controls, not a financial cap or proof of provider capacity. */
 final case class CuratorConfig(
+  profileId: String,
   operationUrl: String,
   model: String,
   credentialFile: String,
@@ -67,6 +68,7 @@ trait CurationAudit {
 
 final case class AuditedProposal(proposal: CurationProposal, responseOrdinal: Int, responseDigest: String)
 trait CuratorModel {
+  def profile: CurationProfilePin
   def propose(input: CurationInput, reader: CurationReader, audit: CurationAudit): IO[AuditedProposal]
 }
 
@@ -114,6 +116,7 @@ object CuratorModel {
       Require(value.trim.nonEmpty && UTF_8.newEncoder().canEncode(value) &&
         !value.exists(c => c < ' ' || c == 127.toChar),
         "curator-config", "invalid configured model profile")
+    label(config.profileId)
     label(config.model)
     config.reasoningEffort.foreach(label)
     Require(config.credentialFile.nonEmpty, "curator-config", "explicit credential file required")
@@ -169,6 +172,27 @@ object CuratorModel {
   }
 
   private final class HttpCurator(config: CuratorConfig, schemas: SchemaSet, client: Client[IO]) extends CuratorModel {
+    val profile: CurationProfilePin = {
+      val schema = Json.obj("graph_find" -> schemas.find, "graph_read" -> schemas.read, "proposal" -> schemas.proposal)
+      val descriptor = Json.obj(
+        "format" -> Json.fromString("ontology.curator-profile/1"),
+        "profileId" -> Json.fromString(config.profileId),
+        "operationUrl" -> Json.fromString(config.operationUrl),
+        "credentialReference" -> Json.fromString(config.credentialFile),
+        "deadline" -> Json.fromString(config.deadline.toString),
+        "maxInputBytes" -> Json.fromInt(config.maxInputBytes),
+        "maxResponseBytes" -> Json.fromInt(config.maxResponseBytes),
+        "allowSourceSharing" -> Json.fromBoolean(config.allowSourceSharing),
+        "inputEncoding" -> Json.fromString(CurationInputs.Encoding),
+        "requestTemplate" -> payload(initialMessages("<sealed CurationInput JSON>")),
+        "schemas" -> schema
+      )
+      CurationProfilePin(config.profileId, Digests.text(descriptor.noSpaces), Digests.text(schema.noSpaces))
+    }
+    private def initialMessages(input: String): Vector[Json] = Vector(
+      Json.obj("role" -> Json.fromString("system"), "content" -> Json.fromString(systemPrompt)),
+      Json.obj("role" -> Json.fromString("user"), "content" -> Json.fromString(input))
+    )
     private def expired[A]: IO[A] = IO.raiseError(Fault("curator-timeout", "total curator deadline exceeded"))
 
     private def remaining(started: FiniteDuration): IO[FiniteDuration] = IO.monotonic.flatMap { now =>
@@ -365,14 +389,7 @@ object CuratorModel {
         val work = IO.defer {
           val qualifiedInput = inputJson(input).noSpaces
           checkSize(qualifiedInput, config.maxInputBytes)
-          val initial = Conversation(
-            Vector(
-              Json.obj("role" -> Json.fromString("system"), "content" -> Json.fromString(systemPrompt)),
-              Json.obj("role" -> Json.fromString("user"), "content" -> Json.fromString(qualifiedInput))
-            ),
-            Set.empty[String],
-            1
-          )
+          val initial = Conversation(initialMessages(qualifiedInput), Set.empty[String], 1)
           loop(input, reader, audit, started, initial)
         }
         // One monotonic budget covers input preparation, audit, credentials, all reads and HTTP.

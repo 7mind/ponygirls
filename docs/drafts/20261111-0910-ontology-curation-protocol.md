@@ -12,6 +12,14 @@ Each attempt retains its own admission limits. Historical validation, journal lo
 
 CurationMaterial reconstructs the entire ordered source cut and graph seed. Source records must correspond to their exact frozen graph definitions. The input manifest pins every seed/source record and the deterministic UTF-8 input encoding, digest and byte count. Capacity failure is explicit; no source truncation or hidden subset is substituted.
 
+## Runtime input and profile boundary
+
+CuratorModel exposes the profile pin derived inside its resource from the configuration, policy/request template and schema values it actually captures. Credential references are included, never credential contents. A pin describes configuration, not observed provider/model identity. Changing a schema accessor after construction cannot silently change the captured request or its pin.
+
+FrozenCurationReader reuses GraphQueries through a narrow read-only repository contract. It never substitutes the live head for its retained snapshot. Pagination stays at the pinned generation; explicit receipts must match scope, exact reference and generation. Missing context remains unavailable rather than being fetched from a newer cut.
+
+RepositoryCurationAudit serializes each attempt's callbacks and uses the confirmed prepared-request digest for later stages. Replayed preparation/possible-dispatch acknowledgment is not permission to call the provider again. Any hook error or cancellation stops that adapter invocation, including uncertain acknowledgments before or after storage commit. This adapter is implemented, but the automatic coordinator lifecycle is not yet composed.
+
 ## Journal, input and candidate correspondence
 
 The stages are RequestPrepared, DispatchPossible and ResponseObserved, with consecutive request ordinals. Their meanings are deliberately different:

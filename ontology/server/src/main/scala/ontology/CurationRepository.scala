@@ -33,7 +33,11 @@ final case class CurationAttemptView(attempt: CurationAttempt, journal: List[Cur
 final case class CurationFrozenView(claim: CurationClaim, snapshot: GraphSnapshot, material: SealedCurationInput)
 final case class CurationScopeBatch(scopes: List[String], more: Boolean)
 final case class CurationRecoveryBatch(attempts: List[CurationAttemptSummary], more: Boolean)
-trait CurationRepository {
+trait CurationAuditWriter {
+  def appendAudit(fence: CoordinatorFence, scope: String, attemptId: UUID, ordinal: Int, stage: CurationAuditStage,
+                  requestDigest: String, payload: Option[CurationAuditPayload]): IO[CurationWriteResult]
+}
+trait CurationRepository extends CurationAuditWriter {
   def acquire(ownerId: UUID): IO[CoordinatorLease]
   def renew(fence: CoordinatorFence): IO[CoordinatorLease]
   def release(fence: CoordinatorFence): IO[Unit]
@@ -41,8 +45,6 @@ trait CurationRepository {
   def recoverOlderFences(fence: CoordinatorFence, limit: Int): IO[CurationRecoveryBatch]
   def claim(fence: CoordinatorFence, scope: String, attemptId: UUID, profile: CurationProfilePin): IO[CurationClaimResult]
   def seal(fence: CoordinatorFence, scope: String, attemptId: UUID): IO[CurationWriteResult]
-  def appendAudit(fence: CoordinatorFence, scope: String, attemptId: UUID, ordinal: Int, stage: CurationAuditStage,
-                  requestDigest: String, payload: Option[CurationAuditPayload]): IO[CurationWriteResult]
   def publish(fence: CoordinatorFence, scope: String, attemptId: UUID, candidate: CurationCandidate, hostRequestId: UUID): IO[CurationWriteResult]
   def stop(fence: CoordinatorFence, scope: String, attemptId: UUID, reason: CurationStop): IO[CurationWriteResult]
   def inspect(principal: Principal, scope: String, attemptId: UUID): IO[CurationAttemptView]

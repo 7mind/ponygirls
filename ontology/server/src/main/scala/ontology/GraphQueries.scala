@@ -47,7 +47,7 @@ final class CursorSigner(key: Array[Byte]) {
     } catch { case f: Fault if f.code == "cursor" => throw f; case _: Exception => throw Fault("cursor", "invalid cursor") }
   }
 }
-final class GraphQueries(repository: GraphRepository, cursors: CursorSigner, limits: QueryLimits) {
+final class GraphQueries(repository: GraphReadRepository, cursors: CursorSigner, limits: QueryLimits) {
   private val EnvelopeReserveBytes = 2048
   private def start(cursor: Option[String], query: String, generation: Long, count: Int): Int = cursor match {
     case None => 0
