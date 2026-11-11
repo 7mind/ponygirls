@@ -107,7 +107,7 @@ class TargetSearchTests(unittest.TestCase):
                 sha=hashlib.sha256(payload).hexdigest()
                 initialized=client.init_upload('metadata hayneedle','dir','external',[
                     {'kind':'file','path':'catalogue/hayneedle.bin','size':len(payload),'sha256':sha},{'kind':'dir','path':'empty'}],expires_in_s=60,
-                    tags=['taghayneedle','Release'],hostname='hosthayneedle',project_path='/projecthayneedle/path')
+                    tags=['tagneedle','Release'],hostname='hostneedle',project_path='/projectneedle/path')
                 aid=initialized['artifact_id'];password=initialized['external_password']
                 for offset in range(0,len(payload),262144):client.put_chunk(aid,'catalogue/hayneedle.bin',offset,payload[offset:offset+262144])
                 self.assertEqual(model.snapshot(),[],'ordinary upload called the model')
@@ -122,11 +122,12 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertLess(time.monotonic()-start,2,'model call held the authoritative transaction/root monitor')
                 info=client.get_artifact(aid)
                 self.assertEqual((info['tags'],info['hostname'],info['project_path']),
-                    (['taghayneedle','Release'],'hosthayneedle','/projecthayneedle/path'))
-                for text,field in [('taghayneedle','tag'),('hosthayneedle','hostname'),('projecthayneedle','projectpath')]:
-                    catalogue=client.list_artifacts(query=text)
+                    (['tagneedle','Release'],'hostneedle','/projectneedle/path'))
+                for catalogue_text,retrieval_text,field in [('tagneedle','tagneedle','tag'),
+                        ('hostneedle','hostneedle','hostname'),('projectneedle','/projectneedle/path','projectpath')]:
+                    catalogue=client.list_artifacts(query=catalogue_text)
                     self.assertEqual([item['artifact_id'] for item in catalogue['artifacts']],[aid])
-                    page=client.search(text,'lexical')
+                    page=client.search(retrieval_text,'lexical')
                     self.assertEqual([item['artifact']['artifact_id'] for item in page['hits']],[aid])
                     self.assertIn(field,[e['field'] for e in page['hits'][0]['evidence']])
                 lexical=client.search('hayneedle','lexical')
@@ -168,24 +169,24 @@ class TargetSearchTests(unittest.TestCase):
                             self.assertIn(evidence['path'],('catalogue/hayneedle.bin','empty'));self.assertEqual(evidence['text'],evidence['path'])
                         else:
                             self.assertIsNone(evidence['path'])
-                            expected={'name':['metadata hayneedle'],'tag':['taghayneedle','Release'],
-                                'hostname':['hosthayneedle'],'projectpath':['/projecthayneedle/path']}
+                            expected={'name':['metadata hayneedle'],'tag':['tagneedle','Release'],
+                                'hostname':['hostneedle'],'projectpath':['/projectneedle/path']}
                             self.assertIn(evidence['text'],expected[evidence['field']])
                 for mode in ('lexical','semantic','hybrid'):
-                    page=client.search('hayneedle',mode,tags=['Release','taghayneedle'],hostname='hosthayneedle',project_path='/projecthayneedle/path')
+                    page=client.search('hayneedle',mode,tags=['Release','tagneedle'],hostname='hostneedle',project_path='/projectneedle/path')
                     self.assertEqual([item['artifact']['artifact_id'] for item in page['hits']],[aid])
-                catalogue=client.list_artifacts(tags=['Release','taghayneedle'],hostname='hosthayneedle',project_path='/projecthayneedle/path')
+                catalogue=client.list_artifacts(tags=['Release','tagneedle'],hostname='hostneedle',project_path='/projectneedle/path')
                 self.assertEqual([item['artifact_id'] for item in catalogue['artifacts']],[aid])
                 for filters in ({'visibility':'public'},{'kind':'file'},{'created_by_user':'not-the-creator'},
-                        {'tags':['Release','missing']},{'tags':['release']},{'hostname':'HOSTHAYNEEDLE'},
-                        {'hostname':'hosthay'},{'project_path':'/Projecthayneedle/path'},{'project_path':'/projecthayneedle'}):
+                        {'tags':['Release','missing']},{'tags':['release']},{'hostname':'HOSTNEEDLE'},
+                        {'hostname':'hostnee'},{'project_path':'/Projectneedle/path'},{'project_path':'/projectneedle'}):
                     for mode in ('lexical','semantic','hybrid'):
                         self.assertEqual(client.search('hayneedle',mode,**filters)['hits'],[])
                     if 'kind' not in filters and 'created_by_user' not in filters:
                         self.assertEqual(client.list_artifacts(**filters)['artifacts'],[])
                 encoded=json.dumps(model.snapshot(),ensure_ascii=False)
                 documents='\n'.join(text for call in model.snapshot() for text in call['inputs'] if text.startswith('doc: '))
-                for metadata in ('taghayneedle','Release','hosthayneedle','/projecthayneedle/path'):
+                for metadata in ('tagneedle','Release','hostneedle','/projectneedle/path'):
                     self.assertIn(metadata,documents)
                 for secret in (token,password,sha,'BINARY_SECRET_NOT_APPROVED_FOR_EMBEDDING'):
                     self.assertNotIn(secret,encoded)
