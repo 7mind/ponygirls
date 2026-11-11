@@ -14,7 +14,7 @@ final case class CurationCycleConfig(scanLimit: Int, recoveryLimit: Int, cleanup
 }
 enum CycleStop {
   case ClaimUncertain, StoreUncertain, PublicationUncertain, CleanupUncertain, CleanupOverBudget
-  case Cancelled, OwnershipLost, DiagnosticFailure
+  case Cancelled, OwnershipLost, DiagnosticFailure, ProjectionUncertain, ProjectionRejected
 }
 enum ScopeOutcome {
   case Ineligible(scope: String)

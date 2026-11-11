@@ -116,7 +116,7 @@ abstract class CurationTransportContract extends CurationRepositorySupport {
       val config = CurationCycleConfig(2, 1, 1.second)
       val service = new CurationRunner(repo.curation, settings, config, CurationRunnerConfig(1.second, 100.millis, 1.second), IO(UUID.randomUUID()),
         selected => CurationCoordinator.create(repo.curation, repo, settings.principal, provider, new CursorSigner(Array.fill[Byte](32)(7)),
-          QueryLimits(100, 64, 65536, 2048), selected, IO(UUID.randomUUID()), diagnostics, new SupervisedCurationCleanup), new SupervisedCurationCleanup, lifecycle)
+          QueryLimits(100, 64, 65536, 2048), selected, IO(UUID.randomUUID()), diagnostics, new SupervisedCurationCleanup), new SupervisedCurationCleanup, lifecycle, TestProjectionRuntime.factory(repo, settings), TestProjectionRuntime.noServer)
       Resource.make(service.run.start)(_.cancel).use { fiber => for {
         observed <- first.get.timeout(5.seconds)
         _ = if (stale) assert(observed.isInstanceOf[ScopeOutcome.Terminal]) else assert(observed.isInstanceOf[ScopeOutcome.Published])

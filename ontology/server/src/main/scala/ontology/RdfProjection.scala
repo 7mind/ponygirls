@@ -30,12 +30,14 @@ trait RdfProjection {
 }
 object RdfProjection {
   def resource(storage: RdfStorage, targetId: String, queryDeadlineSeconds: Int, newIncarnation: IO[java.util.UUID]): Resource[IO, RdfProjection] =
+    managed(storage, targetId, queryDeadlineSeconds, newIncarnation, work => work, work => work)
+  private[ontology] def managed(storage: RdfStorage, targetId: String, queryDeadlineSeconds: Int, newIncarnation: IO[java.util.UUID],
+    acquire: IO[RdfProjection] => IO[RdfProjection], close: IO[Unit] => IO[Unit]): Resource[IO, RdfProjection] =
     Resource.make(IO.blocking(new SailRepository(storage match {
       case RdfStorage.Memory => new MemoryStore()
       case RdfStorage.Native(path) => new NativeStore(path.toFile)
-    })))(repository => IO.blocking(repository.shutDown()))
-      .evalTap(repository => IO.blocking(repository.init()))
-      .evalMap(repository => Rdf4jProjection.open(repository, targetId, queryDeadlineSeconds, newIncarnation))
+    })))(repository => close(IO.blocking(repository.shutDown())))
+      .evalMap(repository => acquire(IO.blocking(repository.init()).flatMap(_ => Rdf4jProjection.open(repository, targetId, queryDeadlineSeconds, newIncarnation))))
 }
 object Rdf4jProjection {
   def open(repository: Repository, targetId: String, queryDeadlineSeconds: Int, newIncarnation: IO[java.util.UUID]): IO[RdfProjection] = IO.defer {

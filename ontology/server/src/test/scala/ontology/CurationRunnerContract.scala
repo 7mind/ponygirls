@@ -20,7 +20,7 @@ abstract class CurationRunnerContract extends CurationCoordinatorSupport {
     new CurationRunner(owner, settings, cycleConfig, runConfig, ids,
       config => CurationCoordinator.create(owner, repo, settings.principal, model, new CursorSigner(Array.fill[Byte](32)(4)),
         QueryLimits(100, 64, 65536, 2048), config, IO(UUID.randomUUID()), cycleLog, new SupervisedCurationCleanup),
-      new SupervisedCurationCleanup, log)
+      new SupervisedCurationCleanup, log, TestProjectionRuntime.factory(repo, settings), TestProjectionRuntime.noServer)
   for (origin <- List("capture", "command")) test(s"automatic polling for $origin publishes once and shutdown releases ownership") { check { (repo, settings, scope) => for {
     _ <- if (origin == "command") mutate(repo, scope).void else capture(repo, scope).void
     calls <- Cell.of[IO, Int](0)
@@ -212,8 +212,8 @@ abstract class CurationRunnerContract extends CurationCoordinatorSupport {
       override def acquire(id: UUID): IO[CoordinatorLease] = acquisitions.update(_ + 1) *> repo.curation.acquire(id)
     }
     _ = assertEquals(intercept[Fault](new CurationRunner(owner, settings, cycleConfig,
-      runConfig.copy(renewEvery = settings.leaseDuration.toNanos.nanos), IO(UUID.randomUUID()), _ => IO.pure(kernel), new SupervisedCurationCleanup, log)).code, "config")
-    service = new CurationRunner(owner, settings, cycleConfig, runConfig, IO(UUID.randomUUID()), _ => IO.pure(kernel), new SupervisedCurationCleanup, log)
+      runConfig.copy(renewEvery = settings.leaseDuration.toNanos.nanos), IO(UUID.randomUUID()), _ => IO.pure(kernel), new SupervisedCurationCleanup, log, TestProjectionRuntime.factory(repo, settings), TestProjectionRuntime.noServer)).code, "config")
+    service = new CurationRunner(owner, settings, cycleConfig, runConfig, IO(UUID.randomUUID()), _ => IO.pure(kernel), new SupervisedCurationCleanup, log, TestProjectionRuntime.factory(repo, settings), TestProjectionRuntime.noServer)
     result <- service.run.attempt
     _ = fault(result, "config")
     count <- acquisitions.get

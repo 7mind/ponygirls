@@ -26,4 +26,4 @@ The legacy unfenced acknowledgment API is removed. `outboxSnapshots` is read-onl
 
 Controls include shared memory/PostgreSQL reconciliation/replay/monotonicity tests, real local RDF observations, late-write rollback, forged progress, coherent checkpoint rollback/deletion and expiry while queued behind coordinator or scope locks. Service tests show that another incarnation's valid acknowledgment cannot establish local readiness.
 
-ProjectionStep, its runner resource lifecycle, Main/configuration, worker/Pi integration, packaging and full live acceptance remain unfinished. No deployment or migration of a live service is authorized by this implementation.
+The [bounded projection step and runner resource lifecycle](20261111-1912-ontology-projection-runtime.md) are implemented separately. Main/configuration, worker/Pi integration, packaging and full live acceptance remain unfinished. No deployment or migration of a live service is authorized by this implementation.
