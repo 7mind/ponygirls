@@ -32,5 +32,6 @@ object TestAuthoring {
     case v: RelationDetail.Decomposition => RelationDetailInput.Decomposition(v.grouping)
     case v: RelationDetail.Delegation => RelationDetailInput.Delegation(v.actors, v.operations, v.outcomes.map(Target.Exact(_)))
     case v: RelationDetail.Adoption => RelationDetailInput.Adoption(v.presentationId, v.origin)
+    case v: RelationDetail.AssessmentUse => RelationDetailInput.AssessmentUse(Target.Exact(v.requirement), v.disposition, v.basis.map(Target.Exact(_)))
   }
 }

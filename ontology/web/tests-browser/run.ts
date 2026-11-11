@@ -7,6 +7,7 @@ import { chromium, type Page, type Route } from 'playwright-core';
 import * as C from '../src/contracts.js';
 import type { Codec } from '../src/client.js';
 import { checkTheme, checkNarrowLayout, type ThemeObservation } from './theme.js';
+import { assessmentRecords } from './assessment-fixture.js';
 
 async function main(): Promise<void> {
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Use the pinned development shell; browser downloads are not allowed.');
@@ -45,7 +46,7 @@ const source = C.Definition.fromPlain({ ref: ref(20), scope: 'a', applicability:
 const goal = C.Definition.fromPlain({ ref: ref(1), scope: 'a', applicability: new C.Applicability_Unresolved('Fixture has not established semantic applicability', [], []), content: C.Content_Outcome.fromPlain({ text: 'Preserve the audit trail', acceptance: new C.Acceptance(['Retain evidence and unresolved intent'], undefined), force: C.Force.Required }), standing: C.Standing.Active, basis: [source.ref], changeReason: undefined, provenance: provenance(agent, 90) });
 const contract = new C.Binding(ref(30), 'a', goal.ref, [], 'worker-fixture', provenance(agent, 90));
 const selected = new C.BindingSelection(ref(31), 'a', contract.ref, true, 'Explicit synthetic contract selection', [goal.ref], provenance(agent, 90));
-const records: C.GraphRecord[] = [new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected)];
+const records: C.GraphRecord[] = [new C.GraphRecord_Node(goal), new C.GraphRecord_Node(source), new C.GraphRecord_Contract(contract), new C.GraphRecord_Selection(selected), ...assessmentRecords('a', ref, provenance(agent, 90))];
 const sourceEvent = C.CapturedEvent.fromPlain({ id: id(20), scope: 'a', sourceNamespace: 'fixture-collector', frontier: 1n, context, origin: C.EventOrigin.UserMessage, metadata, text: sourceText, observation: new C.Observation_None(), provenance: source.provenance });
 const absentEvent = C.CapturedEvent.fromPlain({ id: id(22), scope: 'a', sourceNamespace: 'fixture-host', frontier: 2n, context, origin: C.EventOrigin.ToolOutput, metadata: new C.CaptureMetadata('absence-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic witness, not a physical measurement'], []), text: 'Reported absence', observation: new C.Observation_FileAbsent('report.txt', 2n), provenance: provenance(host, 92) });
 const identity = new C.Identity(human, ['a', 'b'], [C.Capability.Read, C.Capability.Review]);
@@ -155,8 +156,13 @@ try {
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
   await page.getByRole('combobox', { name: 'Authorized scope', exact: true }).selectOption('a');
   const recordRegion = page.getByRole('region', { name: 'Ontology records', exact: true });
-  await recordRegion.getByRole('heading', { name: 'Selection event · selected', exact: true }).waitFor();
+  await recordRegion.locator('article.record-card').filter({ has: page.getByRole('button', { name: `Inspect exact revision ${id(31)}@1`, exact: true }) }).getByRole('heading', { name: 'Selection event · selected', exact: true }).waitFor();
   await recordRegion.getByText('worker-fixture', { exact: true }).waitFor();
+  await recordRegion.getByText('Declared assessment use', { exact: true }).waitFor();
+  await recordRegion.getByText('Applicable', { exact: true }).waitFor();
+  await recordRegion.getByText('Recorded gate evidence', { exact: true }).waitFor();
+  await recordRegion.getByText('Selected-contract witnesses', { exact: true }).waitFor();
+  receipts.push('assessment use remains qualified and gate evidence roles stay separate');
   await recordRegion.locator('article.record-card').filter({ has: page.getByRole('heading', { name: 'Intent · Outcome', exact: true }) }).getByLabel('Include exact revision in review', { exact: true }).check();
   await page.getByRole('button', { name: 'Prepare exact presentation', exact: true }).click();
   await page.getByRole('heading', { name: 'Presented snapshot', exact: true }).waitFor();

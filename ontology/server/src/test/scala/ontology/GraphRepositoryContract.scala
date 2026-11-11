@@ -16,6 +16,8 @@ abstract class GraphRepositoryContract extends FunSuite {
   protected def request(scope: String, generation: Long, text: String): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("claim", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement(text, Modality.Assertion)), Nil)))
   protected def admission(r: ApplyRequest): Admission = Admission(Actor("test-agent", ActorKind.Agent), Actor("test-host", ActorKind.Service), r.requestId, "2026-11-10T00:00:00Z")
   private def scope(): String = "contract-" + UUID.randomUUID()
+  private def reader(scope: String): Principal = Principal("reader", Actor("test-reader", ActorKind.Agent), Set(scope), Set(Capability.Read))
+  private def query(repository: GraphRepository): GraphQueries = new GraphQueries(repository, new CursorSigner(Array.fill[Byte](32)(1)), QueryLimits(100, 100, 1024 * 1024, 1024))
 
   private def captureContext(): CaptureContext = CaptureContext("fixture-session", None, None, LineageStatus.Unknown, "fixture-branch", UUID.randomUUID())
   private def capturePrincipal(scope: String, kind: ActorKind, namespace: String): Principal = Principal(credentialId = namespace, actor = Actor(namespace, kind), scopes = Set(scope), capabilities = Set(Capability.Read, Capability.Capture, Capability.HostCapture))
@@ -186,6 +188,76 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(missing.left.toOption.collect { case f: Fault => f.code }, Some("not-found"))
     } yield ()
   } }
+  test("gate witnesses persist while stale progress leaves Current but remains inspectable in History") { check { repo =>
+    val name = scope()
+    val input = AssessmentFixture.request(name, 0L, AssessmentFixture.operations)
+    val principal = reader(name)
+    val queries = query(repo)
+    for {
+      result <- repo.apply(input, AssessmentFixture.admission(input))
+      snapshot <- repo.read(name)
+      event = Graph.event(snapshot, AssessmentFixture.ref(result, "done"))
+      _ = assert(event.gateBasis.references.contains(AssessmentFixture.ref(result, "use")))
+      before <- queries.read(principal, ReadRequest(name, ReadView.Current, Nil, None, 100))
+      _ = assert(before.records.exists(record => Graph.recordRef(record) == event.ref))
+      revision = AssessmentFixture.request(name, result.generation, List(AssessmentFixture.changedReview(result)))
+      _ <- repo.apply(revision, AssessmentFixture.admission(revision))
+      current <- queries.read(principal, ReadRequest(name, ReadView.Current, Nil, None, 100))
+      _ = assert(current.records.exists(record => Graph.recordRef(record) == event.subject))
+      _ = assert(!current.records.exists(record => Graph.recordRef(record) == event.ref))
+      history <- queries.read(principal, ReadRequest(name, ReadView.History, List(event.ref), None, 100))
+      _ = assertEquals(history.records, List(GraphRecord.Progress(event)))
+      context <- queries.read(principal, ReadRequest(name, ReadView.BindingContext, List(event.subject), None, 100))
+      _ = assert(Gates.references(event.gateBasis).forall(ref => context.records.exists(record => Graph.recordRef(record) == ref)))
+      stored <- repo.history(name, result.generation)
+      _ = assertEquals(Graph.event(stored, event.ref), event)
+    } yield ()
+  } }
+  test("planned selected work stays visible when its condition has no applicability-use account") { check { repo =>
+    val name = scope()
+    val plan = AssessmentFixture.operations.filter {
+      case operation: Operation.Relate => operation.kind != RelationKind.UsesAssessment
+      case _: Operation.State => false
+      case _ => true
+    } :+ Operation.State("planned", Target.Created("consumer"), None, Phase.Planned, None, None, Nil, "Use remains unresolved")
+    val input = AssessmentFixture.request(name, 0L, plan)
+    val principal = reader(name)
+    val queries = query(repo)
+    for {
+      result <- repo.apply(input, AssessmentFixture.admission(input))
+      current <- queries.read(principal, ReadRequest(name, ReadView.Current, Nil, None, 100))
+      _ = assert(current.records.exists(record => Graph.recordRef(record) == AssessmentFixture.ref(result, "consumer")))
+      _ = assert(current.records.exists(record => Graph.recordRef(record) == AssessmentFixture.ref(result, "planned")))
+    } yield ()
+  } }
+  List(Consumption.Current, Consumption.Historical).foreach { consumption =>
+    test(s"$consumption consumption treats a predecessor's stale gate warrant explicitly") { check { repo =>
+      val name = scope()
+      val input = AssessmentFixture.request(name, 0L, AssessmentFixture.operations)
+      val principal = reader(name)
+      val queries = query(repo)
+      for {
+        upstream <- repo.apply(input, AssessmentFixture.admission(input))
+        dependency = RelationDetailInput.Dependency(Gate.Completion, consumption, if (consumption == Consumption.Historical) Some(Target.Exact(AssessmentFixture.ref(upstream, "done"))) else None, "Explicit historical work reuse, not current support")
+        child = AssessmentFixture.request(name, upstream.generation, List(
+          Operation.Create("child", AssessmentFixture.applicability, ContentInput.Task("Downstream", AcceptanceInput(List("Declared outcome"), None), Execution.Delegated), Nil),
+          Operation.Relate("dependency", AssessmentFixture.applicability, RelationKind.DependsOn, List(Target.Created("child")), List(Target.Exact(AssessmentFixture.ref(upstream, "consumer"))), dependency, "Completed predecessor needed"),
+          Operation.Bind("child-binding", Target.Created("child"), List(Target.Created("dependency")), "fixture"),
+          Operation.SelectBinding("selected", Target.Created("child-binding"), true, "Explicit downstream contract", List(Target.Created("child"))),
+          Operation.State("active", Target.Created("child-binding"), None, Phase.Active, None, None, Nil, "Reported only")))
+        downstream <- repo.apply(child, AssessmentFixture.admission(child))
+        revised = AssessmentFixture.request(name, downstream.generation, List(AssessmentFixture.changedReview(upstream)))
+        changed <- repo.apply(revised, AssessmentFixture.admission(revised))
+        current <- queries.read(principal, ReadRequest(name, ReadView.Current, Nil, None, 100))
+        _ = assertEquals(current.records.exists(record => Graph.recordRef(record) == AssessmentFixture.ref(downstream, "active")), consumption == Consumption.Historical)
+        next = AssessmentFixture.request(name, changed.generation, List(Operation.State("again", Target.Exact(AssessmentFixture.ref(downstream, "child-binding")), Some(AssessmentFixture.ref(downstream, "active")), Phase.Active, None, None, Nil, "Reported only")))
+        admitted <- repo.apply(next, AssessmentFixture.admission(next)).attempt
+        _ = if (consumption == Consumption.Current) assertEquals(admitted.left.toOption.collect { case fault: Fault => fault.code }, Some("assessment-use")) else assert(admitted.isRight)
+        history <- repo.history(name, downstream.generation)
+        _ = assert(history.events.exists(_.ref == AssessmentFixture.ref(downstream, "active")))
+      } yield ()
+    } }
+  }
   test("atomic snapshot, exact history and outbox agree") { check { repo =>
     val r = request(scope(), 0L, "First assertion")
     for {

@@ -20,7 +20,8 @@ export enum RelationKind {
     PlannedOutput = "PlannedOutput",
     Produced = "Produced",
     Answers = "Answers",
-    Assesses = "Assesses"
+    Assesses = "Assesses",
+    UsesAssessment = "UsesAssessment"
 }
 
 export const RelationKind_values: ReadonlyArray<RelationKind> = [
@@ -43,7 +44,8 @@ export const RelationKind_values: ReadonlyArray<RelationKind> = [
     RelationKind.PlannedOutput,
     RelationKind.Produced,
     RelationKind.Answers,
-    RelationKind.Assesses
+    RelationKind.Assesses,
+    RelationKind.UsesAssessment
 ] as const;
 
 export function RelationKind_parse(s: string): RelationKind {

@@ -7,7 +7,6 @@ import java.nio.charset.StandardCharsets.UTF_8
 final class AdmissionEngine {
   private val taskPhases = Set(Phase.Planned, Phase.Active, Phase.Blocked, Phase.Completed, Phase.Cancelled)
   private val inquiryPhases = Set(Phase.Open, Phase.Resolved)
-  private val currentContractPhases = Set(Phase.Active, Phase.Completed, Phase.Resolved)
   def apply(base: GraphSnapshot, request: ApplyRequest, admission: Admission): Applied = {
     Require(request.scope == base.scope, "scope", "scope mismatch")
     Require(request.requestId == admission.requestId, "request", "request binding mismatch")
@@ -89,17 +88,16 @@ final class AdmissionEngine {
           Require(Graph.latestEvent(graph, subject).map(_.ref) == x.previous, "conflict", "previous event is not binding-local current head")
           Require(x.result.nonEmpty == (x.phase == Phase.Completed), "state", "only completed work has a result")
           Require(!Set(Phase.Completed, Phase.Cancelled, Phase.Blocked, Phase.Resolved).contains(x.phase) || x.resolution.exists(_.trim.nonEmpty), "state", "resolution required")
-          if (currentContractPhases.contains(x.phase)) Graph.validateSelectedBinding(graph, b)
-          task.foreach { value =>
-            if (x.phase == Phase.Active || x.phase == Phase.Completed) {
-              Require(value.acceptance.clauses.nonEmpty, "acceptance", "unresolved acceptance blocks execution and fulfillment")
-              validateGates(graph, b)
-              if (value.execution == Execution.HumanRequired) Require(admission.actor.kind == ActorKind.Human, "authority", "Human-required task cannot be performed by an agent report")
-            }
+          if (Gates.requiresWarrant(x.phase)) Graph.validateSelectedBinding(graph, b)
+          val executingTask = task.filter(_ => x.phase == Phase.Active || x.phase == Phase.Completed)
+          executingTask.foreach(value => Require(value.acceptance.clauses.nonEmpty, "acceptance", "unresolved acceptance blocks execution and fulfillment"))
+          val gateBasis = if (Gates.requiresWarrant(x.phase)) Gates.evaluate(graph, b) else GateBasis(Nil, Nil)
+          executingTask.foreach { value =>
+            if (value.execution == Execution.HumanRequired) Require(admission.actor.kind == ActorKind.Human, "authority", "Human-required task cannot be performed by an agent report")
           }
           val evidence = refs(x.evidence)
           Require(!x.result.contains(Resolution.Fulfilled) || evidence.nonEmpty, "evidence", "fulfilled report requires evidence")
-          val e = StateEvent(fresh, graph.scope, subject, x.previous, x.phase, x.result, x.resolution, evidence, x.uncertainty, admission.provenance)
+          val e = StateEvent(fresh, graph.scope, subject, x.previous, x.phase, x.result, x.resolution, evidence, x.uncertainty, gateBasis, admission.provenance)
           graph = graph.copy(events = graph.events :+ e); fresh
       }
       aliases = aliases.updated(alias, published)
@@ -109,7 +107,7 @@ final class AdmissionEngine {
     graph.bindings.drop(base.bindings.size).foreach(Graph.validateBinding(graph, _))
     val newSelections = graph.selections.drop(base.selections.size).map(_.ref).toSet
     Selections.latest(graph).filter(value => newSelections.contains(value.ref) && value.selected).foreach(value => Graph.validateSelectedBinding(graph, Graph.binding(graph, value.binding)))
-    graph.events.drop(base.events.size).filter(e => currentContractPhases.contains(e.phase)).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateSelectedBinding(graph, b); validateGates(graph, b) })
+    graph.events.drop(base.events.size).filter(e => Gates.requiresWarrant(e.phase)).foreach(Gates.validateEvent(graph, _))
     Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(request.scope, request.requestId, Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
   }
 
@@ -156,26 +154,12 @@ final class AdmissionEngine {
           case _ => throw Fault("kind", "assessment source must be an explicit review")
         }
         empty(r)
+      case RelationKind.UsesAssessment => Gates.validateUse(g, r)
       case RelationKind.Answers => Require(Graph.node(g, r.targets.head).content.isInstanceOf[Content.Question], "kind", "answer target must be a question"); empty(r)
       case _ => empty(r)
     }
   }
   private def empty(r: Relation): Unit = Require(r.detail.isInstanceOf[RelationDetail.Empty], "detail", "unexpected relation detail")
-  private def validateGates(g: GraphSnapshot, b: Binding): Unit = {
-    b.context.flatMap(ref => g.relations.find(_.ref == ref)).foreach { r =>
-      if (r.kind == RelationKind.DependsOn) {
-        val d = r.detail.asInstanceOf[RelationDetail.Dependency]
-        val completion = d.event.map(Graph.event(g, _)).orElse(Graph.latestEvent(g, r.targets.head))
-        Require(completion.exists(e => e.phase == Phase.Completed && (d.gate == Gate.Completion || e.result.contains(Resolution.Fulfilled))), "prerequisite", "work prerequisite not satisfied")
-        if (d.consumption == Consumption.Current) Graph.validateSelectedBinding(g, Graph.binding(g, r.targets.head))
-      }
-      if (r.kind == RelationKind.Requires) {
-        Graph.validateSelectedBinding(g, Graph.binding(g, r.targets.head))
-        val supported = Graph.relations(g).filter(e => e.kind == RelationKind.Assesses && e.standing == Standing.Active && e.targets.contains(r.targets.head)).flatMap(e => e.sources.flatMap(s => g.definitions.find(_.ref == s))).filter(d => Graph.definitions(g).exists(_.ref == d.ref) && d.standing == Standing.Active).collect { case d if d.content.isInstanceOf[Content.Review] => d.content.asInstanceOf[Content.Review].assessment }
-        Require(supported.nonEmpty && supported.forall(_ == Assessment.Supported), "condition", "condition lacks an unconflicted applicable supporting assessment")
-      }
-    }
-  }
   private def validateCycles(g: GraphSnapshot): Unit = {
     val edges = Graph.relations(g).filter(_.standing == Standing.Active).flatMap { r =>
       if (r.kind == RelationKind.DependsOn && r.detail.asInstanceOf[RelationDetail.Dependency].consumption == Consumption.Current) List(r.sources.head.id -> Graph.binding(g, r.targets.head).definition.id)

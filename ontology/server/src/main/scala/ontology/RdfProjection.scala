@@ -111,9 +111,12 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
         case GraphRecord.Person(v) => literal("actorId", v.value.id); literal("actorKind", v.value.kind.toString); "actor"
         case GraphRecord.Input(v) => literal("text", v.content); literal("inputKind", v.kind.toString); literal("contributor", v.contributor.id); literal("recorder", v.recorder.id); "input-receipt"
         case GraphRecord.Node(v) => applicability(v.applicability); literal("kind", Graph.kind(v.content)); literal("text", Graph.text(v.content)); literal("standing", v.standing.toString); links("basis", v.basis); provenance(model, scope, subject, v.provenance); "definition"
-        case GraphRecord.Edge(v) => applicability(v.applicability); literal("kind", v.kind.toString); literal("text", v.why); literal("standing", v.standing.toString); links("source", v.sources); links("target", v.targets); provenance(model, scope, subject, v.provenance); "relation"
+        case GraphRecord.Edge(v) =>
+          applicability(v.applicability); literal("kind", v.kind.toString); literal("text", v.why); literal("standing", v.standing.toString); links("source", v.sources); links("target", v.targets)
+          v.detail match { case use: RelationDetail.AssessmentUse => links("requirement", List(use.requirement)); links("basis", use.basis); literal("assessmentUse", use.disposition.toString); case _ => () }
+          provenance(model, scope, subject, v.provenance); "relation"
         case GraphRecord.Contract(v) => literal("workContext", v.workContext); links("definition", List(v.definition)); links("context", v.context); provenance(model, scope, subject, v.provenance); "binding"
-        case GraphRecord.Progress(v) => links("subject", List(v.subject)); links("previous", v.previous.toList); links("evidence", v.evidence); literal("phase", v.phase.toString); provenance(model, scope, subject, v.provenance); "event"
+        case GraphRecord.Progress(v) => links("subject", List(v.subject)); links("previous", v.previous.toList); links("evidence", v.evidence); links("gateBasis", v.gateBasis.references); links("selectionWitness", v.gateBasis.selectionWitnesses); literal("phase", v.phase.toString); provenance(model, scope, subject, v.provenance); "event"
         case GraphRecord.Selection(v) => links("binding", List(v.binding)); links("basis", v.basis); literal("selected", v.selected.toString); literal("text", v.reason); provenance(model, scope, subject, v.provenance); "binding-selection"
       }
       model.add(subject, RDF.TYPE, values.createIRI("urn:ontology:type:" + category), graph(scope))
@@ -148,7 +151,7 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
     result
   }
   def subjects(scope: String, expectedGeneration: Long, predicate: String, target: Ref): IO[List[Ref]] = transaction(false) { c =>
-    Require(Set("source", "target", "basis", "definition", "context", "subject", "previous", "evidence", "applicability", "binding").contains(predicate), "query", "unknown traversal predicate")
+    Require(Set("source", "target", "basis", "definition", "context", "subject", "previous", "evidence", "applicability", "binding", "requirement", "gateBasis", "selectionWitness").contains(predicate), "query", "unknown traversal predicate")
     readSnapshot(c, scope, expectedGeneration)
     val query = c.prepareTupleQuery("SELECT ?payload WHERE { GRAPH ?scope { ?record ?predicate ?target ; <urn:ontology:property:payload> ?payload ; <urn:ontology:property:ordinal> ?ordinal } } ORDER BY ?ordinal")
     query.setBinding("scope", graph(scope)); query.setBinding("predicate", property(predicate)); query.setBinding("target", record(scope, target)); query.setMaxExecutionTime(queryDeadlineSeconds)

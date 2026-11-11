@@ -18,6 +18,7 @@ import { ApplicabilityInput, ApplicabilityInput_JsonCodec } from './Applicabilit
 import { ApplyRequest, ApplyRequest_JsonCodec } from './ApplyRequest.js';
 import { ApplyResult, ApplyResult_JsonCodec } from './ApplyResult.js';
 import { Assessment, Assessment_JsonCodec } from './Assessment.js';
+import { AssessmentUseDisposition, AssessmentUseDisposition_JsonCodec } from './AssessmentUseDisposition.js';
 import { Binding, Binding_JsonCodec } from './Binding.js';
 import { BindingSelection, BindingSelection_JsonCodec } from './BindingSelection.js';
 import { Capability, Capability_JsonCodec } from './Capability.js';
@@ -46,6 +47,7 @@ import { FindRequest, FindRequest_JsonCodec } from './FindRequest.js';
 import { FindResult, FindResult_JsonCodec } from './FindResult.js';
 import { Force, Force_JsonCodec } from './Force.js';
 import { Gate, Gate_JsonCodec } from './Gate.js';
+import { GateBasis, GateBasis_JsonCodec } from './GateBasis.js';
 import { GoverningChange, GoverningChange_JsonCodec } from './GoverningChange.js';
 import { GraphRecord, GraphRecord_JsonCodec } from './GraphRecord.js';
 import { GraphSnapshot, GraphSnapshot_JsonCodec } from './GraphSnapshot.js';
@@ -109,6 +111,7 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(ApplyRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ApplyRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ApplyResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ApplyResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Assessment_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Assessment_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(AssessmentUseDisposition_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => AssessmentUseDisposition_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Binding_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Binding_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(BindingSelection_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => BindingSelection_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Capability_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Capability_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -137,6 +140,7 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(FindResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => FindResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Force_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Force_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Gate_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Gate_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(GateBasis_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GateBasis_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(GoverningChange_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GoverningChange_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(GraphRecord_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GraphRecord_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(GraphSnapshot_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => GraphSnapshot_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -213,6 +217,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ApplyRequest": ['0.1.0'],
         "ontology.api/:#ApplyResult": ['0.1.0'],
         "ontology.api/:#Assessment": ['0.1.0'],
+        "ontology.api/:#AssessmentUseDisposition": ['0.1.0'],
         "ontology.api/:#Binding": ['0.1.0'],
         "ontology.api/:#BindingSelection": ['0.1.0'],
         "ontology.api/:#Capability": ['0.1.0'],
@@ -241,6 +246,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#FindResult": ['0.1.0'],
         "ontology.api/:#Force": ['0.1.0'],
         "ontology.api/:#Gate": ['0.1.0'],
+        "ontology.api/:#GateBasis": ['0.1.0'],
         "ontology.api/:#GoverningChange": ['0.1.0'],
         "ontology.api/:#GraphRecord": ['0.1.0'],
         "ontology.api/:#GraphSnapshot": ['0.1.0'],
@@ -335,11 +341,13 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#Operation]#SelectBinding": ['0.1.0'],
         "ontology.api/[ontology.api/:#Operation]#State": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": ['0.1.0'],
+        "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Delegation": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Dependency": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetailInput]#Empty": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetail]#Adoption": ['0.1.0'],
+        "ontology.api/[ontology.api/:#RelationDetail]#AssessmentUse": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetail]#Decomposition": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetail]#Delegation": ['0.1.0'],
         "ontology.api/[ontology.api/:#RelationDetail]#Dependency": ['0.1.0'],
@@ -363,6 +371,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ApplyRequest": { '0.1.0': 'identical' },
         "ontology.api/:#ApplyResult": { '0.1.0': 'identical' },
         "ontology.api/:#Assessment": { '0.1.0': 'identical' },
+        "ontology.api/:#AssessmentUseDisposition": { '0.1.0': 'identical' },
         "ontology.api/:#Binding": { '0.1.0': 'identical' },
         "ontology.api/:#BindingSelection": { '0.1.0': 'identical' },
         "ontology.api/:#Capability": { '0.1.0': 'identical' },
@@ -391,6 +400,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#FindResult": { '0.1.0': 'identical' },
         "ontology.api/:#Force": { '0.1.0': 'identical' },
         "ontology.api/:#Gate": { '0.1.0': 'identical' },
+        "ontology.api/:#GateBasis": { '0.1.0': 'identical' },
         "ontology.api/:#GoverningChange": { '0.1.0': 'identical' },
         "ontology.api/:#GraphRecord": { '0.1.0': 'identical' },
         "ontology.api/:#GraphSnapshot": { '0.1.0': 'identical' },
@@ -485,11 +495,13 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/[ontology.api/:#Operation]#SelectBinding": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#Operation]#State": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Adoption": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Decomposition": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Delegation": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Dependency": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetailInput]#Empty": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetail]#Adoption": { '0.1.0': 'identical' },
+        "ontology.api/[ontology.api/:#RelationDetail]#AssessmentUse": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetail]#Decomposition": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetail]#Delegation": { '0.1.0': 'identical' },
         "ontology.api/[ontology.api/:#RelationDetail]#Dependency": { '0.1.0': 'identical' },

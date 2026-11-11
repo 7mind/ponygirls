@@ -19,8 +19,10 @@ package ontology.api {
   object BaboonCodecsJson extends AbstractBaboonJsonCodecs{
     register("ontology.api/:#Relation", Lazy(Relation_JsonCodec))
     register("ontology.api/:#Grouping", Lazy(Grouping_JsonCodec))
+    register("ontology.api/:#AssessmentUseDisposition", Lazy(AssessmentUseDisposition_JsonCodec))
     register("ontology.api/:#JudgmentsResult", Lazy(JudgmentsResult_JsonCodec))
     register("ontology.api/:#ApplyRequest", Lazy(ApplyRequest_JsonCodec))
+    register("ontology.api/:#GateBasis", Lazy(GateBasis_JsonCodec))
     register("ontology.api/:#InputKind", Lazy(InputKind_JsonCodec))
     register("ontology.api/:#ScopeRequest", Lazy(ScopeRequest_JsonCodec))
     register("ontology.api/:#Gate", Lazy(Gate_JsonCodec))

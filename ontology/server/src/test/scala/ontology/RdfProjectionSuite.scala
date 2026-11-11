@@ -52,6 +52,22 @@ abstract class RdfProjectionContract extends FunSuite {
       _ = assertEquals(bad.left.toOption.collect { case f: Fault => f.code }, Some("scope"))
     } yield ()
   } }
+  test("assessment use and immutable gate witnesses survive projection and exact traversal") { check { rdf =>
+    val graph = AssessmentFixture.snapshot("s")
+    val use = graph.relations.find(_.kind == RelationKind.UsesAssessment).get
+    val requirement = use.detail.asInstanceOf[RelationDetail.AssessmentUse].requirement
+    val event = graph.events.head
+    for {
+      _ <- rdf.publish(graph)
+      restored <- rdf.snapshot("s", graph.generation)
+      _ = assertEquals(restored, graph)
+      requirements <- rdf.subjects("s", graph.generation, "requirement", requirement)
+      _ = assertEquals(requirements, List(use.ref))
+      gates <- rdf.subjects("s", graph.generation, "gateBasis", use.ref)
+      _ = assertEquals(gates, List(event.ref))
+      _ = assert(event.gateBasis.references.contains(use.ref))
+    } yield ()
+  } }
   test("same revision is idempotent, changed bytes conflict, old revisions cannot regress head") { check { rdf =>
     val first = sample("s"); val next = first.copy(generation = 2L)
     for {

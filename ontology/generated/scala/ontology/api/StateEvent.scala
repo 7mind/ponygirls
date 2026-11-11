@@ -13,6 +13,7 @@ package ontology.api {
     resolution: Option[String],
     evidence: List[Ref],
     uncertainty: String,
+    gateBasis: GateBasis,
     provenance: Provenance
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = StateEvent.baboonDomainVersion
@@ -52,6 +53,7 @@ package ontology.api {
         "resolution" -> value.resolution.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "evidence" -> Json.fromValues(value.evidence.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
         "uncertainty" -> Json.fromString(value.uncertainty),
+        "gateBasis" -> GateBasis_JsonCodec.instance.encode(ctx, value.gateBasis),
         "provenance" -> Provenance_JsonCodec.instance.encode(ctx, value.provenance)
       )
     }
@@ -72,8 +74,9 @@ package ontology.api {
             resolution <- getField(jsonObject, "resolution").flatMap(v => decodeOption(decodeString)(v.hcursor))
             evidence <- getField(jsonObject, "evidence").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
             uncertainty <- getField(jsonObject, "uncertainty").flatMap(v => decodeString(v.hcursor))
+            gateBasis <- getField(jsonObject, "gateBasis").flatMap(v => GateBasis_JsonCodec.circeDecoder(v.hcursor))
             provenance <- getField(jsonObject, "provenance").flatMap(v => Provenance_JsonCodec.circeDecoder(v.hcursor))
-          } yield StateEvent(ref,scope,subject,previous,phase,result,resolution,evidence,uncertainty,provenance)
+          } yield StateEvent(ref,scope,subject,previous,phase,result,resolution,evidence,uncertainty,gateBasis,provenance)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to StateEvent: object expected"))
       }
     }

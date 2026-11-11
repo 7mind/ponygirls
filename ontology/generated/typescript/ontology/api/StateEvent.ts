@@ -1,5 +1,6 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {GateBasis, GateBasis_JsonCodec} from './GateBasis.js'
 import {Phase, Phase_JsonCodec} from './Phase.js'
 import {Provenance, Provenance_JsonCodec} from './Provenance.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
@@ -15,9 +16,10 @@ export class StateEvent implements BaboonGeneratedLatest {
     private readonly _resolution: string | undefined;
     private readonly _evidence: Array<Ref>;
     private readonly _uncertainty: string;
+    private readonly _gateBasis: GateBasis;
     private readonly _provenance: Provenance;
 
-    constructor(ref: Ref, scope: string, subject: Ref, previous: Ref | undefined, phase: Phase, result: Resolution | undefined, resolution: string | undefined, evidence: Array<Ref>, uncertainty: string, provenance: Provenance) {
+    constructor(ref: Ref, scope: string, subject: Ref, previous: Ref | undefined, phase: Phase, result: Resolution | undefined, resolution: string | undefined, evidence: Array<Ref>, uncertainty: string, gateBasis: GateBasis, provenance: Provenance) {
         this._ref = ref
         this._scope = scope
         this._subject = subject
@@ -27,6 +29,7 @@ export class StateEvent implements BaboonGeneratedLatest {
         this._resolution = resolution
         this._evidence = evidence
         this._uncertainty = uncertainty
+        this._gateBasis = gateBasis
         this._provenance = provenance
     }
 
@@ -57,6 +60,9 @@ export class StateEvent implements BaboonGeneratedLatest {
     public get uncertainty(): string {
         return this._uncertainty;
     }
+    public get gateBasis(): GateBasis {
+        return this._gateBasis;
+    }
     public get provenance(): Provenance {
         return this._provenance;
     }
@@ -72,11 +78,12 @@ export class StateEvent implements BaboonGeneratedLatest {
             resolution: this._resolution !== undefined ? this._resolution : undefined,
             evidence: this._evidence,
             uncertainty: this._uncertainty,
+            gateBasis: this._gateBasis,
             provenance: this._provenance
         };
     }
 
-    public with(overrides: {ref?: Ref; scope?: string; subject?: Ref; previous?: Ref | undefined; phase?: Phase; result?: Resolution | undefined; resolution?: string | undefined; evidence?: Array<Ref>; uncertainty?: string; provenance?: Provenance}): StateEvent {
+    public with(overrides: {ref?: Ref; scope?: string; subject?: Ref; previous?: Ref | undefined; phase?: Phase; result?: Resolution | undefined; resolution?: string | undefined; evidence?: Array<Ref>; uncertainty?: string; gateBasis?: GateBasis; provenance?: Provenance}): StateEvent {
         return new StateEvent(
             'ref' in overrides ? overrides.ref! : this._ref,
             'scope' in overrides ? overrides.scope! : this._scope,
@@ -87,11 +94,12 @@ export class StateEvent implements BaboonGeneratedLatest {
             'resolution' in overrides ? overrides.resolution! : this._resolution,
             'evidence' in overrides ? overrides.evidence! : this._evidence,
             'uncertainty' in overrides ? overrides.uncertainty! : this._uncertainty,
+            'gateBasis' in overrides ? overrides.gateBasis! : this._gateBasis,
             'provenance' in overrides ? overrides.provenance! : this._provenance
         );
     }
 
-    public static fromPlain(obj: {ref: Ref; scope: string; subject: Ref; previous: Ref | undefined; phase: Phase; result: Resolution | undefined; resolution: string | undefined; evidence: Array<Ref>; uncertainty: string; provenance: Provenance}): StateEvent {
+    public static fromPlain(obj: {ref: Ref; scope: string; subject: Ref; previous: Ref | undefined; phase: Phase; result: Resolution | undefined; resolution: string | undefined; evidence: Array<Ref>; uncertainty: string; gateBasis: GateBasis; provenance: Provenance}): StateEvent {
         return new StateEvent(
             obj.ref,
             obj.scope,
@@ -102,6 +110,7 @@ export class StateEvent implements BaboonGeneratedLatest {
             obj.resolution,
             obj.evidence,
             obj.uncertainty,
+            obj.gateBasis,
             obj.provenance
         );
     }
@@ -151,6 +160,7 @@ export class StateEvent_JsonCodec {
             "resolution": value.resolution === undefined ? null : value.resolution,
             "evidence": Array.from(value.evidence).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "uncertainty": value.uncertainty,
+            "gateBasis": GateBasis_JsonCodec.instance.encode(BaboonCodecContext.Default, value.gateBasis),
             "provenance": Provenance_JsonCodec.instance.encode(BaboonCodecContext.Default, value.provenance),
         }
     }
@@ -170,6 +180,7 @@ export class StateEvent_JsonCodec {
             obj["resolution"] === undefined || obj["resolution"] === null ? undefined : obj["resolution"] === undefined || obj["resolution"] === null ? undefined : obj["resolution"] as string,
             (obj["evidence"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["uncertainty"] as string,
+            GateBasis_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["gateBasis"]),
             Provenance_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["provenance"]),
         )
     }

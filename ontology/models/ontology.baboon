@@ -23,6 +23,7 @@ enum Execution { Delegated HumanRequired }
 enum Modality { Assertion Prediction Assumption ObservationAccount }
 enum Correction { Implementation Interpretation IntentChange Mixed Unresolved }
 enum Assessment { Unassessed Supported Contradicted Mixed }
+enum AssessmentUseDisposition { Applicable Excluded Unresolved }
 enum Escalation { NoEscalation HumanRequired Unresolved }
 enum ConflictState { Open Resolved }
 enum Standing { Active Superseded Withdrawn }
@@ -43,7 +44,7 @@ adt Content {
  data Conflict { text: str subjects: lst[Ref] status: ConflictState resolution: opt[str] uncertainty: str }
 }
 
-enum RelationKind { Quotes Interprets Infers Assumes Supports Challenges Adopts Chooses Delegates Supersedes Withdraws ContributesTo DependsOn Requires Decomposes AssignedTo PlannedOutput Produced Answers Assesses }
+enum RelationKind { Quotes Interprets Infers Assumes Supports Challenges Adopts Chooses Delegates Supersedes Withdraws ContributesTo DependsOn Requires Decomposes AssignedTo PlannedOutput Produced Answers Assesses UsesAssessment }
 enum Gate { Completion Fulfillment }
 enum Consumption { Current Historical }
 enum Grouping { All Alternative Navigation }
@@ -54,6 +55,7 @@ adt RelationDetail {
  data Decomposition { grouping: Grouping }
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Ref] }
  data Adoption { presentationId: uid origin: AdoptionOrigin }
+ data AssessmentUse { requirement: Ref disposition: AssessmentUseDisposition basis: lst[Ref] }
 }
 data Definition { ref: Ref scope: str applicability: Applicability content: Content standing: Standing basis: lst[Ref] changeReason: opt[str] provenance: Provenance }
 data Relation { ref: Ref scope: str applicability: Applicability kind: RelationKind sources: lst[Ref] targets: lst[Ref] detail: RelationDetail why: str standing: Standing provenance: Provenance }
@@ -61,7 +63,8 @@ data Binding { ref: Ref scope: str definition: Ref context: lst[Ref] workContext
 data BindingSelection { ref: Ref scope: str binding: Ref selected: bit reason: str basis: lst[Ref] provenance: Provenance }
 enum Phase { Planned Active Blocked Completed Cancelled Open Resolved }
 enum Resolution { Fulfilled NotFulfilled Inconclusive }
-data StateEvent { ref: Ref scope: str subject: Ref previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Ref] uncertainty: str provenance: Provenance }
+data GateBasis { references: lst[Ref] selectionWitnesses: lst[Ref] }
+data StateEvent { ref: Ref scope: str subject: Ref previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Ref] uncertainty: str gateBasis: GateBasis provenance: Provenance }
 
 adt Target { data Exact { ref: Ref } data Created { alias: str } }
 data AcceptanceInput { clauses: lst[str] question: opt[Target] }
@@ -88,6 +91,7 @@ adt RelationDetailInput {
  data Decomposition { grouping: Grouping }
  data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Target] }
  data Adoption { presentationId: uid origin: AdoptionOrigin }
+ data AssessmentUse { requirement: Target disposition: AssessmentUseDisposition basis: lst[Target] }
 }
 adt Operation {
  data Create { alias: str applicability: ApplicabilityInput content: ContentInput basis: lst[Target] }

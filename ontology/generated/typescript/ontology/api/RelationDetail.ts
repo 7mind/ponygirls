@@ -1,12 +1,13 @@
 import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {AdoptionOrigin, AdoptionOrigin_JsonCodec} from './AdoptionOrigin.js'
+import {AssessmentUseDisposition, AssessmentUseDisposition_JsonCodec} from './AssessmentUseDisposition.js'
 import {Consumption, Consumption_JsonCodec} from './Consumption.js'
 import {Gate, Gate_JsonCodec} from './Gate.js'
 import {Grouping, Grouping_JsonCodec} from './Grouping.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
 
-export type RelationDetail = RelationDetail_Empty | RelationDetail_Dependency | RelationDetail_Decomposition | RelationDetail_Delegation | RelationDetail_Adoption
+export type RelationDetail = RelationDetail_Empty | RelationDetail_Dependency | RelationDetail_Decomposition | RelationDetail_Delegation | RelationDetail_Adoption | RelationDetail_AssessmentUse
 
 export const RelationDetail = {
     BaboonDomainVersion: '0.1.0',
@@ -618,6 +619,134 @@ export class RelationDetail_Adoption_JsonCodec {
     }
 }
 
+export class RelationDetail_AssessmentUse implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#RelationDetail]#AssessmentUse' as const;
+    private readonly _requirement: Ref;
+    private readonly _disposition: AssessmentUseDisposition;
+    private readonly _basis: Array<Ref>;
+
+    constructor(requirement: Ref, disposition: AssessmentUseDisposition, basis: Array<Ref>) {
+        this._requirement = requirement
+        this._disposition = disposition
+        this._basis = basis
+    }
+
+    public get requirement(): Ref {
+        return this._requirement;
+    }
+    public get disposition(): AssessmentUseDisposition {
+        return this._disposition;
+    }
+    public get basis(): Array<Ref> {
+        return this._basis;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            requirement: this._requirement,
+            disposition: this._disposition,
+            basis: this._basis
+        };
+    }
+
+    public with(overrides: {requirement?: Ref; disposition?: AssessmentUseDisposition; basis?: Array<Ref>}): RelationDetail_AssessmentUse {
+        return new RelationDetail_AssessmentUse(
+            'requirement' in overrides ? overrides.requirement! : this._requirement,
+            'disposition' in overrides ? overrides.disposition! : this._disposition,
+            'basis' in overrides ? overrides.basis! : this._basis
+        );
+    }
+
+    public static fromPlain(obj: {requirement: Ref; disposition: AssessmentUseDisposition; basis: Array<Ref>}): RelationDetail_AssessmentUse {
+        return new RelationDetail_AssessmentUse(
+            obj.requirement,
+            obj.disposition,
+            obj.basis
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return RelationDetail_AssessmentUse.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return RelationDetail_AssessmentUse.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#RelationDetail]#AssessmentUse'
+    public baboonTypeIdentifier() {
+        return RelationDetail_AssessmentUse.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return RelationDetail_AssessmentUse.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return RelationDetail_AssessmentUse.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return RelationDetail_AssessmentUse.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#RelationDetail'
+    public baboonAdtTypeIdentifier() {
+        return RelationDetail_AssessmentUse.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): RelationDetail_AssessmentUse_JsonCodec {
+        return RelationDetail_AssessmentUse_JsonCodec.instance
+    }
+}
+
+export class RelationDetail_AssessmentUse_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: RelationDetail_AssessmentUse): unknown {
+        if (this !== RelationDetail_AssessmentUse_JsonCodec.lazyInstance.value) {
+          return RelationDetail_AssessmentUse_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "requirement": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.requirement),
+            "disposition": AssessmentUseDisposition_JsonCodec.instance.encode(BaboonCodecContext.Default, value.disposition),
+            "basis": Array.from(value.basis).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): RelationDetail_AssessmentUse {
+        if (this !== RelationDetail_AssessmentUse_JsonCodec .lazyInstance.value) {
+            return RelationDetail_AssessmentUse_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new RelationDetail_AssessmentUse (
+            Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["requirement"]),
+            AssessmentUseDisposition_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["disposition"]),
+            (obj["basis"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return RelationDetail_AssessmentUse_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return RelationDetail_AssessmentUse_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#RelationDetail]#AssessmentUse'
+    public baboonTypeIdentifier() {
+        return RelationDetail_AssessmentUse_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#RelationDetail'
+    public baboonAdtTypeIdentifier() {
+        return RelationDetail_AssessmentUse_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new RelationDetail_AssessmentUse_JsonCodec())
+    public static get instance(): RelationDetail_AssessmentUse_JsonCodec {
+        return RelationDetail_AssessmentUse_JsonCodec.lazyInstance.value
+    }
+}
+
 
 export class RelationDetail_JsonCodec {
     public encode(ctx: BaboonCodecContext, value: RelationDetail): unknown {
@@ -640,6 +769,9 @@ export class RelationDetail_JsonCodec {
             if (value instanceof RelationDetail_Adoption) {
                 return { "Adoption": RelationDetail_Adoption_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof RelationDetail_AssessmentUse) {
+                return { "AssessmentUse": RelationDetail_AssessmentUse_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
         throw new Error("Unhandled ADT branch: " + (value as {constructor?: {name?: string}}).constructor?.name);
     }
     public decode(ctx: BaboonCodecContext, json: unknown): RelationDetail {
@@ -655,6 +787,7 @@ export class RelationDetail_JsonCodec {
                 case "Decomposition": return RelationDetail_Decomposition_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Delegation": return RelationDetail_Delegation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Adoption": return RelationDetail_Adoption_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "AssessmentUse": return RelationDetail_AssessmentUse_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }
     }

@@ -25,6 +25,7 @@ package ontology.api {
     case object Produced extends RelationKind
     case object Answers extends RelationKind
     case object Assesses extends RelationKind
+    case object UsesAssessment extends RelationKind
     
     def parse(s: String): Option[RelationKind] = {
       s match {
@@ -48,6 +49,7 @@ package ontology.api {
         case "Produced" => Some(Produced)
         case "Answers" => Some(Answers)
         case "Assesses" => Some(Assesses)
+        case "UsesAssessment" => Some(UsesAssessment)
         case _ => None
       }
     }
@@ -72,7 +74,8 @@ package ontology.api {
       PlannedOutput,
       Produced,
       Answers,
-      Assesses
+      Assesses,
+      UsesAssessment
     ) 
   }
   

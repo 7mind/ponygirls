@@ -147,6 +147,7 @@ function RelationDetails({ value, inspect }: { value: C.RelationDetail; inspect:
   if (value instanceof C.RelationDetail_Dependency) return <><dl><Field label='Gate'>{value.gate}</Field><Field label='Consumption'>{value.consumption}</Field><Field label='Applicability'>{value.applicability}</Field></dl><Refs label='Dependency event' values={value.event ? [value.event] : []} inspect={inspect} /></>;
   if (value instanceof C.RelationDetail_Decomposition) return <dl><Field label='Grouping'>{value.grouping}</Field></dl>;
   if (value instanceof C.RelationDetail_Delegation) return <><h4>Recorded delegation actors</h4><Texts values={value.actors} /><h4>Recorded operations</h4><Texts values={value.operations} /><Refs label='Delegated outcomes' values={value.outcomes} inspect={inspect} /><p className='fine-print'>Displaying a delegation is not permission to execute it.</p></>;
+  if (value instanceof C.RelationDetail_AssessmentUse) return <><dl><Field label='Declared assessment use'>{value.disposition}</Field></dl><Refs label='Exact requirement' values={[value.requirement]} inspect={inspect} /><Refs label='Applicability-use basis' values={value.basis} inspect={inspect} /><p className='fine-print'>Applicability use is an attributed account, not a truth or permission certificate. Exclusion does not refute the original assessment.</p></>;
   if (value instanceof C.RelationDetail_Adoption) return <dl><Field label='Presentation identifier'><code>{value.presentationId}</code></Field><Field label='Adoption origin'>{value.origin}</Field></dl>;
   return null;
 }
@@ -174,7 +175,7 @@ function RecordDetails({ record, inspect }: { record: C.GraphRecord; inspect: In
   }
   if (record instanceof C.GraphRecord_Progress) {
     const value = record.value;
-    return <><dl><Field label='Reported phase'>{value.phase}</Field><Field label='Reported result'>{value.result}</Field><Field label='Resolution account'>{value.resolution}</Field><Field label='Uncertainty'>{value.uncertainty}</Field></dl><Refs label='State subject' values={[value.subject]} inspect={inspect} /><Refs label='Previous state event' values={value.previous ? [value.previous] : []} inspect={inspect} /><Refs label='State evidence' values={value.evidence} inspect={inspect} /><p className='fine-print'>This is a reported state event, not an independent finding of task completion.</p></>;
+    return <><dl><Field label='Reported phase'>{value.phase}</Field><Field label='Reported result'>{value.result}</Field><Field label='Resolution account'>{value.resolution}</Field><Field label='Uncertainty'>{value.uncertainty}</Field></dl><Refs label='State subject' values={[value.subject]} inspect={inspect} /><Refs label='Previous state event' values={value.previous ? [value.previous] : []} inspect={inspect} /><Refs label='State evidence' values={value.evidence} inspect={inspect} /><Refs label='Recorded gate evidence' values={value.gateBasis.references} inspect={inspect} /><Refs label='Selected-contract witnesses' values={value.gateBasis.selectionWitnesses} inspect={inspect} /><p className='fine-print'>This is a reported state event, not an independent finding of task completion.</p></>;
   }
   if (record instanceof C.GraphRecord_Selection) {
     const value = record.value;

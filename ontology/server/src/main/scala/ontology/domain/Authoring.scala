@@ -36,5 +36,6 @@ object Authoring {
     case v: RelationDetailInput.Decomposition => RelationDetail.Decomposition(v.grouping)
     case v: RelationDetailInput.Delegation => RelationDetail.Delegation(v.actors, v.operations, v.outcomes.map(resolve))
     case v: RelationDetailInput.Adoption => RelationDetail.Adoption(v.presentationId, v.origin)
+    case v: RelationDetailInput.AssessmentUse => RelationDetail.AssessmentUse(resolve(v.requirement), v.disposition, v.basis.map(resolve))
   }
 }

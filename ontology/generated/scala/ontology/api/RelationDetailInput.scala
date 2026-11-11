@@ -369,6 +369,80 @@ package ontology.api {
       override protected def LazyInstance: Lazy[BaboonJsonCodec[RelationDetailInput.Adoption]] = cachedLazyInstance
       override def instance: BaboonJsonCodec[RelationDetailInput.Adoption] = LazyInstance.value
     }
+    
+    
+    final case class AssessmentUse(
+      requirement: Target,
+      disposition: AssessmentUseDisposition,
+      basis: List[Target]
+    ) extends RelationDetailInput with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = RelationDetailInput.AssessmentUse.baboonDomainVersion
+      override def baboonDomainIdentifier: String = RelationDetailInput.AssessmentUse.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = RelationDetailInput.AssessmentUse.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = RelationDetailInput.AssessmentUse.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = RelationDetailInput.AssessmentUse.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = RelationDetailInput.AssessmentUse.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = RelationDetailInput.AssessmentUse.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = RelationDetailInput.AssessmentUse.baboonAdtType
+    }
+    
+    object AssessmentUse {
+      def baboonDomainVersion: String = "0.1.0"
+      def baboonDomainIdentifier: String = "ontology.api"
+      def baboonTypeIdentifier: String = "ontology.api/[ontology.api/:#RelationDetailInput]#AssessmentUse"
+      private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "ontology.api/:#RelationDetailInput"
+      def baboonAdtType: _root_.java.lang.Class[?] = RelationDetailInput.getClass
+      def codecJson: BaboonJsonCodec[RelationDetailInput.AssessmentUse] = RelationDetailInput.AssessmentUse_JsonCodec.instance
+    }
+    
+    object AssessmentUse_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[RelationDetailInput.AssessmentUse, BaboonJsonCodec[RelationDetailInput.AssessmentUse]] {
+      def encode(ctx: BaboonCodecContext, value: RelationDetailInput.AssessmentUse): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "requirement" -> Target_JsonCodec.instance.encode(ctx, value.requirement),
+          "disposition" -> AssessmentUseDisposition_JsonCodec.instance.encode(ctx, value.disposition),
+          "basis" -> Json.fromValues(value.basis.map(e => Target_JsonCodec.instance.encode(ctx, e)))
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, RelationDetailInput.AssessmentUse] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              requirement <- getField(jsonObject, "requirement").flatMap(v => Target_JsonCodec.circeDecoder(v.hcursor))
+              disposition <- getField(jsonObject, "disposition").flatMap(v => AssessmentUseDisposition_JsonCodec.circeDecoder(v.hcursor))
+              basis <- getField(jsonObject, "basis").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
+            } yield RelationDetailInput.AssessmentUse(requirement,disposition,basis)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to AssessmentUse: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = RelationDetailInput.AssessmentUse.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = RelationDetailInput.AssessmentUse.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = RelationDetailInput.AssessmentUse.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = RelationDetailInput.AssessmentUse.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = RelationDetailInput.AssessmentUse.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[RelationDetailInput.AssessmentUse]] = Lazy(RelationDetailInput.AssessmentUse_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[RelationDetailInput.AssessmentUse]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[RelationDetailInput.AssessmentUse] = LazyInstance.value
+    }
     def baboonDomainVersion: String = "0.1.0"
     def baboonDomainIdentifier: String = "ontology.api"
     def baboonTypeIdentifier: String = "ontology.api/:#RelationDetailInput"
@@ -397,6 +471,8 @@ package ontology.api {
         case delegation: RelationDetailInput.Delegation => Json.obj("Delegation" -> RelationDetailInput.Delegation_JsonCodec.instance.encode(ctx, delegation))
         
         case adoption: RelationDetailInput.Adoption => Json.obj("Adoption" -> RelationDetailInput.Adoption_JsonCodec.instance.encode(ctx, adoption))
+        
+        case assessmentuse: RelationDetailInput.AssessmentUse => Json.obj("AssessmentUse" -> RelationDetailInput.AssessmentUse_JsonCodec.instance.encode(ctx, assessmentuse))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
       }
@@ -426,6 +502,9 @@ package ontology.api {
                 
                 case "Adoption" =>
                   RelationDetailInput.Adoption_JsonCodec.instance.decode(ctx, json)
+                
+                case "AssessmentUse" =>
+                  RelationDetailInput.AssessmentUse_JsonCodec.instance.decode(ctx, json)
       
                 case _ => Left(new IllegalArgumentException(s"Cannot decode $wire to RelationDetailInput: no matching value"))
               }
