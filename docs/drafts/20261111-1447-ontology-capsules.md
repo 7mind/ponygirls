@@ -2,7 +2,7 @@
 
 ## Implemented boundary
 
-The Baboon contracts and pure Scala projection/delivery policy are implemented. Persistence, service composition, worker/Pi integration and real-backend browser acceptance remain separate unfinished work. A capsule is a bounded derived account, not semantic completeness, truth, execution permission or evidence of model use.
+The Baboon contracts, pure Scala projection/delivery policy and memory/PostgreSQL capsule ledger are implemented. Service composition, worker/Pi integration and real-backend browser acceptance remain separate unfinished work. A capsule is a bounded derived account, not semantic completeness, truth, execution permission or evidence of model use.
 
 `CapsuleProjection` owns deterministic selection, exact record/receipt closure, qualifications, text and payload digest. `RecordLinks` shares structural references with presentation construction; `RelationValidation` preserves ordinary authoring restrictions and checks retained captured actions against canonical review evidence. Placing these guarantees in a caller would permit different consumers to omit evidence or classify malformed records as stale.
 
@@ -28,16 +28,18 @@ Changes compare **retained account revisions**, not projected-root membership. I
 
 The capsule payload digest and client-reported full-boundary digest are distinct. The latter's bytes have not been received or verified by this server. Client time remains reported time, including a future client clock; server receipt time is separate. Neither receipt asserts provider-wire inclusion, model consumption or physical execution. Preparation and delivery do not create primary activity.
 
-## Required persistence work
+## Persistence ownership and bounds
 
-The read-boundary prerequisite is implemented separately: `CurationReadModel` returns a coherent graph/status pair through a read-only context. Public status now takes only the scope lock, not the coordinator lock. Retained-cut validation binds historical G/F/C and publication generation, validates positively named evidence and explicit journal prefixes, and preserves earlier active observations after later transitions—even at equal timestamps. Included publication times are checked independently of the latest observed attempt. Missing historical metadata observations are not reconstructed from current rows. This does not implement capsule/delivery storage.
+The read-boundary prerequisite is implemented separately: `CurationReadModel` returns a coherent graph/status pair through a read-only context. Public status now takes only the scope lock, not the coordinator lock. Retained-cut validation binds historical G/F/C and publication generation, validates positively named evidence and explicit journal prefixes, and preserves earlier active observations after later transitions—even at equal timestamps. Included publication times are checked independently of the latest observed attempt. Missing historical metadata observations are not reconstructed from current rows. The capsule ledger uses this boundary within its existing scope transaction.
 
-Use the existing graph transaction owner, owner-scoped canonical request replay and explicit bounded baseline/history traversal. Historical validation uses retained projection limits. Configuration reductions may exceed operational traversal capacity, but do not make retained artifacts corrupt. Delivery/read/replay do not require that the context remain enabled for new preparation.
+`GraphRepository.capsules(settings)` creates a configured facade over the same repository-owned ledger. Canonical prepare/delivery requests have owner-scoped replay keys; retries preserve original artifacts, observations and ingress. Memory stages both ledger maps before assignment; PostgreSQL uses the existing scope transaction and auxiliary tables from migration 005. Neither path creates graph/input/outbox activity.
+
+Baseline traversal counts the requested artifact and all ancestors. New preparation reserves a slot for itself, preventing an artifact that immediately exceeds its own configuration's read budget. `maxMaterialSnapshots` counts distinct capsule assembly cuts, not total internal SQL reads or recursive integrity work. Historical validation uses retained projection limits. Configuration reductions may exceed operational traversal capacity, but do not make retained artifacts corrupt. Delivery/read/replay do not require that the context remain enabled for new preparation.
 
 Bind historical G/F/C and publication generation to their authoritative records. Mutable attempt summaries are retained server observations; do not reconstruct their earlier state from today's terminal attempt or infer ordering from equal timestamps. Preserve original ingress/time on replay. Avoid scope-to-global coordinator lock inversion. An authorized empty G0 preparation must not invent graph/history activity.
 
 ## Verification scope
 
-Shared memory/PostgreSQL tests cover pure projection against real repository material, current and historical warrants, Human review correspondence, namespace authorization, capacity, deterministic bytes, baseline integrity and delivery reports. These do not establish capsule/delivery storage semantics. Browser checks use scripted APIs, not the concrete unfinished backend.
+Shared memory/PostgreSQL tests cover projection against repository material and ledger behavior: exact replay, credential rotation, disabled new contexts, bounded ancestry/material cuts, inherited namespace revocation, concurrency and historical attempt observations. PostgreSQL controls cover late-insert rollback, reconstructed-adapter response-loss recovery, resealed projection/cycle corruption, and scope-locked observations while a command queues. Empty G0 artifacts do not create scope/history rows. Browser checks still use scripted APIs, not the concrete unfinished backend.
 
 Q56 revision 2, read on 2026-11-11, separately requires external graph commands to retain primary command Sources and advance the frontier atomically. Internal curator publication remains non-primary. That new increment is not implemented by this capsule milestone and grants no deployment or Human-study authority.

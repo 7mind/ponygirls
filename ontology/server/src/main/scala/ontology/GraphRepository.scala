@@ -8,6 +8,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 
 trait GraphRepository extends GraphReadRepository {
   def curation: CurationRepository
+  def capsules(settings: CapsuleStoreSettings): CapsuleRepository
   def history(scope: String, generation: Long): IO[GraphSnapshot]
   def scopes: IO[List[String]]
   def apply(request: ApplyRequest, admission: Admission): IO[ApplyResult]
@@ -36,6 +37,8 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
   private final case class IngestKey(scope: String, namespace: String, requestId: java.util.UUID)
   private var sourceEvents = Map.empty[String, List[PrimaryRecord]]
   private var presentations = Map.empty[(String, java.util.UUID), Presentation]
+  private var capsuleRows = Map.empty[(String, java.util.UUID), CapsuleRow]
+  private var deliveryRows = Map.empty[(String, java.util.UUID), DeliveryRow]
   private var judgmentIndex = Map.empty[Receipt, (String, java.util.UUID)]
   private var sourceIndex = Map.empty[SourceKey, (String, IngestResult)]
   private var ingestReceipts = Map.empty[IngestKey, (String, IngestResult)]
@@ -47,6 +50,7 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
   private val curationValidation = new CurationValidation(engine)
   private val curationStore = new CurationStore(curationTransactions, curationReadTransactions, curationSettings, engine)
   val curation: CurationRepository = curationStore
+  def capsules(settings: CapsuleStoreSettings): CapsuleRepository = new CapsuleStore(capsuleTransactions, settings, new CurationReadModel(curationValidation), curationValidation)
   private def verified(graph: GraphSnapshot): GraphSnapshot = curationValidation.graph(curationEvidence, verifiedPrimary(graph))
   private def verifiedPrimary(graph: GraphSnapshot): GraphSnapshot = {
     val events = sourceEvents.getOrElse(graph.scope, Nil).filter(_.event.frontier <= graph.sourceFrontier)
@@ -280,6 +284,62 @@ final class MemoryGraphRepository(engine: AdmissionEngine, review: ReviewDomain,
     Require(outbox.contains((scope, generation)), "not-found", "unknown projected revision")
     outbox = outbox.updated((scope, generation), true)
   })
+  private def capsuleTransactions: CapsuleTransactions = new CapsuleTransactions {
+    def run[A](scope: String)(body: CapsuleTransaction => A): IO[A] = IO(MemoryGraphRepository.this.synchronized {
+      var nextCapsules = capsuleRows
+      var nextDeliveries = deliveryRows
+      def sameScope(value: String): Unit = Require(value == scope, "invariant", "capsule transaction scope differs")
+      val tx = new CapsuleTransaction {
+        def now: java.time.Instant = clock.instant()
+        def curation: CurationReadContext = curationEvidence
+        def capsule(s: String, id: java.util.UUID): Option[CapsuleRow] = {
+          sameScope(s)
+          nextCapsules.get((s, id)).map { row =>
+            Require(row.value.id == id && row.value.payload.scope == s, "corrupt", "capsule map key differs")
+            CapsuleRows.capsule(row); row
+          }
+        }
+        def capsuleRequest(s: String, owner: Actor, requestId: java.util.UUID): Option[CapsuleRow] = {
+          sameScope(s)
+          val found = nextCapsules.valuesIterator.filter(row => row.value.payload.scope == s && row.value.owner == owner && row.value.requestId == requestId).toList
+          Require(found.size <= 1, "corrupt", "duplicate capsule request identity")
+          found.headOption.map(row => capsule(s, row.value.id).get)
+        }
+        def delivery(s: String, id: java.util.UUID): Option[DeliveryRow] = {
+          sameScope(s)
+          nextDeliveries.get((s, id)).map { row =>
+            Require(row.value.id == id && row.value.scope == s, "corrupt", "delivery map key differs")
+            CapsuleRows.delivery(row); row
+          }
+        }
+        def deliveryRequest(s: String, owner: Actor, requestId: java.util.UUID): Option[DeliveryRow] = {
+          sameScope(s)
+          val found = nextDeliveries.valuesIterator.filter(row => row.value.scope == s && row.value.owner == owner && row.value.requestId == requestId).toList
+          Require(found.size <= 1, "corrupt", "duplicate delivery request identity")
+          found.headOption.map(row => delivery(s, row.value.id).get)
+        }
+        def insertCapsule(row: CapsuleRow): Unit = {
+          val value = row.value
+          sameScope(value.payload.scope); CapsuleRows.capsule(row)
+          Require(capsule(scope, value.id).isEmpty && capsuleRequest(scope, value.owner, value.requestId).isEmpty, "identity", "capsule already exists")
+          Require(value.payload.previousCapsuleId.forall(id => nextCapsules.get((scope, id)).exists(_.value.owner == value.owner)), "corrupt", "capsule baseline owner missing")
+          nextCapsules = nextCapsules.updated((scope, value.id), row)
+        }
+        def insertDelivery(row: DeliveryRow): Unit = {
+          val value = row.value
+          sameScope(value.scope); CapsuleRows.delivery(row)
+          Require(delivery(scope, value.id).isEmpty && deliveryRequest(scope, value.owner, value.requestId).isEmpty, "identity", "delivery already exists")
+          Require(nextCapsules.get((scope, value.capsuleId)).exists(_.value.owner == value.owner), "corrupt", "delivery capsule owner missing")
+          nextDeliveries = nextDeliveries.updated((scope, value.id), row)
+        }
+        def reviewEvidence(graph: GraphSnapshot, claims: List[AdoptionClaim]): List[ReviewEvidence] = loadAdoptions(graph, claims)
+      }
+      val result = body(tx)
+      capsuleRows = nextCapsules
+      deliveryRows = nextDeliveries
+      result
+    })
+  }
   private def curationReadTransactions: CurationReadTransactions = new CurationReadTransactions {
     def run[A](scope: String)(body: CurationReadContext => A): IO[A] = IO(MemoryGraphRepository.this.synchronized { body(curationEvidence) })
   }

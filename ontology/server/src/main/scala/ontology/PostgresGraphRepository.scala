@@ -15,12 +15,16 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private val curationValidation = new CurationValidation(engine)
   private val curationStore = new CurationStore(curationTransactions, curationReadTransactions, curationSettings, engine)
   val curation: CurationRepository = curationStore
+  def capsules(settings: CapsuleStoreSettings): CapsuleRepository = {
+    val transactions = new PostgresCapsuleTransactions(database, lock, curationRead, c => curationTransaction(c).now, loadAdoptions)
+    new CapsuleStore(transactions, settings, new CurationReadModel(curationValidation), curationValidation)
+  }
   def initialize: IO[Unit] = IO.blocking {
     def sql(file: String): String = {
       val stream = Option(getClass.getResourceAsStream("/" + file)).getOrElse(throw Fault("config", "migration resource missing"))
       Using.resource(stream)(s => new String(s.readAllBytes(), UTF_8))
     }
-    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")), Migration(3, "curation", sql("003_curation.sql")), Migration(4, "graph-commands", sql("004_graph_commands.sql")))
+    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")), Migration(3, "curation", sql("003_curation.sql")), Migration(4, "graph-commands", sql("004_graph_commands.sql")), Migration(5, "capsules", sql("005_capsules.sql")))
   }.flatMap(migrations => database.migrate("ontology", migrations))
   private def query[A](c: Connection, sql: String)(bind: PreparedStatement => Unit)(read: ResultSet => A): A =
     Using.resource(c.prepareStatement(sql)) { p => bind(p); Using.resource(p.executeQuery())(read) }
