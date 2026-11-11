@@ -62,6 +62,29 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(sources.frontier, 1L)
     } yield ()
   } }
+  test("each immutable graph generation retains its own captured source frontier") { check { repo =>
+    val name = scope(); val principal = capturePrincipal(name, ActorKind.Human, "human-source")
+    val context = captureContext()
+    val first = sourceRequest(name, context, EventOrigin.UserMessage, SourceRepresentation.Text, Observation.None(), "First source")
+    val second = sourceRequest(name, context, EventOrigin.UserMessage, SourceRepresentation.Text, Observation.None(), "Later source")
+    def frontier(snapshot: GraphSnapshot): Long = Wire.encode(GraphSnapshot.codecJson, snapshot).hcursor.get[Long]("sourceFrontier").fold(throw _, identity)
+    for {
+      one <- repo.ingest(first, principal, captureRecorder, captureTime)
+      captured <- repo.read(name)
+      mutation = request(name, captured.generation, "Interpretation does not add a source")
+      applied <- repo.apply(mutation, admission(mutation))
+      two <- repo.ingest(second, principal, captureRecorder, captureTime)
+      initial <- repo.history(name, 0L)
+      oldCapture <- repo.history(name, captured.generation)
+      oldMutation <- repo.history(name, applied.generation)
+      current <- repo.read(name)
+      _ = assertEquals(frontier(initial), 0L)
+      _ = assertEquals(frontier(oldCapture), one.frontier)
+      _ = assertEquals(frontier(oldMutation), one.frontier)
+      _ = assertEquals(frontier(current), two.frontier)
+      _ = assertEquals(two.frontier, 2L)
+    } yield ()
+  } }
   test("event and transport replay are distinct and neither advances the source frontier") { check { repo =>
     val name = scope(); val principal = capturePrincipal(name, ActorKind.Agent, "agent-source")
     val request = sourceRequest(name, captureContext(), EventOrigin.WorkerMessage, SourceRepresentation.Text, Observation.None(), "Worker assertion")

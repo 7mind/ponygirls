@@ -105,7 +105,7 @@ adt Operation {
 root data ApplyRequest { scope: str requestId: uid expectedGeneration: i64 operations: lst[Operation] }
 data AliasRef { alias: str ref: Ref }
 root data ApplyResult { scope: str requestId: uid generation: i64 created: lst[AliasRef] replayed: bit }
-root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] selections: lst[BindingSelection] }
+root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 sourceFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] selections: lst[BindingSelection] }
 enum ReadView { Current History BindingContext }
 root data ReadRequest { scope: str view: ReadView targets: lst[Ref] cursor: opt[str] limit: i32 }
 adt GraphRecord { data Input { value: InputReceipt } data Person { value: ActorRecord } data Node { value: Definition } data Edge { value: Relation } data Contract { value: Binding } data Progress { value: StateEvent } data Selection { value: BindingSelection } }

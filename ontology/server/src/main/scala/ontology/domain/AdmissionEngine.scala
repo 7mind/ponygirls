@@ -8,6 +8,7 @@ final class AdmissionEngine {
   private val taskPhases = Set(Phase.Planned, Phase.Active, Phase.Blocked, Phase.Completed, Phase.Cancelled)
   private val inquiryPhases = Set(Phase.Open, Phase.Resolved)
   def apply(base: GraphSnapshot, request: ApplyRequest, admission: Admission): Applied = {
+    Graph.validateCounters(base)
     Require(request.scope == base.scope, "scope", "scope mismatch")
     Require(request.requestId == admission.requestId, "request", "request binding mismatch")
     Require(request.expectedGeneration == base.generation, "conflict", "graph generation changed")

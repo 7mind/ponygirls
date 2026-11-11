@@ -22,16 +22,22 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private def decodeSnapshot(scope: String, generation: Long, text: String): GraphSnapshot = {
     val snapshot = StoredJson.decode(GraphSnapshot.codecJson, text)
     Require(snapshot.scope == scope && snapshot.generation == generation, "corrupt", "snapshot does not match its row identity")
+    Graph.validateCounters(snapshot)
     snapshot
   }
-  private def load(c: Connection, scope: String): GraphSnapshot = query(c, "SELECT generation, snapshot FROM ontology_scopes WHERE scope = ?")(_.setString(1, scope)) { r =>
-    if (r.next()) decodeSnapshot(scope, r.getLong(1), r.getString(2)) else Graph.empty(scope)
+  private def load(c: Connection, scope: String): GraphSnapshot = query(c, "SELECT generation, snapshot, frontier FROM ontology_scopes WHERE scope = ?")(_.setString(1, scope)) { r =>
+    if (r.next()) {
+      val snapshot = decodeSnapshot(scope, r.getLong(1), r.getString(2))
+      Require(snapshot.sourceFrontier == r.getLong(3), "corrupt", "snapshot source frontier differs from scope head")
+      snapshot
+    } else Graph.empty(scope)
   }
   private def lock(c: Connection, scope: String): Unit = query(c, "SELECT pg_advisory_xact_lock(hashtextextended(?, 0))")(_.setString(1, "ontology:" + scope))(r => { Require(r.next(), "database", "scope lock result unavailable"); () })
   private def saveGraph(c: Connection, before: GraphSnapshot, after: GraphSnapshot): Unit = {
     Require(before.scope == after.scope && after.generation == Math.addExact(before.generation, 1L), "invariant", "invalid graph publication")
+    Graph.validateCounters(after)
     val json = StoredJson.encode(GraphSnapshot.codecJson, after)
-    update(c, "INSERT INTO ontology_scopes(scope, generation, snapshot) VALUES (?, ?, ?) ON CONFLICT (scope) DO UPDATE SET generation = EXCLUDED.generation, snapshot = EXCLUDED.snapshot")(p => { p.setString(1, after.scope); p.setLong(2, after.generation); p.setString(3, json) })
+    update(c, "INSERT INTO ontology_scopes(scope, generation, snapshot, frontier) VALUES (?, ?, ?, ?) ON CONFLICT (scope) DO UPDATE SET generation = EXCLUDED.generation, snapshot = EXCLUDED.snapshot, frontier = EXCLUDED.frontier")(p => { p.setString(1, after.scope); p.setLong(2, after.generation); p.setString(3, json); p.setLong(4, after.sourceFrontier) })
     update(c, "INSERT INTO ontology_revisions(scope, generation, snapshot) VALUES (?, ?, ?) ON CONFLICT DO NOTHING")(p => { p.setString(1, before.scope); p.setLong(2, before.generation); p.setString(3, StoredJson.encode(GraphSnapshot.codecJson, before)) })
     update(c, "INSERT INTO ontology_revisions(scope, generation, snapshot) VALUES (?, ?, ?)")(p => { p.setString(1, after.scope); p.setLong(2, after.generation); p.setString(3, json) })
     update(c, "INSERT INTO ontology_outbox(scope, generation) VALUES (?, ?)")(p => { p.setString(1, after.scope); p.setLong(2, after.generation) })
@@ -83,7 +89,6 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
         changed.result
     }
   }
-  private def frontier(c: Connection, scope: String): Long = query(c, "SELECT frontier FROM ontology_scopes WHERE scope = ?")(_.setString(1, scope))(r => if (r.next()) r.getLong(1) else 0L)
   private def eventRow(c: Connection, scope: String, r: ResultSet): (CapturedEvent, IngestResult, String) = {
     val namespace = r.getString("source_namespace")
     val eventId = r.getObject("event_id", classOf[UUID])
@@ -122,7 +127,7 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
           case Some((_, stored, previous)) => Require(previous == fingerprint, "replay-conflict", "source event ID has different content"); stored.copy(requestId = request.requestId, replayed = true)
           case None =>
             val before = load(c, request.scope)
-            val observed = frontier(c, request.scope)
+            val observed = before.sourceFrontier
             query(c, "SELECT COUNT(*), COALESCE(MAX(frontier), 0) FROM ontology_captures WHERE scope = ?")(_.setString(1, request.scope)) { r =>
               Require(r.next() && r.getLong(1) == observed && r.getLong(2) == observed, "corrupt", "source frontier range is incomplete")
             }
@@ -131,7 +136,6 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
             saveGraph(c, before, changed.snapshot)
             saveInput(c, changed.receipt)
             update(c, "INSERT INTO ontology_captures(scope, source_namespace, event_id, capture_id, frontier, fingerprint, payload, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.eventId); p.setObject(4, changed.event.id); p.setLong(5, changed.event.frontier); p.setString(6, fingerprint); p.setString(7, StoredJson.encode(CapturedEvent.codecJson, changed.event)); p.setString(8, StoredJson.encode(IngestResult.codecJson, changed.result)) })
-            update(c, "UPDATE ontology_scopes SET frontier = ? WHERE scope = ?")(p => { p.setLong(1, changed.event.frontier); p.setString(2, request.scope) })
             changed.result
         }
         update(c, "INSERT INTO ontology_ingest_requests(scope, source_namespace, request_id, payload_digest, result) VALUES (?, ?, ?, ?, ?)")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.requestId); p.setString(4, digest); p.setString(5, StoredJson.encode(IngestResult.codecJson, result)) })
@@ -139,7 +143,7 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
     }
   }
   def sources(request: SourceRequest): IO[SourceResult] = database.transaction { c =>
-    val current = frontier(c, request.scope)
+    val current = load(c, request.scope).sourceFrontier
     Require(request.after >= 0 && request.after <= current && request.limit > 0 && request.limit < Int.MaxValue, "source-page", "invalid source page")
     val events = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier > ? AND frontier <= ? ORDER BY frontier LIMIT ?")(p => { p.setString(1, request.scope); p.setLong(2, request.after); p.setLong(3, current); p.setInt(4, request.limit + 1) }) { r => val rows = List.newBuilder[CapturedEvent]; while (r.next()) rows += eventRow(c, request.scope, r)._1; rows.result() }
     val expected = math.min(current - request.after, request.limit.toLong + 1L)

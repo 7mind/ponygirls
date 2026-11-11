@@ -66,8 +66,10 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
   }
   private def requireGeneration(c: RepositoryConnection, scope: String, expected: Long): Unit =
     Require(generation(c, scope).contains(expected), "projection-lag", "requested graph revision is not projected")
-  private def requireScope(snapshot: GraphSnapshot): Unit =
+  private def requireScope(snapshot: GraphSnapshot): Unit = {
+    Graph.validateCounters(snapshot)
     Require((snapshot.definitions.map(_.scope) ++ snapshot.relations.map(_.scope) ++ snapshot.bindings.map(_.scope) ++ snapshot.events.map(_.scope) ++ snapshot.selections.map(_.scope)).forall(_ == snapshot.scope), "scope", "projected record scope differs from dataset scope")
+  }
   def publish(snapshot: GraphSnapshot): IO[Long] = transaction(true) { c =>
     requireScope(snapshot)
     val scope = snapshot.scope
@@ -91,7 +93,7 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
     val records = Graph.records(snapshot)
     Require(records.map(Graph.recordRef).distinct.size == records.size, "identity", "duplicate projection reference")
     def addMeta(name: String, value: String): Unit = { model.add(metadata(scope), property(name), values.createLiteral(value), graph(scope)); () }
-    addMeta("scope", scope); addMeta("generation", snapshot.generation.toString); addMeta("coveredFrontier", snapshot.coveredFrontier.toString); addMeta("digest", digest)
+    addMeta("scope", scope); addMeta("generation", snapshot.generation.toString); addMeta("coveredFrontier", snapshot.coveredFrontier.toString); addMeta("sourceFrontier", snapshot.sourceFrontier.toString); addMeta("digest", digest)
     records.zipWithIndex.foreach { case (item, ordinal) =>
       val ref = Graph.recordRef(item)
       val subject = record(scope, ref)
@@ -138,7 +140,9 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
     }
     val frontier = field(c, scope, "coveredFrontier").getOrElse(throw Fault("corrupt", "missing RDF coverage"))
     val covered = try frontier.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF coverage") }
-    val result = GraphSnapshot(scope, expectedGeneration, covered,
+    val sourceFrontier = field(c, scope, "sourceFrontier").getOrElse(throw Fault("corrupt", "missing RDF source frontier"))
+    val captured = try sourceFrontier.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF source frontier") }
+    val result = GraphSnapshot(scope, expectedGeneration, covered, captured,
       records.collect { case GraphRecord.Node(v) => v }, records.collect { case GraphRecord.Edge(v) => v },
       records.collect { case GraphRecord.Contract(v) => v }, records.collect { case GraphRecord.Progress(v) => v }, records.collect { case GraphRecord.Person(v) => v }, records.collect { case GraphRecord.Selection(v) => v })
     val digest = Digests.text(StoredJson.encode(GraphSnapshot.codecJson, result))

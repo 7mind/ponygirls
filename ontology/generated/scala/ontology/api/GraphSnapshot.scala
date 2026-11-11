@@ -7,6 +7,7 @@ package ontology.api {
     scope: String,
     generation: Long,
     coveredFrontier: Long,
+    sourceFrontier: Long,
     definitions: List[Definition],
     relations: List[Relation],
     bindings: List[Binding],
@@ -45,6 +46,7 @@ package ontology.api {
         "scope" -> Json.fromString(value.scope),
         "generation" -> Json.fromString(value.generation.toString),
         "coveredFrontier" -> Json.fromString(value.coveredFrontier.toString),
+        "sourceFrontier" -> Json.fromString(value.sourceFrontier.toString),
         "definitions" -> Json.fromValues(value.definitions.map(e => Definition_JsonCodec.instance.encode(ctx, e))),
         "relations" -> Json.fromValues(value.relations.map(e => Relation_JsonCodec.instance.encode(ctx, e))),
         "bindings" -> Json.fromValues(value.bindings.map(e => Binding_JsonCodec.instance.encode(ctx, e))),
@@ -64,13 +66,14 @@ package ontology.api {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             coveredFrontier <- getField(jsonObject, "coveredFrontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+            sourceFrontier <- getField(jsonObject, "sourceFrontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             definitions <- getField(jsonObject, "definitions").flatMap(v => decodeList(Definition_JsonCodec.circeDecoder)(v.hcursor))
             relations <- getField(jsonObject, "relations").flatMap(v => decodeList(Relation_JsonCodec.circeDecoder)(v.hcursor))
             bindings <- getField(jsonObject, "bindings").flatMap(v => decodeList(Binding_JsonCodec.circeDecoder)(v.hcursor))
             events <- getField(jsonObject, "events").flatMap(v => decodeList(StateEvent_JsonCodec.circeDecoder)(v.hcursor))
             actors <- getField(jsonObject, "actors").flatMap(v => decodeList(ActorRecord_JsonCodec.circeDecoder)(v.hcursor))
             selections <- getField(jsonObject, "selections").flatMap(v => decodeList(BindingSelection_JsonCodec.circeDecoder)(v.hcursor))
-          } yield GraphSnapshot(scope,generation,coveredFrontier,definitions,relations,bindings,events,actors,selections)
+          } yield GraphSnapshot(scope,generation,coveredFrontier,sourceFrontier,definitions,relations,bindings,events,actors,selections)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to GraphSnapshot: object expected"))
       }
     }

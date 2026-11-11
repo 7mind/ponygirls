@@ -68,13 +68,28 @@ abstract class RdfProjectionContract extends FunSuite {
       _ = assert(event.gateBasis.references.contains(use.ref))
     } yield ()
   } }
+  test("captured frontier is projected separately from maintained coverage") { check { rdf =>
+    val context = CaptureContext("synthetic-session", None, None, LineageStatus.Unknown, "synthetic-branch", UUID.randomUUID())
+    val request = IngestRequest("s", UUID.randomUUID(), UUID.randomUUID(), context, EventOrigin.UserMessage, CaptureMetadata("synthetic-entry", None, None, SourceRepresentation.Text, Nil, Nil), "Synthetic source", Observation.None())
+    val principal = Principal("fixture", Actor("fixture-account", ActorKind.Human), Set("s"), Set(Capability.Capture))
+    val graph = new CaptureEngine().apply(Graph.empty("s"), Nil, 0L, request, principal, Actor("fixture-host", ActorKind.Service), "fixture").snapshot
+    for {
+      _ <- rdf.publish(graph)
+      restored <- rdf.snapshot("s", graph.generation)
+      _ = assertEquals(restored.sourceFrontier, 1L)
+      _ = assertEquals(restored.coveredFrontier, 0L)
+      _ = assertEquals(restored, graph)
+      invalid <- rdf.publish(graph.copy(generation = graph.generation + 1L, coveredFrontier = 2L)).attempt
+      _ = assertEquals(invalid.left.toOption.collect { case f: Fault => f.code }, Some("corrupt"))
+    } yield ()
+  } }
   test("same revision is idempotent, changed bytes conflict, old revisions cannot regress head") { check { rdf =>
     val first = sample("s"); val next = first.copy(generation = 2L)
     for {
       _ <- rdf.publish(first)
       same <- rdf.publish(first)
       _ = assertEquals(same, 1L)
-      bad <- rdf.publish(first.copy(coveredFrontier = 9L)).attempt
+      bad <- rdf.publish(first.copy(coveredFrontier = 9L, sourceFrontier = 9L)).attempt
       _ = assertEquals(bad.left.toOption.collect { case f: Fault => f.code }, Some("projection-conflict"))
       _ <- rdf.publish(next)
       older <- rdf.publish(first)

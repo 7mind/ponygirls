@@ -52,7 +52,8 @@ final class CaptureEngine {
   }
   def apply(base: GraphSnapshot, prior: List[CapturedEvent], frontier: Long, input: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String): Captured = {
     validateIngress(input, principal)
-    Require(input.scope == base.scope && frontier >= base.coveredFrontier && frontier >= 0, "scope", "capture scope/frontier mismatch")
+    Graph.validateCounters(base)
+    Require(input.scope == base.scope && frontier == base.sourceFrontier, "scope", "capture scope/frontier mismatch")
     val context = input.context
     input.observation match {
       case value: Observation.FileVersion =>
@@ -87,7 +88,7 @@ final class CaptureEngine {
     val definition = Definition(source, input.scope, Applicability.Captured(source), Content.Source(input.text, (artifactRefs ++ executionRefs).distinct, Digests.text(input.text), source.id, principal.credentialId, context, input.metadata, input.origin, input.observation), Standing.Active, Nil, None, provenance)
     val actors = List(contributor, recorder, principal.actor).distinct.filterNot(a => base.actors.exists(_.value == a)).map { actor => ActorRecord(Ref(UUID.nameUUIDFromBytes(("actor:" + actor.kind + ":" + actor.id).getBytes(UTF_8)), 1), actor) }
     val additions = artifacts.filterNot(a => base.definitions.exists(_.ref == a.ref))
-    val changed = base.copy(generation = Math.addExact(base.generation, 1L), definitions = base.definitions ++ additions :+ definition, actors = base.actors ++ actors)
+    val changed = base.copy(generation = Math.addExact(base.generation, 1L), sourceFrontier = event.frontier, definitions = base.definitions ++ additions :+ definition, actors = base.actors ++ actors)
     (additions :+ definition).foreach(value => Applicabilities.validate(changed, value.applicability, true))
     val receipt = InputReceipts.create(inputId, input.scope, changed.generation, InputKind.Capture, contributor, recorder, principal.actor, "ontology.api.IngestRequest/0.1.0 canonical JSON", Wire.encode(IngestRequest.codecJson, input).noSpaces, receivedAt)
     Captured(changed, event, IngestResult(input.scope, input.requestId, input.eventId, principal.credentialId, source, artifactRefs, event.frontier, false), receipt)

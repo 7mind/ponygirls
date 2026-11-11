@@ -55,6 +55,27 @@ final class CaptureReproductionSuite extends FunSuite {
       } yield ()
     } }.unsafeRunSync()(using runtime)
   }
+  test("source listing cannot turn a disagreeing head counter into a complete prefix") {
+    RepositoryReproductionDatabase.resource.use { db => RepositoryReproductionDatabase.store(db).flatMap { repo =>
+      val (request, principal) = example()
+      def setFrontier(value: Long): IO[Unit] = db.transaction { c =>
+        Using.resource(c.prepareStatement("UPDATE ontology_scopes SET frontier = ? WHERE scope = ?")) { s =>
+          s.setLong(1, value); s.setString(2, request.scope); assertEquals(s.executeUpdate(), 1)
+        }
+      }
+      for {
+        _ <- repo.ingest(request, principal, recorder, at)
+        _ <- repo.ingest(request.copy(requestId = UUID.randomUUID(), eventId = UUID.randomUUID()), principal, recorder, at)
+        _ <- setFrontier(1L)
+        outcomes <- (for {
+          head <- repo.read(request.scope).attempt
+          listing <- repo.sources(SourceRequest(request.scope, 0L, 10)).attempt
+        } yield (head, listing)).guarantee(setFrontier(2L))
+        _ = fault(outcomes._1, "corrupt")
+        _ = fault(outcomes._2, "corrupt")
+      } yield ()
+    } }.unsafeRunSync()(using runtime)
+  }
   test("source-page lookahead limit contract matches between adapters") {
     val scope = "empty-" + UUID.randomUUID()
     val request = SourceRequest(scope, 0L, Int.MaxValue)

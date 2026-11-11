@@ -14,7 +14,7 @@ final case class Admission(actor: Actor, recorder: Actor, requestId: UUID, recor
 }
 final case class Applied(snapshot: GraphSnapshot, result: ApplyResult)
 object Graph {
-  def empty(scope: String): GraphSnapshot = GraphSnapshot(scope, 0L, 0L, Nil, Nil, Nil, Nil, Nil, Nil)
+  def empty(scope: String): GraphSnapshot = GraphSnapshot(scope, 0L, 0L, 0L, Nil, Nil, Nil, Nil, Nil, Nil)
   def text(c: Content): String = c match {
     case x: Content.Outcome => x.text
     case x: Content.Constraint => x.text
@@ -43,6 +43,7 @@ object Graph {
     case _: Content.Artifact => "artifact"
     case _: Content.Conflict => "conflict"
   }
+  def validateCounters(g: GraphSnapshot): Unit = Require(g.generation >= 0 && g.coveredFrontier >= 0 && g.sourceFrontier >= g.coveredFrontier, "corrupt", "invalid graph generation/frontier counters")
   def node(g: GraphSnapshot, r: Ref): Definition = g.definitions.find(_.ref == r).getOrElse(throw Fault("reference", "definition not found in scope"))
   def binding(g: GraphSnapshot, r: Ref): Binding = g.bindings.find(_.ref == r).getOrElse(throw Fault("reference", "binding not found in scope"))
   def event(g: GraphSnapshot, r: Ref): StateEvent = g.events.find(_.ref == r).getOrElse(throw Fault("reference", "event not found in scope"))
