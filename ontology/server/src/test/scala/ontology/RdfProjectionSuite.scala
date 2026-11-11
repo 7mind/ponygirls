@@ -20,7 +20,7 @@ abstract class RdfProjectionContract extends FunSuite {
       Operation.Create("a", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("α\r\n引用 and \"quotes\"", Modality.Assertion)), Nil),
       Operation.Create("b", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Hypothesis("Competing proposition", "Discriminating prediction")), Nil),
       Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Challenges, List(Target.Created("a")), List(Target.Created("b")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Not a truth verdict")
-    ), None), Admission(ontology.TestContexts.principal(scope, Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"))).snapshot
+    ), None), Admission(ontology.TestContexts.principal(scope, Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"), Nil)).snapshot
   }
   test("empty and populated snapshots roundtrip with exact identities and literals") { check { rdf =>
     val graph = sample("s")
@@ -41,7 +41,7 @@ abstract class RdfProjectionContract extends FunSuite {
       Operation.Bind("binding", Target.Exact(definition), Nil, "declared-work-context"),
       Operation.SelectBinding("selected", Target.Created("binding"), true, "Selected context", List(Target.Exact(definition))),
       Operation.SelectBinding("retired", Target.Created("binding"), false, "Retired context, not cancelled work", List(Target.Exact(definition))))
-    val graph = new AdmissionEngine().apply(base, ApplyRequest("s", id, base.generation, ops, None), Admission(ontology.TestContexts.principal("s", Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"))).snapshot
+    val graph = new AdmissionEngine().apply(base, ApplyRequest("s", id, base.generation, ops, None), Admission(ontology.TestContexts.principal("s", Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"), Nil)).snapshot
     for {
       _ <- rdf.publish(graph)
       restored <- rdf.snapshot("s", graph.generation)
@@ -81,6 +81,36 @@ abstract class RdfProjectionContract extends FunSuite {
       _ = assertEquals(restored, graph)
       invalid <- rdf.publish(graph.copy(generation = graph.generation + 1L, coveredFrontier = 2L)).attempt
       _ = assertEquals(invalid.left.toOption.collect { case f: Fault => f.code }, Some("corrupt"))
+    } yield ()
+  } }
+  test("review publication preserves separate derived and primary Sources and exact action links") { check { rdf =>
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)
+    val actor = Actor("fixture-human", ActorKind.Human)
+    val service = Actor("fixture-service", ActorKind.Service)
+    val principal = Principal("fixture-review", actor, Set("s"), Set(Capability.Read, Capability.Review))
+    val call = ReviewCall.from(ServiceCall.authenticated(Authenticated(principal, true, "fixture", Some("fixture")), "fixture-review", UUID.randomUUID()), "s")
+    val id = UUID.randomUUID()
+    val request = ApplyRequest("s", id, 0L, List(Operation.Create("q", TestAuthoring.applicability(TestApplicability.unresolved), ContentInput.Question("Choose", List("A", "B"), None, Escalation.Unresolved), Nil)), None)
+    val admission = Admission(TestContexts.principal("s", Actor("author", ActorKind.Agent)), service, id, "2026-11-11T00:00:00Z", TestContexts.trace("fixture"), Nil)
+    for {
+      created <- repo.apply(request, admission)
+      before <- repo.read("s")
+      _ <- rdf.publish(before)
+      p <- repo.prepare(PresentRequest("s", List(created.created.head.ref), before.generation), call, UUID.randomUUID(), "2026-11-11T00:00:00Z")
+      unchanged <- rdf.snapshot("s", before.generation)
+      _ = assert(!Graph.exists(unchanged, p.reservedSourceRef))
+      judgment <- repo.judge(JudgmentRequest("s", UUID.randomUUID(), p.id, ReviewAction.Choose(p.payload.manifest.choices(1)), "Controlled choice"), call, service, "2026-11-11T00:00:01Z")
+      graph <- repo.read("s")
+      _ <- rdf.publish(graph)
+      restored <- rdf.snapshot("s", graph.generation)
+      _ = assertEquals(restored, graph)
+      _ = assertEquals(restored.sourceFrontier, 1L)
+      _ = assert(Graph.node(restored, p.reservedSourceRef).content.asInstanceOf[Content.Source].descriptor.isInstanceOf[SourceDescriptor.DerivedPresentation])
+      _ = assert(Graph.node(restored, judgment.source).content.asInstanceOf[Content.Source].descriptor.isInstanceOf[SourceDescriptor.PrimaryCapture])
+      sources <- rdf.subjects("s", graph.generation, "source", judgment.source)
+      targets <- rdf.subjects("s", graph.generation, "target", p.reservedSourceRef)
+      _ = assertEquals(sources, graph.relations.map(_.ref))
+      _ = assertEquals(targets, sources)
     } yield ()
   } }
   test("same revision is idempotent, changed bytes conflict, old revisions cannot regress head") { check { rdf =>

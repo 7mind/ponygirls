@@ -14,7 +14,7 @@ abstract class GraphRepositoryContract extends FunSuite {
   override def afterAll(): Unit = runtime.shutdown()
   protected def check(f: GraphRepository => IO[Unit]): Unit = repository.use(f).unsafeRunSync()(runtime)
   protected def request(scope: String, generation: Long, text: String): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("claim", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement(text, Modality.Assertion)), Nil)), None)
-  protected def admission(r: ApplyRequest): Admission = Admission(ontology.TestContexts.principal(r.scope, Actor("test-agent", ActorKind.Agent)), Actor("test-host", ActorKind.Service), r.requestId, "2026-11-10T00:00:00Z", ontology.TestContexts.trace("fixture-apply"))
+  protected def admission(r: ApplyRequest): Admission = Admission(ontology.TestContexts.principal(r.scope, Actor("test-agent", ActorKind.Agent)), Actor("test-host", ActorKind.Service), r.requestId, "2026-11-10T00:00:00Z", ontology.TestContexts.trace("fixture-apply"), Nil)
   private def scope(): String = "contract-" + UUID.randomUUID()
   private def reader(scope: String): Principal = Principal("reader", Actor("test-reader", ActorKind.Agent), Set(scope), Set(Capability.Read))
   private def query(repository: GraphRepository): GraphQueries = new GraphQueries(repository, new CursorSigner(Array.fill[Byte](32)(1)), QueryLimits(100, 100, 1024 * 1024, 1024))
@@ -355,6 +355,6 @@ abstract class GraphRepositoryContract extends FunSuite {
     }
   } }
 }
-final class MemoryGraphRepositorySuite extends ContextRepositoryContract {
-  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine)))
+final class MemoryGraphRepositorySuite extends ReviewRepositoryContract {
+  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)))
 }

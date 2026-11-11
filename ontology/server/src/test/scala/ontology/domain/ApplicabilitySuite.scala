@@ -11,7 +11,7 @@ final class ApplicabilitySuite extends FunSuite {
   private val b = Applicability.Declared("Only component B", Nil, Nil)
   private def run(graph: GraphSnapshot, operations: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply")))
+    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply"), Nil))
   }
   private def ref(value: Applied, name: String): Ref = value.result.created.find(_.alias == name).get.ref
   private def task: Content = Content.Task("Build", Acceptance(List("observable result"), None), Execution.Delegated)

@@ -9,7 +9,7 @@ final case class Fault(code: String, detail: String) extends RuntimeException(de
 object Require {
   def apply(condition: Boolean, code: String, detail: String): Unit = if (!condition) throw Fault(code, detail)
 }
-final case class Admission(principal: Principal, recorder: Actor, requestId: UUID, recordedAt: String, ingress: RequestTrace) {
+final case class Admission(principal: Principal, recorder: Actor, requestId: UUID, recordedAt: String, ingress: RequestTrace, reviewEvidence: List[ReviewEvidence]) {
   def actor: Actor = principal.actor
   def provenance: Provenance = Provenance(actor, recorder, InputReceipts.graphId(actor, requestId), recordedAt)
   def ref(alias: String): Ref = Ref(UUID.nameUUIDFromBytes((requestId.toString + ":" + alias).getBytes(UTF_8)), 1)

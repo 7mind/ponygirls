@@ -15,12 +15,12 @@ final class GraphQueriesSuite extends FunSuite {
   private def service(repo: GraphRepository, bytes: Int): GraphQueries = new GraphQueries(repo, new CursorSigner(Array.fill[Byte](32)(7)), QueryLimits(100, 64, bytes, 2048))
   private def change(repo: GraphRepository, generation: Long, operations: List[Operation]): IO[ApplyResult] = {
     val id = UUID.randomUUID()
-    repo.apply(ApplyRequest("a", id, generation, operations, None), Admission(ontology.TestContexts.principal("a", Actor("writer", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply")))
+    repo.apply(ApplyRequest("a", id, generation, operations, None), Admission(ontology.TestContexts.principal("a", Actor("writer", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"), Nil))
   }
   private def node(alias: String, text: String): Operation = Operation.Create(alias, ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement(text, Modality.Assertion)), Nil)
   private def check(io: IO[Unit]): Unit = io.unsafeRunSync()(using runtime)
   test("history pagination preserves every exact reference without duplicates") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 16384)
     val request = ReadRequest("a", ReadView.History, Nil, None, 1)
     def all(cursor: Option[String], accumulated: List[GraphRecord]): IO[List[GraphRecord]] = queries.read(reader, request.copy(cursor = cursor)).flatMap { page =>
       assertEquals(page.generation, 1L)
@@ -35,7 +35,7 @@ final class GraphQueriesSuite extends FunSuite {
     } yield ())
   }
   test("cursors reject changed arguments, forgery and stale generations") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 16384)
     val request = ReadRequest("a", ReadView.History, Nil, None, 1)
     check(for {
       _ <- change(repo, 0L, List(node("a", "A"), node("b", "B")))
@@ -51,11 +51,11 @@ final class GraphQueriesSuite extends FunSuite {
     } yield ())
   }
   test("scope authorization precedes discovery") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 16384)
     check(queries.find(reader, FindRequest("not-granted", None, "", None, 1)).attempt.map(result => assertEquals(result.left.toOption.collect { case f: Fault => f.code }, Some("forbidden"))))
   }
   test("find is literal text, not a hidden expression language") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 16384)
     check(for {
       _ <- change(repo, 0L, List(node("a", "A OR B"), node("b", "AB")))
       found <- queries.find(reader, FindRequest("a", Some(DefinitionKind.Statement), " OR ", None, 10))
@@ -63,7 +63,7 @@ final class GraphQueriesSuite extends FunSuite {
     } yield ())
   }
   test("current view excludes progress against a superseded definition") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 16384)
     val task = Content.Task("Original", Acceptance(List("accepted behavior"), None), Execution.Delegated)
     check(for {
       initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task), Nil), Operation.Bind("b", Target.Created("t"), Nil, "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("t"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
@@ -78,7 +78,7 @@ final class GraphQueriesSuite extends FunSuite {
     } yield ())
   }
   test("current progress requires current governing context as well as current definition") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 16384)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 16384)
     val task = Content.Task("Work", Acceptance(List("deliver"), None), Execution.Delegated)
     check(for {
       initial <- change(repo, 0L, List(Operation.Create("t", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(task), Nil), Operation.Create("o", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Outcome("Output", Acceptance(List("matches"), None), Force.Required)), Nil), Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.PlannedOutput, List(Target.Created("t")), List(Target.Created("o")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Expected output"), Operation.Bind("b", Target.Created("t"), List(Target.Created("r")), "fixture"), Operation.SelectBinding("b-selection", Target.Created("b"), true, "Selected by this fixture", List(Target.Created("t"))), Operation.State("e", Target.Created("b"), None, Phase.Active, None, None, Nil, "")))
@@ -98,7 +98,7 @@ final class GraphQueriesSuite extends FunSuite {
     assertEquals(intercept[Fault](Wire.decode(FindRequest.codecJson, json)).code, "bad-envelope")
   }
   test("page bytes are bounded and oversized records are not silently truncated") {
-    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = service(repo, 4096)
+    val repo = new MemoryGraphRepository(new AdmissionEngine, TestReview.domain); val queries = service(repo, 4096)
     check(for {
       _ <- change(repo, 0L, (0 until 10).toList.map(i => node("n" + i, "x" * 600)))
       page <- queries.read(reader, ReadRequest("a", ReadView.History, Nil, None, 100))

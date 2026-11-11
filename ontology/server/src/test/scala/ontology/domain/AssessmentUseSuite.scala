@@ -9,7 +9,7 @@ final class AssessmentUseSuite extends FunSuite {
   private val applicability = ApplicabilityInput.Declared("Only this synthetic work context", Nil, Nil)
   private def run(graph: GraphSnapshot, operations: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("curator", ActorKind.Agent)), Actor("fixture-host", ActorKind.Service), id, "fixture", ontology.TestContexts.trace("fixture-apply")))
+    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("curator", ActorKind.Agent)), Actor("fixture-host", ActorKind.Service), id, "fixture", ontology.TestContexts.trace("fixture-apply"), Nil))
   }
   private def setup: List[Operation] = List(
     Operation.Create("condition", applicability, ContentInput.Statement("Required condition", Modality.Assertion), Nil),

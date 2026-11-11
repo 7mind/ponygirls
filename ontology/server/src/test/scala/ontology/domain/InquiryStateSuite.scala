@@ -11,7 +11,7 @@ final class InquiryStateSuite extends FunSuite {
   private def phase(value: String): Phase = Wire.decode(Phase_JsonCodec.instance, io.circe.Json.fromString(value))
   private def run(graph: GraphSnapshot, operations: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("curator", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply")))
+    engine(graph, ApplyRequest(graph.scope, id, graph.generation, operations, None), Admission(ontology.TestContexts.principal(graph.scope, Actor("curator", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply"), Nil))
   }
   private def ref(value: Applied, alias: String): Ref = value.result.created.find(_.alias == alias).get.ref
   private def initial(content: Content): Applied = run(Graph.empty("inquiry"), List(

@@ -36,7 +36,7 @@ final class AtomicAuthoringSuite extends FunSuite {
   private def run(g: GraphSnapshot, ops: List[Json]): Applied = {
     val r = request(g, ops)
     assertEquals(Wire.decode(ApplyRequest.codecJson, Wire.encode(ApplyRequest.codecJson, r)), r)
-    val result = engine(g, r, Admission(ontology.TestContexts.principal(g.scope, actor), Actor("fixture-recorder", ActorKind.Unknown), r.requestId, "fixture", ontology.TestContexts.trace("fixture-apply")))
+    val result = engine(g, r, Admission(ontology.TestContexts.principal(g.scope, actor), Actor("fixture-recorder", ActorKind.Unknown), r.requestId, "fixture", ontology.TestContexts.trace("fixture-apply"), Nil))
     assertEquals(Wire.decode(GraphSnapshot.codecJson, Wire.encode(GraphSnapshot.codecJson, result.snapshot)), result.snapshot)
     result
   }

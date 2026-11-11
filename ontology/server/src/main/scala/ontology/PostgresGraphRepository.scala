@@ -9,12 +9,15 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.util.UUID
 import scala.util.Using
 
-final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEngine) extends GraphRepository {
+final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEngine, review: ReviewDomain) extends GraphRepository {
   private val capture = new CaptureEngine
   def initialize: IO[Unit] = IO.blocking {
-    val stream = Option(getClass.getResourceAsStream("/001_graph.sql")).getOrElse(throw Fault("config", "graph migration resource missing"))
-    Using.resource(stream)(s => new String(s.readAllBytes(), UTF_8))
-  }.flatMap(sql => database.migrate("ontology", List(Migration(1, "graph", sql))))
+    def sql(file: String): String = {
+      val stream = Option(getClass.getResourceAsStream("/" + file)).getOrElse(throw Fault("config", "migration resource missing"))
+      Using.resource(stream)(s => new String(s.readAllBytes(), UTF_8))
+    }
+    List(Migration(1, "graph", sql("001_graph.sql")), Migration(2, "review", sql("002_review.sql")))
+  }.flatMap(migrations => database.migrate("ontology", migrations))
   private def query[A](c: Connection, sql: String)(bind: PreparedStatement => Unit)(read: ResultSet => A): A =
     Using.resource(c.prepareStatement(sql)) { p => bind(p); Using.resource(p.executeQuery())(read) }
   private def update(c: Connection, sql: String)(bind: PreparedStatement => Unit): Int =
@@ -45,10 +48,20 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   private def saveInput(c: Connection, receipt: InputReceipt): Unit = {
     update(c, "INSERT INTO ontology_inputs(scope, input_id, generation, payload) VALUES (?, ?, ?, ?)")(p => { p.setString(1, receipt.scope); p.setObject(2, receipt.ref.id); p.setLong(3, receipt.generation); p.setString(4, StoredJson.encode(InputReceipt.codecJson, receipt)) })
   }
-  def read(scope: String): IO[GraphSnapshot] = database.transaction(c => load(c, scope))
+  private def verified(c: Connection, graph: GraphSnapshot): GraphSnapshot = {
+    val events = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier <= ? ORDER BY frontier")(p => { p.setString(1, graph.scope); p.setLong(2, graph.sourceFrontier) }) { rows =>
+      val values = List.newBuilder[PrimaryRecord]
+      while (rows.next()) values += eventRow(c, graph, rows)
+      values.result()
+    }
+    SourceIntegrity.frontier(graph, events.map(_.event))
+    PrimaryIntegrity.inventory(graph, events)
+    graph
+  }
+  def read(scope: String): IO[GraphSnapshot] = database.transaction(c => verified(c, load(c, scope)))
   private def loadHistory(c: Connection, scope: String, generation: Long): GraphSnapshot =
     query(c, "SELECT snapshot FROM ontology_revisions WHERE scope = ? AND generation = ?")(p => { p.setString(1, scope); p.setLong(2, generation) }) { r =>
-      Require(r.next(), "not-found", "graph revision not found"); decodeSnapshot(scope, generation, r.getString(1))
+      Require(r.next(), "not-found", "graph revision not found"); verified(c, decodeSnapshot(scope, generation, r.getString(1)))
     }
   def history(scope: String, generation: Long): IO[GraphSnapshot] = database.transaction(c => loadHistory(c, scope, generation))
   private def validateContexts(c: Connection, principal: Principal, contexts: List[ContextRecord]): Unit = {
@@ -59,7 +72,14 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
   def scopes: IO[List[String]] = database.transaction { c => query(c, "SELECT scope FROM ontology_scopes ORDER BY scope")(_ => ()) { r =>
     val items = List.newBuilder[String]; while (r.next()) items += r.getString(1); items.result()
   } }
-  def input(scope: String, ref: Ref): IO[InputReceipt] = database.transaction(c => loadInput(c, scope, ref))
+  def input(scope: String, ref: Ref): IO[InputReceipt] = database.transaction { c =>
+    val receipt = loadInput(c, scope, ref)
+    if (Set(InputKind.Capture, InputKind.Judgment, InputKind.PresentationPublication).contains(receipt.kind)) {
+      val graph = verified(c, load(c, scope))
+      SourceIntegrity.linkedInput(graph, receipt)
+    }
+    receipt
+  }
   private def loadInput(c: Connection, scope: String, ref: Ref): InputReceipt = {
     Require(ref.revision == 1, "not-found", "input receipts are immutable")
     query(c, "SELECT generation, payload FROM ontology_inputs WHERE scope = ? AND input_id = ?")(p => { p.setString(1, scope); p.setObject(2, ref.id) }) { r =>
@@ -88,9 +108,11 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
         Require(stored.scope == request.scope && stored.requestId == request.requestId, "corrupt", "mutation result binding mismatch")
         stored.copy(replayed = true)
       case None =>
+        val claims = Adoptions.claims(request)
+        if (claims.nonEmpty) admission.principal.require(request.scope, Capability.Read)
         validateContexts(c, admission.principal, List(context))
-        val before = load(c, request.scope)
-        val changed = engine(before, request, admission)
+        val before = verified(c, load(c, request.scope))
+        val changed = engine(before, request, admission.copy(reviewEvidence = loadAdoptions(c, before, claims)))
         saveGraph(c, before, changed.snapshot)
         saveInput(c, InputReceipts.create(admission.provenance.input, request.scope, changed.snapshot.generation, InputKind.GraphMutation, admission.actor, admission.recorder, admission.actor, "ontology.api.ApplyRequest/0.1.0 canonical JSON", content, admission.recordedAt, context, admission.ingress))
         update(c, "INSERT INTO ontology_mutations(scope, actor_id, actor_kind, request_id, payload_digest, result) VALUES (?, ?, ?, ?, ?, ?)")(p => {
@@ -99,34 +121,105 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
         changed.result
     }
   }
-  private def eventRow(c: Connection, scope: String, r: ResultSet): (CapturedEvent, IngestResult, String) = {
-    val namespace = r.getString("source_namespace")
-    val eventId = r.getObject("event_id", classOf[UUID])
-    val event = StoredJson.decode(CapturedEvent.codecJson, r.getString("payload"))
-    Require(event.scope == scope && event.sourceNamespace == namespace && event.id == CaptureIdentity.event(namespace, eventId) && event.frontier == r.getLong("frontier"), "corrupt", "capture row identity mismatch")
-    Require(CaptureIdentity.fingerprint(event, eventId) == r.getString("fingerprint"), "corrupt", "capture content binding mismatch")
-    val result = StoredJson.decode(IngestResult.codecJson, r.getString("result"))
-    validateResult(event, result, eventId)
-    Require(InputReceipts.id(InputKind.Capture, namespace, result.requestId) == event.provenance.input, "corrupt", "capture input receipt mismatch")
-    val receipt = loadInput(c, scope, Ref(event.provenance.input, 1))
-    Require(receipt.kind == InputKind.Capture && receipt.contributor == event.provenance.contributor && receipt.recorder == event.provenance.recorder && receipt.recordedAt == event.provenance.recordedAt, "corrupt", "captured attribution differs from retained input")
-    val submitted = StoredJson.decode(IngestRequest.codecJson, receipt.content)
-    Require(submitted.scope == scope && submitted.requestId == result.requestId && submitted.eventId == eventId && CaptureIdentity.fingerprint(namespace, submitted) == r.getString("fingerprint"), "corrupt", "capture differs from retained input")
-    (event, result, r.getString("fingerprint"))
+  private def loadPresentation(c: Connection, scope: String, id: UUID): Presentation =
+    query(c, "SELECT * FROM ontology_presentations WHERE scope = ? AND presentation_id = ?")(s => { s.setString(1, scope); s.setObject(2, id) }) { row =>
+      Require(row.next(), "not-found", "presentation not found")
+      val value = StoredJson.decode(Presentation.codecJson, row.getString("payload"))
+      Require(value.id == id && value.payload.scope == scope && value.owner.id == row.getString("owner_id") &&
+        value.owner.kind.toString == row.getString("owner_kind") && value.payload.generation == row.getLong("generation") &&
+        value.reservedSourceRef.id == row.getObject("reserved_source_id", classOf[UUID]) && value.payloadDigest == row.getString("payload_digest"),
+        "corrupt", "presentation row binding mismatch")
+      try review.validatePresentation(value) catch { case _: Fault => throw Fault("corrupt", "invalid retained presentation") }
+      value
+    }
+  private def optionalInput(c: Connection, scope: String, ref: Ref): Option[InputReceipt] = {
+    val exists = query(c, "SELECT 1 FROM ontology_inputs WHERE scope = ? AND input_id = ?")(s => { s.setString(1, scope); s.setObject(2, ref.id) })(_.next())
+    if (exists) Some(loadInput(c, scope, ref)) else None
   }
-  private def validateResult(event: CapturedEvent, result: IngestResult, eventId: UUID): Unit = Require(result.scope == event.scope && result.eventId == eventId && result.sourceNamespace == event.sourceNamespace && result.source == Ref(event.id, 1) && result.frontier == event.frontier && result.artifacts == CaptureIdentity.artifacts(event), "corrupt", "capture result binding mismatch")
-  private def existingEvent(c: Connection, request: IngestRequest, namespace: String): Option[(CapturedEvent, IngestResult, String)] = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND source_namespace = ? AND event_id = ?")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.eventId) })(r => if (r.next()) Some(eventRow(c, request.scope, r)) else None)
+  private def savePrimary(c: Connection, record: PrimaryRecord): Unit = {
+    val result = record.outcome match {
+      case PrimaryOutcome.Captured(value) => StoredJson.encode(IngestResult.codecJson, value)
+      case PrimaryOutcome.Reviewed(value) => StoredJson.encode(Judgment.codecJson, value)
+    }
+    val event = record.event
+    update(c, "INSERT INTO ontology_captures(scope, source_namespace, event_id, capture_id, frontier, fingerprint, payload, result, input_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)")(s => {
+      s.setString(1, event.scope); s.setString(2, event.sourceNamespace); s.setObject(3, record.eventId); s.setObject(4, event.id)
+      s.setLong(5, event.frontier); s.setString(6, record.fingerprint); s.setString(7, StoredJson.encode(CapturedEvent.codecJson, event))
+      s.setString(8, result); s.setString(9, record.kind.toString)
+    })
+  }
+  private def loadJudgment(c: Connection, graph: GraphSnapshot, captureId: UUID): Judgment =
+    query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND capture_id = ?")(s => { s.setString(1, graph.scope); s.setObject(2, captureId) }) { row =>
+      Require(row.next(), "corrupt", "judgment primary row missing")
+      eventRow(c, graph, row).outcome match {
+        case PrimaryOutcome.Reviewed(value) => value
+        case _ => throw Fault("corrupt", "judgment index points to a generic capture")
+      }
+    }
+  private def reviewEvidence(c: Connection, graph: GraphSnapshot, record: PrimaryRecord): ReviewEvidence = record.outcome match {
+    case PrimaryOutcome.Reviewed(value) =>
+      val p = loadPresentation(c, graph.scope, value.presentationId)
+      ReviewEvidence(p, value, record.event, loadInput(c, graph.scope, Ref(record.event.provenance.input, 1)), loadInput(c, graph.scope, review.publicationInput(p)))
+    case _ => throw Fault("presentation", "linked review response required")
+  }
+  private def loadAdoptions(c: Connection, graph: GraphSnapshot, claims: List[AdoptionClaim]): List[ReviewEvidence] = claims.map { claim =>
+    Require(claim.response.revision == 1, "presentation", "review response is immutable")
+    query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND capture_id = ? AND input_kind = 'Judgment'")(s => { s.setString(1, graph.scope); s.setObject(2, claim.response.id) }) { row =>
+      Require(row.next(), "presentation", "review response not found")
+      val record = eventRow(c, graph, row)
+      Require(record.event.reviewResponse.exists(_.presentationId == claim.presentationId), "presentation", "presentation response pair mismatch")
+      reviewEvidence(c, graph, record)
+    }
+  }
+  private def eventRow(c: Connection, graph: GraphSnapshot, r: ResultSet): PrimaryRecord = {
+    val event = StoredJson.decode(CapturedEvent.codecJson, r.getString("payload"))
+    Require(event.scope == graph.scope && event.sourceNamespace == r.getString("source_namespace") &&
+      event.id == r.getObject("capture_id", classOf[UUID]) && event.frontier == r.getLong("frontier"), "corrupt", "primary row identity mismatch")
+    val outcome = r.getString("input_kind") match {
+      case "Capture" => PrimaryOutcome.Captured(StoredJson.decode(IngestResult.codecJson, r.getString("result")))
+      case "Judgment" => PrimaryOutcome.Reviewed(StoredJson.decode(Judgment.codecJson, r.getString("result")))
+      case _ => throw Fault("corrupt", "invalid primary input kind")
+    }
+    val record = PrimaryRecord(r.getObject("event_id", classOf[UUID]), event, r.getString("fingerprint"), outcome)
+    val receipt = loadInput(c, graph.scope, Ref(event.provenance.input, 1))
+    outcome match {
+      case _: PrimaryOutcome.Captured =>
+        val indexed = query(c, "SELECT 1 FROM ontology_judgments WHERE scope = ? AND capture_id = ?")(s => { s.setString(1, graph.scope); s.setObject(2, event.id) })(_.next())
+        PrimaryIntegrity.capture(graph, record, receipt, indexed)
+      case PrimaryOutcome.Reviewed(value) =>
+        val evidence = reviewEvidence(c, graph, record)
+        val p = evidence.presentation
+        PrimaryIntegrity.judgment(graph, record, evidence, review)
+        query(c, "SELECT actor_id, actor_kind, request_id, judgment_id, presentation_id, payload_digest FROM ontology_judgments WHERE scope = ? AND capture_id = ?")(s => { s.setString(1, graph.scope); s.setObject(2, event.id) }) { index =>
+          Require(index.next() && index.getString(1) == value.actor.id && index.getString(2) == value.actor.kind.toString &&
+            index.getObject(3, classOf[UUID]) == value.requestId && index.getObject(4, classOf[UUID]) == value.id &&
+            index.getObject(5, classOf[UUID]) == p.id && index.getString(6) == receipt.digest, "corrupt", "judgment index mismatch")
+        }
+    }
+    record
+  }
+  private def validateResult(event: CapturedEvent, result: IngestResult, eventId: UUID): Unit = PrimaryRecord.validateCaptureResult(event, result, eventId)
+  private def existingEvent(c: Connection, graph: GraphSnapshot, request: IngestRequest, namespace: String): Option[(CapturedEvent, IngestResult, String)] = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND source_namespace = ? AND input_kind = 'Capture' AND event_id = ?")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.eventId) }) { r =>
+    if (!r.next()) None else {
+      val record = eventRow(c, graph, r)
+      record.outcome match {
+        case PrimaryOutcome.Captured(result) => Some((record.event, result, record.fingerprint))
+        case _ => throw Fault("corrupt", "generic capture expected")
+      }
+    }
+  }
   def ingest(request: IngestRequest, principal: Principal, recorder: Actor, receivedAt: String, ingress: RequestTrace): IO[IngestResult] = database.transaction { c =>
     capture.validateIngress(request, principal)
     Contexts.server(ingress, Contexts.ProtocolLimits)
     lock(c, request.scope)
     val namespace = principal.credentialId
+    val before = load(c, request.scope)
     val digest = Digests.text(StoredJson.encode(IngestRequest.codecJson, request))
     val priorRequest = query(c, "SELECT payload_digest, result FROM ontology_ingest_requests WHERE scope = ? AND source_namespace = ? AND request_id = ?")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.requestId) })(r => if (r.next()) Some((r.getString(1), r.getString(2))) else None)
     priorRequest match {
       case Some((previous, stored)) =>
         Require(previous == digest, "replay-conflict", "request ID has different content")
-        val (event, _, fingerprint) = existingEvent(c, request, namespace).getOrElse(throw Fault("corrupt", "ingest receipt has no captured event"))
+        val (event, _, fingerprint) = existingEvent(c, before, request, namespace).getOrElse(throw Fault("corrupt", "ingest receipt has no captured event"))
         Require(fingerprint == CaptureIdentity.fingerprint(namespace, request), "corrupt", "ingest receipt event mismatch")
         val result = StoredJson.decode(IngestResult.codecJson, stored)
         validateResult(event, result, request.eventId)
@@ -134,20 +227,20 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
         result.copy(replayed = true)
       case None =>
         val fingerprint = CaptureIdentity.fingerprint(namespace, request)
-        val result = existingEvent(c, request, namespace) match {
+        val result = existingEvent(c, before, request, namespace) match {
           case Some((_, stored, previous)) => Require(previous == fingerprint, "replay-conflict", "source event ID has different content"); stored.copy(requestId = request.requestId, replayed = true)
           case None =>
             validateContexts(c, principal, List(CaptureIdentity.occurrence(request), Contexts.contribution(request.contributionContext, ingress, Contexts.ProtocolLimits)))
-            val before = load(c, request.scope)
+            verified(c, before)
             val observed = before.sourceFrontier
             query(c, "SELECT COUNT(*), COALESCE(MAX(frontier), 0) FROM ontology_captures WHERE scope = ?")(_.setString(1, request.scope)) { r =>
               Require(r.next() && r.getLong(1) == observed && r.getLong(2) == observed, "corrupt", "source frontier range is incomplete")
             }
-            val prior = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND source_namespace = ? ORDER BY frontier")(p => { p.setString(1, request.scope); p.setString(2, namespace) }) { r => val rows = List.newBuilder[CapturedEvent]; while (r.next()) rows += eventRow(c, request.scope, r)._1; rows.result() }
+            val prior = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND source_namespace = ? ORDER BY frontier")(p => { p.setString(1, request.scope); p.setString(2, namespace) }) { r => val rows = List.newBuilder[CapturedEvent]; while (r.next()) rows += eventRow(c, before, r).event; rows.result() }
             val changed = capture(before, prior, observed, request, principal, recorder, receivedAt, ingress)
             saveGraph(c, before, changed.snapshot)
             saveInput(c, changed.receipt)
-            update(c, "INSERT INTO ontology_captures(scope, source_namespace, event_id, capture_id, frontier, fingerprint, payload, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.eventId); p.setObject(4, changed.event.id); p.setLong(5, changed.event.frontier); p.setString(6, fingerprint); p.setString(7, StoredJson.encode(CapturedEvent.codecJson, changed.event)); p.setString(8, StoredJson.encode(IngestResult.codecJson, changed.result)) })
+            savePrimary(c, PrimaryRecord(request.eventId, changed.event, fingerprint, PrimaryOutcome.Captured(changed.result)))
             changed.result
         }
         update(c, "INSERT INTO ontology_ingest_requests(scope, source_namespace, request_id, payload_digest, result) VALUES (?, ?, ?, ?, ?)")(p => { p.setString(1, request.scope); p.setString(2, namespace); p.setObject(3, request.requestId); p.setString(4, digest); p.setString(5, StoredJson.encode(IngestResult.codecJson, result)) })
@@ -155,18 +248,85 @@ final class PostgresGraphRepository(database: JdbcDatabase, engine: AdmissionEng
     }
   }
   def sources(request: SourceRequest): IO[SourceResult] = database.transaction { c =>
-    val current = load(c, request.scope).sourceFrontier
+    val graph = load(c, request.scope)
+    val current = graph.sourceFrontier
     Require(request.after >= 0 && request.after <= current && request.limit > 0 && request.limit < Int.MaxValue, "source-page", "invalid source page")
-    val events = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier > ? AND frontier <= ? ORDER BY frontier LIMIT ?")(p => { p.setString(1, request.scope); p.setLong(2, request.after); p.setLong(3, current); p.setInt(4, request.limit + 1) }) { r => val rows = List.newBuilder[CapturedEvent]; while (r.next()) rows += eventRow(c, request.scope, r)._1; rows.result() }
+    val events = query(c, "SELECT * FROM ontology_captures WHERE scope = ? AND frontier > ? AND frontier <= ? ORDER BY frontier LIMIT ?")(p => { p.setString(1, request.scope); p.setLong(2, request.after); p.setLong(3, current); p.setInt(4, request.limit + 1) }) { r => val rows = List.newBuilder[CapturedEvent]; while (r.next()) rows += eventRow(c, graph, r).event; rows.result() }
     val expected = math.min(current - request.after, request.limit.toLong + 1L)
     Require(events.size.toLong == expected && events.zipWithIndex.forall { case (event, index) => event.frontier == request.after + index.toLong + 1L }, "corrupt", "source page contains an incomplete frontier range")
     val page = events.take(request.limit)
     SourceResult(request.scope, page, current, if (events.size > page.size) Some(page.last.frontier) else None)
   }
+  def prepare(request: PresentRequest, call: ReviewCall, id: UUID, at: String): IO[Presentation] = database.transaction { c =>
+    review.authorize(call, request.scope)
+    lock(c, request.scope)
+    val value = review.prepare(verified(c, load(c, request.scope)), request, call, id, at)
+    val exists = query(c, "SELECT 1 FROM ontology_presentations WHERE scope = ? AND presentation_id = ?")(s => { s.setString(1, request.scope); s.setObject(2, id) })(_.next())
+    Require(!exists, "identity", "presentation identity already exists")
+    update(c, "INSERT INTO ontology_presentations(scope, presentation_id, owner_id, owner_kind, generation, reserved_source_id, payload_digest, payload) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(s => {
+      s.setString(1, request.scope); s.setObject(2, id); s.setString(3, value.owner.id); s.setString(4, value.owner.kind.toString)
+      s.setLong(5, value.payload.generation); s.setObject(6, value.reservedSourceRef.id); s.setString(7, value.payloadDigest); s.setString(8, StoredJson.encode(Presentation.codecJson, value))
+    })
+    value
+  }
+  def presentation(principal: Principal, scope: String, id: UUID): IO[Presentation] = database.transaction { c =>
+    principal.require(scope, Capability.Read)
+    loadPresentation(c, scope, id)
+  }
+  def judge(request: JudgmentRequest, call: ReviewCall, service: Actor, at: String): IO[Judgment] = database.transaction { c =>
+    review.authorize(call, request.scope)
+    lock(c, request.scope)
+    val digest = Digests.text(Wire.encode(JudgmentRequest.codecJson, request).noSpaces)
+    val prior = query(c, "SELECT payload_digest, capture_id FROM ontology_judgments WHERE scope = ? AND actor_kind = ? AND actor_id = ? AND request_id = ?")(s => {
+      s.setString(1, request.scope); s.setString(2, call.principal.actor.kind.toString); s.setString(3, call.principal.actor.id); s.setObject(4, request.requestId)
+    })(r => if (r.next()) Some((r.getString(1), r.getObject(2, classOf[UUID]))) else None)
+    prior match {
+      case Some((previous, captureId)) =>
+        Require(previous == digest, "replay-conflict", "request ID has different content")
+        loadJudgment(c, verified(c, load(c, request.scope)), captureId)
+      case None =>
+        val p = loadPresentation(c, request.scope, request.presentationId)
+        val before = verified(c, load(c, request.scope))
+        val existing = optionalInput(c, request.scope, review.publicationInput(p))
+        val changed = review.publish(before, p, request, call, service, at, existing)
+        val publication = changed.publicationReceipt.orElse(existing).getOrElse(throw Fault("invariant", "publication receipt missing"))
+        review.validateEvidence(changed.snapshot, ReviewEvidence(p, changed.judgment, changed.event, changed.receipt, publication))
+        saveGraph(c, before, changed.snapshot)
+        changed.publicationReceipt.foreach(saveInput(c, _))
+        saveInput(c, changed.receipt)
+        savePrimary(c, PrimaryRecord(request.requestId, changed.event, CaptureIdentity.fingerprint(changed.event, request.requestId), PrimaryOutcome.Reviewed(changed.judgment)))
+        update(c, "INSERT INTO ontology_judgments(scope, actor_id, actor_kind, request_id, judgment_id, presentation_id, capture_id, payload_digest) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")(s => {
+          s.setString(1, request.scope); s.setString(2, call.principal.actor.id); s.setString(3, call.principal.actor.kind.toString)
+          s.setObject(4, request.requestId); s.setObject(5, changed.judgment.id); s.setObject(6, p.id); s.setObject(7, changed.event.id); s.setString(8, digest)
+        })
+        verified(c, load(c, request.scope))
+        changed.judgment
+    }
+  }
+  def judgment(principal: Principal, scope: String, id: UUID): IO[Judgment] = database.transaction { c =>
+    principal.require(scope, Capability.Read)
+    val graph = verified(c, load(c, scope))
+    val captureId = query(c, "SELECT capture_id FROM ontology_judgments WHERE scope = ? AND judgment_id = ? AND EXISTS (SELECT 1 FROM ontology_captures c WHERE c.scope = ontology_judgments.scope AND c.capture_id = ontology_judgments.capture_id AND c.frontier <= ?)")(s => { s.setString(1, scope); s.setObject(2, id); s.setLong(3, graph.sourceFrontier) }) { r =>
+      Require(r.next(), "not-found", "judgment not found"); r.getObject(1, classOf[UUID])
+    }
+    loadJudgment(c, graph, captureId)
+  }
+  def judgments(principal: Principal, scope: String): IO[List[Judgment]] = database.transaction { c =>
+    principal.require(scope, Capability.Read)
+    val graph = verified(c, load(c, scope))
+    query(c, "SELECT c.* FROM ontology_judgments j JOIN ontology_captures c ON c.scope = j.scope AND c.capture_id = j.capture_id WHERE j.scope = ? AND c.frontier <= ? ORDER BY c.frontier")(s => { s.setString(1, scope); s.setLong(2, graph.sourceFrontier) }) { r =>
+      val values = List.newBuilder[Judgment]
+      while (r.next()) eventRow(c, graph, r).outcome match {
+        case PrimaryOutcome.Reviewed(value) => values += value
+        case _ => throw Fault("corrupt", "judgment index points to a generic capture")
+      }
+      values.result()
+    }
+  }
   def pendingProjections(limit: Int): IO[List[GraphSnapshot]] = database.transaction { c =>
     Require(limit > 0, "limit", "positive projection batch required")
     query(c, "SELECT r.scope, r.generation, r.snapshot FROM ontology_outbox o JOIN ontology_revisions r USING(scope, generation) WHERE NOT o.published ORDER BY o.scope, o.generation LIMIT ?")(_.setInt(1, limit)) { r =>
-      val rows = List.newBuilder[GraphSnapshot]; while (r.next()) rows += decodeSnapshot(r.getString(1), r.getLong(2), r.getString(3)); rows.result()
+      val rows = List.newBuilder[GraphSnapshot]; while (r.next()) rows += verified(c, decodeSnapshot(r.getString(1), r.getLong(2), r.getString(3))); rows.result()
     }
   }
   def acknowledgeProjection(scope: String, generation: Long): IO[Unit] = database.transaction { c =>

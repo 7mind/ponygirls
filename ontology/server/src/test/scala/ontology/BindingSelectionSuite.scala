@@ -29,7 +29,7 @@ abstract class BindingSelectionContract extends FunSuite {
     def apply(operations: List[Json]): IO[ApplyResult] = repository.read(scope).flatMap { graph =>
       val id = UUID.randomUUID()
       val request = Wire.decode(ApplyRequest.codecJson, json(s"""{"scope":"$scope","requestId":"$id","expectedGeneration":"${graph.generation}","contributionContext":null,"operations":${Json.arr(operations*)}}"""))
-      repository.apply(request, Admission(ontology.TestContexts.principal(scope, actor), Actor("fixture-host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply")))
+      repository.apply(request, Admission(ontology.TestContexts.principal(scope, actor), Actor("fixture-host", ActorKind.Service), id, "2026-11-11T00:00:00Z", ontology.TestContexts.trace("fixture-apply"), Nil))
     }
     def current: IO[ReadResult] = queries.read(principal, ReadRequest(scope, ReadView.Current, Nil, None, 100))
     def history: IO[ReadResult] = queries.read(principal, ReadRequest(scope, ReadView.History, Nil, None, 100))
@@ -102,7 +102,7 @@ abstract class BindingSelectionContract extends FunSuite {
   } yield () } }
 }
 final class MemoryBindingSelectionSuite extends BindingSelectionContract {
-  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine)))
+  protected def repository: Resource[IO, GraphRepository] = Resource.eval(IO(new MemoryGraphRepository(new AdmissionEngine, TestReview.domain)))
 }
 final class PostgresBindingSelectionSuite extends BindingSelectionContract {
   protected def repository: Resource[IO, GraphRepository] = {
@@ -113,7 +113,7 @@ final class PostgresBindingSelectionSuite extends BindingSelectionContract {
     val config = JdbcConfig(required("ONTOLOGY_TEST_JDBC_URL"), "postgres", Path.of(required("ONTOLOGY_TEST_PASSWORD_FILE")),
       JdbcLimits(4, 16, 10.seconds, 10.seconds, 30.seconds, 35.seconds, 60.seconds, 35.seconds))
     JdbcDatabase.resource(config).evalMap { db =>
-      val store = new PostgresGraphRepository(db, new AdmissionEngine)
+      val store = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain)
       store.initialize.as(store: GraphRepository)
     }
   }

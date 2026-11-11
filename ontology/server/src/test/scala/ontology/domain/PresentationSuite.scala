@@ -15,7 +15,7 @@ final class PresentationSuite extends FunSuite {
   private val call = review(human, scope)
   private def apply(graph: GraphSnapshot, operations: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    new AdmissionEngine().apply(graph, ApplyRequest(scope, id, graph.generation, operations, None), Admission(TestContexts.principal(scope, Actor("author", ActorKind.Agent)), Actor("host", ActorKind.Service), id, at, TestContexts.trace("fixture-apply")))
+    new AdmissionEngine().apply(graph, ApplyRequest(scope, id, graph.generation, operations, None), Admission(TestContexts.principal(scope, Actor("author", ActorKind.Agent)), Actor("host", ActorKind.Service), id, at, TestContexts.trace("fixture-apply"), Nil))
   }
   private val built = apply(Graph.empty(scope), List(
     Operation.Create("background", TestAuthoring.applicability(TestApplicability.unresolved), ContentInput.Question("Background", List("X", "Y"), None, Escalation.Unresolved), Nil),

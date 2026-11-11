@@ -58,7 +58,7 @@ final class AdmissionEngine {
           val detail = Authoring.relationDetail(x.detail, resolve)
           Applicabilities.validate(graph, applicability, false)
           val r = Relation(fresh, graph.scope, applicability, x.kind, refs(x.sources), refs(x.targets), detail, x.why, Standing.Active, admission.provenance)
-          validateRelation(graph, r)
+          validateRelation(graph, r, admission.reviewEvidence)
           graph = graph.copy(relations = graph.relations :+ r); fresh
         case x: Operation.ReviseRelation =>
           val old = Graph.relation(graph, x.ref)
@@ -69,7 +69,7 @@ final class AdmissionEngine {
           val applicability = Authoring.applicability(x.applicability, resolve)
           Applicabilities.validate(graph, applicability, false)
           val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), applicability = applicability, detail = detail, why = x.why, standing = x.standing, provenance = admission.provenance)
-          validateRelation(graph, r); graph = graph.copy(relations = graph.relations :+ r); r.ref
+          validateRelation(graph, r, admission.reviewEvidence); graph = graph.copy(relations = graph.relations :+ r); r.ref
         case x: Operation.Bind =>
           val b = Binding(fresh, graph.scope, resolve(x.definition), refs(x.context), x.workContext, admission.provenance)
           Graph.validateBinding(graph, b)
@@ -115,7 +115,7 @@ final class AdmissionEngine {
     Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(request.scope, request.requestId, Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
   }
 
-  private def validateRelation(g: GraphSnapshot, r: Relation): Unit = {
+  private def validateRelation(g: GraphSnapshot, r: Relation, reviewEvidence: List[ReviewEvidence]): Unit = {
     Require(r.why.trim.nonEmpty && r.sources.nonEmpty && r.targets.nonEmpty, "relation", "relation explanation and endpoints required")
     Require(r.kind == RelationKind.Infers || r.sources.size == 1, "arity", "relation requires exactly one source")
     Require(Set(RelationKind.Decomposes, RelationKind.Assesses).contains(r.kind) || r.targets.size == 1, "arity", "relation requires exactly one target")
@@ -137,7 +137,9 @@ final class AdmissionEngine {
         (r.sources ++ r.targets).foreach(x => Graph.node(g, x))
       case RelationKind.Delegates => Require(r.detail.isInstanceOf[RelationDetail.Delegation], "detail", "delegation bounds required")
       case RelationKind.Adopts | RelationKind.Chooses => r.detail match {
-        case a: RelationDetail.Adoption => Require(a.origin == AdoptionOrigin.Interpretation, "protected", "captured Human action requires the presentation/judgment endpoint")
+        case a: RelationDetail.Adoption =>
+          Require(a.origin == AdoptionOrigin.Interpretation, "protected", "captured Human action requires the presentation/judgment endpoint")
+          Adoptions.validate(g, r, a, reviewEvidence)
         case _ => throw Fault("detail", "adoption presentation binding required")
       }
       case RelationKind.AssignedTo => task(r.sources.head); Require(g.actors.exists(_.ref == r.targets.head), "kind", "assignment target must be a captured actor"); empty(r)

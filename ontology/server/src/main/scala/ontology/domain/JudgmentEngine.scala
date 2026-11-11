@@ -1,7 +1,7 @@
 package ontology.domain
 
 import ontology.api.*
-import ontology.{Digests, ReviewCall, Wire}
+import ontology.{ReviewCall, Wire}
 import java.nio.charset.StandardCharsets.UTF_8
 import java.time.Instant
 import java.time.format.DateTimeParseException
@@ -14,7 +14,6 @@ final case class Judged(snapshot: GraphSnapshot, event: CapturedEvent, judgment:
                         publicationReceipt: Option[InputReceipt], relation: Option[Relation])
 
 final class JudgmentEngine(limits: ReviewLimits) {
-  private val Encoding = "ontology.api.JudgmentRequest/0.1.0 canonical JSON"
   def publicationInput(presentation: Presentation): Ref = DerivedPresentations.inputRef(presentation)
   def apply(base: GraphSnapshot, presentation: Presentation, request: JudgmentRequest, call: ReviewCall,
             service: Actor, recordedAt: String, existingPublication: Option[InputReceipt]): Judged = {
@@ -42,16 +41,13 @@ final class JudgmentEngine(limits: ReviewLimits) {
     val frontier = Math.addExact(base.sourceFrontier, 1L)
     val provenance = Provenance(actor, service, inputRef.id, recordedAt)
     val context = Contexts.server(call.ingress, Contexts.ProtocolLimits)
-    val metadata = CaptureMetadata(judgmentId.toString, Some(presentation.id.toString), None, SourceRepresentation.HumanJudgment, Nil, Nil)
+    val metadata = ReviewRecords.metadata(judgmentId, presentation.id)
     val link = ReviewResponseLink(presentation.id, judgmentId, presentation.reservedSourceRef, presentation.payloadDigest)
     val event = CapturedEvent(sourceRef.id, base.scope, call.principal.credentialId, frontier, context,
       EventOrigin.UserMessage, metadata, text, Observation.None(), Some(link), provenance)
-    val source = Definition(sourceRef, base.scope, Applicability.Captured(sourceRef), Content.Source(text,
-      (presentation.reservedSourceRef :: presentation.payload.targets).distinct, Digests.text(text),
-      SourceDescriptor.PrimaryCapture(sourceRef.id, event.sourceNamespace, context, metadata, event.origin, event.observation, event.reviewResponse)),
-      Standing.Active, List(presentation.reservedSourceRef), None, provenance)
+    val source = ReviewRecords.source(event, presentation)
     val receipt = InputReceipts.create(inputRef.id, base.scope, generation, InputKind.Judgment, actor, service, actor,
-      Encoding, text, recordedAt, context, call.ingress)
+      ReviewRecords.JudgmentEncoding, text, recordedAt, context, call.ingress)
     val judgment = Judgment(judgmentId, base.scope, request.requestId, presentation.id, request.action,
       request.rationale, actor, recordedAt, sourceRef, presentation.reservedSourceRef, inputRef)
     complete(base, derived, source, receipt, event, judgment, generation, frontier)
@@ -59,22 +55,8 @@ final class JudgmentEngine(limits: ReviewLimits) {
 
   private def complete(base: GraphSnapshot, derived: DerivedPublication, source: Definition, receipt: InputReceipt,
                        event: CapturedEvent, judgment: Judgment, generation: Long, frontier: Long): Judged = {
-    val selected = judgment.action match {
-      case _: ReviewAction.Review => None
-      case value: ReviewAction.Choose => Some(RelationKind.Chooses -> value.selection)
-      case value: ReviewAction.Adopt => Some(RelationKind.Adopts -> PresentedSelection.Whole(value.target))
-    }
-    val relation = selected.map { case (kind, selection) =>
-      val ref = ReviewIdentity.relation(base.scope, judgment.actor, judgment.requestId)
-      Require(!Graph.records(base).exists(record => Graph.recordRef(record).id == ref.id), "identity", "action relation identity already exists")
-      val target = selection match {
-        case value: PresentedSelection.Whole => value.target
-        case value: PresentedSelection.Alternative => value.target
-      }
-      Relation(ref, base.scope, Applicability.Captured(source.ref), kind, List(source.ref), List(target),
-        RelationDetail.Adoption(judgment.presentationId, AdoptionOrigin.CapturedAction, source.ref, selection),
-        judgment.rationale, Standing.Active, source.provenance)
-    }
+    val relation = ReviewRecords.relation(judgment, source.provenance)
+    relation.foreach(edge => Require(!Graph.records(base).exists(record => Graph.recordRef(record).id == edge.ref.id), "identity", "action relation identity already exists"))
     val actors = List(source.provenance.contributor, source.provenance.recorder).distinct
       .filterNot(actor => base.actors.exists(_.value == actor)).map(actor =>
         ActorRecord(Ref(UUID.nameUUIDFromBytes(("actor:" + actor.kind + ":" + actor.id).getBytes(UTF_8)), 1), actor))

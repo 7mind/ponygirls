@@ -22,7 +22,7 @@ final class JudgmentSuite extends FunSuite {
   private val created = new AdmissionEngine().apply(Graph.empty(scope), ApplyRequest(scope, id, 0L, List(
     Operation.Create("q", TestAuthoring.applicability(TestApplicability.unresolved), ContentInput.Question("Which?", List("A", "B"), None, Escalation.HumanRequired), Nil),
     Operation.Bind("b", Target.Created("q"), Nil, "fixture")), None),
-    Admission(TestContexts.principal(scope, Actor("author", ActorKind.Agent)), service, id, at, TestContexts.trace("fixture-apply")))
+    Admission(TestContexts.principal(scope, Actor("author", ActorKind.Agent)), service, id, at, TestContexts.trace("fixture-apply"), Nil))
   private val graph = created.snapshot
   private def ref(alias: String): Ref = created.result.created.find(_.alias == alias).get.ref
   private def presentation(target: Ref): Presentation = PresentationEngine.prepare(graph, PresentRequest(scope, List(target), graph.generation), preparationCall, UUID.randomUUID(), at, limits.presentation)
@@ -98,7 +98,7 @@ final class JudgmentSuite extends FunSuite {
   test("future-relative presentations reject while genuinely historical presentations remain valid") {
     val updateId = UUID.randomUUID()
     val update = ApplyRequest(scope, updateId, graph.generation, List(Operation.Create("unrelated", TestAuthoring.applicability(TestApplicability.unresolved), ContentInput.Statement("Unrelated later record", Modality.Assertion), Nil)), None)
-    val advanced = new AdmissionEngine().apply(graph, update, Admission(TestContexts.principal(scope, Actor("author", ActorKind.Agent)), service, updateId, at, TestContexts.trace("fixture-apply"))).snapshot
+    val advanced = new AdmissionEngine().apply(graph, update, Admission(TestContexts.principal(scope, Actor("author", ActorKind.Agent)), service, updateId, at, TestContexts.trace("fixture-apply"), Nil)).snapshot
     val future = PresentationEngine.prepare(advanced, PresentRequest(scope, List(ref("q")), advanced.generation), preparationCall, UUID.randomUUID(), at, limits.presentation)
     assert(future.payload.records.forall(Graph.records(graph).contains))
     assertEquals(intercept[Fault](engine(graph, future, request(future, ReviewAction.Review(JudgmentKind.Accept)), originalCall, service, later, None)).code, "presentation")

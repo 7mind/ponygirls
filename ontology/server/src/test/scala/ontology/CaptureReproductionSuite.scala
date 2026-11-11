@@ -30,7 +30,7 @@ final class CaptureReproductionSuite extends FunSuite {
         event = original.events.head
         _ <- db.transaction { c => Using.resource(c.prepareStatement("DELETE FROM ontology_captures WHERE scope = ? AND frontier = 1")) { s => s.setString(1, request.scope); assertEquals(s.executeUpdate(), 1) } }
         result <- repo.sources(SourceRequest(request.scope, 0L, 10)).attempt.guarantee(db.transaction { c =>
-          Using.resource(c.prepareStatement("INSERT INTO ontology_captures(scope, source_namespace, event_id, capture_id, frontier, fingerprint, payload, result) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")) { s =>
+          Using.resource(c.prepareStatement("INSERT INTO ontology_captures(scope, source_namespace, event_id, capture_id, frontier, fingerprint, payload, result, input_kind) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'Capture')")) { s =>
             s.setString(1, request.scope); s.setString(2, principal.credentialId); s.setObject(3, request.eventId); s.setObject(4, event.id); s.setLong(5, 1L)
             s.setString(6, CaptureIdentity.fingerprint(principal.credentialId, request)); s.setString(7, StoredJson.encode(CapturedEvent.codecJson, event)); s.setString(8, StoredJson.encode(IngestResult.codecJson, first)); assertEquals(s.executeUpdate(), 1)
           }
@@ -76,11 +76,41 @@ final class CaptureReproductionSuite extends FunSuite {
       } yield ()
     } }.unsafeRunSync()(using runtime)
   }
+  List("head", "history", "sources", "input").foreach { boundary =>
+    test(s"$boundary rejects a graph Source that disagrees with its retained capture") {
+      RepositoryReproductionDatabase.resource.use { db => RepositoryReproductionDatabase.store(db).flatMap { repo =>
+        val (request, principal) = example()
+        for {
+          result <- repo.ingest(request, principal, recorder, at, TestContexts.trace("fixture-ingest"))
+          original <- repo.read(request.scope)
+          source = Graph.node(original, result.source)
+          content = source.content.asInstanceOf[Content.Source]
+          different = "Another valid account, not this captured input"
+          altered = original.copy(definitions = original.definitions.map(node => if (node.ref == source.ref) node.copy(content = content.copy(text = different, rawDigest = Digests.text(different))) else node))
+          table = if (boundary == "history") "ontology_revisions" else "ontology_scopes"
+          set = (value: GraphSnapshot) => db.transaction { connection =>
+            Using.resource(connection.prepareStatement(s"UPDATE $table SET snapshot = ? WHERE scope = ? AND generation = ?")) { statement =>
+              statement.setString(1, StoredJson.encode(GraphSnapshot.codecJson, value)); statement.setString(2, request.scope); statement.setLong(3, original.generation)
+              assertEquals(statement.executeUpdate(), 1)
+            }
+          }
+          _ <- set(altered)
+          checked <- (boundary match {
+            case "head" => repo.read(request.scope).void
+            case "history" => repo.history(request.scope, original.generation).void
+            case "sources" => repo.sources(SourceRequest(request.scope, 0L, 10)).void
+            case "input" => repo.input(request.scope, Ref(source.provenance.input, 1)).void
+          }).attempt.guarantee(set(original))
+          _ = fault(checked, "corrupt")
+        } yield ()
+      } }.unsafeRunSync()(using runtime)
+    }
+  }
   test("source-page lookahead limit contract matches between adapters") {
     val scope = "empty-" + UUID.randomUUID()
     val request = SourceRequest(scope, 0L, Int.MaxValue)
     (for {
-      memory <- new MemoryGraphRepository(new AdmissionEngine).sources(request).attempt
+      memory <- new MemoryGraphRepository(new AdmissionEngine, TestReview.domain).sources(request).attempt
       postgres <- RepositoryReproductionDatabase.resource.evalMap(RepositoryReproductionDatabase.store).use(_.sources(request).attempt)
       _ = fault(memory, "source-page")
       _ = fault(postgres, "source-page")

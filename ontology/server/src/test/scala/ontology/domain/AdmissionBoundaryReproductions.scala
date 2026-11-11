@@ -12,7 +12,7 @@ final class AdmissionBoundaryReproductions extends FunSuite {
   private def task(s: String): Content.Task = Content.Task(s, Acceptance(List("observable contract"), None), Execution.Delegated)
   private def run(g: GraphSnapshot, ops: List[Operation]): Applied = {
     val id = UUID.randomUUID()
-    engine(g, ApplyRequest(g.scope, id, g.generation, ops, None), Admission(ontology.TestContexts.principal(g.scope, actor), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply")))
+    engine(g, ApplyRequest(g.scope, id, g.generation, ops, None), Admission(ontology.TestContexts.principal(g.scope, actor), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"), Nil))
   }
   private def ref(x: Applied, alias: String): Ref = x.result.created.find(_.alias == alias).get.ref
   test("planned output cannot point to an actor record") {

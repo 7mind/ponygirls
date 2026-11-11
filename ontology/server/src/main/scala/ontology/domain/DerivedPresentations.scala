@@ -20,6 +20,17 @@ private[domain] object DerivedPresentations {
     Definition(presentation.reservedSourceRef, payload.scope, Applicability.Unresolved(Qualification, payload.sourceRefs, Nil), content,
       Standing.Active, payload.sourceRefs, None, provenance)
   }
+  def validate(graph: GraphSnapshot, presentation: Presentation, receipt: InputReceipt): Unit = {
+    InputReceipts.validateContext(receipt)
+    Require(receipt.ref == inputRef(presentation) && receipt.scope == graph.scope && receipt.kind == InputKind.PresentationPublication &&
+      receipt.generation > presentation.payload.generation && receipt.generation <= graph.generation &&
+      receipt.encoding == Encoding && receipt.content == command(presentation) && receipt.digest == Digests.text(receipt.content) &&
+      receipt.submitter == presentation.owner && receipt.contributor.kind == ActorKind.Service && receipt.recorder.kind == ActorKind.Service &&
+      receipt.ingress.transport == RequestTransport.Cookie, "corrupt", "retained presentation publication receipt mismatch")
+    val expected = definition(presentation, Provenance(receipt.contributor, receipt.recorder, receipt.ref.id, receipt.recordedAt))
+    Require(Graph.records(graph).filter(record => Graph.recordRef(record).id == expected.ref.id) == List(GraphRecord.Node(expected)),
+      "corrupt", "retained derived presentation differs from its publication")
+  }
   def resolve(graph: GraphSnapshot, presentation: Presentation, existingReceipt: Option[InputReceipt], call: ReviewCall, service: Actor, recordedAt: String): DerivedPublication = {
     val existing = Graph.records(graph).filter(record => Graph.recordRef(record).id == presentation.reservedSourceRef.id)
     val ref = inputRef(presentation)
@@ -30,14 +41,7 @@ private[domain] object DerivedPresentations {
         val source = definition(presentation, Provenance(service, service, receipt.ref.id, recordedAt))
         DerivedPublication(source, receipt, true)
       case (List(GraphRecord.Node(source)), Some(receipt)) =>
-        InputReceipts.validateContext(receipt)
-        Require(receipt.ref == ref && receipt.scope == graph.scope && receipt.kind == InputKind.PresentationPublication &&
-          receipt.generation > presentation.payload.generation && receipt.generation <= graph.generation &&
-          receipt.encoding == Encoding && receipt.content == command(presentation) && receipt.digest == Digests.text(receipt.content) &&
-          receipt.submitter == presentation.owner && receipt.contributor.kind == ActorKind.Service && receipt.recorder.kind == ActorKind.Service &&
-          receipt.ingress.transport == RequestTransport.Cookie, "corrupt", "retained presentation publication receipt mismatch")
-        val expected = definition(presentation, Provenance(receipt.contributor, receipt.recorder, receipt.ref.id, receipt.recordedAt))
-        Require(source == expected, "corrupt", "retained derived presentation differs from its publication")
+        validate(graph, presentation, receipt)
         DerivedPublication(source, receipt, false)
       case _ => throw Fault("corrupt", "derived presentation source and publication receipt disagree")
     }
