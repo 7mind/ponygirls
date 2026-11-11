@@ -9,6 +9,8 @@ data Actor { id: str kind: ActorKind }
 data Ref { id: uid revision: i32 }
 data ActorRecord { ref: Ref value: Actor }
 data Provenance { contributor: Actor recorder: Actor input: uid recordedAt: str }
+enum InputKind { GraphMutation Capture Curation }
+data InputReceipt { ref: Ref scope: str generation: i64 kind: InputKind contributor: Actor recorder: Actor submitter: Actor encoding: str content: str digest: str recordedAt: str }
 enum Force { Required Preferred Unresolved }
 enum Polarity { Required Prohibited }
 enum Execution { Delegated HumanRequired }
@@ -30,7 +32,7 @@ adt Content {
  data Question { text: str alternatives: lst[str] answer: opt[str] escalation: Escalation }
  data Decision { text: str alternatives: lst[str] rationale: str }
  data Review { text: str findings: lst[str] subjects: lst[Ref] basis: lst[Ref] uncertainty: str assessment: Assessment }
- data Source { text: str context: lst[Ref] rawDigest: str eventId: uid }
+ data Source { text: str context: lst[Ref] rawDigest: str eventId: uid sourceNamespace: str captureContext: CaptureContext metadata: CaptureMetadata origin: EventOrigin observation: Observation }
  data Artifact { text: str digest: str mediaType: str locator: str generation: i64 }
  data Conflict { text: str subjects: lst[Ref] status: ConflictState resolution: opt[str] uncertainty: str }
 }
@@ -65,15 +67,16 @@ adt Operation {
 }
 root data ApplyRequest { scope: str requestId: uid expectedGeneration: i64 operations: lst[Operation] }
 data AliasRef { alias: str ref: Ref }
-root data ApplyResult { generation: i64 created: lst[AliasRef] replayed: bit }
+root data ApplyResult { scope: str requestId: uid generation: i64 created: lst[AliasRef] replayed: bit }
 root data GraphSnapshot { scope: str generation: i64 coveredFrontier: i64 definitions: lst[Definition] relations: lst[Relation] bindings: lst[Binding] events: lst[StateEvent] actors: lst[ActorRecord] }
 enum ReadView { Current History BindingContext }
 root data ReadRequest { scope: str view: ReadView targets: lst[Ref] cursor: opt[str] limit: i32 }
-adt GraphRecord { data Person { value: ActorRecord } data Node { value: Definition } data Edge { value: Relation } data Contract { value: Binding } data Progress { value: StateEvent } }
-root data ReadResult { generation: i64 records: lst[GraphRecord] cursor: opt[str] }
-root data FindRequest { scope: str kind: opt[str] query: str cursor: opt[str] limit: i32 }
+adt GraphRecord { data Input { value: InputReceipt } data Person { value: ActorRecord } data Node { value: Definition } data Edge { value: Relation } data Contract { value: Binding } data Progress { value: StateEvent } }
+root data ReadResult { scope: str generation: i64 records: lst[GraphRecord] cursor: opt[str] }
+enum DefinitionKind { Outcome Constraint Task Statement Hypothesis Defect Question Decision Review Source Artifact Conflict }
+root data FindRequest { scope: str kind: opt[DefinitionKind] query: str cursor: opt[str] limit: i32 }
 data SearchHit { ref: Ref kind: str text: str standing: Standing }
-root data FindResult { generation: i64 items: lst[SearchHit] cursor: opt[str] }
+root data FindResult { scope: str generation: i64 items: lst[SearchHit] cursor: opt[str] }
 
 // Capture is a separate trusted ingress; these actor claims are not graph mutations.
 enum EventOrigin { UserMessage WorkerMessage ToolOutput }
@@ -82,13 +85,16 @@ data CaptureContext { sessionId: str rootSessionId: opt[str] parentSessionId: op
 adt Observation {
  data None {}
  data FileVersion { path: str generation: i64 digest: str length: i64 }
+ data FileAbsent { path: str generation: i64 }
  data Execution { action: str checker: str contract: opt[Ref] artifacts: lst[Ref] exitCode: opt[i32] complete: bit }
 }
-root data IngestRequest { scope: str requestId: uid eventId: uid context: CaptureContext origin: EventOrigin text: str observation: Observation }
-data CapturedEvent { id: uid scope: str frontier: i64 context: CaptureContext origin: EventOrigin text: str observation: Observation provenance: Provenance }
-root data IngestResult { source: Ref frontier: i64 replayed: bit }
+enum SourceRepresentation { Text PiTranscript HostReceipt GraphCommand HumanJudgment }
+data CaptureMetadata { sourceId: str parentSourceId: opt[str] observedAt: opt[str] representation: SourceRepresentation omissions: lst[str] exposedDeliveries: lst[uid] }
+root data IngestRequest { scope: str requestId: uid eventId: uid context: CaptureContext origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation }
+data CapturedEvent { id: uid scope: str sourceNamespace: str frontier: i64 context: CaptureContext origin: EventOrigin metadata: CaptureMetadata text: str observation: Observation provenance: Provenance }
+root data IngestResult { scope: str requestId: uid eventId: uid sourceNamespace: str source: Ref artifacts: lst[Ref] frontier: i64 replayed: bit }
 root data SourceRequest { scope: str after: i64 limit: i32 }
-root data SourceResult { events: lst[CapturedEvent] frontier: i64 nextAfter: opt[i64] }
+root data SourceResult { scope: str events: lst[CapturedEvent] frontier: i64 nextAfter: opt[i64] }
 enum CurationState { Idle Pending Running Failed }
 root data ScopeRequest { scope: str }
 data ScopeSummary { scope: str generation: i64 frontier: i64 coveredFrontier: i64 curation: CurationState failure: opt[str] rdfGeneration: opt[i64] }
@@ -106,8 +112,9 @@ enum JudgmentKind { Accept RequestCorrection NeedEvidence ReviseIntent }
 root data PresentRequest { scope: str targets: lst[Ref] expectedGeneration: i64 }
 root data Presentation { id: uid scope: str generation: i64 targets: lst[Ref] records: lst[GraphRecord] sourceRefs: lst[Ref] createdAt: str }
 root data JudgmentRequest { scope: str requestId: uid presentationId: uid kind: JudgmentKind rationale: str }
-data Judgment { id: uid scope: str presentationId: uid kind: JudgmentKind rationale: str actor: Actor recordedAt: str }
+data Judgment { id: uid scope: str requestId: uid presentationId: uid kind: JudgmentKind rationale: str actor: Actor recordedAt: str }
 root data JudgmentsResult { items: lst[Judgment] }
 root data LoginRequest { token: str }
-root data Identity { actor: Actor scopes: lst[str] }
+enum Capability { Read Mutate Capture Review HostCapture }
+root data Identity { actor: Actor scopes: lst[str] capabilities: lst[Capability] }
 root data LoginResult { identity: Identity versions: VersionInfo }

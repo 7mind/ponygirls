@@ -10,6 +10,7 @@ package ontology.api {
     eventId: UUID,
     context: CaptureContext,
     origin: EventOrigin,
+    metadata: CaptureMetadata,
     text: String,
     observation: Observation
   ) extends BaboonGeneratedLatest {
@@ -46,6 +47,7 @@ package ontology.api {
         "eventId" -> Json.fromString(value.eventId.toString()),
         "context" -> CaptureContext_JsonCodec.instance.encode(ctx, value.context),
         "origin" -> EventOrigin_JsonCodec.instance.encode(ctx, value.origin),
+        "metadata" -> CaptureMetadata_JsonCodec.instance.encode(ctx, value.metadata),
         "text" -> Json.fromString(value.text),
         "observation" -> Observation_JsonCodec.instance.encode(ctx, value.observation)
       )
@@ -63,9 +65,10 @@ package ontology.api {
             eventId <- getField(jsonObject, "eventId").flatMap(v => decodeUUID(v.hcursor))
             context <- getField(jsonObject, "context").flatMap(v => CaptureContext_JsonCodec.circeDecoder(v.hcursor))
             origin <- getField(jsonObject, "origin").flatMap(v => EventOrigin_JsonCodec.circeDecoder(v.hcursor))
+            metadata <- getField(jsonObject, "metadata").flatMap(v => CaptureMetadata_JsonCodec.circeDecoder(v.hcursor))
             text <- getField(jsonObject, "text").flatMap(v => decodeString(v.hcursor))
             observation <- getField(jsonObject, "observation").flatMap(v => Observation_JsonCodec.circeDecoder(v.hcursor))
-          } yield IngestRequest(scope,requestId,eventId,context,origin,text,observation)
+          } yield IngestRequest(scope,requestId,eventId,context,origin,metadata,text,observation)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to IngestRequest: object expected"))
       }
     }

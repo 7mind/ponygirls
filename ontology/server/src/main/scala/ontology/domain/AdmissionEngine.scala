@@ -80,7 +80,7 @@ final class AdmissionEngine {
     // Later operations in the same transaction must not invalidate a new binding or completion.
     graph.bindings.drop(base.bindings.size).foreach(Graph.validateBinding(graph, _))
     graph.events.drop(base.events.size).filter(e => e.phase == Phase.Active || e.phase == Phase.Completed).foreach(e => { val b = Graph.binding(graph, e.subject); Graph.validateBinding(graph, b); validateGates(graph, b) })
-    Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
+    Applied(graph.copy(generation = Math.addExact(base.generation, 1L)), ApplyResult(request.scope, request.requestId, Math.addExact(base.generation, 1L), request.operations.map(op => AliasRef(aliasOf(op), aliases(aliasOf(op)))), false))
   }
 
   private def validateRelation(g: GraphSnapshot, r: Relation): Unit = {

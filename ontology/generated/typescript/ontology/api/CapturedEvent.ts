@@ -1,6 +1,7 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {CaptureContext, CaptureContext_JsonCodec} from './CaptureContext.js'
+import {CaptureMetadata, CaptureMetadata_JsonCodec} from './CaptureMetadata.js'
 import {EventOrigin, EventOrigin_JsonCodec} from './EventOrigin.js'
 import {Observation, Observation_JsonCodec} from './Observation.js'
 import {Provenance, Provenance_JsonCodec} from './Provenance.js'
@@ -8,19 +9,23 @@ import {Provenance, Provenance_JsonCodec} from './Provenance.js'
 export class CapturedEvent implements BaboonGeneratedLatest {
     private readonly _id: string;
     private readonly _scope: string;
+    private readonly _sourceNamespace: string;
     private readonly _frontier: bigint;
     private readonly _context: CaptureContext;
     private readonly _origin: EventOrigin;
+    private readonly _metadata: CaptureMetadata;
     private readonly _text: string;
     private readonly _observation: Observation;
     private readonly _provenance: Provenance;
 
-    constructor(id: string, scope: string, frontier: bigint, context: CaptureContext, origin: EventOrigin, text: string, observation: Observation, provenance: Provenance) {
+    constructor(id: string, scope: string, sourceNamespace: string, frontier: bigint, context: CaptureContext, origin: EventOrigin, metadata: CaptureMetadata, text: string, observation: Observation, provenance: Provenance) {
         this._id = id
         this._scope = scope
+        this._sourceNamespace = sourceNamespace
         this._frontier = frontier
         this._context = context
         this._origin = origin
+        this._metadata = metadata
         this._text = text
         this._observation = observation
         this._provenance = provenance
@@ -32,6 +37,9 @@ export class CapturedEvent implements BaboonGeneratedLatest {
     public get scope(): string {
         return this._scope;
     }
+    public get sourceNamespace(): string {
+        return this._sourceNamespace;
+    }
     public get frontier(): bigint {
         return this._frontier;
     }
@@ -40,6 +48,9 @@ export class CapturedEvent implements BaboonGeneratedLatest {
     }
     public get origin(): EventOrigin {
         return this._origin;
+    }
+    public get metadata(): CaptureMetadata {
+        return this._metadata;
     }
     public get text(): string {
         return this._text;
@@ -55,35 +66,41 @@ export class CapturedEvent implements BaboonGeneratedLatest {
         return {
             id: this._id,
             scope: this._scope,
+            sourceNamespace: this._sourceNamespace,
             frontier: this._frontier,
             context: this._context,
             origin: this._origin,
+            metadata: this._metadata,
             text: this._text,
             observation: this._observation,
             provenance: this._provenance
         };
     }
 
-    public with(overrides: {id?: string; scope?: string; frontier?: bigint; context?: CaptureContext; origin?: EventOrigin; text?: string; observation?: Observation; provenance?: Provenance}): CapturedEvent {
+    public with(overrides: {id?: string; scope?: string; sourceNamespace?: string; frontier?: bigint; context?: CaptureContext; origin?: EventOrigin; metadata?: CaptureMetadata; text?: string; observation?: Observation; provenance?: Provenance}): CapturedEvent {
         return new CapturedEvent(
             'id' in overrides ? overrides.id! : this._id,
             'scope' in overrides ? overrides.scope! : this._scope,
+            'sourceNamespace' in overrides ? overrides.sourceNamespace! : this._sourceNamespace,
             'frontier' in overrides ? overrides.frontier! : this._frontier,
             'context' in overrides ? overrides.context! : this._context,
             'origin' in overrides ? overrides.origin! : this._origin,
+            'metadata' in overrides ? overrides.metadata! : this._metadata,
             'text' in overrides ? overrides.text! : this._text,
             'observation' in overrides ? overrides.observation! : this._observation,
             'provenance' in overrides ? overrides.provenance! : this._provenance
         );
     }
 
-    public static fromPlain(obj: {id: string; scope: string; frontier: bigint; context: CaptureContext; origin: EventOrigin; text: string; observation: Observation; provenance: Provenance}): CapturedEvent {
+    public static fromPlain(obj: {id: string; scope: string; sourceNamespace: string; frontier: bigint; context: CaptureContext; origin: EventOrigin; metadata: CaptureMetadata; text: string; observation: Observation; provenance: Provenance}): CapturedEvent {
         return new CapturedEvent(
             obj.id,
             obj.scope,
+            obj.sourceNamespace,
             obj.frontier,
             obj.context,
             obj.origin,
+            obj.metadata,
             obj.text,
             obj.observation,
             obj.provenance
@@ -128,9 +145,11 @@ export class CapturedEvent_JsonCodec {
         return {
             "id": value.id,
             "scope": value.scope,
+            "sourceNamespace": value.sourceNamespace,
             "frontier": value.frontier.toString(),
             "context": CaptureContext_JsonCodec.instance.encode(BaboonCodecContext.Default, value.context),
             "origin": EventOrigin_JsonCodec.instance.encode(BaboonCodecContext.Default, value.origin),
+            "metadata": CaptureMetadata_JsonCodec.instance.encode(BaboonCodecContext.Default, value.metadata),
             "text": value.text,
             "observation": Observation_JsonCodec.instance.encode(BaboonCodecContext.Default, value.observation),
             "provenance": Provenance_JsonCodec.instance.encode(BaboonCodecContext.Default, value.provenance),
@@ -145,9 +164,11 @@ export class CapturedEvent_JsonCodec {
         return new CapturedEvent (
             obj["id"] as string,
             obj["scope"] as string,
+            obj["sourceNamespace"] as string,
             BaboonInt64.read(obj["frontier"], "i64/u64"),
             CaptureContext_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["context"]),
             EventOrigin_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["origin"]),
+            CaptureMetadata_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["metadata"]),
             obj["text"] as string,
             Observation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["observation"]),
             Provenance_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["provenance"]),

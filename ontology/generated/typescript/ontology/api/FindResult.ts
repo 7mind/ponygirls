@@ -3,16 +3,21 @@ import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.j
 import {SearchHit, SearchHit_JsonCodec} from './SearchHit.js'
 
 export class FindResult implements BaboonGeneratedLatest {
+    private readonly _scope: string;
     private readonly _generation: bigint;
     private readonly _items: Array<SearchHit>;
     private readonly _cursor: string | undefined;
 
-    constructor(generation: bigint, items: Array<SearchHit>, cursor: string | undefined) {
+    constructor(scope: string, generation: bigint, items: Array<SearchHit>, cursor: string | undefined) {
+        this._scope = scope
         this._generation = generation
         this._items = items
         this._cursor = cursor
     }
 
+    public get scope(): string {
+        return this._scope;
+    }
     public get generation(): bigint {
         return this._generation;
     }
@@ -25,22 +30,25 @@ export class FindResult implements BaboonGeneratedLatest {
 
     public toJSON(): Record<string, unknown> {
         return {
+            scope: this._scope,
             generation: this._generation,
             items: this._items,
             cursor: this._cursor !== undefined ? this._cursor : undefined
         };
     }
 
-    public with(overrides: {generation?: bigint; items?: Array<SearchHit>; cursor?: string | undefined}): FindResult {
+    public with(overrides: {scope?: string; generation?: bigint; items?: Array<SearchHit>; cursor?: string | undefined}): FindResult {
         return new FindResult(
+            'scope' in overrides ? overrides.scope! : this._scope,
             'generation' in overrides ? overrides.generation! : this._generation,
             'items' in overrides ? overrides.items! : this._items,
             'cursor' in overrides ? overrides.cursor! : this._cursor
         );
     }
 
-    public static fromPlain(obj: {generation: bigint; items: Array<SearchHit>; cursor: string | undefined}): FindResult {
+    public static fromPlain(obj: {scope: string; generation: bigint; items: Array<SearchHit>; cursor: string | undefined}): FindResult {
         return new FindResult(
+            obj.scope,
             obj.generation,
             obj.items,
             obj.cursor
@@ -83,6 +91,7 @@ export class FindResult_JsonCodec {
         }
     
         return {
+            "scope": value.scope,
             "generation": value.generation.toString(),
             "items": Array.from(value.items).map(item => SearchHit_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "cursor": value.cursor === undefined ? null : value.cursor,
@@ -95,6 +104,7 @@ export class FindResult_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new FindResult (
+            obj["scope"] as string,
             BaboonInt64.read(obj["generation"], "i64/u64"),
             (obj["items"] as unknown[]).map(item => SearchHit_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] as string,

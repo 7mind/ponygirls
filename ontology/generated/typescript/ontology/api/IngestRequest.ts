@@ -1,6 +1,7 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {CaptureContext, CaptureContext_JsonCodec} from './CaptureContext.js'
+import {CaptureMetadata, CaptureMetadata_JsonCodec} from './CaptureMetadata.js'
 import {EventOrigin, EventOrigin_JsonCodec} from './EventOrigin.js'
 import {Observation, Observation_JsonCodec} from './Observation.js'
 
@@ -10,15 +11,17 @@ export class IngestRequest implements BaboonGeneratedLatest {
     private readonly _eventId: string;
     private readonly _context: CaptureContext;
     private readonly _origin: EventOrigin;
+    private readonly _metadata: CaptureMetadata;
     private readonly _text: string;
     private readonly _observation: Observation;
 
-    constructor(scope: string, requestId: string, eventId: string, context: CaptureContext, origin: EventOrigin, text: string, observation: Observation) {
+    constructor(scope: string, requestId: string, eventId: string, context: CaptureContext, origin: EventOrigin, metadata: CaptureMetadata, text: string, observation: Observation) {
         this._scope = scope
         this._requestId = requestId
         this._eventId = eventId
         this._context = context
         this._origin = origin
+        this._metadata = metadata
         this._text = text
         this._observation = observation
     }
@@ -38,6 +41,9 @@ export class IngestRequest implements BaboonGeneratedLatest {
     public get origin(): EventOrigin {
         return this._origin;
     }
+    public get metadata(): CaptureMetadata {
+        return this._metadata;
+    }
     public get text(): string {
         return this._text;
     }
@@ -52,30 +58,33 @@ export class IngestRequest implements BaboonGeneratedLatest {
             eventId: this._eventId,
             context: this._context,
             origin: this._origin,
+            metadata: this._metadata,
             text: this._text,
             observation: this._observation
         };
     }
 
-    public with(overrides: {scope?: string; requestId?: string; eventId?: string; context?: CaptureContext; origin?: EventOrigin; text?: string; observation?: Observation}): IngestRequest {
+    public with(overrides: {scope?: string; requestId?: string; eventId?: string; context?: CaptureContext; origin?: EventOrigin; metadata?: CaptureMetadata; text?: string; observation?: Observation}): IngestRequest {
         return new IngestRequest(
             'scope' in overrides ? overrides.scope! : this._scope,
             'requestId' in overrides ? overrides.requestId! : this._requestId,
             'eventId' in overrides ? overrides.eventId! : this._eventId,
             'context' in overrides ? overrides.context! : this._context,
             'origin' in overrides ? overrides.origin! : this._origin,
+            'metadata' in overrides ? overrides.metadata! : this._metadata,
             'text' in overrides ? overrides.text! : this._text,
             'observation' in overrides ? overrides.observation! : this._observation
         );
     }
 
-    public static fromPlain(obj: {scope: string; requestId: string; eventId: string; context: CaptureContext; origin: EventOrigin; text: string; observation: Observation}): IngestRequest {
+    public static fromPlain(obj: {scope: string; requestId: string; eventId: string; context: CaptureContext; origin: EventOrigin; metadata: CaptureMetadata; text: string; observation: Observation}): IngestRequest {
         return new IngestRequest(
             obj.scope,
             obj.requestId,
             obj.eventId,
             obj.context,
             obj.origin,
+            obj.metadata,
             obj.text,
             obj.observation
         );
@@ -122,6 +131,7 @@ export class IngestRequest_JsonCodec {
             "eventId": value.eventId,
             "context": CaptureContext_JsonCodec.instance.encode(BaboonCodecContext.Default, value.context),
             "origin": EventOrigin_JsonCodec.instance.encode(BaboonCodecContext.Default, value.origin),
+            "metadata": CaptureMetadata_JsonCodec.instance.encode(BaboonCodecContext.Default, value.metadata),
             "text": value.text,
             "observation": Observation_JsonCodec.instance.encode(BaboonCodecContext.Default, value.observation),
         }
@@ -138,6 +148,7 @@ export class IngestRequest_JsonCodec {
             obj["eventId"] as string,
             CaptureContext_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["context"]),
             EventOrigin_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["origin"]),
+            CaptureMetadata_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["metadata"]),
             obj["text"] as string,
             Observation_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["observation"]),
         )

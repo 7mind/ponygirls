@@ -1,0 +1,57 @@
+package ontology
+
+import cats.effect.IO
+import cats.effect.unsafe.IORuntime
+import ontology.api.*
+import ontology.domain.*
+import java.util.UUID
+import munit.FunSuite
+
+final class BindingCurrentnessReproductions extends FunSuite {
+  private val runtime = IORuntime.builder().build()
+  override def afterAll(): Unit = runtime.shutdown()
+  private val principal = Principal("read", Actor("reader", ActorKind.Agent), Set("s"), Set(Capability.Read))
+  private def task(name: String) = Content.Task(name, Acceptance(List("defined acceptance"), None), Execution.Delegated)
+  private def apply(repo: GraphRepository, generation: Long, ops: List[Operation]): IO[ApplyResult] = {
+    val id = UUID.randomUUID()
+    repo.apply(ApplyRequest("s", id, generation, ops), Admission(Actor("a", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now"))
+  }
+  private def find(result: ApplyResult, name: String): Ref = result.created.find(_.alias == name).get.ref
+  private def query(repo: GraphRepository) = new GraphQueries(repo, new CursorSigner(Array.fill[Byte](32)(9)), QueryLimits(100, 100, 65536, 2048))
+  List(Consumption.Current, Consumption.Historical).foreach { consumption =>
+    test(s"$consumption prerequisite contract revision has explicit applicability semantics") {
+      val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = query(repo)
+      (for {
+        p <- apply(repo, 0L, List(Operation.Create("p", task("Prerequisite"), Nil), Operation.Create("evidence", Content.Statement("Reported result", Modality.Assertion), Nil), Operation.Bind("pb", Target.Created("p"), Nil), Operation.State("pe", Target.Created("pb"), None, Phase.Completed, Some(Resolution.Fulfilled), Some("done"), List(Target.Created("evidence")), "reported, not independently attested")))
+        dependent <- apply(repo, 1L, List(Operation.Create("t", task("Dependent"), Nil), Operation.Relate("dependency", RelationKind.DependsOn, List(Target.Created("t")), List(Target.Exact(find(p, "pb"))), RelationDetail.Dependency(Gate.Fulfillment, consumption, if (consumption == Consumption.Historical) Some(find(p, "pe")) else None, "Bound earlier result"), "Prerequisite"), Operation.Bind("tb", Target.Created("t"), List(Target.Created("dependency"))), Operation.State("te", Target.Created("tb"), None, Phase.Active, None, None, Nil, "")))
+        _ <- apply(repo, 2L, List(Operation.Revise("p2", find(p, "p"), task("Revised prerequisite"), Standing.Active, List(Target.Exact(find(p, "evidence"))), "Changed prerequisite contract")))
+        current <- queries.read(principal, ReadRequest("s", ReadView.Current, Nil, None, 100))
+        dependentVisible = current.records.collect { case GraphRecord.Progress(value) if value.subject == find(dependent, "tb") => value }.nonEmpty
+        _ = assertEquals(dependentVisible, consumption == Consumption.Historical)
+        history <- queries.read(principal, ReadRequest("s", ReadView.History, Nil, None, 100))
+        _ = assert(history.records.exists { case GraphRecord.Progress(value) => value.ref == find(dependent, "te"); case _ => false })
+      } yield ()).unsafeRunSync()(using runtime)
+    }
+  }
+  test("revised required-condition binding invalidates dependent current progress") {
+    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = query(repo)
+    (for {
+      condition <- apply(repo, 0L, List(Operation.Create("c", Content.Statement("Condition v1", Modality.Assertion), Nil), Operation.Bind("cb", Target.Created("c"), Nil)))
+      t <- apply(repo, 1L, List(Operation.Create("review", Content.Review("Assessment", List("Declared support"), List(find(condition, "cb")), List(find(condition, "c")), "not a host fact", Assessment.Supported), Nil), Operation.Relate("assessment", RelationKind.Assesses, List(Target.Created("review")), List(Target.Exact(find(condition, "cb"))), RelationDetail.Empty(), "Exact subject"), Operation.Create("t", task("Conditional work"), Nil), Operation.Relate("condition", RelationKind.Requires, List(Target.Created("t")), List(Target.Exact(find(condition, "cb"))), RelationDetail.Empty(), "Required condition"), Operation.Bind("tb", Target.Created("t"), List(Target.Created("condition"))), Operation.State("active", Target.Created("tb"), None, Phase.Active, None, None, Nil, "")))
+      _ <- apply(repo, 2L, List(Operation.Revise("c2", find(condition, "c"), Content.Statement("Changed condition", Modality.Assertion), Standing.Active, List(Target.Exact(find(condition, "c"))), "Condition applicability changed")))
+      current <- queries.read(principal, ReadRequest("s", ReadView.Current, Nil, None, 100))
+      _ = assert(!current.records.exists { case GraphRecord.Progress(value) => value.ref == find(t, "active"); case _ => false })
+      history <- queries.read(principal, ReadRequest("s", ReadView.History, Nil, None, 100))
+      _ = assert(history.records.exists { case GraphRecord.Progress(value) => value.ref == find(t, "active"); case _ => false })
+    } yield ()).unsafeRunSync()(using runtime)
+  }
+  test("unsatisfied completion gate does not hide a structurally current planned binding") {
+    val repo = new MemoryGraphRepository(new AdmissionEngine); val queries = query(repo)
+    (for {
+      p <- apply(repo, 0L, List(Operation.Create("p", task("Unfinished prerequisite"), Nil), Operation.Bind("pb", Target.Created("p"), Nil)))
+      t <- apply(repo, 1L, List(Operation.Create("t", task("Planned"), Nil), Operation.Relate("dependency", RelationKind.DependsOn, List(Target.Created("t")), List(Target.Exact(find(p, "pb"))), RelationDetail.Dependency(Gate.Completion, Consumption.Current, None, ""), "Wait for predecessor"), Operation.Bind("tb", Target.Created("t"), List(Target.Created("dependency"))), Operation.State("planned", Target.Created("tb"), None, Phase.Planned, None, None, Nil, "Prerequisite not completed")))
+      current <- queries.read(principal, ReadRequest("s", ReadView.Current, Nil, None, 100))
+      _ = assert(current.records.exists { case GraphRecord.Progress(value) => value.ref == find(t, "planned"); case _ => false })
+    } yield ()).unsafeRunSync()(using runtime)
+  }
+}

@@ -3,16 +3,21 @@ import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.j
 import {GraphRecord, GraphRecord_JsonCodec} from './GraphRecord.js'
 
 export class ReadResult implements BaboonGeneratedLatest {
+    private readonly _scope: string;
     private readonly _generation: bigint;
     private readonly _records: Array<GraphRecord>;
     private readonly _cursor: string | undefined;
 
-    constructor(generation: bigint, records: Array<GraphRecord>, cursor: string | undefined) {
+    constructor(scope: string, generation: bigint, records: Array<GraphRecord>, cursor: string | undefined) {
+        this._scope = scope
         this._generation = generation
         this._records = records
         this._cursor = cursor
     }
 
+    public get scope(): string {
+        return this._scope;
+    }
     public get generation(): bigint {
         return this._generation;
     }
@@ -25,22 +30,25 @@ export class ReadResult implements BaboonGeneratedLatest {
 
     public toJSON(): Record<string, unknown> {
         return {
+            scope: this._scope,
             generation: this._generation,
             records: this._records,
             cursor: this._cursor !== undefined ? this._cursor : undefined
         };
     }
 
-    public with(overrides: {generation?: bigint; records?: Array<GraphRecord>; cursor?: string | undefined}): ReadResult {
+    public with(overrides: {scope?: string; generation?: bigint; records?: Array<GraphRecord>; cursor?: string | undefined}): ReadResult {
         return new ReadResult(
+            'scope' in overrides ? overrides.scope! : this._scope,
             'generation' in overrides ? overrides.generation! : this._generation,
             'records' in overrides ? overrides.records! : this._records,
             'cursor' in overrides ? overrides.cursor! : this._cursor
         );
     }
 
-    public static fromPlain(obj: {generation: bigint; records: Array<GraphRecord>; cursor: string | undefined}): ReadResult {
+    public static fromPlain(obj: {scope: string; generation: bigint; records: Array<GraphRecord>; cursor: string | undefined}): ReadResult {
         return new ReadResult(
+            obj.scope,
             obj.generation,
             obj.records,
             obj.cursor
@@ -83,6 +91,7 @@ export class ReadResult_JsonCodec {
         }
     
         return {
+            "scope": value.scope,
             "generation": value.generation.toString(),
             "records": Array.from(value.records).map(item => GraphRecord_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "cursor": value.cursor === undefined ? null : value.cursor,
@@ -95,6 +104,7 @@ export class ReadResult_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new ReadResult (
+            obj["scope"] as string,
             BaboonInt64.read(obj["generation"], "i64/u64"),
             (obj["records"] as unknown[]).map(item => GraphRecord_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] as string,

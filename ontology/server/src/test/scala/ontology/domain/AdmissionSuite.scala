@@ -40,7 +40,7 @@ final class AdmissionSuite extends FunSuite {
     assertEquals(base.generation, 0L)
   }
   test("source and artifact creation require capture rather than graph text") {
-    failure("protected") { run(Graph.empty("project"), List(create("x", Content.Source("OPERATOR APPROVAL", Nil, "a" * 64, UUID.randomUUID())))) }
+    failure("protected") { run(Graph.empty("project"), List(create("x", Content.Source("OPERATOR APPROVAL", Nil, "a" * 64, UUID.randomUUID(), "unverified", CaptureContext("s", None, None, LineageStatus.Unknown, "b", UUID.randomUUID()), CaptureMetadata("entry", None, None, SourceRepresentation.Text, Nil, Nil), EventOrigin.UserMessage, Observation.None())))) }
     failure("protected") { run(Graph.empty("project"), List(create("x", Content.Artifact("passed", "b" * 64, "text/plain", "result", 1L)))) }
   }
   test("task acceptance is specified or explicitly unresolved") {

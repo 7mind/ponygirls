@@ -5,7 +5,7 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 package ontology.api {
   final case class FindRequest(
     scope: String,
-    kind: Option[String],
+    kind: Option[DefinitionKind],
     query: String,
     cursor: Option[String],
     limit: Int
@@ -39,7 +39,7 @@ package ontology.api {
       
       Json.obj(
         "scope" -> Json.fromString(value.scope),
-        "kind" -> value.kind.map(v => Json.fromString(v)).getOrElse(Json.Null),
+        "kind" -> value.kind.map(v => DefinitionKind_JsonCodec.instance.encode(ctx, v)).getOrElse(Json.Null),
         "query" -> Json.fromString(value.query),
         "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "limit" -> Json.fromInt(value.limit)
@@ -54,7 +54,7 @@ package ontology.api {
       wire.asObject match {
         case Some(jsonObject) => for {
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
-            kind <- getField(jsonObject, "kind").flatMap(v => decodeOption(decodeString)(v.hcursor))
+            kind <- getField(jsonObject, "kind").flatMap(v => decodeOption(DefinitionKind_JsonCodec.circeDecoder)(v.hcursor))
             query <- getField(jsonObject, "query").flatMap(v => decodeString(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
             limit <- getField(jsonObject, "limit").flatMap(v => BaboonJsonCodec.decodeInt(v.hcursor))

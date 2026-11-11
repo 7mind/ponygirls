@@ -3,16 +3,21 @@ import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.j
 import {CapturedEvent, CapturedEvent_JsonCodec} from './CapturedEvent.js'
 
 export class SourceResult implements BaboonGeneratedLatest {
+    private readonly _scope: string;
     private readonly _events: Array<CapturedEvent>;
     private readonly _frontier: bigint;
     private readonly _nextAfter: bigint | undefined;
 
-    constructor(events: Array<CapturedEvent>, frontier: bigint, nextAfter: bigint | undefined) {
+    constructor(scope: string, events: Array<CapturedEvent>, frontier: bigint, nextAfter: bigint | undefined) {
+        this._scope = scope
         this._events = events
         this._frontier = frontier
         this._nextAfter = nextAfter
     }
 
+    public get scope(): string {
+        return this._scope;
+    }
     public get events(): Array<CapturedEvent> {
         return this._events;
     }
@@ -25,22 +30,25 @@ export class SourceResult implements BaboonGeneratedLatest {
 
     public toJSON(): Record<string, unknown> {
         return {
+            scope: this._scope,
             events: this._events,
             frontier: this._frontier,
             nextAfter: this._nextAfter !== undefined ? this._nextAfter : undefined
         };
     }
 
-    public with(overrides: {events?: Array<CapturedEvent>; frontier?: bigint; nextAfter?: bigint | undefined}): SourceResult {
+    public with(overrides: {scope?: string; events?: Array<CapturedEvent>; frontier?: bigint; nextAfter?: bigint | undefined}): SourceResult {
         return new SourceResult(
+            'scope' in overrides ? overrides.scope! : this._scope,
             'events' in overrides ? overrides.events! : this._events,
             'frontier' in overrides ? overrides.frontier! : this._frontier,
             'nextAfter' in overrides ? overrides.nextAfter! : this._nextAfter
         );
     }
 
-    public static fromPlain(obj: {events: Array<CapturedEvent>; frontier: bigint; nextAfter: bigint | undefined}): SourceResult {
+    public static fromPlain(obj: {scope: string; events: Array<CapturedEvent>; frontier: bigint; nextAfter: bigint | undefined}): SourceResult {
         return new SourceResult(
+            obj.scope,
             obj.events,
             obj.frontier,
             obj.nextAfter
@@ -83,6 +91,7 @@ export class SourceResult_JsonCodec {
         }
     
         return {
+            "scope": value.scope,
             "events": Array.from(value.events).map(item => CapturedEvent_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "frontier": value.frontier.toString(),
             "nextAfter": value.nextAfter === undefined ? null : value.nextAfter.toString(),
@@ -95,6 +104,7 @@ export class SourceResult_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new SourceResult (
+            obj["scope"] as string,
             (obj["events"] as unknown[]).map(item => CapturedEvent_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             BaboonInt64.read(obj["frontier"], "i64/u64"),
             obj["nextAfter"] === undefined || obj["nextAfter"] === null ? undefined : obj["nextAfter"] === undefined || obj["nextAfter"] === null ? undefined : BaboonInt64.read(obj["nextAfter"], "i64/u64"),

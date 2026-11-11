@@ -153,6 +153,11 @@ lazy val ritesServer = project.in(file("rites/server")).dependsOn(ritesContracts
 )
 lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontologyContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "ontology-server",
+  libraryDependencies ++= Seq(
+    "org.eclipse.rdf4j" % "rdf4j-repository-sail" % "6.1.0",
+    "org.eclipse.rdf4j" % "rdf4j-sail-memory" % "6.1.0",
+    "org.eclipse.rdf4j" % "rdf4j-sail-nativerdf" % "6.1.0"
+  ),
   Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
   Compile / mainClass := Some("ontology.Main"),
   assembly / mainClass := Some("ontology.Main"),

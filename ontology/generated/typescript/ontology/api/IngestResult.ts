@@ -3,18 +3,43 @@ import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.j
 import {Ref, Ref_JsonCodec} from './Ref.js'
 
 export class IngestResult implements BaboonGeneratedLatest {
+    private readonly _scope: string;
+    private readonly _requestId: string;
+    private readonly _eventId: string;
+    private readonly _sourceNamespace: string;
     private readonly _source: Ref;
+    private readonly _artifacts: Array<Ref>;
     private readonly _frontier: bigint;
     private readonly _replayed: boolean;
 
-    constructor(source: Ref, frontier: bigint, replayed: boolean) {
+    constructor(scope: string, requestId: string, eventId: string, sourceNamespace: string, source: Ref, artifacts: Array<Ref>, frontier: bigint, replayed: boolean) {
+        this._scope = scope
+        this._requestId = requestId
+        this._eventId = eventId
+        this._sourceNamespace = sourceNamespace
         this._source = source
+        this._artifacts = artifacts
         this._frontier = frontier
         this._replayed = replayed
     }
 
+    public get scope(): string {
+        return this._scope;
+    }
+    public get requestId(): string {
+        return this._requestId;
+    }
+    public get eventId(): string {
+        return this._eventId;
+    }
+    public get sourceNamespace(): string {
+        return this._sourceNamespace;
+    }
     public get source(): Ref {
         return this._source;
+    }
+    public get artifacts(): Array<Ref> {
+        return this._artifacts;
     }
     public get frontier(): bigint {
         return this._frontier;
@@ -25,23 +50,38 @@ export class IngestResult implements BaboonGeneratedLatest {
 
     public toJSON(): Record<string, unknown> {
         return {
+            scope: this._scope,
+            requestId: this._requestId,
+            eventId: this._eventId,
+            sourceNamespace: this._sourceNamespace,
             source: this._source,
+            artifacts: this._artifacts,
             frontier: this._frontier,
             replayed: this._replayed
         };
     }
 
-    public with(overrides: {source?: Ref; frontier?: bigint; replayed?: boolean}): IngestResult {
+    public with(overrides: {scope?: string; requestId?: string; eventId?: string; sourceNamespace?: string; source?: Ref; artifacts?: Array<Ref>; frontier?: bigint; replayed?: boolean}): IngestResult {
         return new IngestResult(
+            'scope' in overrides ? overrides.scope! : this._scope,
+            'requestId' in overrides ? overrides.requestId! : this._requestId,
+            'eventId' in overrides ? overrides.eventId! : this._eventId,
+            'sourceNamespace' in overrides ? overrides.sourceNamespace! : this._sourceNamespace,
             'source' in overrides ? overrides.source! : this._source,
+            'artifacts' in overrides ? overrides.artifacts! : this._artifacts,
             'frontier' in overrides ? overrides.frontier! : this._frontier,
             'replayed' in overrides ? overrides.replayed! : this._replayed
         );
     }
 
-    public static fromPlain(obj: {source: Ref; frontier: bigint; replayed: boolean}): IngestResult {
+    public static fromPlain(obj: {scope: string; requestId: string; eventId: string; sourceNamespace: string; source: Ref; artifacts: Array<Ref>; frontier: bigint; replayed: boolean}): IngestResult {
         return new IngestResult(
+            obj.scope,
+            obj.requestId,
+            obj.eventId,
+            obj.sourceNamespace,
             obj.source,
+            obj.artifacts,
             obj.frontier,
             obj.replayed
         );
@@ -83,7 +123,12 @@ export class IngestResult_JsonCodec {
         }
     
         return {
+            "scope": value.scope,
+            "requestId": value.requestId,
+            "eventId": value.eventId,
+            "sourceNamespace": value.sourceNamespace,
             "source": Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, value.source),
+            "artifacts": Array.from(value.artifacts).map(item => Ref_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "frontier": value.frontier.toString(),
             "replayed": value.replayed,
         }
@@ -95,7 +140,12 @@ export class IngestResult_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new IngestResult (
+            obj["scope"] as string,
+            obj["requestId"] as string,
+            obj["eventId"] as string,
+            obj["sourceNamespace"] as string,
             Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["source"]),
+            (obj["artifacts"] as unknown[]).map(item => Ref_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             BaboonInt64.read(obj["frontier"], "i64/u64"),
             obj["replayed"] as boolean,
         )

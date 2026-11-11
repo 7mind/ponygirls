@@ -4,6 +4,7 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 
 package ontology.api {
   final case class FindResult(
+    scope: String,
     generation: Long,
     items: List[SearchHit],
     cursor: Option[String]
@@ -36,6 +37,7 @@ package ontology.api {
       }
       
       Json.obj(
+        "scope" -> Json.fromString(value.scope),
         "generation" -> Json.fromString(value.generation.toString),
         "items" -> Json.fromValues(value.items.map(e => SearchHit_JsonCodec.instance.encode(ctx, e))),
         "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
@@ -49,10 +51,11 @@ package ontology.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
+            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             items <- getField(jsonObject, "items").flatMap(v => decodeList(SearchHit_JsonCodec.circeDecoder)(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield FindResult(generation,items,cursor)
+          } yield FindResult(scope,generation,items,cursor)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to FindResult: object expected"))
       }
     }

@@ -2,7 +2,7 @@ import {type BaboonAdtMemberMeta, type BaboonGeneratedLatest} from '../../Baboon
 import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.js'
 import {Ref, Ref_JsonCodec} from './Ref.js'
 
-export type Observation = Observation_None | Observation_FileVersion | Observation_Execution
+export type Observation = Observation_None | Observation_FileVersion | Observation_FileAbsent | Observation_Execution
 
 export const Observation = {
     BaboonDomainVersion: '0.1.0',
@@ -260,6 +260,124 @@ export class Observation_FileVersion_JsonCodec {
     }
 }
 
+export class Observation_FileAbsent implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#Observation]#FileAbsent' as const;
+    private readonly _path: string;
+    private readonly _generation: bigint;
+
+    constructor(path: string, generation: bigint) {
+        this._path = path
+        this._generation = generation
+    }
+
+    public get path(): string {
+        return this._path;
+    }
+    public get generation(): bigint {
+        return this._generation;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            path: this._path,
+            generation: this._generation
+        };
+    }
+
+    public with(overrides: {path?: string; generation?: bigint}): Observation_FileAbsent {
+        return new Observation_FileAbsent(
+            'path' in overrides ? overrides.path! : this._path,
+            'generation' in overrides ? overrides.generation! : this._generation
+        );
+    }
+
+    public static fromPlain(obj: {path: string; generation: bigint}): Observation_FileAbsent {
+        return new Observation_FileAbsent(
+            obj.path,
+            obj.generation
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return Observation_FileAbsent.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return Observation_FileAbsent.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#Observation]#FileAbsent'
+    public baboonTypeIdentifier() {
+        return Observation_FileAbsent.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return Observation_FileAbsent.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return Observation_FileAbsent.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return Observation_FileAbsent.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#Observation'
+    public baboonAdtTypeIdentifier() {
+        return Observation_FileAbsent.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): Observation_FileAbsent_JsonCodec {
+        return Observation_FileAbsent_JsonCodec.instance
+    }
+}
+
+export class Observation_FileAbsent_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: Observation_FileAbsent): unknown {
+        if (this !== Observation_FileAbsent_JsonCodec.lazyInstance.value) {
+          return Observation_FileAbsent_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "path": value.path,
+            "generation": value.generation.toString(),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): Observation_FileAbsent {
+        if (this !== Observation_FileAbsent_JsonCodec .lazyInstance.value) {
+            return Observation_FileAbsent_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new Observation_FileAbsent (
+            obj["path"] as string,
+            BaboonInt64.read(obj["generation"], "i64/u64"),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return Observation_FileAbsent_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return Observation_FileAbsent_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#Observation]#FileAbsent'
+    public baboonTypeIdentifier() {
+        return Observation_FileAbsent_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#Observation'
+    public baboonAdtTypeIdentifier() {
+        return Observation_FileAbsent_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new Observation_FileAbsent_JsonCodec())
+    public static get instance(): Observation_FileAbsent_JsonCodec {
+        return Observation_FileAbsent_JsonCodec.lazyInstance.value
+    }
+}
+
 export class Observation_Execution implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'ontology.api/[ontology.api/:#Observation]#Execution' as const;
     private readonly _action: string;
@@ -431,6 +549,9 @@ export class Observation_JsonCodec {
             if (value instanceof Observation_FileVersion) {
                 return { "FileVersion": Observation_FileVersion_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
+            if (value instanceof Observation_FileAbsent) {
+                return { "FileAbsent": Observation_FileAbsent_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
             if (value instanceof Observation_Execution) {
                 return { "Execution": Observation_Execution_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
@@ -446,6 +567,7 @@ export class Observation_JsonCodec {
         switch (key) {
             case "None": return Observation_None_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "FileVersion": return Observation_FileVersion_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "FileAbsent": return Observation_FileAbsent_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Execution": return Observation_Execution_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
             default: throw new Error("Unknown ADT branch: " + key);
         }

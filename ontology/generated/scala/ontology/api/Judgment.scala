@@ -7,6 +7,7 @@ package ontology.api {
   final case class Judgment(
     id: UUID,
     scope: String,
+    requestId: UUID,
     presentationId: UUID,
     kind: JudgmentKind,
     rationale: String,
@@ -43,6 +44,7 @@ package ontology.api {
       Json.obj(
         "id" -> Json.fromString(value.id.toString()),
         "scope" -> Json.fromString(value.scope),
+        "requestId" -> Json.fromString(value.requestId.toString()),
         "presentationId" -> Json.fromString(value.presentationId.toString()),
         "kind" -> JudgmentKind_JsonCodec.instance.encode(ctx, value.kind),
         "rationale" -> Json.fromString(value.rationale),
@@ -60,12 +62,13 @@ package ontology.api {
         case Some(jsonObject) => for {
             id <- getField(jsonObject, "id").flatMap(v => decodeUUID(v.hcursor))
             scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
+            requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
             presentationId <- getField(jsonObject, "presentationId").flatMap(v => decodeUUID(v.hcursor))
             kind <- getField(jsonObject, "kind").flatMap(v => JudgmentKind_JsonCodec.circeDecoder(v.hcursor))
             rationale <- getField(jsonObject, "rationale").flatMap(v => decodeString(v.hcursor))
             actor <- getField(jsonObject, "actor").flatMap(v => Actor_JsonCodec.circeDecoder(v.hcursor))
             recordedAt <- getField(jsonObject, "recordedAt").flatMap(v => decodeString(v.hcursor))
-          } yield Judgment(id,scope,presentationId,kind,rationale,actor,recordedAt)
+          } yield Judgment(id,scope,requestId,presentationId,kind,rationale,actor,recordedAt)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Judgment: object expected"))
       }
     }

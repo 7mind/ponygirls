@@ -157,6 +157,77 @@ package ontology.api {
     }
     
     
+    final case class FileAbsent(
+      path: String,
+      generation: Long
+    ) extends Observation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = Observation.FileAbsent.baboonDomainVersion
+      override def baboonDomainIdentifier: String = Observation.FileAbsent.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = Observation.FileAbsent.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = Observation.FileAbsent.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = Observation.FileAbsent.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = Observation.FileAbsent.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = Observation.FileAbsent.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = Observation.FileAbsent.baboonAdtType
+    }
+    
+    object FileAbsent {
+      def baboonDomainVersion: String = "0.1.0"
+      def baboonDomainIdentifier: String = "ontology.api"
+      def baboonTypeIdentifier: String = "ontology.api/[ontology.api/:#Observation]#FileAbsent"
+      private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "ontology.api/:#Observation"
+      def baboonAdtType: _root_.java.lang.Class[?] = Observation.getClass
+      def codecJson: BaboonJsonCodec[Observation.FileAbsent] = Observation.FileAbsent_JsonCodec.instance
+    }
+    
+    object FileAbsent_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[Observation.FileAbsent, BaboonJsonCodec[Observation.FileAbsent]] {
+      def encode(ctx: BaboonCodecContext, value: Observation.FileAbsent): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "path" -> Json.fromString(value.path),
+          "generation" -> Json.fromString(value.generation.toString)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, Observation.FileAbsent] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              path <- getField(jsonObject, "path").flatMap(v => decodeString(v.hcursor))
+              generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
+            } yield Observation.FileAbsent(path,generation)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to FileAbsent: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = Observation.FileAbsent.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = Observation.FileAbsent.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = Observation.FileAbsent.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = Observation.FileAbsent.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = Observation.FileAbsent.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[Observation.FileAbsent]] = Lazy(Observation.FileAbsent_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[Observation.FileAbsent]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[Observation.FileAbsent] = LazyInstance.value
+    }
+    
+    
     final case class Execution(
       action: String,
       checker: String,
@@ -261,6 +332,8 @@ package ontology.api {
         
         case fileversion: Observation.FileVersion => Json.obj("FileVersion" -> Observation.FileVersion_JsonCodec.instance.encode(ctx, fileversion))
         
+        case fileabsent: Observation.FileAbsent => Json.obj("FileAbsent" -> Observation.FileAbsent_JsonCodec.instance.encode(ctx, fileabsent))
+        
         case execution: Observation.Execution => Json.obj("Execution" -> Observation.Execution_JsonCodec.instance.encode(ctx, execution))
       
         case _ => throw new IllegalArgumentException(s"Cannot encode $value: unexpected subclass")
@@ -282,6 +355,9 @@ package ontology.api {
                 
                 case "FileVersion" =>
                   Observation.FileVersion_JsonCodec.instance.decode(ctx, json)
+                
+                case "FileAbsent" =>
+                  Observation.FileAbsent_JsonCodec.instance.decode(ctx, json)
                 
                 case "Execution" =>
                   Observation.Execution_JsonCodec.instance.decode(ctx, json)

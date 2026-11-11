@@ -9,7 +9,7 @@ object Require {
   def apply(condition: Boolean, code: String, detail: String): Unit = if (!condition) throw Fault(code, detail)
 }
 final case class Admission(actor: Actor, recorder: Actor, requestId: UUID, recordedAt: String) {
-  def provenance: Provenance = Provenance(actor, recorder, requestId, recordedAt)
+  def provenance: Provenance = Provenance(actor, recorder, InputReceipts.graphId(actor, requestId), recordedAt)
   def ref(alias: String): Ref = Ref(UUID.nameUUIDFromBytes((requestId.toString + ":" + alias).getBytes(UTF_8)), 1)
 }
 final case class Applied(snapshot: GraphSnapshot, result: ApplyResult)
@@ -55,15 +55,27 @@ object Graph {
   def governing(k: RelationKind): Boolean = Set(RelationKind.DependsOn, RelationKind.Requires, RelationKind.AssignedTo, RelationKind.PlannedOutput).contains(k)
   def context(g: GraphSnapshot, d: Ref): List[Ref] = relations(g).filter(r => r.standing == Standing.Active && governing(r.kind) && r.sources.exists(_.id == d.id)).map(_.ref)
   def validateBinding(g: GraphSnapshot, b: Binding): Unit = {
-    val d = node(g, b.definition)
-    Require(definitions(g).exists(x => x.ref == d.ref && x.standing == Standing.Active), "stale-context", "definition is not active current content")
-    val required = context(g, d.ref)
-    Require(required.forall(b.context.contains), "missing-context", "governing relations missing from binding")
-    b.context.foreach { ref =>
-      Require(exists(g, ref) && current(g, ref), "stale-context", "binding context changed")
-      g.relations.find(_.ref == ref).filter(r => governing(r.kind)).foreach { r =>
-        Require(r.standing == Standing.Active && r.sources.contains(d.ref), "stale-context", "governing relation targets an earlier definition")
-        if (r.kind == RelationKind.PlannedOutput) r.targets.foreach(t => Require(definitions(g).exists(n => n.ref == t && n.standing == Standing.Active), "stale-context", "planned-output contract changed"))
+    var pending = List(b)
+    var visited = Set.empty[Ref]
+    while (pending.nonEmpty) {
+      val item = pending.head; pending = pending.tail
+      if (!visited.contains(item.ref)) {
+        visited += item.ref
+        val d = node(g, item.definition)
+        Require(definitions(g).exists(x => x.ref == d.ref && x.standing == Standing.Active), "stale-context", "definition is not active current content")
+        Require(context(g, d.ref).forall(item.context.contains), "missing-context", "governing relations missing from binding")
+        item.context.foreach { ref =>
+          Require(exists(g, ref) && current(g, ref), "stale-context", "binding context changed")
+          g.relations.find(_.ref == ref).filter(r => governing(r.kind)).foreach { r =>
+            Require(r.standing == Standing.Active && r.sources.contains(d.ref), "stale-context", "governing relation targets an earlier definition")
+            if (r.kind == RelationKind.PlannedOutput) r.targets.foreach(t => Require(definitions(g).exists(n => n.ref == t && n.standing == Standing.Active), "stale-context", "planned-output contract changed"))
+            if (r.kind == RelationKind.DependsOn || r.kind == RelationKind.Requires) {
+              val targets = r.targets.map(binding(g, _))
+              val currentDependency = r.kind == RelationKind.Requires || r.detail.asInstanceOf[RelationDetail.Dependency].consumption == Consumption.Current
+              if (currentDependency) pending = targets ++ pending
+            }
+          }
+        }
       }
     }
   }
@@ -86,5 +98,5 @@ object Graph {
     }
   }
   def records(g: GraphSnapshot): List[GraphRecord] = g.actors.map(GraphRecord.Person(_)) ++ g.definitions.map(GraphRecord.Node(_)) ++ g.relations.map(GraphRecord.Edge(_)) ++ g.bindings.map(GraphRecord.Contract(_)) ++ g.events.map(GraphRecord.Progress(_))
-  def recordRef(r: GraphRecord): Ref = r match { case GraphRecord.Person(v) => v.ref; case GraphRecord.Node(v) => v.ref; case GraphRecord.Edge(v) => v.ref; case GraphRecord.Contract(v) => v.ref; case GraphRecord.Progress(v) => v.ref }
+  def recordRef(r: GraphRecord): Ref = r match { case GraphRecord.Input(v) => v.ref; case GraphRecord.Person(v) => v.ref; case GraphRecord.Node(v) => v.ref; case GraphRecord.Edge(v) => v.ref; case GraphRecord.Contract(v) => v.ref; case GraphRecord.Progress(v) => v.ref }
 }

@@ -13,6 +13,74 @@ package ontology.api {
   }
   
   object GraphRecord {
+    final case class Input(
+      value: InputReceipt
+    ) extends GraphRecord with BaboonAdtMemberMeta with BaboonGeneratedLatest {
+      override def baboonDomainVersion: String = GraphRecord.Input.baboonDomainVersion
+      override def baboonDomainIdentifier: String = GraphRecord.Input.baboonDomainIdentifier
+      override def baboonTypeIdentifier: String = GraphRecord.Input.baboonTypeIdentifier
+      override def baboonSameInVersions: List[String] = GraphRecord.Input.baboonSameInVersions
+      override def baboonForwardReadable: Map[String, String] = GraphRecord.Input.baboonForwardReadable
+      override def baboonMinReaderVersions: Map[String, String] = GraphRecord.Input.baboonMinReaderVersions
+      override def baboonAdtTypeIdentifier: String = GraphRecord.Input.baboonAdtTypeIdentifier
+      override def baboonAdtType: _root_.java.lang.Class[?] = GraphRecord.Input.baboonAdtType
+    }
+    
+    object Input {
+      def baboonDomainVersion: String = "0.1.0"
+      def baboonDomainIdentifier: String = "ontology.api"
+      def baboonTypeIdentifier: String = "ontology.api/[ontology.api/:#GraphRecord]#Input"
+      private lazy val _baboonSameInVersions: List[String] = List("0.1.0")
+      def baboonSameInVersions: List[String] = _baboonSameInVersions
+      private lazy val _baboonForwardReadable: Map[String, String] = Map("0.1.0" -> "identical")
+      def baboonForwardReadable: Map[String, String] = _baboonForwardReadable
+      private lazy val _baboonMinReaderVersions: Map[String, String] = Map("json-additive" -> "0.1.0", "prefix-compact" -> "0.1.0", "prefix-any-mode" -> "0.1.0", "identical" -> "0.1.0")
+      def baboonMinReaderVersions: Map[String, String] = _baboonMinReaderVersions
+      def baboonAdtTypeIdentifier: String = "ontology.api/:#GraphRecord"
+      def baboonAdtType: _root_.java.lang.Class[?] = GraphRecord.getClass
+      def codecJson: BaboonJsonCodec[GraphRecord.Input] = GraphRecord.Input_JsonCodec.instance
+    }
+    
+    object Input_JsonCodec extends BaboonJsonCodec.BaseGeneratedAdt[GraphRecord.Input, BaboonJsonCodec[GraphRecord.Input]] {
+      def encode(ctx: BaboonCodecContext, value: GraphRecord.Input): Json = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.encode(ctx, value)
+        }
+        
+        Json.obj(
+          "value" -> InputReceipt_JsonCodec.instance.encode(ctx, value.value)
+        )
+      }
+      
+      def decode(ctx: BaboonCodecContext, wire: Json): Either[Throwable, GraphRecord.Input] = {
+        if (this ne LazyInstance.value) {
+          return LazyInstance.value.decode(ctx, wire)
+        }
+        
+        wire.asObject match {
+          case Some(jsonObject) => for {
+              value <- getField(jsonObject, "value").flatMap(v => InputReceipt_JsonCodec.circeDecoder(v.hcursor))
+            } yield GraphRecord.Input(value)
+          case _ => Left(new IllegalArgumentException("Cannot decode $wire to Input: object expected"))
+        }
+      }
+    
+      def baboonDomainVersion: String = GraphRecord.Input.baboonDomainVersion
+      
+      def baboonDomainIdentifier: String = GraphRecord.Input.baboonDomainIdentifier
+      
+      def baboonTypeIdentifier: String = GraphRecord.Input.baboonTypeIdentifier
+      
+      def baboonAdtTypeIdentifier: String = GraphRecord.Input.baboonAdtTypeIdentifier
+      
+      def baboonAdtType: _root_.java.lang.Class[?] = GraphRecord.Input.baboonAdtType
+    
+      private lazy val cachedLazyInstance: Lazy[BaboonJsonCodec[GraphRecord.Input]] = Lazy(GraphRecord.Input_JsonCodec)
+      override protected def LazyInstance: Lazy[BaboonJsonCodec[GraphRecord.Input]] = cachedLazyInstance
+      override def instance: BaboonJsonCodec[GraphRecord.Input] = LazyInstance.value
+    }
+    
+    
     final case class Person(
       value: ActorRecord
     ) extends GraphRecord with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -370,6 +438,8 @@ package ontology.api {
       }
       
       value match {
+        case input: GraphRecord.Input => Json.obj("Input" -> GraphRecord.Input_JsonCodec.instance.encode(ctx, input))
+        
         case person: GraphRecord.Person => Json.obj("Person" -> GraphRecord.Person_JsonCodec.instance.encode(ctx, person))
         
         case node: GraphRecord.Node => Json.obj("Node" -> GraphRecord.Node_JsonCodec.instance.encode(ctx, node))
@@ -394,6 +464,9 @@ package ontology.api {
           jsonObject.toList.headOption match {
             case Some((key, json)) =>
               key match {
+                case "Input" =>
+                  GraphRecord.Input_JsonCodec.instance.decode(ctx, json)
+                
                 case "Person" =>
                   GraphRecord.Person_JsonCodec.instance.decode(ctx, json)
                 

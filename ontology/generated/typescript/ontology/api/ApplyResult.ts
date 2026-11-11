@@ -3,16 +3,26 @@ import {BaboonCodecContext, BaboonInt64, Lazy} from '../../BaboonSharedRuntime.j
 import {AliasRef, AliasRef_JsonCodec} from './AliasRef.js'
 
 export class ApplyResult implements BaboonGeneratedLatest {
+    private readonly _scope: string;
+    private readonly _requestId: string;
     private readonly _generation: bigint;
     private readonly _created: Array<AliasRef>;
     private readonly _replayed: boolean;
 
-    constructor(generation: bigint, created: Array<AliasRef>, replayed: boolean) {
+    constructor(scope: string, requestId: string, generation: bigint, created: Array<AliasRef>, replayed: boolean) {
+        this._scope = scope
+        this._requestId = requestId
         this._generation = generation
         this._created = created
         this._replayed = replayed
     }
 
+    public get scope(): string {
+        return this._scope;
+    }
+    public get requestId(): string {
+        return this._requestId;
+    }
     public get generation(): bigint {
         return this._generation;
     }
@@ -25,22 +35,28 @@ export class ApplyResult implements BaboonGeneratedLatest {
 
     public toJSON(): Record<string, unknown> {
         return {
+            scope: this._scope,
+            requestId: this._requestId,
             generation: this._generation,
             created: this._created,
             replayed: this._replayed
         };
     }
 
-    public with(overrides: {generation?: bigint; created?: Array<AliasRef>; replayed?: boolean}): ApplyResult {
+    public with(overrides: {scope?: string; requestId?: string; generation?: bigint; created?: Array<AliasRef>; replayed?: boolean}): ApplyResult {
         return new ApplyResult(
+            'scope' in overrides ? overrides.scope! : this._scope,
+            'requestId' in overrides ? overrides.requestId! : this._requestId,
             'generation' in overrides ? overrides.generation! : this._generation,
             'created' in overrides ? overrides.created! : this._created,
             'replayed' in overrides ? overrides.replayed! : this._replayed
         );
     }
 
-    public static fromPlain(obj: {generation: bigint; created: Array<AliasRef>; replayed: boolean}): ApplyResult {
+    public static fromPlain(obj: {scope: string; requestId: string; generation: bigint; created: Array<AliasRef>; replayed: boolean}): ApplyResult {
         return new ApplyResult(
+            obj.scope,
+            obj.requestId,
             obj.generation,
             obj.created,
             obj.replayed
@@ -83,6 +99,8 @@ export class ApplyResult_JsonCodec {
         }
     
         return {
+            "scope": value.scope,
+            "requestId": value.requestId,
             "generation": value.generation.toString(),
             "created": Array.from(value.created).map(item => AliasRef_JsonCodec.instance.encode(BaboonCodecContext.Default, item)),
             "replayed": value.replayed,
@@ -95,6 +113,8 @@ export class ApplyResult_JsonCodec {
     
         const obj = json as Record<string, unknown>;
         return new ApplyResult (
+            obj["scope"] as string,
+            obj["requestId"] as string,
             BaboonInt64.read(obj["generation"], "i64/u64"),
             (obj["created"] as unknown[]).map(item => AliasRef_JsonCodec.instance.decode(BaboonCodecContext.Default, item)),
             obj["replayed"] as boolean,

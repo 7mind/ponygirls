@@ -1,10 +1,16 @@
-import io.circe.Decoder.decodeBoolean
+import io.circe.Decoder.{decodeBoolean, decodeList, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
+import java.util.UUID
 
 package ontology.api {
   final case class IngestResult(
+    scope: String,
+    requestId: UUID,
+    eventId: UUID,
+    sourceNamespace: String,
     source: Ref,
+    artifacts: List[Ref],
     frontier: Long,
     replayed: Boolean
   ) extends BaboonGeneratedLatest {
@@ -36,7 +42,12 @@ package ontology.api {
       }
       
       Json.obj(
+        "scope" -> Json.fromString(value.scope),
+        "requestId" -> Json.fromString(value.requestId.toString()),
+        "eventId" -> Json.fromString(value.eventId.toString()),
+        "sourceNamespace" -> Json.fromString(value.sourceNamespace),
         "source" -> Ref_JsonCodec.instance.encode(ctx, value.source),
+        "artifacts" -> Json.fromValues(value.artifacts.map(e => Ref_JsonCodec.instance.encode(ctx, e))),
         "frontier" -> Json.fromString(value.frontier.toString),
         "replayed" -> Json.fromBoolean(value.replayed)
       )
@@ -49,10 +60,15 @@ package ontology.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
+            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
+            requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
+            eventId <- getField(jsonObject, "eventId").flatMap(v => decodeUUID(v.hcursor))
+            sourceNamespace <- getField(jsonObject, "sourceNamespace").flatMap(v => decodeString(v.hcursor))
             source <- getField(jsonObject, "source").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
+            artifacts <- getField(jsonObject, "artifacts").flatMap(v => decodeList(Ref_JsonCodec.circeDecoder)(v.hcursor))
             frontier <- getField(jsonObject, "frontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             replayed <- getField(jsonObject, "replayed").flatMap(v => decodeBoolean(v.hcursor))
-          } yield IngestResult(source,frontier,replayed)
+          } yield IngestResult(scope,requestId,eventId,sourceNamespace,source,artifacts,frontier,replayed)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to IngestResult: object expected"))
       }
     }

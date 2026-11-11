@@ -3,10 +3,11 @@ import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
 import {ActorRecord, ActorRecord_JsonCodec} from './ActorRecord.js'
 import {Binding, Binding_JsonCodec} from './Binding.js'
 import {Definition, Definition_JsonCodec} from './Definition.js'
+import {InputReceipt, InputReceipt_JsonCodec} from './InputReceipt.js'
 import {Relation, Relation_JsonCodec} from './Relation.js'
 import {StateEvent, StateEvent_JsonCodec} from './StateEvent.js'
 
-export type GraphRecord = GraphRecord_Person | GraphRecord_Node | GraphRecord_Edge | GraphRecord_Contract | GraphRecord_Progress
+export type GraphRecord = GraphRecord_Input | GraphRecord_Person | GraphRecord_Node | GraphRecord_Edge | GraphRecord_Contract | GraphRecord_Progress
 
 export const GraphRecord = {
     BaboonDomainVersion: '0.1.0',
@@ -20,6 +21,114 @@ export const GraphRecord = {
         return GraphRecord_JsonCodec.instance
     }
 } as const
+
+export class GraphRecord_Input implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
+    public readonly $type = 'ontology.api/[ontology.api/:#GraphRecord]#Input' as const;
+    private readonly _value: InputReceipt;
+
+    constructor(value: InputReceipt) {
+        this._value = value
+    }
+
+    public get value(): InputReceipt {
+        return this._value;
+    }
+
+    public toJSON(): Record<string, unknown> {
+        return {
+            value: this._value
+        };
+    }
+
+    public with(overrides: {value?: InputReceipt}): GraphRecord_Input {
+        return new GraphRecord_Input(
+            'value' in overrides ? overrides.value! : this._value
+        );
+    }
+
+    public static fromPlain(obj: {value: InputReceipt}): GraphRecord_Input {
+        return new GraphRecord_Input(
+            obj.value
+        );
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return GraphRecord_Input.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return GraphRecord_Input.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#GraphRecord]#Input'
+    public baboonTypeIdentifier() {
+        return GraphRecord_Input.BaboonTypeIdentifier
+    }
+    public static readonly BaboonSameInVersions = ["0.1.0"]
+    public baboonSameInVersions() {
+        return GraphRecord_Input.BaboonSameInVersions
+    }
+    public static readonly BaboonForwardReadable: { readonly [version: string]: string } = { "0.1.0": "identical" }
+    public baboonForwardReadable() {
+        return GraphRecord_Input.BaboonForwardReadable
+    }
+    public static readonly BaboonMinReaderVersions: { readonly [tier: string]: string } = { "json-additive": "0.1.0", "prefix-compact": "0.1.0", "prefix-any-mode": "0.1.0", "identical": "0.1.0" }
+    public baboonMinReaderVersions() {
+        return GraphRecord_Input.BaboonMinReaderVersions
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#GraphRecord'
+    public baboonAdtTypeIdentifier() {
+        return GraphRecord_Input.BaboonAdtTypeIdentifier
+    }
+    
+    public static jsonCodec(): GraphRecord_Input_JsonCodec {
+        return GraphRecord_Input_JsonCodec.instance
+    }
+}
+
+export class GraphRecord_Input_JsonCodec {
+    public encode(ctx: BaboonCodecContext, value: GraphRecord_Input): unknown {
+        if (this !== GraphRecord_Input_JsonCodec.lazyInstance.value) {
+          return GraphRecord_Input_JsonCodec.lazyInstance.value.encode(ctx, value)
+        }
+    
+        return {
+            "value": InputReceipt_JsonCodec.instance.encode(BaboonCodecContext.Default, value.value),
+        }
+    }
+    public decode(ctx: BaboonCodecContext, json: unknown): GraphRecord_Input {
+        if (this !== GraphRecord_Input_JsonCodec .lazyInstance.value) {
+            return GraphRecord_Input_JsonCodec.lazyInstance.value.decode(ctx, json)
+        }
+    
+        const obj = json as Record<string, unknown>;
+        return new GraphRecord_Input (
+            InputReceipt_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["value"]),
+        )
+    }
+
+    public static readonly BaboonDomainVersion = '0.1.0'
+    public baboonDomainVersion() {
+        return GraphRecord_Input_JsonCodec.BaboonDomainVersion
+    }
+    public static readonly BaboonDomainIdentifier = 'ontology.api'
+    public baboonDomainIdentifier() {
+        return GraphRecord_Input_JsonCodec.BaboonDomainIdentifier
+    }
+    public static readonly BaboonTypeIdentifier = 'ontology.api/[ontology.api/:#GraphRecord]#Input'
+    public baboonTypeIdentifier() {
+        return GraphRecord_Input_JsonCodec.BaboonTypeIdentifier
+    }
+    public static readonly BaboonAdtTypeIdentifier = 'ontology.api/:#GraphRecord'
+    public baboonAdtTypeIdentifier() {
+        return GraphRecord_Input_JsonCodec.BaboonAdtTypeIdentifier
+    }
+
+    public static lazyInstance = new Lazy(() => new GraphRecord_Input_JsonCodec())
+    public static get instance(): GraphRecord_Input_JsonCodec {
+        return GraphRecord_Input_JsonCodec.lazyInstance.value
+    }
+}
 
 export class GraphRecord_Person implements BaboonAdtMemberMeta, BaboonGeneratedLatest {
     public readonly $type = 'ontology.api/[ontology.api/:#GraphRecord]#Person' as const;
@@ -568,7 +677,10 @@ export class GraphRecord_JsonCodec {
           return GraphRecord_JsonCodec.lazyInstance.value.encode(ctx, value)
         }
     
-        if (value instanceof GraphRecord_Person) {
+        if (value instanceof GraphRecord_Input) {
+                return { "Input": GraphRecord_Input_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
+            }
+            if (value instanceof GraphRecord_Person) {
                 return { "Person": GraphRecord_Person_JsonCodec.instance.encode(BaboonCodecContext.Default, value) }
             }
             if (value instanceof GraphRecord_Node) {
@@ -593,7 +705,8 @@ export class GraphRecord_JsonCodec {
         const obj = json as Record<string, unknown>;
         const key = Object.keys(obj)[0];
         switch (key) {
-            case "Person": return GraphRecord_Person_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+            case "Input": return GraphRecord_Input_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
+                case "Person": return GraphRecord_Person_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Node": return GraphRecord_Node_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Edge": return GraphRecord_Edge_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])
                 case "Contract": return GraphRecord_Contract_JsonCodec.instance.decode(BaboonCodecContext.Default, obj[key])

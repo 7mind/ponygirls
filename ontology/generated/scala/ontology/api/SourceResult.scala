@@ -1,9 +1,10 @@
-import io.circe.Decoder.{decodeList, decodeOption}
+import io.circe.Decoder.{decodeList, decodeOption, decodeString}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
 
 package ontology.api {
   final case class SourceResult(
+    scope: String,
     events: List[CapturedEvent],
     frontier: Long,
     nextAfter: Option[Long]
@@ -36,6 +37,7 @@ package ontology.api {
       }
       
       Json.obj(
+        "scope" -> Json.fromString(value.scope),
         "events" -> Json.fromValues(value.events.map(e => CapturedEvent_JsonCodec.instance.encode(ctx, e))),
         "frontier" -> Json.fromString(value.frontier.toString),
         "nextAfter" -> value.nextAfter.map(v => Json.fromString(v.toString)).getOrElse(Json.Null)
@@ -49,10 +51,11 @@ package ontology.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
+            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             events <- getField(jsonObject, "events").flatMap(v => decodeList(CapturedEvent_JsonCodec.circeDecoder)(v.hcursor))
             frontier <- getField(jsonObject, "frontier").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             nextAfter <- getField(jsonObject, "nextAfter").flatMap(v => decodeOption(BaboonJsonCodec.decodeLong)(v.hcursor))
-          } yield SourceResult(events,frontier,nextAfter)
+          } yield SourceResult(scope,events,frontier,nextAfter)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to SourceResult: object expected"))
       }
     }

@@ -1,9 +1,12 @@
-import io.circe.Decoder.{decodeBoolean, decodeList}
+import io.circe.Decoder.{decodeBoolean, decodeList, decodeString, decodeUUID}
 import io.circe.Json
 import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, BaboonGeneratedLatest, Lazy}
+import java.util.UUID
 
 package ontology.api {
   final case class ApplyResult(
+    scope: String,
+    requestId: UUID,
     generation: Long,
     created: List[AliasRef],
     replayed: Boolean
@@ -36,6 +39,8 @@ package ontology.api {
       }
       
       Json.obj(
+        "scope" -> Json.fromString(value.scope),
+        "requestId" -> Json.fromString(value.requestId.toString()),
         "generation" -> Json.fromString(value.generation.toString),
         "created" -> Json.fromValues(value.created.map(e => AliasRef_JsonCodec.instance.encode(ctx, e))),
         "replayed" -> Json.fromBoolean(value.replayed)
@@ -49,10 +54,12 @@ package ontology.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
+            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
+            requestId <- getField(jsonObject, "requestId").flatMap(v => decodeUUID(v.hcursor))
             generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             created <- getField(jsonObject, "created").flatMap(v => decodeList(AliasRef_JsonCodec.circeDecoder)(v.hcursor))
             replayed <- getField(jsonObject, "replayed").flatMap(v => decodeBoolean(v.hcursor))
-          } yield ApplyResult(generation,created,replayed)
+          } yield ApplyResult(scope,requestId,generation,created,replayed)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ApplyResult: object expected"))
       }
     }

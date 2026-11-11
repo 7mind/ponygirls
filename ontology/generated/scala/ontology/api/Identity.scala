@@ -5,7 +5,8 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 package ontology.api {
   final case class Identity(
     actor: Actor,
-    scopes: List[String]
+    scopes: List[String],
+    capabilities: List[Capability]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = Identity.baboonDomainVersion
     override def baboonDomainIdentifier: String = Identity.baboonDomainIdentifier
@@ -36,7 +37,8 @@ package ontology.api {
       
       Json.obj(
         "actor" -> Actor_JsonCodec.instance.encode(ctx, value.actor),
-        "scopes" -> Json.fromValues(value.scopes.map(e => Json.fromString(e)))
+        "scopes" -> Json.fromValues(value.scopes.map(e => Json.fromString(e))),
+        "capabilities" -> Json.fromValues(value.capabilities.map(e => Capability_JsonCodec.instance.encode(ctx, e)))
       )
     }
     
@@ -49,7 +51,8 @@ package ontology.api {
         case Some(jsonObject) => for {
             actor <- getField(jsonObject, "actor").flatMap(v => Actor_JsonCodec.circeDecoder(v.hcursor))
             scopes <- getField(jsonObject, "scopes").flatMap(v => decodeList(decodeString)(v.hcursor))
-          } yield Identity(actor,scopes)
+            capabilities <- getField(jsonObject, "capabilities").flatMap(v => decodeList(Capability_JsonCodec.circeDecoder)(v.hcursor))
+          } yield Identity(actor,scopes,capabilities)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to Identity: object expected"))
       }
     }

@@ -1,14 +1,15 @@
 import {type BaboonGeneratedLatest} from '../../BaboonSharedRuntime.js'
 import {BaboonCodecContext, Lazy} from '../../BaboonSharedRuntime.js'
+import {DefinitionKind, DefinitionKind_JsonCodec} from './DefinitionKind.js'
 
 export class FindRequest implements BaboonGeneratedLatest {
     private readonly _scope: string;
-    private readonly _kind: string | undefined;
+    private readonly _kind: DefinitionKind | undefined;
     private readonly _query: string;
     private readonly _cursor: string | undefined;
     private readonly _limit: number;
 
-    constructor(scope: string, kind: string | undefined, query: string, cursor: string | undefined, limit: number) {
+    constructor(scope: string, kind: DefinitionKind | undefined, query: string, cursor: string | undefined, limit: number) {
         this._scope = scope
         this._kind = kind
         this._query = query
@@ -19,7 +20,7 @@ export class FindRequest implements BaboonGeneratedLatest {
     public get scope(): string {
         return this._scope;
     }
-    public get kind(): string | undefined {
+    public get kind(): DefinitionKind | undefined {
         return this._kind;
     }
     public get query(): string {
@@ -42,7 +43,7 @@ export class FindRequest implements BaboonGeneratedLatest {
         };
     }
 
-    public with(overrides: {scope?: string; kind?: string | undefined; query?: string; cursor?: string | undefined; limit?: number}): FindRequest {
+    public with(overrides: {scope?: string; kind?: DefinitionKind | undefined; query?: string; cursor?: string | undefined; limit?: number}): FindRequest {
         return new FindRequest(
             'scope' in overrides ? overrides.scope! : this._scope,
             'kind' in overrides ? overrides.kind! : this._kind,
@@ -52,7 +53,7 @@ export class FindRequest implements BaboonGeneratedLatest {
         );
     }
 
-    public static fromPlain(obj: {scope: string; kind: string | undefined; query: string; cursor: string | undefined; limit: number}): FindRequest {
+    public static fromPlain(obj: {scope: string; kind: DefinitionKind | undefined; query: string; cursor: string | undefined; limit: number}): FindRequest {
         return new FindRequest(
             obj.scope,
             obj.kind,
@@ -99,7 +100,7 @@ export class FindRequest_JsonCodec {
     
         return {
             "scope": value.scope,
-            "kind": value.kind === undefined ? null : value.kind,
+            "kind": value.kind === undefined ? null : DefinitionKind_JsonCodec.instance.encode(BaboonCodecContext.Default, value.kind),
             "query": value.query,
             "cursor": value.cursor === undefined ? null : value.cursor,
             "limit": value.limit,
@@ -113,7 +114,7 @@ export class FindRequest_JsonCodec {
         const obj = json as Record<string, unknown>;
         return new FindRequest (
             obj["scope"] as string,
-            obj["kind"] === undefined || obj["kind"] === null ? undefined : obj["kind"] === undefined || obj["kind"] === null ? undefined : obj["kind"] as string,
+            obj["kind"] === undefined || obj["kind"] === null ? undefined : obj["kind"] === undefined || obj["kind"] === null ? undefined : DefinitionKind_JsonCodec.instance.decode(BaboonCodecContext.Default, obj["kind"]),
             obj["query"] as string,
             obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] === undefined || obj["cursor"] === null ? undefined : obj["cursor"] as string,
             obj["limit"] as number,

@@ -4,6 +4,7 @@ import _root_.baboon.runtime.shared.{BaboonJsonCodec, BaboonCodecContext, Baboon
 
 package ontology.api {
   final case class ReadResult(
+    scope: String,
     generation: Long,
     records: List[GraphRecord],
     cursor: Option[String]
@@ -36,6 +37,7 @@ package ontology.api {
       }
       
       Json.obj(
+        "scope" -> Json.fromString(value.scope),
         "generation" -> Json.fromString(value.generation.toString),
         "records" -> Json.fromValues(value.records.map(e => GraphRecord_JsonCodec.instance.encode(ctx, e))),
         "cursor" -> value.cursor.map(v => Json.fromString(v)).getOrElse(Json.Null)
@@ -49,10 +51,11 @@ package ontology.api {
       
       wire.asObject match {
         case Some(jsonObject) => for {
+            scope <- getField(jsonObject, "scope").flatMap(v => decodeString(v.hcursor))
             generation <- getField(jsonObject, "generation").flatMap(v => BaboonJsonCodec.decodeLong(v.hcursor))
             records <- getField(jsonObject, "records").flatMap(v => decodeList(GraphRecord_JsonCodec.circeDecoder)(v.hcursor))
             cursor <- getField(jsonObject, "cursor").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield ReadResult(generation,records,cursor)
+          } yield ReadResult(scope,generation,records,cursor)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to ReadResult: object expected"))
       }
     }
