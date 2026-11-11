@@ -24,6 +24,16 @@ Audit keys replay identically without changing their original timestamps. A conf
 
 AuditedProposal carries the exact final response ordinal and normalized-response digest. Candidate validation decodes the retained final response and compares its actual proposal, rather than allowing another proposal to borrow that response's digest. Publication planning revalidates the live fence, exact G/F/C, frozen material, request/input correspondence and response/proposal correspondence. An empty proposal plans G+1 and C=F without creating a fictitious graph node or advancing primary F.
 
+## Pure publication admission
+
+CurationPublisher now produces an uncommitted publication value: the proposed graph snapshot, Curation input receipt, terminal attempt and publication receipt. Only the future repository transaction may make that value authoritative.
+
+Ordinary Admission retains its existing constructor and graph-command identity rules. A separate internal CurationAdmission supplies Curation provenance to the same semantic admission engine. It requires an Agent contributor, Service recorder and submitter, scoped Read and Mutate grants, and an Internal `curation.publish` trace. The public repository's graph_apply path cannot select this admission type. New operation-record identities are disjoint from ordinary commands even for the same request UUID and alias; revisions of existing entities retain their identity semantics.
+
+For empty deltas, all graph collections remain unchanged; only generation and coverage advance. An input receipt and terminal attempt are still produced. For nonempty deltas, existing protected-source, applicability, selection, gate and authority rules remain in force. A rejected late operation returns no partial publication. Neither path advances the primary frontier or manufactures a Source.
+
+CurationReceipts validates canonical publication input and its receipt-local identity, scope, generation, timestamp, attribution, internal context and proposal digest. Published attempts must refer to their deterministic Curation input identity. These local checks do not replace the persistence owner's attempt/journal/history/material correspondence checks.
+
 ## Remaining persistence obligations
 
 The future owner must enforce one fenced coordinator, explicit lease/cadence/capacity configuration, fresh owner-side time after potentially blocking locks, and one transaction for graph/history/input receipt/attempt/outbox publication. Model and network operations stay outside transactions. Profile selection, source-sharing authorization and frozen reader ownership remain explicit service responsibilities; their digest labels are not attestations.

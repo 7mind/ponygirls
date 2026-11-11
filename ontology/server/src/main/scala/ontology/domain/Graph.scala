@@ -9,10 +9,36 @@ final case class Fault(code: String, detail: String) extends RuntimeException(de
 object Require {
   def apply(condition: Boolean, code: String, detail: String): Unit = if (!condition) throw Fault(code, detail)
 }
-final case class Admission(principal: Principal, recorder: Actor, requestId: UUID, recordedAt: String, ingress: RequestTrace, reviewEvidence: List[ReviewEvidence]) {
-  def actor: Actor = principal.actor
+sealed trait MutationAdmission {
+  def principal: Principal
+  def recorder: Actor
+  def requestId: UUID
+  def recordedAt: String
+  def ingress: RequestTrace
+  def reviewEvidence: List[ReviewEvidence]
+  final def actor: Actor = principal.actor
+  def provenance: Provenance
+  def ref(alias: String): Ref
+  def validateRequest(request: ApplyRequest): Unit
+}
+final case class Admission(principal: Principal, recorder: Actor, requestId: UUID, recordedAt: String, ingress: RequestTrace, reviewEvidence: List[ReviewEvidence]) extends MutationAdmission {
   def provenance: Provenance = Provenance(actor, recorder, InputReceipts.graphId(actor, requestId), recordedAt)
   def ref(alias: String): Ref = Ref(UUID.nameUUIDFromBytes((requestId.toString + ":" + alias).getBytes(UTF_8)), 1)
+  def validateRequest(request: ApplyRequest): Unit = ()
+}
+private[domain] final case class CurationAdmission(scope: String, principal: Principal, recorder: Actor, submitter: Actor,
+  requestId: UUID, recordedAt: String, ingress: RequestTrace, reviewEvidence: List[ReviewEvidence]) extends MutationAdmission {
+  def provenance: Provenance = Provenance(actor, recorder, CurationIdentity.input(scope, requestId).id, recordedAt)
+  def ref(alias: String): Ref = CurationIdentity.record(scope, requestId, alias)
+  def validateRequest(request: ApplyRequest): Unit = {
+    Require(request.scope == scope && request.requestId == requestId && request.contributionContext.isEmpty, "curation", "invalid internal curation request")
+    principal.require(scope, Capability.Read)
+    principal.require(scope, Capability.Mutate)
+    Require(actor.kind == ActorKind.Agent && recorder.kind == ActorKind.Service && submitter.kind == ActorKind.Service, "curation", "invalid curation contributors")
+    Require(ingress.transport == RequestTransport.Internal && ingress.operation == CurationIdentity.Operation, "curation", "internal curation trace required")
+    Contexts.server(ingress, Contexts.ProtocolLimits)
+    ()
+  }
 }
 final case class Applied(snapshot: GraphSnapshot, result: ApplyResult)
 object Graph {

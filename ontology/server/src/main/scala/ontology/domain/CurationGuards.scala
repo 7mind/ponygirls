@@ -83,7 +83,7 @@ object CurationGuards {
       case CurationAttemptState.Published =>
         check(attempt.inputManifest.nonEmpty && attempt.candidate.nonEmpty && attempt.terminalCode.isEmpty && attempt.finishedAt.nonEmpty, "invalid Published state")
         val value = attempt.publication.getOrElse(throw Fault("curation", "publication receipt missing"))
-        check(value.attemptId == attempt.claim.attemptId && value.scope == attempt.claim.scope && value.input.revision == 1 &&
+        check(value.attemptId == attempt.claim.attemptId && value.scope == attempt.claim.scope && value.input == CurationIdentity.input(attempt.claim.scope, attempt.claim.attemptId) &&
           value.generation == Math.addExact(attempt.claim.baseGeneration, 1L) && value.frontier == attempt.claim.frontier &&
           value.coveredFrontier == attempt.claim.frontier && attempt.finishedAt.contains(value.recordedAt), "invalid publication receipt")
       case CurationAttemptState.Failed | CurationAttemptState.Stale | CurationAttemptState.Interrupted =>

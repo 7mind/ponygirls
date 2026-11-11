@@ -22,7 +22,7 @@ object InputReceipts {
         StoredJson.decode(PresentationPublication.codecJson, receipt.content)
         Require(receipt.contributor.kind == ActorKind.Service, "corrupt", "derived publication must retain service authorship")
         Some(Contexts.server(receipt.ingress, Contexts.ProtocolLimits))
-      case InputKind.Curation => None
+      case InputKind.Curation => Some(CurationReceipts.context(receipt))
     }
     expected.foreach(context => Require(receipt.contributionContext == context, "corrupt", "receipt context differs from retained contribution"))
   } catch { case _: Fault => throw Fault("corrupt", "invalid retained receipt context") }
