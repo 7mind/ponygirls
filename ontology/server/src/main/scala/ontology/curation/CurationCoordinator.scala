@@ -15,8 +15,10 @@ final class CurationCoordinator private (repo: CurationRepository, inputs: Graph
   import CurationCoordinator.*
   private def check(value: Boolean): Unit = Require(value, "coordinator-result", "coordinator acknowledgment mismatch")
   def stopped: IO[Option[CycleStop]] = stop.get
-  def stopAdmissions(reason: CycleStop): IO[Unit] = stop.update(_.orElse(Some(reason))) *>
-    diagnostics.stopped(reason).handleErrorWith(_ => stop.set(Some(CycleStop.DiagnosticFailure)))
+  private[curation] def halt(reason: CycleStop): IO[Unit] = stop.update(_.orElse(Some(reason)))
+  private[curation] def diagnosticFailure: IO[Unit] = stop.set(Some(CycleStop.DiagnosticFailure))
+  def stopAdmissions(reason: CycleStop): IO[Unit] = halt(reason) *>
+    diagnostics.stopped(reason).handleErrorWith(_ => diagnosticFailure)
   private def accepting: IO[Unit] = stop.get.flatMap(value => IO(Require(value.isEmpty, "coordinator-stopped", "admissions stopped")))
   private def note(value: ScopeOutcome): IO[Unit] = diagnostics.outcome(value).handleErrorWith(_ => stopAdmissions(CycleStop.DiagnosticFailure))
   private def published(a: CurationAttempt, r: CurationPublicationReceipt): ScopeOutcome = {
@@ -42,6 +44,8 @@ final class CurationCoordinator private (repo: CurationRepository, inputs: Graph
   private def observe(a: CurationAttempt, work: IO[ScopeOutcome], failure: CycleStop): IO[ScopeOutcome] =
     cleanup.observe(config.cleanupBudget, work, stopAdmissions(CycleStop.CleanupOverBudget)).attempt.flatMap {
       case Right(CleanupObservation.Observed(value)) => IO.pure(value)
+      case Right(CleanupObservation.ObservedDiagnosticFailure(value)) => diagnosticFailure.as(value)
+      case Right(CleanupObservation.UncertainDiagnosticFailure) => diagnosticFailure.as(ScopeOutcome.Uncertain(a.claim.scope, a.claim.attemptId))
       case _ => stopAdmissions(failure).as(ScopeOutcome.Uncertain(a.claim.scope, a.claim.attemptId))
     }
   private def settle(a: CurationAttempt, reason: CurationStop): IO[ScopeOutcome] = inspect(a).flatMap { found =>

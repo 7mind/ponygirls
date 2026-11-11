@@ -43,6 +43,39 @@ final class SupervisedCurationCleanupSuite extends FunSuite {
     } yield () }
   } yield ()) }
 
+  test("a failed budget diagnostic does not cancel the owned cleanup operation") { run(for {
+    entered <- Deferred[IO, Unit]
+    release <- Deferred[IO, Unit]
+    reported <- Deferred[IO, Unit]
+    finished <- Cell.of[IO, Boolean](false)
+    work = entered.complete(()).void *> release.get *> finished.set(true).as(outcome)
+    notice = reported.complete(()).void *> IO.raiseError[Unit](new java.io.IOException("controlled diagnostic failure"))
+    observer = new SupervisedCurationCleanup().observe(50.millis, work, notice).attempt
+    _ <- Resource.make(observer.start)(fiber => release.complete(()).void *> fiber.cancel).use { fiber => for {
+      _ <- entered.get
+      _ <- reported.get.timeout(1.second)
+      _ <- IO.sleep(50.millis)
+      _ <- release.complete(())
+      result <- fiber.joinWithNever
+      settled <- finished.get
+      _ = assert(settled, s"diagnostic failure cancelled the owned operation: $result")
+      _ = assertEquals(result, Right(CleanupObservation.ObservedDiagnosticFailure(outcome)))
+    } yield () }
+  } yield ()) }
+
+  test("combined operation and budget-diagnostic failure is distinguishable from operation failure alone") { run(for {
+    release <- Deferred[IO, Unit]
+    reported <- Deferred[IO, Unit]
+    work = release.get *> IO.raiseError[ScopeOutcome](new java.io.IOException("controlled operation failure"))
+    notice = reported.complete(()).void *> IO.raiseError[Unit](new java.io.IOException("controlled diagnostic failure"))
+    _ <- Resource.make(new SupervisedCurationCleanup().observe(50.millis, work, notice).start)(fiber => release.complete(()).void *> fiber.cancel).use { fiber => for {
+      _ <- reported.get.timeout(1.second)
+      _ <- release.complete(())
+      observed <- fiber.joinWithNever
+      _ = assertEquals(observed, CleanupObservation.UncertainDiagnosticFailure)
+    } yield () }
+  } yield ()) }
+
   test("cancellation joins owned cleanup rather than abandoning it") { run(for {
     entered <- Deferred[IO, Unit]
     release <- Deferred[IO, Unit]

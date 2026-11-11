@@ -29,24 +29,34 @@ trait CurationDiagnostics {
   def outcome(value: ScopeOutcome): IO[Unit]
   def stopped(reason: CycleStop): IO[Unit]
 }
-enum CleanupObservation {
-  case Observed(value: ScopeOutcome)
+enum CleanupObservation[+A] {
+  case Observed(value: A)
+  case ObservedDiagnosticFailure(value: A)
   case Uncertain
+  case UncertainDiagnosticFailure
 }
 trait CurationCleanup {
-  def observe(budget: FiniteDuration, work: IO[ScopeOutcome], overdue: IO[Unit]): IO[CleanupObservation]
+  def observe[A](budget: FiniteDuration, work: IO[A], overdue: IO[Unit]): IO[CleanupObservation[A]]
 }
 final class SupervisedCurationCleanup extends CurationCleanup {
-  private def result(outcome: Outcome[IO, Throwable, Either[Throwable, ScopeOutcome]]): IO[CleanupObservation] = outcome match {
+  private def result[A](outcome: Outcome[IO, Throwable, Either[Throwable, A]]): IO[CleanupObservation[A]] = outcome match {
     case Outcome.Succeeded(value) => value.map(_.fold(_ => CleanupObservation.Uncertain, CleanupObservation.Observed(_)))
     case _ => IO.pure(CleanupObservation.Uncertain)
   }
-  def observe(budget: FiniteDuration, work: IO[ScopeOutcome], overdue: IO[Unit]): IO[CleanupObservation] =
-    Resource.make(work.attempt.start)(_.cancel).use { fiber =>
+  def observe[A](budget: FiniteDuration, work: IO[A], overdue: IO[Unit]): IO[CleanupObservation[A]] = IO.defer {
+    Require(budget > Duration.Zero, "config", "positive cleanup budget required")
+    Resource.make(work.attempt.start)(fiber => fiber.cancel.guarantee(fiber.join.void)).use { fiber =>
       IO.race(fiber.join, IO.sleep(budget)).flatMap {
         case Left(outcome) => result(outcome)
-        // Cancelling a join does not cancel its owned work; report the cutoff, then settle it.
-        case Right(_) => overdue *> fiber.join.flatMap(result)
+        // Reporting failure must not cancel work or discard a result observed afterward.
+        case Right(_) => overdue.attempt.flatMap { notice =>
+          fiber.join.flatMap(result[A]).map {
+            case CleanupObservation.Observed(value) if notice.isLeft => CleanupObservation.ObservedDiagnosticFailure(value)
+            case CleanupObservation.Uncertain if notice.isLeft => CleanupObservation.UncertainDiagnosticFailure
+            case observed => observed
+          }
+        }
       }
     }
+  }
 }

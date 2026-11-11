@@ -90,6 +90,46 @@ abstract class CurationTransportContract extends CurationRepositorySupport {
     count <- calls.get
     _ = assertEquals(count, 1)
   } yield () } } }
+  for (stale <- List(false, true)) test(s"automatic lifecycle composes actual loopback transport with stale=$stale") { check { (repo, settings, scope) => for {
+    _ <- capture(repo, scope)
+    calls <- Cell.of[IO, Int](0)
+    first <- cats.effect.Deferred[IO, ScopeOutcome]
+    app: HttpApp[IO] = cats.data.Kleisli { request => for {
+      body <- request.as[String]
+      status <- repo.curation.status(settings.principal, scope)
+      id = status.attempt.getOrElse(throw new AssertionError("missing claimed attempt")).attemptId
+      view <- repo.curation.inspect(settings.principal, scope, id)
+      _ = assertEquals(view.journal.last.stage, CurationAuditStage.DispatchPossible)
+      _ = assertEquals(view.journal.head.payload.map(_.content), Some(body))
+      _ <- calls.update(_ + 1)
+      _ <- if (stale) capture(repo, scope).void else IO.unit
+      proposal = CurationProposal(view.attempt.claim.baseGeneration, view.attempt.claim.frontier, Nil)
+      response = Json.obj("choices" -> Json.arr(Json.obj("finish_reason" -> Json.fromString("stop"), "message" -> Json.obj(
+        "role" -> Json.fromString("assistant"), "content" -> Json.fromString(StoredJson.encode(CurationProposal.codecJson, proposal))))))
+    } yield Response[IO](Status.Ok).withEntity(response.noSpaces) }
+    _ <- model(app).use { provider =>
+      val diagnostics = new CurationDiagnostics {
+        def outcome(value: ScopeOutcome): IO[Unit] = first.complete(value).void *> IO.never[Unit]
+        def stopped(reason: CycleStop): IO[Unit] = IO.unit
+      }
+      val lifecycle = new CurationRunnerDiagnostics { def emit(event: RunnerEvent): IO[Unit] = IO.unit }
+      val config = CurationCycleConfig(2, 1, 1.second)
+      val service = new CurationRunner(repo.curation, settings, config, CurationRunnerConfig(1.second, 100.millis, 1.second), IO(UUID.randomUUID()),
+        selected => CurationCoordinator.create(repo.curation, repo, settings.principal, provider, new CursorSigner(Array.fill[Byte](32)(7)),
+          QueryLimits(100, 64, 65536, 2048), selected, IO(UUID.randomUUID()), diagnostics, new SupervisedCurationCleanup), new SupervisedCurationCleanup, lifecycle)
+      Resource.make(service.run.start)(_.cancel).use { fiber => for {
+        observed <- first.get.timeout(5.seconds)
+        _ = if (stale) assert(observed.isInstanceOf[ScopeOutcome.Terminal]) else assert(observed.isInstanceOf[ScopeOutcome.Published])
+        _ <- fiber.cancel
+      } yield () }
+    }
+    current <- repo.curation.status(settings.principal, scope)
+    _ = assertEquals(current.coveredFrontier, if (stale) 0L else 1L)
+    _ = assertEquals(current.attempt.map(_.state), Some(if (stale) CurationAttemptState.Stale else CurationAttemptState.Published))
+    count <- calls.get
+    _ = assertEquals(count, 1)
+    _ <- leased(repo)(_ => IO.unit)
+  } yield () } }
 }
 
 final class MemoryCurationTransportSuite extends CurationTransportContract {

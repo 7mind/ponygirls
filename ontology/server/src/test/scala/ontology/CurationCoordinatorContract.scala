@@ -9,14 +9,14 @@ import ontology.curation.*
 import ontology.domain.*
 import scala.concurrent.duration.*
 
-abstract class CurationCoordinatorContract extends CurationRepositorySupport {
-  private final class Recorder(val outcomes: Cell[IO, List[ScopeOutcome]], val stops: Cell[IO, List[CycleStop]]) extends CurationDiagnostics {
+abstract class CurationCoordinatorSupport extends CurationRepositorySupport {
+  protected final class Recorder(val outcomes: Cell[IO, List[ScopeOutcome]], val stops: Cell[IO, List[CycleStop]]) extends CurationDiagnostics {
     def outcome(value: ScopeOutcome): IO[Unit] = outcomes.update(_ :+ value)
     def stopped(value: CycleStop): IO[Unit] = stops.update(_ :+ value)
   }
-  private def recorder: IO[Recorder] = (Cell.of[IO, List[ScopeOutcome]](Nil), Cell.of[IO, List[CycleStop]](Nil)).mapN(new Recorder(_, _))
-  private def controlled(calls: Cell[IO, Int], beforeResponse: IO[Unit]): CuratorModel = new CuratorModel {
-    val profile: CurationProfilePin = CurationCoordinatorContract.this.profile
+  protected def recorder: IO[Recorder] = (Cell.of[IO, List[ScopeOutcome]](Nil), Cell.of[IO, List[CycleStop]](Nil)).mapN(new Recorder(_, _))
+  protected def controlled(calls: Cell[IO, Int], beforeResponse: IO[Unit]): CuratorModel = new CuratorModel {
+    val profile: CurationProfilePin = CurationCoordinatorSupport.this.profile
     def propose(input: CurationInput, reader: CurationReader, audit: CurationAudit): IO[AuditedProposal] = IO.defer {
       val request = Json.obj("messages" -> Json.arr(Json.obj("role" -> Json.fromString("system"), "content" -> Json.fromString("Controlled policy")),
         Json.obj("role" -> Json.fromString("user"), "content" -> Json.fromString(CurationInputs.json(input).noSpaces))))
@@ -27,10 +27,13 @@ abstract class CurationCoordinatorContract extends CurationRepositorySupport {
         audit.response(1, response).as(AuditedProposal(proposal, 1, Digests.text(response.noSpaces)))
     }
   }
-  private def coordinator(owner: CurationRepository, repo: GraphRepository, settings: CurationStoreSettings, model: CuratorModel,
+  protected def coordinator(owner: CurationRepository, repo: GraphRepository, settings: CurationStoreSettings, model: CuratorModel,
     diagnostics: CurationDiagnostics, ids: IO[UUID]): IO[CurationCoordinator] = CurationCoordinator.create(owner, repo, settings.principal, model,
     new CursorSigner(Array.fill[Byte](32)(3)), QueryLimits(100, 64, 65536, 2048), CurationCycleConfig(2, 1, 2.seconds), ids, diagnostics, new SupervisedCurationCleanup)
 
+}
+
+abstract class CurationCoordinatorContract extends CurationCoordinatorSupport {
   test("a cycle publishes once and does not invoke the model again for an unchanged frontier") { check { (repo, settings, scope) => leased(repo) { lease => for {
     _ <- capture(repo, scope)
     calls <- Cell.of[IO, Int](0)

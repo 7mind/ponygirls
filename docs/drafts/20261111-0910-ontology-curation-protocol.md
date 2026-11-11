@@ -1,6 +1,6 @@
 # Ontology curation protocol foundation
 
-This is an implemented protocol/domain/storage/transport slice, **not a completed live curation service**. Durable repository operations for attempts, leases, recovery and publication are implemented. The automatic coordinator loop, concrete service composition and worker sidecar remain unfinished. No deployment, Human study or private-source model traffic is authorized or established by these checks.
+This is an implemented protocol/domain/storage/transport slice, **not a completed live curation service**. Durable repository operations and the automatic curator lifecycle are implemented and exercised with controlled providers. Concrete service composition, RDF runtime topology and the worker sidecar remain unfinished. No deployment, Human study or private-source model traffic is authorized or established by these checks.
 
 ## Ownership and coordinates
 
@@ -20,7 +20,7 @@ CuratorModel exposes the profile pin derived inside its resource from the config
 
 FrozenCurationReader reuses GraphQueries through a narrow read-only repository contract. It never substitutes the live head for its retained snapshot. Pagination stays at the pinned generation; explicit receipts must match scope, exact reference and generation. Missing context remains unavailable rather than being fetched from a newer cut.
 
-RepositoryCurationAudit serializes each attempt's callbacks and uses the confirmed prepared-request digest for later stages. Replayed preparation/possible-dispatch acknowledgment is not permission to call the provider again. Any hook error or cancellation stops that adapter invocation, including uncertain acknowledgments before or after storage commit. Stop transitions are coordinated with callback serialization, and in-flight hooks recheck stopped state before returning continuation. This adapter is implemented, but the automatic coordinator lifecycle is not yet composed.
+RepositoryCurationAudit serializes each attempt's callbacks and uses the confirmed prepared-request digest for later stages. Replayed preparation/possible-dispatch acknowledgment is not permission to call the provider again. Any hook error or cancellation stops that adapter invocation, including uncertain acknowledgments before or after storage commit. Stop transitions are coordinated with callback serialization, and in-flight hooks recheck stopped state before returning continuation. The automatic lifecycle now composes this adapter with the model and repositories; full application composition remains separate.
 
 ## Cycle kernel and supervised cleanup
 
@@ -28,7 +28,9 @@ CurationCoordinator.cycle operates under a caller-owned fence and serializes cyc
 
 Claim-recording uncertainty stops further admission. Publication uncertainty is reconciled by inspecting retained state and, when needed, one exact candidate replay; it never causes another model invocation. Known terminal and Published outcomes survive cleanup. Diagnostics failure is itself observable in the stop state.
 
-SupervisedCurationCleanup owns its operation. A budget alarm stops/reports further admission, then waits for that operation to settle; it neither detaches it nor fabricates a failure or completion. Cancellation remains cooperative. The automatic acquisition/renewal/polling/release lifecycle is not yet implemented.
+SupervisedCurationCleanup owns its operation. A budget alarm stops/reports further admission, then waits for that operation to settle; it neither detaches it nor fabricates a failure or completion. Cancellation remains cooperative. Reporting failure does not cancel owned cleanup or erase an observed result. Combined operation/reporting failure remains distinct from operation-only uncertainty.
+
+CurationRunner owns a fresh kernel and owner identity, acquires one lease, renews independently and polls serialized cycles. Renewal loss halts admission and signals work cancellation before diagnostics. Shutdown settles/joins work while renewal remains owned, then joins renewal before supervised lease release. It never automatically reacquires or changes profiles. Release uncertainty remains uncertainty even when an observer later proves release committed; diagnostic failure is retained separately rather than discarded.
 
 ## Journal, input and candidate correspondence
 
@@ -64,10 +66,10 @@ Exact committed publication replay validates the retained result and returns the
 
 Head, history and projection-outbox validation use the published-attempt inventory bounded by the requested generation. At a publication generation the snapshot must match its retained revision exactly. Later snapshots must preserve the exact content and multiplicity of records attributed to each Curation input, while legitimate later ordinary edits remain allowed. Receipt/attempt validation reconstructs the recorded graph outcome; it does not fabricate historical credentials or a lease.
 
-Automatic renewal/polling, execution cadence/concurrency, profile selection, source-sharing authorization and frozen reader composition remain runtime responsibilities. Configuration must be explicit; digest labels are not attestations.
+Renewal/polling, cadence and batch bounds are explicit runtime configuration; only serialized cycle execution is supported. Profile selection, source-sharing authorization and frozen reader composition are wired into the runtime boundary. Full application configuration and service/Pi deployment remain separate work; digest labels are not attestations.
 
 ## Status and verification limits
 
 The API/UI distinguish the current G/F/C, last publication generation and the latest attempt's pinned coordinates, admission deadline and journal stage. Equal C/F means source coverage, not review of subsequent graph edits.
 
-The same repository contract runs against memory and owned PostgreSQL. Additional controls exercise queued lease expiry, clock rollback, old-fence recovery, late SQL failure rollback, discarded commit acknowledgements, retained-limit changes, historical cuts and canonical-but-miswired or extra records. Separate loopback-provider checks cover transport ordering, deadlines and input/response linkage. Browser tests use built assets and scripted APIs. These checks do not establish an automatically running curation service, real-backend browser acceptance, semantic classification quality, Human benefit or deployment.
+The same repository contract runs against memory and owned PostgreSQL. Additional controls exercise queued lease expiry, clock rollback, old-fence recovery, late SQL failure rollback, discarded commit acknowledgements, retained-limit changes, historical cuts and canonical-but-miswired or extra records. Separate loopback-provider checks cover transport ordering, deadlines and input/response linkage. Browser tests use built assets and scripted APIs. Controlled tests exercise the automatic lifecycle against both stores and real loopback HTTP providers. They do not establish a deployed application, real-backend browser acceptance, semantic classification quality or Human benefit.
