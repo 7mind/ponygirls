@@ -2977,7 +2977,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3011,7 +3012,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3048,7 +3050,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3093,7 +3096,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3141,7 +3145,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3175,7 +3180,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3212,7 +3218,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": {
@@ -3254,7 +3261,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": {
@@ -3299,7 +3307,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3344,7 +3353,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3392,7 +3402,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3426,7 +3437,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "state": "Claimed",
       "inputManifest": null,
@@ -3508,6 +3520,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     },
     "scalaTypeId": "ontology.api/:#CurationAttemptSummary",
@@ -3523,6 +3536,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     }
   },
@@ -3541,6 +3555,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": "controlled-codec-fixture"
     },
     "scalaTypeId": "ontology.api/:#CurationAttemptSummary",
@@ -3556,6 +3571,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": "controlled-codec-fixture"
     }
   },
@@ -3574,6 +3590,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     },
     "scalaTypeId": "ontology.api/:#CurationAttemptSummary",
@@ -3589,6 +3606,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     }
   },
@@ -3607,6 +3625,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     },
     "scalaTypeId": "ontology.api/:#CurationAttemptSummary",
@@ -3622,6 +3641,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     }
   },
@@ -3640,6 +3660,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     },
     "scalaTypeId": "ontology.api/:#CurationAttemptSummary",
@@ -3655,6 +3676,7 @@
       "terminalCode": null,
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     }
   },
@@ -3673,6 +3695,7 @@
       "terminalCode": "controlled-codec-fixture",
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     },
     "scalaTypeId": "ontology.api/:#CurationAttemptSummary",
@@ -3688,6 +3711,7 @@
       "terminalCode": "controlled-codec-fixture",
       "auditUncertain": true,
       "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture",
       "finishedAt": null
     }
   },
@@ -3862,7 +3886,8 @@
       "schemaDigest": "controlled-codec-fixture",
       "graphDigest": "controlled-codec-fixture",
       "sourceCutDigest": "controlled-codec-fixture",
-      "claimedAt": "controlled-codec-fixture"
+      "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture"
     },
     "scalaTypeId": "ontology.api/:#CurationClaim",
     "scalaWire": {
@@ -3887,7 +3912,8 @@
       "schemaDigest": "controlled-codec-fixture",
       "graphDigest": "controlled-codec-fixture",
       "sourceCutDigest": "controlled-codec-fixture",
-      "claimedAt": "controlled-codec-fixture"
+      "claimedAt": "controlled-codec-fixture",
+      "deadlineAt": "controlled-codec-fixture"
     }
   },
   {
@@ -4075,7 +4101,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "manifest": {
         "attemptId": "00000000-0000-4000-8000-000000000001",
@@ -4120,7 +4147,8 @@
         "schemaDigest": "controlled-codec-fixture",
         "graphDigest": "controlled-codec-fixture",
         "sourceCutDigest": "controlled-codec-fixture",
-        "claimedAt": "controlled-codec-fixture"
+        "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture"
       },
       "manifest": {
         "attemptId": "00000000-0000-4000-8000-000000000001",
@@ -4308,6 +4336,7 @@
         "terminalCode": null,
         "auditUncertain": true,
         "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture",
         "finishedAt": null
       }
     },
@@ -4332,6 +4361,7 @@
         "terminalCode": null,
         "auditUncertain": true,
         "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture",
         "finishedAt": null
       }
     }
@@ -10436,6 +10466,7 @@
         "terminalCode": null,
         "auditUncertain": true,
         "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture",
         "finishedAt": null
       }
     },
@@ -10461,6 +10492,7 @@
         "terminalCode": null,
         "auditUncertain": true,
         "claimedAt": "controlled-codec-fixture",
+        "deadlineAt": "controlled-codec-fixture",
         "finishedAt": null
       }
     }

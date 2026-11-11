@@ -21,7 +21,7 @@ final class CurationGuardsSuite extends FunSuite {
   private val graph = captured.snapshot
   private val sources = List(captured.event)
   private val claim = CurationClaim(UUID.randomUUID(), "s", fence, graph.generation, 1L, 0L, limits.toWire, "fixture", "a" * 64, "b" * 64,
-    CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), at.toString)
+    CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), at.toString, at.plusSeconds(120).toString)
   private val claimed = CurationAttempt(claim, CurationAttemptState.Claimed, None, None, None, None, false, None)
   private val material = CurationMaterial.seal(claim, graph, sources, at.plusSeconds(1), limits)
   private val sealedAttempt = CurationGuards.seal(claimed, Nil, graph, sources, lease, at.plusSeconds(1), limits)
@@ -155,6 +155,30 @@ final class CurationGuardsSuite extends FunSuite {
     )
     val attempt = sealedAttempt.copy(state = CurationAttemptState.Running)
     assertEquals(intercept[Fault](CurationGuards.publication(attempt, entries, candidate, graph, sources, lease, at.plusSeconds(5), limits)).code, "curation")
+  }
+
+  test("lease renewal does not extend the fixed publication deadline") {
+    val done = observed()
+    val bounded = done.attempt.copy(claim = claim.copy(deadlineAt = at.plusSeconds(5).toString))
+    val renewed = lease.copy(renewedAt = at.plusSeconds(4).toString, expiresAt = at.plusSeconds(100).toString)
+    assertEquals(CurationGuards.publication(bounded, done.entries, candidate, graph, sources, renewed, at.plusSeconds(5).minusNanos(1), limits), CurationPublicationPlan(graph.generation + 1L, 1L, 1L))
+    assertEquals(intercept[Fault](CurationGuards.publication(bounded, done.entries, candidate, graph, sources, renewed, at.plusSeconds(5), limits)).code, "curation-expired")
+  }
+
+  test("late response evidence terminalizes without extending publication authority") {
+    val bounded = sealedAttempt.copy(claim = claim.copy(deadlineAt = at.plusSeconds(4).toString))
+    val p = append(bounded, Nil, CurationAuditStage.RequestPrepared, Some(requestPayload), 2)
+    val d = append(p.attempt, p.entries, CurationAuditStage.DispatchPossible, None, 3)
+    val observed = append(d.attempt, d.entries, CurationAuditStage.ResponseObserved, Some(responsePayload), 4)
+    assertEquals(observed.attempt.state, CurationAttemptState.Failed)
+    assertEquals(observed.attempt.terminalCode, Some("curation-expired"))
+    assertEquals(observed.entries.last.stage, CurationAuditStage.ResponseObserved)
+    assert(!observed.attempt.auditUncertain)
+    val replay = append(observed.attempt, observed.entries, CurationAuditStage.ResponseObserved, Some(responsePayload), 100)
+    assert(replay.replayed)
+    assertEquals(replay.attempt, observed.attempt)
+    CurationGuards.validate(observed.attempt, observed.entries, limits)
+    assertEquals(intercept[Fault](CurationGuards.validate(observed.attempt.copy(state = CurationAttemptState.Running, terminalCode = None, finishedAt = None), observed.entries, limits)).code, "curation")
   }
 
   test("terminal uncertainty derives from the journal and retries do not revive attempts") {

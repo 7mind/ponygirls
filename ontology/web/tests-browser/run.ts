@@ -71,7 +71,7 @@ let activePage: Page | null = null;
 const executionEvent = new C.CapturedEvent(id(26), 'a', 'fixture-host', 3n, context, C.EventOrigin.ToolOutput,
   new C.CaptureMetadata('execution-entry', undefined, undefined, C.SourceRepresentation.HostReceipt, ['Synthetic execution account, not a physical measurement'], []),
   'Synthetic execution account', new C.Observation_Execution('controlled run', 'fixture host instrument', undefined, [inputArtifact.ref], [outputArtifact.ref], undefined, false), undefined, provenance(host, 95));
-const pendingAttempt = new C.CurationAttemptSummary(id(500), 5n, 3n, 2n, C.CurationAttemptState.Running, 'a'.repeat(64), 1, C.CurationAuditStage.DispatchPossible, undefined, true, time, undefined);
+const pendingAttempt = new C.CurationAttemptSummary(id(500), 5n, 3n, 2n, C.CurationAttemptState.Running, 'a'.repeat(64), 1, C.CurationAuditStage.DispatchPossible, undefined, true, time, '2026-11-11T00:02:00Z', undefined);
 let authenticated = false;
 let generation = 5n;
 let saved: C.Presentation | undefined;
@@ -253,6 +253,7 @@ try {
   assert.equal(await field('Attempt target frontier').textContent(), '3');
   assert.equal(await field('Last curation publication generation').textContent(), '4');
   assert.equal(await field('Latest audit stage').textContent(), 'DispatchPossible');
+  assert.equal(await field('Attempt admission deadline').textContent(), '2026-11-11T00:02:00Z');
   await statusRegion.getByText('It does not prove provider receipt, model use or the absence of unrecorded activity.', { exact: false }).waitFor();
   receipts.push('current head, pinned attempt, last publication and dispatch qualifications remain distinct');
   assert(saved !== undefined);

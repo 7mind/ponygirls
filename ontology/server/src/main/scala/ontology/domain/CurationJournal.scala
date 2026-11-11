@@ -16,6 +16,7 @@ object CurationJournal {
       val observed = instant(entry.observedAt)
       val priorTime = previous.fold(instant(claim.claimedAt))(value => instant(value.observedAt))
       check(!observed.isBefore(priorTime), "audit time precedes retained evidence")
+      if (entry.stage != CurationAuditStage.ResponseObserved) check(observed.isBefore(instant(claim.deadlineAt)), "new request audit is past the attempt deadline")
       entry.payload.foreach { value =>
         check(value.encoding == JsonEncoding, "unsupported audit payload encoding")
         payload(value, limits)

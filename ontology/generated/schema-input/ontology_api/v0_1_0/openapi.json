@@ -1602,7 +1602,8 @@
           "previousCoveredFrontier",
           "state",
           "auditUncertain",
-          "claimedAt"
+          "claimedAt",
+          "deadlineAt"
         ],
         "properties" : {
           "attemptId" : {
@@ -1669,6 +1670,9 @@
             "type" : "boolean"
           },
           "claimedAt" : {
+            "type" : "string"
+          },
+          "deadlineAt" : {
             "type" : "string"
           },
           "finishedAt" : {
@@ -1810,7 +1814,8 @@
           "schemaDigest",
           "graphDigest",
           "sourceCutDigest",
-          "claimedAt"
+          "claimedAt",
+          "deadlineAt"
         ],
         "properties" : {
           "attemptId" : {
@@ -1854,6 +1859,9 @@
             "type" : "string"
           },
           "claimedAt" : {
+            "type" : "string"
+          },
+          "deadlineAt" : {
             "type" : "string"
           }
         }

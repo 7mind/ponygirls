@@ -10,6 +10,8 @@ A claim pins the coordinator fence, scope, graph generation G, retained primary 
 
 Each attempt retains its own admission limits. Historical validation, journal loading, material reconstruction and recovery use those pinned limits; lowering current configuration does not turn valid retained records into corruption. New claims use the new limits.
 
+Claims also retain a fixed owner-clock admission deadline, derived from the explicitly configured attempt duration after ownership locks. Lease renewal does not extend it. New sealing, request preparation, possible dispatch and publication require owner time strictly before the cutoff. Exact acknowledgments remain readable afterward. An already-dispatched response observed late may be retained and terminalized atomically, but cannot publish. This is an admission cutoff, not a promise that an already-admitted transaction physically commits before that instant or that cancellation revokes external effects.
+
 CurationMaterial reconstructs the entire ordered source cut and graph seed. Source records must correspond to their exact frozen graph definitions. The input manifest pins every seed/source record and the deterministic UTF-8 input encoding, digest and byte count. Capacity failure is explicit; no source truncation or hidden subset is substituted.
 
 ## Runtime input and profile boundary
@@ -18,7 +20,7 @@ CuratorModel exposes the profile pin derived inside its resource from the config
 
 FrozenCurationReader reuses GraphQueries through a narrow read-only repository contract. It never substitutes the live head for its retained snapshot. Pagination stays at the pinned generation; explicit receipts must match scope, exact reference and generation. Missing context remains unavailable rather than being fetched from a newer cut.
 
-RepositoryCurationAudit serializes each attempt's callbacks and uses the confirmed prepared-request digest for later stages. Replayed preparation/possible-dispatch acknowledgment is not permission to call the provider again. Any hook error or cancellation stops that adapter invocation, including uncertain acknowledgments before or after storage commit. This adapter is implemented, but the automatic coordinator lifecycle is not yet composed.
+RepositoryCurationAudit serializes each attempt's callbacks and uses the confirmed prepared-request digest for later stages. Replayed preparation/possible-dispatch acknowledgment is not permission to call the provider again. Any hook error or cancellation stops that adapter invocation, including uncertain acknowledgments before or after storage commit. Stop transitions are coordinated with callback serialization, and in-flight hooks recheck stopped state before returning continuation. This adapter is implemented, but the automatic coordinator lifecycle is not yet composed.
 
 ## Journal, input and candidate correspondence
 
@@ -58,6 +60,6 @@ Automatic renewal/polling, execution cadence/concurrency, profile selection, sou
 
 ## Status and verification limits
 
-The API/UI distinguish the current G/F/C, last publication generation and the latest attempt's pinned coordinates and journal stage. Equal C/F means source coverage, not review of subsequent graph edits.
+The API/UI distinguish the current G/F/C, last publication generation and the latest attempt's pinned coordinates, admission deadline and journal stage. Equal C/F means source coverage, not review of subsequent graph edits.
 
 The same repository contract runs against memory and owned PostgreSQL. Additional controls exercise queued lease expiry, clock rollback, old-fence recovery, late SQL failure rollback, discarded commit acknowledgements, retained-limit changes, historical cuts and canonical-but-miswired or extra records. Separate loopback-provider checks cover transport ordering, deadlines and input/response linkage. Browser tests use built assets and scripted APIs. These checks do not establish an automatically running curation service, real-backend browser acceptance, semantic classification quality, Human benefit or deployment.

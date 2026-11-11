@@ -362,7 +362,7 @@ function CurationAttemptView({ value }: { value: C.CurationAttemptSummary | unde
     <Field label='Attempt previous coverage'>{value.previousCoveredFrontier.toString()}</Field><Field label='Sealed input digest'>{value.inputDigest ?? 'Not sealed'}</Field>
     <Field label='Latest audit ordinal'>{value.lastOrdinal === undefined ? 'None recorded' : value.lastOrdinal}</Field><Field label='Latest audit stage'>{value.lastStage ?? 'None recorded'}</Field>
     <Field label='Terminal code'>{value.terminalCode ?? 'None recorded'}</Field><Field label='Audit uncertainty recorded'>{value.auditUncertain ? 'Yes' : 'No'}</Field>
-    <Field label='Claimed at'>{value.claimedAt}</Field><Field label='Finished at'>{value.finishedAt ?? 'Not recorded'}</Field>
+    <Field label='Claimed at'>{value.claimedAt}</Field><Field label='Attempt admission deadline'>{value.deadlineAt}</Field><Field label='Finished at'>{value.finishedAt ?? 'Not recorded'}</Field>
     </dl><p className='fine-print'>The journal distinguishes request preparation, possible dispatch and an observed response. It does not prove provider receipt, model use or the absence of unrecorded activity.</p></section>;
 }
 

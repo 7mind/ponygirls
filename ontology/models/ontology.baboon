@@ -174,7 +174,7 @@ data CurationAdmissionLimits { maxOrdinals: i32 maxAuditBytes: i32 maxInputBytes
 root data CurationClaim {
  attemptId: uid scope: str fence: CoordinatorFence baseGeneration: i64 frontier: i64 previousCoveredFrontier: i64
  admissionLimits: CurationAdmissionLimits
- profileId: str profileDigest: str schemaDigest: str graphDigest: str sourceCutDigest: str claimedAt: str
+ profileId: str profileDigest: str schemaDigest: str graphDigest: str sourceCutDigest: str claimedAt: str deadlineAt: str
 }
 data CurationRecordPin { ref: Ref digest: str }
 data CurationSourcePin { ref: Ref frontier: i64 digest: str }
@@ -203,7 +203,7 @@ root data CurationAttempt {
 data CurationAttemptSummary {
  attemptId: uid baseGeneration: i64 frontier: i64 previousCoveredFrontier: i64 state: CurationAttemptState
  inputDigest: opt[str] lastOrdinal: opt[i32] lastStage: opt[CurationAuditStage]
- terminalCode: opt[str] auditUncertain: bit claimedAt: str finishedAt: opt[str]
+ terminalCode: opt[str] auditUncertain: bit claimedAt: str deadlineAt: str finishedAt: opt[str]
 }
 root data ScopeRequest { scope: str }
 data ScopeSummary { scope: str generation: i64 frontier: i64 coveredFrontier: i64 curation: CurationState failure: opt[str] rdfGeneration: opt[i64] lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }

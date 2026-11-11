@@ -20,7 +20,8 @@ object CurationReceipts {
     val claimed = CurationChecks.instant(claim.claimedAt)
     val sealedAt = CurationChecks.instant(manifest.sealedAt)
     val published = CurationChecks.instant(input.publishedAt)
-    check(!sealedAt.isBefore(claimed) && !published.isBefore(sealedAt))
+    val deadline = CurationChecks.instant(claim.deadlineAt)
+    check(deadline.isAfter(claimed) && !sealedAt.isBefore(claimed) && !published.isBefore(sealedAt) && sealedAt.isBefore(deadline) && published.isBefore(deadline))
     List(claim.profileDigest, claim.schemaDigest, claim.graphDigest, claim.sourceCutDigest, manifest.inputDigest,
       input.responseDigest, input.proposalDigest).foreach(CurationChecks.digest)
     check(manifest.attemptId == claim.attemptId && manifest.encoding == CurationInputs.Encoding && manifest.encoding.length <= limits.maxLabelChars && manifest.inputBytes > 0 && manifest.inputBytes <= limits.maxInputBytes &&

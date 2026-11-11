@@ -15,9 +15,10 @@ export class CurationAttemptSummary implements BaboonGeneratedLatest {
     private readonly _terminalCode: string | undefined;
     private readonly _auditUncertain: boolean;
     private readonly _claimedAt: string;
+    private readonly _deadlineAt: string;
     private readonly _finishedAt: string | undefined;
 
-    constructor(attemptId: string, baseGeneration: bigint, frontier: bigint, previousCoveredFrontier: bigint, state: CurationAttemptState, inputDigest: string | undefined, lastOrdinal: number | undefined, lastStage: CurationAuditStage | undefined, terminalCode: string | undefined, auditUncertain: boolean, claimedAt: string, finishedAt: string | undefined) {
+    constructor(attemptId: string, baseGeneration: bigint, frontier: bigint, previousCoveredFrontier: bigint, state: CurationAttemptState, inputDigest: string | undefined, lastOrdinal: number | undefined, lastStage: CurationAuditStage | undefined, terminalCode: string | undefined, auditUncertain: boolean, claimedAt: string, deadlineAt: string, finishedAt: string | undefined) {
         this._attemptId = attemptId
         this._baseGeneration = baseGeneration
         this._frontier = frontier
@@ -29,6 +30,7 @@ export class CurationAttemptSummary implements BaboonGeneratedLatest {
         this._terminalCode = terminalCode
         this._auditUncertain = auditUncertain
         this._claimedAt = claimedAt
+        this._deadlineAt = deadlineAt
         this._finishedAt = finishedAt
     }
 
@@ -65,6 +67,9 @@ export class CurationAttemptSummary implements BaboonGeneratedLatest {
     public get claimedAt(): string {
         return this._claimedAt;
     }
+    public get deadlineAt(): string {
+        return this._deadlineAt;
+    }
     public get finishedAt(): string | undefined {
         return this._finishedAt;
     }
@@ -82,11 +87,12 @@ export class CurationAttemptSummary implements BaboonGeneratedLatest {
             terminalCode: this._terminalCode !== undefined ? this._terminalCode : undefined,
             auditUncertain: this._auditUncertain,
             claimedAt: this._claimedAt,
+            deadlineAt: this._deadlineAt,
             finishedAt: this._finishedAt !== undefined ? this._finishedAt : undefined
         };
     }
 
-    public with(overrides: {attemptId?: string; baseGeneration?: bigint; frontier?: bigint; previousCoveredFrontier?: bigint; state?: CurationAttemptState; inputDigest?: string | undefined; lastOrdinal?: number | undefined; lastStage?: CurationAuditStage | undefined; terminalCode?: string | undefined; auditUncertain?: boolean; claimedAt?: string; finishedAt?: string | undefined}): CurationAttemptSummary {
+    public with(overrides: {attemptId?: string; baseGeneration?: bigint; frontier?: bigint; previousCoveredFrontier?: bigint; state?: CurationAttemptState; inputDigest?: string | undefined; lastOrdinal?: number | undefined; lastStage?: CurationAuditStage | undefined; terminalCode?: string | undefined; auditUncertain?: boolean; claimedAt?: string; deadlineAt?: string; finishedAt?: string | undefined}): CurationAttemptSummary {
         return new CurationAttemptSummary(
             'attemptId' in overrides ? overrides.attemptId! : this._attemptId,
             'baseGeneration' in overrides ? overrides.baseGeneration! : this._baseGeneration,
@@ -99,11 +105,12 @@ export class CurationAttemptSummary implements BaboonGeneratedLatest {
             'terminalCode' in overrides ? overrides.terminalCode! : this._terminalCode,
             'auditUncertain' in overrides ? overrides.auditUncertain! : this._auditUncertain,
             'claimedAt' in overrides ? overrides.claimedAt! : this._claimedAt,
+            'deadlineAt' in overrides ? overrides.deadlineAt! : this._deadlineAt,
             'finishedAt' in overrides ? overrides.finishedAt! : this._finishedAt
         );
     }
 
-    public static fromPlain(obj: {attemptId: string; baseGeneration: bigint; frontier: bigint; previousCoveredFrontier: bigint; state: CurationAttemptState; inputDigest: string | undefined; lastOrdinal: number | undefined; lastStage: CurationAuditStage | undefined; terminalCode: string | undefined; auditUncertain: boolean; claimedAt: string; finishedAt: string | undefined}): CurationAttemptSummary {
+    public static fromPlain(obj: {attemptId: string; baseGeneration: bigint; frontier: bigint; previousCoveredFrontier: bigint; state: CurationAttemptState; inputDigest: string | undefined; lastOrdinal: number | undefined; lastStage: CurationAuditStage | undefined; terminalCode: string | undefined; auditUncertain: boolean; claimedAt: string; deadlineAt: string; finishedAt: string | undefined}): CurationAttemptSummary {
         return new CurationAttemptSummary(
             obj.attemptId,
             obj.baseGeneration,
@@ -116,6 +123,7 @@ export class CurationAttemptSummary implements BaboonGeneratedLatest {
             obj.terminalCode,
             obj.auditUncertain,
             obj.claimedAt,
+            obj.deadlineAt,
             obj.finishedAt
         );
     }
@@ -167,6 +175,7 @@ export class CurationAttemptSummary_JsonCodec {
             "terminalCode": value.terminalCode === undefined ? null : value.terminalCode,
             "auditUncertain": value.auditUncertain,
             "claimedAt": value.claimedAt,
+            "deadlineAt": value.deadlineAt,
             "finishedAt": value.finishedAt === undefined ? null : value.finishedAt,
         }
     }
@@ -188,6 +197,7 @@ export class CurationAttemptSummary_JsonCodec {
             obj["terminalCode"] === undefined || obj["terminalCode"] === null ? undefined : obj["terminalCode"] === undefined || obj["terminalCode"] === null ? undefined : obj["terminalCode"] as string,
             obj["auditUncertain"] as boolean,
             obj["claimedAt"] as string,
+            obj["deadlineAt"] as string,
             obj["finishedAt"] === undefined || obj["finishedAt"] === null ? undefined : obj["finishedAt"] === undefined || obj["finishedAt"] === null ? undefined : obj["finishedAt"] as string,
         )
     }

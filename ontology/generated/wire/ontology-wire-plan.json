@@ -3,8 +3,8 @@
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "73c8585c383208932d4a42d53343ba6702a5f839057c2ed30bde8959c6a5ecb3",
-  "rawDigest": "6d5cc1645db8a17d80bb0b5ff1af42ab9117ee0acb096a717916d228bb0bbf7d",
+  "modelDigest": "cc162213539c8b8ec81881bc999bce0520e791bf2fd768faf857458986567172",
+  "rawDigest": "fd99a5c03873f5676f6c94072a9492fe40a00d978cd429f5f9df6476f327fec9",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -2303,6 +2303,9 @@
         "claimedAt": {
           "kind": "string"
         },
+        "deadlineAt": {
+          "kind": "string"
+        },
         "finishedAt": {
           "kind": "nullable",
           "value": {
@@ -2444,6 +2447,9 @@
           "kind": "i64"
         },
         "claimedAt": {
+          "kind": "string"
+        },
+        "deadlineAt": {
           "kind": "string"
         },
         "fence": {

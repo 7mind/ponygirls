@@ -16,6 +16,7 @@ package ontology.api {
     terminalCode: Option[String],
     auditUncertain: Boolean,
     claimedAt: String,
+    deadlineAt: String,
     finishedAt: Option[String]
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CurationAttemptSummary.baboonDomainVersion
@@ -57,6 +58,7 @@ package ontology.api {
         "terminalCode" -> value.terminalCode.map(v => Json.fromString(v)).getOrElse(Json.Null),
         "auditUncertain" -> Json.fromBoolean(value.auditUncertain),
         "claimedAt" -> Json.fromString(value.claimedAt),
+        "deadlineAt" -> Json.fromString(value.deadlineAt),
         "finishedAt" -> value.finishedAt.map(v => Json.fromString(v)).getOrElse(Json.Null)
       )
     }
@@ -79,8 +81,9 @@ package ontology.api {
             terminalCode <- getField(jsonObject, "terminalCode").flatMap(v => decodeOption(decodeString)(v.hcursor))
             auditUncertain <- getField(jsonObject, "auditUncertain").flatMap(v => decodeBoolean(v.hcursor))
             claimedAt <- getField(jsonObject, "claimedAt").flatMap(v => decodeString(v.hcursor))
+            deadlineAt <- getField(jsonObject, "deadlineAt").flatMap(v => decodeString(v.hcursor))
             finishedAt <- getField(jsonObject, "finishedAt").flatMap(v => decodeOption(decodeString)(v.hcursor))
-          } yield CurationAttemptSummary(attemptId,baseGeneration,frontier,previousCoveredFrontier,state,inputDigest,lastOrdinal,lastStage,terminalCode,auditUncertain,claimedAt,finishedAt)
+          } yield CurationAttemptSummary(attemptId,baseGeneration,frontier,previousCoveredFrontier,state,inputDigest,lastOrdinal,lastStage,terminalCode,auditUncertain,claimedAt,deadlineAt,finishedAt)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CurationAttemptSummary: object expected"))
       }
     }

@@ -12,7 +12,7 @@ final class CurationReceiptSuite extends FunSuite {
   private val curator = Actor("fixture-curator", ActorKind.Agent)
   private val trace = RequestTrace(UUID.randomUUID(), "curation.publish", RequestTransport.Internal)
   private val claim = CurationClaim(UUID.randomUUID(), "controlled-curation", CoordinatorFence(UUID.randomUUID(), 1L), 1L, 1L, 0L, CurationGuardLimits(3, 65536, 1048576L, 128, 128).toWire,
-    "fixture", "1" * 64, "2" * 64, "3" * 64, "4" * 64, "2026-11-11T00:00:00Z")
+    "fixture", "1" * 64, "2" * 64, "3" * 64, "4" * 64, "2026-11-11T00:00:00Z", "2026-11-11T00:02:00Z")
   private val manifest = CurationInputManifest(claim.attemptId, Nil, List(CurationSourcePin(Ref(UUID.randomUUID(), 1), 1L, "5" * 64)),
     CurationInputs.Encoding, "6" * 64, 2L, "2026-11-11T00:00:01Z")
   private val proposal = CurationProposal(1L, 1L, Nil)
@@ -34,7 +34,8 @@ final class CurationReceiptSuite extends FunSuite {
       original.copy(recorder = curator), original.copy(submitter = curator),
       original.copy(ingress = bearer, contributionContext = Contexts.server(bearer, Contexts.ProtocolLimits)),
       original.copy(contributionContext = ContextRecord(OriginContext.Unknown("Not retained"), Nil)),
-      receipt(publication.copy(proposalDigest = "8" * 64)))
+      receipt(publication.copy(proposalDigest = "8" * 64)),
+      receipt(publication.copy(claim = claim.copy(deadlineAt = at))))
     wrong.foreach(value => assertEquals(intercept[Fault](InputReceipts.validateContext(value)).code, "corrupt"))
   }
 

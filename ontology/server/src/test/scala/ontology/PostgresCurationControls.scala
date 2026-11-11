@@ -95,6 +95,47 @@ final class PostgresCurationControls extends CurationRepositorySupport {
     }
   } }
 
+  test("queued publication checks the attempt deadline even while renewed ownership remains valid") { withDatabase(TestCuration.FixtureLease) { (db, repo, settings, scope) =>
+    val bounded = settings.copy(attemptDuration = JavaDuration.ofSeconds(3))
+    val owner = new PostgresGraphRepository(db, new AdmissionEngine, TestReview.domain, bounded)
+    owner.initialize *> capture(owner, scope) *> leased(owner) { lease => for {
+      value <- begin(owner, bounded, scope, lease, Nil)
+      _ <- observe(owner, scope, lease, value)
+      renewed <- owner.curation.renew(lease.fence)
+      deadline = Instant.parse(value.attempt.claim.deadlineAt)
+      entered = new CountDownLatch(1)
+      release = new CountDownLatch(1)
+      pid = new java.util.concurrent.atomic.AtomicInteger(0)
+      hold = db.transaction { c =>
+        Using.resource(c.createStatement())(s => Using.resource(s.executeQuery("SELECT pg_backend_pid()")) { r => r.next(); pid.set(r.getInt(1)) })
+        Using.resource(c.prepareStatement("SELECT pg_advisory_xact_lock(hashtextextended(?, 0))")) { p =>
+          p.setString(1, "ontology:" + scope)
+          Using.resource(p.executeQuery()) { r => r.next(); entered.countDown(); Require(release.await(8, TimeUnit.SECONDS), "fixture", "scope lock release timed out") }
+        }
+      }
+      blocked = db.transaction { c => Using.resource(c.prepareStatement("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE ? = ANY(pg_blocking_pids(pid)))")) { p =>
+        p.setInt(1, pid.get()); Using.resource(p.executeQuery()) { r => r.next(); r.getBoolean(1) }
+      } }
+      _ <- Resource.make(hold.start)(fiber => IO(release.countDown()) *> fiber.joinWithNever).use { _ =>
+        IO.blocking(entered.await(5, TimeUnit.SECONDS)).flatMap(locked => IO(assert(locked))) *>
+          Resource.make(owner.curation.publish(lease.fence, scope, value.attempt.claim.attemptId, value.candidate, UUID.randomUUID()).start)(fiber => IO(release.countDown()) *> fiber.cancel).use { pending => for {
+            _ <- until(blocked)
+            queued <- dbNow(db)
+            _ = assert(queued.isBefore(deadline), "fixture must queue before the attempt deadline")
+            _ <- until(dbNow(db).map(now => !now.isBefore(deadline)))
+            _ <- IO(release.countDown())
+            result <- pending.joinWithNever
+            _ = assert(result.isInstanceOf[CurationWriteResult.Terminal])
+            now <- dbNow(db)
+            _ = assert(now.isBefore(Instant.parse(renewed.expiresAt)), "lease must remain valid independently of attempt expiry")
+            status <- owner.curation.status(settings.principal, scope)
+            _ = assertEquals(status.failure, Some("curation-expired"))
+            _ = assertEquals((status.generation, status.frontier, status.coveredFrontier), (1L, 1L, 0L))
+          } yield () }
+      }
+    } yield () }
+  } }
+
   test("late publication failure rolls back graph input history outbox and terminal attempt together") { withDatabase(TestCuration.FixtureLease) { (db, repo, settings, scope) => leased(repo) { lease => for {
     _ <- capture(repo, scope)
     value <- begin(repo, settings, scope, lease, Nil)

@@ -68,7 +68,7 @@ private[ontology] final class CurationStore(transactions: CurationTransactions, 
   private def summary(view: CurationAttemptView): CurationAttemptSummary = {
     val a = view.attempt; val c = a.claim
     CurationAttemptSummary(c.attemptId, c.baseGeneration, c.frontier, c.previousCoveredFrontier, a.state, a.inputManifest.map(_.inputDigest),
-      view.journal.lastOption.map(_.ordinal), view.journal.lastOption.map(_.stage), a.terminalCode, a.auditUncertain, c.claimedAt, a.finishedAt)
+      view.journal.lastOption.map(_.ordinal), view.journal.lastOption.map(_.stage), a.terminalCode, a.auditUncertain, c.claimedAt, c.deadlineAt, a.finishedAt)
   }
   private def current(tx: CurationTransaction, scope: String): CurationStatus = {
     val head = tx.head(scope); val last = latest(tx, scope, false)
@@ -150,7 +150,7 @@ private[ontology] final class CurationStore(transactions: CurationTransactions, 
         else {
           val sources = tx.sources(graph, graph.coveredFrontier)
           val claim = CurationClaim(attemptId, scope, fence, graph.generation, graph.sourceFrontier, graph.coveredFrontier, settings.guards.toWire,
-            profile.id, profile.profileDigest, profile.schemaDigest, CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), now.toString)
+            profile.id, profile.profileDigest, profile.schemaDigest, CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), now.toString, now.plus(settings.attemptDuration).toString)
           CurationGuards.claim(claim, graph, sources, maximum, active, lease, now, settings.guards)
           val attempt = CurationAttempt(claim, CurationAttemptState.Claimed, None, None, None, None, false, None)
           tx.saveAttempt(attempt, true)
@@ -204,7 +204,8 @@ private[ontology] final class CurationStore(transactions: CurationTransactions, 
         Require(!next.replayed && next.entries.last == entry, "invariant", "new audit append did not produce the requested entry")
         tx.append(entry)
         tx.saveAttempt(next.attempt, false)
-        CurationWriteResult.Advanced(next.attempt, false)
+        if (CurationGuards.active(next.attempt.state)) CurationWriteResult.Advanced(next.attempt, false)
+        else CurationWriteResult.Terminal(next.attempt)
       })
     }
   }

@@ -17,8 +17,9 @@ export class CurationClaim implements BaboonGeneratedLatest {
     private readonly _graphDigest: string;
     private readonly _sourceCutDigest: string;
     private readonly _claimedAt: string;
+    private readonly _deadlineAt: string;
 
-    constructor(attemptId: string, scope: string, fence: CoordinatorFence, baseGeneration: bigint, frontier: bigint, previousCoveredFrontier: bigint, admissionLimits: CurationAdmissionLimits, profileId: string, profileDigest: string, schemaDigest: string, graphDigest: string, sourceCutDigest: string, claimedAt: string) {
+    constructor(attemptId: string, scope: string, fence: CoordinatorFence, baseGeneration: bigint, frontier: bigint, previousCoveredFrontier: bigint, admissionLimits: CurationAdmissionLimits, profileId: string, profileDigest: string, schemaDigest: string, graphDigest: string, sourceCutDigest: string, claimedAt: string, deadlineAt: string) {
         this._attemptId = attemptId
         this._scope = scope
         this._fence = fence
@@ -32,6 +33,7 @@ export class CurationClaim implements BaboonGeneratedLatest {
         this._graphDigest = graphDigest
         this._sourceCutDigest = sourceCutDigest
         this._claimedAt = claimedAt
+        this._deadlineAt = deadlineAt
     }
 
     public get attemptId(): string {
@@ -73,6 +75,9 @@ export class CurationClaim implements BaboonGeneratedLatest {
     public get claimedAt(): string {
         return this._claimedAt;
     }
+    public get deadlineAt(): string {
+        return this._deadlineAt;
+    }
 
     public toJSON(): Record<string, unknown> {
         return {
@@ -88,11 +93,12 @@ export class CurationClaim implements BaboonGeneratedLatest {
             schemaDigest: this._schemaDigest,
             graphDigest: this._graphDigest,
             sourceCutDigest: this._sourceCutDigest,
-            claimedAt: this._claimedAt
+            claimedAt: this._claimedAt,
+            deadlineAt: this._deadlineAt
         };
     }
 
-    public with(overrides: {attemptId?: string; scope?: string; fence?: CoordinatorFence; baseGeneration?: bigint; frontier?: bigint; previousCoveredFrontier?: bigint; admissionLimits?: CurationAdmissionLimits; profileId?: string; profileDigest?: string; schemaDigest?: string; graphDigest?: string; sourceCutDigest?: string; claimedAt?: string}): CurationClaim {
+    public with(overrides: {attemptId?: string; scope?: string; fence?: CoordinatorFence; baseGeneration?: bigint; frontier?: bigint; previousCoveredFrontier?: bigint; admissionLimits?: CurationAdmissionLimits; profileId?: string; profileDigest?: string; schemaDigest?: string; graphDigest?: string; sourceCutDigest?: string; claimedAt?: string; deadlineAt?: string}): CurationClaim {
         return new CurationClaim(
             'attemptId' in overrides ? overrides.attemptId! : this._attemptId,
             'scope' in overrides ? overrides.scope! : this._scope,
@@ -106,11 +112,12 @@ export class CurationClaim implements BaboonGeneratedLatest {
             'schemaDigest' in overrides ? overrides.schemaDigest! : this._schemaDigest,
             'graphDigest' in overrides ? overrides.graphDigest! : this._graphDigest,
             'sourceCutDigest' in overrides ? overrides.sourceCutDigest! : this._sourceCutDigest,
-            'claimedAt' in overrides ? overrides.claimedAt! : this._claimedAt
+            'claimedAt' in overrides ? overrides.claimedAt! : this._claimedAt,
+            'deadlineAt' in overrides ? overrides.deadlineAt! : this._deadlineAt
         );
     }
 
-    public static fromPlain(obj: {attemptId: string; scope: string; fence: CoordinatorFence; baseGeneration: bigint; frontier: bigint; previousCoveredFrontier: bigint; admissionLimits: CurationAdmissionLimits; profileId: string; profileDigest: string; schemaDigest: string; graphDigest: string; sourceCutDigest: string; claimedAt: string}): CurationClaim {
+    public static fromPlain(obj: {attemptId: string; scope: string; fence: CoordinatorFence; baseGeneration: bigint; frontier: bigint; previousCoveredFrontier: bigint; admissionLimits: CurationAdmissionLimits; profileId: string; profileDigest: string; schemaDigest: string; graphDigest: string; sourceCutDigest: string; claimedAt: string; deadlineAt: string}): CurationClaim {
         return new CurationClaim(
             obj.attemptId,
             obj.scope,
@@ -124,7 +131,8 @@ export class CurationClaim implements BaboonGeneratedLatest {
             obj.schemaDigest,
             obj.graphDigest,
             obj.sourceCutDigest,
-            obj.claimedAt
+            obj.claimedAt,
+            obj.deadlineAt
         );
     }
 
@@ -177,6 +185,7 @@ export class CurationClaim_JsonCodec {
             "graphDigest": value.graphDigest,
             "sourceCutDigest": value.sourceCutDigest,
             "claimedAt": value.claimedAt,
+            "deadlineAt": value.deadlineAt,
         }
     }
     public decode(ctx: BaboonCodecContext, json: unknown): CurationClaim {
@@ -199,6 +208,7 @@ export class CurationClaim_JsonCodec {
             obj["graphDigest"] as string,
             obj["sourceCutDigest"] as string,
             obj["claimedAt"] as string,
+            obj["deadlineAt"] as string,
         )
     }
 

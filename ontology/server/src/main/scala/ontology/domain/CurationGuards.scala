@@ -13,6 +13,8 @@ object CurationGuards {
     val acquired = instant(current.acquiredAt); val renewed = instant(current.renewedAt); val expires = instant(current.expiresAt)
     check(!renewed.isBefore(acquired) && expires.isAfter(renewed) && !now.isBefore(renewed) && now.isBefore(expires), "coordinator lease unavailable")
   }
+  def beforeDeadline(claim: CurationClaim, now: Instant): Unit =
+    Require(now.isBefore(instant(claim.deadlineAt)), "curation-expired", "attempt admission deadline elapsed")
   def eligible(head: GraphSnapshot, maximumAttempted: Option[Long], hasActive: Boolean): Boolean = {
     Graph.validateCounters(head)
     check(maximumAttempted.forall(value => value >= 0 && value <= head.sourceFrontier), "invalid attempted frontier")
@@ -23,7 +25,7 @@ object CurationGuards {
     label(value.scope, limits); label(value.profileId, limits)
     check(value.baseGeneration >= 0 && value.previousCoveredFrontier >= 0 && value.frontier > value.previousCoveredFrontier && value.fence.epoch > 0, "invalid claim coordinates")
     List(value.profileDigest, value.schemaDigest, value.graphDigest, value.sourceCutDigest).foreach(digest)
-    instant(value.claimedAt)
+    check(instant(value.deadlineAt).isAfter(instant(value.claimedAt)), "invalid claim deadline")
   }
   def claim(value: CurationClaim, head: GraphSnapshot, sources: List[CapturedEvent], maximumAttempted: Option[Long], hasActive: Boolean,
             current: CoordinatorLease, now: Instant, limits: CurationGuardLimits): Unit = {
@@ -35,7 +37,7 @@ object CurationGuards {
   private def manifest(claim: CurationClaim, value: CurationInputManifest, limits: CurationGuardLimits): Unit = {
     check(value.attemptId == claim.attemptId && value.inputBytes > 0 && value.inputBytes <= limits.maxInputBytes, "invalid input manifest")
     label(value.encoding, limits); digest(value.inputDigest)
-    check(!instant(value.sealedAt).isBefore(instant(claim.claimedAt)), "seal precedes claim")
+    check(!instant(value.sealedAt).isBefore(instant(claim.claimedAt)) && instant(value.sealedAt).isBefore(instant(claim.deadlineAt)), "seal is outside claim admission interval")
     check(value.seed.size.toLong + value.sources.size.toLong <= limits.maxPins && value.seed.map(_.ref).distinct.size == value.seed.size &&
       value.sources.map(_.ref).distinct.size == value.sources.size, "invalid manifest pin set")
     value.seed.foreach(pin => { check(pin.ref.revision > 0, "invalid record pin"); digest(pin.digest) })
@@ -63,6 +65,8 @@ object CurationGuards {
   def validate(attempt: CurationAttempt, entries: List[CurationAuditRecord], limits: CurationGuardLimits): Unit = {
     claimShape(attempt.claim, limits)
     CurationJournal.validate(attempt.claim, entries, limits)
+    val lateResponse = entries.lastOption.exists(entry => entry.stage == CurationAuditStage.ResponseObserved && !instant(entry.observedAt).isBefore(instant(attempt.claim.deadlineAt)))
+    check(!lateResponse || !active(attempt.state), "late response requires a terminal attempt")
     attempt.inputManifest.foreach(manifest(attempt.claim, _, limits))
     check(entries.isEmpty || attempt.inputManifest.nonEmpty, "journal has no sealed input")
     attempt.inputManifest.foreach { input =>
@@ -86,7 +90,8 @@ object CurationGuards {
         val value = attempt.publication.getOrElse(throw Fault("curation", "publication receipt missing"))
         check(value.attemptId == attempt.claim.attemptId && value.scope == attempt.claim.scope && value.input == CurationIdentity.input(attempt.claim.scope, attempt.claim.attemptId) &&
           value.generation == Math.addExact(attempt.claim.baseGeneration, 1L) && value.frontier == attempt.claim.frontier &&
-          value.coveredFrontier == attempt.claim.frontier && attempt.finishedAt.contains(value.recordedAt), "invalid publication receipt")
+          value.coveredFrontier == attempt.claim.frontier && attempt.finishedAt.contains(value.recordedAt) &&
+          instant(value.recordedAt).isBefore(instant(attempt.claim.deadlineAt)), "invalid publication receipt")
       case CurationAttemptState.Failed | CurationAttemptState.Stale | CurationAttemptState.Interrupted =>
         check(attempt.publication.isEmpty && attempt.finishedAt.nonEmpty && attempt.terminalCode.exists(_.matches("[a-z][a-z0-9-]*")), "invalid terminal attempt")
         attempt.terminalCode.foreach(label(_, limits))
@@ -105,6 +110,7 @@ object CurationGuards {
       case None =>
         check(attempt.state == CurationAttemptState.Claimed, "input seal requires Claimed state")
         lease(attempt.claim, current, now)
+        beforeDeadline(attempt.claim, now)
         val material = CurationMaterial.seal(attempt.claim, frozen, sources, now, limits)
         val next = attempt.copy(state = CurationAttemptState.InputSealed, inputManifest = Some(material.manifest))
         validate(next, entries, limits)
@@ -121,9 +127,13 @@ object CurationGuards {
     else {
       check(Set(CurationAttemptState.InputSealed, CurationAttemptState.Running).contains(attempt.state), "audit append requires a sealed active attempt")
       lease(attempt.claim, current, now)
+      if (stage != CurationAuditStage.ResponseObserved) beforeDeadline(attempt.claim, now)
       val changed = entries :+ entry
       CurationJournal.validate(attempt.claim, changed, limits)
-      val next = attempt.copy(state = CurationAttemptState.Running, auditUncertain = CurationJournal.uncertain(changed))
+      val running = attempt.copy(state = CurationAttemptState.Running, auditUncertain = CurationJournal.uncertain(changed))
+      val next = if (stage == CurationAuditStage.ResponseObserved && !now.isBefore(instant(attempt.claim.deadlineAt)))
+        running.copy(state = CurationAttemptState.Failed, terminalCode = Some("curation-expired"), finishedAt = Some(now.toString))
+      else running
       validate(next, changed, limits)
       CurationAuditAppend(next, changed, false)
     }
@@ -134,6 +144,7 @@ object CurationGuards {
     validate(attempt, entries, limits)
     check(attempt.state == CurationAttemptState.Running, "publication requires Running state")
     lease(attempt.claim, current, now)
+    beforeDeadline(attempt.claim, now)
     candidate(attempt, entries, value)
     check(!now.isBefore(instant(entries.last.observedAt)), "publication precedes retained evidence")
     check(attempt.candidate.forall(_ == value), "candidate already differs")

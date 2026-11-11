@@ -33,7 +33,7 @@ object CurationMaterial {
   def seal(claim: CurationClaim, graph: GraphSnapshot, sources: List[CapturedEvent], at: Instant, limits: CurationGuardLimits): SealedCurationInput = {
     check(claim.admissionLimits == limits.toWire, "seal admission limits differ from claim")
     frozen(claim, graph, sources)
-    check(!at.isBefore(instant(claim.claimedAt)), "input seal precedes claim")
+    check(!at.isBefore(instant(claim.claimedAt)) && at.isBefore(instant(claim.deadlineAt)), "input seal is outside claim admission interval")
     val seed = Graph.records(graph)
     check(seed.map(Graph.recordRef).distinct.size == seed.size && seed.size.toLong + sources.size.toLong <= limits.maxPins, "invalid or oversized frozen pin set")
     val input = CurationInput(claim.scope, claim.baseGeneration, claim.frontier, claim.previousCoveredFrontier, seed, sources)

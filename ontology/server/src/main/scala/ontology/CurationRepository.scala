@@ -6,12 +6,12 @@ import java.util.UUID
 import ontology.api.*
 import ontology.domain.*
 
-final case class CurationStoreSettings(principal: Principal, service: Actor, scopes: Set[String], leaseDuration: Duration,
+final case class CurationStoreSettings(principal: Principal, service: Actor, scopes: Set[String], leaseDuration: Duration, attemptDuration: Duration,
   guards: CurationGuardLimits, maxScanScopes: Int, maxRecoveryAttempts: Int) {
   Require(principal.actor.kind == ActorKind.Agent && principal.actor.id.trim.nonEmpty && service.kind == ActorKind.Service && service.id.trim.nonEmpty,
     "config", "curator Agent and service identity required")
   Require(scopes.nonEmpty && scopes.forall(_.trim.nonEmpty), "config", "explicit curation scopes required")
-  Require(!leaseDuration.isZero && !leaseDuration.isNegative && maxScanScopes > 0 && maxRecoveryAttempts > 0, "config", "positive curation lease and capacities required")
+  Require(!leaseDuration.isZero && !leaseDuration.isNegative && !attemptDuration.isZero && !attemptDuration.isNegative && maxScanScopes > 0 && maxRecoveryAttempts > 0, "config", "positive curation lease and capacities required")
   scopes.foreach { scope => principal.require(scope, Capability.Read); principal.require(scope, Capability.Mutate) }
 }
 final case class CurationProfilePin(id: String, profileDigest: String, schemaDigest: String)

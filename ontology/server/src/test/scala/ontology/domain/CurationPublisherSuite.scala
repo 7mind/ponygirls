@@ -28,7 +28,7 @@ final class CurationPublisherSuite extends FunSuite {
   private val fence = CoordinatorFence(UUID.randomUUID(), 1L)
   private val lease = CoordinatorLease(fence, at.toString, at.toString, at.plusSeconds(60).toString)
   private val claim = CurationClaim(UUID.randomUUID(), scope, fence, graph.generation, graph.sourceFrontier, graph.coveredFrontier, limits.toWire, "fixture",
-    "a" * 64, "b" * 64, CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), at.toString)
+    "a" * 64, "b" * 64, CurationMaterial.graphDigest(graph), CurationMaterial.sourceDigest(sources), at.toString, at.plusSeconds(120).toString)
   private val material = CurationMaterial.seal(claim, graph, sources, at.plusSeconds(1), limits)
   private def payload(json: Json): CurationAuditPayload = {
     val text = json.noSpaces
@@ -73,6 +73,13 @@ final class CurationPublisherSuite extends FunSuite {
     val result = publish(value)
     val different = result.publication.copy(input = Ref(UUID.randomUUID(), 1))
     assertEquals(intercept[Fault](CurationGuards.validate(result.attempt.copy(publication = Some(different)), value.entries, limits)).code, "curation")
+  }
+
+  test("historical publication validation rejects admission at its retained deadline") {
+    val value = proposed(Nil)
+    val result = publish(value)
+    val expired = result.attempt.copy(claim = result.attempt.claim.copy(deadlineAt = result.publication.recordedAt))
+    assertEquals(intercept[Fault](CurationGuards.validate(expired, value.entries, limits)).code, "curation")
   }
 
   test("nonempty curation acquires Curation provenance during ordinary semantic admission") {

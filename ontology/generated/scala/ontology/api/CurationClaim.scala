@@ -17,7 +17,8 @@ package ontology.api {
     schemaDigest: String,
     graphDigest: String,
     sourceCutDigest: String,
-    claimedAt: String
+    claimedAt: String,
+    deadlineAt: String
   ) extends BaboonGeneratedLatest {
     override def baboonDomainVersion: String = CurationClaim.baboonDomainVersion
     override def baboonDomainIdentifier: String = CurationClaim.baboonDomainIdentifier
@@ -59,7 +60,8 @@ package ontology.api {
         "schemaDigest" -> Json.fromString(value.schemaDigest),
         "graphDigest" -> Json.fromString(value.graphDigest),
         "sourceCutDigest" -> Json.fromString(value.sourceCutDigest),
-        "claimedAt" -> Json.fromString(value.claimedAt)
+        "claimedAt" -> Json.fromString(value.claimedAt),
+        "deadlineAt" -> Json.fromString(value.deadlineAt)
       )
     }
     
@@ -83,7 +85,8 @@ package ontology.api {
             graphDigest <- getField(jsonObject, "graphDigest").flatMap(v => decodeString(v.hcursor))
             sourceCutDigest <- getField(jsonObject, "sourceCutDigest").flatMap(v => decodeString(v.hcursor))
             claimedAt <- getField(jsonObject, "claimedAt").flatMap(v => decodeString(v.hcursor))
-          } yield CurationClaim(attemptId,scope,fence,baseGeneration,frontier,previousCoveredFrontier,admissionLimits,profileId,profileDigest,schemaDigest,graphDigest,sourceCutDigest,claimedAt)
+            deadlineAt <- getField(jsonObject, "deadlineAt").flatMap(v => decodeString(v.hcursor))
+          } yield CurationClaim(attemptId,scope,fence,baseGeneration,frontier,previousCoveredFrontier,admissionLimits,profileId,profileDigest,schemaDigest,graphDigest,sourceCutDigest,claimedAt,deadlineAt)
         case _ => Left(new IllegalArgumentException("Cannot decode $wire to CurationClaim: object expected"))
       }
     }
