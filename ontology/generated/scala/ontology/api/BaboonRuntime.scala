@@ -28,6 +28,7 @@ package ontology.api {
     register("ontology.api/:#CaptureMetadata", Lazy(CaptureMetadata_JsonCodec))
     register("ontology.api/:#ActorRecord", Lazy(ActorRecord_JsonCodec))
     register("ontology.api/:#ScopeSummary", Lazy(ScopeSummary_JsonCodec))
+    register("ontology.api/:#RelationDetailInput", Lazy(RelationDetailInput_JsonCodec))
     register("ontology.api/:#GraphSnapshot", Lazy(GraphSnapshot_JsonCodec))
     register("ontology.api/:#Target", Lazy(Target_JsonCodec))
     register("ontology.api/:#Phase", Lazy(Phase_JsonCodec))
@@ -47,7 +48,9 @@ package ontology.api {
     register("ontology.api/:#RelationKind", Lazy(RelationKind_JsonCodec))
     register("ontology.api/:#StateEvent", Lazy(StateEvent_JsonCodec))
     register("ontology.api/:#AdoptionOrigin", Lazy(AdoptionOrigin_JsonCodec))
+    register("ontology.api/:#ContentInput", Lazy(ContentInput_JsonCodec))
     register("ontology.api/:#Execution", Lazy(Execution_JsonCodec))
+    register("ontology.api/:#AcceptanceInput", Lazy(AcceptanceInput_JsonCodec))
     register("ontology.api/:#CaptureContext", Lazy(CaptureContext_JsonCodec))
     register("ontology.api/:#RelationDetail", Lazy(RelationDetail_JsonCodec))
     register("ontology.api/:#DeliveryRequest", Lazy(DeliveryRequest_JsonCodec))
@@ -74,6 +77,7 @@ package ontology.api {
     register("ontology.api/:#Correction", Lazy(Correction_JsonCodec))
     register("ontology.api/:#SourceResult", Lazy(SourceResult_JsonCodec))
     register("ontology.api/:#Ack", Lazy(Ack_JsonCodec))
+    register("ontology.api/:#ApplicabilityContextInput", Lazy(ApplicabilityContextInput_JsonCodec))
     register("ontology.api/:#Standing", Lazy(Standing_JsonCodec))
     register("ontology.api/:#Observation", Lazy(Observation_JsonCodec))
     register("ontology.api/:#Polarity", Lazy(Polarity_JsonCodec))
@@ -97,6 +101,7 @@ package ontology.api {
     register("ontology.api/:#ScopesResult", Lazy(ScopesResult_JsonCodec))
     register("ontology.api/:#GraphRecord", Lazy(GraphRecord_JsonCodec))
     register("ontology.api/:#CurationState", Lazy(CurationState_JsonCodec))
+    register("ontology.api/:#ApplicabilityInput", Lazy(ApplicabilityInput_JsonCodec))
     register("ontology.api/:#Assessment", Lazy(Assessment_JsonCodec))
   }
 }

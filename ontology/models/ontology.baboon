@@ -63,11 +63,36 @@ enum Resolution { Fulfilled NotFulfilled Inconclusive }
 data StateEvent { ref: Ref scope: str subject: Ref previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Ref] uncertainty: str provenance: Provenance }
 
 adt Target { data Exact { ref: Ref } data Created { alias: str } }
+data AcceptanceInput { clauses: lst[str] question: opt[Target] }
+adt ApplicabilityContextInput { data Capture { source: Target } data Subject { ref: Target } }
+adt ApplicabilityInput {
+ data Unresolved { reason: str basis: lst[Target] context: lst[ApplicabilityContextInput] }
+ data Declared { statement: str basis: lst[Target] context: lst[ApplicabilityContextInput] }
+}
+adt ContentInput {
+ data Outcome { text: str acceptance: AcceptanceInput force: Force }
+ data Constraint { text: str polarity: Polarity force: Force }
+ data Task { text: str acceptance: AcceptanceInput execution: Execution }
+ data Statement { text: str modality: Modality }
+ data Hypothesis { text: str prediction: str }
+ data Defect { text: str observed: str expected: str reproduction: str affected: lst[Target] correction: Correction }
+ data Question { text: str alternatives: lst[str] answer: opt[str] escalation: Escalation }
+ data Decision { text: str alternatives: lst[str] rationale: str }
+ data Review { text: str findings: lst[str] subjects: lst[Target] basis: lst[Target] uncertainty: str assessment: Assessment }
+ data Conflict { text: str subjects: lst[Target] status: ConflictState resolution: opt[str] uncertainty: str }
+}
+adt RelationDetailInput {
+ data Empty {}
+ data Dependency { gate: Gate consumption: Consumption event: opt[Target] applicability: str }
+ data Decomposition { grouping: Grouping }
+ data Delegation { actors: lst[str] operations: lst[str] outcomes: lst[Target] }
+ data Adoption { presentationId: uid origin: AdoptionOrigin }
+}
 adt Operation {
- data Create { alias: str applicability: Applicability content: Content basis: lst[Target] }
- data Revise { alias: str ref: Ref applicability: Applicability content: Content standing: Standing basis: lst[Target] reason: str }
- data Relate { alias: str applicability: Applicability kind: RelationKind sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str }
- data ReviseRelation { alias: str ref: Ref applicability: Applicability sources: lst[Target] targets: lst[Target] detail: RelationDetail why: str standing: Standing }
+ data Create { alias: str applicability: ApplicabilityInput content: ContentInput basis: lst[Target] }
+ data Revise { alias: str ref: Ref applicability: ApplicabilityInput content: ContentInput standing: Standing basis: lst[Target] reason: str }
+ data Relate { alias: str applicability: ApplicabilityInput kind: RelationKind sources: lst[Target] targets: lst[Target] detail: RelationDetailInput why: str }
+ data ReviseRelation { alias: str ref: Ref applicability: ApplicabilityInput sources: lst[Target] targets: lst[Target] detail: RelationDetailInput why: str standing: Standing }
  data Bind { alias: str definition: Target context: lst[Target] }
  data State { alias: str subject: Target previous: opt[Ref] phase: Phase result: opt[Resolution] resolution: opt[str] evidence: lst[Target] uncertainty: str }
 }

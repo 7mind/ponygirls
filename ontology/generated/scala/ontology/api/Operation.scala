@@ -16,8 +16,8 @@ package ontology.api {
   object Operation {
     final case class Create(
       alias: String,
-      applicability: Applicability,
-      content: Content,
+      applicability: ApplicabilityInput,
+      content: ContentInput,
       basis: List[Target]
     ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
       override def baboonDomainVersion: String = Operation.Create.baboonDomainVersion
@@ -53,8 +53,8 @@ package ontology.api {
         
         Json.obj(
           "alias" -> Json.fromString(value.alias),
-          "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability),
-          "content" -> Content_JsonCodec.instance.encode(ctx, value.content),
+          "applicability" -> ApplicabilityInput_JsonCodec.instance.encode(ctx, value.applicability),
+          "content" -> ContentInput_JsonCodec.instance.encode(ctx, value.content),
           "basis" -> Json.fromValues(value.basis.map(e => Target_JsonCodec.instance.encode(ctx, e)))
         )
       }
@@ -67,8 +67,8 @@ package ontology.api {
         wire.asObject match {
           case Some(jsonObject) => for {
               alias <- getField(jsonObject, "alias").flatMap(v => decodeString(v.hcursor))
-              applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
-              content <- getField(jsonObject, "content").flatMap(v => Content_JsonCodec.circeDecoder(v.hcursor))
+              applicability <- getField(jsonObject, "applicability").flatMap(v => ApplicabilityInput_JsonCodec.circeDecoder(v.hcursor))
+              content <- getField(jsonObject, "content").flatMap(v => ContentInput_JsonCodec.circeDecoder(v.hcursor))
               basis <- getField(jsonObject, "basis").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
             } yield Operation.Create(alias,applicability,content,basis)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to Create: object expected"))
@@ -94,8 +94,8 @@ package ontology.api {
     final case class Revise(
       alias: String,
       ref: Ref,
-      applicability: Applicability,
-      content: Content,
+      applicability: ApplicabilityInput,
+      content: ContentInput,
       standing: Standing,
       basis: List[Target],
       reason: String
@@ -134,8 +134,8 @@ package ontology.api {
         Json.obj(
           "alias" -> Json.fromString(value.alias),
           "ref" -> Ref_JsonCodec.instance.encode(ctx, value.ref),
-          "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability),
-          "content" -> Content_JsonCodec.instance.encode(ctx, value.content),
+          "applicability" -> ApplicabilityInput_JsonCodec.instance.encode(ctx, value.applicability),
+          "content" -> ContentInput_JsonCodec.instance.encode(ctx, value.content),
           "standing" -> Standing_JsonCodec.instance.encode(ctx, value.standing),
           "basis" -> Json.fromValues(value.basis.map(e => Target_JsonCodec.instance.encode(ctx, e))),
           "reason" -> Json.fromString(value.reason)
@@ -151,8 +151,8 @@ package ontology.api {
           case Some(jsonObject) => for {
               alias <- getField(jsonObject, "alias").flatMap(v => decodeString(v.hcursor))
               ref <- getField(jsonObject, "ref").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
-              applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
-              content <- getField(jsonObject, "content").flatMap(v => Content_JsonCodec.circeDecoder(v.hcursor))
+              applicability <- getField(jsonObject, "applicability").flatMap(v => ApplicabilityInput_JsonCodec.circeDecoder(v.hcursor))
+              content <- getField(jsonObject, "content").flatMap(v => ContentInput_JsonCodec.circeDecoder(v.hcursor))
               standing <- getField(jsonObject, "standing").flatMap(v => Standing_JsonCodec.circeDecoder(v.hcursor))
               basis <- getField(jsonObject, "basis").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
               reason <- getField(jsonObject, "reason").flatMap(v => decodeString(v.hcursor))
@@ -179,11 +179,11 @@ package ontology.api {
     
     final case class Relate(
       alias: String,
-      applicability: Applicability,
+      applicability: ApplicabilityInput,
       kind: RelationKind,
       sources: List[Target],
       targets: List[Target],
-      detail: RelationDetail,
+      detail: RelationDetailInput,
       why: String
     ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
       override def baboonDomainVersion: String = Operation.Relate.baboonDomainVersion
@@ -219,11 +219,11 @@ package ontology.api {
         
         Json.obj(
           "alias" -> Json.fromString(value.alias),
-          "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability),
+          "applicability" -> ApplicabilityInput_JsonCodec.instance.encode(ctx, value.applicability),
           "kind" -> RelationKind_JsonCodec.instance.encode(ctx, value.kind),
           "sources" -> Json.fromValues(value.sources.map(e => Target_JsonCodec.instance.encode(ctx, e))),
           "targets" -> Json.fromValues(value.targets.map(e => Target_JsonCodec.instance.encode(ctx, e))),
-          "detail" -> RelationDetail_JsonCodec.instance.encode(ctx, value.detail),
+          "detail" -> RelationDetailInput_JsonCodec.instance.encode(ctx, value.detail),
           "why" -> Json.fromString(value.why)
         )
       }
@@ -236,11 +236,11 @@ package ontology.api {
         wire.asObject match {
           case Some(jsonObject) => for {
               alias <- getField(jsonObject, "alias").flatMap(v => decodeString(v.hcursor))
-              applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
+              applicability <- getField(jsonObject, "applicability").flatMap(v => ApplicabilityInput_JsonCodec.circeDecoder(v.hcursor))
               kind <- getField(jsonObject, "kind").flatMap(v => RelationKind_JsonCodec.circeDecoder(v.hcursor))
               sources <- getField(jsonObject, "sources").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
               targets <- getField(jsonObject, "targets").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
-              detail <- getField(jsonObject, "detail").flatMap(v => RelationDetail_JsonCodec.circeDecoder(v.hcursor))
+              detail <- getField(jsonObject, "detail").flatMap(v => RelationDetailInput_JsonCodec.circeDecoder(v.hcursor))
               why <- getField(jsonObject, "why").flatMap(v => decodeString(v.hcursor))
             } yield Operation.Relate(alias,applicability,kind,sources,targets,detail,why)
           case _ => Left(new IllegalArgumentException("Cannot decode $wire to Relate: object expected"))
@@ -266,10 +266,10 @@ package ontology.api {
     final case class ReviseRelation(
       alias: String,
       ref: Ref,
-      applicability: Applicability,
+      applicability: ApplicabilityInput,
       sources: List[Target],
       targets: List[Target],
-      detail: RelationDetail,
+      detail: RelationDetailInput,
       why: String,
       standing: Standing
     ) extends Operation with BaboonAdtMemberMeta with BaboonGeneratedLatest {
@@ -307,10 +307,10 @@ package ontology.api {
         Json.obj(
           "alias" -> Json.fromString(value.alias),
           "ref" -> Ref_JsonCodec.instance.encode(ctx, value.ref),
-          "applicability" -> Applicability_JsonCodec.instance.encode(ctx, value.applicability),
+          "applicability" -> ApplicabilityInput_JsonCodec.instance.encode(ctx, value.applicability),
           "sources" -> Json.fromValues(value.sources.map(e => Target_JsonCodec.instance.encode(ctx, e))),
           "targets" -> Json.fromValues(value.targets.map(e => Target_JsonCodec.instance.encode(ctx, e))),
-          "detail" -> RelationDetail_JsonCodec.instance.encode(ctx, value.detail),
+          "detail" -> RelationDetailInput_JsonCodec.instance.encode(ctx, value.detail),
           "why" -> Json.fromString(value.why),
           "standing" -> Standing_JsonCodec.instance.encode(ctx, value.standing)
         )
@@ -325,10 +325,10 @@ package ontology.api {
           case Some(jsonObject) => for {
               alias <- getField(jsonObject, "alias").flatMap(v => decodeString(v.hcursor))
               ref <- getField(jsonObject, "ref").flatMap(v => Ref_JsonCodec.circeDecoder(v.hcursor))
-              applicability <- getField(jsonObject, "applicability").flatMap(v => Applicability_JsonCodec.circeDecoder(v.hcursor))
+              applicability <- getField(jsonObject, "applicability").flatMap(v => ApplicabilityInput_JsonCodec.circeDecoder(v.hcursor))
               sources <- getField(jsonObject, "sources").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
               targets <- getField(jsonObject, "targets").flatMap(v => decodeList(Target_JsonCodec.circeDecoder)(v.hcursor))
-              detail <- getField(jsonObject, "detail").flatMap(v => RelationDetail_JsonCodec.circeDecoder(v.hcursor))
+              detail <- getField(jsonObject, "detail").flatMap(v => RelationDetailInput_JsonCodec.circeDecoder(v.hcursor))
               why <- getField(jsonObject, "why").flatMap(v => decodeString(v.hcursor))
               standing <- getField(jsonObject, "standing").flatMap(v => Standing_JsonCodec.circeDecoder(v.hcursor))
             } yield Operation.ReviseRelation(alias,ref,applicability,sources,targets,detail,why,standing)

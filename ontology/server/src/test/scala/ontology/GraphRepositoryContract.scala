@@ -13,7 +13,7 @@ abstract class GraphRepositoryContract extends FunSuite {
   protected def repository: Resource[IO, GraphRepository]
   override def afterAll(): Unit = runtime.shutdown()
   private def check(f: GraphRepository => IO[Unit]): Unit = repository.use(f).unsafeRunSync()(runtime)
-  protected def request(scope: String, generation: Long, text: String): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("claim", ontology.TestApplicability.unresolved, Content.Statement(text, Modality.Assertion), Nil)))
+  protected def request(scope: String, generation: Long, text: String): ApplyRequest = ApplyRequest(scope, UUID.randomUUID(), generation, List(Operation.Create("claim", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement(text, Modality.Assertion)), Nil)))
   protected def admission(r: ApplyRequest): Admission = Admission(Actor("test-agent", ActorKind.Agent), Actor("test-host", ActorKind.Service), r.requestId, "2026-11-10T00:00:00Z")
   private def scope(): String = "contract-" + UUID.randomUUID()
 
@@ -134,7 +134,7 @@ abstract class GraphRepositoryContract extends FunSuite {
     val name = scope()
     val question = Content.Question("Which evidence is missing?", Nil, None, Escalation.HumanRequired)
     val opened = ApplyRequest(name, UUID.randomUUID(), 0L, List(
-      Operation.Create("question", TestApplicability.unresolved, question, Nil),
+      Operation.Create("question", ontology.TestAuthoring.applicability(TestApplicability.unresolved), ontology.TestAuthoring.content(question), Nil),
       Operation.Bind("binding", Target.Created("question"), Nil),
       Operation.State("open", Target.Created("binding"), None, Phase.Open, None, None, Nil, "Unanswered")))
     for {
@@ -153,6 +153,37 @@ abstract class GraphRepositoryContract extends FunSuite {
       _ = assertEquals(current.definitions.head.content, question)
       receipt <- repo.input(name, Ref(current.events.last.provenance.input, 1))
       _ = assertEquals(StoredJson.decode(ApplyRequest.codecJson, receipt.content), close)
+    } yield ()
+  } }
+  test("nested authoring publishes exact records and preserves original aliases atomically") { check { repo =>
+    val name = scope()
+    val applicability = ApplicabilityInput.Unresolved("Fixture does not assert semantic applicability", Nil, Nil)
+    val r = ApplyRequest(name, UUID.randomUUID(), 0L, List(
+      Operation.Create("question", applicability, ContentInput.Question("Which acceptance applies?", Nil, None, Escalation.Unresolved), Nil),
+      Operation.Create("task", applicability, ContentInput.Task("Build", AcceptanceInput(Nil, Some(Target.Created("question"))), Execution.Delegated), Nil),
+      Operation.Bind("binding", Target.Created("task"), Nil),
+      Operation.Create("review", applicability, ContentInput.Review("Review", Nil, List(Target.Created("binding")), List(Target.Created("question")), "No conclusion", Assessment.Unassessed), Nil),
+      Operation.Create("defect", applicability, ContentInput.Defect("Gap", "Observed", "Expected", "Reproduction", List(Target.Created("binding")), Correction.Unresolved), Nil),
+      Operation.Create("conflict", applicability, ContentInput.Conflict("Conflict", List(Target.Created("task")), ConflictState.Open, None, "Unresolved"), Nil)))
+    for {
+      result <- repo.apply(r, admission(r))
+      graph <- repo.read(name)
+      aliases = result.created.map(value => value.alias -> value.ref).toMap
+      _ = assertEquals(Graph.node(graph, aliases("task")).content.asInstanceOf[Content.Task].acceptance.question, Some(aliases("question")))
+      _ = assertEquals(Graph.node(graph, aliases("review")).content.asInstanceOf[Content.Review].subjects, List(aliases("binding")))
+      _ = assertEquals(Graph.node(graph, aliases("defect")).content.asInstanceOf[Content.Defect].affected, List(aliases("binding")))
+      _ = assertEquals(Graph.node(graph, aliases("conflict")).content.asInstanceOf[Content.Conflict].subjects, List(aliases("task")))
+      receipt <- repo.input(name, Ref(graph.definitions.head.provenance.input, 1))
+      _ = assertEquals(StoredJson.decode(ApplyRequest.codecJson, receipt.content), r)
+      bad = ApplyRequest(name, UUID.randomUUID(), result.generation, List(
+        Operation.Create("scratch", applicability, ContentInput.Statement("Would be rolled back", Modality.Assertion), Nil),
+        Operation.Create("invalid", applicability, ContentInput.Task("Unknown acceptance", AcceptanceInput(Nil, Some(Target.Created("future"))), Execution.Delegated), Nil)))
+      rejected <- repo.apply(bad, admission(bad)).attempt
+      _ = assertEquals(rejected.left.toOption.collect { case f: Fault => f.code }, Some("reference"))
+      after <- repo.read(name)
+      _ = assertEquals(after, graph)
+      missing <- repo.input(name, Ref(admission(bad).provenance.input, 1)).attempt
+      _ = assertEquals(missing.left.toOption.collect { case f: Fault => f.code }, Some("not-found"))
     } yield ()
   } }
   test("atomic snapshot, exact history and outbox agree") { check { repo =>
@@ -190,7 +221,7 @@ abstract class GraphRepositoryContract extends FunSuite {
     val r = request(scope(), 0L, "Original")
     for {
       _ <- repo.apply(r, admission(r))
-      bad <- repo.apply(r.copy(operations = List(Operation.Create("claim", ontology.TestApplicability.unresolved, Content.Statement("Changed", Modality.Assertion), Nil))), admission(r)).attempt
+      bad <- repo.apply(r.copy(operations = List(Operation.Create("claim", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("Changed", Modality.Assertion)), Nil))), admission(r)).attempt
       head <- repo.read(r.scope)
       _ = assertEquals(bad.left.toOption.collect { case f: Fault => f.code }, Some("replay-conflict"))
       _ = assertEquals(Graph.text(head.definitions.head.content), "Original")

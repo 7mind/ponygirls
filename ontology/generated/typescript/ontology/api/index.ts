@@ -1,6 +1,7 @@
 
 
 export * from './Acceptance.js';
+export * from './AcceptanceInput.js';
 export * from './Ack.js';
 export * from './Actor.js';
 export * from './ActorKind.js';
@@ -9,6 +10,8 @@ export * from './AdoptionOrigin.js';
 export * from './AliasRef.js';
 export * from './Applicability.js';
 export * from './ApplicabilityContext.js';
+export * from './ApplicabilityContextInput.js';
+export * from './ApplicabilityInput.js';
 export * from './ApplyRequest.js';
 export * from './ApplyResult.js';
 export * from './Assessment.js';
@@ -22,6 +25,7 @@ export * from './CapturedEvent.js';
 export * from './ConflictState.js';
 export * from './Consumption.js';
 export * from './Content.js';
+export * from './ContentInput.js';
 export * from './Correction.js';
 export * from './CurationProposal.js';
 export * from './CurationState.js';
@@ -69,6 +73,7 @@ export * from './ReadView.js';
 export * from './Ref.js';
 export * from './Relation.js';
 export * from './RelationDetail.js';
+export * from './RelationDetailInput.js';
 export * from './RelationKind.js';
 export * from './Resolution.js';
 export * from './ScopeRequest.js';

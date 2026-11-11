@@ -17,9 +17,9 @@ abstract class RdfProjectionContract extends FunSuite {
   protected def sample(scope: String): GraphSnapshot = {
     val id = UUID.randomUUID()
     new AdmissionEngine().apply(Graph.empty(scope), ApplyRequest(scope, id, 0L, List(
-      Operation.Create("a", ontology.TestApplicability.unresolved, Content.Statement("α\r\n引用 and \"quotes\"", Modality.Assertion), Nil),
-      Operation.Create("b", ontology.TestApplicability.unresolved, Content.Hypothesis("Competing proposition", "Discriminating prediction"), Nil),
-      Operation.Relate("r", ontology.TestApplicability.unresolved, RelationKind.Challenges, List(Target.Created("a")), List(Target.Created("b")), RelationDetail.Empty(), "Not a truth verdict")
+      Operation.Create("a", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Statement("α\r\n引用 and \"quotes\"", Modality.Assertion)), Nil),
+      Operation.Create("b", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), ontology.TestAuthoring.content(Content.Hypothesis("Competing proposition", "Discriminating prediction")), Nil),
+      Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Challenges, List(Target.Created("a")), List(Target.Created("b")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Not a truth verdict")
     )), Admission(Actor("agent", ActorKind.Agent), Actor("host", ActorKind.Service), id, "now")).snapshot
   }
   test("empty and populated snapshots roundtrip with exact identities and literals") { check { rdf =>

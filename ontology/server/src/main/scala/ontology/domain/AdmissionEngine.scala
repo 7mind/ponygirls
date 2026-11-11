@@ -33,30 +33,39 @@ final class AdmissionEngine {
       Require(!Graph.exists(graph, fresh), "identity", "new identity already exists")
       val published: Ref = operation match {
         case x: Operation.Create =>
-          writable(x.content); Graph.validateContent(graph, x.content); Applicabilities.validate(graph, x.applicability, false)
-          val d = Definition(fresh, graph.scope, x.applicability, x.content, Standing.Active, refs(x.basis), None, admission.provenance)
+          val content = Authoring.content(x.content, resolve)
+          val applicability = Authoring.applicability(x.applicability, resolve)
+          writable(content); Graph.validateContent(graph, content); Applicabilities.validate(graph, applicability, false)
+          val d = Definition(fresh, graph.scope, applicability, content, Standing.Active, refs(x.basis), None, admission.provenance)
           graph = graph.copy(definitions = graph.definitions :+ d); fresh
         case x: Operation.Revise =>
           val old = Graph.node(graph, x.ref)
           Require(Graph.definitions(graph).exists(_.ref == x.ref), "conflict", "definition revision changed")
-          writable(old.content); writable(x.content); Graph.validateContent(graph, x.content); Applicabilities.validate(graph, x.applicability, false)
+          writable(old.content)
+          val content = Authoring.content(x.content, resolve)
+          val applicability = Authoring.applicability(x.applicability, resolve)
+          writable(content); Graph.validateContent(graph, content); Applicabilities.validate(graph, applicability, false)
           Require(x.reason.trim.nonEmpty, "content", "revision reason required")
           val basis = refs(x.basis)
           Require(basis.nonEmpty, "basis", "revisions require an inspectable change basis")
           val next = Ref(old.ref.id, Math.addExact(old.ref.revision, 1))
-          graph = graph.copy(definitions = graph.definitions :+ Definition(next, graph.scope, x.applicability, x.content, x.standing, basis, Some(x.reason), admission.provenance)); next
+          graph = graph.copy(definitions = graph.definitions :+ Definition(next, graph.scope, applicability, content, x.standing, basis, Some(x.reason), admission.provenance)); next
         case x: Operation.Relate =>
-          Applicabilities.validate(graph, x.applicability, false)
-          val r = Relation(fresh, graph.scope, x.applicability, x.kind, refs(x.sources), refs(x.targets), x.detail, x.why, Standing.Active, admission.provenance)
+          val applicability = Authoring.applicability(x.applicability, resolve)
+          val detail = Authoring.relationDetail(x.detail, resolve)
+          Applicabilities.validate(graph, applicability, false)
+          val r = Relation(fresh, graph.scope, applicability, x.kind, refs(x.sources), refs(x.targets), detail, x.why, Standing.Active, admission.provenance)
           validateRelation(graph, r)
           graph = graph.copy(relations = graph.relations :+ r); fresh
         case x: Operation.ReviseRelation =>
           val old = Graph.relation(graph, x.ref)
           Require(Graph.relations(graph).exists(_.ref == x.ref), "conflict", "relation revision changed")
           val sources = refs(x.sources); val targets = refs(x.targets)
-          Require(old.sources == sources && old.targets == targets && old.detail == x.detail, "identity", "changed relation proposition requires explicit replacement")
-          Applicabilities.validate(graph, x.applicability, false)
-          val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), applicability = x.applicability, why = x.why, standing = x.standing, provenance = admission.provenance)
+          val detail = Authoring.relationDetail(x.detail, resolve)
+          Require(old.sources == sources && old.targets == targets && old.detail == detail, "identity", "changed relation proposition requires explicit replacement")
+          val applicability = Authoring.applicability(x.applicability, resolve)
+          Applicabilities.validate(graph, applicability, false)
+          val r = old.copy(ref = Ref(old.ref.id, Math.addExact(old.ref.revision, 1)), applicability = applicability, detail = detail, why = x.why, standing = x.standing, provenance = admission.provenance)
           validateRelation(graph, r); graph = graph.copy(relations = graph.relations :+ r); r.ref
         case x: Operation.Bind =>
           val b = Binding(fresh, graph.scope, resolve(x.definition), refs(x.context), admission.provenance)
