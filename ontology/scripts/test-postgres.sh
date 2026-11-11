@@ -29,7 +29,7 @@ chmod 600 "$base/password"
 export ONTOLOGY_TEST_JDBC_URL="jdbc:postgresql://127.0.0.1:$port/postgres"
 export ONTOLOGY_TEST_PASSWORD_FILE="$base/password"
 set +e
-bash scripts/backend-sbt.sh 'ontologyServer/Test/validationInventory' 'ontologyServer/testFull' 2>&1 | tee "$report/run.log"
+bash scripts/backend-sbt.sh 'ontologyServer/Test/validationInventory' 'ontologyServer/testFull' "$@" 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}
 set -e
 printf '%s\n' "$status" > "$report/exit-status"

@@ -22,7 +22,16 @@ nix run .#ontology -- check-config /absolute/config.json
 
 `ontology` combines the service JAR, a launcher using the pinned JVM, and dashboard assets. It is not an AOT/native executable. `ontology-web` builds and checks the locked frontend independently. `lib.mkOntologyPackage { inherit pkgs; }` exposes `serverArtifact`, `web`, `runtimeSource` and `sharedJavaRuntime`.
 
-Set `http.webRoot` explicitly to `${ontologyPackage.web}/share/ontology/web` in rendered configuration to serve the packaged dashboard. `null` remains valid for API-only use; the launcher supplies no web-root environment fallback. Package construction does not enable a service or supply runtime credentials.
+Set `http.webRoot` explicitly to `${ontologyPackage.web}/share/ontology/web` in rendered configuration to serve the packaged dashboard. Use that standalone web output, not the combined package's symlink tree: the static server rejects files resolving outside its configured root. `null` remains valid for API-only use; the launcher supplies no web-root environment fallback. Package construction does not enable a service or supply runtime credentials.
+
+Installed-artifact acceptance runs after the full suite against the same owned database:
+
+```bash
+nix develop .#backend --command bash ontology/scripts/test-postgres.sh \
+  "ontologyServer/Test/runMain ontology.PackagedRuntimeAcceptance /absolute/package-output /absolute/web-output/share/ontology/web /absolute/fresh-report-directory"
+```
+
+This invokes the installed launcher, checks exact asset bytes and security headers, exercises a controlled curation publication and RDF/SQL correspondence, and verifies listener shutdown and coordinator release. It does not drive a browser.
 
 ## Commands
 
@@ -48,4 +57,4 @@ External graph commands and designated captures/reviews atomically create primar
 
 Runtime resources stay in native Cats Resource scopes. Distage receives borrowed values and constructs the object graph; it does not close those resources again. The pinned mixed Scala/Cats graph is not routed through the incompatible `Lifecycle.fromCats` adapter.
 
-Controlled tests exercise real Auth/HTTP/MCP, PostgreSQL, loopback model transport, Native RDF, review and capsule paths, including shutdown and ownership denial. Those results are not genuine-Human participation, semantic-quality evidence, deployment, native-ELF acceptance or browser acceptance. Pi/worker integration and final integrated acceptance remain unfinished. Nix package builds and packaged `check-config` are smoke evidence, not acceptance of the installed service against PostgreSQL or a browser.
+Controlled tests exercise real Auth/HTTP/MCP, PostgreSQL, loopback model transport, Native RDF, review and capsule paths, including shutdown and ownership denial. Those results are not genuine-Human participation, semantic-quality evidence, deployment, native-ELF acceptance or browser acceptance. Pi/worker integration and final integrated acceptance remain unfinished. Nix package builds and packaged `check-config` are smoke evidence. The separate installed-artifact acceptance covers controlled PostgreSQL/HTTP/model/RDF execution, not a browser or semantic quality.
