@@ -53,7 +53,7 @@ source evidence until its replacement checks pass.
 | Logout | Ok | Origin/auth guards; revoke token-bound grants; clear session |
 | Whoami | Identity | live principal attribution, not role-based authorization |
 | ListArtifacts(query) | Catalogue(page) | all authenticated users; exact catalogue |
-| InitUpload(name,kind,visibility,expiresInSeconds,files) | UploadInitialized | atomic quota/session reservation; initial external password |
+| InitUpload(name,kind,visibility,expiresInSeconds,files,tags,hostname,projectPath) | UploadInitialized | atomic quota/session reservation; initial external password |
 | GetArtifact(artifactId) | ArtifactInfo | any authenticated user; expired=410 |
 | PatchArtifact(artifactId,patch) | ArtifactPatched | owner while incomplete; everyone when ready; external password only on transition |
 | DeleteArtifact(artifactId) | Ok | everyone, any state, frees reservation and revokes grants |
@@ -108,6 +108,34 @@ public anonymously or after a valid grant. Content expiry remains masked 404.
 explicit ADT `Keep {}`, `Clear {}`, or `Set {seconds}`. An empty name is never
 "keep". File manifests are immutable; Directory variants cannot carry sizes
 or hashes. Keep manifest entry ordering and every empty directory.
+
+## Artifact tags and provenance
+
+The sole-current contract adds `tags: lst[str]`, `hostname: opt[str]`, and
+`projectPath: opt[str]` to `Artifact` and `InitUpload`, and to `CatalogueQuery`
+and `SearchFilter`. Owned clients and server must be upgraded together. Empty
+metadata is `[]`, `null`, `null`; existing artifacts receive these values through
+a schema migration. Metadata is provided explicitly, never inferred from the
+server's hostname or a client's working directory, and cannot change through
+`ArtifactPatch`. It does not alter manifests, payload paths or authorization.
+
+Tags are unique exact strings: at most 32, each nonblank and at most 128 Unicode
+scalars. A supplied hostname is nonblank and at most 253 scalars; a supplied
+project path is nonblank and at most 4096 scalars. Values are retained without
+trimming, normalization or filesystem resolution. Invalid metadata or filters
+return `BadEnvelope`. These are descriptive labels, not verified host identities
+or server-accessible filesystem locations. Avoid sensitive provenance in public
+artifacts; every registered manager can read all metadata.
+
+Catalogue and all retrieval modes accept conjunctive, case-sensitive exact
+metadata filters; every requested tag must be present. Catalogue free text also
+matches casefolded literal substrings in these fields. Retrieval indexes these
+metadata fields alongside names and manifest paths, not file bytes. Evidence
+uses `Tag`, `Hostname` and `ProjectPath` with null manifest pointers. Metadata
+changes are included in source-version identity. Search expressions use
+`tag:<value>`, `hostname:<value>` and `project:<value>`; only `tag:` may repeat,
+and repeated values must be unique. These filters do not remove retrieval's
+nonblank-text requirement.
 
 ## Streaming and browser protocol adapters
 
@@ -205,8 +233,8 @@ Search is distinct from exact ListArtifacts. Lexical/Semantic/Hybrid are
 explicit; missing endpoint advertises Lexical only, unavailable requested mode
 returns typed failure, never silent fallback. Authorize ready/unexpired rows
 before every candidate limit/count/evidence selection, reauthorize at delivery.
-Corpus is approved artifact metadata + manifest paths only (Name/ManifestPath
-provenance); no credentials, hashes, passwords, grant values or binary contents.
+Corpus is approved artifact metadata + manifest paths only
+(Name/ManifestPath/Tag/Hostname/ProjectPath provenance); no credentials, hashes, passwords, grant values or binary contents.
 Ordinary writes/catalogue/serving do not call a model. Published hits carry
 sourceVersion/generationId/policyId/optional embeddingProfile/optional embeddingSpace and evidence.
 ExactMatches versus CandidateWindow + rankingLimit are explicit. Scores are
