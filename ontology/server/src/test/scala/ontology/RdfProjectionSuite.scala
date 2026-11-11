@@ -22,6 +22,36 @@ abstract class RdfProjectionContract extends FunSuite {
       Operation.Relate("r", ontology.TestAuthoring.applicability(ontology.TestApplicability.unresolved), RelationKind.Challenges, List(Target.Created("a")), List(Target.Created("b")), ontology.TestAuthoring.detail(RelationDetail.Empty()), "Not a truth verdict")
     ), None), Admission(ontology.TestContexts.principal(scope, Actor("agent", ActorKind.Agent)), Actor("host", ActorKind.Service), id, "now", ontology.TestContexts.trace("fixture-apply"), Nil)).snapshot
   }
+  test("local exact-cut observation distinguishes absent older matching and newer projections") { check { rdf =>
+    val readiness = new LocalExactRdfReadiness(rdf)
+    val empty = Graph.empty("probe")
+    val populated = sample("probe")
+    for {
+      absent <- readiness.generation(empty)
+      _ = assertEquals(absent, None)
+      _ <- rdf.publish(empty)
+      zero <- readiness.generation(empty)
+      older <- readiness.generation(populated)
+      _ = assertEquals(zero, Some(0L))
+      _ = assertEquals(older, None)
+      _ <- rdf.publish(populated)
+      exact <- readiness.generation(populated)
+      newer <- readiness.generation(empty)
+      _ = assertEquals(exact, Some(1L))
+      _ = assertEquals(newer, None)
+      unchanged <- rdf.snapshot("probe", 1L)
+      _ = assertEquals(unchanged, populated)
+    } yield ()
+  } }
+  test("local exact-cut observation rejects internally consistent content from another authority") { check { rdf =>
+    val expected = sample("probe")
+    val different = sample("probe")
+    for {
+      _ <- rdf.publish(different)
+      result <- new LocalExactRdfReadiness(rdf).generation(expected).attempt
+      _ = assertEquals(result.left.toOption.collect { case f: Fault => f.code }, Some("projection-conflict"))
+    } yield ()
+  } }
   test("empty and populated snapshots roundtrip with exact identities and literals") { check { rdf =>
     val graph = sample("s")
     for {

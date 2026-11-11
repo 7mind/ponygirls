@@ -62,10 +62,15 @@ final class Rdf4jProjection(repository: Repository, queryDeadlineSeconds: Int) e
       }
     }
   private def generation(c: RepositoryConnection, scope: String): Option[Long] = field(c, scope, "generation").map { value =>
-    try value.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF generation") }
+    val parsed = try value.toLong catch { case _: NumberFormatException => throw Fault("corrupt", "invalid RDF generation") }
+    Require(parsed >= 0L, "corrupt", "negative RDF generation")
+    parsed
   }
-  private def requireGeneration(c: RepositoryConnection, scope: String, expected: Long): Unit =
-    Require(generation(c, scope).contains(expected), "projection-lag", "requested graph revision is not projected")
+  private def requireGeneration(c: RepositoryConnection, scope: String, expected: Long): Unit = {
+    val actual = generation(c, scope)
+    Require(actual.nonEmpty || !c.hasStatement(null, null, null, false, graph(scope)), "corrupt", "nonempty RDF dataset has no generation checkpoint")
+    Require(actual.contains(expected), "projection-lag", "requested graph revision is not projected")
+  }
   private def requireScope(snapshot: GraphSnapshot): Unit = {
     Graph.validateCounters(snapshot)
     Require((snapshot.definitions.map(_.scope) ++ snapshot.relations.map(_.scope) ++ snapshot.bindings.map(_.scope) ++ snapshot.events.map(_.scope) ++ snapshot.selections.map(_.scope)).forall(_ == snapshot.scope), "scope", "projected record scope differs from dataset scope")
