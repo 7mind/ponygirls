@@ -134,7 +134,10 @@ try {
       const initialHash = await page.evaluate(()=>location.hash);
       const initialCommands = commands.length;
       const copy = page.locator('#artifact-list [data-action=copy-link]').first();
-      await copy.click();
+      await copy.focus();
+      assert(await copy.evaluate(node=>node===document.activeElement),'copy control accepts keyboard focus');
+      assert.equal(await copy.evaluate(node=>getComputedStyle(node).outlineStyle),'solid','keyboard focus has a visible outline');
+      await page.keyboard.press('Enter');
       await page.waitForFunction(()=>document.querySelector('.record-copy-status').textContent==='Content link copied.');
       assert.equal(await page.evaluate(()=>navigator.clipboard.readText()), artifacts[0].contentUrl, 'native clipboard contains returned content URL only');
       assert.match(await copy.getAttribute('aria-label'),/^Content link copied for /);
@@ -301,6 +304,19 @@ try {
         for (const value of measurements) assert(value.scroll <= value.width + 1, `${width}/${colorScheme} ${selector}: ${JSON.stringify(value)}`);
       };
       await noOverflow('html, .topbar, #whoami, #results-panel, .artifacts, .artifacts th, .artifacts td');
+      const copyGeometry = await page.locator('#artifact-list > tr').evaluateAll(rows => rows.map(row => {
+        const copy = row.querySelector('.record-copy').getBoundingClientRect();
+        const heading = row.querySelector('.record-heading').getBoundingClientRect();
+        const badge = row.cells[1].querySelector('.type-badge').getBoundingClientRect();
+        return {width:copy.width,height:copy.height,headingDelta:copy.y+copy.height/2-heading.y-heading.height/2,badgeDelta:copy.y+copy.height/2-badge.y-badge.height/2};
+      }));
+      console.log(`copy geometry ${width}px ${colorScheme}: ${JSON.stringify(copyGeometry)}`);
+      for (const geometry of copyGeometry) {
+        assert.equal(geometry.width,24,'copy control is compact with a 24px hit area');
+        assert.equal(geometry.height,24,'copy control retains a 24px hit area');
+        assert(Math.abs(geometry.headingDelta)<=1,'copy control is centered beside the artifact name');
+        if(width>1350) assert(Math.abs(geometry.badgeDelta)<=2,'desktop copy control aligns with the kind badge');
+      }
       const density = await page.locator('#artifact-list tr').first().evaluate(row => {
         const cell = getComputedStyle(row.cells[0]), card = getComputedStyle(row);
         return {cellY:parseFloat(cell.paddingTop),cellX:parseFloat(cell.paddingLeft),cardY:parseFloat(card.paddingTop),cardX:parseFloat(card.paddingLeft),gap:parseFloat(card.rowGap)};
