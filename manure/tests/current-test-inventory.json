@@ -522,6 +522,7 @@
       "classification": "current",
       "requires": [],
       "tests": [
+        "test_current_target_harness.TargetHarnessSafetyTests.test_browser_fixture_metadata_defaults_use_current_schema",
         "test_current_target_harness.TargetHarnessSafetyTests.test_database_requires_explicit_createdb_opt_in_before_any_process",
         "test_current_target_harness.TargetHarnessSafetyTests.test_empty_or_non_argv_launcher_never_starts_a_process",
         "test_current_target_harness.TargetHarnessSafetyTests.test_missing_launcher_fails_not_skips_or_python_fallback",
