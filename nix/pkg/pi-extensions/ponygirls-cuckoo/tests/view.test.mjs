@@ -27,7 +27,7 @@ const tick = () => new Promise(setImmediate);
 
 test('REPRO: wrapped body lines do not clip at width (no lost characters)', async () => {
   // Long config line must be fully visible after scrolling, not truncated by PanelLayout
-  const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
+  const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const longIntro = 'Cuckoo: ON (session)\nGrowth: 15% relative (global); next inquiry: 23000 tokens (baseline 20000). This is a very long config line to test wrapping not clipping.\nPending: none.';
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   const showing = view.showReports(f.ctx, [report], longIntro);
@@ -40,7 +40,7 @@ test('REPRO: wrapped body lines do not clip at width (no lost characters)', asyn
 });
 
 test('REPRO: runtime error appears before detail, not after settings', async () => {
-  const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
+  const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const faultIntro = 'Error: Something failed\nCuckoo: OFF (global)\nGrowth: window 15 (global); next: waiting.';
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   const showing = view.showReports(f.ctx, [report], faultIntro);
@@ -70,7 +70,7 @@ test('REPRO: empty state has no table headers, only empty message', async () => 
 });
 
 test('REPRO: valid report detail meta shows saved self-report qualifier', async () => {
-  const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
+  const report = checkpoint('r', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   const showing = view.showReports(f.ctx, [report], '');
   await tick(); const panel = f.views[0].component;
@@ -82,7 +82,7 @@ test('REPRO: valid report detail meta shows saved self-report qualifier', async 
 
 test('REPRO: detail header wraps at narrow width preserving all metadata', async () => {
   // Long metadata: timestamp, current branch, entry id, qualifier — must all be recoverable
-  const entry = { type: 'custom', id: 'entry-abc-123', parentId: null, timestamp: '2026-11-08T12:00:00Z', customType: REPORT_TYPE, data: checkpoint('hist-req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] })) };
+  const entry = { type: 'custom', id: 'entry-abc-123', parentId: null, timestamp: '2026-11-08T12:00:00Z', customType: REPORT_TYPE, data: checkpoint('hist-req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] })) };
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   const showing = view.showHistory(f.ctx, [entry], [entry]);
   await tick(); const panel = f.views[0].component;
@@ -100,7 +100,7 @@ test('REPRO: detail header wraps at narrow width preserving all metadata', async
 
 test('REPRO: 40×24 fullscreen shows detail (not zero-height body)', async () => {
   const reports = [];
-  for (let i = 1; i <= 8; i++) reports.push(checkpoint(`req-${i}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'In progress '.repeat(5), obstacles: 'None known', issues: 'None known', bottlenecks: 'None known', eta: 'Unknown' }], rules: [] })));
+  for (let i = 1; i <= 8; i++) reports.push(checkpoint(`req-${i}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'In progress '.repeat(5), issues: [], eta: 'Unknown' }], rules: [] })));
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   const showing = view.showReports(f.ctx, reports, 'Cuckoo: ON (session)\nGrowth: 15% relative (global); next: 23000 tokens.\nPending: none.\nDefaults: /tmp/c.json\nUse /cuckoo history for saved answers.');
   await tick(); const panel = f.views[0].component;
@@ -123,7 +123,7 @@ test('REPRO: 40×24 fullscreen shows detail (not zero-height body)', async () =>
 });
 
 test('REPRO: column width arithmetic does not clip Status to "Statu" or "save…"', async () => {
-  const report = checkpoint('test-req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
+  const report = checkpoint('test-req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   const showing = view.showReports(f.ctx, [report], '');
   await tick(); const panel = f.views[0].component;
@@ -140,10 +140,10 @@ test('REPRO: column width arithmetic does not clip Status to "Statu" or "save…
 
 test('REPRO: selection change resets detail scroll to top', async () => {
   const long = checkpoint('long', JSON.stringify({
-    objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Obj ${i + 1}`, progress: 'P '.repeat(20), obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Unknown' })),
+    objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Obj ${i + 1}`, progress: 'P '.repeat(20), issues: [], eta: 'Unknown' })),
     rules: [],
   }));
-  const short = checkpoint('short', JSON.stringify({ objectives: [{ objective: 'Brief', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
+  const short = checkpoint('short', JSON.stringify({ objectives: [{ objective: 'Brief', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
   const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {});
   view.publish(f.ctx, [short, long], true, null);
   f.badge().handleMouse(click); await tick();
@@ -170,7 +170,7 @@ test('REPRO: empty table preserves intro/fault footer text', async () => {
 });
 
 test('REPRO: history view shows entry.id in detail metadata', async () => {
-  const entry = { type: 'custom', id: 'entry-abc-123', parentId: null, timestamp: '2026-11-08T01:00:00Z', customType: REPORT_TYPE, data: checkpoint('hist-req', JSON.stringify({ objectives: [{ objective: 'History task', progress: 'Seen', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] })) };
+  const entry = { type: 'custom', id: 'entry-abc-123', parentId: null, timestamp: '2026-11-08T01:00:00Z', customType: REPORT_TYPE, data: checkpoint('hist-req', JSON.stringify({ objectives: [{ objective: 'History task', progress: 'Seen', issues: [], eta: 'Complete' }], rules: [] })) };
   const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {});
   const showing = view.showHistory(f.ctx, [entry], [entry]);
   await tick(); const panel = f.views[0].component;
@@ -227,7 +227,7 @@ test('badge repeat-click, keyboard close and disposal share one view', async () 
 
 test('table navigation: j/k and arrows move selection, newest selected by default', async () => {
   const reports = [];
-  for (let i = 1; i <= 8; i++) reports.push(checkpoint(`req-${i}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'In progress', obstacles: 'None known', issues: 'None known', bottlenecks: 'None known', eta: 'Unknown' }], rules: [] })));
+  for (let i = 1; i <= 8; i++) reports.push(checkpoint(`req-${i}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'In progress', issues: [], eta: 'Unknown' }], rules: [] })));
   const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {});
   view.publish(f.ctx, reports, true, null);
   f.badge().handleMouse(click); await tick();
@@ -271,8 +271,8 @@ test('table navigation: j/k and arrows move selection, newest selected by defaul
 });
 
 test('detail pane shows selected checkpoint content and updates on selection change', async () => {
-  const r1 = checkpoint('first', JSON.stringify({ objectives: [{ objective: 'First task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
-  const r2 = checkpoint('second', JSON.stringify({ objectives: [{ objective: 'Second task', progress: 'Halfway', obstacles: 'Blocked', issues: 'Bug found', bottlenecks: 'Serial', eta: 'Tomorrow' }], rules: [] }));
+  const r1 = checkpoint('first', JSON.stringify({ objectives: [{ objective: 'First task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
+  const r2 = checkpoint('second', JSON.stringify({ objectives: [{ objective: 'Second task', progress: 'Halfway', issues: ['Blocked', 'Bug found', 'Serial'], eta: 'Tomorrow' }], rules: [] }));
   const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {});
   view.publish(f.ctx, [r1, r2], true, null);
   f.badge().handleMouse(click); await tick();
@@ -309,7 +309,7 @@ test('invalid report shows error detail with raw output, not parsed fields', asy
 
 test('detail scroll: ctrl-u/d and Home/End scroll detail independently of table', async () => {
   const long = checkpoint('long-report', JSON.stringify({
-    objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Objective ${i + 1}`, progress: 'Progress '.repeat(20), obstacles: 'None known', issues: 'None known', bottlenecks: 'None known', eta: 'Unknown' })),
+    objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Objective ${i + 1}`, progress: 'Progress '.repeat(20), issues: [], eta: 'Unknown' })),
     rules: [],
   }));
   const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {});
@@ -364,7 +364,7 @@ test('showHistory shows entries with timestamps and branch attribution', async (
 
 test('non-terminal view notifies full plain text via reportContent/historyContent', async () => {
   const f = fixture(theme); f.ctx.mode = 'rpc'; const view = new CuckooView(() => {});
-  const r = checkpoint('rpc-req', JSON.stringify({ objectives: [{ objective: 'RPC task', progress: 'Done', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [{ rule: 'Show mockups', source: 'user', scope: 'This change' }] }));
+  const r = checkpoint('rpc-req', JSON.stringify({ objectives: [{ objective: 'RPC task', progress: 'Done', issues: [], eta: 'Complete' }], rules: [{ rule: 'Show mockups', source: 'user', scope: 'This change' }] }));
   await view.showReports(f.ctx, [r], 'Cuckoo: ON\nGrowth policy: measured');
   assert.ok(f.notifications.length > 0);
   const msg = f.notifications[0][0];
@@ -394,7 +394,7 @@ test('panel advertises i and closes before requesting exactly one manual inquiry
 });
 
 test('settings and fault text appear in footer region', async () => {
-  const reports = [checkpoint('req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Started', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Unknown' }], rules: [] }))];
+  const reports = [checkpoint('req', JSON.stringify({ objectives: [{ objective: 'Task', progress: 'Started', issues: [], eta: 'Unknown' }], rules: [] }))];
   const styled = { fg: (token, text) => `<${token}>${text}</${token}>`, bg: (_token, text) => text, bold: text => `<b>${text}</b>` };
   const f = fixture(styled); f.resize(40); const view = new CuckooView(() => {});
   view.publish(f.ctx, reports, true, null);
@@ -414,7 +414,7 @@ test('settings and fault text appear in footer region', async () => {
 
 test('narrow layout adapts columns and table viewport is bounded', async () => {
   const reports = [];
-  for (let i = 1; i <= 12; i++) reports.push(checkpoint(`req-${String(i).padStart(3, '0')}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'Progress', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Unknown' }], rules: [] })));
+  for (let i = 1; i <= 12; i++) reports.push(checkpoint(`req-${String(i).padStart(3, '0')}`, JSON.stringify({ objectives: [{ objective: `Task ${i}`, progress: 'Progress', issues: [], eta: 'Unknown' }], rules: [] })));
   const f = fixture(theme); f.resize(24); const view = new CuckooView(() => {});
   view.publish(f.ctx, reports, true, null);
   f.badge().handleMouse(click); await tick();
@@ -439,7 +439,7 @@ test('narrow layout adapts columns and table viewport is bounded', async () => {
 });
 
 test('request IDs are sanitized of terminal control bytes', async () => {
-  const bad = checkpoint('req\x1b\x07\r\x9b-unsafe', JSON.stringify({ objectives: [{ objective: 'Safe', progress: 'Yes', obstacles: 'None', issues: 'None', bottlenecks: 'None', eta: 'Complete' }], rules: [] }));
+  const bad = checkpoint('req\x1b\x07\r\x9b-unsafe', JSON.stringify({ objectives: [{ objective: 'Safe', progress: 'Yes', issues: [], eta: 'Complete' }], rules: [] }));
   const f = fixture(theme); f.resize(40); const view = new CuckooView(() => {});
   view.publish(f.ctx, [bad], true, null);
   f.badge().handleMouse(click); await tick();

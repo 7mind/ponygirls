@@ -1,7 +1,7 @@
 import type { SessionEntry } from '@earendil-works/pi-coding-agent';
 import { wrapTextWithAnsi } from '@earendil-works/pi-tui';
 import type { UiFg, UiTheme } from '@ponygirls/pi-ui';
-import { checkpoints, historyText, REPORT_TYPE, reportText, type Checkpoint } from './report.ts';
+import { checkpoints, historyText, issuesText, REPORT_TYPE, reportText, type Checkpoint } from './report.ts';
 
 export interface CuckooContent {
   title: string;
@@ -56,9 +56,7 @@ export function checkpointDetail(theme: UiTheme, value: Checkpoint, width: numbe
     value.report.objectives.map((item, index) => [
       objectiveHeading(theme, item.objective, index, width),
       field(theme, 'Progress', item.progress, 'accent', width),
-      field(theme, 'Obstacles', item.obstacles, 'warning', width),
-      field(theme, 'Issues', item.issues, 'warning', width),
-      field(theme, 'Bottlenecks', item.bottlenecks, 'warning', width),
+      field(theme, 'Issues', issuesText(item.issues), 'warning', width),
       field(theme, 'ETA', item.eta, 'accent', width),
     ].join('\n')).join('\n\n');
   return `${heading(theme, 'Session-local rules', 'warning')}\n${rules}\n\n${objectives}`;

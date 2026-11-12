@@ -4,7 +4,7 @@ import { checkpoint, checkpoints, historyText, reportText, REPORT_TYPE } from '.
 import { historyContent, reportContent, terminalText } from '../src/presentation.ts';
 
 const theme = { fg: (token, text) => `<${token}>${text}</${token}>`, bold: text => `<b>${text}</b>`, bg: (_token, text) => text };
-const objective = { objective: 'Check identity', progress: 'Unknown completion', obstacles: 'None known', issues: 'Needs verification', bottlenecks: 'No measured bottleneck', eta: 'Unknown ETA' };
+const objective = { objective: 'Check identity', progress: 'Unknown completion', issues: ['Needs verification', 'No measured bottleneck'], eta: 'Unknown ETA' };
 const entry = (id, timestamp, value) => ({ type: 'custom', id, parentId: null, timestamp, customType: REPORT_TYPE, data: value });
 
 // Specified Behavioral-Active / Blackbox-Atomic: structured presentation, no terminal or inference.
@@ -16,7 +16,7 @@ test('plain reports stay unchanged; checkpoints are newest-first with original n
   const rendered = content.render(theme, 300);
   assert.ok(rendered.indexOf('Checkpoint 2') < rendered.indexOf('Checkpoint 1'));
   assert.ok(rendered.indexOf('Newest objective') < rendered.indexOf('Status and configuration'));
-  for (const value of Object.values(objective)) assert.ok(rendered.includes(value), value);
+  for (const value of Object.values(objective).flat()) assert.ok(rendered.includes(value), value);
   assert.doesNotMatch(rendered, /100%|completed|blocked/);
 });
 
@@ -30,8 +30,8 @@ test('history keeps all branches, request/entry/timestamp attribution, and legac
   assert.match(rendered, /Entry entry-old \(current branch\)/);
   assert.match(rendered, /Entry entry-new \(other branch\)/);
   assert.match(rendered, /request-old/); assert.match(rendered, /request-new/);
-  assert.equal((rendered.match(/Not recorded \(legacy report\)/g) ?? []).length, 4);
-  assert.equal(checkpoints([old])[0].report.objectives[0].obstacles, null);
+  assert.equal((rendered.match(/Not recorded \(legacy report\)/g) ?? []).length, 2);
+  assert.equal(checkpoints([old])[0].report.objectives[0].issues, null);
   assert.match(rendered, /No current objectives/);
   assert.match(rendered, /saved answers, not live verification/);
 });

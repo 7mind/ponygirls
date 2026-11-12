@@ -5,7 +5,7 @@ import { checkpoint, checkpoints, parseReport, reportText, historyText, REPORT_T
 import { reportContent, historyContent } from '../src/presentation.ts';
 import { INQUIRY } from '../src/state.ts';
 
-const objective = { objective: 'Improve Cuckoo', progress: 'Inspected the renderer', obstacles: 'Layout selection pending', issues: 'None known', bottlenecks: 'Awaiting selection', eta: 'Unknown: layout not selected' };
+const objective = { objective: 'Improve Cuckoo', progress: 'Inspected the renderer', issues: ['Layout selection pending'], eta: 'Unknown: layout not selected' };
 const rules = [{ rule: 'Show mockups before implementation.', source: 'user', scope: 'This UI change' }, { rule: 'Preserve cadence behavior.', source: 'assistant', scope: 'This change only' }];
 const raw = JSON.stringify({ objectives: [objective], rules });
 const plain = { fg: (_token, text) => text, bold: text => text };
@@ -26,7 +26,7 @@ test('current reports require bounded rules with explicit origin and applicabili
   }
   assert.throws(() => parseReport('{"objectives":[]}'));
   assert.throws(() => parseReport(JSON.stringify({ objectives: [], rules: [], extra: true })));
-  assert.equal(checkpoint('new', raw).version, 3);
+  assert.equal(checkpoint('new', raw).version, 4);
 });
 
 test('inquiry requests concise human-friendly prose without losing factual caveats', () => {
@@ -40,8 +40,8 @@ test('inquiry separates active local instructions from inherited policies and in
 });
 
 test('v1/v2 rules remain unrecorded, not confused with a current empty list; history preserves source/scope', () => {
-  const legacy = [entry('v1', { version: 1, requestId: 'v1', raw: '{"objectives":[]}', error: null }), entry('v2', { version: 2, requestId: 'v2', raw: JSON.stringify({ objectives: [objective] }), error: null })];
-  const current = entry('v3', checkpoint('v3', raw));
+  const legacy = [entry('v1', { version: 1, requestId: 'v1', raw: '{"objectives":[]}', error: null }), entry('v2', { version: 2, requestId: 'v2', raw: JSON.stringify({ objectives: [{ objective: 'Legacy', progress: 'Testing', obstacles: 'None known', issues: 'None known', bottlenecks: 'Serial', eta: 'Unknown' }] }), error: null })];
+  const current = entry('v4', checkpoint('v4', raw));
   for (const value of checkpoints(legacy)) assert.equal(value.report.rules, null);
   for (const text of [reportText(checkpoints(legacy)), reportContent(checkpoints(legacy), '').render(plain, 100)]) assert.equal((text.match(/Session rules not recorded \(legacy report\)/g) ?? []).length, 2);
   const noRules = checkpoint('empty', '{"objectives":[],"rules":[]}');
@@ -62,11 +62,12 @@ test('compact hierarchy uses inline fields, semantic headers and one rules secti
   assert.match(text, /<muted><b>Status and configuration<\/b><\/muted>/);
   assert.match(text, /<accent><b>user:<\/b><\/accent>/);
   assert.match(text, /<muted><b>assistant:<\/b><\/muted>/);
-  for (const [label, color] of [['Progress', 'accent'], ['Obstacles', 'warning'], ['Issues', 'warning'], ['Bottlenecks', 'warning'], ['ETA', 'accent']]) assert.match(text, new RegExp(`   <${color}><b>${label}:<\\/b><\\/${color}> +\\S`));
+  for (const [label, color] of [['Progress', 'accent'], ['Issues', 'warning'], ['ETA', 'accent']]) assert.match(text, new RegExp(`   <${color}><b>${label}:<\\/b><\\/${color}> +\\S`));
   const unstyled = reportContent([value], '').render(plain, 140);
   assert.equal((unstyled.match(/Session-local rules/g) ?? []).length, 1);
   assert.ok(unstyled.indexOf('Session-local rules') < unstyled.indexOf('1. Improve'));
-  assert.match(unstyled, /   Progress:    Inspected the renderer\n   Obstacles:/);
+  assert.match(unstyled, /   Progress:    Inspected the renderer\n   Issues:      - Layout selection pending/);
+  assert.doesNotMatch(unstyled, /Obstacles:|Bottlenecks:/);
   assert.ok(unstyled.split('\n').length <= 18, unstyled);
 });
 

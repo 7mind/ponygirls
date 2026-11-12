@@ -4,7 +4,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { stream as streamAnthropic } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { registerCuckoo } from '../index.ts';
 
-const raw = JSON.stringify({ objectives: [{ objective: 'Ship recall', progress: 'Testing', obstacles: 'None known', issues: 'None known', bottlenecks: 'Validation', eta: 'Unknown: tests pending' }], rules: [{ rule: 'Review before merging', source: 'assistant', scope: 'This change' }] });
+const raw = JSON.stringify({ objectives: [{ objective: 'Ship recall', progress: 'Testing', issues: ['Validation'], eta: 'Unknown: tests pending' }], rules: [{ rule: 'Review before merging', source: 'assistant', scope: 'This change' }] });
 function fixture() {
   const manager = SessionManager.inMemory(); const tools = new Map(); const handlers = new Map();
   const preferences = { path: 'memory:cuckoo', read: () => ({ enabled: false, policy: { kind: 'window', value: 15 } }), write() { assert.fail('recall must not write preferences'); } };
@@ -22,7 +22,7 @@ function fixture() {
     assert.match(result.details.notice, /authorization/i);
     return result.details;
   };
-  const save = (requestId, text = raw, error = null, version = 3, extra = {}) => manager.appendCustomEntry('cuckoo.report', { version, requestId, raw: text, error, ...extra });
+  const save = (requestId, text = raw, error = null, version = 4, extra = {}) => manager.appendCustomEntry('cuckoo.report', { version, requestId, raw: text, error, ...extra });
   return { manager, tools, handlers, ctx, preferences, call, save };
 }
 async function readAll(f, entryId, scope) {
@@ -97,12 +97,18 @@ test('cursor pagination stays stable when a newer round is saved and rejects mis
 test('read preserves exact raw text, validation failure and legacy unknown fields rather than inventing values', async () => {
   const f = fixture();
   const legacy = f.save('legacy', '{"objectives":[{"objective":"Earlier work","progress":"Pending"}]}', null, 1);
-  const v2 = f.save('v2', JSON.stringify({ objectives: JSON.parse(raw).objectives }), null, 2);
+  const old = { objective: 'Earlier work', progress: 'Testing', obstacles: 'None known', issues: 'A defect', bottlenecks: 'Serial', eta: 'Unknown' };
+  const v2 = f.save('v2', JSON.stringify({ objectives: [old] }), null, 2);
+  const v3Raw = JSON.stringify({ objectives: [old], rules: [] });
+  const v3 = f.save('v3', v3Raw, null, 3);
   const invalid = f.save('invalid', 'not JSON\n\u001b literal 🐦', null);
   const interrupted = f.save('interrupted', raw, 'Interrupted');
   const legacyBody = await readAll(f, legacy, 'branch');
   assert.equal(legacyBody.version, 1); assert.equal(legacyBody.report.objectives[0].eta, null); assert.equal(legacyBody.report.rules, null);
   assert.equal((await readAll(f, v2, 'branch')).report.rules, null);
+  const v3Body = await readAll(f, v3, 'branch');
+  assert.equal(v3Body.raw, v3Raw); assert.equal(v3Body.version, 3);
+  assert.deepEqual(v3Body.report.objectives[0].issues, ['Obstacles (legacy): None known', 'Issues (legacy): A defect', 'Bottlenecks (legacy): Serial']);
   const invalidBody = await readAll(f, invalid, 'branch');
   assert.equal(invalidBody.raw, 'not JSON\n\u001b literal 🐦'); assert.equal(invalidBody.report, null); assert.match(invalidBody.error, /SyntaxError/);
   const interruptedBody = await readAll(f, interrupted, 'branch'); assert.equal(interruptedBody.raw, raw); assert.equal(interruptedBody.report, null); assert.equal(interruptedBody.error, 'Interrupted');
@@ -112,7 +118,7 @@ test('read links the source response without exposing thinking or other stored c
   const f = fixture();
   const content = [{ type: 'thinking', thinking: 'PRIVATE_THINKING_NOT_A_REFLECTION' }, { type: 'text', text: raw }];
   const messageEntryId = f.manager.appendMessage({ role: 'assistant', content, provider: 'fixture', model: 'original-model', api: 'openai-completions', stopReason: 'stop', timestamp: 1 });
-  const entryId = f.save('source-linked', raw, null, 3, { messageEntryId, content });
+  const entryId = f.save('source-linked', raw, null, 4, { messageEntryId, content });
   const list = await f.call({ action: 'list' }); assert.equal(list.rounds[0].messageEntryId, messageEntryId);
   const body = await readAll(f, entryId, 'branch');
   assert.equal(body.response.provider, 'fixture'); assert.equal(body.response.model, 'original-model'); assert.equal(body.messageEntryId, messageEntryId);

@@ -41,7 +41,7 @@ async function fixture(t) {
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
   return { dir, session, manager, contexts, replies, errors, notifications, onRequest: fn => { onRequest = fn; } };
 }
-const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","obstacles":"None known","issues":"None known","bottlenecks":"Serial validation","eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
+const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","issues":["A decoder defect needs correction","Waiting for access approval","Serial validation"],"eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
 
 for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000, 30000]]) {
   test(`real Pi ${kind} growth policy schedules at the exact token delta and persists through reload`, { timeout: 20000 }, async t => {
@@ -149,6 +149,8 @@ test('real Pi manual inquiry runs while off, persists JSON and does not become a
   assert.equal(f.contexts.length, 2); assert.equal(f.replies.length, 0);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1);
   assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, JSON.parse(report));
+  assert.equal(checkpoints(f.manager.getBranch())[0].version, 4);
+  assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives[0].issues.length, 3);
   assert.match(JSON.stringify(f.contexts.at(-1)), /Restate me your objectives/);
   assert.equal(stateOnBranch(f.manager.getBranch()).pending, null);
   await f.session.reload(); await f.session.prompt('/cuckoo status');
@@ -156,6 +158,8 @@ test('real Pi manual inquiry runs while off, persists JSON and does not become a
   assert.match(f.notifications.at(-1)[0], /Validating the runtime/);
   assert.match(f.notifications.at(-1)[0], /user: Show mockups before implementing \(scope: This UI change\)/);
   assert.match(f.notifications.at(-1)[0], /assistant: Preserve cadence/);
+  for (const issue of JSON.parse(report).objectives[0].issues) assert.ok(f.notifications.at(-1)[0].includes(`- ${issue}`));
+  assert.doesNotMatch(f.notifications.at(-1)[0], /Obstacles:|Bottlenecks:/);
   assert.deepEqual(f.errors, []);
 });
 
@@ -190,7 +194,7 @@ test('real Pi recall preserves branch isolation and reaches pre-compaction round
   const f = await fixture(t);
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
   const root = f.manager.getLeafId();
-  const other = f.manager.appendCustomEntry('cuckoo.report', { version: 3, requestId: 'other', raw: report, error: null });
+  const other = f.manager.appendCustomEntry('cuckoo.report', { version: 4, requestId: 'other', raw: report, error: null });
   f.manager.branch(root);
   const current = f.manager.appendCustomEntry('cuckoo.report', { version: 1, requestId: 'legacy', raw: '{"objectives":[]}', error: null });
   const kept = f.manager.appendMessage({ role: 'user', content: 'Keep this after compaction', timestamp: 1 });

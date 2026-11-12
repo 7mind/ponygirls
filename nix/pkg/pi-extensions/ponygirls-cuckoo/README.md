@@ -116,7 +116,7 @@ top), then the detail header, then the selected checkpoint body. The detail
 header wraps at narrow widths so all metadata (timestamp, branch, entry ID,
 qualifier) remains accessible via scrolling. The body renders inline: rules
 section, then numbered objectives with compact labeled fields (progress,
-obstacles, issues, bottlenecks, ETA). Invalid reports show the raw output and
+a single issues list, ETA). Invalid reports show the raw output and
 error rather than parsed fields. After the detail, effective settings and
 configuration scroll into view. The entire body (errors + detail + settings)
 scrolls independently of the table via ctrl-u/ctrl-d (half-page) and Home/End
@@ -174,7 +174,7 @@ The main model receives “Restate me your objectives and brief me on your
 progress, obstacles, issues, bottlenecks, and ETA” with a JSON-only schema:
 
 ```json
-{"objectives":[{"objective":"Current objective","progress":"Brief factual progress","obstacles":"None known","issues":"None known","bottlenecks":"Serial runtime validation","eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
+{"objectives":[{"objective":"Current objective","progress":"Brief factual progress","issues":["A decoder defect needs correction","Waiting for access approval","Serial runtime validation limits progress"],"eta":"Unknown: validation has not started"}],"rules":[{"rule":"Show mockups before implementation","source":"user","scope":"This UI change"}]}
 ```
 
 The prompt asks for brief, concise, human-friendly plain language in every field,
@@ -183,11 +183,15 @@ and unnecessary implementation details without sacrificing accuracy, material
 blockers, rule scope/attribution or uncertainty. This is a prose instruction,
 not an additional length limit or a guarantee of model behavior.
 
-All six fields are required nonempty strings (at most 8000 characters each;
-100 objectives and 100000 characters total). Obstacles describe impediments or
-blocking dependencies, issues describe known defects or risks, and bottlenecks
-describe what limits progress or throughput. Use `None known` rather than imply
-independent verification. ETA is time to completion with its evidence, assumptions
+Each objective has exactly `objective`, `progress`, `issues`, and `eta`.
+The first, second and fourth are nonempty strings. `issues` is one list of
+nonempty strings covering all three conceptual categories: known defects/risks,
+obstacles/impediments/blocking dependencies, and bottlenecks limiting progress or
+throughput. The model is asked to combine overlapping concerns, not emit separate
+category fields or sublists. Use `[]` when none are known; this does not mean they
+were independently ruled out. The panel shows `None known` for an empty list.
+Limits: 100 objectives, 100 issues per objective, 8000 characters per string,
+and 100000 characters for the complete response. ETA is time to completion with its evidence, assumptions
 and uncertainty, or `Unknown` with the reason an estimate is unavailable; the
 inquiry explicitly prohibits invented deadlines or estimates.
 
@@ -202,11 +206,17 @@ means no session-local rules were reported. Assistant conventions are not user
 approval or authorization. This is a recall prompt, not a policy enforcement or
 independent provenance-verification mechanism.
 
-New checkpoints use metadata version 3. Version-1 and version-2 saved reports
-remain readable: rules show `Session rules not recorded (legacy report)` rather
-than implying there were none. Version-1 additional objective fields still show
-`Not recorded (legacy report)`, not invented values. Current replies missing
-required fields are invalid and retain their raw output.
+New checkpoints use metadata version 4. Version-1 through version-3 saved reports
+remain readable without rewriting their original raw responses. Version-2/3
+obstacles, issues and bottlenecks normalize into three labeled legacy items in
+the unified issues list, preserving every original statement (even `None known`)
+rather than inferring an empty list. This normalized projection is also returned
+by `cuckoo_recall`; its `version` identifies the saved format and `raw` retains
+that exact format. Version-1 issues and ETA remain unrecorded (`null` in recall,
+`Not recorded (legacy report)` in the panel). Version-1/2 rules likewise remain
+unrecorded rather than implying there were none. New replies with missing fields,
+a string-valued issues field, or obsolete category fields are invalid and retain
+their raw output.
 
 Only current objectives count; an empty list means zero. Reports are model
 self-reports, **not independently verified progress or new authorization**.
