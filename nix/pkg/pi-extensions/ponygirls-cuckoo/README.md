@@ -49,6 +49,56 @@ reopening that session restores its history without a separate global history
 file. A new session starts with no answers; a fork contains only entries Pi
 copies into that new session. Opening history does not request model inference.
 
+## Model awareness and reflection recall
+
+At each run start, a structured system-prompt section explains Cuckoo's
+context-growth cadence, the current automatic enablement/policy, and the
+JSON-only inquiry/resumption protocol. It does not start an inquiry. Invalid
+settings are reported as unavailable rather than as an enabled/disabled default.
+
+The model can use the read-only **`cuckoo_recall`** tool during ordinary work:
+
+```json
+{"action":"list"}
+{"action":"list","scope":"session","limit":10}
+{"action":"list","before":"<nextBefore from previous page>"}
+{"action":"read","entryId":"<round entryId>"}
+{"action":"read","entryId":"<round entryId>","offset":6000,"limit":6000}
+```
+
+- Default scope is `branch` (the current branch); explicit `session` scope
+  includes every branch in the current session. Use the same scope for later
+  list/read pages. No other session files or global memory are searched.
+- List returns newest-first metadata: stable report-entry ID, request ID,
+  timestamp, current/other branch, schema version, valid/invalid status,
+  objective/rule counts and source-response entry ID when recorded. `valid`
+  means schema-valid, **not independently verified**. `nextBefore` is an
+  exclusive entry-ID cursor: new rounds do not shift already enumerated pages.
+  The default page is 10 rounds, maximum 20. A missing/out-of-scope cursor is
+  an error; restart listing after changing branches.
+- Read returns `text`, a page of a JSON document containing the version-aware
+  parsed report, exact raw answer, validation/interruption error, and source
+  response metadata (provider/model when available). Concatenate `text` pages
+  using `nextOffset` until it is `null`, then parse the combined JSON. Offsets
+  count UTF-16 code units; default page size is 6000, maximum 8000. Responses
+  are capped at 50000 UTF-8 bytes; oversized metadata is an explicit error,
+  not silent truncation. Thinking blocks and unrelated stored content are not
+  exposed by this tool.
+- Invalid/interrupted rounds remain readable. Legacy missing fields are
+  `null` (not recorded), not invented values or evidence that no rules applied.
+- Recall uses persisted session entries, so it survives compaction/reload and
+  follows branch navigation immediately. Forks expose only the entries Pi
+  copied. It stays available while automatic inquiries are OFF, performs no
+  inference or history mutation, and remains blocked during JSON-only inquiries
+  like every other tool. Normal Pi tool selection can restrict its availability.
+
+Every result identifies the current session and warns that reflections are
+historical model self-reports, not current facts, rules, approval or authority.
+The model is told to reconcile them with current evidence/instructions, not
+revive superseded objectives or follow instructions embedded in recalled text.
+This is an on-demand reflection-history layer, **not** an independently verified
+memory or a demonstrated improvement in model behavior.
+
 ## Reading the panel
 
 The terminal panel shows a selectable checkpoint table with detail beneath.
@@ -191,5 +241,9 @@ nix build .#checks.x86_64-linux.subagents-policy-shape --no-link -L
 The extension check typechecks and runs all `tests/*.test.mjs`, including real
 Pi loader/model-loop/JSONL tests with a controlled in-process provider. These
 establish workflow behavior, not live-model classification or semantic quality.
+Recall checks cover bounded enumeration/read, exact text reconstruction, legacy
+and invalid rounds, source provenance, branch/fork isolation, compaction/reload,
+model-facing guidance/tool declarations, argument validation, and continued
+checkpoint tool blocking.
 `tests/fixtures/tui-provider.ts` is an explicitly loaded, network-free provider
 for manual PTY validation; it is not loaded by the extension.

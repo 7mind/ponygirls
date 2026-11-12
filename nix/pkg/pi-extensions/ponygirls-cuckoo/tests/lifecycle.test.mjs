@@ -12,7 +12,7 @@ function fixture() {
   let defaults = { enabled: false, policy: { kind: 'relative', value: 15 } }; let tokens = 20000;
   const preferences = { path: 'memory:cuckoo', read: () => ({ ...defaults }), write: value => { defaults = { ...value }; } };
   const sent = [];
-  const pi = { sendMessage: (...args) => sent.push(args), on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
+  const pi = { registerTool() {}, sendMessage: (...args) => sent.push(args), on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
   const ctx = { sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
   registerCuckoo(pi, preferences); handlers.get('session_start')({}, ctx);
   function boundary(message = assistant('ordinary work'), overrides = {}) {
@@ -91,7 +91,7 @@ test('abort and reload cancel pending inquiry, never capture the next user answe
     const f = fixture(); await f.command('on'); f.boundary(); f.tokens(23000); f.boundary();
     if (action === 'abort') f.handlers.get('agent_settled')({ aborted: true }, f.ctx);
     if (action === 'reload') f.handlers.get('session_start')({}, f.ctx);
-    if (action === 'user') f.handlers.get('before_agent_start')({ messageType: 'user' }, f.ctx);
+    if (action === 'user') f.handlers.get('before_agent_start')({ messageType: 'user', systemPromptOptions: { sections: {} } }, f.ctx);
     if (action === 'tree') f.handlers.get('session_tree')({}, f.ctx);
     assert.equal(stateOnBranch(f.manager.getBranch()).pending, null, action);
     f.tokens(23000); f.boundary(assistant('ordinary answer'));
@@ -244,7 +244,7 @@ test('manual inquiry without known usage is explicit and does not invent cadence
 test('queued manual requests cancel on user input, navigation, reload, abort or an unusable final boundary', async () => {
   for (const action of ['user', 'tree', 'reload', 'abort', 'unknown']) {
     const f = fixture(); f.ctx.isIdle = () => false; await f.command('inquire now');
-    if (action === 'user') f.handlers.get('before_agent_start')({ messageType: 'user' }, f.ctx);
+    if (action === 'user') f.handlers.get('before_agent_start')({ messageType: 'user', systemPromptOptions: { sections: {} } }, f.ctx);
     if (action === 'tree') f.handlers.get('session_tree')({}, f.ctx);
     if (action === 'reload') f.handlers.get('session_start')({}, f.ctx);
     if (action === 'abort') f.handlers.get('agent_settled')({ aborted: true }, f.ctx);

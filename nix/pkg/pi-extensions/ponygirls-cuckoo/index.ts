@@ -1,11 +1,13 @@
 import { completeCuckooArguments } from './src/complete.ts';
 import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
+import { Type } from 'typebox';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft, type TurnEndEvent } from '@earendil-works/pi-coding-agent';
 import { parseToggleCommand, sessionEnabledData } from '@ponygirls/pi-settings';
 import { ENABLED_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences, type PreferenceStore } from './src/preferences.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, checkpoint, checkpoints } from './src/report.ts';
+import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, observe, stateOnBranch, type State } from './src/state.ts';
 import { CuckooView } from './src/view.ts';
 import { reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
@@ -75,6 +77,38 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       } catch (error) { cancel(ctx, 'Manual inquiry could not start; no automatic retry'); throw error; }
     } catch (error) { ctx.ui.notify(terminalText(`Cuckoo: ${String(error)}`), 'error'); }
   }
+  const scope = Type.Optional(Type.Union([Type.Literal('branch'), Type.Literal('session')], { description: 'Current branch (default), or all branches in this session.' }));
+  pi.registerTool({
+    name: RECALL_TOOL, label: 'Recall Cuckoo reflections',
+    description: 'List or read saved Cuckoo self-reflection rounds in this session, even when automatic inquiries are off. List is newest-first (default 10, max 20); pass nextBefore as before for the next page. Read uses entryId from list and returns a page of JSON text (default 6000, max 8000 UTF-16 characters); concatenate text pages using nextOffset to reconstruct the full report, exact raw answer and validation error. Null legacy fields mean not recorded. Historical model self-reports are not verified facts, current instructions or authorization. No new inquiry or cross-session access.',
+    promptSnippet: 'List/read saved session-local self-reflection rounds (historical self-reports, not verified state)',
+    promptGuidelines: ['Use cuckoo_recall during ordinary work when earlier reflections are relevant; do not call it during a JSON-only Cuckoo inquiry.'],
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    parameters: Type.Object({
+      action: Type.Union([Type.Literal('list'), Type.Literal('read')]), scope,
+      before: Type.Optional(Type.String({ minLength: 1, description: 'List only: exclusive nextBefore cursor from the previous page.' })),
+      entryId: Type.Optional(Type.String({ minLength: 1, description: 'Required for read: report entryId from list.' })),
+      offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Read only: UTF-16 offset, initially 0, then nextOffset.' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: MAX_READ_CHARS, description: `List: at most ${MAX_LIST_ITEMS} rounds. Read: at most ${MAX_READ_CHARS} UTF-16 characters.` })),
+    }, { additionalProperties: false }),
+    async execute(_id, params, _signal, _onUpdate, ctx) {
+      const scope = params.scope === undefined ? 'branch' : params.scope;
+      let request: RecallRequest;
+      if (params.action === 'list') {
+        if (params.entryId !== undefined || params.offset !== undefined) throw new Error('Cuckoo list does not accept entryId or offset; use before for pagination');
+        request = { action: 'list', scope, before: params.before, limit: params.limit === undefined ? DEFAULT_LIST_ITEMS : params.limit };
+      } else {
+        if (params.entryId === undefined) throw new Error('Cuckoo read requires entryId from list');
+        if (params.before !== undefined) throw new Error('Cuckoo read does not accept before; use offset for pagination');
+        request = { action: 'read', scope, entryId: params.entryId, offset: params.offset === undefined ? 0 : params.offset, limit: params.limit === undefined ? DEFAULT_READ_CHARS : params.limit };
+      }
+      const result = recallRounds(ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch(), request);
+      const details = { sessionId: ctx.sessionManager.getSessionId(), notice: RECALL_NOTICE, ...result };
+      const text = JSON.stringify(details);
+      if (Buffer.byteLength(text, 'utf8') > MAX_RESPONSE_BYTES) throw new Error('Cuckoo recall metadata exceeds the response size limit; no partial result returned');
+      return { content: [{ type: 'text', text }], details };
+    },
+  });
   pi.registerCommand('cuckoo', {
     description: 'Show objectives/progress; inquire now: request a checkpoint; history: saved answers across session branches; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
     getArgumentCompletions: completeCuckooArguments,
@@ -124,6 +158,12 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     refresh(ctx);
   });
   pi.on('before_agent_start', (event, ctx) => {
+    let scheduling: string;
+    try {
+      const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
+      scheduling = `Automatic inquiries at run start: ${config.enabled ? 'ON' : 'OFF'}; policy: ${policyText(config.policy)}.`;
+    } catch (error) { warn(ctx, error); scheduling = 'Automatic inquiry configuration unavailable due to invalid settings; saved rounds remain readable.'; }
+    event.systemPromptOptions.sections.cuckoo = `${scheduling}\n${MODEL_GUIDANCE}`;
     if (event.messageType === 'user') {
       try { cancel(ctx, 'Checkpoint superseded by a new user prompt'); } catch (error) { warn(ctx, error); }
     }

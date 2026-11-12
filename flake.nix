@@ -973,6 +973,7 @@
             for package in pi-ai pi-agent-core pi-tui; do
               ln -s "$sdk/node_modules/@earendil-works/$package" node_modules/@earendil-works/$package
             done
+            ln -s "$sdk/node_modules/typebox" node_modules/typebox
             ln -s "$sdk/node_modules/@types" node_modules/@types
             tsc -p tsconfig.json
             node --test tests/*.test.mjs

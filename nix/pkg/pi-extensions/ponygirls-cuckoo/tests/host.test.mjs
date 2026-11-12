@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import * as sdk from '@earendil-works/pi-coding-agent';
-import { createAssistantMessageEventStream } from '@earendil-works/pi-ai';
+import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai';
 import { checkpoints, historyText } from '../src/report.ts';
 import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 
@@ -35,7 +35,7 @@ async function fixture(t) {
     } });
   const manager = sdk.SessionManager.create(dir, dir);
   const { session } = await sdk.createAgentSession({ cwd: dir, agentDir: dir, modelRuntime: runtime, model: runtime.getModel('cuckoo-fixture', 'scripted'),
-    thinkingLevel: 'off', settingsManager: settings, resourceLoader: loader, sessionManager: manager, tools: ['bash'] });
+    thinkingLevel: 'off', settingsManager: settings, resourceLoader: loader, sessionManager: manager });
   const errors = []; const notifications = [];
   await session.bindExtensions({ mode: 'rpc', onError: error => errors.push(error), uiContext: { notify: (...args) => notifications.push(args), setWidget() {} } });
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
@@ -157,6 +157,82 @@ test('real Pi manual inquiry runs while off, persists JSON and does not become a
   assert.match(f.notifications.at(-1)[0], /user: Show mockups before implementing \(scope: This UI change\)/);
   assert.match(f.notifications.at(-1)[0], /assistant: Preserve cadence/);
   assert.deepEqual(f.errors, []);
+});
+
+test('real Pi recall tool is declared, returns a saved round and stays readable with automatic scheduling off', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  assert.ok(getCurrentTools(f.contexts[0].messages).some(tool => tool.name === 'cuckoo_recall'));
+  assert.match(getCurrentSystemPrompt(f.contexts[0].messages), /Automatic inquiries at run start: OFF/);
+  assert.match(getCurrentSystemPrompt(f.contexts[0].messages), /self-reflection.*context-token growth.*not a timer/s);
+  f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const saved = f.manager.getEntries().find(entry => entry.type === 'custom' && entry.customType === 'cuckoo.report');
+  await f.session.prompt('/cuckoo on');
+  f.replies.push({ content: [{ type: 'toolCall', id: 'recall-list', name: 'cuckoo_recall', arguments: { action: 'list' } }], tokens: 20200 }, { text: 'Listed', tokens: 20300 });
+  await f.session.prompt('List earlier reflections');
+  assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /Automatic inquiries at run start: ON/);
+  const list = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'recall-list').message;
+  assert.equal(list.isError, false); assert.equal(list.details.rounds[0].entryId, saved.id); assert.equal(list.details.total, 1);
+  await f.session.prompt('/cuckoo off'); await f.session.reload();
+  f.replies.push({ content: [{ type: 'toolCall', id: 'recall-read', name: 'cuckoo_recall', arguments: { action: 'read', entryId: saved.id } }], tokens: 20400 }, { text: 'Read as historical evidence only', tokens: 20500 });
+  await f.session.prompt('Read that reflection');
+  const read = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'recall-read').message;
+  assert.equal(read.isError, false); assert.equal(read.details.nextOffset, null);
+  assert.deepEqual(JSON.parse(read.details.text).report, JSON.parse(report));
+  assert.equal(JSON.parse(read.details.text).messageEntryId, saved.data.messageEntryId);
+  assert.equal(JSON.parse(read.details.text).response.model, 'scripted');
+  assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /Automatic inquiries at run start: OFF/);
+  assert.match(JSON.stringify(f.contexts.at(-1)), /Historical model self-reports/);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.equal(f.contexts.length, 6); assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi recall preserves branch isolation and reaches pre-compaction rounds after reload', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  const root = f.manager.getLeafId();
+  const other = f.manager.appendCustomEntry('cuckoo.report', { version: 3, requestId: 'other', raw: report, error: null });
+  f.manager.branch(root);
+  const current = f.manager.appendCustomEntry('cuckoo.report', { version: 1, requestId: 'legacy', raw: '{"objectives":[]}', error: null });
+  const kept = f.manager.appendMessage({ role: 'user', content: 'Keep this after compaction', timestamp: 1 });
+  f.manager.appendCompaction('Summary without reflection bodies', kept, 25000);
+  await f.session.reload();
+  f.replies.push({ content: [
+    { type: 'toolCall', id: 'branch-list', name: 'cuckoo_recall', arguments: { action: 'list' } },
+    { type: 'toolCall', id: 'session-list', name: 'cuckoo_recall', arguments: { action: 'list', scope: 'session' } },
+    { type: 'toolCall', id: 'other-denied', name: 'cuckoo_recall', arguments: { action: 'read', entryId: other } },
+    { type: 'toolCall', id: 'other-explicit', name: 'cuckoo_recall', arguments: { action: 'read', scope: 'session', entryId: other } },
+  ], tokens: 21000 }, { text: 'Historical branch scopes distinguished', tokens: 21100 });
+  await f.session.prompt('Recall reflections');
+  const result = id => f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === id).message;
+  assert.deepEqual(result('branch-list').details.rounds.map(round => round.entryId), [current]);
+  assert.deepEqual(result('session-list').details.rounds.map(round => round.branch), ['current', 'other']);
+  assert.equal(result('other-denied').isError, true);
+  assert.equal(result('other-explicit').details.round.branch, 'other'); assert.equal(JSON.parse(result('other-explicit').details.text).raw, report);
+  const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.equal(reopened.getEntries().filter(entry => entry.type === 'custom' && entry.customType === 'cuckoo.report').length, 2);
+  assert.equal(f.contexts.length, 3); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi rejects invalid recall arguments through tool validation', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  const inputs = [{ action: 'list', limit: 21 }, { action: 'list', scope: 'global' }, { action: 'read' }, { action: 'read', entryId: 'x', offset: -1 }, { action: 'list', path: '/unrelated/session' }];
+  f.replies.push({ content: inputs.map((arguments_, i) => ({ type: 'toolCall', id: `invalid-${i}`, name: 'cuckoo_recall', arguments: arguments_ })), tokens: 20000 }, { text: 'Invalid requests reported', tokens: 20100 });
+  await f.session.prompt('Exercise argument boundaries');
+  const results = f.manager.getEntries().filter(entry => entry.type === 'message' && entry.message.role === 'toolResult');
+  assert.equal(results.length, inputs.length); assert.ok(results.every(entry => entry.message.isError));
+  for (const entry of results) assert.doesNotMatch(JSON.stringify(entry.message.content), /not found/);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 0); assert.equal(f.contexts.length, 2); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi still blocks recall during a JSON-only inquiry and resumes once without recursive reflection', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ content: [{ type: 'toolCall', id: 'blocked-recall', name: 'cuckoo_recall', arguments: { action: 'list' } }], tokens: 20100 }, { text: 'Original task finished', tokens: 20200 });
+  await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const result = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'blocked-recall').message;
+  assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /JSON only/);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
+  assert.equal(f.contexts.length, 3); assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
 
 test('real Pi busy manual request captures the checkpoint, not the ongoing response', { timeout: 20000 }, async t => {
