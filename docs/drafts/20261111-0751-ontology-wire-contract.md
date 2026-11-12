@@ -4,7 +4,7 @@ The application supports its sole, unpublished `ontology.api` 0.1.0 contract. Th
 
 ## Owners and artifacts
 
-- `ontology/models/ontology.baboon` remains the model source. The generator verifies the pinned Baboon 0.0.198 executable digest.
+- `ontology/models/ontology.baboon` remains the model source. The generator verifies the repository's pinned Baboon 0.0.200 executable digest; initial milestone evidence used 0.0.198 before the integration alignment.
 - `ontology/generated/schema-input/` preserves raw compiler OpenAPI components. These are **not** the accepted wire schemas: their ADT and nullable-field conventions differ from the application's codec/boundary contract. Do not serve these files as MCP schemas.
 - `ontology/scripts/schema-registry.ts` reads executable generated codec metadata. It checks the type/component bijection and ADT parent/member correspondence, without parsing generated source or Baboon syntax.
 - `schema-plan.ts` compiles the known component subset into a finite validation plan. Unsupported formats, keywords, unions, unresolved references and non-consuming reference cycles reject generation.

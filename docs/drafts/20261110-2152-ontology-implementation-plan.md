@@ -43,7 +43,7 @@ Placement alternatives:
 - Keep RDF behind a query/projection boundary rather than using it to determine source truth or Human approval. PostgreSQL remains the commit owner.
 - The existing pinned stack uses Cats Effect IO/http4s and a shared ABI adapter; the design requests BIO-style boundaries. Before implementing the server, resolve and document the concrete effect composition against pinned dependencies. Do not silently claim existing services are already BIO-polymorphic or migrate them as a side effect.
 
-Selected application dependencies now include RDF4J 6.1.0 (compatible with the pinned Java 25 environment) and lossless-json 4.3.3 at the browser JSON boundary. Baboon remains pinned at 0.0.198 with a single Scala 2.13 generated-runtime boundary consumed by Scala 3 services. Generator name collisions were reproduced and resolved by renaming unpublished model types, not patching generated code. Concrete service boundaries use Cats Effect IO/http4s and the shared CatsIOInjector/logstage composition; this is not a claim of BIO-polymorphic implementation.
+Selected application dependencies now include RDF4J 6.1.0 (compatible with the pinned Java 25 environment) and lossless-json 4.3.3 at the browser JSON boundary. Baboon follows the repository's 0.0.200 pin after local integration (the initial ontology milestones used 0.0.198), with a single Scala 2.13 generated-runtime boundary consumed by Scala 3 services. Generator name collisions were reproduced and resolved by renaming unpublished model types, not patching generated code. Concrete service boundaries use Cats Effect IO/http4s and the shared CatsIOInjector/logstage composition; this is not a claim of BIO-polymorphic implementation.
 
 ## 4. Automatic light/dark theme contract
 

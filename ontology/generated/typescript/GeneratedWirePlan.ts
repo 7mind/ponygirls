@@ -3,7 +3,7 @@ export const wirePlan: WirePlan = {
   "formatVersion": 1,
   "domain": "ontology.api",
   "version": "0.1.0",
-  "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
+  "compilerDigest": "1d0debf771b8a22334e68cf7e6f99d55443f2451279eae3713ad1b155a96cfc4",
   "modelDigest": "a9580df7c58d5f4a6910292d83ecded8dc64e97c8b18ff3793c277c941b1030b",
   "rawDigest": "0a24a5f7c576dd315906a6f968ed613a00b067b472e02bb97fe0a99485d3d331",
   "registry": [

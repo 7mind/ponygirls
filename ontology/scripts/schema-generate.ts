@@ -8,7 +8,7 @@ import { compilePlan } from './schema-plan.js';
 import { definitions, schemaFor, serialize } from './schema-json.js';
 import { fixtures } from './schema-fixtures.js';
 
-const PINNED_COMPILER = '6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36';
+const PINNED_COMPILER = '1d0debf771b8a22334e68cf7e6f99d55443f2451279eae3713ad1b155a96cfc4';
 async function main(args: readonly string[]): Promise<void> {
   assert.equal(args.length, 5, 'expected RAW_OPENAPI MODEL OUTPUT_DIR TYPED_PLAN COMPILER_SHA256');
   const [rawFile, modelFile, output, typedPlan, compilerDigest] = args;
