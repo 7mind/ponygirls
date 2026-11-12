@@ -22,6 +22,10 @@ final class DefaultOntologyService(repository: GraphRepository, cursors: CursorS
     ReviewCall.from(call.call, scope)
     body
   }
+  def limits(call: ServiceCall): IO[QueryLimitsResult] = IO {
+    Require(call.principal.capabilities.contains(Capability.Read), "forbidden", "query limits require Read")
+    QueryLimitsResult(queryLimits.maxPageRecords)
+  }
   def scopes(call: ServiceCall): IO[ScopesResult] = IO.defer {
     Require(call.principal.capabilities.contains(Capability.Read), "forbidden", "scope catalog requires Read")
     catalog.scopes(call.principal).flatMap { scopes =>

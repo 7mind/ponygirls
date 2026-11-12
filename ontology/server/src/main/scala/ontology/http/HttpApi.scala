@@ -261,6 +261,11 @@ final class HttpApi(auth: Auth, service: OntologyService, mcp: Mcp, webRoot: Opt
     case request @ GET -> Root / "api" / "v1" / "whoami" => handled {
       authorized(request, false)(captured => current(request, captured, false, false).map(a => Transport.encoded(Identity.codecJson, a.principal.identity)))
     }
+    case request @ GET -> Root / "api" / "v1" / "limits" => handled {
+      authorized(request, false) { captured =>
+        current(request, captured, false, false).flatMap(a => service.limits(ServiceCall.authenticated(a, "/api/v1/limits", newRequestId()))).map(v => Transport.encoded(QueryLimitsResult.codecJson, v))
+      }
+    }
     case request @ GET -> Root / "api" / "v1" / "scopes" => handled {
       authorized(request, false) { captured =>
         current(request, captured, false, false).flatMap(a => service.scopes(ServiceCall.authenticated(a, "/api/v1/scopes", newRequestId()))).map(v => Transport.encoded(ScopesResult.codecJson, v))

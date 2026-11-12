@@ -121,6 +121,7 @@ export * from './ProjectionStoreIdentity.js';
 export * from './ProjectionTarget.js';
 export * from './ProjectionTargetOrigin.js';
 export * from './Provenance.js';
+export * from './QueryLimitsResult.js';
 export * from './ReadRequest.js';
 export * from './ReadResult.js';
 export * from './ReadView.js';

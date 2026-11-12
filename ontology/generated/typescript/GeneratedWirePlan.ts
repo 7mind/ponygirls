@@ -4,8 +4,8 @@ export const wirePlan: WirePlan = {
   "domain": "ontology.api",
   "version": "0.1.0",
   "compilerDigest": "6470f599d47cc3f685efc4ccf4ddcc8492bfd0dcd87a88bf76ed7bfee0f77f36",
-  "modelDigest": "df290e830db9b06d8d79bd06e004404a0f96a325b12da42d1f11f3c65d691424",
-  "rawDigest": "1af46457a379b4f1fa37a433a25194431651a28269b9decbbb57e0deebb1a0a5",
+  "modelDigest": "a9580df7c58d5f4a6910292d83ecded8dc64e97c8b18ff3793c277c941b1030b",
+  "rawDigest": "0a24a5f7c576dd315906a6f968ed613a00b067b472e02bb97fe0a99485d3d331",
   "registry": [
     {
       "typeId": "ontology.api/:#Acceptance",
@@ -964,6 +964,14 @@ export const wirePlan: WirePlan = {
       "domain": "ontology.api",
       "version": "0.1.0",
       "component": "ontology_api_Provenance",
+      "parent": null,
+      "tag": null
+    },
+    {
+      "typeId": "ontology.api/:#QueryLimitsResult",
+      "domain": "ontology.api",
+      "version": "0.1.0",
+      "component": "ontology_api_QueryLimitsResult",
       "parent": null,
       "tag": null
     },
@@ -4166,6 +4174,14 @@ export const wirePlan: WirePlan = {
         "recorder": {
           "kind": "ref",
           "component": "ontology_api_Actor"
+        }
+      }
+    },
+    "ontology_api_QueryLimitsResult": {
+      "kind": "object",
+      "fields": {
+        "maxPageRecords": {
+          "kind": "i32"
         }
       }
     },

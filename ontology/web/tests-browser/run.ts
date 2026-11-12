@@ -106,6 +106,7 @@ try {
       return reply(route, C.LoginResult.jsonCodec(), new C.LoginResult(identity, versions), 200);
     }
     if (!authenticated) return reply(route, C.Failure.jsonCodec(), new C.Failure('unauthorized', 'Fixture authentication required'), 401);
+    if (operation === 'limits') return reply(route, C.QueryLimitsResult.jsonCodec(), new C.QueryLimitsResult(100), 200);
     if (operation === 'whoami') return reply(route, C.Identity.jsonCodec(), identity, 200);
     assert.equal(request.headers()['x-ontology-actor'], human.id);
     if (operation === 'scopes') {

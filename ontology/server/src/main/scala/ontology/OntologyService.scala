@@ -10,6 +10,7 @@ import ontology.api.*
   * neither it nor an authenticated account proves physical human presence.
   */
 trait OntologyService {
+  def limits(call: ServiceCall): IO[QueryLimitsResult]
   def scopes(call: ServiceCall): IO[ScopesResult]
   def find(call: ServiceCall, request: FindRequest): IO[FindResult]
   def read(call: ServiceCall, request: ReadRequest): IO[ReadResult]

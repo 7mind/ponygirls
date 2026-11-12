@@ -4359,6 +4359,18 @@
           }
         }
       },
+      "ontology_api_QueryLimitsResult" : {
+        "type" : "object",
+        "required" : [
+          "maxPageRecords"
+        ],
+        "properties" : {
+          "maxPageRecords" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
       "ontology_api_ReadRequest" : {
         "type" : "object",
         "required" : [

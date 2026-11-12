@@ -1,4 +1,4 @@
-import { BaboonCodecContext } from './contracts.js';
+import { BaboonCodecContext, QueryLimitsResult } from './contracts.js';
 import { parseJson } from './json.js';
 import { WireValidation, type WireCodecIdentity } from './wire-validation.js';
 
@@ -9,7 +9,7 @@ export interface Codec<T> extends WireCodecIdentity {
 export class ApiFailure extends Error {
   constructor(readonly code: string) { super(code.replaceAll('-', ' ')); }
 }
-export type OperationName = 'login' | 'logout' | 'whoami' | 'scopes' | 'find' | 'read' | 'sources' | 'status' | 'present' | 'judge' | 'judgments' | 'apply' | 'ingest';
+export type OperationName = 'login' | 'logout' | 'whoami' | 'limits' | 'scopes' | 'find' | 'read' | 'sources' | 'status' | 'present' | 'judge' | 'judgments' | 'apply' | 'ingest';
 const API_VERSION = '0.1.0';
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_DEADLINE_MS = 30_000;
@@ -45,6 +45,12 @@ export class ApiClient {
   private actor: string | null = null;
   constructor(private readonly fetcher: typeof fetch, private readonly validation: WireValidation) {}
   setActor(actor: string | null): void { this.actor = actor; }
+  async pageLimit(preferred: number, signal: AbortSignal): Promise<number> {
+    if (!Number.isSafeInteger(preferred) || preferred < 1) throw new ApiFailure('invalid-request');
+    const limits = await this.get('limits', QueryLimitsResult.jsonCodec(), signal);
+    if (limits.maxPageRecords < 1) throw new ApiFailure('invalid-response');
+    return Math.min(preferred, limits.maxPageRecords);
+  }
   async get<T>(operation: OperationName, codec: Codec<T>, signal: AbortSignal): Promise<T> {
     return this.request(operation, undefined, codec, signal);
   }

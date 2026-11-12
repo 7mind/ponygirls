@@ -123,6 +123,7 @@ import { ProjectionStoreIdentity, ProjectionStoreIdentity_JsonCodec } from './Pr
 import { ProjectionTarget, ProjectionTarget_JsonCodec } from './ProjectionTarget.js';
 import { ProjectionTargetOrigin, ProjectionTargetOrigin_JsonCodec } from './ProjectionTargetOrigin.js';
 import { Provenance, Provenance_JsonCodec } from './Provenance.js';
+import { QueryLimitsResult, QueryLimitsResult_JsonCodec } from './QueryLimitsResult.js';
 import { ReadRequest, ReadRequest_JsonCodec } from './ReadRequest.js';
 import { ReadResult, ReadResult_JsonCodec } from './ReadResult.js';
 import { ReadView, ReadView_JsonCodec } from './ReadView.js';
@@ -274,6 +275,7 @@ class DomainOntologyApiV0_1_0JsonCodecs extends AbstractBaboonJsonCodecs {
         this.register(ProjectionTarget_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionTarget_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ProjectionTargetOrigin_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ProjectionTargetOrigin_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(Provenance_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => Provenance_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
+        this.register(QueryLimitsResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => QueryLimitsResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadRequest_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadRequest_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadResult_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadResult_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
         this.register(ReadView_JsonCodec.BaboonTypeIdentifier, new Lazy<BaboonJsonCodec<unknown>>(() => ReadView_JsonCodec.instance as unknown as BaboonJsonCodec<unknown>));
@@ -438,6 +440,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ProjectionTarget": ['0.1.0'],
         "ontology.api/:#ProjectionTargetOrigin": ['0.1.0'],
         "ontology.api/:#Provenance": ['0.1.0'],
+        "ontology.api/:#QueryLimitsResult": ['0.1.0'],
         "ontology.api/:#ReadRequest": ['0.1.0'],
         "ontology.api/:#ReadResult": ['0.1.0'],
         "ontology.api/:#ReadView": ['0.1.0'],
@@ -668,6 +671,7 @@ class DomainOntologyApiV0_1_0Meta implements BaboonMeta {
         "ontology.api/:#ProjectionTarget": { '0.1.0': 'identical' },
         "ontology.api/:#ProjectionTargetOrigin": { '0.1.0': 'identical' },
         "ontology.api/:#Provenance": { '0.1.0': 'identical' },
+        "ontology.api/:#QueryLimitsResult": { '0.1.0': 'identical' },
         "ontology.api/:#ReadRequest": { '0.1.0': 'identical' },
         "ontology.api/:#ReadResult": { '0.1.0': 'identical' },
         "ontology.api/:#ReadView": { '0.1.0': 'identical' },

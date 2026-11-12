@@ -117,6 +117,7 @@ package ontology.api {
     register("ontology.api/:#CurationStatus", Lazy(CurationStatus_JsonCodec))
     register("ontology.api/:#Correction", Lazy(Correction_JsonCodec))
     register("ontology.api/:#CapsuleChange", Lazy(CapsuleChange_JsonCodec))
+    register("ontology.api/:#QueryLimitsResult", Lazy(QueryLimitsResult_JsonCodec))
     register("ontology.api/:#ProjectionProgress", Lazy(ProjectionProgress_JsonCodec))
     register("ontology.api/:#SourceDescriptor", Lazy(SourceDescriptor_JsonCodec))
     register("ontology.api/:#InputKind", Lazy(InputKind_JsonCodec))

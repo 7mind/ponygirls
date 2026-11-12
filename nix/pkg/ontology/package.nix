@@ -1,12 +1,13 @@
-{ lib, callPackage, symlinkJoin, squishLib }:
+{ lib, callPackage, symlinkJoin, squishLib, pi-coding-agent }:
 let
   server = callPackage ./server.nix { inherit squishLib; };
   web = callPackage ./web.nix { };
+  worker = callPackage ./worker.nix { inherit pi-coding-agent; };
 in symlinkJoin {
   name = "ontology-0.1.0";
-  paths = [ server web ];
+  paths = [ server web worker ];
   passthru = {
-    inherit web;
+    inherit web worker;
     serverArtifact = server;
     inherit (server) runtimeSource sharedJavaRuntime;
   };

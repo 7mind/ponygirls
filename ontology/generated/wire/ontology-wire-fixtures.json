@@ -10168,6 +10168,17 @@
     }
   },
   {
+    "typeId": "ontology.api/:#QueryLimitsResult",
+    "label": "base",
+    "wire": {
+      "maxPageRecords": 1
+    },
+    "scalaTypeId": "ontology.api/:#QueryLimitsResult",
+    "scalaWire": {
+      "maxPageRecords": 1
+    }
+  },
+  {
     "typeId": "ontology.api/:#ReadRequest",
     "label": "base",
     "wire": {

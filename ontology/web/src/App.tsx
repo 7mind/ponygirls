@@ -225,7 +225,7 @@ function Inspector({ client, scope, trail, inspect, back, close }: { client: Api
   const load = useCallback((cursor?: string, generation?: bigint) => {
     if (targetId === undefined || targetRevision === undefined) return;
     return result.run(async signal => {
-      const value = await client.post('read', new C.ReadRequest(scope, C.ReadView.History, [new C.Ref(targetId, targetRevision)], cursor, 100), C.ReadRequest.jsonCodec(), C.ReadResult.jsonCodec(), signal);
+      const value = await client.post('read', new C.ReadRequest(scope, C.ReadView.History, [new C.Ref(targetId, targetRevision)], cursor, 1), C.ReadRequest.jsonCodec(), C.ReadResult.jsonCodec(), signal);
       if (value.scope !== scope) throw new Error('The inspection response belongs to another scope.');
       if (generation !== undefined && value.generation !== generation) throw new Error('The graph generation changed between inspection pages. Reload this exact reference; pages have not been combined.');
       return value;
@@ -252,12 +252,13 @@ function Browser({ client, scope, mode, search, selection, locked, canReview, in
   const load = useCallback((cursor: string | undefined, expected: bigint | undefined, number: number) => {
     return page.run(async signal => {
       let next: Page;
+      const pageLimit = await client.pageLimit(24, signal);
       if (mode === 'search') {
-        const value = await client.post('find', new C.FindRequest(scope, search.kind, search.query, cursor, 24), C.FindRequest.jsonCodec(), C.FindResult.jsonCodec(), signal);
+        const value = await client.post('find', new C.FindRequest(scope, search.kind, search.query, cursor, pageLimit), C.FindRequest.jsonCodec(), C.FindResult.jsonCodec(), signal);
         if (value.scope !== scope) throw new Error('Search response scope mismatch.');
         next = { generation: value.generation, records: [], hits: value.items, cursor: value.cursor };
       } else {
-        const value = await client.post('read', new C.ReadRequest(scope, mode === 'history' ? C.ReadView.History : C.ReadView.Current, [], cursor, 24), C.ReadRequest.jsonCodec(), C.ReadResult.jsonCodec(), signal);
+        const value = await client.post('read', new C.ReadRequest(scope, mode === 'history' ? C.ReadView.History : C.ReadView.Current, [], cursor, pageLimit), C.ReadRequest.jsonCodec(), C.ReadResult.jsonCodec(), signal);
         if (value.scope !== scope) throw new Error('Record response scope mismatch.');
         next = { generation: value.generation, records: value.records, hits: [], cursor: value.cursor };
       }

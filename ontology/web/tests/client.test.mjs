@@ -6,6 +6,18 @@ import { WireValidation } from '../.cache/fixtures/web/src/wire-validation.js';
 import { wirePlan } from '../.cache/fixtures/generated/typescript/GeneratedWirePlan.js';
 const validation = new WireValidation(wirePlan);
 
+for (const maximum of [1, 7, 24, 100]) test(`page requests honor the advertised bound ${maximum}`, async () => {
+  const client = new ApiClient(async (url, options) => {
+    assert.equal(url, '/api/v1/limits'); assert.equal(options.method, 'GET');
+    return new Response(JSON.stringify({ maxPageRecords: maximum }), { status: 200 });
+  }, validation);
+  assert.equal(await client.pageLimit(24, new AbortController().signal), Math.min(24, maximum));
+});
+for (const maximum of [0, -1]) test(`invalid advertised page bound ${maximum} fails explicitly`, async () => {
+  const client = new ApiClient(async () => new Response(JSON.stringify({ maxPageRecords: maximum }), { status: 200 }), validation);
+  await assert.rejects(client.pageLimit(24, new AbortController().signal), /invalid response/);
+});
+
 const maximum = 9223372036854775807n;
 const validIdentity = { actor: { id: 'fixture-human', kind: 'Human' }, scopes: ['a'], capabilities: ['Read'] };
 for (const [name, value] of [

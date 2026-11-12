@@ -34,6 +34,7 @@ final class HttpApiSuite extends FunSuite {
     var reviews = List.empty[ReviewCall]
     def read(p: ServiceCall, r: ReadRequest): IO[ReadResult] = IO { p.principal.require(r.scope, Capability.Read); calls = calls :+ p; reads += 1; ReadResult(r.scope, 0L, Nil, None) }
     def find(p: ServiceCall, r: FindRequest): IO[FindResult] = unused
+    def limits(p: ServiceCall): IO[QueryLimitsResult] = IO.pure(QueryLimitsResult(100))
     def scopes(p: ServiceCall): IO[ScopesResult] = IO.pure(ScopesResult(Nil))
     def sources(p: ServiceCall, r: SourceRequest): IO[SourceResult] = unused
     def status(p: ServiceCall, r: ScopeRequest): IO[CurationStatus] = unused

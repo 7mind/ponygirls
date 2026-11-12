@@ -38,6 +38,7 @@ class Fixture {
         return reply(route, C.LoginResult.jsonCodec(), new C.LoginResult(this.identity(actor), this.versions), 200);
       }
       if (!this.authenticated) return reply(route, C.Failure.jsonCodec(), new C.Failure('unauthorized', 'Fixture session expired'), 401);
+      if (name === 'limits') return reply(route, C.QueryLimitsResult.jsonCodec(), new C.QueryLimitsResult(100), 200);
       if (name === 'whoami') return reply(route, C.Identity.jsonCodec(), this.identity(this.actor), 200);
       if (name === 'scopes') {
         if (this.blockScopes) await this.scopeGate;

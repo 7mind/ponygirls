@@ -23,19 +23,19 @@ object PackagedRuntimeAcceptance extends IOApp {
   private val terminatedBySigterm = 143
   private def check(condition: Boolean, message: String): IO[Unit] =
     IO.raiseUnless(condition)(new AssertionError(message))
-  private def request(f: RuntimeFixture, path: String): Request[IO] =
+  private[ontology] def request(f: RuntimeFixture, path: String): Request[IO] =
     Request[IO](Method.GET, Uri.unsafeFromString(f.config.auth.publicOrigin + path)).putHeaders(
       Header.Raw(CIString("Origin"), f.config.auth.publicOrigin),
       Header.Raw(CIString("X-Ontology-Version"), Wire.versions.current),
       Header.Raw(CIString("Authorization"), "Bearer " + f.agentToken))
-  private def scopes(client: Client[IO], f: RuntimeFixture): IO[ScopesResult] =
+  private[ontology] def scopes(client: Client[IO], f: RuntimeFixture): IO[ScopesResult] =
     client.run(request(f, "/api/v1/scopes")).use { response =>
       check(response.status == Status.Ok, "scope request rejected") *>
         response.body.compile.to(Array).map(bytes => Wire.decode(ScopesResult.codecJson, Wire.parse(bytes)))
     }
   private def await[A](operation: IO[A])(ready: A => Boolean): IO[A] =
     IO.defer(operation.flatMap(value => if (ready(value)) IO.pure(value) else IO.sleep(25.millis) *> await(operation)(ready)))
-  private def process(executable: Path, f: RuntimeFixture, report: Path): Resource[IO, Process] =
+  private[ontology] def process(executable: Path, f: RuntimeFixture, report: Path): Resource[IO, Process] =
     Resource.make(IO.blocking {
       new ProcessBuilder(executable.toString, "serve", f.configFile.toString)
         .redirectOutput(report.resolve("server.stdout").toFile)
@@ -81,7 +81,7 @@ object PackagedRuntimeAcceptance extends IOApp {
     calls <- f.requests.get
     _ <- check(calls.size == 1, "expected exactly one controlled model request")
   } yield current.items.head
-  private def coordinator(db: JdbcDatabase): IO[CoordinatorState] = db.transaction { connection =>
+  private[ontology] def coordinator(db: JdbcDatabase): IO[CoordinatorState] = db.transaction { connection =>
     Using.resource(connection.createStatement()) { statement =>
       Using.resource(statement.executeQuery("SELECT epoch, payload FROM ontology_curation_coordinator WHERE singleton")) { rows =>
         require(rows.next(), "coordinator row missing")

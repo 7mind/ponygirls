@@ -36,13 +36,19 @@ let
     "ontology/server/src/main" "ontology/migrations" ];
   ontologyTests = [ "ontology/server/src/test" "ontology/models" "ontology/scripts"
     "ontology/generated/typescript" "ontology/generated/schema-input"
-    "ontology/web/package.json" "ontology/web/package-lock.json" ];
+    "ontology/web/package.json" "ontology/web/package-lock.json" "ontology/web/tsconfig.json" "ontology/web/tsconfig.fixtures.json"
+    "ontology/web/src" "ontology/web/tests" "ontology/web/tests-browser"
+    "ontology/worker/src" "ontology/worker/scripts" "ontology/worker/tests"
+    "ontology/worker/package.json" "ontology/worker/package-lock.json" "ontology/worker/tsconfig.json" ];
 in {
   # JVM derivations consume the active repository-root build. Non-JVM sources
   # deliberately retain their existing Chronicle-relative layouts and identities.
   server = backendSource "chronicle-server-source" runtime;
   ontologyServer = backendSource "ontology-server-source" (common ++ shared ++ ontologyRuntime);
   ontologyTests = backendSource "ontology-tests-source" (common ++ shared ++ sharedTests ++ ontologyRuntime ++ ontologyTests);
+  ontologyWorker = sourceAt (root + "/ontology") "ontology-worker-source" [
+    "worker" "generated/typescript" "web/src/json.ts" "web/src/wire-validation.ts" "web/src/wire-plan.ts"
+  ];
   ontologyWeb = sourceAt (root + "/ontology") "ontology-web-source" [
     "web" "generated/typescript" "generated/schema-input" "generated/wire" "models" "scripts"
   ];

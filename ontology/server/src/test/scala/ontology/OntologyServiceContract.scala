@@ -50,6 +50,18 @@ abstract class OntologyServiceContract extends CurationRepositorySupport {
   }
   private def json(response: Response[IO]): IO[Json] = response.body.compile.to(Array).map(Wire.parse)
 
+  test("query limit discovery requires Read and creates no graph state") { check { (repo, _, scope) => fixture(repo, scope).use { f => for {
+    result <- f.app(http("/api/v1/limits", Json.Null, Some(workerToken)).withMethod(Method.GET))
+    _ = assertEquals(result.status, Status.Ok)
+    value <- json(result)
+    _ = assertEquals(Wire.decode(QueryLimitsResult.codecJson, value), QueryLimitsResult(100))
+    denied <- f.service.limits(ServiceCall.internal(f.principal.copy(capabilities = Set(Capability.Mutate)), "limits-denied", UUID.randomUUID())).attempt
+    _ = fault(denied, "forbidden")
+    namespaces <- repo.scopes
+    _ = assert(!namespaces.contains(scope))
+    _ = assertEquals(f.allocated.get(), 0)
+  } yield () } } }
+
   test("actual REST and MCP command paths share primary accounting and exact replay") { check { (repo, _, scope) => fixture(repo, scope).use { f => for {
     r = command(scope, 0L)
     first <- f.app(http("/api/v1/apply", Wire.encode(ApplyRequest.codecJson, r), Some(workerToken)))

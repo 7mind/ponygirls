@@ -88,7 +88,15 @@ Do not create a generic theme controller solely to duplicate browser media-query
 - **Full sidecar only:** failed curation leaves honest lag, not advanced coverage; graph delivery is attributed data and cannot become a new primary source, permission or recursive curation trigger.
 - **Evaluation:** implementation acceptance is distinct from measured Human benefit. No inference from green software tests to improved Human judgments.
 
-## 7. Current state
+## 7. Integrated engineering checkpoint
+
+The full live service, authoritative PostgreSQL ledgers, automatic curation, fenced RDF lifecycle, capsule/delivery persistence, opt-in Pi sidecar, review UI and Nix packages are implemented. See [service usage and acceptance](../../ontology/README.md) and [sidecar boundaries](../../ontology/worker/README.md). Final candidate verification includes 780 backend tests in 90 suites, 43 worker controls, 77 dashboard controls, complete scripted browser checks, and installed runtime/Pi/real-browser acceptance with controlled models and owned PostgreSQL. These counts describe the task-worktree candidate before final local integration, not deployment or Human-benefit evidence.
+
+HostCapture ingress and its validation/persistence contracts exist. The normal Pi adapter is a Collector using `Observation.None`; no privileged file/execution observer is integrated. Authentication is not independent physical attestation. The old “trusted host instrument” TODO below must not be read as a claim that transcript integration supplies one.
+
+Q56's external-command primary accounting and Q57's explicitly granted empty-scope catalog are implemented. Q59 directs retention of the ontology worktree after local integration, deferring its Codegraph-sensitive cleanup. No push, deployment, private transcript ingestion or Human study is authorized by this checkpoint.
+
+## 8. Historical foundation checkpoint (superseded above)
 
 Q55 revision 3 is answered and recorded. Task branch/worktree: `feature/ontology-implementation`, `.worktrees/wt-ponygirls-ontology-implementation`.
 

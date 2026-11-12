@@ -219,6 +219,7 @@ data CurationAttemptSummary {
  terminalCode: opt[str] auditUncertain: bit claimedAt: str deadlineAt: str finishedAt: opt[str]
 }
 root data ScopeRequest { scope: str }
+root data QueryLimitsResult { maxPageRecords: i32 }
 data ScopeSummary { scope: str generation: i64 frontier: i64 coveredFrontier: i64 curation: CurationState failure: opt[str] rdfGeneration: opt[i64] lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }
 root data ScopesResult { items: lst[ScopeSummary] }
 root data CurationStatus { scope: str generation: i64 frontier: i64 coveredFrontier: i64 state: CurationState failure: opt[str] lastPublicationGeneration: opt[i64] attempt: opt[CurationAttemptSummary] }
