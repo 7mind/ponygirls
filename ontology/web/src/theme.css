@@ -1,0 +1,55 @@
+:root {
+  color-scheme: light;
+  --canvas: #f3f6fb;
+  --surface: #ffffff;
+  --surface-raised: #e9eff7;
+  --ink: #17263b;
+  --muted: #4d5e75;
+  --border: #73849a;
+  --accent: #244fc0;
+  --on-accent: #ffffff;
+  --focus: #8c4200;
+  --selected: #dce8ff;
+  --warning: #754a00;
+  --warning-surface: #fff2cd;
+  --error: #9f2525;
+  --error-surface: #ffe9e7;
+  --success: #1c6542;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --canvas: #111a29;
+    --surface: #1c293c;
+    --surface-raised: #29394f;
+    --ink: #edf3fc;
+    --muted: #b8c8df;
+    --border: #8a9db8;
+    --accent: #a2caff;
+    --on-accent: #102641;
+    --focus: #ffcf83;
+    --selected: #344c70;
+    --warning: #ffdb8d;
+    --warning-surface: #48391c;
+    --error: #ffb9b0;
+    --error-surface: #4a2b30;
+    --success: #a5e3bf;
+  }
+}
+* { box-sizing: border-box; }
+html { background: var(--canvas); color: var(--ink); font-family: system-ui, sans-serif; }
+body { margin: 0; }
+button, input, select, textarea { font: inherit; color: var(--ink); }
+button, input, select, textarea, dialog { background: var(--surface); border: 1px solid var(--border); border-radius: .5rem; }
+button { cursor: pointer; padding: .55rem .85rem; }
+button:disabled { cursor: not-allowed; color: var(--muted); background: var(--surface-raised); }
+button.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 3px; }
+a { color: var(--accent); text-underline-offset: .2em; }
+::selection { background: var(--selected); color: var(--ink); }
+.muted { color: var(--muted); }
+.warning { color: var(--warning); background: var(--warning-surface); }
+.error { color: var(--error); background: var(--error-surface); }
+.success { color: var(--success); }
+pre, code { font-family: ui-monospace, monospace; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; background: var(--surface-raised); padding: .8rem; border-radius: .5rem; }

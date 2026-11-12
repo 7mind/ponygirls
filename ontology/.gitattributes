@@ -1,0 +1,2 @@
+# Keep pinned compiler output byte-identical; do not post-process generated whitespace.
+generated/** -whitespace

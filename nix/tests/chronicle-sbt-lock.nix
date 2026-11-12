@@ -24,7 +24,7 @@ let
         done
         test -n "$output"
         cp ${content} "$output"
-        for assembly in chronicle/target/chronicle-server.jar haystack/server/target/haystack-server.jar manure/backend/target/manure-server.jar rites/server/target/rites-server.jar; do
+        for assembly in chronicle/target/chronicle-server.jar haystack/server/target/haystack-server.jar manure/backend/target/manure-server.jar rites/server/target/rites-server.jar ontology/server/target/ontology-server.jar; do
           mkdir -p "$(dirname "$assembly")"
           printf 'fixture jar' > "$assembly"
         done

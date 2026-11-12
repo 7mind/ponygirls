@@ -69,14 +69,26 @@ def check(helper: Path, directory: Path) -> None:
     destination = directory / 'published.lock.json'
     lock = {'version': 1, 'artifacts': [{'url': 'https://repo.maven.apache.org/maven2/test.jar',
                                        'sha256': '0' * 52}]}
-    for state in ['missing', 'empty', 'complete']:
+    assemblies = [
+        'chronicle/target/chronicle-server.jar',
+        'haystack/server/target/haystack-server.jar',
+        'manure/backend/target/manure-server.jar',
+        'rites/server/target/rites-server.jar',
+        'ontology/server/target/ontology-server.jar',
+    ]
+    for state in ['missing', 'empty', 'missing-ontology', 'empty-ontology', 'complete']:
+        produced = [] if state == 'missing' else [
+            artifact for artifact in assemblies
+            if not (state == 'missing-ontology' and artifact.startswith('ontology/'))
+        ]
+        empty_prefix = {'empty': 'rites/', 'empty-ontology': 'ontology/'}.get(state)
         mock_generator.write_text(
             f'#!{sys.executable}\nimport pathlib, sys\n'
             f'pathlib.Path(sys.argv[-1]).write_text({json.dumps(lock)!r})\n'
-            f'for artifact in {(["chronicle/target/chronicle-server.jar", "haystack/server/target/haystack-server.jar", "manure/backend/target/manure-server.jar", "rites/server/target/rites-server.jar"] if state != "missing" else [])!r}:\n'
+            f'for artifact in {produced!r}:\n'
             '    jar = pathlib.Path(artifact)\n'
             '    jar.parent.mkdir(parents=True)\n'
-            f'    jar.write_bytes(b"" if {state == "empty"!r} and "rites" in artifact else b"jar")\n'
+            f'    jar.write_bytes(b"" if {empty_prefix!r} is not None and artifact.startswith({empty_prefix!r}) else b"jar")\n'
         )
         mock_generator.chmod(0o755)
         destination.write_text('original lock')

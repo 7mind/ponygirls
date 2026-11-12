@@ -70,7 +70,7 @@ writeShellApplication {
       timeout ${toString generationTimeoutSeconds} ${lockfileGenerator}/bin/squish-lockfile \
       lockfile-config.json --keep-temp --output "$work/deps.lock.json" \
       2>&1 >"$work/generator.stdout" | tee "$work/generator.log" >&2
-    for assembly in chronicle/target/chronicle-server.jar haystack/server/target/haystack-server.jar manure/backend/target/manure-server.jar rites/server/target/rites-server.jar; do
+    for assembly in chronicle/target/chronicle-server.jar haystack/server/target/haystack-server.jar manure/backend/target/manure-server.jar rites/server/target/rites-server.jar ontology/server/target/ontology-server.jar; do
       if [[ ! -s "$work/project/$assembly" ]]; then
         echo "Missing or empty assembly $assembly; refusing to replace the lockfile" >&2
         exit 1

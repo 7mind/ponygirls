@@ -1,7 +1,7 @@
 scalaVersion := "3.9.0"
 organization := "dev.chronicle"
 version := "0.1.0"
-lazy val contractCoassembly = taskKey[File]("Coassemble five current generated domains with exactly one canonical compiled runtime")
+lazy val contractCoassembly = taskKey[File]("Coassemble six current generated domains with exactly one canonical compiled runtime")
 lazy val verifySingleBaboonRuntime = taskKey[Unit]("Prove every Baboon runtime class has exactly one compiled classpath owner")
 lazy val verifyBaboonRuntime = taskKey[Unit]("Verify domain runtime sources against the one canonical runtime")
 lazy val baboonRuntime = project.in(file("shared/baboon-runtime")).settings(
@@ -34,6 +34,7 @@ lazy val contracts = project.in(file("chronicle/generated/.build")).dependsOn(ba
 lazy val haystackContracts = project.in(file("haystack/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val manureContracts = project.in(file("manure/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val ritesContracts = project.in(file("rites/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
+lazy val ontologyContracts = project.in(file("ontology/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val validationInventory = taskKey[File]("Write the discovered, unfiltered release test inventory")
 lazy val testChildClasspath = taskKey[String]("Export the physical classpath for isolated test children")
 // Libraries use only artifacts already present in the common dependency lock.
@@ -150,7 +151,26 @@ lazy val ritesServer = project.in(file("rites/server")).dependsOn(ritesContracts
   assembly / mainClass := Some("rites.Main"),
   assembly / assemblyJarName := "rites-server.jar",
 )
-lazy val root = project.in(file(".")).aggregate(baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, ritesContracts, haystackServer, manureServer, ritesServer).settings(
+lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontologyContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
+  name := "ontology-server",
+  libraryDependencies ++= Seq(
+    "org.eclipse.rdf4j" % "rdf4j-repository-sail" % "6.1.0",
+    "org.eclipse.rdf4j" % "rdf4j-sail-memory" % "6.1.0",
+    "org.eclipse.rdf4j" % "rdf4j-sail-nativerdf" % "6.1.0"
+  ),
+  // MapDB's version ranges require floating Maven metadata even with locked artifacts.
+  dependencyOverrides ++= Seq(
+    "org.eclipse.collections" % "eclipse-collections-api" % "10.4.0",
+    "org.eclipse.collections" % "eclipse-collections" % "10.4.0",
+    "org.eclipse.collections" % "eclipse-collections-forkjoin" % "10.4.0",
+    "org.jetbrains.kotlin" % "kotlin-stdlib" % "1.9.25"
+  ),
+  Compile / unmanagedResourceDirectories ++= Seq(baseDirectory.value.getParentFile / "migrations", baseDirectory.value.getParentFile / "generated" / "wire"),
+  Compile / mainClass := Some("ontology.Main"),
+  assembly / mainClass := Some("ontology.Main"),
+  assembly / assemblyJarName := "ontology-server.jar"
+)
+lazy val root = project.in(file(".")).aggregate(ontologyContracts, ontologyServer, baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, ritesContracts, haystackServer, manureServer, ritesServer).settings(
   name := "backend-foundation",
   publish / skip := true,
   cleanFiles += baseDirectory.value / "target" / "contracts-coassembly.jar",
@@ -160,24 +180,26 @@ lazy val root = project.in(file(".")).aggregate(baboonRuntime, contracts, chroni
       (contracts / Compile / compile).value,
       (haystackContracts / Compile / compile).value,
       (manureContracts / Compile / compile).value,
-      (ritesContracts / Compile / compile).value
+      (ritesContracts / Compile / compile).value,
+      (ontologyContracts / Compile / compile).value
     )
     val roots = Seq(
       (baboonRuntime / Compile / classDirectory).value,
       (contracts / Compile / classDirectory).value,
       (haystackContracts / Compile / classDirectory).value,
       (manureContracts / Compile / classDirectory).value,
-      (ritesContracts / Compile / classDirectory).value
+      (ritesContracts / Compile / classDirectory).value,
+      (ontologyContracts / Compile / classDirectory).value
     )
     val files = roots.flatMap(root => (root ** "*.class").get().map(f => f -> f.relativeTo(root).get.getPath.replace('\\', '/')))
     val owners = files.groupBy(_._2)
     owners.foreach { case (name, found) => require(found.size == 1, "duplicate coassembled class: " + name) }
     val runtime = files.filter(_._2.startsWith("baboon/runtime/"))
     require(runtime.nonEmpty && runtime.forall(_._1.toPath.startsWith(roots.head.toPath)), "noncanonical compiled runtime owner")
-    Seq("chronicle/api/", "haystack/api/", "manure/api/", "rites/api/", "rites/worker/").foreach(prefix => require(files.exists(_._2.startsWith(prefix)), "missing compiled domain: " + prefix))
+    Seq("chronicle/api/", "haystack/api/", "manure/api/", "rites/api/", "rites/worker/", "ontology/api/").foreach(prefix => require(files.exists(_._2.startsWith(prefix)), "missing compiled domain: " + prefix))
     val output = baseDirectory.value / "target" / "contracts-coassembly.jar"
     IO.zip(files.sortBy(_._2), output, Some(315532800000L))
-    streams.value.log.info("Coassembled all five current domains: " + files.size + " classes; " + runtime.size + " runtime classes from exactly one canonical owner")
+    streams.value.log.info("Coassembled all six current domains: " + files.size + " classes; " + runtime.size + " runtime classes from exactly one canonical owner")
     output
   }
 )

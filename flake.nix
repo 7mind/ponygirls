@@ -367,9 +367,12 @@
           chronicle-collector = pkgs.callPackage ./nix/pkg/chronicle/collector.nix { };
           chronicle-web = pkgs.callPackage ./nix/pkg/chronicle/web.nix { };
           rites-web = pkgs.callPackage ./nix/pkg/rites/web.nix { };
+          ontology-web = pkgs.callPackage ./nix/pkg/ontology/web.nix { };
         } // pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
           chronicle = self.lib.mkChroniclePackage { inherit pkgs; };
           rites = self.lib.mkRitesPackage { inherit pkgs; };
+          ontology = self.lib.mkOntologyPackage { inherit pkgs; };
+          ontology-worker = self.packages.${system}.ontology.worker;
           rites-worker = self.packages.${system}.rites.worker;
           manure-posix-shared = (pkgs.callPackage ./nix/pkg/manure/posix.nix { }).shared;
           manure-posix-static = (pkgs.callPackage ./nix/pkg/manure/posix.nix { }).static;
@@ -1317,6 +1320,10 @@
         lib.mkManureClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/client.nix { };
         lib.mkManurePackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/package.nix { squishLib = inputs.squish.lib; };
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
+        lib.mkOntologyPackage = { pkgs }: pkgs.callPackage ./nix/pkg/ontology/package.nix {
+          squishLib = inputs.squish.lib;
+          pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+        };
         lib.mkRitesPackage = { pkgs }: pkgs.callPackage ./nix/pkg/rites/package.nix {
           squishLib = inputs.squish.lib;
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };

@@ -9,6 +9,32 @@ let
   manureInventory = builtins.fromJSON (builtins.readFile ../../manure/tests/current-test-inventory.json);
   manureWitnesses = pkgs.lib.concatMap (group: group.sourceRefs ++ group.targetRefs) manureInventory.invariantGroups;
 in
+assert selected sources.ontologyServer "ontology/server/src/main/scala/ontology/Main.scala" "regular";
+assert selected sources.ontologyServer "ontology/migrations/006_projection_sessions.sql" "regular";
+assert selected sources.ontologyServer "ontology/generated/wire/ontology-wire-schemas.json" "regular";
+assert !(selected sources.ontologyServer "ontology/server/src/test/resources/runtime-config.json" "regular");
+assert !(selected sources.ontologyServer "ontology/web/package.json" "regular");
+assert !(selected sources.ontologyServer "ontology/server/target/ontology-server.jar" "regular");
+assert !(selected sources.ontologyServer ".local/secret" "regular");
+assert selected sources.ontologyTests "ontology/server/src/test/resources/runtime-config.json" "regular";
+assert selected sources.ontologyTests "ontology/generated/schema-input/ontology_api/v0_1_0/openapi.json" "regular";
+assert selected sources.ontologyTests "shared/model-http/src/test/scala/ponygirls/retrieval/ResponseAcceptanceTest.scala" "regular";
+assert selected sources.backendDevelopment "shared/service-runtime/src/test/scala/Example.scala" "regular";
+assert selected sources.backendDevelopment "ontology/server/src/test/scala/ontology/MainSuite.scala" "regular";
+assert selected sources.ontologyWorker "worker/src/extension.ts" "regular";
+assert selected sources.ontologyWorker "generated/typescript/ontology/api/QueryLimitsResult.ts" "regular";
+assert selected sources.ontologyWorker "web/src/wire-validation.ts" "regular";
+assert !(selected sources.ontologyWorker "web/src/App.tsx" "regular");
+assert !(selected sources.ontologyWorker "worker/node_modules" "directory");
+assert !(selected sources.ontologyWorker "worker/.cache" "directory");
+assert selected sources.ontologyTests "ontology/server/src/test/resources/owned-node.py" "regular";
+assert selected sources.ontologyTests "ontology/worker/scripts/real-backend.mjs" "regular";
+assert selected sources.ontologyWeb "web/package-lock.json" "regular";
+assert selected sources.ontologyWeb "generated/wire/ontology-wire-plan.json" "regular";
+assert selected sources.ontologyWeb "scripts/schema-generate.ts" "regular";
+assert !(selected sources.ontologyWeb "web/node_modules" "directory");
+assert !(selected sources.ontologyWeb "web/dist" "directory");
+assert !(selected sources.ontologyWeb "server/src/main/scala/ontology/Main.scala" "regular");
 assert selected sources.ritesServer "rites/generated/scala/rites/api/RunInfo.scala" "regular";
 assert selected sources.ritesServer "rites/server/src/main/scala/rites/Main.scala" "regular";
 assert !(selected sources.ritesServer "rites/server/src/test/scala/rites/ExampleTest.scala" "regular");
@@ -24,6 +50,9 @@ assert selected sources.backendDevelopment "haystack/server/src/main/scala/hayst
 assert selected sources.backendDevelopment "manure/backend/src/main/scala/manure/Main.scala" "regular";
 assert selected sources.backendDevelopment "rites/server/src/main/scala/rites/Main.scala" "regular";
 assert selected sources.backendDevelopment "rites/server/src/test/scala/rites/ExampleTest.scala" "regular";
+assert selected sources.backendDevelopment "ontology/generated/scala/ontology/api/Ref.scala" "regular";
+assert !(selected server "ontology/generated/scala/ontology/api/Ref.scala" "regular");
+assert !(selected sources.backendDevelopment "ontology/generated/.build/target/classes/ontology/api/Ref.class" "regular");
 assert selected server "build.sbt" "regular";
 assert selected server "project/plugins.sbt" "regular";
 assert selected server "project/BuildChecks.scala" "regular";
@@ -83,10 +112,35 @@ pkgs.runCommand "backend-source-layout-test" {
   manureSource = sources.manureServer;
   manureTargetSource = sources.manureTargetTests;
   developmentSource = sources.backendDevelopment;
+  ontologySource = sources.ontologyServer;
+  ontologyTestSource = sources.ontologyTests;
+  ontologyWebSource = sources.ontologyWeb;
+  ontologyWorkerSource = sources.ontologyWorker;
   nativeBuildInputs = [ pkgs.python3 ];
 } ''
   # Real source existence belongs to the builder. Pure no-build evaluation must
   # not dereference lazily realized filtered-store paths via builtins.pathExists.
+  test -f "$ontologySource/ontology/server/src/main/scala/ontology/Main.scala"
+  test -f "$ontologySource/ontology/generated/wire/ontology-wire-schemas.json"
+  test -f "$ontologySource/ontology/migrations/006_projection_sessions.sql"
+  test ! -e "$ontologySource/ontology/server/src/test"
+  test ! -e "$ontologySource/ontology/web"
+  test -f "$ontologyTestSource/ontology/server/src/test/resources/runtime-config.json"
+  test -f "$ontologyTestSource/shared/model-http/src/test/scala/ponygirls/retrieval/ResponseAcceptanceTest.scala"
+  test -f "$ontologyWorkerSource/worker/src/extension.ts"
+  test -f "$ontologyWorkerSource/generated/typescript/ontology/api/QueryLimitsResult.ts"
+  test -f "$ontologyWorkerSource/web/src/wire-validation.ts"
+  test ! -e "$ontologyWorkerSource/web/src/App.tsx"
+  test ! -e "$ontologyWorkerSource/worker/node_modules"
+  test ! -e "$ontologyWorkerSource/worker/.cache"
+  test -f "$ontologyTestSource/ontology/server/src/test/resources/owned-node.py"
+  test -f "$ontologyTestSource/ontology/worker/scripts/real-backend.mjs"
+  test -f "$ontologyWebSource/web/package-lock.json"
+  test -f "$ontologyWebSource/generated/wire/ontology-wire-plan.json"
+  test -f "$ontologyWebSource/scripts/schema-generate.ts"
+  test ! -e "$ontologyWebSource/web/node_modules"
+  test ! -e "$ontologyWebSource/web/dist"
+  test -f "$developmentSource/ontology/server/src/test/scala/ontology/MainSuite.scala"
   test -f "$serverSource/build.sbt"
   test -f "$serverSource/project/plugins.sbt"
   test ! -e "$serverSource/project/project"
@@ -98,6 +152,8 @@ pkgs.runCommand "backend-source-layout-test" {
   test -f "$developmentSource/haystack/generated/scala/haystack/api/Item.scala"
   test -f "$developmentSource/manure/generated/scala/manure/api/VersionInfo.scala"
   test -f "$developmentSource/rites/generated/scala/rites/api/RunInfo.scala"
+  test -f "$developmentSource/ontology/generated/scala/ontology/api/Ref.scala"
+  test ! -e "$developmentSource/ontology/generated/.build/target"
   for source in "$serverSource" "$haystackSource" "$manureSource"; do
     for shared in baboon-runtime service-runtime model-http retrieval-core retrieval-postgres; do
       test -d "$source/shared/$shared/src/main"

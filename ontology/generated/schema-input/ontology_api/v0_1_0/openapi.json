@@ -1,0 +1,5441 @@
+{
+  "openapi" : "3.1.0",
+  "info" : {
+    "title" : "ontology.api",
+    "version" : "0.1.0"
+  },
+  "paths" : {
+    
+  },
+  "components" : {
+    "schemas" : {
+      "ontology_api_Acceptance" : {
+        "type" : "object",
+        "required" : [
+          "clauses"
+        ],
+        "properties" : {
+          "clauses" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "question" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_AcceptanceInput" : {
+        "type" : "object",
+        "required" : [
+          "clauses"
+        ],
+        "properties" : {
+          "clauses" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "question" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Target"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_Ack" : {
+        "type" : "object",
+        "required" : [
+          "ok"
+        ],
+        "properties" : {
+          "ok" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "ontology_api_Actor" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "kind"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "kind" : {
+            "$ref" : "#/components/schemas/ontology_api_ActorKind"
+          }
+        }
+      },
+      "ontology_api_ActorKind" : {
+        "type" : "string",
+        "enum" : [
+          "Human",
+          "Agent",
+          "Collector",
+          "Service",
+          "Unknown"
+        ]
+      },
+      "ontology_api_ActorRecord" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "value"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          }
+        }
+      },
+      "ontology_api_AdoptionOrigin" : {
+        "type" : "string",
+        "enum" : [
+          "Interpretation",
+          "CapturedAction"
+        ]
+      },
+      "ontology_api_AliasRef" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "ref"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_Applicability_Unresolved" : {
+        "type" : "object",
+        "required" : [
+          "reason",
+          "basis",
+          "context"
+        ],
+        "properties" : {
+          "reason" : {
+            "type" : "string"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ApplicabilityContext"
+            }
+          }
+        }
+      },
+      "ontology_api_Applicability_Declared" : {
+        "type" : "object",
+        "required" : [
+          "statement",
+          "basis",
+          "context"
+        ],
+        "properties" : {
+          "statement" : {
+            "type" : "string"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ApplicabilityContext"
+            }
+          }
+        }
+      },
+      "ontology_api_Applicability_Captured" : {
+        "type" : "object",
+        "required" : [
+          "source"
+        ],
+        "properties" : {
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_Applicability" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_Applicability_Unresolved"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Applicability_Declared"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Applicability_Captured"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Unresolved, Declared, Captured."
+      },
+      "ontology_api_ApplicabilityContext_Capture" : {
+        "type" : "object",
+        "required" : [
+          "source"
+        ],
+        "properties" : {
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_ApplicabilityContext_Subject" : {
+        "type" : "object",
+        "required" : [
+          "ref"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_ApplicabilityContext" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityContext_Capture"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityContext_Subject"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Capture, Subject."
+      },
+      "ontology_api_ApplicabilityContextInput_Capture" : {
+        "type" : "object",
+        "required" : [
+          "source"
+        ],
+        "properties" : {
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          }
+        }
+      },
+      "ontology_api_ApplicabilityContextInput_Subject" : {
+        "type" : "object",
+        "required" : [
+          "ref"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          }
+        }
+      },
+      "ontology_api_ApplicabilityContextInput" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityContextInput_Capture"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityContextInput_Subject"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Capture, Subject."
+      },
+      "ontology_api_ApplicabilityInput_Unresolved" : {
+        "type" : "object",
+        "required" : [
+          "reason",
+          "basis",
+          "context"
+        ],
+        "properties" : {
+          "reason" : {
+            "type" : "string"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ApplicabilityContextInput"
+            }
+          }
+        }
+      },
+      "ontology_api_ApplicabilityInput_Declared" : {
+        "type" : "object",
+        "required" : [
+          "statement",
+          "basis",
+          "context"
+        ],
+        "properties" : {
+          "statement" : {
+            "type" : "string"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ApplicabilityContextInput"
+            }
+          }
+        }
+      },
+      "ontology_api_ApplicabilityInput" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityInput_Unresolved"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityInput_Declared"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Unresolved, Declared."
+      },
+      "ontology_api_ApplyRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "expectedGeneration",
+          "operations"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "expectedGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "operations" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Operation"
+            }
+          },
+          "contributionContext" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ContextRecordInput"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_ApplyResult" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "generation",
+          "created",
+          "replayed"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "created" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_AliasRef"
+            }
+          },
+          "replayed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "ontology_api_Assessment" : {
+        "type" : "string",
+        "enum" : [
+          "Unassessed",
+          "Supported",
+          "Contradicted",
+          "Mixed"
+        ]
+      },
+      "ontology_api_AssessmentUseDisposition" : {
+        "type" : "string",
+        "enum" : [
+          "Applicable",
+          "Excluded",
+          "Unresolved"
+        ]
+      },
+      "ontology_api_Binding" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "scope",
+          "definition",
+          "context",
+          "workContext",
+          "provenance"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "definition" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "workContext" : {
+            "type" : "string"
+          },
+          "provenance" : {
+            "$ref" : "#/components/schemas/ontology_api_Provenance"
+          }
+        }
+      },
+      "ontology_api_BindingSelection" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "scope",
+          "binding",
+          "selected",
+          "reason",
+          "basis",
+          "provenance"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "binding" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "selected" : {
+            "type" : "boolean"
+          },
+          "reason" : {
+            "type" : "string"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "provenance" : {
+            "$ref" : "#/components/schemas/ontology_api_Provenance"
+          }
+        }
+      },
+      "ontology_api_Capability" : {
+        "type" : "string",
+        "enum" : [
+          "Read",
+          "Mutate",
+          "Capture",
+          "Review",
+          "HostCapture"
+        ]
+      },
+      "ontology_api_Capsule" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "requestId",
+          "owner",
+          "payload",
+          "payloadDigest",
+          "limits",
+          "preparedAt",
+          "preparationTrace"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "owner" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "payload" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsulePayload"
+          },
+          "payloadDigest" : {
+            "type" : "string"
+          },
+          "limits" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsuleLimits"
+          },
+          "preparedAt" : {
+            "type" : "string"
+          },
+          "preparationTrace" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTrace"
+          }
+        }
+      },
+      "ontology_api_CapsuleChange" : {
+        "type" : "object",
+        "required" : [
+          "account",
+          "basis",
+          "humanBasis"
+        ],
+        "properties" : {
+          "previous" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "current" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "account" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "reason" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "humanBasis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_CapsuleCut" : {
+        "type" : "object",
+        "required" : [
+          "generation",
+          "frontier",
+          "coveredFrontier"
+        ],
+        "properties" : {
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "lastPublicationGeneration" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "attempt" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAttemptSummary"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_CapsuleLimits" : {
+        "type" : "object",
+        "required" : [
+          "maxRecords",
+          "maxPayloadBytes"
+        ],
+        "properties" : {
+          "maxRecords" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxPayloadBytes" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_CapsuleManifest" : {
+        "type" : "object",
+        "required" : [
+          "entries",
+          "changes",
+          "qualifications"
+        ],
+        "properties" : {
+          "entries" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CapsuleManifestEntry"
+            }
+          },
+          "changes" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CapsuleChange"
+            }
+          },
+          "qualifications" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CapsuleQualification"
+            }
+          }
+        }
+      },
+      "ontology_api_CapsuleManifestEntry" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "partition",
+          "roles",
+          "evidence"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "partition" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsulePartition"
+          },
+          "roles" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CapsuleRole"
+            }
+          },
+          "evidence" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_CapsulePartition" : {
+        "type" : "string",
+        "enum" : [
+          "SelectedWorkContext",
+          "UnresolvedScopeContext",
+          "SupportingContext",
+          "HistoricalContext"
+        ]
+      },
+      "ontology_api_CapsulePayload" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "workContext",
+          "reportedContext",
+          "cut",
+          "policy",
+          "records",
+          "manifest",
+          "text"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "workContext" : {
+            "type" : "string"
+          },
+          "reportedContext" : {
+            "$ref" : "#/components/schemas/ontology_api_ContextRecord"
+          },
+          "cut" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsuleCut"
+          },
+          "previousCapsuleId" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "uuid"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "policy" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsulePolicyIdentity"
+          },
+          "records" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_GraphRecord"
+            }
+          },
+          "manifest" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsuleManifest"
+          },
+          "text" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CapsulePolicyIdentity" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "digest"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CapsuleQualification" : {
+        "type" : "object",
+        "required" : [
+          "code",
+          "subjects"
+        ],
+        "properties" : {
+          "code" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsuleQualificationCode"
+          },
+          "subjects" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_CapsuleQualificationCode" : {
+        "type" : "string",
+        "enum" : [
+          "CoverageLag",
+          "NoCurationPublication",
+          "GraphChangedAfterCuration",
+          "ReportedContextUnknown",
+          "UnresolvedApplicability",
+          "UnboundIntent",
+          "StaleBinding",
+          "StaleWarrant",
+          "MissingHumanBasis",
+          "AmbiguousHumanBasis",
+          "UnresolvedConflict",
+          "UnresolvedChange",
+          "HistoricalEvidence"
+        ]
+      },
+      "ontology_api_CapsuleRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "workContext",
+          "expectedFrontier"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "workContext" : {
+            "type" : "string"
+          },
+          "reportedContext" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ContextRecordInput"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "expectedFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "previousCapsuleId" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "uuid"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_CapsuleRole" : {
+        "type" : "string",
+        "enum" : [
+          "RecordAccount",
+          "IntentAccount",
+          "HumanBasisAccount",
+          "DerivedAccount",
+          "Observation",
+          "Binding",
+          "Selection",
+          "Progress",
+          "Relation",
+          "SourceBasis",
+          "Artifact",
+          "Attribution"
+        ]
+      },
+      "ontology_api_CaptureContext" : {
+        "type" : "object",
+        "required" : [
+          "sessionId",
+          "lineage",
+          "branch",
+          "epoch"
+        ],
+        "properties" : {
+          "sessionId" : {
+            "type" : "string"
+          },
+          "rootSessionId" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "parentSessionId" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lineage" : {
+            "$ref" : "#/components/schemas/ontology_api_LineageStatus"
+          },
+          "branch" : {
+            "type" : "string"
+          },
+          "epoch" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_CaptureMetadata" : {
+        "type" : "object",
+        "required" : [
+          "sourceId",
+          "representation",
+          "omissions",
+          "exposedDeliveries"
+        ],
+        "properties" : {
+          "sourceId" : {
+            "type" : "string"
+          },
+          "parentSourceId" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "observedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "representation" : {
+            "$ref" : "#/components/schemas/ontology_api_SourceRepresentation"
+          },
+          "omissions" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "exposedDeliveries" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string",
+              "format" : "uuid"
+            }
+          }
+        }
+      },
+      "ontology_api_CapturedEvent" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "scope",
+          "sourceNamespace",
+          "frontier",
+          "context",
+          "origin",
+          "metadata",
+          "text",
+          "observation",
+          "provenance"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "sourceNamespace" : {
+            "type" : "string"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "context" : {
+            "$ref" : "#/components/schemas/ontology_api_ContextRecord"
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_EventOrigin"
+          },
+          "metadata" : {
+            "$ref" : "#/components/schemas/ontology_api_CaptureMetadata"
+          },
+          "text" : {
+            "type" : "string"
+          },
+          "observation" : {
+            "$ref" : "#/components/schemas/ontology_api_Observation"
+          },
+          "reviewResponse" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ReviewResponseLink"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "provenance" : {
+            "$ref" : "#/components/schemas/ontology_api_Provenance"
+          }
+        }
+      },
+      "ontology_api_ConflictState" : {
+        "type" : "string",
+        "enum" : [
+          "Open",
+          "Resolved"
+        ]
+      },
+      "ontology_api_Consumption" : {
+        "type" : "string",
+        "enum" : [
+          "Current",
+          "Historical"
+        ]
+      },
+      "ontology_api_Content_Outcome" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "acceptance",
+          "force"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "acceptance" : {
+            "$ref" : "#/components/schemas/ontology_api_Acceptance"
+          },
+          "force" : {
+            "$ref" : "#/components/schemas/ontology_api_Force"
+          }
+        }
+      },
+      "ontology_api_Content_Constraint" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "polarity",
+          "force"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "polarity" : {
+            "$ref" : "#/components/schemas/ontology_api_Polarity"
+          },
+          "force" : {
+            "$ref" : "#/components/schemas/ontology_api_Force"
+          }
+        }
+      },
+      "ontology_api_Content_Task" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "acceptance",
+          "execution"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "acceptance" : {
+            "$ref" : "#/components/schemas/ontology_api_Acceptance"
+          },
+          "execution" : {
+            "$ref" : "#/components/schemas/ontology_api_Execution"
+          }
+        }
+      },
+      "ontology_api_Content_Statement" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "modality"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "modality" : {
+            "$ref" : "#/components/schemas/ontology_api_Modality"
+          }
+        }
+      },
+      "ontology_api_Content_Hypothesis" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "prediction"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "prediction" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Content_Defect" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "observed",
+          "expected",
+          "reproduction",
+          "affected",
+          "correction"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "observed" : {
+            "type" : "string"
+          },
+          "expected" : {
+            "type" : "string"
+          },
+          "reproduction" : {
+            "type" : "string"
+          },
+          "affected" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "correction" : {
+            "$ref" : "#/components/schemas/ontology_api_Correction"
+          }
+        }
+      },
+      "ontology_api_Content_Question" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "alternatives",
+          "escalation"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "alternatives" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "answer" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "escalation" : {
+            "$ref" : "#/components/schemas/ontology_api_Escalation"
+          }
+        }
+      },
+      "ontology_api_Content_Decision" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "alternatives",
+          "rationale"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "alternatives" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "rationale" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Content_Review" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "findings",
+          "subjects",
+          "basis",
+          "uncertainty",
+          "assessment"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "findings" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "subjects" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "uncertainty" : {
+            "type" : "string"
+          },
+          "assessment" : {
+            "$ref" : "#/components/schemas/ontology_api_Assessment"
+          }
+        }
+      },
+      "ontology_api_Content_Source" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "context",
+          "rawDigest",
+          "descriptor"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "rawDigest" : {
+            "type" : "string"
+          },
+          "descriptor" : {
+            "$ref" : "#/components/schemas/ontology_api_SourceDescriptor"
+          }
+        }
+      },
+      "ontology_api_Content_Artifact" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "digest",
+          "mediaType",
+          "locator",
+          "generation"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "mediaType" : {
+            "type" : "string"
+          },
+          "locator" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_Content_Conflict" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "subjects",
+          "status",
+          "uncertainty"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "subjects" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "status" : {
+            "$ref" : "#/components/schemas/ontology_api_ConflictState"
+          },
+          "resolution" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "uncertainty" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Content" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Outcome"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Constraint"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Task"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Statement"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Hypothesis"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Defect"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Question"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Decision"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Review"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Source"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Artifact"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Content_Conflict"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Outcome, Constraint, Task, Statement, Hypothesis, Defect, Question, Decision, Review, Source, Artifact, Conflict."
+      },
+      "ontology_api_ContentInput_Outcome" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "acceptance",
+          "force"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "acceptance" : {
+            "$ref" : "#/components/schemas/ontology_api_AcceptanceInput"
+          },
+          "force" : {
+            "$ref" : "#/components/schemas/ontology_api_Force"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Constraint" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "polarity",
+          "force"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "polarity" : {
+            "$ref" : "#/components/schemas/ontology_api_Polarity"
+          },
+          "force" : {
+            "$ref" : "#/components/schemas/ontology_api_Force"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Task" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "acceptance",
+          "execution"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "acceptance" : {
+            "$ref" : "#/components/schemas/ontology_api_AcceptanceInput"
+          },
+          "execution" : {
+            "$ref" : "#/components/schemas/ontology_api_Execution"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Statement" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "modality"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "modality" : {
+            "$ref" : "#/components/schemas/ontology_api_Modality"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Hypothesis" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "prediction"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "prediction" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Defect" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "observed",
+          "expected",
+          "reproduction",
+          "affected",
+          "correction"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "observed" : {
+            "type" : "string"
+          },
+          "expected" : {
+            "type" : "string"
+          },
+          "reproduction" : {
+            "type" : "string"
+          },
+          "affected" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "correction" : {
+            "$ref" : "#/components/schemas/ontology_api_Correction"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Question" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "alternatives",
+          "escalation"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "alternatives" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "answer" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "escalation" : {
+            "$ref" : "#/components/schemas/ontology_api_Escalation"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Decision" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "alternatives",
+          "rationale"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "alternatives" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "rationale" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Review" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "findings",
+          "subjects",
+          "basis",
+          "uncertainty",
+          "assessment"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "findings" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "subjects" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "uncertainty" : {
+            "type" : "string"
+          },
+          "assessment" : {
+            "$ref" : "#/components/schemas/ontology_api_Assessment"
+          }
+        }
+      },
+      "ontology_api_ContentInput_Conflict" : {
+        "type" : "object",
+        "required" : [
+          "text",
+          "subjects",
+          "status",
+          "uncertainty"
+        ],
+        "properties" : {
+          "text" : {
+            "type" : "string"
+          },
+          "subjects" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "status" : {
+            "$ref" : "#/components/schemas/ontology_api_ConflictState"
+          },
+          "resolution" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "uncertainty" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ContentInput" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Outcome"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Constraint"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Task"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Statement"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Hypothesis"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Defect"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Question"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Decision"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Review"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput_Conflict"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Outcome, Constraint, Task, Statement, Hypothesis, Defect, Question, Decision, Review, Conflict."
+      },
+      "ontology_api_ContextRecord" : {
+        "type" : "object",
+        "required" : [
+          "origin",
+          "reportedInherited"
+        ],
+        "properties" : {
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_OriginContext"
+          },
+          "reportedInherited" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ReportedInheritance"
+            }
+          }
+        }
+      },
+      "ontology_api_ContextRecordInput" : {
+        "type" : "object",
+        "required" : [
+          "origin",
+          "reportedInherited"
+        ],
+        "properties" : {
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_OriginContextInput"
+          },
+          "reportedInherited" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ReportedInheritance"
+            }
+          }
+        }
+      },
+      "ontology_api_CoordinatorFence" : {
+        "type" : "object",
+        "required" : [
+          "ownerId",
+          "epoch"
+        ],
+        "properties" : {
+          "ownerId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "epoch" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_CoordinatorLease" : {
+        "type" : "object",
+        "required" : [
+          "fence",
+          "acquiredAt",
+          "renewedAt",
+          "expiresAt"
+        ],
+        "properties" : {
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "acquiredAt" : {
+            "type" : "string"
+          },
+          "renewedAt" : {
+            "type" : "string"
+          },
+          "expiresAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Correction" : {
+        "type" : "string",
+        "enum" : [
+          "Implementation",
+          "Interpretation",
+          "IntentChange",
+          "Mixed",
+          "Unresolved"
+        ]
+      },
+      "ontology_api_CurationAdmissionLimits" : {
+        "type" : "object",
+        "required" : [
+          "maxOrdinals",
+          "maxAuditBytes",
+          "maxInputBytes",
+          "maxPins",
+          "maxLabelChars"
+        ],
+        "properties" : {
+          "maxOrdinals" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxAuditBytes" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxInputBytes" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "maxPins" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "maxLabelChars" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_CurationAttempt" : {
+        "type" : "object",
+        "required" : [
+          "claim",
+          "state",
+          "auditUncertain"
+        ],
+        "properties" : {
+          "claim" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationClaim"
+          },
+          "state" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAttemptState"
+          },
+          "inputManifest" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationInputManifest"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "candidate" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationCandidate"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "publication" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationPublicationReceipt"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "terminalCode" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "auditUncertain" : {
+            "type" : "boolean"
+          },
+          "finishedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_CurationAttemptState" : {
+        "type" : "string",
+        "enum" : [
+          "Claimed",
+          "InputSealed",
+          "Running",
+          "Published",
+          "Failed",
+          "Stale",
+          "Interrupted"
+        ]
+      },
+      "ontology_api_CurationAttemptSummary" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "baseGeneration",
+          "frontier",
+          "previousCoveredFrontier",
+          "state",
+          "auditUncertain",
+          "claimedAt",
+          "deadlineAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "baseGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "previousCoveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "state" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAttemptState"
+          },
+          "inputDigest" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastOrdinal" : {
+            "oneOf" : [
+              {
+                "type" : "integer",
+                "format" : "int32"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastStage" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAuditStage"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "terminalCode" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "auditUncertain" : {
+            "type" : "boolean"
+          },
+          "claimedAt" : {
+            "type" : "string"
+          },
+          "deadlineAt" : {
+            "type" : "string"
+          },
+          "finishedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_CurationAuditPayload" : {
+        "type" : "object",
+        "required" : [
+          "encoding",
+          "content",
+          "digest",
+          "bytes"
+        ],
+        "properties" : {
+          "encoding" : {
+            "type" : "string"
+          },
+          "content" : {
+            "type" : "string"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "bytes" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_CurationAuditRecord" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "scope",
+          "fence",
+          "ordinal",
+          "stage",
+          "requestDigest",
+          "observedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "ordinal" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "stage" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAuditStage"
+          },
+          "requestDigest" : {
+            "type" : "string"
+          },
+          "payload" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAuditPayload"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "observedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationAuditStage" : {
+        "type" : "string",
+        "enum" : [
+          "RequestPrepared",
+          "DispatchPossible",
+          "ResponseObserved"
+        ]
+      },
+      "ontology_api_CurationCandidate" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "inputDigest",
+          "responseOrdinal",
+          "responseDigest",
+          "proposal",
+          "proposalDigest"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "inputDigest" : {
+            "type" : "string"
+          },
+          "responseOrdinal" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "responseDigest" : {
+            "type" : "string"
+          },
+          "proposal" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationProposal"
+          },
+          "proposalDigest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationClaim" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "scope",
+          "fence",
+          "baseGeneration",
+          "frontier",
+          "previousCoveredFrontier",
+          "admissionLimits",
+          "profileId",
+          "profileDigest",
+          "schemaDigest",
+          "graphDigest",
+          "sourceCutDigest",
+          "claimedAt",
+          "deadlineAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "baseGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "previousCoveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "admissionLimits" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationAdmissionLimits"
+          },
+          "profileId" : {
+            "type" : "string"
+          },
+          "profileDigest" : {
+            "type" : "string"
+          },
+          "schemaDigest" : {
+            "type" : "string"
+          },
+          "graphDigest" : {
+            "type" : "string"
+          },
+          "sourceCutDigest" : {
+            "type" : "string"
+          },
+          "claimedAt" : {
+            "type" : "string"
+          },
+          "deadlineAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationInputManifest" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "seed",
+          "sources",
+          "encoding",
+          "inputDigest",
+          "inputBytes",
+          "sealedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "seed" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CurationRecordPin"
+            }
+          },
+          "sources" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CurationSourcePin"
+            }
+          },
+          "encoding" : {
+            "type" : "string"
+          },
+          "inputDigest" : {
+            "type" : "string"
+          },
+          "inputBytes" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "sealedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationProposal" : {
+        "type" : "object",
+        "required" : [
+          "expectedGeneration",
+          "frontier",
+          "operations"
+        ],
+        "properties" : {
+          "expectedGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "operations" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Operation"
+            }
+          }
+        }
+      },
+      "ontology_api_CurationPublicationInput" : {
+        "type" : "object",
+        "required" : [
+          "claim",
+          "manifest",
+          "responseOrdinal",
+          "responseDigest",
+          "proposal",
+          "proposalDigest",
+          "publishedAt"
+        ],
+        "properties" : {
+          "claim" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationClaim"
+          },
+          "manifest" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationInputManifest"
+          },
+          "responseOrdinal" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "responseDigest" : {
+            "type" : "string"
+          },
+          "proposal" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationProposal"
+          },
+          "proposalDigest" : {
+            "type" : "string"
+          },
+          "publishedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationPublicationReceipt" : {
+        "type" : "object",
+        "required" : [
+          "attemptId",
+          "scope",
+          "input",
+          "generation",
+          "frontier",
+          "coveredFrontier",
+          "recordedAt"
+        ],
+        "properties" : {
+          "attemptId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "input" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationRecordPin" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "digest"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationSourcePin" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "frontier",
+          "digest"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_CurationState" : {
+        "type" : "string",
+        "enum" : [
+          "Idle",
+          "Pending",
+          "Running",
+          "Failed",
+          "Stale",
+          "Interrupted"
+        ]
+      },
+      "ontology_api_CurationStatus" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "frontier",
+          "coveredFrontier",
+          "state"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "state" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationState"
+          },
+          "failure" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastPublicationGeneration" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "attempt" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAttemptSummary"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_Definition" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "scope",
+          "applicability",
+          "content",
+          "standing",
+          "basis",
+          "provenance"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_Applicability"
+          },
+          "content" : {
+            "$ref" : "#/components/schemas/ontology_api_Content"
+          },
+          "standing" : {
+            "$ref" : "#/components/schemas/ontology_api_Standing"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "changeReason" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "provenance" : {
+            "$ref" : "#/components/schemas/ontology_api_Provenance"
+          }
+        }
+      },
+      "ontology_api_DefinitionKind" : {
+        "type" : "string",
+        "enum" : [
+          "Outcome",
+          "Constraint",
+          "Task",
+          "Statement",
+          "Hypothesis",
+          "Defect",
+          "Question",
+          "Decision",
+          "Review",
+          "Source",
+          "Artifact",
+          "Conflict"
+        ]
+      },
+      "ontology_api_DeliveryBoundary" : {
+        "type" : "string",
+        "enum" : [
+          "ClientContext",
+          "ExtensionContext"
+        ]
+      },
+      "ontology_api_DeliveryCutComparison" : {
+        "type" : "string",
+        "enum" : [
+          "SameGraphAndCoverage",
+          "ChangedGraphOrCoverage"
+        ]
+      },
+      "ontology_api_DeliveryReceipt" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "requestId",
+          "owner",
+          "scope",
+          "capsuleId",
+          "capsulePayloadDigest",
+          "workContext",
+          "reportedContext",
+          "boundary",
+          "receivedAt",
+          "ingress",
+          "observedCut",
+          "cutComparison"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "owner" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "capsuleId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "capsulePayloadDigest" : {
+            "type" : "string"
+          },
+          "workContext" : {
+            "type" : "string"
+          },
+          "reportedContext" : {
+            "$ref" : "#/components/schemas/ontology_api_ContextRecord"
+          },
+          "boundary" : {
+            "$ref" : "#/components/schemas/ontology_api_DeliveryBoundary"
+          },
+          "reportedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "reportedBoundaryPayload" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ReportedBoundaryDigest"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "receivedAt" : {
+            "type" : "string"
+          },
+          "ingress" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTrace"
+          },
+          "observedCut" : {
+            "$ref" : "#/components/schemas/ontology_api_CapsuleCut"
+          },
+          "cutComparison" : {
+            "$ref" : "#/components/schemas/ontology_api_DeliveryCutComparison"
+          }
+        }
+      },
+      "ontology_api_DeliveryRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "capsuleId",
+          "capsulePayloadDigest",
+          "workContext",
+          "boundary"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "capsuleId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "capsulePayloadDigest" : {
+            "type" : "string"
+          },
+          "workContext" : {
+            "type" : "string"
+          },
+          "reportedContext" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ContextRecordInput"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "boundary" : {
+            "$ref" : "#/components/schemas/ontology_api_DeliveryBoundary"
+          },
+          "reportedAt" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "reportedBoundaryPayload" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ReportedBoundaryDigest"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_Escalation" : {
+        "type" : "string",
+        "enum" : [
+          "NoEscalation",
+          "HumanRequired",
+          "Unresolved"
+        ]
+      },
+      "ontology_api_EventOrigin" : {
+        "type" : "string",
+        "enum" : [
+          "UserMessage",
+          "WorkerMessage",
+          "ToolOutput",
+          "GraphCommand"
+        ]
+      },
+      "ontology_api_Execution" : {
+        "type" : "string",
+        "enum" : [
+          "Delegated",
+          "HumanRequired"
+        ]
+      },
+      "ontology_api_Failure" : {
+        "type" : "object",
+        "required" : [
+          "code",
+          "message"
+        ],
+        "properties" : {
+          "code" : {
+            "type" : "string"
+          },
+          "message" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_FindRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "query",
+          "limit"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "kind" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_DefinitionKind"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "query" : {
+            "type" : "string"
+          },
+          "cursor" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "limit" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_FindResult" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "items"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "items" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_SearchHit"
+            }
+          },
+          "cursor" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_Force" : {
+        "type" : "string",
+        "enum" : [
+          "Required",
+          "Preferred",
+          "Unresolved"
+        ]
+      },
+      "ontology_api_Gate" : {
+        "type" : "string",
+        "enum" : [
+          "Completion",
+          "Fulfillment"
+        ]
+      },
+      "ontology_api_GateBasis" : {
+        "type" : "object",
+        "required" : [
+          "references",
+          "selectionWitnesses"
+        ],
+        "properties" : {
+          "references" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "selectionWitnesses" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Input" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_InputReceipt"
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Person" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_ActorRecord"
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Node" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_Definition"
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Edge" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_Relation"
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Contract" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_Binding"
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Progress" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_StateEvent"
+          }
+        }
+      },
+      "ontology_api_GraphRecord_Selection" : {
+        "type" : "object",
+        "required" : [
+          "value"
+        ],
+        "properties" : {
+          "value" : {
+            "$ref" : "#/components/schemas/ontology_api_BindingSelection"
+          }
+        }
+      },
+      "ontology_api_GraphRecord" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Input"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Person"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Node"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Edge"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Contract"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Progress"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_GraphRecord_Selection"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Input, Person, Node, Edge, Contract, Progress, Selection."
+      },
+      "ontology_api_GraphSnapshot" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "coveredFrontier",
+          "sourceFrontier",
+          "definitions",
+          "relations",
+          "bindings",
+          "events",
+          "actors",
+          "selections"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "sourceFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "definitions" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Definition"
+            }
+          },
+          "relations" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Relation"
+            }
+          },
+          "bindings" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Binding"
+            }
+          },
+          "events" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_StateEvent"
+            }
+          },
+          "actors" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ActorRecord"
+            }
+          },
+          "selections" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_BindingSelection"
+            }
+          }
+        }
+      },
+      "ontology_api_Grouping" : {
+        "type" : "string",
+        "enum" : [
+          "All",
+          "Alternative",
+          "Navigation"
+        ]
+      },
+      "ontology_api_Identity" : {
+        "type" : "object",
+        "required" : [
+          "actor",
+          "scopes",
+          "capabilities"
+        ],
+        "properties" : {
+          "actor" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "scopes" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "capabilities" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Capability"
+            }
+          }
+        }
+      },
+      "ontology_api_IngestRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "eventId",
+          "origin",
+          "metadata",
+          "text",
+          "observation"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "eventId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "occurrenceContext" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ContextRecordInput"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "contributionContext" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ContextRecordInput"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_EventOrigin"
+          },
+          "metadata" : {
+            "$ref" : "#/components/schemas/ontology_api_CaptureMetadata"
+          },
+          "text" : {
+            "type" : "string"
+          },
+          "observation" : {
+            "$ref" : "#/components/schemas/ontology_api_Observation"
+          }
+        }
+      },
+      "ontology_api_IngestResult" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "eventId",
+          "sourceNamespace",
+          "source",
+          "artifacts",
+          "frontier",
+          "replayed"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "eventId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "sourceNamespace" : {
+            "type" : "string"
+          },
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "artifacts" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "replayed" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "ontology_api_InheritanceAnchor_ReportedEpoch" : {
+        "type" : "object",
+        "required" : [
+          "source",
+          "epoch"
+        ],
+        "properties" : {
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "epoch" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_InheritanceAnchor_ReportedParent" : {
+        "type" : "object",
+        "required" : [
+          "source",
+          "epoch"
+        ],
+        "properties" : {
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "epoch" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_InheritanceAnchor" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_InheritanceAnchor_ReportedEpoch"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_InheritanceAnchor_ReportedParent"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: ReportedEpoch, ReportedParent."
+      },
+      "ontology_api_InheritanceKind" : {
+        "type" : "string",
+        "enum" : [
+          "Fork",
+          "Import"
+        ]
+      },
+      "ontology_api_InputKind" : {
+        "type" : "string",
+        "enum" : [
+          "GraphMutation",
+          "Capture",
+          "Curation",
+          "PresentationPublication",
+          "Judgment"
+        ]
+      },
+      "ontology_api_InputReceipt" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "scope",
+          "generation",
+          "kind",
+          "contributor",
+          "recorder",
+          "submitter",
+          "encoding",
+          "content",
+          "digest",
+          "recordedAt",
+          "contributionContext",
+          "ingress"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "kind" : {
+            "$ref" : "#/components/schemas/ontology_api_InputKind"
+          },
+          "contributor" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "recorder" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "submitter" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "encoding" : {
+            "type" : "string"
+          },
+          "content" : {
+            "type" : "string"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          },
+          "contributionContext" : {
+            "$ref" : "#/components/schemas/ontology_api_ContextRecord"
+          },
+          "ingress" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTrace"
+          }
+        }
+      },
+      "ontology_api_Judgment" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "scope",
+          "requestId",
+          "presentationId",
+          "action",
+          "rationale",
+          "actor",
+          "recordedAt",
+          "source",
+          "presentationSource",
+          "input"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "action" : {
+            "$ref" : "#/components/schemas/ontology_api_ReviewAction"
+          },
+          "rationale" : {
+            "type" : "string"
+          },
+          "actor" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          },
+          "source" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "presentationSource" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "input" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_JudgmentKind" : {
+        "type" : "string",
+        "enum" : [
+          "Accept",
+          "RequestCorrection",
+          "NeedEvidence",
+          "ReviseIntent"
+        ]
+      },
+      "ontology_api_JudgmentRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "requestId",
+          "presentationId",
+          "action",
+          "rationale"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "action" : {
+            "$ref" : "#/components/schemas/ontology_api_ReviewAction"
+          },
+          "rationale" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_JudgmentsResult" : {
+        "type" : "object",
+        "required" : [
+          "items"
+        ],
+        "properties" : {
+          "items" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Judgment"
+            }
+          }
+        }
+      },
+      "ontology_api_LineageStatus" : {
+        "type" : "string",
+        "enum" : [
+          "Unknown",
+          "Recorded"
+        ]
+      },
+      "ontology_api_LoginRequest" : {
+        "type" : "object",
+        "required" : [
+          "token"
+        ],
+        "properties" : {
+          "token" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_LoginResult" : {
+        "type" : "object",
+        "required" : [
+          "identity",
+          "versions"
+        ],
+        "properties" : {
+          "identity" : {
+            "$ref" : "#/components/schemas/ontology_api_Identity"
+          },
+          "versions" : {
+            "$ref" : "#/components/schemas/ontology_api_VersionInfo"
+          }
+        }
+      },
+      "ontology_api_Modality" : {
+        "type" : "string",
+        "enum" : [
+          "Assertion",
+          "Prediction",
+          "Assumption",
+          "ObservationAccount"
+        ]
+      },
+      "ontology_api_Observation_None" : {
+        "type" : "object"
+      },
+      "ontology_api_Observation_FileVersion" : {
+        "type" : "object",
+        "required" : [
+          "path",
+          "generation",
+          "digest",
+          "length"
+        ],
+        "properties" : {
+          "path" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "length" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_Observation_FileAbsent" : {
+        "type" : "object",
+        "required" : [
+          "path",
+          "generation"
+        ],
+        "properties" : {
+          "path" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_Observation_Execution" : {
+        "type" : "object",
+        "required" : [
+          "action",
+          "checker",
+          "inputs",
+          "outputs",
+          "complete"
+        ],
+        "properties" : {
+          "action" : {
+            "type" : "string"
+          },
+          "checker" : {
+            "type" : "string"
+          },
+          "contract" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "inputs" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "outputs" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "exitCode" : {
+            "oneOf" : [
+              {
+                "type" : "integer",
+                "format" : "int32"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "complete" : {
+            "type" : "boolean"
+          }
+        }
+      },
+      "ontology_api_Observation" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_Observation_None"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Observation_FileVersion"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Observation_FileAbsent"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Observation_Execution"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: None, FileVersion, FileAbsent, Execution."
+      },
+      "ontology_api_Operation_Create" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "applicability",
+          "content",
+          "basis"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityInput"
+          },
+          "content" : {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          }
+        }
+      },
+      "ontology_api_Operation_Revise" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "ref",
+          "applicability",
+          "content",
+          "standing",
+          "basis",
+          "reason"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityInput"
+          },
+          "content" : {
+            "$ref" : "#/components/schemas/ontology_api_ContentInput"
+          },
+          "standing" : {
+            "$ref" : "#/components/schemas/ontology_api_Standing"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "reason" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Operation_Relate" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "applicability",
+          "kind",
+          "sources",
+          "targets",
+          "detail",
+          "why"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityInput"
+          },
+          "kind" : {
+            "$ref" : "#/components/schemas/ontology_api_RelationKind"
+          },
+          "sources" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "detail" : {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput"
+          },
+          "why" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Operation_ReviseRelation" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "ref",
+          "applicability",
+          "sources",
+          "targets",
+          "detail",
+          "why",
+          "standing"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_ApplicabilityInput"
+          },
+          "sources" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "detail" : {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput"
+          },
+          "why" : {
+            "type" : "string"
+          },
+          "standing" : {
+            "$ref" : "#/components/schemas/ontology_api_Standing"
+          }
+        }
+      },
+      "ontology_api_Operation_Bind" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "definition",
+          "context",
+          "workContext"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "definition" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "context" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "workContext" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Operation_SelectBinding" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "binding",
+          "selected",
+          "reason",
+          "basis"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "binding" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "selected" : {
+            "type" : "boolean"
+          },
+          "reason" : {
+            "type" : "string"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          }
+        }
+      },
+      "ontology_api_Operation_State" : {
+        "type" : "object",
+        "required" : [
+          "alias",
+          "subject",
+          "phase",
+          "evidence",
+          "uncertainty"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          },
+          "subject" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "previous" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "phase" : {
+            "$ref" : "#/components/schemas/ontology_api_Phase"
+          },
+          "result" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Resolution"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "resolution" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "evidence" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          },
+          "uncertainty" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Operation" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_Create"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_Revise"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_Relate"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_ReviseRelation"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_Bind"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_SelectBinding"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Operation_State"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Create, Revise, Relate, ReviseRelation, Bind, SelectBinding, State."
+      },
+      "ontology_api_OriginContext_Unknown" : {
+        "type" : "object",
+        "required" : [
+          "reason"
+        ],
+        "properties" : {
+          "reason" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_OriginContext_ReportedNative" : {
+        "type" : "object",
+        "required" : [
+          "context"
+        ],
+        "properties" : {
+          "context" : {
+            "$ref" : "#/components/schemas/ontology_api_CaptureContext"
+          }
+        }
+      },
+      "ontology_api_OriginContext_ServiceRequest" : {
+        "type" : "object",
+        "required" : [
+          "trace"
+        ],
+        "properties" : {
+          "trace" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTrace"
+          }
+        }
+      },
+      "ontology_api_OriginContext" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_OriginContext_Unknown"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_OriginContext_ReportedNative"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_OriginContext_ServiceRequest"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Unknown, ReportedNative, ServiceRequest."
+      },
+      "ontology_api_OriginContextInput_Unknown" : {
+        "type" : "object",
+        "required" : [
+          "reason"
+        ],
+        "properties" : {
+          "reason" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_OriginContextInput_ReportedNative" : {
+        "type" : "object",
+        "required" : [
+          "context"
+        ],
+        "properties" : {
+          "context" : {
+            "$ref" : "#/components/schemas/ontology_api_CaptureContext"
+          }
+        }
+      },
+      "ontology_api_OriginContextInput" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_OriginContextInput_Unknown"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_OriginContextInput_ReportedNative"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Unknown, ReportedNative."
+      },
+      "ontology_api_Phase" : {
+        "type" : "string",
+        "enum" : [
+          "Planned",
+          "Active",
+          "Blocked",
+          "Completed",
+          "Cancelled",
+          "Open",
+          "Resolved"
+        ]
+      },
+      "ontology_api_Polarity" : {
+        "type" : "string",
+        "enum" : [
+          "Required",
+          "Prohibited"
+        ]
+      },
+      "ontology_api_PresentRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "targets",
+          "expectedGeneration"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "expectedGeneration" : {
+            "type" : "string",
+            "format" : "int64"
+          }
+        }
+      },
+      "ontology_api_Presentation" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "owner",
+          "reservedSourceRef",
+          "payload",
+          "payloadDigest",
+          "createdAt",
+          "preparationTrace"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "owner" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "reservedSourceRef" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "payload" : {
+            "$ref" : "#/components/schemas/ontology_api_PresentationPayload"
+          },
+          "payloadDigest" : {
+            "type" : "string"
+          },
+          "createdAt" : {
+            "type" : "string"
+          },
+          "preparationTrace" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTrace"
+          }
+        }
+      },
+      "ontology_api_PresentationManifest" : {
+        "type" : "object",
+        "required" : [
+          "choices",
+          "adoptionTargets"
+        ],
+        "properties" : {
+          "choices" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_PresentedSelection"
+            }
+          },
+          "adoptionTargets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_PresentationPayload" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "targets",
+          "records",
+          "sourceRefs",
+          "manifest"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "records" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_GraphRecord"
+            }
+          },
+          "sourceRefs" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "manifest" : {
+            "$ref" : "#/components/schemas/ontology_api_PresentationManifest"
+          }
+        }
+      },
+      "ontology_api_PresentationPublication" : {
+        "type" : "object",
+        "required" : [
+          "presentationId",
+          "reservedSourceRef",
+          "payloadDigest"
+        ],
+        "properties" : {
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "reservedSourceRef" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "payloadDigest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_PresentedSelection_Whole" : {
+        "type" : "object",
+        "required" : [
+          "target"
+        ],
+        "properties" : {
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_PresentedSelection_Alternative" : {
+        "type" : "object",
+        "required" : [
+          "target",
+          "definition",
+          "index",
+          "label"
+        ],
+        "properties" : {
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "definition" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "index" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "label" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_PresentedSelection" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelection_Whole"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelection_Alternative"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Whole, Alternative."
+      },
+      "ontology_api_PresentedSelectionInput_Whole" : {
+        "type" : "object",
+        "required" : [
+          "target"
+        ],
+        "properties" : {
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          }
+        }
+      },
+      "ontology_api_PresentedSelectionInput_Alternative" : {
+        "type" : "object",
+        "required" : [
+          "target",
+          "definition",
+          "index",
+          "label"
+        ],
+        "properties" : {
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "definition" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "index" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "label" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_PresentedSelectionInput" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelectionInput_Whole"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelectionInput_Alternative"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Whole, Alternative."
+      },
+      "ontology_api_ProjectionAckInput" : {
+        "type" : "object",
+        "required" : [
+          "sessionId",
+          "requestId",
+          "target",
+          "observed"
+        ],
+        "properties" : {
+          "sessionId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionTarget"
+          },
+          "observed" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionCheckpoint"
+          }
+        }
+      },
+      "ontology_api_ProjectionAckReceipt" : {
+        "type" : "object",
+        "required" : [
+          "input",
+          "disposition",
+          "recordedAt"
+        ],
+        "properties" : {
+          "input" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionAckInput"
+          },
+          "disposition" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionDisposition"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ProjectionCheckpoint" : {
+        "type" : "object",
+        "required" : [
+          "instance",
+          "scope",
+          "generation",
+          "digest"
+        ],
+        "properties" : {
+          "instance" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ProjectionCheckpointWitness" : {
+        "type" : "object",
+        "required" : [
+          "checkpoint",
+          "sessionId",
+          "requestId"
+        ],
+        "properties" : {
+          "checkpoint" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionCheckpoint"
+          },
+          "sessionId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "requestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_ProjectionDisposition" : {
+        "type" : "string",
+        "enum" : [
+          "ExactCheckpoint",
+          "SupersededByCheckpoint"
+        ]
+      },
+      "ontology_api_ProjectionInstance" : {
+        "type" : "object",
+        "required" : [
+          "targetId",
+          "incarnation"
+        ],
+        "properties" : {
+          "targetId" : {
+            "type" : "string"
+          },
+          "incarnation" : {
+            "type" : "string",
+            "format" : "uuid"
+          }
+        }
+      },
+      "ontology_api_ProjectionIssuedBatch" : {
+        "type" : "object",
+        "required" : [
+          "startIndex",
+          "targets"
+        ],
+        "properties" : {
+          "startIndex" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ProjectionTarget"
+            }
+          }
+        }
+      },
+      "ontology_api_ProjectionProgress" : {
+        "type" : "object",
+        "required" : [
+          "issuedThrough"
+        ],
+        "properties" : {
+          "issuedThrough" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "batch" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ProjectionIssuedBatch"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_ProjectionSession" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "fence",
+          "instance",
+          "actor",
+          "scopes",
+          "batchLimit",
+          "openedAt"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "fence" : {
+            "$ref" : "#/components/schemas/ontology_api_CoordinatorFence"
+          },
+          "instance" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
+          },
+          "actor" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "scopes" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "batchLimit" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "openedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ProjectionStoreIdentity" : {
+        "type" : "object",
+        "required" : [
+          "format",
+          "instance"
+        ],
+        "properties" : {
+          "format" : {
+            "type" : "integer",
+            "format" : "int32"
+          },
+          "instance" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionInstance"
+          }
+        }
+      },
+      "ontology_api_ProjectionTarget" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "digest",
+          "origin"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "digest" : {
+            "type" : "string"
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_ProjectionTargetOrigin"
+          }
+        }
+      },
+      "ontology_api_ProjectionTargetOrigin" : {
+        "type" : "string",
+        "enum" : [
+          "Head",
+          "Outbox"
+        ]
+      },
+      "ontology_api_Provenance" : {
+        "type" : "object",
+        "required" : [
+          "contributor",
+          "recorder",
+          "input",
+          "recordedAt"
+        ],
+        "properties" : {
+          "contributor" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "recorder" : {
+            "$ref" : "#/components/schemas/ontology_api_Actor"
+          },
+          "input" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "recordedAt" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_QueryLimitsResult" : {
+        "type" : "object",
+        "required" : [
+          "maxPageRecords"
+        ],
+        "properties" : {
+          "maxPageRecords" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_ReadRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "view",
+          "targets",
+          "limit"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "view" : {
+            "$ref" : "#/components/schemas/ontology_api_ReadView"
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "cursor" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "limit" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_ReadResult" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "records"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "records" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_GraphRecord"
+            }
+          },
+          "cursor" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_ReadView" : {
+        "type" : "string",
+        "enum" : [
+          "Current",
+          "History",
+          "BindingContext"
+        ]
+      },
+      "ontology_api_Ref" : {
+        "type" : "object",
+        "required" : [
+          "id",
+          "revision"
+        ],
+        "properties" : {
+          "id" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "revision" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_Relation" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "scope",
+          "applicability",
+          "kind",
+          "sources",
+          "targets",
+          "detail",
+          "why",
+          "standing",
+          "provenance"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_Applicability"
+          },
+          "kind" : {
+            "$ref" : "#/components/schemas/ontology_api_RelationKind"
+          },
+          "sources" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "targets" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "detail" : {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail"
+          },
+          "why" : {
+            "type" : "string"
+          },
+          "standing" : {
+            "$ref" : "#/components/schemas/ontology_api_Standing"
+          },
+          "provenance" : {
+            "$ref" : "#/components/schemas/ontology_api_Provenance"
+          }
+        }
+      },
+      "ontology_api_RelationDetail_Empty" : {
+        "type" : "object"
+      },
+      "ontology_api_RelationDetail_Dependency" : {
+        "type" : "object",
+        "required" : [
+          "gate",
+          "consumption",
+          "applicability"
+        ],
+        "properties" : {
+          "gate" : {
+            "$ref" : "#/components/schemas/ontology_api_Gate"
+          },
+          "consumption" : {
+            "$ref" : "#/components/schemas/ontology_api_Consumption"
+          },
+          "event" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "applicability" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_RelationDetail_PlanRequirement" : {
+        "type" : "object",
+        "required" : [
+          "workContext"
+        ],
+        "properties" : {
+          "workContext" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_RelationDetail_Decomposition" : {
+        "type" : "object",
+        "required" : [
+          "grouping"
+        ],
+        "properties" : {
+          "grouping" : {
+            "$ref" : "#/components/schemas/ontology_api_Grouping"
+          }
+        }
+      },
+      "ontology_api_RelationDetail_Delegation" : {
+        "type" : "object",
+        "required" : [
+          "actors",
+          "operations",
+          "outcomes"
+        ],
+        "properties" : {
+          "actors" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "operations" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "outcomes" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_RelationDetail_Adoption" : {
+        "type" : "object",
+        "required" : [
+          "presentationId",
+          "origin",
+          "response",
+          "selection"
+        ],
+        "properties" : {
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_AdoptionOrigin"
+          },
+          "response" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "selection" : {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelection"
+          }
+        }
+      },
+      "ontology_api_RelationDetail_AssessmentUse" : {
+        "type" : "object",
+        "required" : [
+          "requirement",
+          "disposition",
+          "basis"
+        ],
+        "properties" : {
+          "requirement" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "disposition" : {
+            "$ref" : "#/components/schemas/ontology_api_AssessmentUseDisposition"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          }
+        }
+      },
+      "ontology_api_RelationDetail" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_Empty"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_Dependency"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_PlanRequirement"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_Decomposition"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_Delegation"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_Adoption"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetail_AssessmentUse"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Empty, Dependency, PlanRequirement, Decomposition, Delegation, Adoption, AssessmentUse."
+      },
+      "ontology_api_RelationDetailInput_Empty" : {
+        "type" : "object"
+      },
+      "ontology_api_RelationDetailInput_Dependency" : {
+        "type" : "object",
+        "required" : [
+          "gate",
+          "consumption",
+          "applicability"
+        ],
+        "properties" : {
+          "gate" : {
+            "$ref" : "#/components/schemas/ontology_api_Gate"
+          },
+          "consumption" : {
+            "$ref" : "#/components/schemas/ontology_api_Consumption"
+          },
+          "event" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Target"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "applicability" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_RelationDetailInput_PlanRequirement" : {
+        "type" : "object",
+        "required" : [
+          "workContext"
+        ],
+        "properties" : {
+          "workContext" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_RelationDetailInput_Decomposition" : {
+        "type" : "object",
+        "required" : [
+          "grouping"
+        ],
+        "properties" : {
+          "grouping" : {
+            "$ref" : "#/components/schemas/ontology_api_Grouping"
+          }
+        }
+      },
+      "ontology_api_RelationDetailInput_Delegation" : {
+        "type" : "object",
+        "required" : [
+          "actors",
+          "operations",
+          "outcomes"
+        ],
+        "properties" : {
+          "actors" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "operations" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          },
+          "outcomes" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          }
+        }
+      },
+      "ontology_api_RelationDetailInput_Adoption" : {
+        "type" : "object",
+        "required" : [
+          "presentationId",
+          "origin",
+          "response",
+          "selection"
+        ],
+        "properties" : {
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_AdoptionOrigin"
+          },
+          "response" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "selection" : {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelectionInput"
+          }
+        }
+      },
+      "ontology_api_RelationDetailInput_AssessmentUse" : {
+        "type" : "object",
+        "required" : [
+          "requirement",
+          "disposition",
+          "basis"
+        ],
+        "properties" : {
+          "requirement" : {
+            "$ref" : "#/components/schemas/ontology_api_Target"
+          },
+          "disposition" : {
+            "$ref" : "#/components/schemas/ontology_api_AssessmentUseDisposition"
+          },
+          "basis" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Target"
+            }
+          }
+        }
+      },
+      "ontology_api_RelationDetailInput" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_Empty"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_Dependency"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_PlanRequirement"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_Decomposition"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_Delegation"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_Adoption"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_RelationDetailInput_AssessmentUse"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Empty, Dependency, PlanRequirement, Decomposition, Delegation, Adoption, AssessmentUse."
+      },
+      "ontology_api_RelationKind" : {
+        "type" : "string",
+        "enum" : [
+          "Quotes",
+          "Interprets",
+          "Infers",
+          "Assumes",
+          "Supports",
+          "Challenges",
+          "Adopts",
+          "Chooses",
+          "Delegates",
+          "Supersedes",
+          "Withdraws",
+          "ContributesTo",
+          "DependsOn",
+          "Requires",
+          "Decomposes",
+          "AssignedTo",
+          "PlannedOutput",
+          "Produced",
+          "Answers",
+          "Assesses",
+          "UsesAssessment"
+        ]
+      },
+      "ontology_api_ReportedBoundaryDigest" : {
+        "type" : "object",
+        "required" : [
+          "encoding",
+          "digest"
+        ],
+        "properties" : {
+          "encoding" : {
+            "type" : "string"
+          },
+          "digest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ReportedInheritance" : {
+        "type" : "object",
+        "required" : [
+          "kind",
+          "sourceScope",
+          "generation",
+          "sourceFrontier",
+          "coveredFrontier",
+          "bindingRefs",
+          "sourceRefs"
+        ],
+        "properties" : {
+          "kind" : {
+            "$ref" : "#/components/schemas/ontology_api_InheritanceKind"
+          },
+          "sourceScope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "sourceFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "bindingRefs" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "sourceRefs" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "anchor" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_InheritanceAnchor"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_RequestTrace" : {
+        "type" : "object",
+        "required" : [
+          "hostRequestId",
+          "operation",
+          "transport"
+        ],
+        "properties" : {
+          "hostRequestId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "operation" : {
+            "type" : "string"
+          },
+          "transport" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTransport"
+          }
+        }
+      },
+      "ontology_api_RequestTransport" : {
+        "type" : "string",
+        "enum" : [
+          "Bearer",
+          "Cookie",
+          "Internal"
+        ]
+      },
+      "ontology_api_Resolution" : {
+        "type" : "string",
+        "enum" : [
+          "Fulfilled",
+          "NotFulfilled",
+          "Inconclusive"
+        ]
+      },
+      "ontology_api_ReviewAction_Review" : {
+        "type" : "object",
+        "required" : [
+          "kind"
+        ],
+        "properties" : {
+          "kind" : {
+            "$ref" : "#/components/schemas/ontology_api_JudgmentKind"
+          }
+        }
+      },
+      "ontology_api_ReviewAction_Choose" : {
+        "type" : "object",
+        "required" : [
+          "selection"
+        ],
+        "properties" : {
+          "selection" : {
+            "$ref" : "#/components/schemas/ontology_api_PresentedSelection"
+          }
+        }
+      },
+      "ontology_api_ReviewAction_Adopt" : {
+        "type" : "object",
+        "required" : [
+          "target"
+        ],
+        "properties" : {
+          "target" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_ReviewAction" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_ReviewAction_Review"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ReviewAction_Choose"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_ReviewAction_Adopt"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Review, Choose, Adopt."
+      },
+      "ontology_api_ReviewResponseLink" : {
+        "type" : "object",
+        "required" : [
+          "presentationId",
+          "judgmentId",
+          "presentationSource",
+          "payloadDigest"
+        ],
+        "properties" : {
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "judgmentId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "presentationSource" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "payloadDigest" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ScopeRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_ScopeSummary" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "generation",
+          "frontier",
+          "coveredFrontier",
+          "curation"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "coveredFrontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "curation" : {
+            "$ref" : "#/components/schemas/ontology_api_CurationState"
+          },
+          "failure" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "rdfGeneration" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "lastPublicationGeneration" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "attempt" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_CurationAttemptSummary"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_ScopesResult" : {
+        "type" : "object",
+        "required" : [
+          "items"
+        ],
+        "properties" : {
+          "items" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_ScopeSummary"
+            }
+          }
+        }
+      },
+      "ontology_api_SearchHit" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "kind",
+          "text",
+          "standing",
+          "applicability"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "kind" : {
+            "type" : "string"
+          },
+          "text" : {
+            "type" : "string"
+          },
+          "standing" : {
+            "$ref" : "#/components/schemas/ontology_api_Standing"
+          },
+          "applicability" : {
+            "$ref" : "#/components/schemas/ontology_api_Applicability"
+          }
+        }
+      },
+      "ontology_api_SourceDescriptor_PrimaryCapture" : {
+        "type" : "object",
+        "required" : [
+          "eventId",
+          "sourceNamespace",
+          "captureContext",
+          "metadata",
+          "origin",
+          "observation"
+        ],
+        "properties" : {
+          "eventId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "sourceNamespace" : {
+            "type" : "string"
+          },
+          "captureContext" : {
+            "$ref" : "#/components/schemas/ontology_api_ContextRecord"
+          },
+          "metadata" : {
+            "$ref" : "#/components/schemas/ontology_api_CaptureMetadata"
+          },
+          "origin" : {
+            "$ref" : "#/components/schemas/ontology_api_EventOrigin"
+          },
+          "observation" : {
+            "$ref" : "#/components/schemas/ontology_api_Observation"
+          },
+          "reviewResponse" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_ReviewResponseLink"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_SourceDescriptor_DerivedPresentation" : {
+        "type" : "object",
+        "required" : [
+          "presentationId",
+          "generation",
+          "payloadDigest",
+          "preparedAt",
+          "preparationTrace"
+        ],
+        "properties" : {
+          "presentationId" : {
+            "type" : "string",
+            "format" : "uuid"
+          },
+          "generation" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "payloadDigest" : {
+            "type" : "string"
+          },
+          "preparedAt" : {
+            "type" : "string"
+          },
+          "preparationTrace" : {
+            "$ref" : "#/components/schemas/ontology_api_RequestTrace"
+          }
+        }
+      },
+      "ontology_api_SourceDescriptor" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_SourceDescriptor_PrimaryCapture"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_SourceDescriptor_DerivedPresentation"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: PrimaryCapture, DerivedPresentation."
+      },
+      "ontology_api_SourceRepresentation" : {
+        "type" : "string",
+        "enum" : [
+          "Text",
+          "PiTranscript",
+          "HostReceipt",
+          "GraphCommand",
+          "HumanJudgment"
+        ]
+      },
+      "ontology_api_SourceRequest" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "after",
+          "limit"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "after" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "limit" : {
+            "type" : "integer",
+            "format" : "int32"
+          }
+        }
+      },
+      "ontology_api_SourceResult" : {
+        "type" : "object",
+        "required" : [
+          "scope",
+          "events",
+          "frontier"
+        ],
+        "properties" : {
+          "scope" : {
+            "type" : "string"
+          },
+          "events" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_CapturedEvent"
+            }
+          },
+          "frontier" : {
+            "type" : "string",
+            "format" : "int64"
+          },
+          "nextAfter" : {
+            "oneOf" : [
+              {
+                "type" : "string",
+                "format" : "int64"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          }
+        }
+      },
+      "ontology_api_Standing" : {
+        "type" : "string",
+        "enum" : [
+          "Active",
+          "Superseded",
+          "Withdrawn"
+        ]
+      },
+      "ontology_api_StateEvent" : {
+        "type" : "object",
+        "required" : [
+          "ref",
+          "scope",
+          "subject",
+          "phase",
+          "evidence",
+          "uncertainty",
+          "gateBasis",
+          "provenance"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "scope" : {
+            "type" : "string"
+          },
+          "subject" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          },
+          "previous" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Ref"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "phase" : {
+            "$ref" : "#/components/schemas/ontology_api_Phase"
+          },
+          "result" : {
+            "oneOf" : [
+              {
+                "$ref" : "#/components/schemas/ontology_api_Resolution"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "resolution" : {
+            "oneOf" : [
+              {
+                "type" : "string"
+              },
+              {
+                "type" : "null"
+              }
+            ]
+          },
+          "evidence" : {
+            "type" : "array",
+            "items" : {
+              "$ref" : "#/components/schemas/ontology_api_Ref"
+            }
+          },
+          "uncertainty" : {
+            "type" : "string"
+          },
+          "gateBasis" : {
+            "$ref" : "#/components/schemas/ontology_api_GateBasis"
+          },
+          "provenance" : {
+            "$ref" : "#/components/schemas/ontology_api_Provenance"
+          }
+        }
+      },
+      "ontology_api_Target_Exact" : {
+        "type" : "object",
+        "required" : [
+          "ref"
+        ],
+        "properties" : {
+          "ref" : {
+            "$ref" : "#/components/schemas/ontology_api_Ref"
+          }
+        }
+      },
+      "ontology_api_Target_Created" : {
+        "type" : "object",
+        "required" : [
+          "alias"
+        ],
+        "properties" : {
+          "alias" : {
+            "type" : "string"
+          }
+        }
+      },
+      "ontology_api_Target" : {
+        "oneOf" : [
+          {
+            "$ref" : "#/components/schemas/ontology_api_Target_Exact"
+          },
+          {
+            "$ref" : "#/components/schemas/ontology_api_Target_Created"
+          }
+        ],
+        "description" : "ADT discriminator-wrapper encoding: encoded as a single-key JSON object {\"<Branch>\": { ...branch fields... }} where the key is the branch's short name and the value is that branch's field object. Exactly one branch key is present. Known branches: Exact, Created."
+      },
+      "ontology_api_VersionInfo" : {
+        "type" : "object",
+        "required" : [
+          "current",
+          "minimum",
+          "supported"
+        ],
+        "properties" : {
+          "current" : {
+            "type" : "string"
+          },
+          "minimum" : {
+            "type" : "string"
+          },
+          "supported" : {
+            "type" : "array",
+            "items" : {
+              "type" : "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}

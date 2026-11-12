@@ -1,0 +1,11 @@
+{
+  "scheme" : 3,
+  "locks" : {
+    "ontology.api" : [
+      {
+        "version" : "0.1.0",
+        "sigId" : "a502ac8e652000ae90449b53717248dd7ddd05733a1c93fe8520be91a4e23d1b"
+      }
+    ]
+  }
+}
