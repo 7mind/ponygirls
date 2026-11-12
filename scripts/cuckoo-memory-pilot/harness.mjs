@@ -53,6 +53,7 @@ export async function runJob({ job, caseData, directory, sdk, Type, runtime, mod
     const visible = () => documents.filter(document => document.availableFrom <= sourceStage.value);
     const instrumentation = pi => {
       const pendingTools = new Map();
+      pi.on('before_agent_start', event => { event.systemPromptOptions.cwd = '/synthetic-workspace'; });
       pi.registerTool({ name: 'fixture_list', label: 'List synthetic sources', description: 'List every currently available synthetic source record ID and caption, including old revisions. Use fixture_read for the actual evidence. Upload recency alone is not authority.',
         parameters: Type.Object({}, { additionalProperties: false }), annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
         async execute() { const records = visible().map(({ id, caption }) => ({ id, caption })); return { content: [{ type: 'text', text: JSON.stringify({ records }) }], details: { recordIds: records.map(record => record.id) } }; } });

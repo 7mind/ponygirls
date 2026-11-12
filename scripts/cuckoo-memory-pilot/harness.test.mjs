@@ -51,12 +51,12 @@ async function fixture(t, writing, fail) {
   const caseData = getCase('upgrade'); caseData.initialPrompt += ' REMOVABLE_PREFIX_MARKER';
   const result = await runJob({ job: { id: `fixture-${writing}`, provider: 'pilot-fixture', model: 'scripted', thinking: 'off', writing, caseId: 'upgrade', continuations: [{ id: 'ordinary-reduced', selective: false, reduced: true }, { id: 'selective-reduced', selective: true, reduced: true }, { id: 'ordinary-full', selective: false, reduced: false }] },
     caseData, directory: join(parent, 'job'), sdk, Type, runtime, model: runtime.getModel('pilot-fixture', 'scripted'), extension: process.env.PI_CUCKOO_EXTENSION, onProgress() {}, inferenceKind: 'scripted', signal: new AbortController().signal });
-  return { result, contexts };
+  return { result, contexts, parent };
 }
 
 // Behavioral-Active / Effectual-GoodCommunication: actual SDK/filesystem, scripted provider is not a semantic agent.
 for (const writing of ['current', 'delta']) test(`${writing}: native checkpoints/forks/reduction preserve identical evidence and bounded tools`, { timeout: 30000 }, async t => {
-  const { result, contexts } = await fixture(t, writing, false);
+  const { result, contexts, parent } = await fixture(t, writing, false);
   assert.equal(result.status, 'completed', JSON.stringify(result.errors)); assert.equal(result.prefix.reports.length, 4); assert.equal(result.prefix.validReports, 4);
   assert.equal(result.prefix.deltaInjections, writing === 'delta' ? 4 : 0);
   for (const run of result.continuations) {
@@ -71,6 +71,11 @@ for (const writing of ['current', 'delta']) test(`${writing}: native checkpoints
     assert.equal(run.activeTools.includes('cuckoo_search'), run.arm.selective);
     assert.ok(!run.activeTools.some(name => ['read', 'write', 'bash', 'edit'].includes(name)));
     if (run.arm.reduced) assert.ok(!run.projectedRolesAfterReduction.includes('assistant'));
+  }
+  for (const context of contexts) {
+    const system = context.messages.filter(message => message.role === 'system');
+    assert.ok(JSON.stringify(system).includes('/synthetic-workspace'), 'model-facing cwd is a neutral logical workspace');
+    assert.ok(!JSON.stringify(system).includes(parent), 'actual run-directory labels must not enter model-facing system sections');
   }
   const inquiries = contexts.filter(context => JSON.stringify(context.messages.at(-1)).includes('Restate me your objectives'));
   assert.equal(inquiries.length, 4);
