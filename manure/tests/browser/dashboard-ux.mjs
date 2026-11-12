@@ -25,7 +25,7 @@ const check = async (name, run) => {
     page.on("request", (request) => urls.push(request.url()));
     await page.addInitScript(() => {
       const original = window.fetch.bind(window);
-      window.__ux = { listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
+      window.__ux = { listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdListReset: false, releaseListReset: null, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
       window.fetch = (url, options) => {
         const state = window.__ux;
         const value = String(url);
@@ -52,6 +52,7 @@ const check = async (name, run) => {
         if (command?.GetCapabilities && state.holdCapabilities) { state.holdCapabilities=false;return response.then(res=>new Promise(resolve=>{state.releaseCapabilities=()=>resolve(res);})); }
         if (command?.Search && state.holdSearch) { state.holdSearch=false;return response.then(res=>new Promise(resolve=>{state.releaseSearch=()=>resolve(res);})); }
         if (listPage && state.holdList) { state.holdList=false;return response.then(res=>new Promise(resolve=>{state.releaseList=()=>resolve(res);})); }
+        if (command?.ListArtifacts && !listPage && state.holdListReset) { state.holdListReset=false;return response.then(res=>new Promise(resolve=>{state.releaseListReset=()=>resolve(res);})); }
         if (command?.RotateExternalPassword && state.holdRotate) { state.holdRotate=false;return response.then(res=>new Promise(resolve=>{state.releaseRotate=()=>resolve(res);})); }
         return response;
       };
@@ -383,10 +384,19 @@ await check("returning from details after cancelling a page restores scrolling",
   await page.locator("#results-panel").evaluate((node) => { node.scrollTop = 0; });
   await page.locator("#artifact-list [data-action=details]").first().click();
   await page.locator("#detail-section").waitFor({ state: "visible" });
+  await page.evaluate(() => { window.__ux.holdListReset = true; });
   await page.locator("#detail-back-button").click();
   await page.locator("#dashboard-section").waitFor({ state: "visible" });
   await page.evaluate(() => window.__ux.releaseList());
-  await settle(page);
+  // Back refreshes the catalogue behind the cancelled physical append. Frames
+  // do not establish response completion: keep that refresh pending explicitly.
+  await page.waitForFunction(() => window.__ux.releaseListReset !== null);
+  assert.equal(await rows(page).count(), 0, "cancelled append cannot populate the returning catalogue");
+  assert.equal(await page.locator("#load-more-button").isEnabled(), false, "refresh owns the pending control");
+  assert.equal(await page.locator("#list-status").textContent(), "Loading artifacts…");
+  await page.evaluate(() => window.__ux.releaseListReset());
+  await count(page, 25);
+  await page.waitForFunction(() => !document.querySelector("#load-more-button").disabled);
   assert.equal(await page.locator("#load-more-button").isEnabled(), true);
   await page.locator("#load-more-button").click();
   await count(page, 50);
