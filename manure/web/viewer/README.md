@@ -29,6 +29,18 @@ nix build --impure --no-link --print-out-paths --expr \
 The installation is `$out/share/manure/web/viewer/`. Never commit `node_modules`
 or `dist`. The source directory is not directly browser-usable; build first.
 
+## Markdown source
+
+Markdown previews (including directory READMEs) have **Preview** and **Show raw**
+tabs. Show raw displays the fetched UTF-8 source as inert, selectable text, with
+local highlighting for headings, quotes, lists and fenced blocks. Tabs support
+arrow keys, Home and End. Switching views does not refetch or rerender the file.
+**Copy raw**, beside **Download original**, copies that same source text; clipboard
+failure is reported with guidance to select the raw text manually. Clipboard
+access requires a secure browser context and permission. Download original remains
+available for byte-exact downloads, including files outside the text preview limit.
+Source/copy controls remain usable if Markdown rendering fails after loading.
+
 ## Markdown section links
 
 Every Markdown heading (levels 1–6) has a visible, keyboard-accessible `#`

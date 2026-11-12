@@ -127,13 +127,72 @@ function headingLinks(article) {
   addEventListener('hashchange', scrollToFragment);
   return scrollToFragment;
 }
-async function markdown(text) {
+function markdownSource(text) {
+  const code = element('code');
+  let fence = null;
+  for (const line of text.match(/[^\n]*\n|[^\n]+$/g) || []) {
+    const marker = line.match(/^ {0,3}(`{3,}|~{3,})/);
+    let cls = '';
+    if (fence) {
+      cls = 'source-code';
+      if (marker && marker[1][0] === fence[0] && marker[1].length >= fence.length && !line.slice(marker[0].length).trim()) fence = null;
+    } else if (marker) { fence = marker[1]; cls = 'source-code'; }
+    else if (/^ {0,3}#{1,6}(?:\s|$)/.test(line)) cls = 'source-heading';
+    else if (/^ {0,3}>/.test(line)) cls = 'source-quote';
+    else if (/^\s*(?:[-+*]|\d+[.)])\s/.test(line)) cls = 'source-list';
+    code.append(cls ? element('span', line, cls) : document.createTextNode(line));
+  }
+  return code;
+}
+function markdownControls(text) {
+  const tabs = element('div', null, 'tools markdown-tabs');
+  tabs.setAttribute('role', 'tablist'); tabs.setAttribute('aria-label', 'Markdown view');
+  const preview = element('div'); preview.id = 'markdown-preview';
+  const source = element('div', null, 'raw-source'); source.id = 'markdown-source'; source.hidden = true;
+  const pre = element('pre'); pre.append(markdownSource(text)); source.append(pre);
+  const panels = [preview, source];
+  const controls = ['Preview', 'Show raw'].map((label, index) => {
+    const tab = button(label, () => select(index));
+    tab.id = `markdown-tab-${index}`; tab.setAttribute('role', 'tab');
+    tab.setAttribute('aria-controls', panels[index].id);
+    panels[index].setAttribute('role', 'tabpanel');
+    panels[index].setAttribute('aria-labelledby', tab.id); panels[index].tabIndex = 0;
+    tab.addEventListener('keydown', event => {
+      const next = {ArrowLeft:1-index, ArrowRight:1-index, Home:0, End:1}[event.key];
+      if (next === undefined) return;
+      event.preventDefault(); select(next); controls[next].focus();
+    });
+    return tab;
+  });
+  function select(index) {
+    controls.forEach((tab, i) => {
+      tab.setAttribute('aria-selected', String(i === index)); tab.tabIndex = i === index ? 0 : -1;
+      panels[i].hidden = i !== index;
+    });
+  }
+  select(0); tabs.append(...controls); content.append(tabs, ...panels);
+  const copy = document.querySelector('#copy-raw');
+  const feedback = document.querySelector('#copy-status');
+  copy.hidden = false; copy.disabled = false;
+  copy.addEventListener('click', async () => {
+    copy.disabled = true; feedback.textContent = '';
+    try {
+      if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard access is unavailable.');
+      await navigator.clipboard.writeText(text);
+      feedback.textContent = 'Raw Markdown copied.';
+    } catch {
+      feedback.textContent = 'Could not copy. Select and copy the text in Show raw instead.';
+    } finally { copy.disabled = false; }
+  });
+  return preview;
+}
+async function markdown(text, target) {
   const article = element('article',null,'markdown');
   article.innerHTML = sanitizedMarkdown(text);
   const scrollToFragment = headingLinks(article);
   const graphs = [...article.querySelectorAll('pre > code')].filter(code => /language-(mermaid|mmd|dot|gv|graphviz)\b/.test(code.className));
   diagramCount(graphs.length);
-  content.append(article);
+  target.append(article);
   scrollToFragment();
   const deadline = Date.now() + 30000;
   for (const code of graphs) {
@@ -210,7 +269,10 @@ async function main() {
   else if (meta.kind === 'pdf') await pdf();
   else {
     const text = new TextDecoder('utf-8', {fatal:true}).decode(await fetchBytes(TEXT_LIMIT));
-    if (['markdown','md'].includes(meta.kind)) await markdown(text);
+    if (['markdown','md'].includes(meta.kind)) {
+      const preview = markdownControls(text);
+      try { await markdown(text, preview); } catch (error) { fail(error, preview); }
+    }
     else if (['mermaid','mmd','dot','gv','graphviz'].includes(meta.kind)) await diagram(text,meta.kind,content);
     else throw new Error('Unsupported preview format.');
   }
