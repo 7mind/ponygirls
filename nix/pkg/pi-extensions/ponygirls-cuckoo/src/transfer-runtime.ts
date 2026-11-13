@@ -17,10 +17,11 @@ import {
   type TransferApproval, type TransferDestination,
   type TransferInspection, type TransferReadRequest,
 } from './experiments/session-transfer.ts';
+import { NativeTransferFiles, type TransferFiles } from './transfer-operator.ts';
 import {
-  NativeTransferFiles, previewTransfer, confirmTransfer, requireTransferUI,
-  transferDisplay, type TransferFiles,
-} from './transfer-operator.ts';
+  previewOperatorText as previewTransfer, confirmOperatorAction as confirmTransfer,
+  requireOperatorUI as requireTransferUI, operatorDisplay as transferDisplay,
+} from './operator-ui.ts';
 
 export const TRANSFER_TOOL = 'cuckoo_transfer';
 export const MAX_RETAINED_TRANSFER_PACKETS = 4;

@@ -40,6 +40,8 @@ export interface CriticModelIdentity {
   readonly configurationDigest: TextDigest;
 }
 
+export type CriticDataPolicy = 'synthetic-public-only' | 'operator-approved-task-snapshots-v1';
+
 export interface CriticGrant {
   readonly id: string;
   readonly scope: CriticScope;
@@ -49,7 +51,7 @@ export interface CriticGrant {
   readonly promptDigest: TextDigest;
   readonly privacyPolicyId: string;
   readonly privacyPolicyDigest: TextDigest;
-  readonly dataPolicy: 'synthetic-public-only';
+  readonly dataPolicy: CriticDataPolicy;
   /** Civil epoch milliseconds. */
   readonly expiresAt: number;
   readonly revoked: boolean;
@@ -554,7 +556,7 @@ function validateGrant(value: unknown): asserts value is CriticGrant {
   identifier(grant.privacyPolicyId);
   digest(grant.privacyPolicyDigest);
   if (
-    grant.dataPolicy !== 'synthetic-public-only' ||
+    (grant.dataPolicy !== 'synthetic-public-only' && grant.dataPolicy !== 'operator-approved-task-snapshots-v1') ||
     typeof grant.revoked !== 'boolean'
   ) {
     throw new Error('Invalid policy');

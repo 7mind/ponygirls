@@ -53,7 +53,7 @@ export interface EmbeddingAuditEvent {
 }
 
 export interface EmbeddingFetch {
-  (url: string, init: RequestInit): Promise<Response>;
+  (url: string, init: RequestInit & { readonly signal: AbortSignal }): Promise<Response>;
 }
 
 export interface EmbeddingAuthorize {

@@ -8,6 +8,10 @@ import { CuckooPreferences, FilePreferenceStore, type PreferenceScope, type Pref
 import { FEATURES, featureId } from './src/features.ts';
 import { CuckooFeatures } from './src/feature-runtime.ts';
 import { CuckooTransfer, nativeTransferDependencies } from './src/transfer-runtime.ts';
+import { CuckooTaskConsents } from './src/task-consent.ts';
+import { CuckooVectors } from './src/vector-runtime.ts';
+import { CuckooCritic } from './src/critic-runtime.ts';
+import { nativeNetworkServices, type CuckooNetworkServices } from './src/network-services.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, checkpoint, checkpoints } from './src/report.ts';
 import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
@@ -16,10 +20,17 @@ import { CuckooView } from './src/view.ts';
 import { CuckooSettingsView, bindSettingsCallbacks } from './src/settings-view.ts';
 import { reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
 
-export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): void {
+export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, networkServices: CuckooNetworkServices): void {
   const configuration = new CuckooPreferences(pi, preferences, path => new FilePreferenceStore(path));
   const features = new CuckooFeatures(pi, configuration, randomUUID());
-  const transfer = new CuckooTransfer(features, nativeTransferDependencies());
+  const transferDependencies = nativeTransferDependencies();
+  const transfer = new CuckooTransfer(features, transferDependencies);
+  const taskConsents = new CuckooTaskConsents(pi, features,
+    () => networkServices.clock.civilNowMs(), () => networkServices.ids.nextId(),
+    cwd => transferDependencies.files.projectId(cwd), () => networkServices.clock.monotonicNowMs());
+  const vectors = new CuckooVectors(features, taskConsents, networkServices);
+  const critic = new CuckooCritic(pi, features, taskConsents, networkServices);
+  const workflows = [{ name: 'transfer', runtime: transfer }, { name: 'vectors', runtime: vectors }, { name: 'critic', runtime: critic }] as const;
   let view = new CuckooView(inquire);
   let settingsView = new CuckooSettingsView();
   let manualRequested = false;
@@ -122,14 +133,15 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     },
   });
   pi.registerCommand('cuckoo', {
-    description: 'Show objectives/progress; settings: scoped feature checkboxes; transfer export|import|task|revoke|clear|status; inquire now; history; on|off|inherit; [default|project] feature NAME on|off|inherit; [default|project] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
+    description: 'Show objectives/progress; settings: scoped feature checkboxes; transfer export|import|task|revoke|clear|status; vectors approve|revoke|status; critic approve|revoke|status|reconcile; inquire now; history; on|off|inherit; [default|project] feature NAME on|off|inherit; [default|project] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
     getArgumentCompletions: completeCuckooArguments,
     handler: async (args, ctx) => {
       try {
         const trimmed = args.trim();
-        if (trimmed === 'transfer' || trimmed.startsWith('transfer ')) {
-          try { await transfer.command(trimmed.slice('transfer'.length).trim(), ctx); }
-          catch (error) { ctx.ui.notify(terminalText(`Cuckoo transfer: ${String(error)}`), 'error'); }
+        const workflow = workflows.find(item => trimmed === item.name || trimmed.startsWith(`${item.name} `));
+        if (workflow !== undefined) {
+          try { await workflow.runtime.command(trimmed.slice(workflow.name.length).trim(), ctx); }
+          catch (error) { ctx.ui.notify(terminalText(`Cuckoo ${workflow.name}: ${String(error)}`), 'error'); }
           return;
         }
         if (trimmed === 'settings') {
@@ -201,6 +213,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     event.systemPromptOptions.sections.cuckoo = `${scheduling}\n${MODEL_GUIDANCE}`;
     if (event.messageType === 'user') {
       try { cancel(ctx, 'Checkpoint superseded by a new user prompt'); } catch (error) { warn(ctx, error); }
+      try { critic.ordinaryRunStart(ctx); }
+      catch (error) { ctx.ui.notify(terminalText(`Cuckoo critic unavailable: ${String(error)}`), 'error'); }
     }
   });
   pi.on('message_start', (event, ctx) => {
@@ -222,6 +236,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     if (state !== null && state.pending !== null) return { block: true, reason: 'Cuckoo checkpoint requires JSON only; tool execution is not permitted for this response.' };
   });
   pi.on('turn_end', (event: TurnEndEvent, ctx) => {
+    try { event.entries.push(...critic.ordinaryBoundary(event, ctx)); }
+    catch (error) { ctx.ui.notify(terminalText(`Cuckoo critic unavailable: ${String(error)}`), 'error'); }
     try {
       const branch = ctx.sessionManager.getBranch();
       const previous = stateOnBranch(branch);
@@ -271,4 +287,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
   pi.on('turn_start', (_event, ctx) => refresh(ctx));
   pi.on('session_shutdown', (_event, ctx) => { settingsView.dispose(); features.shutdown(); view.dispose(ctx); });
 }
-export default function (pi: ExtensionAPI): void { registerCuckoo(pi, new FilePreferenceStore(join(getAgentDir(), 'cuckoo.json'))); }
+export default function (pi: ExtensionAPI): void {
+  const agentDir = getAgentDir();
+  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), nativeNetworkServices(agentDir));
+}

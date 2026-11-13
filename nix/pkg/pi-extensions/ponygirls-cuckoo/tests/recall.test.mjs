@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { stream as streamAnthropic } from '@earendil-works/pi-ai/api/anthropic-messages';
 import { registerCuckoo } from '../index.ts';
+import { inertNetworkServices } from './fixtures/task-network.mjs';
 
 const raw = JSON.stringify({ objectives: [{ objective: 'Ship recall', progress: 'Testing', issues: ['Validation'], eta: 'Unknown: tests pending' }], rules: [{ rule: 'Review before merging', source: 'assistant', scope: 'This change' }] });
 function fixture() {
@@ -12,7 +13,7 @@ function fixture() {
   const pi = { registerTool: tool => { tools.set(tool.name, tool); if (tool.defaultActive !== false) activeTools.add(tool.name); }, getActiveTools: () => [...activeTools], setActiveTools(names) { activeTools.clear(); for (const name of names) activeTools.add(name); }, on: (name, fn) => handlers.set(name, fn), registerCommand() {}, registerShortcut() {},
     sendMessage() { assert.fail('recall must not request inference'); }, appendEntry() { assert.fail('recall must not append entries'); } };
   const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, ui: { notify() {}, setWidget() {} } };
-  registerCuckoo(pi, preferences);
+  registerCuckoo(pi, preferences, inertNetworkServices());
   handlers.get('session_start')({}, ctx);
   const call = async params => {
     const tool = tools.get('cuckoo_recall'); assert.ok(tool, 'cuckoo_recall must be registered');

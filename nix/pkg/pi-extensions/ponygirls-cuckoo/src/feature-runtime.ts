@@ -13,6 +13,7 @@ export class CuckooFeatures {
   private readonly pi: ExtensionAPI;
   private readonly preferences: CuckooPreferences;
   private readonly epoch: MemoryScopeEpoch;
+  private readonly ownerEpoch: MemoryScopeEpoch;
   private readonly tools: FeatureTool[] = [];
   private previousAllowed = new Set<string>();
   private configurationIdentity: string | null = null;
@@ -22,6 +23,7 @@ export class CuckooFeatures {
 
   constructor(pi: ExtensionAPI, preferences: CuckooPreferences, nonce: string) {
     this.pi = pi; this.preferences = preferences; this.epoch = new MemoryScopeEpoch(nonce);
+    this.ownerEpoch = new MemoryScopeEpoch(`${nonce}:owner`);
     this.registerTool(createMemoryTool({
       pi, runtime: nativeMemoryRuntime(), registry: createBuiltinCheckerRegistry(),
       isInquiryActive: ctx => this.inquiryActive(ctx),
@@ -44,6 +46,7 @@ export class CuckooFeatures {
   }
 
   start(ctx: ExtensionContext): void {
+    this.ownerEpoch.advance();
     this.invalidate();
     this.ownerSession = ctx.sessionManager.getSessionId();
     this.alive = true;
@@ -53,10 +56,12 @@ export class CuckooFeatures {
 
   navigate(ctx: ExtensionContext): void {
     this.requireOwner(ctx);
+    this.ownerEpoch.advance();
     this.invalidate();
   }
 
   shutdown(): void {
+    this.ownerEpoch.advance();
     this.invalidate();
     this.alive = false;
     this.ownerSession = null;
@@ -103,6 +108,10 @@ export class CuckooFeatures {
 
   requireFeature(ctx: ExtensionContext, feature: FeatureId): EffectivePreferences {
     this.requireOrdinaryWork(ctx);
+    return this.requireEnabledFeature(ctx, feature);
+  }
+
+  requireEnabledFeature(ctx: ExtensionContext, feature: FeatureId): EffectivePreferences {
     const settings = this.refresh(ctx);
     const state = featureActivation(settings.enabled, settings.features, feature);
     if (!state.activeBySettings) throw new Error(`Cuckoo ${feature} unavailable: ${state.reasons.join(', ')}`);
@@ -124,6 +133,11 @@ export class CuckooFeatures {
     if (!required.some(id => featureActivation(settings.enabled, settings.features, id).activeBySettings)) {
       throw new Error(`Cuckoo action ${action} is disabled; requires master ON and ${required.join(' or ')} with its dependencies`);
     }
+  }
+
+  ownerKey(ctx: ExtensionContext): string {
+    this.requireOwner(ctx);
+    return this.ownerEpoch.key(ctx.sessionManager.getSessionId());
   }
 
   scopeKey(ctx: ExtensionContext): string {

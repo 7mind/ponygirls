@@ -370,6 +370,17 @@ test('disabled, missing grant, host denial, and recognizable excluded models nev
   }
 });
 
+test('versioned task disclosure policy is distinct from retained synthetic grants', async () => {
+  for (const policy of ['synthetic-public-only', 'operator-approved-task-snapshots-v1']) {
+    const f = fixture(new DeterministicModel(reply(goodText())), {});
+    f.state.grant.dataPolicy = policy;
+    const run = launch(f); const completed = await run.completion;
+    assert.equal(completed.terminal.outcome, 'accepted');
+    assert.equal(records(f, 'start')[0].grant.dataPolicy, policy);
+    assert.equal(new ReflectionCritic(f.ports, f.limits).history()[0].record.grant.dataPolicy, policy);
+  }
+});
+
 test('exact immutable public payload, fixed prompt, no tools or mutation authority', async () => {
   const f = fixture(new DeterministicModel(reply(goodText())), {});
   const expected = structuredClone(f.request.bundle);

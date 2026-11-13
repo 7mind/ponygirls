@@ -11,7 +11,8 @@ import { CuckooFeatures } from '../src/feature-runtime.ts';
 import { NativeMemoryPort, nativeMemoryRuntime } from '../src/memory-runtime.ts';
 import { appendMemory, makeSnapshot, makeTask, readMemory } from '../src/memory-core.ts';
 import { CuckooTransfer, TRANSFER_TOOL, TRANSFER_APPROVAL_MS } from '../src/transfer-runtime.ts';
-import { NativeTransferFiles, previewTransfer, confirmTransfer, transferDisplay } from '../src/transfer-operator.ts';
+import { NativeTransferFiles } from '../src/transfer-operator.ts';
+import { previewOperatorText as previewTransfer, confirmOperatorAction as confirmTransfer, operatorDisplay as transferDisplay } from '../src/operator-ui.ts';
 import { MAX_TRANSFER_MANIFEST_BYTES } from '../src/experiments/session-transfer.ts';
 
 const TEXT = 'Controlled public artifact 🐦\n"quoted"\u0000\ud800';

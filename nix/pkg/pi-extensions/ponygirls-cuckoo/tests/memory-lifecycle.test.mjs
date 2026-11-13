@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { SessionManager } from '@earendil-works/pi-coding-agent';
 import { registerCuckoo } from '../index.ts';
+import { inertNetworkServices } from './fixtures/task-network.mjs';
 import auditMemoryMigrationNotice from '../audit-memory.ts';
 import { readMemory } from '../src/memory-core.ts';
 import { DEFAULT_FEATURES } from '../src/features.ts';
@@ -21,7 +22,7 @@ function fixture(enabled) {
   let saved = { enabled, policy: { kind: 'window', value: 15 }, features: { ...DEFAULT_FEATURES, evidence: true, corrections: true, verifiers: true, reader: true } };
   const preferences = { path: 'memory:fixture', read: () => structuredClone(saved), write(value) { saved = structuredClone(value); } };
   const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => ({ tokens: 20000, contextWindow: 200000, percent: 10 }), ui: { notify: (...args) => notices.push(args), setWidget() {} } };
-  registerCuckoo(pi, preferences);
+  registerCuckoo(pi, preferences, inertNetworkServices());
   handlers.get('session_start')({}, ctx);
   const memory = tools.get('cuckoo_memory');
   assert.ok(memory, 'normal extension registers the gated memory tool');

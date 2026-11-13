@@ -12,9 +12,14 @@ export function completeCuckooArguments(prefix: string): CompletionItem[] | null
       choice('inherit', 'Inherit enablement', false), choice('default', 'Change global defaults', true),
       choice('project', 'Change trusted project overrides', true), choice('feature', 'Configure a feature switch', true),
       choice('transfer', 'Manage operator-approved historical packets', true),
+      choice('vectors', 'Approve, revoke or inspect task encoder consent', true),
+      choice('critic', 'Approve, revoke, inspect or reconcile the task critic', true),
       choice('settings', 'Open scoped feature checkboxes', false), choice('status', 'Show status', false), choice('history', 'Show saved answers across branches', false), choice('reports', 'Show current reports', false),
       choice('policy', 'Set growth policy', true), choice('threshold', 'Set relative growth percentage (legacy alias)', true)];
     if (previous.length === 1 && previous[0] === 'transfer') return ['export', 'import', 'task', 'revoke', 'clear', 'status'].map(token => choice(token, 'Operator-only transfer workflow', false));
+    if (previous.length === 1 && (previous[0] === 'vectors' || previous[0] === 'critic')) return [
+      ...['approve', 'revoke', 'status'].map(token => choice(token, 'Operator task disclosure workflow', false)),
+      ...(previous[0] === 'critic' ? [choice('reconcile', 'Explicitly reconcile one uncertain admission', false)] : [])];
     if (previous.length === 1 && previous[0] === 'inquire') return [choice('now', 'Request a checkpoint now, even when automatic mode is off', false)];
     if (previous.length === 1 && previous[0]!.toLowerCase() === 'default') return [...toggles,
       ...(previous[0] === 'default' ? [choice('policy', 'Set global growth policy', true), choice('threshold', 'Set global relative growth percentage', true), choice('feature', 'Configure a global feature default', true)] : [])];

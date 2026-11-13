@@ -30,6 +30,11 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
   `verifiers`, `reader`, `transfer`, `vectors`, `critic`.
 - `/cuckoo transfer export|import|task|revoke|clear|status`: operator-only,
   same-project historical packet workflow; see below.
+- `/cuckoo vectors approve|revoke|status`: choose a configured encoder and a task,
+  grant bounded disclosure consent, revoke it, or inspect current status.
+- `/cuckoo critic approve|revoke|status|reconcile`: choose a configured critic and
+  a task, revoke consent, inspect recent advice/status, or explicitly reconcile
+  one unresolved admission. None of these actions is a model tool.
 - `/cuckoo policy relative 15`: grow 15% relative to the checkpoint's token count.
 - `/cuckoo policy window 15`: grow by tokens equal to 15% of context-window capacity.
 - `/cuckoo policy tokens 10000`: grow by 10,000 tokens.
@@ -230,17 +235,100 @@ of the stable navigation epoch, not the changing leaf. Source branch heads remai
 exact export observations. Projects are identified by canonical cwd digest;
 declared cross-project packets are rejected.
 
-## Networked feature integration status
+## Per-task network consent
 
-Vector retrieval and critic controller/SDK libraries, plus the bounded embedding
-transport, are included and tested mechanically. Their switches currently record
-preferences only: production model selection and disclosure workflows are not yet
-connected. Enabling those switches starts no network work. Vector eligibility
-requires reader; critic eligibility requires evidence. Their eventual host adapters
-must obtain separate data/model authorization; model-written arguments are not
-approvals. The controlled study harness remains on `experiment/cuckoo-candidates`.
-The earlier study showed no final-answer gain; integration is not a new semantic
-quality result.
+Enabling `vectors` or `critic` starts no network work. Vectors require reader;
+critic requires evidence. Each separately requires an operator TUI approval: choose
+an existing current-branch task and configured destination, inspect the current
+snapshots and future-content policy, then approve in a bounded Cancel-default
+confirmation panel. The grant covers snapshots assigned to that **task ID**,
+including future snapshots; vector consent also covers bounded model-written
+query text. Task assignment/labels remain model-authored, not proof of semantic
+scope. The host never harvests ambient/system/developer/hidden-reasoning blocks.
+A native user-role message or model-written permission field cannot create a grant.
+
+Grants are runtime-local and bound to project, session, navigation/configuration
+scope, task and exact model configuration. They last at most 30 elapsed minutes
+(monotonic lease; civil timestamps for display), with at most 256 encoder calls or
+32 critic calls per grant. These are runaway/resource safeguards, not financial
+approval gates. Revocation, expiry, observed configuration drift, navigation,
+reload and shutdown remove authority. Native receipts do not restore grants on
+restart; failed/uncertain calls are not automatically refunded or retried.
+
+### Encoder configuration and search
+
+Configure global `<agentDir>/cuckoo-encoders.json`; project preferences and model
+arguments cannot choose credential sources or routes. Example structure:
+
+```json
+{
+  "version": 1,
+  "encoders": [{
+    "id": "team-encoder",
+    "label": "Selected team encoder",
+    "url": "https://encoder.example.invalid/v1/embeddings",
+    "model": "configured-model-id",
+    "version": "advertised-model-version",
+    "dimensions": 4096,
+    "normalization": "unit",
+    "credentialEnv": "ENCODER_API_KEY"
+  }]
+}
+```
+
+Use a real configured HTTPS URL/model/version/dimension. The named environment
+variable supplies the credential to the Pi process; never put its value in this
+file, a model argument, source control or a disclosure preview. Missing/malformed
+configuration fails visibly; there is no provider discovery call or fallback.
+Owned-loopback transport is an explicitly injected test service, not a production
+profile flag. Encoder identities bind configuration, implementation sources and
+Node/V8; advertised labels do not attest provider weights.
+
+After consent, `cuckoo_search` takes `taskId`, `query`, and optional bounded `topK`.
+It indexes exact source-available snapshots of the approved task, serializes index
+updates and rechecks current digests/status/authority at HTTP handoff and after
+awaits. The task inventory is bounded to 128 snapshots and 1 MB; oversized inputs
+fail rather than silently shrinking coverage. Search returns active candidates,
+IDs/digests and explicit total/available/excluded/indexed counts, never vectors or
+credentials. Inspect exact text through `cuckoo_memory`. Status-only corrections
+do not require re-encoding; new task snapshots are admitted on the next search.
+Inventory changes mid-search fail explicitly. Completed cached rows may be reused
+by a later explicit search, but an incomplete search is never reported successful.
+Cancellation stops local waiting, not necessarily provider work.
+
+### Advisory critic
+
+Critic selection uses the existing Pi model registry and scoped-model list; it
+never creates a second runtime or reads authentication files. Supported native
+APIs are OpenAI completions/responses/Codex responses with a verifiable off-thinking
+configuration. Virtual, incompatible and recognized prohibited model bindings are
+excluded. URL/configuration drift fails closed; the SDK resolves its own auth.
+No ambient history, tools, delegation, mutations or new goals are given to it.
+
+At an already-continuing ordinary boundary, the critic may review the selected
+latest native task's latest active artifact plus its bounded active/available
+evidence snapshots. It does not transmit task labels or checker output as input.
+The exact bundle must fit 64 records, 24000 characters and 96000 UTF-8 bytes; it is
+not truncated. Requests are tool-free, at most 30 seconds/2000 output tokens, and
+advisory only. There is also a persistent session-wide cap of 128 requests.
+
+Completion records state/advice but never starts another main-model turn. Advice
+can be proposed only at a pre-existing ordinary continuation; JSON inquiries defer
+that proposal, and ordinary final/failed/aborted work cannot be resumed by advice.
+A handoff record is a host proposal, not proof of commit, model reading or benefit.
+`critic status` exposes bounded recent advice with its historical outcome and
+applicability-at-completion, including when no continuation received it.
+
+Native start/transport/terminal records preserve unresolved admission through
+reload. Config OFF revokes applicability while genuine same-owner settlement can
+still be recorded; stale-owner callbacks cannot write into another session/branch.
+`critic reconcile` is a separate Cancel-default release of one unresolved
+reservation when no live owned client is known. It acknowledges that provider work
+may continue; it neither proves remote stop nor retries/resumes anything.
+
+The controlled study harness remains on `experiment/cuckoo-candidates`. The
+previous study showed no final-answer gain; runtime integration and mechanical
+acceptance are not new semantic-quality evidence.
 
 ## Reading the panel
 
