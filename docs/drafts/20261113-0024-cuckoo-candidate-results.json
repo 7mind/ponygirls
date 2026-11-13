@@ -1,0 +1,1429 @@
+{
+  "version": 1,
+  "generatedAt": "2026-11-13T00:32:59.806089+00:00",
+  "experimentalSourceCommit": "2f1f07a8049b0bb8df53930937189a3bbb736c12",
+  "protocolSha256": "c47938c405d20782ff5d6c6c02c3d964ad55cfa709cfe70567d639ef5562af59",
+  "subjects": [
+    {
+      "key": "m0",
+      "provider": "openai-codex",
+      "model": "gpt-6.1-sol",
+      "thinking": "high"
+    },
+    {
+      "key": "m1",
+      "provider": "compatible",
+      "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+      "thinking": "off"
+    }
+  ],
+  "reviewer": {
+    "provider": "compatible",
+    "model": "Qwen/Qwen3-30B-A3B-Instruct-2507",
+    "thinking": "off"
+  },
+  "encoder": {
+    "model": "Qwen/Qwen3-Embedding-8B",
+    "dimensions": 4096,
+    "normalization": "unit",
+    "version": "advertised-unversioned"
+  },
+  "primaryReportedIdentityFields": {
+    "m0": [],
+    "m1": []
+  },
+  "identityQualification": "Primary model labels are requested profiles/client routes; native responseModel fields were absent. No provider-weight attestation. Auxiliary/embedding reported identifiers were checked.",
+  "heldOut": {
+    "planned": 192,
+    "modelCompleted": 179,
+    "resourceLimited": 13,
+    "strict": 95,
+    "semantic": 96,
+    "bySubject": {
+      "m0/E": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/S": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/X": {
+        "n": 8,
+        "strict": 7,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/T1": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/B": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/I": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/V": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/C": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/F": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/T0": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/L": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m0/R": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8
+      },
+      "m1/F": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 6
+      },
+      "m1/E": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 6
+      },
+      "m1/C": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8
+      },
+      "m1/I": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 4
+      },
+      "m1/R": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 5
+      },
+      "m1/T0": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8
+      },
+      "m1/S": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 7
+      },
+      "m1/T1": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8
+      },
+      "m1/X": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8
+      },
+      "m1/B": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8
+      },
+      "m1/V": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8
+      },
+      "m1/L": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 7
+      }
+    },
+    "variants": {
+      "E": {
+        "planned": 16,
+        "modelCompleted": 14,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 2,
+        "schema": 10,
+        "citations": 10,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 168,
+        "toolEnds": 152,
+        "toolErrors": 54,
+        "medianSubjectMs": 13492.281718999999,
+        "knownInputTokens": 72970,
+        "knownOutputTokens": 6692,
+        "unknownUsageResponses": 2,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "S": {
+        "planned": 16,
+        "modelCompleted": 15,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 1,
+        "schema": 10,
+        "citations": 11,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 133,
+        "toolEnds": 117,
+        "toolErrors": 38,
+        "medianSubjectMs": 14926.153782999998,
+        "knownInputTokens": 70089,
+        "knownOutputTokens": 6116,
+        "unknownUsageResponses": 1,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 299,
+        "encodingValidated": 299,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 32,
+        "retrievalRecallAt2": 28,
+        "retrievalRecallAt1": 24
+      },
+      "X": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 7,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 13,
+        "citations": 13,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 15,
+        "conditionDelivered": 15,
+        "requestHooks": 95,
+        "toolEnds": 79,
+        "toolErrors": 28,
+        "medianSubjectMs": 11783.284041499996,
+        "knownInputTokens": 42773,
+        "knownOutputTokens": 3899,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 16,
+        "auxiliaryAccepted": 15,
+        "knownAuxInputTokens": 15796,
+        "knownAuxOutputTokens": 1084,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "T1": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 12,
+        "citations": 9,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 136,
+        "toolEnds": 120,
+        "toolErrors": 55,
+        "medianSubjectMs": 13883.036666500004,
+        "knownInputTokens": 132078,
+        "knownOutputTokens": 5481,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "B": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 8,
+        "citations": 8,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 63,
+        "toolEnds": 47,
+        "toolErrors": 14,
+        "medianSubjectMs": 8068.364742999998,
+        "knownInputTokens": 40712,
+        "knownOutputTokens": 2512,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "I": {
+        "planned": 16,
+        "modelCompleted": 12,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 4,
+        "schema": 11,
+        "citations": 9,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 236,
+        "toolEnds": 220,
+        "toolErrors": 87,
+        "medianSubjectMs": 14998.206447499997,
+        "knownInputTokens": 99719,
+        "knownOutputTokens": 9750,
+        "unknownUsageResponses": 4,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "V": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 14,
+        "citations": 15,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 113,
+        "toolEnds": 97,
+        "toolErrors": 26,
+        "medianSubjectMs": 13333.274054999994,
+        "knownInputTokens": 56489,
+        "knownOutputTokens": 5218,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "C": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 15,
+        "citations": 15,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 15,
+        "conditionDelivered": 15,
+        "requestHooks": 117,
+        "toolEnds": 102,
+        "toolErrors": 37,
+        "medianSubjectMs": 12579.6074815,
+        "knownInputTokens": 61566,
+        "knownOutputTokens": 4678,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 16,
+        "auxiliaryAccepted": 15,
+        "knownAuxInputTokens": 15794,
+        "knownAuxOutputTokens": 1090,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "F": {
+        "planned": 16,
+        "modelCompleted": 14,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 2,
+        "schema": 9,
+        "citations": 8,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 145,
+        "toolEnds": 129,
+        "toolErrors": 79,
+        "medianSubjectMs": 13318.264785999992,
+        "knownInputTokens": 58899,
+        "knownOutputTokens": 5484,
+        "unknownUsageResponses": 2,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "T0": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 13,
+        "citations": 13,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 108,
+        "toolEnds": 92,
+        "toolErrors": 29,
+        "medianSubjectMs": 13247.757905999992,
+        "knownInputTokens": 74737,
+        "knownOutputTokens": 4315,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "L": {
+        "planned": 16,
+        "modelCompleted": 15,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 1,
+        "schema": 12,
+        "citations": 10,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 145,
+        "toolEnds": 129,
+        "toolErrors": 34,
+        "medianSubjectMs": 13465.036216500004,
+        "knownInputTokens": 82131,
+        "knownOutputTokens": 6819,
+        "unknownUsageResponses": 1,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 32,
+        "retrievalRecallAt2": 20,
+        "retrievalRecallAt1": 16
+      },
+      "R": {
+        "planned": 16,
+        "modelCompleted": 13,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 3,
+        "schema": 11,
+        "citations": 12,
+        "actionFlags": 0,
+        "requiredUse": 16,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 200,
+        "toolEnds": 184,
+        "toolErrors": 29,
+        "medianSubjectMs": 12792.4304175,
+        "knownInputTokens": 99144,
+        "knownOutputTokens": 8869,
+        "unknownUsageResponses": 3,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      }
+    },
+    "contrasts": [
+      {
+        "candidate": "E",
+        "control": "B",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 14,
+          "semantic_unknown": 2
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "I",
+        "control": "E",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 11,
+          "semantic_unknown": 5
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "R",
+        "control": "I",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 10,
+          "semantic_unknown": 6
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "F",
+        "control": "R",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 12,
+          "semantic_unknown": 4
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "V",
+        "control": "F",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 14,
+          "semantic_unknown": 2
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "X",
+        "control": "R",
+        "planned": 16,
+        "counts": {
+          "tie": 15,
+          "semantic_tie": 13,
+          "semantic_unknown": 3,
+          "loss": 1
+        },
+        "semanticWinningCases": [],
+        "differences": [
+          {
+            "unit": "scored-1-0-1",
+            "case": "backup",
+            "subject": "m0",
+            "seed": "bad",
+            "strict": "loss",
+            "semantic": "tie"
+          }
+        ]
+      },
+      {
+        "candidate": "C",
+        "control": "X",
+        "planned": 16,
+        "counts": {
+          "tie": 15,
+          "semantic_tie": 16,
+          "win": 1
+        },
+        "semanticWinningCases": [],
+        "differences": [
+          {
+            "unit": "scored-1-0-1",
+            "case": "backup",
+            "subject": "m0",
+            "seed": "bad",
+            "strict": "win",
+            "semantic": "tie"
+          }
+        ]
+      },
+      {
+        "candidate": "C",
+        "control": "R",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 13,
+          "semantic_unknown": 3
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "S",
+        "control": "L",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 14,
+          "semantic_unknown": 2
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      },
+      {
+        "candidate": "T1",
+        "control": "T0",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 16
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      }
+    ],
+    "failures": [
+      {
+        "unit": "scored-0-1-0",
+        "case": "archive",
+        "seed": "good",
+        "subject": "m1",
+        "arm": "I",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-0-1-1",
+        "case": "archive",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "R",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-0",
+        "case": "backup",
+        "seed": "good",
+        "subject": "m1",
+        "arm": "E",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-0",
+        "case": "backup",
+        "seed": "good",
+        "subject": "m1",
+        "arm": "R",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-1",
+        "case": "backup",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "L",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-1",
+        "case": "backup",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "E",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-1",
+        "case": "backup",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "I",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-1",
+        "case": "backup",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "R",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-1-1-1",
+        "case": "backup",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "F",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-2-1-0",
+        "case": "build",
+        "seed": "good",
+        "subject": "m1",
+        "arm": "S",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-2-1-1",
+        "case": "build",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "I",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-3-1-0",
+        "case": "ingredients",
+        "seed": "good",
+        "subject": "m1",
+        "arm": "I",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      },
+      {
+        "unit": "scored-3-1-0",
+        "case": "ingredients",
+        "seed": "good",
+        "subject": "m1",
+        "arm": "F",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      }
+    ],
+    "bindings": [
+      {
+        "unit": "scored-0-0-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-0-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-0-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-0-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-1-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-1-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-1-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-0-1-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-0-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-0-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-0-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-0-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-1-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-1-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-1-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-1-1-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-0-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-0-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-0-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-0-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-1-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-1-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-1-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-2-1-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-0-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-0-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-0-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-0-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-1-0",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-1-0",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-1-1",
+        "pair": [
+          "L",
+          "S"
+        ],
+        "field": "retrievalInventoryDigest",
+        "equal": true,
+        "available": true
+      },
+      {
+        "unit": "scored-3-1-1",
+        "pair": [
+          "T0",
+          "T1"
+        ],
+        "field": "transferManifestDigest",
+        "equal": true,
+        "available": true
+      }
+    ],
+    "auxiliaryRejected": [
+      {
+        "unit": "scored-1-0-1",
+        "variant": "X",
+        "outcome": "unavailable",
+        "reason": "Generated references were not supplied bundle IDs",
+        "transportSettled": true
+      },
+      {
+        "unit": "scored-2-1-1",
+        "variant": "C",
+        "outcome": "error",
+        "reason": "Generated references were not supplied bundle IDs",
+        "transportSettled": true
+      }
+    ]
+  },
+  "retrieval": {
+    "distinctQueries": 8,
+    "repetitionsPerQuery": 4,
+    "observationsPerMethod": 32,
+    "eligibleRecordsPerQuery": 14,
+    "vectorTop1": 24,
+    "vectorTop2": 28,
+    "lexicalTop1": 16,
+    "lexicalTop2": 20,
+    "qualification": "Repeated queries are not independent cases; no final-answer gain was demonstrated."
+  },
+  "optional": {
+    "planned": 32,
+    "modelCompleted": 31,
+    "resourceLimited": 1,
+    "variants": {
+      "RO": {
+        "planned": 16,
+        "modelCompleted": 15,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 1,
+        "schema": 13,
+        "citations": 15,
+        "actionFlags": 0,
+        "requiredUse": 3,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 165,
+        "toolEnds": 149,
+        "toolErrors": 29,
+        "medianSubjectMs": 12648.6606015,
+        "knownInputTokens": 71240,
+        "knownOutputTokens": 7872,
+        "unknownUsageResponses": 1,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      },
+      "BO": {
+        "planned": 16,
+        "modelCompleted": 16,
+        "strict": 8,
+        "semantic": 8,
+        "semanticUnknown": 0,
+        "schema": 11,
+        "citations": 12,
+        "actionFlags": 0,
+        "requiredUse": 0,
+        "conditionAvailable": 16,
+        "conditionDelivered": 16,
+        "requestHooks": 80,
+        "toolEnds": 64,
+        "toolErrors": 18,
+        "medianSubjectMs": 10531.416228,
+        "knownInputTokens": 38590,
+        "knownOutputTokens": 4002,
+        "unknownUsageResponses": 0,
+        "auxiliaryReviews": 0,
+        "auxiliaryAccepted": 0,
+        "knownAuxInputTokens": 0,
+        "knownAuxOutputTokens": 0,
+        "auxUsageUnknown": 0,
+        "encodingPrepared": 0,
+        "encodingValidated": 0,
+        "encodingFailed": 0,
+        "retrievalProbeCount": 0,
+        "retrievalRecallAt2": 0,
+        "retrievalRecallAt1": 0
+      }
+    },
+    "bySubject": {
+      "m0/RO": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8,
+        "memoryUsed": 0,
+        "sourcesUsed": 8
+      },
+      "m0/BO": {
+        "n": 8,
+        "strict": 8,
+        "semantic": 8,
+        "modelCompleted": 8,
+        "memoryUsed": 0,
+        "sourcesUsed": 8
+      },
+      "m1/RO": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 7,
+        "memoryUsed": 8,
+        "sourcesUsed": 8
+      },
+      "m1/BO": {
+        "n": 8,
+        "strict": 0,
+        "semantic": 0,
+        "modelCompleted": 8,
+        "memoryUsed": 0,
+        "sourcesUsed": 8
+      }
+    },
+    "contrasts": [
+      {
+        "candidate": "RO",
+        "control": "BO",
+        "planned": 16,
+        "counts": {
+          "tie": 16,
+          "semantic_tie": 15,
+          "semantic_unknown": 1
+        },
+        "semanticWinningCases": [],
+        "differences": []
+      }
+    ],
+    "failures": [
+      {
+        "unit": "optional-3-1-1",
+        "case": "ingredients",
+        "seed": "bad",
+        "subject": "m1",
+        "arm": "RO",
+        "status": "failed",
+        "outcome": "limit",
+        "diagnostics": [
+          "request-count-bound",
+          "extension-error",
+          "assistant-not-complete"
+        ],
+        "retirement": false
+      }
+    ]
+  },
+  "development": {
+    "v1Retained": {
+      "planned": 96,
+      "modelCompleted": 94,
+      "resourceLimited": 2,
+      "strict": 53,
+      "semantic": 54,
+      "qualification": "Old gate semantics; preserved unchanged, not pooled with held-out evidence."
+    },
+    "v2": {
+      "planned": 96,
+      "modelCompleted": 95,
+      "resourceLimited": 1,
+      "strict": 50,
+      "semantic": 52
+    }
+  },
+  "integration": {
+    "selection": "P1-P4 explicit opt-in audit entry only; ordinary index and default loading unchanged",
+    "codeCommit": "0bcc18183cdb634eb0210016c3f17a15d964320f",
+    "validation": {
+      "sourceTests": 249,
+      "sourceFailures": 0,
+      "sourceSkips": 0,
+      "typecheck": "passed",
+      "packaged": "Nix package and policy checks passed; 249 packaged/source cases, zero failures/errors/skips"
+    },
+    "retainedExperimental": [
+      "P5 cross-session transfer",
+      "P6 semantic/vector retrieval",
+      "P7 autonomous advisory critic",
+      "controlled evaluation harness"
+    ],
+    "defaultActivation": false,
+    "push": false,
+    "deployment": false
+  },
+  "limitations": [
+    "Four held-out case definitions; two synthetic prior-artifact conditions, not natural model history.",
+    "Ceiling/floor prevents semantic ranking of the variants.",
+    "Read-side continuation study does not establish spontaneous memory-authoring quality.",
+    "Structured semantic grading does not repair malformed or string-encoded answers.",
+    "Zero structured action flags is not proof of no possible authority failure.",
+    "Opaque trusted host approvals and scoped data/model bindings are not physical model attestation.",
+    "Source integration and controlled transport tests are not deployment evidence."
+  ]
+}
