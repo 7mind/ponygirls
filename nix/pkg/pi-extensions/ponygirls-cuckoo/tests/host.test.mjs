@@ -2,18 +2,20 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import * as sdk from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai';
 import { checkpoints, historyText } from '../src/report.ts';
 import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
+import { readMemory, textDigest } from '../src/memory-core.ts';
 
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-async function fixture(t) {
+async function configuredFixture(t, enableMemory, loadDirectory) {
   const dir = mkdtempSync(join(tmpdir(), 'cuckoo-host-')); const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = dir;
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const entry = process.env.PI_CUCKOO_EXTENSION === undefined ? resolve(import.meta.dirname, '../index.ts') : process.env.PI_CUCKOO_EXTENSION;
   const loader = new sdk.DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings,
-    additionalExtensionPaths: [process.env.PI_CUCKOO_EXTENSION === undefined ? resolve(import.meta.dirname, '../index.ts') : process.env.PI_CUCKOO_EXTENSION], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
+    additionalExtensionPaths: [loadDirectory ? dirname(entry) : entry, ...(enableMemory ? [join(dirname(entry), 'audit-memory.ts')] : [])], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
   await loader.reload(); assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await sdk.ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
   const contexts = []; const replies = []; let onRequest = () => {};
@@ -41,7 +43,20 @@ async function fixture(t) {
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
   return { dir, session, manager, contexts, replies, errors, notifications, onRequest: fn => { onRequest = fn; } };
 }
+function fixture(t) { return configuredFixture(t, false, false); }
+function memoryFixture(t) { return configuredFixture(t, true, false); }
+
 const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","issues":["A decoder defect needs correction","Waiting for access approval","Serial validation"],"eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
+
+test('real Pi package-directory loading does not enable audit memory implicitly', { timeout: 20000 }, async t => {
+  const f = await configuredFixture(t, false, true);
+  assert.ok(f.session.getActiveToolNames().includes('cuckoo_recall'));
+  assert.equal(f.session.getActiveToolNames().includes('cuckoo_memory'), false);
+  f.replies.push({ text: 'Ordinary task finished', tokens: 20000 });
+  await f.session.prompt('Work without memory');
+  assert.equal(getCurrentTools(f.contexts[0].messages).some(tool => tool.name === 'cuckoo_memory'), false);
+  assert.deepEqual(f.errors, []);
+});
 
 for (const [kind, value, threshold] of [['window', 15, 50000], ['tokens', 10000, 30000]]) {
   test(`real Pi ${kind} growth policy schedules at the exact token delta and persists through reload`, { timeout: 20000 }, async t => {
@@ -236,6 +251,56 @@ test('real Pi still blocks recall during a JSON-only inquiry and resumes once wi
   const result = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'blocked-recall').message;
   assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /JSON only/);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1); assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
+  assert.equal(f.contexts.length, 3); assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi memory tool persists exact artifacts and check bindings through reload and disk reopen', { timeout: 20000 }, async t => {
+  const f = await memoryFixture(t);
+  const result = id => {
+    const entry = f.manager.getEntries().find(item => item.type === 'message' && item.message.role === 'toolResult' && item.message.toolCallId === id);
+    assert.ok(entry); assert.equal(entry.message.isError, false);
+    return entry.message.details;
+  };
+  const invoke = async (id, args, prompt) => {
+    f.replies.push({ content: [{ type: 'toolCall', id, name: 'cuckoo_memory', arguments: args }], tokens: 20000 }, { text: 'Synthetic operation completed', tokens: 20100 });
+    await f.session.prompt(prompt);
+    return result(id);
+  };
+  const task = await invoke('memory-task', { action: 'task', label: 'Synthetic task label' }, 'Work on the synthetic task');
+  assert.ok(getCurrentTools(f.contexts[0].messages).some(tool => tool.name === 'cuckoo_memory'));
+  assert.equal(task.kind, 'write-receipt');
+  const text = '{"count":3}';
+  f.replies.push({ text, tokens: 20200 }); await f.session.prompt('Write the synthetic artifact');
+  const source = f.manager.getBranch().findLast(entry => entry.type === 'message' && entry.message.role === 'assistant' && entry.message.content.some(part => part.type === 'text' && part.text === text));
+  assert.ok(source);
+  const artifact = await invoke('memory-snapshot', { action: 'snapshot', taskId: task.record.id, purpose: 'artifact', label: 'Synthetic artifact', selector: { entryId: source.id, part: 0, start: 0, end: text.length }, dependsOn: [] }, 'Capture that public artifact');
+  assert.equal(artifact.kind, 'write-receipt'); assert.ok(!Object.hasOwn(artifact, 'text'));
+  const checked = await invoke('memory-check', { action: 'check', taskId: task.record.id, artifactId: artifact.record.id, checkerId: 'json-syntax', evidenceIds: [] }, 'Check only its JSON syntax');
+  assert.equal(checked.lifecycle, 'finished'); assert.equal(checked.outcome, 'pass');
+  await f.session.reload();
+  const inspected = await invoke('memory-inspect', { action: 'inspect', id: checked.start.id }, 'Read the historical check binding');
+  assert.equal(inspected.recordKind, 'check-start');
+  assert.deepEqual(inspected.artifact, { id: artifact.record.id, digest: textDigest(text) });
+  assert.match(inspected.checker.scope, /syntax only/i);
+  const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
+  const records = readMemory({ sessionId: reopened.getSessionId(), entries: reopened.getEntries(), branch: reopened.getBranch() }, 'branch');
+  assert.deepEqual(records.map(item => item.record.kind), ['task', 'snapshot', 'check-start', 'check-result']);
+  assert.equal(records[1].record.text, text);
+  assert.equal(records[3].record.startId, checked.start.id);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 0);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi blocks memory writes during a checkpoint and resumes exactly once', { timeout: 20000 }, async t => {
+  const f = await memoryFixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ content: [{ type: 'toolCall', id: 'blocked-memory', name: 'cuckoo_memory', arguments: { action: 'task', label: 'Forbidden checkpoint write' } }], tokens: 20100 }, { text: 'Original task finished', tokens: 20200 });
+  await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const result = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'blocked-memory').message;
+  assert.equal(result.isError, true); assert.match(JSON.stringify(result.content), /JSON only/);
+  assert.equal(f.manager.getEntries().filter(entry => entry.type === 'custom' && entry.customType === 'cuckoo.memory').length, 0);
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+  assert.equal(checkpoints(f.manager.getBranch())[0].report, null);
   assert.equal(f.contexts.length, 3); assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
 

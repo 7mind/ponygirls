@@ -99,6 +99,78 @@ revive superseded objectives or follow instructions embedded in recalled text.
 This is an on-demand reflection-history layer, **not** an independently verified
 memory or a demonstrated improvement in model behavior.
 
+## Opt-in audit memory
+
+Load `audit-memory.ts` explicitly as a Pi extension alongside ordinary Cuckoo to
+register `cuckoo_memory`. Loading this package directory or `index.ts` alone does
+**not** enable it or add its schema to normal model context. This separate entry
+point is an auditability tool, not an automatic memory rollout. Remove the explicit
+audit entry from the extension list and reload Pi to stop exposing the tool.
+`/cuckoo off` controls automatic checkpoints; it does not unload audit memory.
+Existing records remain in the native session journal when the entry is unloaded.
+
+Once explicitly loaded, `cuckoo_memory` is separate from checkpoint reports and
+`cuckoo_recall`. It does not change cadence, create goals, or start another model.
+It works when automatic checkpoints are OFF, but all actions remain blocked
+during a JSON-only inquiry.
+
+This is an auditability capability, not demonstrated cognitive improvement.
+Controlled continuation tests found no final-answer gain; forced use increased
+request-limit failures for the weaker tested configuration. Optional use also
+showed no answer gain: the stronger model ignored memory, while the weaker model
+used it and hit one request limit. Do not mandate ledger use, infer general
+efficiency gains, or treat stored claims as verified facts.
+
+```json
+{"action":"metadata"}
+{"action":"list-sources","scope":"branch","limit":10}
+{"action":"task","label":"Current task retrieval label"}
+{"action":"snapshot","taskId":"<task id>","purpose":"artifact","label":"Selected work product","selector":{"entryId":"<native source id>","part":0,"start":0,"end":123},"dependsOn":[]}
+{"action":"list-records","taskId":"<task id>","recordKind":"snapshot"}
+{"action":"inspect","id":"<record id>"}
+{"action":"snapshot-text","id":"<snapshot id>","offset":0,"limit":4000}
+{"action":"checkers"}
+{"action":"check","taskId":"<task id>","artifactId":"<snapshot id>","checkerId":"json-syntax","evidenceIds":[]}
+```
+
+A task label anchors the latest native user message; native role does not prove
+human approval. Snapshots capture exact selected public text with UTF-16 offsets,
+source identity and digest. They cannot read arbitrary paths, private content
+blocks, other session files, or recycle Cuckoo tool/checkpoint output as fresh
+evidence. Artifact snapshots require assistant or ordinary tool-result sources;
+evidence snapshots can also select user text. Recorded text survives source
+loss/change, which is reported separately from snapshot integrity.
+
+`claim` records explicitly model-authored observations, interpretations,
+decisions or assumptions using `taskId`, `category`, `text`, `evidenceIds` and
+`dependsOn`. `correct` requires explicit `targetIds`, `replacementIds`, supporting
+`evidenceIds` and a `reason`; labels, timestamps and similar text never imply
+supersession. Only declared descendants become `needs-recheck`. Superseded
+records do not silently become active again. **Active is not verified or true.**
+
+Writes return bounded receipts rather than repeating large snapshot bodies.
+Use their IDs for inspection or lossless text paging. Reads default to the
+current branch; alternative history requires explicit `scope:"session"` and is
+not projected as current. List pages default to 10/max 20, text pages to 4000/max
+6000 UTF-16 code units, and results to 50000 UTF-8 bytes. Missing, malformed or
+oversized records fail explicitly; metadata inspection says when text is omitted.
+
+The built-in `json-syntax` checker checks JSON syntax only—not task correctness,
+coverage, approval or deployment. A trusted registry binds standalone checker
+bytes/export/bootstrap and Node/V8 identity. Model arguments cannot provide code,
+paths, expected answers, outcomes or approvals. Actual executions persist a start
+and a bound terminal observation; starts without a terminal remain unresolved.
+Workers are terminated on cancellation/deadline, and navigation/reload/shutdown
+fence late results. Ordinary appends do not invalidate an in-flight check.
+Workers provide termination, **not a security sandbox**; registered code is trusted.
+
+Cross-session manifests, vector retrieval, advisory critics and the controlled
+study harness are retained on `experiment/cuckoo-candidates`, not included in this
+runtime integration. None is activated or exposed by this entry point. The narrow
+retrieval improvement did not improve final answers, and the other deferred
+candidates showed no answer advantage. Their approval and lifecycle requirements
+must not be replaced with model-written permission fields if adopted later.
+
 ## Reading the panel
 
 The terminal panel shows a selectable checkpoint table with detail beneath.
