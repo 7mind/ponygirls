@@ -42,7 +42,7 @@ test('legacy global defaults migrate without writes on read; next write stores p
   assert.deepEqual(store.read(), { enabled: true, policy: { kind: 'relative', value: 17.5 } });
   assert.equal(readFileSync(path, 'utf8'), legacy);
   store.write({ ...store.read(), policy: { kind: 'tokens', value: 12345 } });
-  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { version: 2, enabled: true, policy: { kind: 'tokens', value: 12345 } });
+  assert.deepEqual(JSON.parse(readFileSync(path, 'utf8')), { version: 3, enabled: true, policy: { kind: 'tokens', value: 12345 } });
   writeFileSync(path, '{"version":2,"enabled":true,"policy":{"kind":"unknown","value":15}}');
   assert.throws(() => store.read(), /policy/);
 });
@@ -50,7 +50,7 @@ test('legacy global defaults migrate without writes on read; next write stores p
 test('legacy and new session policies obey chronological overrides and inheritance across reload/branches', () => {
   const manager = SessionManager.inMemory(); const sessionId = manager.getSessionId();
   const defaults = { enabled: false, policy: { kind: 'window', value: 20 } };
-  const effective = () => effectivePreferences(defaults, manager.getEntries(), sessionId);
+  const effective = () => effectivePreferences(defaults, {}, manager.getEntries(), sessionId);
   const anchor = manager.appendCustomEntry('anchor', {});
   manager.appendCustomEntry(THRESHOLD_TYPE, { version: 1, sessionId, thresholdPercent: 5 });
   assert.deepEqual(effective().policy, { kind: 'relative', value: 5 });

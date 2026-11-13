@@ -46,6 +46,8 @@ function fixture(registry) {
       assert.equal(context, ctx);
       return gate();
     },
+    assertActionAllowed() {},
+    scopeSignal: () => undefined,
     scopeKey: context => {
       assert.equal(context, ctx);
       return `tools-test/${manager.getSessionId()}/${epoch}`;
@@ -555,6 +557,8 @@ test('inquiry gate is FIRST for every route: true, throwing and nonboolean fail 
         runtime: poison,
         registry: poison,
         scopeKey() { accesses.push('scope'); throw new Error('Scope accessed'); },
+        scopeSignal() { accesses.push('signal'); throw new Error('Signal accessed'); },
+        assertActionAllowed() { accesses.push('action'); throw new Error('Action accessed'); },
         isInquiryActive(context) {
           assert.equal(context, ctx);
           accesses.push('gate');

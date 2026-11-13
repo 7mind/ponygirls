@@ -15,7 +15,7 @@ async function configuredFixture(t, enableMemory, loadDirectory) {
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
   const entry = process.env.PI_CUCKOO_EXTENSION === undefined ? resolve(import.meta.dirname, '../index.ts') : process.env.PI_CUCKOO_EXTENSION;
   const loader = new sdk.DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager: settings,
-    additionalExtensionPaths: [loadDirectory ? dirname(entry) : entry, ...(enableMemory ? [join(dirname(entry), 'audit-memory.ts')] : [])], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
+    additionalExtensionPaths: [loadDirectory ? dirname(entry) : entry], noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true });
   await loader.reload(); assert.deepEqual(loader.getExtensions().errors, []);
   const runtime = await sdk.ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
   const contexts = []; const replies = []; let onRequest = () => {};
@@ -41,6 +41,10 @@ async function configuredFixture(t, enableMemory, loadDirectory) {
   const errors = []; const notifications = [];
   await session.bindExtensions({ mode: 'rpc', onError: error => errors.push(error), uiContext: { notify: (...args) => notifications.push(args), setWidget() {} } });
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
+  if (enableMemory) {
+    await session.prompt('/cuckoo on');
+    for (const feature of ['evidence', 'corrections', 'verifiers', 'reader']) await session.prompt(`/cuckoo feature ${feature} on`);
+  }
   return { dir, session, manager, contexts, replies, errors, notifications, onRequest: fn => { onRequest = fn; } };
 }
 function fixture(t) { return configuredFixture(t, false, false); }

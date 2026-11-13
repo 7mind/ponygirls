@@ -11,9 +11,9 @@ function fixture() {
   const manager = SessionManager.inMemory(); const handlers = new Map(); const commands = new Map(); const shortcuts = new Map(); const notifications = []; const widgets = [];
   let defaults = { enabled: false, policy: { kind: 'relative', value: 15 } }; let tokens = 20000;
   const preferences = { path: 'memory:cuckoo', read: () => ({ ...defaults }), write: value => { defaults = { ...value }; } };
-  const sent = [];
-  const pi = { registerTool() {}, sendMessage: (...args) => sent.push(args), on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
-  const ctx = { sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
+  const sent = []; const activeTools = new Set();
+  const pi = { registerTool(tool) { if (tool.defaultActive !== false) activeTools.add(tool.name); }, getActiveTools: () => [...activeTools], setActiveTools(names) { activeTools.clear(); for (const name of names) activeTools.add(name); }, sendMessage: (...args) => sent.push(args), on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
+  const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
   registerCuckoo(pi, preferences); handlers.get('session_start')({}, ctx);
   function boundary(message = assistant('ordinary work'), overrides = {}) {
     const messageEntryId = manager.appendMessage(message);

@@ -8,10 +8,12 @@ const raw = JSON.stringify({ objectives: [{ objective: 'Ship recall', progress: 
 function fixture() {
   const manager = SessionManager.inMemory(); const tools = new Map(); const handlers = new Map();
   const preferences = { path: 'memory:cuckoo', read: () => ({ enabled: false, policy: { kind: 'window', value: 15 } }), write() { assert.fail('recall must not write preferences'); } };
-  const pi = { registerTool: tool => tools.set(tool.name, tool), on: (name, fn) => handlers.set(name, fn), registerCommand() {}, registerShortcut() {},
+  const activeTools = new Set();
+  const pi = { registerTool: tool => { tools.set(tool.name, tool); if (tool.defaultActive !== false) activeTools.add(tool.name); }, getActiveTools: () => [...activeTools], setActiveTools(names) { activeTools.clear(); for (const name of names) activeTools.add(name); }, on: (name, fn) => handlers.set(name, fn), registerCommand() {}, registerShortcut() {},
     sendMessage() { assert.fail('recall must not request inference'); }, appendEntry() { assert.fail('recall must not append entries'); } };
-  const ctx = { sessionManager: manager, ui: { notify() {} } };
+  const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, ui: { notify() {}, setWidget() {} } };
   registerCuckoo(pi, preferences);
+  handlers.get('session_start')({}, ctx);
   const call = async params => {
     const tool = tools.get('cuckoo_recall'); assert.ok(tool, 'cuckoo_recall must be registered');
     const result = await tool.execute('recall-call', params, undefined, undefined, ctx);

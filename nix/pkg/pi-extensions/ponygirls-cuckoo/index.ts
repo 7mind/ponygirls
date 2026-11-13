@@ -3,17 +3,25 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import { Type } from 'typebox';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft, type TurnEndEvent } from '@earendil-works/pi-coding-agent';
-import { parseToggleCommand, sessionEnabledData } from '@ponygirls/pi-settings';
-import { ENABLED_TYPE, POLICY_TYPE, FilePreferenceStore, effectivePreferences, type PreferenceStore } from './src/preferences.ts';
+import { parseToggleCommand } from '@ponygirls/pi-settings';
+import { CuckooPreferences, FilePreferenceStore, type PreferenceScope, type PreferenceStore } from './src/preferences.ts';
+import { FEATURES, featureId } from './src/features.ts';
+import { CuckooFeatures } from './src/feature-runtime.ts';
+import { CuckooTransfer, nativeTransferDependencies } from './src/transfer-runtime.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, checkpoint, checkpoints } from './src/report.ts';
 import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, observe, stateOnBranch, type State } from './src/state.ts';
 import { CuckooView } from './src/view.ts';
+import { CuckooSettingsView, bindSettingsCallbacks } from './src/settings-view.ts';
 import { reportContent, terminalText, type CuckooContent } from './src/presentation.ts';
 
 export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): void {
+  const configuration = new CuckooPreferences(pi, preferences, path => new FilePreferenceStore(path));
+  const features = new CuckooFeatures(pi, configuration, randomUUID());
+  const transfer = new CuckooTransfer(features, nativeTransferDependencies());
   let view = new CuckooView(inquire);
+  let settingsView = new CuckooSettingsView();
   let manualRequested = false;
   let fault: string | null = null;
   const stateDraft = (state: State): SessionBoundaryDraft => ({ type: 'custom', customType: STATE_TYPE, data: state });
@@ -24,14 +32,16 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
   }
   function refresh(ctx: ExtensionContext): void {
     try {
-      const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
+      const config = features.refresh(ctx);
       const reports = checkpoints(ctx.sessionManager.getBranch());
       stateOnBranch(ctx.sessionManager.getBranch());
       fault = null; view.publish(ctx, reports, config.enabled, null);
     } catch (error) { warn(ctx, error); view.publish(ctx, [], false, fault); }
   }
   function statusIntro(ctx: ExtensionContext, reports: readonly import('./src/report.ts').Checkpoint[]): string {
-    const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
+    features.refresh(ctx);
+    const settings = configuration.read(ctx);
+    const config = settings.effective;
     const state = stateOnBranch(ctx.sessionManager.getBranch());
     const usage = ctx.getContextUsage();
     const growth = state === null ? null : growthTokens(config.policy, state.baseline, usage === undefined ? null : usage.contextWindow);
@@ -40,6 +50,8 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       `Growth policy: ${policyText(config.policy)} (${config.policySource}); next inquiry: ${next}.\n` +
       `Pending checkpoint: ${state?.pending === null || state === null ? 'none' : state.pending.requestId}.\n` +
       `Global defaults: ${preferences.path}\n` +
+      `Project overrides: ${settings.paths.project}${settings.projectTrusted ? '' : ' (ignored: untrusted project)'}\n` +
+      `Features: ${FEATURES.map(({ id }) => `${id}=${config.features[id] ? 'on' : 'off'} (${config.featureSources[id]})`).join(', ')}.\n` +
       `Use /cuckoo history for saved answers across all session branches.`;
   }
   function status(ctx: ExtensionContext): CuckooContent {
@@ -110,11 +122,27 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     },
   });
   pi.registerCommand('cuckoo', {
-    description: 'Show objectives/progress; inquire now: request a checkpoint; history: saved answers across session branches; on|off|inherit|default on|off; [default] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
+    description: 'Show objectives/progress; settings: scoped feature checkboxes; transfer export|import|task|revoke|clear|status; inquire now; history; on|off|inherit; [default|project] feature NAME on|off|inherit; [default|project] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
     getArgumentCompletions: completeCuckooArguments,
     handler: async (args, ctx) => {
       try {
         const trimmed = args.trim();
+        if (trimmed === 'transfer' || trimmed.startsWith('transfer ')) {
+          try { await transfer.command(trimmed.slice('transfer'.length).trim(), ctx); }
+          catch (error) { ctx.ui.notify(terminalText(`Cuckoo transfer: ${String(error)}`), 'error'); }
+          return;
+        }
+        if (trimmed === 'settings') {
+          await settingsView.show(ctx, bindSettingsCallbacks(configuration, ctx, async request => {
+            const kind = await ctx.ui.select(`Cuckoo ${request.scope} policy kind (current: ${request.value.kind})`, ['relative', 'window', 'tokens'], { signal: request.signal });
+            if (kind === undefined || request.signal.aborted) return undefined;
+            const value = await ctx.ui.input(`Cuckoo ${kind} value (current: ${request.value.value})`, 'Enter a positive number', { signal: request.signal });
+            if (value === undefined || request.signal.aborted) return undefined;
+            if (!/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(value.trim())) throw new Error('Policy value must be a positive number');
+            return validatePolicy({ kind, value: Number(value) });
+          }, () => refresh(ctx)));
+          return;
+        }
         if (trimmed.split(/\s+/).join(' ') === 'inquire now') { inquire(ctx); return; }
         if (trimmed === '' || trimmed === 'reports' || trimmed === 'status') {
           const reports = checkpoints(ctx.sessionManager.getBranch());
@@ -123,18 +151,22 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
         if (trimmed === 'history') { await view.showHistory(ctx, ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()); return; }
         const toggle = parseToggleCommand(trimmed);
         if (toggle !== null && toggle.kind !== 'status') {
-          if (toggle.kind === 'session') pi.appendEntry(ENABLED_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), toggle.enabled));
-          else preferences.write({ ...preferences.read(), enabled: toggle.enabled });
+          configuration.apply(ctx, toggle.kind === 'session' ? 'session' : 'global', [{ field: 'enabled', value: toggle.enabled }]);
         } else {
-          const words = trimmed.split(/\s+/); const global = words[0] === 'default';
-          if (global) words.shift();
-          if (words[0] === 'threshold' && words.length === 2) words.splice(0, words.length, 'policy', ...(words[1] === 'inherit' ? ['inherit'] : ['relative', words[1]]));
-          if (!global && words.length === 2 && words[0] === 'policy' && words[1] === 'inherit') pi.appendEntry(POLICY_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), policy: null });
-          else {
-            if (words.length !== 3 || words[0] !== 'policy' || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(words[2])) throw new Error('Usage: /cuckoo [default] policy relative PERCENT|window PERCENT|tokens COUNT, or policy inherit');
-            const policy = validatePolicy({ kind: words[1], value: Number(words[2]) });
-            if (global) preferences.write({ ...preferences.read(), policy });
-            else pi.appendEntry(POLICY_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), policy });
+          const words = trimmed.split(/\s+/);
+          const scope: PreferenceScope = words[0] === 'default' ? 'global' : words[0] === 'project' ? 'project' : 'session';
+          if (scope !== 'session') words.shift();
+          if (scope === 'project' && words.length === 1 && ['on', 'off', 'inherit'].includes(words[0])) {
+            configuration.apply(ctx, scope, [{ field: 'enabled', value: words[0] === 'inherit' ? null : words[0] === 'on' }]);
+          } else if (words[0] === 'feature' && words.length === 3 && ['on', 'off', 'inherit'].includes(words[2])) {
+            configuration.apply(ctx, scope, [{ field: 'feature', id: featureId(words[1]), value: words[2] === 'inherit' ? null : words[2] === 'on' }]);
+          } else {
+            if (words[0] === 'threshold' && words.length === 2) words.splice(0, words.length, 'policy', ...(words[1] === 'inherit' ? ['inherit'] : ['relative', words[1]]));
+            if (scope !== 'global' && words.length === 2 && words[0] === 'policy' && words[1] === 'inherit') configuration.apply(ctx, scope, [{ field: 'policy', value: null }]);
+            else {
+              if (words.length !== 3 || words[0] !== 'policy' || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(words[2])) throw new Error('Usage: /cuckoo [default|project] feature NAME on|off|inherit, or [default|project] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit');
+              configuration.apply(ctx, scope, [{ field: 'policy', value: validatePolicy({ kind: words[1], value: Number(words[2]) }) }]);
+            }
           }
         }
         refresh(ctx); ctx.ui.notify(terminalText(status(ctx).plain), 'info');
@@ -148,19 +180,22 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     } catch (error) { warn(ctx, error); }
   } });
   pi.on('session_start', (_event, ctx) => {
+    features.start(ctx);
+    settingsView.dispose(); settingsView = new CuckooSettingsView();
     manualRequested = false;
     view = new CuckooView(inquire);
     try { cancel(ctx, 'Checkpoint interrupted by reload or session replacement; no automatic retry'); } catch (error) { warn(ctx, error); }
     refresh(ctx);
   });
   pi.on('session_tree', (_event, ctx) => {
-    try { cancel(ctx, 'Checkpoint interrupted by branch navigation; no automatic retry'); } catch (error) { warn(ctx, error); }
+    settingsView.dispose(); settingsView = new CuckooSettingsView();
+    try { features.navigate(ctx); cancel(ctx, 'Checkpoint interrupted by branch navigation; no automatic retry'); } catch (error) { warn(ctx, error); }
     refresh(ctx);
   });
   pi.on('before_agent_start', (event, ctx) => {
     let scheduling: string;
     try {
-      const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
+      const config = features.refresh(ctx);
       scheduling = `Automatic inquiries at run start: ${config.enabled ? 'ON' : 'OFF'}; policy: ${policyText(config.policy)}.`;
     } catch (error) { warn(ctx, error); scheduling = 'Automatic inquiry configuration unavailable due to invalid settings; saved rounds remain readable.'; }
     event.systemPromptOptions.sections.cuckoo = `${scheduling}\n${MODEL_GUIDANCE}`;
@@ -209,7 +244,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
       }
       if (previous !== null && previous.resuming) return { entries: [...event.entries, stateDraft({ ...previous, resuming: false })] };
       if (!completed) return;
-      const config = effectivePreferences(preferences.read(), ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
+      const config = features.refresh(ctx);
       if (!config.enabled && !manualRequested) { refresh(ctx); return; }
       if (event.context.pendingMessages.length > 0 || event.entries.some(entry => entry.type === 'compaction' || entry.type === 'context_edit' || entry.type === 'custom_message')) return;
       const usage = ctx.getContextUsage();
@@ -234,6 +269,6 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore): 
     refresh(ctx);
   });
   pi.on('turn_start', (_event, ctx) => refresh(ctx));
-  pi.on('session_shutdown', (_event, ctx) => view.dispose(ctx));
+  pi.on('session_shutdown', (_event, ctx) => { settingsView.dispose(); features.shutdown(); view.dispose(ctx); });
 }
 export default function (pi: ExtensionAPI): void { registerCuckoo(pi, new FilePreferenceStore(join(getAgentDir(), 'cuckoo.json'))); }

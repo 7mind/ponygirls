@@ -81,15 +81,18 @@ test('shared settings keep session/global policy and enablement inheritance inde
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, 'cuckoo.json');
   const store = new FilePreferenceStore(path);
-  assert.deepEqual(store.read(), DEFAULT_PREFERENCES);
-  assert.deepEqual(store.read().policy, { kind: 'window', value: 15 });
+  assert.deepEqual(store.read(), {});
+  assert.deepEqual(effectivePreferences(store.read(), {}, [], 'new').policy, { kind: 'window', value: 15 });
   store.write({ enabled: true, policy: { kind: 'relative', value: 20 } });
   const original = readFileSync(path, 'utf8');
   const manager = SessionManager.inMemory(); const sessionId = manager.getSessionId();
-  const effective = () => effectivePreferences(store.read(), manager.getEntries(), sessionId);
+  const effective = () => effectivePreferences(store.read(), {}, manager.getEntries(), sessionId);
   manager.appendCustomEntry(ENABLED_TYPE, { version: 1, sessionId, enabled: false });
   manager.appendCustomEntry(POLICY_TYPE, { version: 1, sessionId, policy: { kind: 'tokens', value: 5000 } });
-  assert.deepEqual(effective(), { enabled: false, policy: { kind: 'tokens', value: 5000 }, enabledSource: 'session', policySource: 'session' });
+  assert.equal(effective().enabled, false);
+  assert.deepEqual(effective().policy, { kind: 'tokens', value: 5000 });
+  assert.equal(effective().enabledSource, 'session'); assert.equal(effective().policySource, 'session');
+  assert.deepEqual(effective().features, DEFAULT_PREFERENCES.features);
   assert.equal(readFileSync(path, 'utf8'), original);
   new FilePreferenceStore(path).write({ enabled: true, policy: { kind: 'window', value: 30 } });
   assert.deepEqual(effective().policy, { kind: 'tokens', value: 5000 });
@@ -97,8 +100,8 @@ test('shared settings keep session/global policy and enablement inheritance inde
   assert.deepEqual(effective().policy, { kind: 'window', value: 30 }); assert.equal(effective().enabled, false);
   manager.appendCustomEntry(ENABLED_TYPE, { version: 1, sessionId, enabled: null });
   assert.equal(effective().enabled, true);
-  assert.equal(effectivePreferences(store.read(), manager.getEntries(), 'other-session').policySource, 'global');
-  writeFileSync(path, 'not JSON'); assert.throws(() => store.read(), /Invalid Cuckoo defaults/);
+  assert.equal(effectivePreferences(store.read(), {}, manager.getEntries(), 'other-session').policySource, 'global');
+  writeFileSync(path, 'not JSON'); assert.throws(() => store.read(), /Invalid Cuckoo preferences/);
 });
 
 test('invalid global/session settings fail visibly instead of becoming defaults', () => {
@@ -111,5 +114,5 @@ test('invalid global/session settings fail visibly instead of becoming defaults'
   assert.throws(() => validatePolicy({ kind: 'unknown', value: 15 }));
   const manager = SessionManager.inMemory(); const sessionId = manager.getSessionId();
   manager.appendCustomEntry(THRESHOLD_TYPE, { version: 1, sessionId, thresholdPercent: -10 });
-  assert.throws(() => effectivePreferences(DEFAULT_PREFERENCES, manager.getEntries(), sessionId), /policy/);
+  assert.throws(() => effectivePreferences(DEFAULT_PREFERENCES, {}, manager.getEntries(), sessionId), /policy/);
 });

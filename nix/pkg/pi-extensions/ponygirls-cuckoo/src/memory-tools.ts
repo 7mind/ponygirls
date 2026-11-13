@@ -154,8 +154,10 @@ export interface MemoryToolDependencies {
   readonly registry: TrustedCheckerRegistry;
   /** Trusted lifecycle gate, not a model parameter. Unknown must fail closed. */
   readonly isInquiryActive: (ctx: ExtensionContext) => boolean;
+  readonly assertActionAllowed: (ctx: ExtensionContext, action: MemoryToolInput['action']) => void;
   /** Trusted instance/session/navigation epoch, stable across ordinary appends. */
   readonly scopeKey: (ctx: ExtensionContext) => string;
+  readonly scopeSignal: (ctx: ExtensionContext) => AbortSignal | undefined;
 }
 
 export interface MemoryRecordReference {
@@ -589,6 +591,7 @@ export function createMemoryTool(
     async execute(toolCallId, params, signal, _onUpdate, ctx) {
       const observed: MemoryRecordReference[] = [];
       let attemptedAppend = false;
+      let action: MemoryToolInput['action'] | null = null;
 
       const ordinaryWork = (): void => {
         // First operation, and repeated before adapter reads/appends.
@@ -596,15 +599,20 @@ export function createMemoryTool(
         if (dependencies.isInquiryActive(ctx) !== false) {
           throw new Error('Cuckoo inquiry requires JSON only; memory access is blocked');
         }
+        if (action !== null) dependencies.assertActionAllowed(ctx, action);
       };
 
       try {
         ordinaryWork();
-        const activeSignal = signal ?? ctx.signal;
-        if (activeSignal?.aborted === true) {
+        const selected = command(params);
+        action = params.action;
+        ordinaryWork();
+        const callerSignal = signal === undefined ? ctx.signal : signal;
+        const scopeSignal = dependencies.scopeSignal(ctx);
+        const activeSignal = callerSignal === undefined ? scopeSignal : scopeSignal === undefined ? callerSignal : AbortSignal.any([callerSignal, scopeSignal]);
+        if (activeSignal !== undefined && activeSignal.aborted) {
           throw new Error('Memory operation cancelled before dispatch');
         }
-        const selected = command(params);
         const native = new NativeMemoryPort(dependencies.pi, ctx.sessionManager);
         const port: MemoryPort = {
           view() {

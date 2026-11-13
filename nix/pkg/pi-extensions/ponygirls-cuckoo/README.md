@@ -6,6 +6,12 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
 ## Controls
 
 - `/cuckoo` or `/cuckoo status`: view current-branch reports and effective settings.
+- `/cuckoo settings`: staged checkbox dialog for the master switch and all seven
+  feature preferences. Tab or Left/Right changes Session/Project/Global scope;
+  Space/Enter toggles, `r` resets to inheritance, `p` edits the complete growth
+  policy, Ctrl-S applies the selected scope, and Escape discards unsaved drafts.
+  Scope tabs, checkboxes and footer actions also support mouse clicks. The dialog
+  shows local overrides, effective sources and inactive dependency reasons.
 - `/cuckoo history`: view all saved answers in this session, newest first, with
   timestamps, checkpoint/entry IDs and current/other-branch labels. Includes
   invalid or interrupted answers and remains available while Cuckoo is OFF.
@@ -16,13 +22,21 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
 - Click the **🐦 N** border badge to toggle reports (fullscreen, or regular
   mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
-- `/cuckoo on|off|inherit`: session override, or inherit the global default.
-- `/cuckoo default on|off`: global default for sessions without an override.
+- `/cuckoo on|off|inherit`: session master override, or inherit project/global.
+- `/cuckoo default on|off`: global master default.
+- `/cuckoo project on|off|inherit`: trusted-project master override.
+- `/cuckoo [default|project] feature NAME on|off|inherit`: set or reset one
+  feature; omit the prefix for session scope. Names: `evidence`, `corrections`,
+  `verifiers`, `reader`, `transfer`, `vectors`, `critic`.
+- `/cuckoo transfer export|import|task|revoke|clear|status`: operator-only,
+  same-project historical packet workflow; see below.
 - `/cuckoo policy relative 15`: grow 15% relative to the checkpoint's token count.
 - `/cuckoo policy window 15`: grow by tokens equal to 15% of context-window capacity.
 - `/cuckoo policy tokens 10000`: grow by 10,000 tokens.
-- `/cuckoo policy inherit`: inherit the global policy independently of enablement.
+- `/cuckoo policy inherit`: inherit project/global policy independently of enablement.
 - `/cuckoo default policy window 15` (or `relative 15`, `tokens 10000`): global policy.
+- `/cuckoo project policy tokens 10000` (or `relative`, `window`): project policy;
+  `project policy inherit` removes that complete override.
 
 Manual inquiries do not change enablement or policy. When idle, they start a
 main-model response immediately; known context usage is required (send a task
@@ -36,13 +50,24 @@ Policy kind and value are one setting, so changing units cannot inherit a value
 from a different mode. Existing `threshold PERCENT`, `threshold inherit`, and
 `default threshold PERCENT` commands remain aliases for the relative policy.
 
-Defaults: **OFF**, **growth equal to 15% of context-window capacity** (`window 15`). Global preferences are mutable
-`<agentDir>/cuckoo.json` (version 2, `policy: {kind, value}`); existing version-1
-percentages and session threshold records retain their relative meaning.
-Reading old defaults does not rewrite them; the next explicit global write
-stores version 2. Session settings persist in session entries and span branches,
-but do not configure a different fork/session ID. Home Manager loads
-the extension without managing or overwriting that preferences file. Reports
+Defaults: **master OFF**, **all seven new features OFF**, **growth equal to 15% of
+context-window capacity** (`window 15`). Each field resolves independently:
+session → trusted project → global → built-in default. Policy kind/value remains
+one indivisible setting. A checked feature stays checked when master/dependencies
+are off; the UI reports why it is inactive instead of enabling prerequisites.
+
+Global preferences are mutable `<agentDir>/cuckoo.json`; project overrides use
+`<cwd>/<CONFIG_DIR_NAME>/cuckoo.json` (normally `.pi/cuckoo.json`). Project files
+are neither read nor written without Pi's project trust. Both store sparse
+version-3 overrides; omitted fields inherit. Existing global version-1 percentages
+and session threshold records keep their relative meaning; version-2 policies keep
+their units. Reading old files does not rewrite them; explicit writes use version 3.
+
+Apply rereads current storage and changes only edited fields. File replacement is
+atomic, not a cross-process transaction. Session Apply appends one batch entry;
+settings span branches but do not configure another fork/session ID. Resetting a
+field never revives an older session override. Home Manager loads the extension
+without managing or overwriting these preference files. Reports
 follow the active branch and remain readable when automatic inquiries are OFF.
 The history command reads all branches of the current session's persisted log;
 reopening that session restores its history without a separate global history
@@ -99,20 +124,28 @@ revive superseded objectives or follow instructions embedded in recalled text.
 This is an on-demand reflection-history layer, **not** an independently verified
 memory or a demonstrated improvement in model behavior.
 
-## Opt-in audit memory
+## Feature controls and audit memory
 
-Load `audit-memory.ts` explicitly as a Pi extension alongside ordinary Cuckoo to
-register `cuckoo_memory`. Loading this package directory or `index.ts` alone does
-**not** enable it or add its schema to normal model context. This separate entry
-point is an auditability tool, not an automatic memory rollout. Remove the explicit
-audit entry from the extension list and reload Pi to stop exposing the tool.
-`/cuckoo off` controls automatic checkpoints; it does not unload audit memory.
-Existing records remain in the native session journal when the entry is unloaded.
+Normal directory/`index.ts` loading registers the feature tools inactive. Enable
+master and desired features through `/cuckoo settings` or commands. No extra
+entry point is needed: `audit-memory.ts` now emits only a migration notice; remove
+it from the extension list. Defaults do not expose the memory schema to the model.
 
-Once explicitly loaded, `cuckoo_memory` is separate from checkpoint reports and
-`cuckoo_recall`. It does not change cadence, create goals, or start another model.
-It works when automatic checkpoints are OFF, but all actions remain blocked
-during a JSON-only inquiry.
+`evidence` permits task labels, exact snapshots and claims; `corrections` permits
+new corrections; `verifiers` permits checker listing/execution; `reader` permits
+expanded record enumeration/inspection/text paging. Corrections and verifiers
+require evidence. Existing correction projection is always honored, even after
+new correction creation is disabled. Evidence retains basic public-source reading
+needed to capture snapshots. Reader can inspect existing records without enabling
+new evidence creation.
+
+Master OFF hides and denies these feature actions, while saved reflection
+recall/history and explicit manual inquiries remain available. An observed change to
+effective feature settings invalidates in-flight feature operations;
+re-enabling cannot publish an old check. Navigation, reload and shutdown also fence
+late work; ordinary native appends do not. Existing native records remain intact.
+All tools remain blocked during a JSON-only inquiry. Feature eligibility does not
+constitute approval to transfer or transmit data.
 
 This is an auditability capability, not demonstrated cognitive improvement.
 Controlled continuation tests found no final-answer gain; forced use increased
@@ -164,12 +197,50 @@ Workers are terminated on cancellation/deadline, and navigation/reload/shutdown
 fence late results. Ordinary appends do not invalidate an in-flight check.
 Workers provide termination, **not a security sandbox**; registered code is trusted.
 
-Cross-session manifests, vector retrieval, advisory critics and the controlled
-study harness are retained on `experiment/cuckoo-candidates`, not included in this
-runtime integration. None is activated or exposed by this entry point. The narrow
-retrieval improvement did not improve final answers, and the other deferred
-candidates showed no answer advantage. Their approval and lifecycle requirements
-must not be replaced with model-written permission fields if adopted later.
+## Operator-approved session transfer
+
+Enable `transfer` and master, then use these TUI commands:
+
+- `transfer export`: provide a current-branch task ID, explicit record IDs and a
+  new absolute output path. Review the complete reference closure, then separately
+  confirm writing the exact canonical packet. Export creates an exclusive `0600`
+  file; it never overwrites, creates directories or discovers sessions.
+- `transfer import`: select one explicit readable regular manifest file. Symlinks
+  and nonregular files are rejected; reads are byte-bounded with strict UTF-8.
+  Review the immutable escaped contents, then separately approve the displayed
+  digest, input path, destination and expiry. The bounded confirmation defaults
+  to Cancel; Left/Right selects the choice and Enter confirms it.
+- `transfer task`: choose an existing destination task or no selected task.
+  Changing this selection revokes retained packets.
+- `transfer revoke` / `clear`: revoke one or all packets. Clear also cancels
+  pending dialogs. Previously returned text cannot be erased.
+- `transfer status`: inspect the current destination and retained approval count.
+
+The model's `cuckoo_transfer` tool only lists approved packet metadata or performs
+`list`, `inspect` and lossless `text` reads by returned packet/record IDs. It accepts
+no paths, manifests, approval fields or destination identity. Nothing is appended
+to the destination memory graph. Origins are declared provenance, not signatures;
+old user text and successful checks remain historical, not new authority or fresh
+verification.
+
+The lease is 15 minutes, with at most four retained packets and 2 MB in total.
+Approvals are runtime-local and are removed by expiry, revocation, observed effective
+feature changes, navigation, reload or shutdown. Destination branch identity uses a digest
+of the stable navigation epoch, not the changing leaf. Source branch heads remain
+exact export observations. Projects are identified by canonical cwd digest;
+declared cross-project packets are rejected.
+
+## Networked feature integration status
+
+Vector retrieval and critic controller/SDK libraries, plus the bounded embedding
+transport, are included and tested mechanically. Their switches currently record
+preferences only: production model selection and disclosure workflows are not yet
+connected. Enabling those switches starts no network work. Vector eligibility
+requires reader; critic eligibility requires evidence. Their eventual host adapters
+must obtain separate data/model authorization; model-written arguments are not
+approvals. The controlled study harness remains on `experiment/cuckoo-candidates`.
+The earlier study showed no final-answer gain; integration is not a new semantic
+quality result.
 
 ## Reading the panel
 
