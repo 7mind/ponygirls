@@ -8,9 +8,11 @@ import { SqliteDecisionStore } from "../src/store.ts";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 function fixture(t) {
-  const preferences = { path: "memory:decisions", value: { enabled: true }, failure: null,
+  const preferences = { path: "memory:decisions", value: { enabled: true }, failure: null, inherited: false,
+    readOverrides() { const value = this.read(); return this.inherited ? {} : value; },
+    writeOverrides(value) { this.value = { enabled: value.enabled === undefined ? true : value.enabled }; this.inherited = value.enabled === undefined; },
     read() { if (this.failure !== null) throw new Error(this.failure); return { ...this.value }; },
-    write(value) { this.value = { ...value }; } };
+    write(value) { this.value = { ...value }; this.inherited = false; } };
   const entries = [];
   const dir = mkdtempSync(join(tmpdir(), "decisions-extension-"));
   const path = join(dir, "decisions", "questions.sqlite");
@@ -38,7 +40,7 @@ function fixture(t) {
     enqueueMessage: (message, options) => { messages.push({ message, options }); },
   };
   const ctx = {
-    cwd: dir, mode: "rpc", hasUI: true, isIdle: () => true,
+    cwd: dir, isProjectTrusted: () => false, mode: "rpc", hasUI: true, isIdle: () => true,
     sessionManager: { getSessionId: () => "origin", getBranch: () => entries, getEntries: () => entries },
     ui: {
       notify: (message, level) => notifications.push({ message, level }),
@@ -69,6 +71,31 @@ function fixture(t) {
     call: (params, id) => tool.execute(id, params, undefined, () => {}, ctx),
     command: (text) => commands.get("decisions").handler(text, ctx), handlers };
 }
+
+test('trusted project and session controls preserve the manual inbox and inherited global preference', async t => {
+  const f = fixture(t); f.ctx.isProjectTrusted = () => true; f.start();
+  const question = await f.call({ action: 'ask', question: 'Retained question' }, 'ask');
+  await f.command('project off'); assert.equal(f.active().includes('decisions'), false);
+  await f.command('status'); assert.match(f.notifications.at(-1).message, /project override/);
+  await f.command(question.details.id); assert.match(f.notifications.at(-1).message, /Retained question/);
+  await f.command('session on'); assert.equal(f.active().includes('decisions'), true);
+  await f.command('session inherit'); assert.equal(f.active().includes('decisions'), false);
+  await f.command('project inherit'); assert.equal(f.active().includes('decisions'), true);
+  assert.equal(f.preferences.read().enabled, true);
+});
+
+test('settings dialog remains available after project binding failure and applies without a store', async t => {
+  const f = fixture(t); f.failProject(); assert.throws(f.start, /project resolution failed/);
+  f.ctx.mode = 'tui'; let openings = 0;
+  f.ctx.ui.custom = factory => new Promise(resolve => {
+    const keys = { matches: (data, action) => action === 'tui.select.cancel' ? data === '\x1b' : action === 'tui.select.confirm' ? data === '\r' : false };
+    const panel = factory({ requestRender() {} }, { fg: (_c, text) => text, bg: (_c, text) => text, bold: text => text }, keys, resolve);
+    panel.render(80);
+    if (openings++ === 0) { panel.handleInput(' '); panel.handleInput('\x13'); } else panel.handleInput('\x1b');
+  });
+  await f.command('settings'); assert.equal(openings, 2); assert.equal(f.active().includes('decisions'), false);
+  assert.equal(f.entries.filter(entry => entry.customType === 'ponygirls.decisions.setting').at(-1).data.enabled, false);
+});
 
 test("nonblocking ask creates project questions and a bottom-left badge, list/get do not answer", async (t) => {
   const f = fixture(t);

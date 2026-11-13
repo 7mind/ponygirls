@@ -109,7 +109,7 @@ function fixture(cwd, files, sessionId) {
     command: args => transfer.command(args, ctx),
     advance: delta => { now += delta; },
     setPreviewAccepted: value => { previewAccepted = value; },
-    enabled: value => { preferences.apply(ctx, 'session', [{ field: 'enabled', value }]); features.refresh(ctx); },
+    enabled: value => { preferences.apply(ctx, 'session', [{ field: 'enabled', value }], new AbortController().signal); features.refresh(ctx); },
   };
 }
 

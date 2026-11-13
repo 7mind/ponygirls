@@ -1,226 +1,688 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Key, matchesKey, visibleWidth } from '@earendil-works/pi-tui';
-import { CuckooSettingsView, SettingsController, SettingsPanel } from '../src/settings-view.ts';
-import { applyPreferenceChanges, resolvePreferences } from '../src/preferences.ts';
 
-const theme = { fg: (_color, text) => text, bg: (_color, text) => text, bold: text => text };
-const keys = { matches(data, action) {
-  const key = { 'tui.select.up': Key.up, 'tui.select.down': Key.down, 'tui.select.confirm': Key.enter, 'tui.select.cancel': Key.escape }[action];
-  return key !== undefined && matchesKey(data, key);
-} };
+import {
+  Key,
+  matchesKey,
+} from '@earendil-works/pi-tui';
+
+import {
+  CuckooSettingsView,
+  bindSettingsCallbacks,
+  createSettingsController,
+} from '../src/settings-view.ts';
+
+import {
+  CuckooPreferences,
+  PREFERENCES_TYPE,
+  applyPreferenceChanges,
+  resolvePreferences,
+} from '../src/preferences.ts';
+
+import {
+  FEATURES,
+} from '../src/features.ts';
+
+import {
+  DEFAULT_POLICY,
+  policyText,
+} from '../src/policy.ts';
 
 function fixture() {
-  let layers = { global: {}, project: {}, session: {} };
-  let trusted = true; let failRead = false; let failWrite = false;
-  const saves = []; const applied = [];
-  const read = () => {
-    if (failRead) throw new Error('unavailable fixture settings');
-    const current = structuredClone(layers);
-    if (!trusted) current.project = {};
-    return { ...current, effective: resolvePreferences(current), projectTrusted: trusted,
-      paths: { global: '/fixture/agent/cuckoo.json', project: '/fixture/project/.pi/cuckoo.json', session: 'synthetic-session' } };
-  };
-  const callbacks = { read,
-    apply(scope, changes) {
-      if (failWrite) throw new Error('owned write failure');
-      if (scope === 'project' && !trusted) throw new Error('Project not trusted');
-      saves.push({ scope, changes: structuredClone(changes) });
-      layers[scope] = applyPreferenceChanges(layers[scope], changes);
+  const state = {
+    layers: {
+      global: {},
+      project: {},
+      session: {},
     },
-    applied: (snapshot, scope) => applied.push({ snapshot, scope }),
-    async editPolicy() { assert.fail('No policy edit expected'); },
+    trusted: true,
+    paths: {
+      global: '/fixture/agent/cuckoo.json',
+      project: '/fixture/project/.pi/cuckoo.json',
+      session: 'session-A',
+    },
   };
-  return { read, callbacks, saves, applied, setLayers: value => { layers = structuredClone(value); }, setTrusted: value => { trusted = value; },
-    failRead: value => { failRead = value; }, failWrite: value => { failWrite = value; } };
-}
-function select(controller, name) {
-  const index = controller.rows.findIndex(row => row.field === name || (row.field === 'feature' && row.id === name));
-  assert.ok(index >= 0); controller.select(index);
-}
-function panel(controller, onCancel, onPolicy) {
-  return new SettingsPanel({ controller, theme, keys, requestRender() {}, cancel: onCancel, editPolicy: onPolicy });
-}
-function mouse(x, y, height) {
-  return { type: 'click', button: 'left', x, y, screenX: x, screenY: y, width: 100, height, modifiers: { shift: false, alt: false, ctrl: false } };
-}
-function uiFixture() {
-  const panels = []; const notices = [];
-  const ctx = { mode: 'tui', hasUI: true, ui: {
-    notify: (...args) => notices.push(args),
-    custom(factory) {
-      return new Promise((resolve, reject) => {
-        let component;
-        try {
-          component = factory({ terminal: { rows: 40 }, requestRender() {} }, theme, keys, value => {
-            if (component !== undefined && typeof component.dispose === 'function') component.dispose();
-            resolve(value);
-          });
-          panels.push(component);
-        } catch (error) { reject(error); }
+
+  const saves = [];
+  const applied = [];
+
+  function read() {
+    const layers = structuredClone(state.layers);
+    if (!state.trusted) layers.project = {};
+
+    return {
+      ...layers,
+      effective: resolvePreferences(layers),
+      projectTrusted: state.trusted,
+      paths: { ...state.paths },
+    };
+  }
+
+  const callbacks = {
+    read,
+
+    apply(scope, changes, signal, expectedTarget) {
+      signal.throwIfAborted();
+
+      const current = read();
+      assert.equal(current.paths[scope], expectedTarget);
+
+      if (scope === 'project' && !current.projectTrusted) {
+        throw new Error('Project not trusted');
+      }
+
+      signal.throwIfAborted();
+
+      saves.push({
+        scope,
+        changes: structuredClone(changes),
+        signal,
+        expectedTarget,
+      });
+
+      state.layers[scope] = applyPreferenceChanges(
+        state.layers[scope],
+        changes,
+      );
+    },
+
+    applied(snapshot, scope) {
+      applied.push({
+        snapshot: structuredClone(snapshot),
+        scope,
       });
     },
-  } };
-  return { ctx, panels, notices };
+
+    async editPolicy() {
+      return undefined;
+    },
+  };
+
+  return {
+    callbacks,
+    saves,
+    applied,
+
+    setLayers(value) {
+      state.layers = structuredClone(value);
+    },
+
+    setTrusted(value) {
+      state.trusted = value;
+    },
+
+    setTarget(scope, target) {
+      state.paths[scope] = target;
+    },
+  };
 }
 
-// Specified Behavioral-Active / Blackbox-Group: public controller, panel and callbacks.
-test('all seven features and master render with local/effective sources and dependency reasons', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks);
-  assert.equal(c.rows.length, 9);
-  select(c, 'vectors'); c.toggleSelected();
-  const p = panel(c, () => {}, () => {});
-  const text = p.render(120).join('\n');
-  for (const row of c.rows) assert.ok(text.includes(row.label));
-  assert.match(text, /\[x\].*Vector retrieval/);
-  assert.match(text, /inactive: Cuckoo is off, reader is off/);
-  assert.match(text, /Effective: on \(session\)/);
-  assert.match(text, /settings, not permission to transmit data/);
+function select(controller, id) {
+  const index = controller.state().rows.findIndex(row => row.id === id);
+  assert.ok(index >= 0, `Missing row: ${id}`);
+  controller.select(index);
+}
+
+function row(controller, id) {
+  const found = controller.state().rows.find(item => item.id === id);
+  assert.ok(found, `Missing row: ${id}`);
+  return found;
+}
+
+async function run(action) {
+  assert.ok(action, 'Expected an external settings action');
+  await action.run(new AbortController().signal);
+}
+
+test('Cuckoo maps every owner field, source and dependency explanation', () => {
+  const f = fixture();
+
+  f.setLayers({
+    global: {
+      enabled: true,
+      features: { evidence: true },
+    },
+    project: {
+      features: { reader: true },
+    },
+    session: {
+      features: { vectors: true },
+    },
+  });
+
+  const controller = createSettingsController(f.callbacks);
+
+  assert.deepEqual(
+    controller.state().rows.map(item => item.id),
+    [
+      'enabled',
+      ...FEATURES.map(feature => feature.id),
+      'policy',
+    ],
+  );
+
+  for (const feature of FEATURES) {
+    const mapped = row(controller, feature.id);
+    assert.equal(mapped.label, feature.label);
+    assert.equal(mapped.description, feature.description);
+    assert.equal(mapped.kind, 'boolean');
+  }
+
+  assert.equal(row(controller, 'enabled').origin, 'global');
+  assert.equal(row(controller, 'reader').origin, 'project');
+  assert.equal(row(controller, 'vectors').origin, 'session');
+  assert.equal(row(controller, 'vectors').checked, true);
+  assert.equal(
+    row(controller, 'vectors').inactive,
+    'ready by settings',
+  );
+  assert.equal(
+    row(controller, 'policy').effectiveText,
+    policyText(DEFAULT_POLICY),
+  );
+  assert.equal(row(controller, 'policy').checked, null);
+
+  f.setTrusted(false);
+  assert.equal(controller.reload(), true);
+
+  assert.equal(row(controller, 'reader').origin, 'default');
+  assert.match(
+    row(controller, 'vectors').inactive,
+    /reader is off/,
+  );
   assert.equal(f.saves.length, 0);
 });
 
-test('drafts are scoped; selected scope alone is previewed/applied and close discards the rest', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks);
-  select(c, 'evidence'); c.toggleSelected();
-  c.selectScope('global'); select(c, 'reader'); c.toggleSelected();
-  assert.equal(c.preview().effective.features.evidence, false, 'other tab draft is not reported as persisted');
-  assert.equal(c.preview().effective.features.reader, true);
-  c.applySelected(); assert.equal(f.saves.length, 1); assert.equal(f.saves[0].scope, 'global');
-  assert.equal(c.dirty('session'), true); assert.equal(c.dirty('global'), false);
-  c.selectScope('session'); assert.equal(c.preview().effective.features.evidence, true);
-  c.dispose(); c.applySelected();
-  assert.equal(f.saves.length, 1); assert.equal(f.read().effective.features.evidence, false);
-  assert.equal(f.read().effective.features.reader, true);
-});
+test('Cuckoo translates one heterogeneous draft into its native atomic batch', async () => {
+  const f = fixture();
+  const edited = { kind: 'tokens', value: 4321 };
+  let editorRequest;
 
-test('lower scope toggles its own resolved value despite higher-scope shadowing', () => {
-  const f = fixture(); f.setLayers({ global: { features: { reader: false } }, project: {}, session: { features: { reader: true } } });
-  const c = new SettingsController(f.callbacks); c.selectScope('global'); select(c, 'reader');
-  c.toggleSelected(); assert.deepEqual(c.pending('global'), [{ field: 'feature', id: 'reader', value: true }]);
-  c.toggleSelected(); assert.equal(c.dirty('global'), false, 'second toggle returns to saved global false');
-  const text = panel(c, () => {}, () => {}).render(100).join('\n');
-  assert.match(text, /\[ \].*Scoped memory reader/);
-  assert.match(text, /Effective: on \(session\)/);
-  assert.match(text, /Local global: off; through this scope: off/);
-});
+  f.callbacks.editPolicy = async request => {
+    editorRequest = request;
+    return edited;
+  };
 
-test('inherit removes one override without changing adjacent draft or complete policy', () => {
-  const f = fixture(); f.setLayers({ global: { enabled: true, features: { reader: true } }, project: {}, session: { features: { reader: false }, policy: { kind: 'tokens', value: 10 } } });
-  const c = new SettingsController(f.callbacks); select(c, 'reader'); c.resetSelected();
-  select(c, 'vectors'); c.toggleSelected(); c.applySelected();
-  assert.equal(f.read().effective.features.reader, true);
-  assert.equal(f.read().effective.featureSources.reader, 'global');
-  assert.equal(f.read().effective.features.vectors, true);
-  assert.deepEqual(f.read().effective.policy, { kind: 'tokens', value: 10 });
-});
+  const controller = createSettingsController(f.callbacks);
 
-test('save rereads current state, preserves unrelated changes and rechecks trust', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks);
-  c.selectScope('project'); select(c, 'reader'); c.toggleSelected();
-  f.setLayers({ global: {}, project: { enabled: true }, session: {} });
-  c.applySelected(); assert.equal(f.read().effective.enabled, true);
-  select(c, 'vectors'); c.toggleSelected(); f.setTrusted(false); c.applySelected();
-  assert.equal(f.saves.length, 1); assert.equal(c.dirty('project'), true);
-  assert.match(c.notice, /trusted/);
-});
+  for (const feature of FEATURES) {
+    select(controller, feature.id);
+    controller.toggleSelected();
+  }
 
-test('save failures keep drafts and do not report success or refresh runtime', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks);
-  c.toggleSelected(); f.failWrite(true); c.applySelected();
-  assert.equal(f.saves.length, 0); assert.equal(f.applied.length, 0);
-  assert.equal(c.dirty('session'), true); assert.match(c.notice, /Save failed/);
-  f.failWrite(false); f.failRead(true); c.applySelected();
-  assert.equal(f.saves.length, 0); assert.match(c.notice, /Reload failed/);
-  f.failRead(false); c.applySelected();
-  assert.equal(f.saves.length, 1); assert.equal(f.applied.length, 1); assert.equal(c.dirty('session'), false);
-});
+  select(controller, 'enabled');
+  controller.toggleSelected();
 
-test('keyboard applies explicitly; reset, scope, policy and cancellation have separate actions', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks); let cancelled = 0; const policy = [];
-  const p = panel(c, () => { cancelled++; c.dispose(); p.dispose(); }, value => policy.push(value));
-  p.handleInput(' '); assert.equal(c.preview().effective.enabled, true); assert.equal(f.saves.length, 0);
-  p.handleInput('\x13'); assert.equal(f.saves.length, 1);
-  p.handleInput('r'); assert.equal(c.preview().effective.enabled, false);
-  p.handleInput('\t'); assert.equal(c.scope, 'project');
-  p.handleInput('p'); assert.equal(policy.length, 1); assert.equal(policy[0].scope, 'project');
-  p.handleInput('\x1b'); assert.equal(cancelled, 1);
-  p.handleInput(' '); p.handleInput('\x13'); assert.equal(f.saves.length, 1);
-});
+  select(controller, 'policy');
+  await run(controller.beginEdit());
 
-test('mouse row and tab actions use fresh rendered geometry and disposed callbacks cannot save', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks); const p = panel(c, () => {}, () => {});
-  let lines = p.render(100);
-  const rowY = lines.findIndex(line => line.includes('Evidence & work products'));
-  assert.equal(p.handleMouse(mouse(4, rowY, lines.length)).handled, true);
-  assert.equal(c.preview().effective.features.evidence, true); assert.equal(f.saves.length, 0);
-  lines = p.render(100); const tabX = lines[0].indexOf('global');
-  assert.ok(tabX > 0); p.handleMouse(mouse(tabX + 1, 0, lines.length));
-  assert.equal(c.scope, 'global');
-  lines = p.render(100); const footerY = lines.findIndex(line => line.includes('Ctrl-S'));
-  p.handleMouse(mouse(lines[footerY].indexOf('Ctrl-S') + 1, footerY, lines.length));
-  assert.equal(f.saves.length, 0, 'global has no draft; session remains unsaved');
-  p.dispose(); p.handleInput('\x13'); p.handleMouse(mouse(4, rowY, lines.length));
+  assert.equal(editorRequest.scope, 'session');
+  assert.deepEqual(editorRequest.value, DEFAULT_POLICY);
+  assert.ok(editorRequest.signal instanceof AbortSignal);
   assert.equal(f.saves.length, 0);
+
+  await run(controller.beginApply());
+
+  assert.equal(f.saves.length, 1);
+  assert.equal(f.saves[0].scope, 'session');
+  assert.equal(f.saves[0].expectedTarget, 'session-A');
+  assert.ok(f.saves[0].signal instanceof AbortSignal);
+
+  assert.deepEqual(
+    f.saves[0].changes,
+    [
+      ...FEATURES.map(feature => ({
+        field: 'feature',
+        id: feature.id,
+        value: true,
+      })),
+      { field: 'enabled', value: true },
+      { field: 'policy', value: edited },
+    ],
+  );
+
+  assert.equal(f.applied.length, 1);
+  assert.equal(f.applied[0].scope, 'session');
+  assert.deepEqual(
+    f.applied[0].snapshot.effective.policy,
+    edited,
+  );
+  assert.equal(
+    f.applied[0].snapshot.effective.features.critic,
+    true,
+  );
 });
 
-test('mouse press retains a target so the terminal dispatcher can synthesize a later click', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks); const p = panel(c, () => {}, () => {});
-  const lines = p.render(100); const x = lines[0].indexOf('global') + 1;
-  const event = mouse(x, 0, lines.length);
-  const press = p.handleMouse({ ...event, type: 'press' });
-  assert.equal(press?.handled, true, 'regular-mode dispatcher needs a press target before delivering release/click');
-  assert.equal(press.target.component, p); assert.equal(press.render, false, 'neutral press must not invalidate its own gesture target');
-  assert.equal(c.scope, 'session', 'press does not activate the checkbox or tab');
-  p.handleMouse({ ...event, type: 'release' }); assert.equal(c.scope, 'session');
-  p.handleMouse(event); assert.equal(c.scope, 'global');
+test('Cuckoo translates inheritance to native null tombstones for every field', async () => {
+  const f = fixture();
+
+  f.setLayers({
+    global: {},
+    project: {},
+    session: {
+      enabled: true,
+      policy: { kind: 'tokens', value: 9000 },
+      features: {
+        evidence: true,
+        corrections: true,
+        verifiers: true,
+        reader: true,
+        transfer: true,
+        vectors: true,
+        critic: true,
+      },
+    },
+  });
+
+  const controller = createSettingsController(f.callbacks);
+
+  for (const item of controller.state().rows) {
+    select(controller, item.id);
+    controller.inheritSelected();
+  }
+
+  await run(controller.beginApply());
+
+  assert.deepEqual(
+    f.saves[0].changes,
+    [
+      { field: 'enabled', value: null },
+      ...FEATURES.map(feature => ({
+        field: 'feature',
+        id: feature.id,
+        value: null,
+      })),
+      { field: 'policy', value: null },
+    ],
+  );
+
+  assert.deepEqual(f.callbacks.read().session, {});
 });
 
-test('rendered rows fit narrow widths; selection and drafts survive resize', () => {
-  const f = fixture(); const c = new SettingsController(f.callbacks); select(c, 'critic'); c.toggleSelected();
-  const p = panel(c, () => {}, () => {});
-  for (const width of [120, 80, 40, 20, 120]) {
-    for (const line of p.render(width)) assert.ok(visibleWidth(line) <= width, `${visibleWidth(line)} > ${width}`);
-    assert.equal(c.currentRow().id, 'critic'); assert.equal(c.preview().effective.features.critic, true);
+test('policy cancellation is distinct from invalid/null policy results', async () => {
+  for (const result of [
+    undefined,
+    null,
+    { kind: 'tokens', value: 0 },
+  ]) {
+    const f = fixture();
+
+    f.setLayers({
+      global: {},
+      project: {},
+      session: {
+        policy: { kind: 'tokens', value: 111 },
+      },
+    });
+
+    f.callbacks.editPolicy = async () => result;
+
+    const controller = createSettingsController(f.callbacks);
+    select(controller, 'policy');
+    await run(controller.beginEdit());
+
+    assert.deepEqual(controller.pending('session'), []);
+    assert.deepEqual(
+      f.callbacks.read().session.policy,
+      { kind: 'tokens', value: 111 },
+    );
+    assert.equal(f.saves.length, 0);
+
+    assert.match(
+      controller.state().notice,
+      result === undefined ? /cancelled/i : /edit failed/i,
+    );
   }
 });
 
-test('view repeat-open closes one interaction and revokes its retained input callbacks', async () => {
-  const f = fixture(); const ui = uiFixture(); const view = new CuckooSettingsView();
-  const opened = view.show(ui.ctx, f.callbacks); assert.equal(ui.panels.length, 1);
-  const old = ui.panels[0]; old.handleInput(' ');
-  await view.show(ui.ctx, f.callbacks); await opened;
-  old.handleInput('\x13'); assert.equal(f.saves.length, 0);
-  const next = view.show(ui.ctx, f.callbacks); assert.equal(ui.panels.length, 2);
-  ui.panels[1].handleInput('\x1b'); await next; assert.equal(f.saves.length, 0);
+test('policy bridge rejects target changes and trust loss after awaiting', async () => {
+  for (const change of ['target', 'trust']) {
+    const f = fixture();
+    let finish;
+    let request;
+
+    const edited = new Promise(resolve => {
+      finish = resolve;
+    });
+
+    f.callbacks.editPolicy = value => {
+      request = value;
+      return edited;
+    };
+
+    const controller = createSettingsController(f.callbacks);
+    controller.selectScope('project');
+    select(controller, 'policy');
+
+    const action = controller.beginEdit();
+    assert.ok(action);
+
+    const running = action.run(new AbortController().signal);
+    assert.equal(request.scope, 'project');
+
+    if (change === 'target') {
+      f.setTarget(
+        'project',
+        '/fixture/other-project/.pi/cuckoo.json',
+      );
+    } else {
+      f.setTrusted(false);
+    }
+
+    finish({ kind: 'tokens', value: 222 });
+    await running;
+
+    assert.deepEqual(controller.pending('project'), []);
+    assert.equal(f.saves.length, 0);
+    assert.match(
+      controller.state().notice,
+      change === 'target' ? /target changed/i : /trusted/i,
+    );
+  }
 });
 
-test('policy editor stages a complete value; disposal cancels it without a later save or reopen', async () => {
-  const f = fixture(); const ui = uiFixture(); const view = new CuckooSettingsView();
-  let enter; const entered = new Promise(resolve => { enter = resolve; }); let request;
-  f.callbacks.editPolicy = value => {
-    request = value; enter();
-    return new Promise(resolve => value.signal.addEventListener('abort', () => resolve({ kind: 'tokens', value: 9000 }), { once: true }));
+test('Cuckoo adapter forwards and awaits an asynchronous apply callback', async () => {
+  const f = fixture();
+  const originalApply = f.callbacks.apply;
+  let finish;
+  let forwarded;
+
+  const permitted = new Promise(resolve => {
+    finish = resolve;
+  });
+
+  f.callbacks.apply = async (
+    scope,
+    changes,
+    signal,
+    expectedTarget,
+  ) => {
+    forwarded = { scope, signal, expectedTarget };
+    await permitted;
+
+    // A callback that awaits owns these final checks.
+    signal.throwIfAborted();
+    originalApply(scope, changes, signal, expectedTarget);
   };
-  const opened = view.show(ui.ctx, f.callbacks); ui.panels[0].handleInput('p'); await entered;
-  view.dispose(); await opened;
-  assert.equal(request.signal.aborted, true); assert.equal(ui.panels.length, 1); assert.equal(f.saves.length, 0);
-  await view.show(ui.ctx, f.callbacks); assert.equal(ui.panels.length, 1);
+
+  const controller = createSettingsController(f.callbacks);
+  controller.toggleSelected();
+
+  const action = controller.beginApply();
+  assert.ok(action);
+
+  const abort = new AbortController();
+  const running = action.run(abort.signal);
+
+  assert.equal(controller.busy, true);
+  assert.equal(forwarded.scope, 'session');
+  assert.equal(forwarded.signal, abort.signal);
+  assert.equal(forwarded.expectedTarget, 'session-A');
+  assert.equal(f.saves.length, 0);
+  assert.equal(f.applied.length, 0);
+
+  finish();
+  await running;
+
+  assert.equal(controller.busy, false);
+  assert.equal(f.saves.length, 1);
+  assert.equal(f.applied.length, 1);
+  assert.equal(controller.dirty('session'), false);
 });
 
-test('policy editing returns to same scope and remains unsaved until explicit apply', async () => {
-  const f = fixture(); const ui = uiFixture(); const view = new CuckooSettingsView();
-  f.callbacks.editPolicy = async request => { assert.equal(request.scope, 'project'); return { kind: 'tokens', value: 4321 }; };
-  const opened = view.show(ui.ctx, f.callbacks); ui.panels[0].handleInput('\t'); ui.panels[0].handleInput('p');
+function nativeBinding() {
+  const state = {
+    global: {},
+    project: {},
+    trusted: true,
+    sessionId: 'session-A',
+    appends: [],
+    writes: [],
+  };
+
+  const context = {
+    cwd: '/fixture/project',
+    isProjectTrusted: () => state.trusted,
+    sessionManager: {
+      getEntries: () => state.appends,
+      getSessionId: () => state.sessionId,
+    },
+  };
+
+  const preferences = new CuckooPreferences(
+    {
+      appendEntry(customType, data) {
+        state.appends.push({
+          type: 'custom',
+          customType,
+          data: structuredClone(data),
+        });
+      },
+    },
+    {
+      path: '/fixture/agent/cuckoo.json',
+
+      read() {
+        return structuredClone(state.global);
+      },
+
+      write(value) {
+        state.writes.push({
+          scope: 'global',
+          value: structuredClone(value),
+        });
+        state.global = structuredClone(value);
+      },
+    },
+    path => ({
+      path,
+
+      read() {
+        return structuredClone(state.project);
+      },
+
+      write(value) {
+        state.writes.push({
+          scope: 'project',
+          path,
+          value: structuredClone(value),
+        });
+        state.project = structuredClone(value);
+      },
+    }),
+  );
+
+  return {
+    state,
+    context,
+    callbacks: bindSettingsCallbacks(
+      preferences,
+      context,
+      async () => undefined,
+      () => {},
+    ),
+  };
+}
+
+test('native binding checks cancellation, destination and trust before storage', () => {
+  const f = nativeBinding();
+  const changes = [
+    { field: 'feature', id: 'reader', value: true },
+  ];
+
+  const sessionTarget = f.callbacks.read().paths.session;
+
+  f.callbacks.apply(
+    'session',
+    changes,
+    new AbortController().signal,
+    sessionTarget,
+  );
+
+  assert.equal(f.state.appends.length, 1);
+  assert.equal(
+    f.state.appends[0].customType,
+    PREFERENCES_TYPE,
+  );
+  assert.deepEqual(f.state.appends[0].data, {
+    version: 1,
+    sessionId: 'session-A',
+    changes,
+  });
+
+  const aborted = new AbortController();
+  aborted.abort();
+
+  assert.throws(() => {
+    f.callbacks.apply(
+      'session',
+      changes,
+      aborted.signal,
+      sessionTarget,
+    );
+  });
+
+  f.state.sessionId = 'session-B';
+
+  assert.throws(
+    () => f.callbacks.apply(
+      'session',
+      changes,
+      new AbortController().signal,
+      sessionTarget,
+    ),
+    /target changed/i,
+  );
+
+  const projectTarget = f.callbacks.read().paths.project;
+  f.context.cwd = '/fixture/other-project';
+
+  assert.throws(
+    () => f.callbacks.apply(
+      'project',
+      changes,
+      new AbortController().signal,
+      projectTarget,
+    ),
+    /target changed/i,
+  );
+
+  const currentProjectTarget = f.callbacks.read().paths.project;
+  f.state.trusted = false;
+
+  assert.throws(
+    () => f.callbacks.apply(
+      'project',
+      changes,
+      new AbortController().signal,
+      currentProjectTarget,
+    ),
+    /trusted/i,
+  );
+
+  assert.equal(f.state.appends.length, 1);
+  assert.equal(f.state.writes.length, 0);
+});
+
+function uiFixture() {
+  const panels = [];
+  const notices = [];
+
+  const theme = {
+    fg: (_color, text) => text,
+    bg: (_color, text) => text,
+    bold: text => text,
+  };
+
+  const keys = {
+    matches(data, action) {
+      const key = {
+        'tui.select.up': Key.up,
+        'tui.select.down': Key.down,
+        'tui.select.confirm': Key.enter,
+        'tui.select.cancel': Key.escape,
+      }[action];
+
+      return key !== undefined && matchesKey(data, key);
+    },
+  };
+
+  const context = {
+    mode: 'tui',
+    hasUI: true,
+    ui: {
+      notify(...args) {
+        notices.push(args);
+      },
+
+      custom(factory) {
+        return new Promise((resolve, reject) => {
+          let component;
+
+          try {
+            component = factory(
+              { requestRender() {} },
+              theme,
+              keys,
+              value => {
+                component?.dispose?.();
+                resolve(value);
+              },
+            );
+            panels.push(component);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    },
+  };
+
+  return { context, panels, notices };
+}
+
+test('Cuckoo view delegates disposal and rejects a late owner policy result', async () => {
+  const f = fixture();
+  const ui = uiFixture();
+  const view = new CuckooSettingsView();
+
+  let entered;
+  let finish;
+  let request;
+
+  const editorEntered = new Promise(resolve => {
+    entered = resolve;
+  });
+
+  const edited = new Promise(resolve => {
+    finish = resolve;
+  });
+
+  f.callbacks.editPolicy = value => {
+    request = value;
+    entered();
+    return edited;
+  };
+
+  const showing = view.show(ui.context, f.callbacks);
+  assert.equal(ui.panels.length, 1);
+
+  ui.panels[0].handleInput('\x1b[F');
+  ui.panels[0].handleInput('\r');
+  await editorEntered;
+
+  view.dispose();
+  await showing;
+
+  assert.equal(request.signal.aborted, true);
+
+  finish({ kind: 'tokens', value: 999 });
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(ui.panels.length, 2); assert.equal(f.saves.length, 0);
-  assert.match(ui.panels[1].render(100).join('\n'), /4321 additional tokens/);
-  ui.panels[1].handleInput('\x13'); assert.equal(f.saves[0].scope, 'project');
-  assert.deepEqual(f.read().effective.policy, { kind: 'tokens', value: 4321 });
-  ui.panels[1].handleInput('\x1b'); await opened;
-});
 
-test('noninteractive settings never open custom UI or write preferences', async () => {
-  const f = fixture(); const ui = uiFixture(); ui.ctx.mode = 'rpc';
-  await new CuckooSettingsView().show(ui.ctx, f.callbacks);
-  assert.equal(ui.panels.length, 0); assert.equal(f.saves.length, 0); assert.match(ui.notices[0][0], /TUI/);
+  assert.equal(ui.panels.length, 1);
+  assert.equal(f.saves.length, 0);
+  assert.equal(f.applied.length, 0);
+
+  await view.show(ui.context, f.callbacks);
+  assert.equal(ui.panels.length, 1);
 });

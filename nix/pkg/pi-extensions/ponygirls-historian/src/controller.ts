@@ -6,7 +6,13 @@ import { resolveProject } from '../../ponygirls-decisions/src/project.ts';
 import { digest, evidenceFromEntry } from './evidence.ts';
 import { HISTORY_CHANNEL, type HistoryFeed } from './feed.ts';
 import { MAX_PENDING_EVENTS, type Evidence, type SourceCursor } from './model.ts';
-import { effectivePreferences, modelKey, type EffectivePreferences, type PreferenceStore, type StoredPreferences } from './preferences.ts';
+import { randomUUID } from 'node:crypto';
+import type { PreferenceStore } from './preferences.ts';
+import type { ScopedConfiguration } from './project-config.ts';
+import type { ScopedSettingsScope } from '@ponygirls/pi-settings';
+import type { HistorianSettingsSnapshot } from './scoped-values.ts';
+import { ProjectSettings, type ConfirmDisclosure, type ProjectApplyResult } from './project-settings.ts';
+import { ConfigurationFence, type ConfigurationObservation } from './configuration-fence.ts';
 import { acquireSessionLock, JournalStore } from './store.ts';
 import { HistorianWorker, OBJECTIVE_VERSION } from './worker.ts';
 import { WorkerFailure, type AttemptFinish } from './attempt.ts';
@@ -44,17 +50,40 @@ export class HistorianController {
   private projectionError: string | null = null;
   private lastCommit: string | null = null;
   private activeConfiguration: string | null = null;
+  private readonly configurationFence = new ConfigurationFence();
+  private readonly projectSettings: ProjectSettings;
 
   constructor(pi: ExtensionAPI, preferences: PreferenceStore, ctx: ExtensionContext, changed: () => void) {
     this.pi = pi; this.preferences = preferences; this.ctx = ctx; this.owner = ctx.sessionManager.getSessionId();
     this.project = resolveProject(ctx.cwd); this.directory = join(preferences.journalRoot(), 'projects', digest(this.project)); this.changed = changed;
+    this.projectSettings = new ProjectSettings(pi, preferences, this.project,
+      candidate => !this.disposed && candidate === this.ctx && candidate.sessionManager.getSessionId() === this.owner, { token: randomUUID });
     this.worker = new HistorianWorker(ctx.modelRegistry);
   }
-  effective(): EffectivePreferences { return effectivePreferences(this.preferences.read(), this.ctx.sessionManager.getEntries(), this.owner); }
-  private authorized(defaults: StoredPreferences, key: string): boolean {
-    const current = effectivePreferences(defaults, this.ctx.sessionManager.getEntries(), this.owner);
-    return !this.disposed && current.enabled && modelKey(current.model) === modelKey(current.approvedModel) &&
-      JSON.stringify([current.model, current.focus, current.enabledGeneration, current.enabledRevision]) === key;
+  private observeConfiguration(config: ScopedConfiguration): { config: ScopedConfiguration; observation: ConfigurationObservation } {
+    const observation = this.configurationFence.observe(config.boundaryKey);
+    if (observation.changed) { this.activeConfiguration = null; this.request?.abort(); }
+    return { config, observation };
+  }
+  private configurationFault(): void {
+    this.configurationFence.invalidate(); this.attachmentBaseline = true;
+    this.activeConfiguration = null; this.request?.abort();
+  }
+  private configuration(): { config: ScopedConfiguration; observation: ConfigurationObservation } {
+    try { return this.observeConfiguration(this.projectSettings.read(this.ctx, null)); }
+    catch (error) { this.configurationFault(); throw error; }
+  }
+  effective(): ScopedConfiguration { return this.configuration().config; }
+  private withAuthorization<T>(key: string, use: () => T): T | undefined {
+    try {
+      return this.projectSettings.withSnapshot(this.ctx, config => {
+        const current = this.observeConfiguration(config);
+        if (this.disposed || !config.enabled || !config.disclosureApproved || current.observation.key !== key) {
+          this.schedule(0); return undefined;
+        }
+        return use();
+      });
+    } catch (error) { this.configurationFault(); throw error; }
   }
   private open(): JournalStore {
     if (this.store === null) {
@@ -103,7 +132,7 @@ export class HistorianController {
     return this.capture;
   }
   private async collect(): Promise<void> {
-    const config = this.effective();
+    const current = this.configuration(); const config = current.config;
     if (!config.enabled) {
       this.request?.abort(); this.activeConfiguration = null;
       if (this.store === null && existsSync(join(this.directory, 'journal.sqlite'))) this.open();
@@ -116,13 +145,13 @@ export class HistorianController {
     }
     const model = config.model;
     if (model === null) throw new Error('Configure /historian model PROVIDER MODEL THINKING before enabling');
-    if (modelKey(config.model) !== modelKey(config.approvedModel)) throw new Error('Model disclosure not approved; run /historian on (or default on) for the configured model');
-    const key = JSON.stringify([config.model, config.focus, config.enabledGeneration, config.enabledRevision]);
+    if (!config.disclosureApproved) throw new Error('Model disclosure not approved; use /historian on, /historian default on, or explicitly approve project ON in settings');
+    const key = current.observation.key;
     if (this.activeConfiguration !== key) { this.request?.abort(); this.activeConfiguration = key; }
     const store = this.open(); this.discoverFeed();
     const previous = store.state(this.owner);
     const cursors = new Map((previous === null ? [] : previous.cursors).map(c => [c.sourceId, c.offset]));
-    const baseline = this.attachmentBaseline || previous === null || !previous.enabled ||
+    const baseline = this.attachmentBaseline || current.observation.baselineRequired || previous === null || !previous.enabled ||
       cursors.get('session-enabled-revision') !== config.enabledRevision ||
       (config.enabledGeneration !== null && cursors.get('global-enabled-generation') !== config.enabledGeneration);
     cursors.set('session-enabled-revision', config.enabledRevision);
@@ -174,10 +203,10 @@ export class HistorianController {
       cursors.set('feed-ready', 1);
     }
     // Serialize synchronous capture/admission and commit with defaults mutations, never inference or feed I/O.
-    this.preferences.withSnapshot(defaults => {
-      if (!this.authorized(defaults, key)) { this.schedule(0); return; }
+    this.withAuthorization(key, () => {
       if (baseline) gaps.push(`${new Date().toISOString()}: Activation/attachment boundary: earlier or offline history was not backfilled; only already captured pending evidence resumes`);
       store.capture(this.owner, true, [...cursors].map(([sourceId, offset]): SourceCursor => ({ sourceId, offset })), evidence, gaps);
+      this.configurationFence.captured(key);
       this.attachmentBaseline = false;
       if (this.working === null && !this.worker.busy && this.failures < MAX_RETRIES && performance.now() >= this.retryAt) {
         const batch = store.batch(this.owner);
@@ -195,10 +224,9 @@ export class HistorianController {
             .then(result => {
               finish({ outcome: 'validated', failure: null, ...result.metrics });
               if (this.disposed || request.signal.aborted) return;
-              const committed = this.preferences.withSnapshot(latest => {
-                if (!this.authorized(latest, key)) return false;
+              const committed = this.withAuthorization(key, () => {
                 store.commit(batch, result.proposals, { ...result.meta, attemptId: attempt.id }); return true;
-              });
+              }) ?? false;
               if (!committed) return;
               this.projectMarkdown(store);
               this.lastCommit = new Date().toISOString(); this.failures = 0; this.error = null;
@@ -233,8 +261,32 @@ export class HistorianController {
   }
   async settingsChanged(): Promise<void> {
     this.request?.abort(); this.failures = 0; this.retryAt = 0;
+    this.configuration();
     if (this.capture !== null) await this.capture;
     await this.reconcile();
+  }
+  async applyProjectSettings(changes: unknown, signal: AbortSignal, confirm: ConfirmDisclosure): Promise<ProjectApplyResult> {
+    const result = await this.projectSettings.apply(this.ctx, changes, signal, confirm);
+    if (result.status === 'applied') await this.settingsChanged();
+    return result;
+  }
+  settingsSnapshot(): HistorianSettingsSnapshot {
+    try {
+      const snapshot = this.projectSettings.settingsSnapshot(this.ctx);
+      const observation = this.configurationFence.observe(snapshot.boundaryKey);
+      if (observation.changed) { this.activeConfiguration = null; this.request?.abort(); }
+      return snapshot;
+    } catch (error) { this.configurationFault(); throw error; }
+  }
+  async applyScopedSettings(scope: ScopedSettingsScope, changes: unknown, signal: AbortSignal,
+    expectedTarget: string, confirm: ConfirmDisclosure): Promise<void> {
+    try { await this.projectSettings.applyScoped(this.ctx, scope, changes, signal, expectedTarget, confirm); }
+    catch (error) {
+      try { this.configuration(); }
+      catch (observationError) { throw new AggregateError([error, observationError], 'Historian settings failed and current configuration is unavailable'); }
+      throw error;
+    }
+    await this.settingsChanged();
   }
   private attemptStatus(): string {
     if (this.store === null) return 'Attempt diagnostics: no journal open\n';
@@ -246,11 +298,12 @@ export class HistorianController {
       (recent.length === 0 ? '' : `Latest attempts (maximum 10):\n${recent.join('\n')}\n`);
   }
   status(): string {
-    let config: EffectivePreferences;
+    let config: ScopedConfiguration;
     try { config = this.effective(); } catch (error) { return `Historian ERROR: ${String(error)}`; }
     const state = this.store === null ? null : this.store.state(this.owner);
     return `Historian ${config.enabled ? 'ON' : 'OFF'} (${config.enabledSource})\n` +
       `Project: ${this.project}\nJournal: ${join(this.directory, 'journal.md')}\n` +
+      `Disclosure approval: ${config.disclosureApproved ? 'approved' : 'required'}\nModel origin: ${config.modelOrigin}\nFocus source: ${config.focusSource}\n` +
       `Model: ${config.model === null ? 'unconfigured' : `${config.model.provider}/${config.model.id} (${config.model.thinking})`} (${config.modelSource})\n` +
       `Activity: ${this.working !== null ? 'journaling' : this.worker.busy ? 'cancelled; waiting for provider drain' : 'idle'}; pending events: ${this.store === null ? 0 : this.store.pending(this.owner)}\n` +
       `Last commit this runtime: ${this.lastCommit ?? 'none'}; failed attempts: ${this.failures}/${MAX_RETRIES}\n` +
@@ -260,12 +313,12 @@ export class HistorianController {
   }
   badge(): string | null {
     if (this.error !== null || this.projectionError !== null) return 'HIST !';
-    try { if (!this.effective().enabled) return null; } catch { return 'HIST !'; }
+    try { const config = this.effective(); if (!config.enabled) return null; if (!config.disclosureApproved) return 'HIST !'; } catch { return 'HIST !'; }
     return this.working === null ? 'HIST' : 'HIST …';
   }
   journal(): string { return this.open().render(); }
   async dispose(): Promise<void> {
-    this.disposed = true; if (this.timer !== null) clearTimeout(this.timer); this.timer = null;
+    this.disposed = true; this.projectSettings.dispose(); if (this.timer !== null) clearTimeout(this.timer); this.timer = null;
     this.unsubscribe?.(); this.unsubscribe = null; this.request?.abort();
     if (this.capture !== null) await this.capture;
     // Worker cancellation is bounded and late results are fenced by disposed above.

@@ -1,6 +1,6 @@
 # Historian
 
-An opt-in, evidence-linked project lab notebook for Pi 1.4.0 / Node 24+.
+An opt-in, evidence-linked project lab notebook for pinned Pi 1.5.2 / Node 24+.
 A tool-less worker interprets significant research, experiments, deployments,
 blockers and discoveries from the governing session and its descendants.
 Mechanical activity is omitted unless needed for reproduction. These are model
@@ -31,14 +31,37 @@ Controls mirror `/context-archive`:
 
 | Command | Effect |
 | --- | --- |
+| `settings` | Stage session/trusted-project/global configuration in the shared dialog |
+| `project on` | Explicitly request runtime-local approval for effective project ON, including unchanged requested ON |
 | `on`, `off` | Override this root session, across branches/reloads |
 | `inherit` | Remove the local enablement override |
 | `default on`, `default off` | Change global defaults; local overrides still win |
 | `default model PROVIDER MODEL THINKING` | Set global model selection |
-| `model inherit` | Inherit global model selection |
+| `model inherit` | Inherit project/global model selection |
 | `default model inherit` | Clear writable global selection; inherit managed model, if any |
 | `[default] focus TEXT`, `focus inherit` | Configure/inherit the journal objective focus |
 | `status`, `journal` | Read status or the journal without inference |
+
+Bare `/historian` remains a status view. In `settings`, Tab selects scope, Space
+stages enablement, `e` edits a complete model/focus, `r` stages inheritance, Ctrl-S
+applies that scope, and Esc discards unsaved drafts. Managed model and journal root
+are read-only metadata. A checkbox is intent, not consent: ON Apply uses a separate,
+bounded, Cancel-default disclosure confirmation for the complete staged model.
+Declining does not save the draft. Native session writes can leave a prefix if a
+later append fails; errors do not claim rollback.
+
+Project preferences live at `<cwd>/.pi/historian.json`, independently of the shared
+journal identity. Only trusted project files participate. Project ON requires a
+private live grant for this runtime and exact configuration/model; the file and
+native audit receipts cannot grant or restore approval. Restart, observed OFF,
+trust/source/configuration changes or read faults revoke the grant. Restoration of
+old bytes or a copied receipt requires fresh confirmation. Project ON shadowed by
+a session override does not receive a future grant. New capture begins at a fresh
+boundary after such intervals; already captured pending evidence is retained.
+
+Global/session textual ON commands retain their existing explicit approval
+semantics without adding another dialog. Settings remain independent of task goals,
+verification, and other extensions' permissions.
 
 Command arguments autocomplete subcommands, defaults, available providers/models,
 and thinking levels. Focus remains free text (with session `inherit` completion).
@@ -55,7 +78,7 @@ Defaults mutations serialize with capture/admission and canonical commits. A
 contending command reports an ownership error rather than pretending it changed
 the setting; retry it after the current short transaction finishes.
 
-`HIST` shows enablement, `HIST …` active work, `HIST !` a fault. Click the badge or
+`HIST` shows enablement, `HIST …` active work, `HIST !` a fault or requested ON awaiting approval. Click the badge or
 use `status` to distinguish requested enablement, backlog, provider drain,
 projection errors and coverage. After three failed attempts, use `on` in that
 root to retry; no silent provider fallback occurs.
@@ -81,8 +104,8 @@ The journal root defaults to null (`<agentDir>/historian`). Set
 A configured root must be absolute; a model requires all three nonempty/validated
 fields. Home Manager writes `historian-defaults.json` whenever either effective
 option is non-null, never the mutable `historian.json`. No credentials are
-stored in these options. Model precedence is session override → writable global
-override → managed default → unconfigured. Enablement/focus changes do not pin an
+stored in these options. Model precedence is session override → trusted project
+override → writable global override → managed default → unconfigured. Enablement/focus changes do not pin an
 inherited model. Changing a managed model preserves existing approval, not approval
 for the new model; use an explicit `on` after reviewing the disclosure.
 
@@ -106,6 +129,16 @@ Default storage is outside the repository:
 <agentDir>/historian/projects/<sha256-project-identity>/journal.sqlite
 <agentDir>/historian/projects/<sha256-project-identity>/journal.md
 ```
+
+Global v1 files remain readable without a migration write. Global mutations write
+sparse v2: absent enabled/model/focus fields inherit, while generation and approval
+metadata remain domain-owned. Legacy model `null` still means inheritance; the
+shared dialog uses an explicit inherit operation, not a generic null sentinel.
+Project v1 stores sparse intent plus UUID revision/activation tokens and rejects
+approval fields. Cooperating mutation and capture/commit paths acquire locks in
+fixed global → canonical project-target order, including across agent directories.
+No lock spans a dialog, feed read or provider inference. Arbitrary external file
+replacement is not made atomically revocable by those locks.
 
 Directories are private, database/projection files are mode 0600. SQLite is
 canonical; Markdown is a recoverable projection, not an editable source of truth.

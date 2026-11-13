@@ -62,7 +62,7 @@ test('controller cannot interrupt a live owner; process death leaves an unknown 
   const first = spawn('attempt', 'root'); assert.deepEqual(await first.ready, { ready: true });
   const other = spawn('attempt', 'other'); assert.deepEqual(await other.ready, { ready: true });
   const preferences = new PreferenceStore(join(directory, 'historian.json'));
-  const ctx = { cwd: directory, sessionManager: { getSessionId: () => 'root', getEntries: () => [] }, modelRegistry: { find: () => undefined }, ui: { notify() {} } };
+  const ctx = { cwd: directory, isProjectTrusted: () => false, sessionManager: { getSessionId: () => 'root', getEntries: () => [] }, modelRegistry: { find: () => undefined }, ui: { notify() {} } };
   const controller = new HistorianController({ events: { emit() {} } }, preferences, ctx, () => {});
   t.after(() => controller.dispose()); await controller.reconcile();
   assert.match(controller.status(), /already owned/);

@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { Type } from "typebox";
-import { defineTool, getAgentDir, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, type TogglePreferenceStore } from "@ponygirls/pi-settings";
+import { defineTool, getAgentDir, CONFIG_DIR_NAME, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { FileTogglePreferenceStore, FileProjectTogglePreferenceStore, SharedScopedToggleConfiguration, ScopedSettingsController, scopedBooleanField, parseScopedToggleCommand, parseToggleCommand, sessionEnabledData, type ScopedToggleSnapshot, type ToggleDefaults, type TogglePreferenceStore } from "@ponygirls/pi-settings";
 import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { completeArgument, compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
+import { completeArgument, compactChip, CustomViewToggle, ScopedSettingsView } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
@@ -21,7 +21,7 @@ const INBOX_SHORTCUT = { key: "ctrl+alt+d", label: "⌃⌥D" } as const;
 export const SESSION_SETTING_TYPE = "ponygirls.decisions.setting";
 export const PREFERENCE_FILENAME = "decisions.json";
 
-type SettingsMode = { kind: "ready"; enabled: boolean; defaultEnabled: boolean; override: boolean | null } | { kind: "fault"; message: string };
+type SettingsMode = { kind: "ready"; enabled: boolean; defaultEnabled: boolean; override: boolean | null; snapshot: ScopedToggleSnapshot } | { kind: "fault"; message: string };
 
 function plain(text: string): string {
   return text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
@@ -76,6 +76,9 @@ interface Binding {
 }
 
 export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies): void {
+  const configuration = new SharedScopedToggleConfiguration(pi, { defaultEnabled: true, filename: PREFERENCE_FILENAME, projectDirectory: CONFIG_DIR_NAME,
+    customType: SESSION_SETTING_TYPE, global: deps.preferences, projectStore: path => new FileProjectTogglePreferenceStore(path) });
+  let settingsView = new ScopedSettingsView();
   let binding: Binding | null = null;
   let settings: SettingsMode = { kind: "fault", message: "settings not loaded" };
   let visible = false;
@@ -88,9 +91,9 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
 
   const refreshSettings = (ctx: ExtensionContext, reconcileTools: boolean): boolean => {
     try {
-      const defaults = deps.preferences.read();
-      const override = sessionEnabled(ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId(), SESSION_SETTING_TYPE);
-      settings = { kind: "ready", enabled: override === null ? defaults.enabled : override, defaultEnabled: defaults.enabled, override };
+      const snapshot = configuration.read(ctx);
+      settings = { kind: "ready", enabled: snapshot.values.enabled, defaultEnabled: snapshot.global.enabled === undefined ? true : snapshot.global.enabled,
+        override: snapshot.session.enabled === undefined ? null : snapshot.session.enabled, snapshot };
       if (settingsWarning !== null) ctx.ui.notify("Decisions settings are available again.", "info");
       settingsWarning = null;
     } catch (error) {
@@ -234,6 +237,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   };
 
   pi.on("session_start", (_event, ctx) => {
+    settingsView.dispose(); settingsView = new ScopedSettingsView();
     if (binding !== null) { dispose(binding); binding = null; }
     ctx.ui.setWidget(STATUS_KEY, undefined);
     refreshSettings(ctx, true);
@@ -259,12 +263,14 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   });
 
   pi.on("session_tree", (_event, ctx) => {
+    settingsView.dispose(); settingsView = new ScopedSettingsView();
     refreshSettings(ctx, true);
     const b = current(ctx);
     if (b !== null) refresh(b);
   });
 
   pi.on("session_shutdown", (_event, ctx) => {
+    settingsView.dispose();
     ctx.ui.setWidget(STATUS_KEY, undefined);
     const b = binding;
     binding = null;
@@ -384,12 +390,13 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     return box;
   });
   pi.registerCommand("decisions", {
-    description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn; automation: on|off|inherit|default on|default off|status",
+    description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn; automation: settings|on|off|inherit|default on|default off|status; project|session|global on|off|inherit",
     getArgumentCompletions: (prefix) => {
       const toggles = completeArgument(prefix, (previous) => {
         const choice = (token: string, description: string, continues: boolean) => ({ token, label: token, description, continues });
         const switches = [choice("on", "Enable decision automation", false), choice("off", "Disable decision automation", false)];
-        if (previous.length === 0) return [...switches, choice("inherit", "Use global enablement", false), choice("default", "Change global defaults", true), choice("status", "Show automation status", false)];
+        if (previous.length === 0) return [...switches, choice('settings', 'Open scoped settings', false), choice('project', 'Change project override', true), choice('session', 'Change session override', true), choice('global', 'Change global override', true), choice("inherit", "Use inherited enablement", false), choice("default", "Change global defaults", true), choice("status", "Show automation status", false)];
+        if (previous.length === 1 && ['project', 'session', 'global'].includes(previous[0]!.toLowerCase())) return [...switches, choice('inherit', 'Remove this scope override', false)];
         return previous.length === 1 && previous[0]!.toLowerCase() === "default" ? switches : null;
       }) ?? [];
       try {
@@ -405,13 +412,24 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     handler: async (args, ctx) => {
       try {
         const text = args.trim();
+        if (text.toLowerCase() === 'settings') {
+          await settingsView.show(ctx, () => new ScopedSettingsController<ToggleDefaults>({
+            fields: { enabled: scopedBooleanField('Automatic decisions assistance', 'Automatic context, notifications and model tool availability. The manual inbox and stored questions remain available while off.') }, order: ['enabled'], inactive: () => '',
+            adapter: { read: () => configuration.read(ctx), apply: (scope, changes, signal) => {
+              for (const change of changes) configuration.apply(ctx, scope, change.op === 'inherit' ? null : change.value, signal);
+            }, applied: () => { refreshSettings(ctx, true); const b = current(ctx); if (b !== null) refresh(b); } },
+          }), { title: 'Decisions settings' });
+          return;
+        }
         const control = text === "" ? null : parseToggleCommand(text);
-        if (control !== null) {
-          if (control.kind === "session") pi.appendEntry(SESSION_SETTING_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), control.enabled));
-          if (control.kind === "default") deps.preferences.write({ enabled: control.enabled });
-          const enabled = refreshSettings(ctx, control.kind !== "status");
+        const scoped = parseScopedToggleCommand(text);
+        if (control !== null || scoped !== null) {
+          if (control === null && scoped !== null) configuration.apply(ctx, scoped.scope, scoped.enabled, ctx.signal === undefined ? new AbortController().signal : ctx.signal);
+          if (control !== null && control.kind === "session") pi.appendEntry(SESSION_SETTING_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), control.enabled));
+          if (control !== null && control.kind === "default") deps.preferences.write({ enabled: control.enabled });
+          const enabled = refreshSettings(ctx, control === null || control.kind !== "status");
           if (binding !== null) refresh(binding);
-          const source = settings.kind === "fault" ? `settings error: ${settings.message}` : settings.override === null
+          const source = settings.kind === "fault" ? `settings error: ${settings.message}` : settings.snapshot.sources.enabled === 'project' ? 'project override' : settings.override === null
             ? "inherited global default" : `session override; global default ${settings.defaultEnabled ? "ON" : "OFF"}`;
           ctx.ui.notify(`Decisions: ${settings.kind === "fault" ? "ERROR" : enabled ? "ON" : "OFF"} (${source})\nGlobal defaults: ${deps.preferences.path}\nManual inbox remains available; stored questions are preserved.`, "info");
           return;

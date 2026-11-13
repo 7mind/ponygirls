@@ -27,7 +27,7 @@ function controller(preferences, manager) {
     appendEntry: (type, data) => manager.appendCustomEntry(type, data),
     registerTool: (tool) => tools.set(tool.name, tool), getActiveTools: () => active, setActiveTools: (tools) => { active = tools; },
   };
-  const ctx = { sessionManager: manager, mode: "rpc", model: { contextWindow: 80000 }, signal: undefined,
+  const ctx = { cwd: '/fixture', isProjectTrusted: () => false, hasUI: false, sessionManager: manager, mode: "rpc", model: { contextWindow: 80000 }, signal: undefined,
     getContextUsage: () => undefined,
     abort: () => { aborts++; }, ui: { notify: (message, level) => notifications.push({ message, level }), setWidget: (...args) => widgets.push(args) } };
   registerContextArchive(pi, preferences);
@@ -36,6 +36,26 @@ function controller(preferences, manager) {
   const boundary = (overrides = {}) => handlers.get("turn_end")({ entries: [], outcome: "completed", context: { contextEntries: manager.buildSessionProjection().entries }, ...overrides }, ctx);
   return { pi, preferences, manager, handlers, commands, tools, widgets, notifications, ctx, command, start, boundary, active: () => active, setActive: (tools) => { active = tools; }, aborts: () => aborts };
 }
+
+test('legacy global controls preserve inheritance of fields they do not edit', async t => {
+  const f = fixture(t, 'filesystem'); f.start();
+  f.preferences.writeOverrides({}); await f.command('default on');
+  assert.deepEqual(f.preferences.readOverrides(), { enabled: true });
+  f.preferences.writeOverrides({}); await f.command('default thresholds 80 30');
+  assert.deepEqual(f.preferences.readOverrides(), { thresholds: { highWatermark: 0.8, lowWatermark: 0.3 } });
+});
+
+test('trusted project thresholds and enablement inherit independently into a session', async t => {
+  const f = fixture(t, 'filesystem'); f.ctx.cwd = f.dir; f.ctx.isProjectTrusted = () => true; productionHistory(f.manager); f.start();
+  await f.command('project on'); await f.command('project thresholds 80 30');
+  await f.command('status'); assert.match(f.notifications.at(-1).message, /archive trigger 64000 \(80%\), release toward 24000 \(30%\)/);
+  assert.match(f.notifications.at(-1).message, /Threshold source: project override/);
+  await f.command('off'); await f.command('status'); assert.match(f.notifications.at(-1).message, /OFF \(session override/);
+  assert.match(f.notifications.at(-1).message, /archive trigger 64000 \(80%\), release toward 24000 \(30%\)/);
+  await f.command('inherit'); await f.command('project thresholds inherit');
+  assert.match(f.notifications.at(-1).message, /archive trigger 56000 \(70%\), release toward 40000 \(50%\)/);
+  assert.equal(f.preferences.read().enabled, false);
+});
 
 // Controller behavior is identical against the in-memory preference port and real FS adapter.
 for (const backend of ["memory", "filesystem"]) {
@@ -217,7 +237,7 @@ test("failed session append or global write cannot report a successful settings 
     assert.equal(f.notifications.at(-1).level, "error");
     assert.match(f.notifications.at(-1).message, /append denied/);
   }
-  f.preferences.write = () => { throw new Error("write denied"); };
+  f.preferences.writeOverrides = () => { throw new Error("write denied"); };
   for (const command of ["default on", "default thresholds 80 55"]) {
     await f.command(command);
     assert.deepEqual(f.preferences.read(), DEFAULT_PREFERENCES);

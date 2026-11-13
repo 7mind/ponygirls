@@ -27,7 +27,7 @@ function fixture(t, storage) {
   const ctx = { cwd, sessionManager: manager, isProjectTrusted: () => true };
   const append = (type, data) => manager.appendCustomEntry(type, data);
   const preferences = new CuckooPreferences({ appendEntry: append }, global, store);
-  return { cwd, global, project, manager, ctx, preferences, append, read: () => preferences.read(ctx), apply: (scope, changes) => preferences.apply(ctx, scope, changes) };
+  return { cwd, global, project, manager, ctx, preferences, append, read: () => preferences.read(ctx), apply: (scope, changes) => preferences.apply(ctx, scope, changes, new AbortController().signal) };
 }
 
 // Specified BG contract, run against both the dummy and production file adapter.
@@ -101,7 +101,7 @@ test('untrusted project state is neither read nor written; trust is checked agai
   f.ctx.isProjectTrusted = () => false;
   assert.equal(preferences.read(f.ctx).projectTrusted, false);
   assert.equal(accesses, 0);
-  assert.throws(() => preferences.apply(f.ctx, 'project', [{ field: 'enabled', value: true }]), /trusted/);
+  assert.throws(() => preferences.apply(f.ctx, 'project', [{ field: 'enabled', value: true }], new AbortController().signal), /trusted/);
   assert.equal(accesses, 0);
   f.ctx.isProjectTrusted = () => true; f.read();
   f.ctx.isProjectTrusted = () => false;

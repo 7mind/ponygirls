@@ -5,13 +5,15 @@ const choice = (token: string, description: string, continues: boolean): Argumen
 
 export function completeHistorianArguments(prefix: string, models: readonly CompletionModel[]): CompletionItem[] | null {
   return completeArgument(prefix, tokens => {
+    if (tokens[0] === 'project') return tokens.length === 1 ? [choice('on', 'Confirm runtime-local project disclosure approval', false)] : null;
     const global = tokens[0] === 'default';
     const previous = global ? tokens.slice(1) : tokens;
     if (previous.length === 0) return [
       choice('on', 'Enable and approve disclosure to the configured provider', false),
       choice('off', 'Disable capture', false),
       ...(!global ? [choice('inherit', 'Use the default enabled setting', false), choice('status', 'Show configuration and diagnostics', false),
-        choice('journal', 'Read the shared project journal', false), choice('default', 'Change defaults for new sessions', true)] : []),
+        choice('journal', 'Read the shared project journal', false), choice('default', 'Change defaults for new sessions', true),
+        choice('settings', 'Open scoped settings', false), choice('project', 'Project disclosure approval', true)] : []),
       choice('model', 'Choose PROVIDER MODEL THINKING, or inherit', true),
       choice('focus', 'Set free-text journal focus', true),
     ];

@@ -5,6 +5,15 @@
 
 ## Controls
 
+- `/context-archive settings` — shared staged settings dialog. Tab selects session,
+  trusted project or global scope; Space toggles, `e` edits the threshold pair,
+  `r` inherits, Ctrl-S applies the selected scope, and Esc cancels unsaved drafts.
+- `/context-archive project on|off|inherit` and
+  `/context-archive project thresholds HIGH LOW|inherit` — trusted-project controls.
+  Project settings live in `<cwd>/.pi/context-archive.json` and are ignored when
+  the project is untrusted. Session → trusted project → global → builtin precedence
+  applies independently to enablement and the complete threshold pair.
+
 - `/context-archive on` / `off` — persist an override for **this session only**.
   ON shows the **🗃️** badge and enables selection at completed-turn boundaries;
   OFF removes the badge and stops new selection.
@@ -15,7 +24,7 @@
 - `/context-archive thresholds HIGH LOW` — set this session's trigger/release pair,
   e.g. `thresholds 80 55`. Both values override together; they are not inherited separately.
 - `/context-archive thresholds inherit` — clear the session threshold pair and use
-  the global pair again, without changing enablement.
+  the inherited project/global pair again, without changing enablement.
 - `/context-archive default thresholds HIGH LOW` — change the global default pair.
   Sessions with an explicit pair keep it.
 - `/context-archive status` — show effective ON/OFF and its source, effective
@@ -26,11 +35,12 @@ Thresholds are decimal percentages; require `0 <= LOW < HIGH <= 100`.
 The initial global pair is **70 / 50**.
 
 Session overrides are versioned custom entries in the append-only session JSONL,
-not model-facing messages. Enablement and threshold overrides have separate
-records and independent inheritance. Existing enabled-only records remain valid.
+not model-facing messages. Dialog Apply writes one batch of tagged set/inherit
+changes; legacy separate records remain readable. Enablement and the threshold
+pair inherit independently. Existing enabled-only records remain valid.
 They survive reload/resume and apply across `/tree` branches: the latest record
 for each setting and this session ID wins, even on another branch.
-New sessions and native forks/clones have different IDs and inherit the global
+New sessions and native forks/clones have different IDs and inherit project/global
 values, ignoring copied parent overrides. In-memory sessions retain settings only
 for their lifetime. Pi does not create a session file before any user/assistant
 message exists, so a toggle in an entirely empty session is not durable across
@@ -40,24 +50,25 @@ The global defaults file is `<getAgentDir()>/context-archive.json`, normally
 `~/.pi/agent/context-archive.json`:
 
 ```json
-{"version":2,"enabled":false,"highWatermark":0.7,"lowWatermark":0.5}
+{"version":3,"enabled":false,"thresholds":{"highWatermark":0.7,"lowWatermark":0.5}}
 ```
 
-Missing means OFF with 70/50 watermarks. Existing version-1 files containing only
-`enabled` are read as global defaults with 70/50; reads and session commands never
-rewrite them. Explicit global changes write version 2 atomically, independently
-of Pi's possibly Nix-managed `settings.json`. Global commands preserve the other
-values; concurrent whole-file updates are last-writer-wins, not merged transactions.
+Missing means OFF with 70/50 watermarks. Global v1/v2 files remain readable without
+rewriting on read. Explicit global changes write sparse v3 atomically; absent fields
+inherit builtin values. Project files use sparse v1 with the same optional enabled
+and thresholds fields. These files are independent of Pi's possibly Nix-managed
+`settings.json`. Global commands preserve both values and inheritance of unrelated
+fields; concurrent whole-file updates are last-writer-wins, not merged transactions.
 Other sessions observe defaults on their next request/boundary. Each setting
 inherits independently: a session can override ON/OFF while inheriting thresholds,
 or the reverse. Explicit overrides are unaffected by subsequent default changes.
 Changes cannot alter an already-sent request and never start inference themselves.
 
-Invalid/unreadable defaults or active session settings stop selection visibly
+Invalid/unreadable defaults, trusted project settings or active session settings stop selection visibly
 (`🗃️ !`), not silently as a successful OFF. A later session on/off/inherit command
 can replace invalid enablement; thresholds/thresholds inherit commands replace invalid
 threshold state. Neither repairs the other setting or a corrupt global file:
-inspect the global file and replace it with a valid complete version-2 object above,
+inspect the affected file and replace it with valid data (the global v3 example above),
 choosing the intended enablement and thresholds. Global field-update commands
 also refuse invalid existing defaults rather than silently resetting other values.
 After deploying this version, reload existing Pi processes before using these

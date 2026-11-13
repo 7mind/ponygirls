@@ -1,11 +1,14 @@
-import { DEFAULT_PREFERENCES, validatePreferences } from "../src/preferences.ts";
+import { DEFAULT_PREFERENCES, validatePreferences, validateOverrides, validateThresholds } from "../src/preferences.ts";
 
 export class MemoryPreferences {
   path = "memory:context-archive";
   defaults = { ...DEFAULT_PREFERENCES };
   failure = null;
+  overrides = {};
+  readOverrides() { this.read(); return structuredClone(this.overrides); }
+  writeOverrides(value) { if (this.failure !== null) throw new Error(this.failure); this.overrides = validateOverrides(value); this.defaults = { enabled: this.overrides.enabled === undefined ? DEFAULT_PREFERENCES.enabled : this.overrides.enabled, ...(this.overrides.thresholds === undefined ? validateThresholds(DEFAULT_PREFERENCES) : this.overrides.thresholds) }; }
   read() { if (this.failure !== null) throw new Error(this.failure); return structuredClone(this.defaults); }
-  write(defaults) { if (this.failure !== null) throw new Error(this.failure); this.defaults = validatePreferences(defaults); }
+  write(defaults) { if (this.failure !== null) throw new Error(this.failure); this.defaults = validatePreferences(defaults); this.overrides = { enabled: this.defaults.enabled, thresholds: validateThresholds(this.defaults) }; }
 }
 
 export const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };

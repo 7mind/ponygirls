@@ -19,7 +19,7 @@ test('managed defaults remain read-only, OFF and unapproved, with explicit writa
   assert.equal(preferences.read().enabled, false); assert.equal(preferences.read().approvedModel, null);
   assert.equal(preferences.journalRoot(), managed.journalRoot);
   preferences.update(() => ({ enabled: true, approvedModel: a }));
-  assert.equal(JSON.parse(readFileSync(preferences.path, 'utf8')).model, null, 'enablement must not materialize an inherited model');
+  assert.equal(Object.hasOwn(JSON.parse(readFileSync(preferences.path, 'utf8')), 'model'), false, 'enablement must not materialize an inherited model');
   assert.equal(lstatSync(link).isSymbolicLink(), true); assert.deepEqual(JSON.parse(readFileSync(link, 'utf8')), managed);
   writeFileSync(managedPath, JSON.stringify({ ...managed, model: b }));
   assert.deepEqual(preferences.read().model, b); assert.deepEqual(preferences.read().approvedModel, a, 'declarative model changes cannot grant consent');

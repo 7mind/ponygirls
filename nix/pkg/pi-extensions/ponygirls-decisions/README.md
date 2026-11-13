@@ -58,7 +58,9 @@ code and precedence as `/context-archive`:
 ```text
 /decisions off           # disable for this session
 /decisions on            # enable for this session
-/decisions inherit       # follow the global default again
+/decisions inherit       # follow project/global inheritance again
+/decisions settings      # shared staged session/project/global dialog
+/decisions project on    # trusted project override (also off/inherit)
 /decisions default off   # change the global default
 /decisions default on
 /decisions status        # show effective state, source and defaults path
@@ -67,11 +69,19 @@ code and precedence as `/context-archive`:
 Session overrides survive reload/resume and apply across branches of that session.
 Pi does not persist a new session until its first conversation message; toggles in
 an otherwise empty or `--no-session` session are not durable across process exit.
-New sessions and forks with a different session ID inherit the global default.
-Global defaults live in `<agent-dir>/decisions.json`, independently of archive
-settings; inheriting sessions observe changes on the next request or settings poll
+New sessions and forks with a different session ID inherit project/global values.
+Precedence is session → trusted project → global → builtin ON. Project preferences
+live in `<cwd>/.pi/decisions.json` (sparse v1); untrusted project files are ignored
+and cannot be edited through these controls. Global preferences live in
+`<agent-dir>/decisions.json` (legacy v1 readable, sparse v2 writes), independently
+of archive settings. Inheriting sessions observe changes on the next request or settings poll
 (approximately one second). Explicit session overrides take precedence. Corrupt
 settings visibly disable automation rather than silently selecting a default.
+
+The dialog stages each scope independently: Tab switches scope, Space toggles,
+`r` inherits, Ctrl-S applies that scope, and Esc cancels unsaved drafts. Settings
+remain accessible even if the question-store project binding fails. Applying a
+preference does not answer, dismiss, approve or delete any question.
 
 While off, the agent tool is hidden and calls are rejected, the badge is cleared,
 no new project summaries or answer wake-ups are admitted, and automatic decisions

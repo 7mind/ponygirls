@@ -161,23 +161,24 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, n
           await view.showReports(ctx, reports, statusIntro(ctx, reports)); return;
         }
         if (trimmed === 'history') { await view.showHistory(ctx, ctx.sessionManager.getEntries(), ctx.sessionManager.getBranch()); return; }
+        const signal = ctx.signal ?? new AbortController().signal;
         const toggle = parseToggleCommand(trimmed);
         if (toggle !== null && toggle.kind !== 'status') {
-          configuration.apply(ctx, toggle.kind === 'session' ? 'session' : 'global', [{ field: 'enabled', value: toggle.enabled }]);
+          configuration.apply(ctx, toggle.kind === 'session' ? 'session' : 'global', [{ field: 'enabled', value: toggle.enabled }], signal);
         } else {
           const words = trimmed.split(/\s+/);
           const scope: PreferenceScope = words[0] === 'default' ? 'global' : words[0] === 'project' ? 'project' : 'session';
           if (scope !== 'session') words.shift();
           if (scope === 'project' && words.length === 1 && ['on', 'off', 'inherit'].includes(words[0])) {
-            configuration.apply(ctx, scope, [{ field: 'enabled', value: words[0] === 'inherit' ? null : words[0] === 'on' }]);
+            configuration.apply(ctx, scope, [{ field: 'enabled', value: words[0] === 'inherit' ? null : words[0] === 'on' }], signal);
           } else if (words[0] === 'feature' && words.length === 3 && ['on', 'off', 'inherit'].includes(words[2])) {
-            configuration.apply(ctx, scope, [{ field: 'feature', id: featureId(words[1]), value: words[2] === 'inherit' ? null : words[2] === 'on' }]);
+            configuration.apply(ctx, scope, [{ field: 'feature', id: featureId(words[1]), value: words[2] === 'inherit' ? null : words[2] === 'on' }], signal);
           } else {
             if (words[0] === 'threshold' && words.length === 2) words.splice(0, words.length, 'policy', ...(words[1] === 'inherit' ? ['inherit'] : ['relative', words[1]]));
-            if (scope !== 'global' && words.length === 2 && words[0] === 'policy' && words[1] === 'inherit') configuration.apply(ctx, scope, [{ field: 'policy', value: null }]);
+            if (scope !== 'global' && words.length === 2 && words[0] === 'policy' && words[1] === 'inherit') configuration.apply(ctx, scope, [{ field: 'policy', value: null }], signal);
             else {
               if (words.length !== 3 || words[0] !== 'policy' || !/^(?:\d+(?:\.\d+)?|\.\d+)$/.test(words[2])) throw new Error('Usage: /cuckoo [default|project] feature NAME on|off|inherit, or [default|project] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit');
-              configuration.apply(ctx, scope, [{ field: 'policy', value: validatePolicy({ kind: words[1], value: Number(words[2]) }) }]);
+              configuration.apply(ctx, scope, [{ field: 'policy', value: validatePolicy({ kind: words[1], value: Number(words[2]) }) }], signal);
             }
           }
         }

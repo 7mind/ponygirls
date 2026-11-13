@@ -346,7 +346,7 @@
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
-          ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
+          ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { inherit (self.packages.${system}) pi-coding-agent ponygirls-pi-settings; };
           ponygirls-pi-settings = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
           ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix {
             inherit (self.packages.${system}) ponygirls-pi-ui ponygirls-pi-settings;
@@ -789,7 +789,7 @@
             touch $out
           '';
           ponygirls-openai-fast = pkgs.runCommand "ponygirls-openai-fast-test" {
-            nativeBuildInputs = [ pkgs.nodejs ];
+            nativeBuildInputs = [ pkgs.nodejs pkgs.typescript ];
             PI_PACKAGE_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
@@ -797,7 +797,12 @@
             cp -r ${./nix/pkg/pi-extensions} pi-extensions
             chmod -R u+w pi-extensions
             cd pi-extensions
-            mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            mkdir -p node_modules/@ponygirls node_modules/@earendil-works
+            ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
+            ln -s "$PI_PACKAGE_ROOT" node_modules/@earendil-works/pi-coding-agent
+            ln -s "$PI_PACKAGE_ROOT/node_modules/@types" node_modules/@types
+            tsc --noEmit --strict --skipLibCheck --allowImportingTsExtensions --target ES2022 --module ESNext --moduleResolution bundler ponygirls-openai-fast.ts
             node --test ponygirls-openai-fast.test.mjs
             touch $out
           '';
@@ -860,7 +865,8 @@
             cp -r ${./nix/pkg/pi-extensions/ponygirls-pi-ui} ponygirls-pi-ui
             chmod -R u+w ponygirls-pi-ui
             cd ponygirls-pi-ui
-            mkdir -p node_modules/@earendil-works
+            mkdir -p node_modules/@earendil-works node_modules/@ponygirls
+            ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
             ln -s "$PI_SDK_ROOT/node_modules/@earendil-works/pi-tui" node_modules/@earendil-works/pi-tui
             ln -s "$PI_SDK_ROOT/node_modules/@types" node_modules/@types
             tsc -p tsconfig.json

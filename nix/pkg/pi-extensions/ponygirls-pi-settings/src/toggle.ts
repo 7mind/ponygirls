@@ -4,8 +4,14 @@ export interface ToggleDefaults {
   enabled: boolean;
 }
 
-export interface TogglePreferenceStore {
+export type ToggleOverrides = Partial<ToggleDefaults>;
+export interface ToggleOverrideStore {
   readonly path: string;
+  readOverrides(): ToggleOverrides;
+  writeOverrides(value: ToggleOverrides): void;
+}
+
+export interface TogglePreferenceStore extends ToggleOverrideStore {
   read(): ToggleDefaults;
   write(defaults: ToggleDefaults): void;
 }
@@ -15,6 +21,14 @@ function validateDefaults(value: unknown): ToggleDefaults {
       !("enabled" in value) || typeof value.enabled !== "boolean") {
     throw new Error("Expected enabled:boolean in toggle defaults");
   }
+  return { enabled: value.enabled };
+}
+
+export function validateToggleOverrides(value: unknown): ToggleOverrides {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Expected toggle overrides object");
+  for (const key of Object.keys(value)) if (key !== "enabled") throw new Error(`Unknown toggle override: ${key}`);
+  if (!("enabled" in value)) return {};
+  if (typeof value.enabled !== "boolean") throw new Error("Expected enabled:boolean in toggle overrides");
   return { enabled: value.enabled };
 }
 
@@ -28,11 +42,22 @@ export class FileTogglePreferenceStore implements TogglePreferenceStore {
   }
 
   read(): ToggleDefaults {
-    return readJsonPreferences(this.path, () => ({ enabled: this.defaultEnabled }), (value) => {
-      if (typeof value !== "object" || value === null || Array.isArray(value) ||
-          !("version" in value) || value.version !== 1) throw new Error("Expected defaults version 1");
-      return validateDefaults(value);
+    const overrides = this.readOverrides();
+    return { enabled: overrides.enabled === undefined ? this.defaultEnabled : overrides.enabled };
+  }
+
+  readOverrides(): ToggleOverrides {
+    return readJsonPreferences(this.path, () => ({}), value => {
+      if (typeof value !== "object" || value === null || Array.isArray(value) || !("version" in value)) throw new Error("Expected defaults version 1 or 2");
+      if (value.version === 1) return validateDefaults(value);
+      if (value.version !== 2) throw new Error("Expected defaults version 1 or 2");
+      const { version: _version, ...overrides } = value;
+      return validateToggleOverrides(overrides);
     }, "toggle defaults");
+  }
+
+  writeOverrides(overrides: ToggleOverrides): void {
+    writeJsonPreferences(this.path, { version: 2, ...validateToggleOverrides(overrides) });
   }
 
   write(defaults: ToggleDefaults): void {

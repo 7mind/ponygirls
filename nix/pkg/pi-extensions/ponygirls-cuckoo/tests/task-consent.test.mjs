@@ -58,7 +58,7 @@ function fixture(t) {
     onAppend: value => { afterAppend = value; }, advance: value => { now += value; elapsed += value; },
     shiftCivil: value => { now += value; },
     newRegistry: () => new CuckooTaskConsents(...deps),
-    switch: value => { configuration.apply(ctx, 'session', [{ field: 'enabled', value }]); features.refresh(ctx); },
+    switch: value => { configuration.apply(ctx, 'session', [{ field: 'enabled', value }], new AbortController().signal); features.refresh(ctx); },
   };
 }
 

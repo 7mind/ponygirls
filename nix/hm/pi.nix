@@ -56,16 +56,19 @@ let
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
 
+  piSettings = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = piBase; };
+  piUi = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; ponygirls-pi-settings = piSettings; };
+
   # Maintained source, not an upstream patchset; see pkg/pi-search-hub/VENDOR.md.
   piSearchHub = pkgs.callPackage ../pkg/pi-search-hub/package.nix {
     pi-coding-agent = piBase;
-    ponygirls-pi-ui = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; };
+    ponygirls-pi-ui = piUi;
   };
   # The ponygirls extensions as one tree, linking the shared UI/settings
   # libraries into its node_modules; see pkg/pi-extensions/package.nix.
   piExtensions = pkgs.callPackage ../pkg/pi-extensions/package.nix {
-    ponygirls-pi-ui = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; };
-    ponygirls-pi-settings = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = piBase; };
+    ponygirls-pi-ui = piUi;
+    ponygirls-pi-settings = piSettings;
   };
 
   # Provider/API-key secrets are no longer injected by the pi wrapper. They are

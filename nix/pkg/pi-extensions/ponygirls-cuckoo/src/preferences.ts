@@ -217,17 +217,29 @@ export class CuckooPreferences {
     return { ...layers, effective: resolvePreferences(layers), projectTrusted,
       paths: { global: this.global.path, project: path, session: ctx.sessionManager.getSessionId() } };
   }
-  apply(ctx: PreferenceContext, scope: PreferenceScope, changes: readonly PreferenceChange[]): void {
+  apply(ctx: PreferenceContext, scope: PreferenceScope, changes: readonly PreferenceChange[], signal: AbortSignal): void {
+    signal.throwIfAborted();
+    const sessionId = ctx.sessionManager.getSessionId(), cwd = ctx.cwd;
+    const current = () => {
+      if (scope === 'project' && !ctx.isProjectTrusted()) throw new Error('Project settings require a trusted project');
+      if (ctx.cwd !== cwd || ctx.sessionManager.getSessionId() !== sessionId) throw new Error('Cuckoo settings target changed');
+      signal.throwIfAborted();
+    };
     const checked = validateChanges(changes);
     if (checked.length === 0) return;
     if (scope === 'session') {
-      this.pi.appendEntry(PREFERENCES_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), changes: checked });
+      current();
+      this.pi.appendEntry(PREFERENCES_TYPE, { version: 1, sessionId, changes: checked });
     } else if (scope === 'global') {
-      this.global.write(applyPreferenceChanges(this.global.read(), checked));
+      const next = applyPreferenceChanges(this.global.read(), checked);
+      current();
+      this.global.write(next);
     } else if (scope === 'project') {
       if (!ctx.isProjectTrusted()) throw new Error('Project settings require a trusted project');
-      const store = this.projectStore(join(ctx.cwd, CONFIG_DIR_NAME, 'cuckoo.json'));
-      store.write(applyPreferenceChanges(store.read(), checked));
+      const store = this.projectStore(join(cwd, CONFIG_DIR_NAME, 'cuckoo.json'));
+      const next = applyPreferenceChanges(store.read(), checked);
+      current();
+      store.write(next);
     } else throw new Error('Invalid Cuckoo preference scope');
   }
 }

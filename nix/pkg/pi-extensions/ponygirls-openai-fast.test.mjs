@@ -7,6 +7,7 @@ import { test } from "node:test";
 const packageRoot = process.env.PI_PACKAGE_ROOT;
 assert.ok(packageRoot, "Set PI_PACKAGE_ROOT to the installed Pi package directory");
 const { createJiti } = await import(pathToFileURL(join(packageRoot, "node_modules/jiti/lib/jiti.mjs")));
+const { SessionManager } = await import(pathToFileURL(join(packageRoot, "dist/index.js")));
 const jiti = createJiti(import.meta.url, {
   moduleCache: false,
   fsCache: false,
@@ -18,7 +19,9 @@ const { FilePreferenceStore, PREFERENCE_FILENAME, registerFastMode } = await jit
 class MemoryPreferenceStore {
   constructor(cell) { this.cell = cell; this.path = "memory:openai-fast"; }
   read() { return this.cell.enabled; }
-  write(enabled) { this.cell.enabled = enabled; }
+  write(enabled) { this.cell.enabled = enabled; this.cell.inherit = false; }
+  readOverrides() { return this.cell.inherit ? {} : { enabled: this.read() }; }
+  writeOverrides(value) { this.cell.inherit = value.enabled === undefined; this.cell.enabled = this.cell.inherit ? true : value.enabled; }
 }
 
 class PiHarness {
@@ -27,12 +30,15 @@ class PiHarness {
     this.commands = new Map();
     this.notifications = [];
     this.model = { provider: "openai", id: "gpt-test" };
+    this.manager = SessionManager.inMemory();
     this.context = {
+      cwd: "/fixture", isProjectTrusted: () => false, sessionManager: this.manager, hasUI: false, mode: "rpc",
       model: this.model,
       ui: { notify: (message, type) => this.notifications.push({ message, type }) },
     };
     registerFastMode({
       on: (name, handler) => this.handlers.set(name, handler),
+      appendEntry: (type, data) => this.manager.appendCustomEntry(type, data),
       registerCommand: (name, command) => this.commands.set(name, command),
     }, store);
   }
@@ -116,7 +122,7 @@ for (const adapter of ["memory", "filesystem"]) {
     const { store } = fixture(t);
     const pi = new PiHarness(store);
     await pi.command("off");
-    assert.equal(await pi.command("toggle"), "Usage: /fast [on|off|status]");
+    assert.equal(await pi.command("toggle"), "Usage: /fast [on|off|status|settings] or global|project|session on|off|inherit");
     assert.equal(pi.notifications.at(-1).type, "warning");
     assert.equal(store.read(), false);
     assert.match(await pi.command(" ON "), /Fast mode: ON/);
@@ -193,6 +199,7 @@ test("host: Pi loads the factory and persists /fast in the configured agent dire
   });
   const notifications = [];
   const context = {
+    cwd: agentDir, isProjectTrusted: () => false, sessionManager: SessionManager.inMemory(), hasUI: false, mode: "rpc",
     model: { provider: "openai-codex", id: "gpt-test" },
     ui: { notify: (message) => notifications.push(message) },
   };
@@ -211,14 +218,37 @@ test("host: Pi loads the factory and persists /fast in the configured agent dire
   assert.deepEqual(JSON.parse(readFileSync(join(agentDir, PREFERENCE_FILENAME), "utf8")), { enabled: false });
 });
 
-test("/fast completes its three actions", () => {
+test("/fast completes legacy actions and scoped settings controls", () => {
   const harness = new PiHarness(new MemoryPreferenceStore({ enabled: true }));
   const complete = harness.commands.get("fast").getArgumentCompletions;
-  assert.deepEqual(complete("").map((item) => item.value), ["on", "off", "status"]);
+  assert.deepEqual(complete("").map((item) => item.value), ["on", "off", "status", "settings", "global ", "project ", "session "]);
   assert.deepEqual(complete("o").map((item) => item.value), ["on", "off"]);
   assert.deepEqual(complete("ST").map((item) => item.value), ["status"]);
   assert.equal(complete("on "), null);
   assert.equal(complete("x"), null);
+  assert.deepEqual(complete("session ").map(item => item.value), ["session on", "session off", "session inherit"]);
+});
+
+test("scoped precedence and reset preserve legacy global /fast on and off", async t => {
+  const dir = temporaryDirectory(t), store = new FilePreferenceStore(join(dir, "agent", PREFERENCE_FILENAME));
+  const pi = new PiHarness(store); pi.context.cwd = dir; pi.context.isProjectTrusted = () => true;
+  await pi.command("off"); assert.equal(store.read(), false);
+  await pi.command("project on"); assert.equal(pi.request({}).service_tier, "priority");
+  await pi.command("session off"); assert.equal(pi.request({}).service_tier, "default");
+  await pi.command("on"); assert.equal(store.read(), true); assert.equal(pi.request({}).service_tier, "default");
+  await pi.command("session inherit"); assert.equal(pi.request({}).service_tier, "priority");
+  await pi.command("project off"); assert.equal(pi.request({}).service_tier, "default");
+  await pi.command("project inherit"); assert.equal(pi.request({}).service_tier, "priority");
+  await pi.command("global inherit"); assert.deepEqual(store.readOverrides(), {}); assert.equal(store.read(), true);
+});
+
+test("untrusted project state is ignored, and settings in RPC neither write nor send inference", async t => {
+  const dir = temporaryDirectory(t); mkdirSync(join(dir, ".pi")); writeFileSync(join(dir, ".pi", PREFERENCE_FILENAME), "malformed");
+  const store = new FilePreferenceStore(join(dir, "agent", PREFERENCE_FILENAME)), pi = new PiHarness(store); pi.context.cwd = dir;
+  assert.equal(pi.request({}).service_tier, "priority");
+  await assert.rejects(pi.command("project on"), /trusted project/);
+  assert.match(await pi.command("settings"), /requires interactive TUI/);
+  assert.deepEqual(store.readOverrides(), {});
 });
 
 // Filesystem-specific Effectual-GoodCommunication boundary checks.

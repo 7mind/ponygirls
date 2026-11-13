@@ -153,7 +153,7 @@ test("real Pi: configured trigger suppresses then permits archival at completed 
   await f.session.prompt("/context-archive default thresholds 60 40");
   f.replies.push("Above configured trigger"); await f.session.prompt("Continue again");
   assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
-  assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 2, enabled: false, highWatermark: 0.6, lowWatermark: 0.4 });
+  assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 3, thresholds: { highWatermark: 0.6, lowWatermark: 0.4 } });
   assert.equal(f.contexts.length, 2);
   assert.deepEqual(f.errors, []);
 });
@@ -177,7 +177,7 @@ test("real Pi: session thresholds persist across reload/resume, ignore global up
   f.replies.push("Global trigger now applies"); await f.session.prompt("Continue with default thresholds");
   assert.equal(recallArchive(f.manager.getBranch(), { action: "list", offset: 0, limit: 20 }).total, 2);
   assert.deepEqual(sessionOverrides(f.manager.getEntries(), f.manager.getSessionId()), { enabled: null, thresholds: null });
-  assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 2, enabled: true, highWatermark: 0.65, lowWatermark: 0.5 });
+  assert.deepEqual(JSON.parse(readFileSync(join(f.dir, "context-archive.json"), "utf8")), { version: 3, enabled: true, thresholds: { highWatermark: 0.65, lowWatermark: 0.5 } });
   assert.equal(f.contexts.length, 3);
   assert.deepEqual(f.errors, []);
 });

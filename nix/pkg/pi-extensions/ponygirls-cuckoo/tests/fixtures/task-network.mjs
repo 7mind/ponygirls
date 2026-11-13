@@ -50,8 +50,8 @@ export function taskNetworkFixture(t, services, registry, scopedModels) {
   }
   return { cwd, manager, pi, tools, active, configuration, features, consents, ctx, native, task, snapshot, notices, dialogs, selections,
     correct: (taskId, targetIds, evidenceIds) => appendMemory(native, makeCorrection(native.view(), { taskId, targetIds, replacementIds: [], evidenceIds, reason: 'Synthetic withdrawal' }, memory)),
-    setEnabled: value => { configuration.apply(ctx, 'session', [{ field: 'enabled', value }]); features.refresh(ctx); },
-    setFeature: (id, value) => { configuration.apply(ctx, 'session', [{ field: 'feature', id, value }]); features.refresh(ctx); },
+    setEnabled: value => { configuration.apply(ctx, 'session', [{ field: 'enabled', value }], new AbortController().signal); features.refresh(ctx); },
+    setFeature: (id, value) => { configuration.apply(ctx, 'session', [{ field: 'feature', id, value }], new AbortController().signal); features.refresh(ctx); },
     onAppend: fn => { appendObserver = fn; }, onConfirm: fn => { confirmHook = fn; }, confirm: value => { confirmation = value; },
     call: async (name, params, signal) => (await tools.get(name).execute('synthetic-call', params, signal, undefined, ctx)).details,
   };

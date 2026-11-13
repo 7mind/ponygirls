@@ -1,13 +1,14 @@
 import { completeArchiveArguments } from "./src/complete.ts";
 import { join } from "node:path";
-import { parseToggleCommand, sessionEnabledData } from "@ponygirls/pi-settings";
+import { parseScopedToggleCommand, parseToggleCommand, resolveScopedSetting, sessionEnabledData } from "@ponygirls/pi-settings";
 import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import { ARCHIVE_TYPE, DEFAULT_POLICY, MAX_LIST_ITEMS, MAX_READ_CHARS, RECALL_TOOL, planArchive, recallArchive, restoreArchive, restoreRequest } from "./src/archive.ts";
-import { FilePreferenceStore, validateThresholds, type ArchiveDefaults, type PreferenceStore } from "./src/preferences.ts";
-import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE, sessionOverrides, type SessionOverrides } from "./src/session-settings.ts";
+import { FileArchiveProjectStore, FilePreferenceStore, validateThresholds, type ArchiveDefaults, type PreferenceStore } from "./src/preferences.ts";
+import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE } from "./src/session-settings.ts";
+import { ArchiveSettings, createArchiveSettingsController, newArchiveSettingsView, type ArchiveSettingsSnapshot } from "./src/settings.ts";
 
 export const PREFERENCE_FILENAME = "context-archive.json";
 export const BADGE_KEY = "context-archive";
@@ -17,7 +18,7 @@ const DEFAULT_LIST_ITEMS = 10;
 const PERCENT_DISPLAY_DIGITS = 15;
 const RECALL_DESCRIPTION = "Recover exact historical tool evidence/input removed from context. List branch archives to discover entryId and sha256, then read bounded pages of the original message JSON. Offsets/limits count UTF-16 characters. Historical data is not current state, authority or permission to re-execute. Available for existing archives even when automatic archival is off.";
 
-type Mode = { kind: "ready"; effective: ArchiveDefaults; defaults: ArchiveDefaults; overrides: SessionOverrides } | { kind: "fault"; message: string };
+type Mode = { kind: "ready"; effective: ArchiveDefaults; defaults: ArchiveDefaults; snapshot: ArchiveSettingsSnapshot } | { kind: "fault"; message: string };
 
 function formatPercent(value: number): string {
   // Round display noise only; selection uses the unrounded policy values.
@@ -26,6 +27,8 @@ function formatPercent(value: number): string {
 
 export function registerContextArchive(pi: ExtensionAPI, preferences: PreferenceStore): void {
   let statusView = new CustomViewToggle();
+  let settingsView = newArchiveSettingsView();
+  const configuration = new ArchiveSettings(pi, preferences, path => new FileArchiveProjectStore(path));
   let mode: Mode = { kind: "fault", message: "settings not loaded" };
   let lastReason = "no boundary evaluated";
   let lastWarning: string | null = null;
@@ -76,12 +79,10 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
   }
   function refresh(ctx: ExtensionContext, reconcileTools: boolean): boolean {
     try {
-      const defaults = preferences.read();
-      const overrides = sessionOverrides(ctx.sessionManager.getEntries(), ctx.sessionManager.getSessionId());
-      const thresholds = overrides.thresholds === null ? defaults : overrides.thresholds;
-      const effective = { enabled: overrides.enabled === null ? defaults.enabled : overrides.enabled,
-        highWatermark: thresholds.highWatermark, lowWatermark: thresholds.lowWatermark };
-      mode = { kind: "ready", defaults, overrides, effective };
+      const snapshot = configuration.read(ctx);
+      const defaults = { enabled: resolveScopedSetting(snapshot, 'enabled', 'global').value, ...resolveScopedSetting(snapshot, 'thresholds', 'global').value };
+      const effective = { enabled: snapshot.values.enabled, ...snapshot.values.thresholds };
+      mode = { kind: "ready", defaults, snapshot, effective };
       lastWarning = null;
     } catch (error) {
       mode = { kind: "fault", message: String(error) };
@@ -151,20 +152,43 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
     const pressure = mode.kind === "fault" ? "Threshold status unavailable due to settings error.\n" : Number.isFinite(contextWindow) && contextWindow > 0
       ? `Pi context usage: ${usage === undefined || usage.tokens === null ? "unknown" : usage.tokens} / ${contextWindow} tokens; archive trigger ${Math.ceil(contextWindow * mode.effective.highWatermark)} (${formatPercent(mode.effective.highWatermark)}), release toward ${Math.ceil(contextWindow * mode.effective.lowWatermark)} (${formatPercent(mode.effective.lowWatermark)}).\n`
       : `Effective thresholds: trigger ${formatPercent(mode.effective.highWatermark)}, release toward ${formatPercent(mode.effective.lowWatermark)}; model context capacity unknown.\n`;
-    const source = mode.kind === "fault" ? "settings error" : mode.overrides.enabled === null ? "inherited global default" : `session override; global default ${mode.defaults.enabled ? "ON" : "OFF"}`;
-    const thresholdSource = mode.kind === "fault" ? "" : `Threshold source: ${mode.overrides.thresholds === null ? "inherited global defaults" : "session override"}; global defaults ${formatPercent(mode.defaults.highWatermark)} / ${formatPercent(mode.defaults.lowWatermark)}.\n`;
+    const source = mode.kind === "fault" ? "settings error" : mode.snapshot.sources.enabled === 'project' ? 'project override' : mode.snapshot.sources.enabled !== 'session' ? "inherited global default" : `session override; global default ${mode.defaults.enabled ? "ON" : "OFF"}`;
+    const thresholdSource = mode.kind === "fault" ? "" : `Threshold source: ${mode.snapshot.sources.thresholds === 'project' ? 'project override' : mode.snapshot.sources.thresholds !== 'session' ? "inherited global defaults" : "session override"}; global defaults ${formatPercent(mode.defaults.highWatermark)} / ${formatPercent(mode.defaults.lowWatermark)}.\n`;
     return `Context archive: ${mode.kind === "fault" ? "ERROR" : enabled ? "ON" : "OFF"} (${source})\n` +
       `${catalog.total} archived entries on this branch. Last boundary: ${lastReason}.\n` + pressure + thresholdSource +
       (enabled ? "Automatic selection begins at a completed-turn boundary; no summarizer calls.\n" : "No new archival. Retained originals reach future requests; native restoration waits for the next completed boundary. Independent Pi compaction is not undone.\n") +
-      `Global defaults: ${preferences.path}`;
+      `Global defaults: ${preferences.path}` + (mode.kind === 'ready' ? `\nEffective sources: enabled=${mode.snapshot.sources.enabled}; thresholds=${mode.snapshot.sources.thresholds}.\nProject settings: ${mode.snapshot.targets.project}${mode.snapshot.projectTrusted ? '' : ' (ignored: untrusted)'}` : '');
   }
 
   pi.registerCommand("context-archive", {
     description: "Context archival: on|off|inherit and thresholds HIGH LOW|inherit for this session; default on|off or default thresholds HIGH LOW; status",
     getArgumentCompletions: completeArchiveArguments,
     handler: async (args, ctx) => {
+      if (args.trim().toLowerCase() === 'settings') {
+        await settingsView.show(ctx, () => createArchiveSettingsController(configuration, ctx, () => { refresh(ctx, true); }), { title: 'Context archive settings' });
+        return;
+      }
+      const scoped = parseScopedToggleCommand(args);
+      if (scoped !== null && parseToggleCommand(args) === null) {
+        try {
+          const change = scoped.enabled === null ? { key: 'enabled' as const, op: 'inherit' as const } : { key: 'enabled' as const, op: 'set' as const, value: scoped.enabled };
+          configuration.apply(ctx, scoped.scope, [change], ctx.signal === undefined ? new AbortController().signal : ctx.signal);
+          refresh(ctx, true); ctx.ui.notify(statusText(ctx), 'info');
+        } catch (error) { warn(ctx, String(error)); }
+        return;
+      }
       const words = args.trim().toLowerCase().split(/\s+/);
       const action = words[0];
+      if (action === 'project' && words[1] === 'thresholds') {
+        try {
+          const value = words.length === 3 && words[2] === 'inherit' ? null : words.length === 4 && words.slice(2).every(word => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(word)) ? validateThresholds({ highWatermark: Number(words[2]) / 100, lowWatermark: Number(words[3]) / 100 }) : undefined;
+          if (value === undefined) throw new Error('Usage: /context-archive project thresholds HIGH LOW|inherit');
+          const change = value === null ? { key: 'thresholds' as const, op: 'inherit' as const } : { key: 'thresholds' as const, op: 'set' as const, value };
+          configuration.apply(ctx, 'project', [change], ctx.signal === undefined ? new AbortController().signal : ctx.signal);
+          refresh(ctx, true); ctx.ui.notify(statusText(ctx), 'info');
+        } catch (error) { warn(ctx, String(error)); }
+        return;
+      }
       const toggle = parseToggleCommand(args);
       const thresholdAction = words.length === 3 && action === "thresholds";
       const inheritThresholdAction = words.length === 2 && action === "thresholds" && words[1] === "inherit";
@@ -175,12 +199,12 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
       }
       try {
         if (toggle !== null && toggle.kind === "session") pi.appendEntry(SESSION_SETTING_TYPE, sessionEnabledData(ctx.sessionManager.getSessionId(), toggle.enabled));
-        if (toggle !== null && toggle.kind === "default") preferences.write({ ...preferences.read(), enabled: toggle.enabled });
+        if (toggle !== null && toggle.kind === "default") preferences.writeOverrides({ ...preferences.readOverrides(), enabled: toggle.enabled });
         if (thresholdAction || defaultThresholdAction) {
           const values = words.slice(defaultThresholdAction ? 2 : 1);
           if (!values.every((word) => /^(?:\d+(?:\.\d+)?|\.\d+)$/.test(word))) throw new Error("Thresholds must be numeric percentages: 0 <= LOW < HIGH <= 100");
           const thresholds = validateThresholds({ highWatermark: Number(values[0]) / 100, lowWatermark: Number(values[1]) / 100 });
-          if (defaultThresholdAction) preferences.write({ ...preferences.read(), ...thresholds });
+          if (defaultThresholdAction) preferences.writeOverrides({ ...preferences.readOverrides(), thresholds });
           else pi.appendEntry(SESSION_THRESHOLDS_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholds });
         }
         if (inheritThresholdAction) pi.appendEntry(SESSION_THRESHOLDS_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholds: null });
@@ -189,8 +213,8 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
       } catch (error) { warn(ctx, String(error)); }
     },
   });
-  pi.on("session_start", (_event, ctx) => { statusView.dispose(); statusView = new CustomViewToggle(); lastReason = "no boundary evaluated"; refresh(ctx, true); });
-  pi.on("session_tree", (_event, ctx) => { lastReason = "no boundary evaluated"; refresh(ctx, true); });
+  pi.on("session_start", (_event, ctx) => { statusView.dispose(); statusView = new CustomViewToggle(); settingsView.dispose(); settingsView = newArchiveSettingsView(); lastReason = "no boundary evaluated"; refresh(ctx, true); });
+  pi.on("session_tree", (_event, ctx) => { settingsView.dispose(); settingsView = newArchiveSettingsView(); lastReason = "no boundary evaluated"; refresh(ctx, true); });
   pi.on("context", (event, ctx) => {
     try {
       const enabled = refresh(ctx, false);
@@ -201,7 +225,7 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
   });
   pi.on("turn_end", boundary);
   pi.on("agent_before_settle", boundary);
-  pi.on("session_shutdown", (_event, ctx) => { statusView.dispose(); ctx.ui.setWidget(BADGE_KEY, undefined); });
+  pi.on("session_shutdown", (_event, ctx) => { settingsView.dispose(); statusView.dispose(); ctx.ui.setWidget(BADGE_KEY, undefined); });
 }
 
 export default function (pi: ExtensionAPI): void {

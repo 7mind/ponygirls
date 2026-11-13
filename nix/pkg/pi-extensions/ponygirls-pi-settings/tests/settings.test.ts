@@ -4,18 +4,21 @@ import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, wr
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, TOGGLE_ARGUMENTS, type ToggleDefaults, type TogglePreferenceStore } from "../src/index.ts";
+import { FileTogglePreferenceStore, parseToggleCommand, sessionEnabled, sessionEnabledData, TOGGLE_ARGUMENTS, validateToggleOverrides, type ToggleOverrides, type ToggleDefaults, type TogglePreferenceStore } from "../src/index.ts";
 
 class MemoryTogglePreferences implements TogglePreferenceStore {
   readonly path = "memory:toggle";
-  private defaults: ToggleDefaults;
-  constructor(defaultEnabled: boolean) { this.defaults = { enabled: defaultEnabled }; }
-  read(): ToggleDefaults { return { ...this.defaults }; }
+  private readonly defaultEnabled: boolean;
+  private overrides: ToggleOverrides = {};
+  constructor(defaultEnabled: boolean) { this.defaultEnabled = defaultEnabled; }
+  read(): ToggleDefaults { return { enabled: this.overrides.enabled === undefined ? this.defaultEnabled : this.overrides.enabled }; }
+  readOverrides(): ToggleOverrides { return { ...this.overrides }; }
+  writeOverrides(value: ToggleOverrides): void { this.overrides = validateToggleOverrides(value); }
   write(defaults: ToggleDefaults): void {
     if (typeof defaults !== "object" || defaults === null || Array.isArray(defaults) || typeof defaults.enabled !== "boolean") {
       throw new Error("Expected enabled:boolean");
     }
-    this.defaults = { enabled: defaults.enabled };
+    this.overrides = { enabled: defaults.enabled };
   }
 }
 
@@ -73,7 +76,7 @@ test("filesystem: only absence inherits; malformed, future-version and inaccessi
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, "toggle.json");
   const store = new FileTogglePreferenceStore(path, true);
-  for (const text of ["{", "null", "[]", "true", "{}", '{"enabled":true}', '{"version":0,"enabled":true}', '{"version":2,"enabled":false}', '{"version":1}', '{"version":1,"enabled":"true"}', '{"version":1,"enabled":null}']) {
+  for (const text of ["{", "null", "[]", "true", "{}", '{"enabled":true}', '{"version":0,"enabled":true}', '{"version":3,"enabled":false}', '{"version":1}', '{"version":1,"enabled":"true"}', '{"version":1,"enabled":null}']) {
     writeFileSync(path, text);
     assert.throws(() => store.read(), /Invalid toggle defaults/);
     assert.equal(readFileSync(path, "utf8"), text, "reads never repair or rewrite malformed data");

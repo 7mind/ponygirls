@@ -70,7 +70,7 @@ test("malformed, wrong-version and inaccessible preferences do not silently beco
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   const path = join(dir, "context-archive.json");
   const store = new FilePreferenceStore(path);
-  for (const value of ["{", "null", "[]", '{"enabled":true}', '{"version":3,"enabled":true}', '{"version":1,"enabled":"false"}', '{"version":2,"enabled":true}', '{"version":2,"enabled":true,"highWatermark":0.5,"lowWatermark":0.6}']) {
+  for (const value of ["{", "null", "[]", '{"enabled":true}', '{"version":4,"enabled":true}', '{"version":1,"enabled":"false"}', '{"version":2,"enabled":true}', '{"version":2,"enabled":true,"highWatermark":0.5,"lowWatermark":0.6}']) {
     writeFileSync(path, value);
     assert.throws(() => store.read());
   }

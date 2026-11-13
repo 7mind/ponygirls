@@ -112,9 +112,9 @@ test('real Pi: managed model/root and default model inherit preserve writable pr
   await f.session.prompt('EXPERIMENT_MANAGED_BUT_OFF'); assert.equal(f.calls.historian.length, 0);
   await f.session.prompt('/historian default on');
   const preferences = () => JSON.parse(readFileSync(join(f.agentDir, 'historian.json'), 'utf8'));
-  assert.equal(preferences().model, null, 'enabling must not materialize inherited model');
+  assert.equal(Object.hasOwn(preferences(), 'model'), false, 'enabling must not materialize inherited model');
   await f.session.prompt('/historian default model main scripted off'); assert.equal(preferences().model.provider, 'main');
-  await f.session.prompt('/historian default model inherit'); assert.equal(preferences().model, null);
+  await f.session.prompt('/historian default model inherit'); assert.equal(Object.hasOwn(preferences(), 'model'), false);
   await f.session.prompt('EXPERIMENT_MANAGED_ROOT');
   const database = join(f.agentDir, 'custom-journals', 'projects', digest(resolveProject(f.cwd)), 'journal.sqlite');
   const revisions = () => {

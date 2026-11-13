@@ -22,10 +22,11 @@ function fixture(t) {
   const defaults = { enabled: true, model, approvedModel: model, focus: DEFAULT_FOCUS };
   preferences.write(defaults);
   const entries = [];
-  const ctx = { cwd: dir, sessionManager: { getSessionId: () => 'root', getEntries: () => entries },
+  const ctx = { cwd: dir, isProjectTrusted: () => false, sessionManager: { getSessionId: () => 'root', getEntries: () => entries },
     modelRegistry: { find: () => undefined }, ui: { notify() {} } };
   const events = { emit() {} };
-  const make = () => new HistorianController({ events }, preferences, ctx, () => {});
+  const pi = { events, appendEntry(customType, data) { entries.push({ type: 'custom', id: `entry-${entries.length}`, parentId: null, timestamp: new Date().toISOString(), customType, data }); } };
+  const make = () => new HistorianController(pi, preferences, ctx, () => {});
   return { make, preferences, entries, defaults, events, dir, ctx };
 }
 
@@ -130,6 +131,55 @@ test('restart while OFF must not authorize the disabled interval when enabled la
   assert.match(second.status(), /pending events: 0/);
 });
 
+test('an observed invalid-preference interval is not backfilled when the same ON bytes return', async t => {
+  const { make, preferences, entries } = fixture(t); const sent = [];
+  t.mock.method(HistorianWorker.prototype, 'run', async batch => {
+    sent.push(batch); return { proposals: [], metrics: { responseChars: 2, usage: null }, meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null } };
+  });
+  const controller = make(); t.after(() => controller.dispose()); await controller.reconcile();
+  const saved = readFileSync(preferences.path, 'utf8'); writeFileSync(preferences.path, 'invalid preferences');
+  entries.push({ type: 'message', id: 'invalid-interval', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'SYNTHETIC_UNAPPROVED_INVALID_INTERVAL', timestamp: 1 } });
+  await controller.reconcile(); assert.match(controller.status(), /settings unavailable|Invalid/);
+  writeFileSync(preferences.path, saved); await controller.settingsChanged(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sent.length, 0, 'recovery must establish a fresh capture boundary'); assert.match(controller.status(), /pending events: 0/);
+});
+
+for (const interval of ['fault', 'trust']) test(`project ${interval} restoration requires fresh approval and never backfills the interval`, async t => {
+  const { make, entries, ctx, dir } = fixture(t); let trusted = true; const sent = [];
+  ctx.isProjectTrusted = () => trusted;
+  t.mock.method(HistorianWorker.prototype, 'run', async batch => {
+    sent.push(batch); return { proposals: [], metrics: { responseChars: 2, usage: null }, meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null } };
+  });
+  const controller = make(); t.after(() => controller.dispose());
+  const enable = () => controller.applyProjectSettings([{ key: 'enabled', op: 'set', value: true }], new AbortController().signal, async () => true);
+  await enable(); assert.equal(controller.effective().disclosureApproved, true);
+  const path = join(dir, '.pi', 'historian.json'); const bytes = readFileSync(path, 'utf8');
+  if (interval === 'fault') writeFileSync(path, '{'); else trusted = false;
+  entries.push({ type: 'message', id: 'unapproved-interval', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'SYNTHETIC_UNAPPROVED_INTERVAL', timestamp: 1 } });
+  await controller.reconcile();
+  if (interval === 'fault') writeFileSync(path, bytes); else trusted = true;
+  await controller.reconcile();
+  assert.equal(controller.effective().disclosureApproved, false); assert.equal(sent.length, 0);
+  await enable(); assert.equal(sent.length, 0);
+  entries.push({ type: 'message', id: 'approved-future', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'SYNTHETIC_APPROVED_FUTURE', timestamp: 1 } });
+  await controller.reconcile(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(sent.length, 1); assert.match(JSON.stringify(sent), /SYNTHETIC_APPROVED_FUTURE/);
+  assert.doesNotMatch(JSON.stringify(sent), /SYNTHETIC_UNAPPROVED_INTERVAL/);
+});
+
+test('project OFF rejects a late admitted result and keeps its pending evidence', async t => {
+  const { make, entries, ctx } = fixture(t); ctx.isProjectTrusted = () => true; let finish; let calls = 0;
+  t.mock.method(HistorianWorker.prototype, 'run', () => { calls++; return new Promise(resolve => { finish = resolve; }); });
+  const controller = make(); t.after(() => controller.dispose()); const signal = new AbortController().signal;
+  await controller.applyProjectSettings([{ key: 'enabled', op: 'set', value: true }], signal, async () => true);
+  entries.push({ type: 'message', id: 'approved-pending', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'Synthetic approved work', timestamp: 1 } });
+  await controller.reconcile(); assert.equal(calls, 1);
+  await controller.applyProjectSettings([{ key: 'enabled', op: 'set', value: false }], signal, async () => assert.fail('OFF must not prompt'));
+  finish({ proposals: [], metrics: { responseChars: 2, usage: null }, meta: { provider: 'fixture', model: 'scripted', thinking: 'off', objective: 'v1', usage: null } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(controller.status(), /pending events: 1/); assert.match(controller.status(), /Last commit this runtime: none/);
+});
+
 test('a settled-event hint expedites an already scheduled reconciliation poll', async t => {
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 1000 });
   const { make, entries } = fixture(t); const controller = make(); t.after(() => controller.dispose());
@@ -194,7 +244,7 @@ test('global OFF is available during inference and fences its late result withou
   assert.match(controller.status(), /OFF/); assert.match(controller.status(), /pending events: 1/);
 });
 
-test('global OFF fences publication, not a provider submission already admitted before OFF', async t => {
+test('observing global OFF cancels an admitted request before provider submission', async t => {
   const { make, entries, preferences, ctx, dir } = fixture(t);
   const runtime = await ModelRuntime.create({ authPath: join(dir, 'auth.json'), modelsPath: null, refreshOnCreate: false });
   const calls = [];
@@ -225,7 +275,13 @@ test('global OFF fences publication, not a provider submission already admitted 
   await controller.reconcile();
   const deadline = performance.now() + 5000;
   while (!controller.status().includes('Activity: idle') && performance.now() < deadline) await new Promise(resolve => setTimeout(resolve, 5));
-  assert.equal(calls.length, 1); assert.match(JSON.stringify(calls), /AUTHORIZED_BEFORE_OFF/); assert.doesNotMatch(JSON.stringify(calls), /PRIVATE_AFTER_OFF/);
+  assert.equal(calls.length, 0);
+  assert.match(controller.status(), /Attempt totals: 1; validated: 0; failed: 0; recovered: 0; cancelled: 1/);
+  const pending = new JournalStore(join(controller.directory, 'journal.sqlite'), dir);
+  try {
+    const batch = JSON.stringify(pending.batch('root'));
+    assert.match(batch, /AUTHORIZED_BEFORE_OFF/); assert.doesNotMatch(batch, /PRIVATE_AFTER_OFF/);
+  } finally { pending.close(); }
   await controller.reconcile(); assert.match(controller.status(), /Activity: idle; pending events: 1/);
   assert.match(controller.status(), /Last commit this runtime: none/);
 });
