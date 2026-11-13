@@ -4,6 +4,7 @@ set -euo pipefail
 BIND_SPECS=()
 ENVS=()
 CONFINE_SOCKET=""
+COWBOY_RIDE=0
 
 show_help() {
   cat <<EOF
@@ -12,6 +13,9 @@ Usage: llm-sandbox [OPTIONS] -- COMMAND [ARGS...]
 Wrapper around bubblewrap with simplified path whitelisting.
 
 Options:
+  --cowboy-ride   No security isolation; overlay binds on the writable host
+                   filesystem, preserving PID/network visibility and environment
+                   (bubblewrap still needs mount/user namespaces)
   --rw PATH        Add read-write path (only if exists)
   --ro PATH        Add read-only path (only if exists)
   --bind SRC,DST      Bind mount SRC to DST inside sandbox (read-write)
@@ -41,6 +45,10 @@ while [[ $# -gt 0 ]]; do
       BIND_SPECS+=("${1#--}"$'\t'"$2")
       shift 2
       ;;
+    --cowboy-ride)
+      COWBOY_RIDE=1
+      shift
+      ;;
     --confine-socket)
       CONFINE_SOCKET="$2"
       shift 2
@@ -68,6 +76,13 @@ if [[ $# -eq 0 ]]; then
   exit 1
 fi
 
+if [[ $COWBOY_RIDE -eq 1 ]]; then
+  if [[ -n "$CONFINE_SOCKET" ]]; then
+    echo 'llm-sandbox: --cowboy-ride cannot confine a host socket' >&2
+    exit 1
+  fi
+  BWRAP_ARGS=(--dev-bind / /)
+else
 BWRAP_ARGS=(
   --unshare-all
   --share-net
@@ -195,6 +210,8 @@ for path in "${SYSTEM_RO_PATHS[@]}"; do
   fi
 done
 
+fi
+
 # Caller-provided binds, emitted in the order they were given so a later bind
 # overrides an earlier one covering the same path (bwrap mounts in argv order).
 # RO paths filter out /nix/* as already bound.
@@ -225,6 +242,10 @@ for env in "${ENVS[@]}"; do
   IFS='=' read -r name value <<< "$env"
   BWRAP_ARGS+=(--setenv "$name" "$value")
 done
+
+if [[ $COWBOY_RIDE -eq 1 ]]; then
+  exec bwrap "${BWRAP_ARGS[@]}" -- "$@"
+fi
 
 # --- Inherited tmux socket confinement (defects:D262, tasks:T1793) ----------
 # yolo passes --confine-socket when it inherited a live host tmux socket. That

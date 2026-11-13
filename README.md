@@ -88,6 +88,42 @@ Code, Codex, and Pi configuration and credentials on a single user account.
 Its subcommands (`claude`, `codex`, `pi`, `shell`, `cmd`) and profile
 management match the Linux tool; the bubblewrap-only capabilities do not apply.
 
+#### Credential/profile overlays without isolation (Linux)
+
+```sh
+yolo --cowboy-ride --auth-override pi:work pi  # host state, work credentials
+yolo --cowboy-ride --profile work pi          # full work profile
+yolo --cowboy-ride --profile personal --auth-override pi:work pi
+```
+
+`--cowboy-ride` provides **no security isolation**: the host filesystem is
+read-write with device access, host PID/network visibility and inherited
+environment (including host sockets and credential variables). Bubblewrap is
+used only for mount overlays. `--profile` retains its usual behavior for all
+supported agents, including shared read-only managed assets; `--auth-override`
+replaces only the selected agent's credentials file, live and read-write, so
+refreshes update the source profile. Pi's override covers its entire auth.json.
+Inherited credential variables still apply; unset them if they would bypass
+the desired file-based identity. Selected agents' home-directory variables
+(`CLAUDE_CONFIG_DIR`, `CODEX_HOME`, `PI_CODING_AGENT_DIR`) are routed to the
+mounted paths so inherited values cannot bypass the overlays. Explicit `--env`
+values take precedence over that routing.
+Host credentials remain accessible by their other paths: this is identity
+selection, not credential protection.
+
+Sandbox hooks (host and guest), prompt extensions, declarative sandbox
+binds/environment/secrets/packages and clipboard forwarding are omitted; no
+sandbox markers are added (inherited outer-sandbox markers are preserved). The agent's own configuration/hooks still apply. Explicit
+`--env`, binds, and resource limits remain usable; resource limits are off by
+default, and launching from `$HOME` is allowed. Shell history uses host defaults.
+Unprivileged bubblewrap still needs mount/user namespaces: supplementary-group
+access and privilege escalation may differ from a direct host launch. This
+mode cannot escape restrictions of a sandbox it was itself launched inside.
+
+Validation: `python3 nix/pkg/yolo/cowboy-ride-test.py -v` checks the CLI's
+bubblewrap arguments; add `--real` for real bubblewrap filesystem, credential
+refresh, profile-state, environment and namespace acceptance on Linux.
+
 ### Session history: Chronicle
 
 | Package | What it is |

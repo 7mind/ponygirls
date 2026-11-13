@@ -1094,6 +1094,7 @@
             cd yolo
             export YOLO_RUNTIME_TOKEN_HELPER=${import ./nix/lib/runtime-token.nix { inherit pkgs; }}
             bash llm-sandbox-test.sh
+            python3 cowboy-ride-test.py -v
             bash profile-test.sh
             bash resource-limits-test.sh
             bash sandbox-entrypoint-test.sh
