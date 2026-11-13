@@ -50,6 +50,7 @@
 # bound onto the standard in-sandbox paths so agents need no profile-specific
 # env.
 PROFILE=""
+COWBOY_RIDE=0
 # Host-side profile management (`--list-profiles`, `--delete-profile NAME`,
 # `--copy-sessions AGENT:SRC:DST`):
 # runs instead of launching the sandbox. Empty means launch normally.
@@ -106,6 +107,14 @@ Usage:
   yolo --copy-sessions AGENT:SRC:DST
 
 Flags (must precede the subcommand):
+      --cowboy-ride      No security isolation: preserve host filesystem,
+                         PID/network visibility and environment; use bwrap for
+                         profile/auth and explicit bind/env overlays. Skip
+                         sandbox integrations, hooks and prompt extensions.
+                         Resource limits are off unless explicitly requested.
+                         Host credentials remain accessible. Bubblewrap still
+                         needs mount/user namespaces; host privilege escalation
+                         and supplementary-group access may differ. Linux only.
   -p, --profile NAME     Use isolated config namespace ~/.config/yolo/NAME
                          (default: agents read their real ~/.claude, ~/.codex, …)
       --auth-override AGENT:PROFILE
@@ -220,6 +229,7 @@ while [[ $# -gt 0 ]]; do
         echo "Error: $1 requires a profile name" >&2; exit 1
       fi
       PROFILE="$2"; shift 2 ;;
+    --cowboy-ride) COWBOY_RIDE=1; shift ;;
     --list-profiles) PROFILE_ACTION="list"; shift ;;
     --delete-profile)
       if [[ $# -lt 2 || -z "$2" ]]; then
@@ -331,6 +341,10 @@ fi
 # the built-in default (1/8 of host RAM, 1/4 of hardware threads) applies.
 MEM_LIMIT=""
 CPU_LIMIT=""
+if [[ $COWBOY_RIDE -eq 1 ]]; then
+  MEM_LIMIT="none"
+  CPU_LIMIT="none"
+fi
 
 parse_mem_limit() {
   local _spec="$1" _n _mult=1
@@ -538,7 +552,7 @@ fi
 # forms still match. --unsafe-share-home opts out.
 _pwd_real="$(readlink -f -- "${PWD}" 2>/dev/null || printf '%s' "${PWD}")"
 _home_real="$(readlink -f -- "${HOME}" 2>/dev/null || printf '%s' "${HOME}")"
-if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 ]]; then
+if [[ "$_pwd_real" == "$_home_real" && $UNSAFE_SHARE_HOME -ne 1 && $COWBOY_RIDE -ne 1 ]]; then
   echo "Error: refusing to run yolo from \$HOME ($_home_real)." >&2
   echo "       \$PWD is bound read-write into the sandbox, so this would expose your" >&2
   echo "       entire home directory (credentials, keys, history) and defeat profile" >&2
@@ -706,6 +720,26 @@ fi
 SUBCMD="$1"; shift
 CMD_ARGS=("$@")
 
+if [[ $COWBOY_RIDE -eq 1 ]]; then
+  echo 'warning: yolo --cowboy-ride provides no security isolation; host files and credentials are accessible.' >&2
+  BASE_ARGS=(--cowboy-ride)
+  # Inherited agent-home overrides must not bypass the selected mount overlays.
+  for _agent in claude codex pi; do
+    if [[ -n "$PROFILE" || "$_auth_agents_seen" == *" $_agent "* ]]; then
+      case "$_agent" in
+        claude) BASE_ARGS+=(--env "CLAUDE_CONFIG_DIR=$HOME/.claude") ;;
+        codex) BASE_ARGS+=(--env "CODEX_HOME=$HOME/.codex") ;;
+        pi) BASE_ARGS+=(--env "PI_CODING_AGENT_DIR=$HOME/.pi/agent") ;;
+      esac
+    fi
+  done
+  BASE_ARGS+=("${ENV_ARGS[@]}")
+  EXTRA_PATH_ARGS=()
+  SECRET_TMPFILE=""
+  SANDBOX_HOOKS_TMPFILE=""
+  SSH_CONFIG_TMPFILE=""
+  CLIP_BROKER_PID=""
+else
 # Container socket forwarding (triggered by YOLO_PODMAN_SOCKET_PATH)
 SOCKET_ARGS=()
 if [[ -n "${YOLO_PODMAN_SOCKET_PATH:-}" && -n "${YOLO_PODMAN_SOCKET_URI:-}" ]]; then
@@ -1193,6 +1227,8 @@ if [[ "$SUBCMD" == pi ]]; then
   BASE_ARGS+=(--env "SMIND_CODEGRAPH_DISABLED=$_codegraph_disabled")
 fi
 
+fi
+
 EXTRA_ARGS=()
 EXEC_CMD=()
 
@@ -1410,7 +1446,7 @@ ensure_codex_config() {
 # the --disable set or its targets exclude the selected subcommand.
 # Hooks are best-effort: a failure warns but does not abort.
 run_prestart_hooks() {
-  [[ -z "${YOLO_PREHOOKS_JSON:-}" ]] && return 0
+  [[ $COWBOY_RIDE -eq 1 || -z "${YOLO_PREHOOKS_JSON:-}" ]] && return 0
   local dis _hook
   dis="$("$YOLO_JQ" -nc '$ARGS.positional' --args "${DISABLE_TAGS[@]}")"
   while IFS= read -r -d '' _hook; do
@@ -1430,7 +1466,8 @@ case "$SUBCMD" in
   claude)
     add_all_agent_binds
     claude_prompt_args=()
-    _claude_prompt="$(compose_prompt claude)"
+    _claude_prompt=""
+    [[ $COWBOY_RIDE -eq 0 ]] && _claude_prompt="$(compose_prompt claude)"
     [[ -n "$_claude_prompt" ]] && claude_prompt_args+=(--append-system-prompt "$_claude_prompt")
     EXEC_CMD=(
       claude
@@ -1453,7 +1490,8 @@ case "$SUBCMD" in
     # claude-targeted YOLO authorization note doesn't apply — Pi has no
     # permission system). Empty means no --append-system-prompt.
     pi_prompt_args=()
-    _pi_prompt="$(compose_prompt pi)"
+    _pi_prompt=""
+    [[ $COWBOY_RIDE -eq 0 ]] && _pi_prompt="$(compose_prompt pi)"
     [[ -n "$_pi_prompt" ]] && pi_prompt_args+=(--append-system-prompt "$_pi_prompt")
     EXEC_CMD=(pi "${pi_prompt_args[@]}" "${CMD_ARGS[@]}")
     ;;
@@ -1462,6 +1500,7 @@ case "$SUBCMD" in
     add_all_agent_binds
     _user_shell="${SHELL:-/bin/sh}"
     _shell_name="$(basename "$_user_shell")"
+    if [[ $COWBOY_RIDE -eq 0 ]]; then
     case "$_shell_name" in
       zsh)
         # Bind zsh rc files read-only; deliberately omit history files.
@@ -1486,6 +1525,7 @@ case "$SUBCMD" in
         EXTRA_ARGS+=(--ro "${HOME}/.config/fish")
         ;;
     esac
+    fi
     EXEC_CMD=("$_user_shell" "${CMD_ARGS[@]}")
     ;;
 
