@@ -30,6 +30,27 @@ final class HttpSuite extends FunSuite:
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
       .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
   private def run(body: (BackendFixture,Http) => IO[Unit]): Unit = BackendFixture.resource(true).use(f => body(f,app(f))).unsafeRunSync()
+  test("dashboard favicon is public, same-origin SVG without exposing other files") { run { (f,_) =>
+    val directory = f.rootPath.resolve("dashboard-assets")
+    val svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path d=\"M0 0h32v32H0z\"/></svg>"
+    for
+      _ <- IO.blocking {
+        java.nio.file.Files.createDirectories(directory)
+        java.nio.file.Files.writeString(directory.resolve("favicon.svg"),svg)
+        java.nio.file.Files.writeString(directory.resolve("private.txt"),"not a dashboard asset")
+      }
+      h = app(f,_.copy(dashboardDir=Some(directory)))
+      response <- h.app.run(request(Method.GET,"/favicon.svg"))
+      body <- response.as[String]
+      _ <- IO {
+        assertEquals(response.status.code,200)
+        assertEquals(body,svg)
+        assertEquals(response.headers.headers.find(_.name == CIString("Content-Type")).map(_.value),Some("image/svg+xml"))
+      }
+      privateFile <- h.app.run(request(Method.GET,"/private.txt"))
+      _ <- IO(assertEquals(privateFile.status.code,404))
+    yield ()
+  }}
   test("password retrieval is explicit, live-authenticated and strict cookie-Origin guarded") { run { (f,h) => for
     a <- f.artifacts.init(f.identity,InitUpload("external",ArtifactKind.Directory,Visibility.External,Vector.empty,None,Vector.empty,None,None))
     c = wire.Command.GetExternalPassword(a.artifact.id)
