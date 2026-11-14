@@ -271,6 +271,7 @@ let
   # stays evaluable under pure nixpkgs lib (pi-prompt-root-test) without a
   # home-manager input.
   piMcpDirectTools = cfg.pi.mcpDirectTools;
+  piMcpServerOverrides = cfg.pi.mcpServerOverrides;
   codegraphServer = config.programs.mcp.servers.codegraph or { };
   codegraphLocal = piCfg.enableMcpIntegration
     && (codegraphServer.command or null) != null
@@ -310,7 +311,7 @@ let
               else
                 piMcpDirectTools;
           in
-          (normalizeMcpServer server)
+          (normalizeMcpServer server // (piMcpServerOverrides.${name} or { }))
           // { exposure = if directToolsEnabled then "direct" else "deferred"; }
       )
       config.programs.mcp.servers;
@@ -524,6 +525,30 @@ in
         {option}`programs.mcp.servers`; a list of server names enables it for
         those additional servers. Pi-only: applied in `piMcpJson`, not leaked
         into the shared MCP registry used by claude/codex.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption {
+      type = lib.types.attrsOf lib.types.attrs;
+      default = { };
+      example = lib.literalExpression ''
+        {
+          haystack.headers.Authorization =
+            "!printf 'Bearer %s' \"$(runtime-token HAYSTACK_TOKEN /run/agenix/haystack-token)\"";
+        }
+      '';
+      description = ''
+        Pi-only per-server field overrides, shallow-merged over the
+        normalized {option}`programs.mcp.servers` entry in `piMcpJson`
+        (each top-level key is replaced wholesale). Use for Pi-native
+        renderings the shared registry cannot express, e.g. a `!command`
+        header in place of a `''${VAR}` env placeholder (Pi resolves
+        `!command` values at connect time, so file-backed credentials work
+        in any launch context). `exposure` stays owned by
+        {option}`smind.hm.dev.llm.pi.mcpDirectTools` and cannot be
+        overridden here. Never put secret material in a command string:
+        paths and variable names only. Pi-only: not leaked into the shared
+        MCP registry used by claude/codex.
       '';
     };
 

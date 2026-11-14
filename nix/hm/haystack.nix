@@ -149,6 +149,17 @@ in
       bearer_token_env_var = "HAYSTACK_TOKEN";
     };
 
+    # Pi expands `Bearer ${HAYSTACK_TOKEN}` from its process env, which
+    # bare launches (outside yolo validatedSessionVariables / haystack-run)
+    # do not carry. Pi-native `!command` headers resolve at connect time
+    # through the same exact-byte-validated runtime-token transport: a
+    # runtime literal HAYSTACK_TOKEN still wins, the configured file is the
+    # fallback, and no secret material enters the store (paths only).
+    smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkIf (tokenFile != null) {
+      haystack.headers.Authorization =
+        "!printf 'Bearer %s' \"$(${runtimeToken} HAYSTACK_TOKEN ${lib.escapeShellArg (toString tokenFile)})\"";
+    };
+
     # Exact-byte-validated credential transport (fail-closed launches).
     smind.hm.dev.llm.yolo.validatedSessionVariables = {
       HAYSTACK_TOKEN = if tokenFile == null then "" else toString tokenFile;
