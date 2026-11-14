@@ -2,7 +2,8 @@
 
 The authenticated backend serves `dist/index.html` as an escaped template and the
 fixed local assets below. No CDN, external rendering service, runtime npm, or
-uploaded HTML execution is involved. Markdown uses marked GFM + DOMPurify;
+uploaded HTML execution is involved. Markdown uses a source-positioned mdast/hast
+GFM pipeline + DOMPurify;
 Mermaid uses strict mode; Graphviz runs its embedded WASM in a disposable worker;
 PDF.js renders pages to canvas without annotation, scripting or action handlers.
 Images (including SVG) are displayed only in browser image context.
@@ -52,6 +53,22 @@ duplicate or already-reserved IDs receive numeric suffixes (`-1`, `-2`, …).
 Fragment URLs scroll after Markdown loads and diagram rendering completes;
 fragment changes and browser back/forward navigation work without reloading.
 The same behavior applies to directory README previews.
+
+Every section has a **Copy** button at its heading's top-right corner. It copies
+the original Markdown from that heading through the next heading of equal or
+higher rank, including subsections. Sections inside lists, blockquotes or HTML
+containers stop at their container boundary. Original syntax, container prefixes,
+Unicode and line endings are retained; content is not reconstructed from HTML.
+
+Every table has top-right **#** and **Copy** controls, outside its horizontal
+scroll area. Copy includes only the table's original source (HTML source for an
+HTML table). Table links use `table-1`, `table-2`, … in document order, with the
+same collision suffix rules as headings. Unique authored table IDs are retained.
+Existing section IDs are allocated first and remain unchanged. Direct links and
+history navigation reveal the table controls as well as its content. Generated
+IDs are deterministic for a given document; inserting/reordering tables can change
+their numbers. Clipboard success appears on the clicked button and is announced;
+failure uses the same Show raw guidance as Copy raw.
 
 ## Directory browsing
 

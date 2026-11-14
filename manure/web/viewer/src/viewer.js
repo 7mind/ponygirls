@@ -1,4 +1,4 @@
-import { marked, Renderer } from 'marked';
+import { renderMarkdown } from './markdown.js';
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import * as pdfjs from 'pdfjs-dist/build/pdf.mjs';
@@ -53,10 +53,7 @@ async function diagram(text, kind, target) {
   const svg = ['dot','gv','graphviz'].includes(kind) ? await graphviz(source) : (await mermaid.render(`diagram-${++graphId}`, source)).svg;
   svgImage(svg,target,'Rendered diagram');
 }
-const markdownRenderer = new Renderer();
-// Preserve GFM task meaning without allowing any interactive uploaded inputs.
-markdownRenderer.checkbox = ({checked}) => `<span role="img" aria-label="${checked ? 'Completed task' : 'Incomplete task'}">${checked ? '☑' : '☐'}</span> `;
-function sanitizedMarkdown(text) {
+function sanitizedMarkdown(html) {
   // Rewrite in the inert sanitizer document, BEFORE creating any live image nodes.
   // Resolve against the original document URL, not the reserved viewer/raw route.
   const mount = raw.slice(0, raw.indexOf('/__manure/raw/'));
@@ -73,9 +70,9 @@ function sanitizedMarkdown(text) {
     }
     if (node.tagName === 'A') node.setAttribute('rel','noopener noreferrer');
   });
-  return purifier.sanitize(marked.parse(text, {gfm:true, renderer:markdownRenderer}), {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background']});
+  return purifier.sanitize(html, {USE_PROFILES:{html:true}, FORBID_TAGS:['style','iframe','object','embed','form','input','video','audio','source'], FORBID_ATTR:['style','srcset','background']});
 }
-function headingLinks(article) {
+function markdownLinks(article) {
   const headings = [...article.querySelectorAll('h1,h2,h3,h4,h5,h6')];
   const counts = new Map();
   for (const node of [...document.querySelectorAll('[id]'), ...article.querySelectorAll('[id]')]) {
@@ -83,10 +80,8 @@ function headingLinks(article) {
   }
   const used = new Set(counts.keys());
   const suffixes = new Map();
-  for (const heading of headings) {
-    const title = heading.textContent.trim();
-    const slug = title.toLowerCase().replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '').trim().replace(/\s+/gu, '-') || 'section';
-    let id = heading.id;
+  function assignId(node, slug) {
+    let id = node.id;
     if (!id || counts.get(id) !== 1) {
       id = slug;
       let suffix = suffixes.get(slug) || 1;
@@ -94,8 +89,14 @@ function headingLinks(article) {
       suffixes.set(slug, suffix);
     }
     used.add(id);
-    heading.id = id;
+    node.id = id;
   }
+  for (const heading of headings) {
+    const title = heading.textContent.trim();
+    assignId(heading, title.toLowerCase().replace(/[^\p{L}\p{N}\p{M}\s_-]/gu, '').trim().replace(/\s+/gu, '-') || 'section');
+  }
+  const tables = [...article.querySelectorAll('table')];
+  tables.forEach((table, index) => assignId(table, `table-${index + 1}`));
   for (const heading of headings) {
     const title = heading.textContent.trim();
     const id = heading.id;
@@ -122,7 +123,10 @@ function headingLinks(article) {
     let id;
     try { id = decodeURIComponent(location.hash.slice(1)); } catch { return; }
     const target = document.getElementById(id);
-    if (target && article.contains(target)) target.scrollIntoView();
+    if (target && article.contains(target)) {
+      const visibleTarget = target.tagName === 'TABLE' && target.parentElement.classList.contains('markdown-table') ? target.parentElement : target;
+      visibleTarget.scrollIntoView();
+    }
   };
   addEventListener('hashchange', scrollToFragment);
   return scrollToFragment;
@@ -174,22 +178,53 @@ function markdownControls(text) {
   const copy = document.querySelector('#copy-raw');
   const feedback = document.querySelector('#copy-status');
   copy.hidden = false; copy.disabled = false;
+  bindMarkdownCopy(copy, feedback, text);
+  return preview;
+}
+function bindMarkdownCopy(copy, feedback, text) {
+  const label = copy.textContent;
+  if (!copy.hasAttribute('aria-label')) copy.setAttribute('aria-label', label);
   copy.addEventListener('click', async () => {
-    copy.disabled = true; feedback.textContent = '';
+    copy.disabled = true; copy.textContent = label; feedback.textContent = '';
     try {
       if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard access is unavailable.');
       await navigator.clipboard.writeText(text);
-      feedback.textContent = 'Raw Markdown copied.';
+      copy.textContent = 'Copied'; feedback.textContent = 'Raw Markdown copied.';
     } catch {
       feedback.textContent = 'Could not copy. Select and copy the text in Show raw instead.';
     } finally { copy.disabled = false; }
   });
-  return preview;
+}
+function copyMarkdownButton(text, label, cls) {
+  const copy = element('button', 'Copy', cls); copy.type = 'button';
+  bindMarkdownCopy(copy, document.querySelector('#copy-status'), text);
+  copy.setAttribute('aria-label', label);
+  return copy;
+}
+function markdownCopyControls(article, sources, text) {
+  for (const node of article.querySelectorAll('h1,h2,h3,h4,h5,h6,table')) {
+    const marker = node.getAttribute('data-manure-source');
+    const source = marker === null ? null : sources[Number(marker)];
+    node.removeAttribute('data-manure-source');
+    const table = node.tagName === 'TABLE';
+    if (!source || source.kind !== (table ? 'table' : 'section')) throw new Error('Markdown copy source is unavailable.');
+    const copy = copyMarkdownButton(text.slice(source.start, source.end), `Copy ${table ? 'table' : 'section'} Markdown`, table ? 'copy-table' : 'copy-section');
+    if (!table) { node.append(copy); continue; }
+    const wrapper = element('div', null, 'markdown-table');
+    const controls = element('div', null, 'table-controls');
+    const link = element('a', '#', 'table-anchor');
+    link.href = `#${encodeURIComponent(node.id)}`;
+    link.setAttribute('aria-label', `Link to table: ${node.caption ? node.caption.textContent.trim() : node.id}`);
+    node.replaceWith(wrapper);
+    controls.append(link, copy); wrapper.append(controls, node);
+  }
 }
 async function markdown(text, target) {
   const article = element('article',null,'markdown');
-  article.innerHTML = sanitizedMarkdown(text);
-  const scrollToFragment = headingLinks(article);
+  const rendered = renderMarkdown(text);
+  article.innerHTML = sanitizedMarkdown(rendered.html);
+  const scrollToFragment = markdownLinks(article);
+  markdownCopyControls(article, rendered.sources, text);
   const graphs = [...article.querySelectorAll('pre > code')].filter(code => /language-(mermaid|mmd|dot|gv|graphviz)\b/.test(code.className));
   diagramCount(graphs.length);
   target.append(article);
