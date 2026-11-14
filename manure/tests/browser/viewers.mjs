@@ -98,7 +98,26 @@ const capture = async (page, name) => {
   });
 };
 
+const favicon = async (page, key) => {
+  const link = page.locator('link[rel="icon"]');
+  assert.equal(await link.count(), 1);
+  assert.equal(await link.getAttribute('type'), 'image/svg+xml');
+  const url = new URL(await link.getAttribute('href'), page.url()).href;
+  assert.equal(url, root(key) + '/__manure/viewer/favicon.svg');
+  const response = await page.request.get(url);
+  assert.equal(response.status(), 200);
+  assert.equal(response.headers()['content-type'], 'image/svg+xml');
+  const decoded = await page.evaluate(async (url) => {
+    const image = new Image();
+    image.src = url;
+    await image.decode();
+    return image.naturalWidth > 0 && image.naturalHeight > 0;
+  }, url);
+  assert.equal(decoded, true, 'favicon must decode under the actual shell CSP');
+};
+
 const shell = async (page, key, name = filename(key)) => {
+  await favicon(page, key);
   const meta = page.locator("meta#manure-viewer");
   await meta.waitFor({ state: "attached" });
   assert.equal(await meta.getAttribute("data-path"), name);
@@ -247,6 +266,7 @@ await check("no-index directory browsing renders README and safely navigates nes
   await page.getByRole("link", { name: "Parent directory", exact: true }).click();
   await page.getByRole("link", { name: "empty/", exact: true }).click();
   await page.getByText("Empty directory", { exact: true }).waitFor();
+  await favicon(page, "browse");
   assert.equal(await page.locator("meta#manure-viewer").count(), 0);
   await page.getByRole("link", { name: "Parent directory", exact: true }).click();
   await page.getByRole("heading", { name: "Viewer specification", exact: true }).waitFor();
@@ -274,6 +294,7 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
   assert.ok(lockedView.status() >= 400, 'locked deep links must not become successful HTML shells');
   await page.goto(root(key) + '/', { waitUntil: "domcontentloaded" });
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
+  await favicon(page, key);
   const protectedURLs = [rawURL(key, name), rawURL(key, "assets/picture.png"), downloadURL(key, name),
     ...["viewer.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
       .map((asset) => root(key) + "/__manure/viewer/" + asset)];

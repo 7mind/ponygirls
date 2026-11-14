@@ -40,9 +40,12 @@ are `manure/web/dashboard`, `manure/web/unlock` relative to launch cwd.
 `viewer_dir` likewise selects the bundled viewer tree; installed packages set
 `/opt/manure/share/manure/web/viewer`, source development defaults to
 `manure/web/viewer/dist` (build first, see that directory's README). Explicit
-`null` disables formatted viewers without disabling raw content. Viewer assets
+`null` disables formatted viewers without disabling raw content. Renderer assets
 and raw bytes use the same artifact authorization checks; no render service is
-contacted.
+contacted. The generic Manure icon at `/__manure/viewer/favicon.svg` (prefixed by
+the artifact mount in path mode) is served without artifact credentials, including
+on locked access pages. It contains no artifact data and does not require an
+enabled viewer or dashboard asset directory.
 
 Example minimal synthetic server configuration:
 

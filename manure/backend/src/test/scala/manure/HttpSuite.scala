@@ -213,6 +213,7 @@ final class HttpSuite extends FunSuite:
       _ <- IO {
         assertEquals(bridge.status.code,200)
         assert(bridgeHtml.contains(s"0;url=/view/$id/nested/?manure-continue=1"))
+        assert(bridgeHtml.contains(s"href=\"/view/$id/__manure/viewer/favicon.svg\""))
         assert(!bridgeHtml.contains("attacker.test")); assert(!bridgeHtml.contains("<script"))
         assert(bridge.headers.headers.exists(h => h.name == CIString("Content-Security-Policy") && h.value.contains("default-src 'none'")))
         assert(!bridge.headers.headers.exists(_.name == CIString("Set-Cookie")))
@@ -220,6 +221,7 @@ final class HttpSuite extends FunSuite:
       _ <- Vector("1","unknown","1&manure-continue=1").traverse_ { marker =>
         h.app.run(navigate(s"/view/$id/?manure-continue=$marker",None)).flatMap { r => r.as[String].flatMap { html => IO {
           assertEquals(r.status.code,401); assert(html.contains(s"/#/artifact/$id"))
+          assert(html.contains(s"href=\"/view/$id/__manure/viewer/favicon.svg\""))
           assert(!html.contains("http-equiv=\"refresh\"")); assert(!r.headers.headers.exists(_.name == CIString("Set-Cookie")))
         }}}
       }
@@ -459,6 +461,63 @@ final class HttpSuite extends FunSuite:
   }}
 
   // Specified: Behavioral-Active / Blackbox / Good Communication (owned PG + FS).
+  test("Manure-owned preview and access shells share a mount-aware public favicon without changing artifact bytes") { run { (f,_) =>
+    val source = java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"))
+    val files = Vector("README.md" -> "# Preview", "empty" -> "", "site/index.html" -> "<title>Uploaded site</title>", "favicon.svg" -> "uploaded favicon")
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("preview icons",ArtifactKind.Directory,Visibility.Public,
+        files.map { (p,b) => ManifestEntry(p,false,Exact.utf8(b).length,SecretCodec.sha256(Exact.utf8(b))) } :+ ManifestEntry("nested",true,0,""),None,Vector.empty,None,None))
+      _ <- files.filter(_._2.nonEmpty).traverse_ { (p,b) => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,Exact.utf8(b),SecretCodec.sha256(Exact.utf8(b))) }
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      expected <- IO.blocking(java.nio.file.Files.readString(source.resolve("manure/web/dashboard/favicon.svg")))
+      _ <- Vector("path","subdomain").traverse_ { mode =>
+        val h = app(f,_.copy(viewerDir=Some(source.resolve("manure/web/viewer")),unlockShellDir=Some(source.resolve("manure/web/unlock")),contentMode=mode,contentSuffix="localhost"))
+        val mount = if mode == "path" then s"/view/${a.artifact.id}" else ""
+        def req(path: String) = request(Method.GET,mount + path).putHeaders(Header.Raw(CIString("Host"),if mode == "path" then "127.0.0.1:47329" else a.artifact.id + ".localhost:47329"))
+        val icon = mount + "/__manure/viewer/favicon.svg"
+        def checkShell(response: org.http4s.Response[IO]): IO[Unit] = response.as[String].map { html =>
+          assert(html.contains("rel=\"icon\""),s"missing preview favicon in $mode shell")
+          assert(html.contains("href=\"" + icon + "\""),s"incorrect preview favicon mount in $mode shell")
+        }
+        for
+          _ <- Vector("/","/nested/","/__manure/view/README.md").traverse_ { path => h.app.run(req(path)).flatMap(checkShell) }
+          disabled = app(f,_.copy(viewerDir=None,contentMode=mode,contentSuffix="localhost"))
+          _ <- disabled.app.run(req("/")).flatMap(checkShell)
+          response <- h.app.run(req("/__manure/viewer/favicon.svg"))
+          svg <- response.as[String]
+          _ <- IO {
+            assertEquals(response.status.code,200)
+            assertEquals(svg,expected)
+            assertEquals(response.headers.headers.find(_.name == CIString("Content-Type")).map(_.value),Some("image/svg+xml"))
+          }
+          _ <- Vector("/site/" -> "<title>Uploaded site</title>","/favicon.svg" -> "uploaded favicon","/README.md" -> "# Preview").traverse_ { (path,expected) =>
+            h.app.run(req(path)).flatMap(_.as[String]).map(body => assertEquals(body,expected))
+          }
+        yield ()
+      }
+      _ <- f.artifacts.patch(f.identity,a.artifact.id,ArtifactPatch(None,Some(Visibility.External),TtlPatch.Unchanged))
+      _ <- Vector("path","subdomain").traverse_ { mode =>
+        val mount = if mode == "path" then s"/view/${a.artifact.id}" else ""
+        def req(path: String) = request(Method.GET,mount + path).putHeaders(Header.Raw(CIString("Host"),if mode == "path" then "127.0.0.1:47329" else a.artifact.id + ".localhost:47329"))
+        val icon = mount + "/__manure/viewer/favicon.svg"
+        val h = app(f,_.copy(contentMode=mode,contentSuffix="localhost",unlockShellDir=Some(source.resolve("manure/web/unlock"))))
+        for
+          _ <- Vector(h,app(f,_.copy(contentMode=mode,contentSuffix="localhost",unlockShellDir=None,viewerDir=None,dashboardDir=None))).traverse_ { server =>
+            for
+              shell <- server.app.run(req("/"))
+              html <- shell.as[String]
+              _ <- IO(assert(html.contains("href=\"" + icon + "\"")))
+              response <- server.app.run(req("/__manure/viewer/favicon.svg"))
+              svg <- response.as[String]
+              _ <- IO { assertEquals(response.status.code,200); assertEquals(svg,expected) }
+              raw <- server.app.run(req("/__manure/raw/README.md"))
+              _ <- IO(assert(raw.status.code != 200,"favicon access must not grant artifact access"))
+            yield ()
+          }
+        yield ()
+      }
+    yield ()
+  }}
   test("viewer negotiation, escaped shell, raw ranges, exact authorized assets and disabled fallback") { run { (f,_) =>
     val bytes = Exact.utf8("# viewer bytes")
     val name = "a&\"<馬>.md"

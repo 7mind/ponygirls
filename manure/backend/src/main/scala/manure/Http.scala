@@ -350,6 +350,10 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case '\'' => "&#39;"
     case c => c.toString
   }
+  private val faviconSvg = """<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="7" fill="#3b2b1c"/><g fill="none" stroke="#f4c078" stroke-width="2.5" stroke-linejoin="round"><path d="m6 10 10-5 10 5v13l-10 5-10-5Z"/><path d="m6 10 10 5 10-5M16 15v13M11 8l10 5v6"/></g></svg>
+"""
+  private def faviconLink(ctx: Context): String =
+    "<link rel=\"icon\" type=\"image/svg+xml\" href=\"" + ctx.mount + "/__manure/viewer/favicon.svg\">"
   private def viewerBytes(name: String): IO[Array[Byte]] = IO.blocking {
     val root = config.viewerDir.getOrElse(throw DomainError("not-found"))
     Require(Set("index.html","viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
@@ -404,9 +408,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       .headOption.map(prefix + _)
     if config.viewerDir.nonEmpty && readme.nonEmpty then viewerShell(ctx,readme.get,listing)
     else IO.pure(Response[IO](Status.Ok).withEntity(
-      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Manure · Directory</title></head><body><main>" +
+      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Manure · Directory</title>" + faviconLink(ctx) + "</head><body><main>" +
         listing + "</main></body></html>").putHeaders(raw("Content-Type","text/html; charset=utf-8"),
-        raw("Content-Security-Policy","default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
+        raw("Content-Security-Policy","default-src 'none'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
   private def form(req: Request[IO]): IO[Map[String,String]] =
     IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/x-www-form-urlencoded"), "bad-envelope")) *>
       body(req,config.limits.maxRequestBodyBytes).map { bytes =>
@@ -421,7 +425,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     case Some(_) => asset(config.unlockShellDir,"index.html",ctx,false).map(_.withStatus(status))
     case None =>
       val warning = if config.contentMode == "path" then "<span id=\"path-mode-warning\" role=\"img\" title=\"Low-security path hosting: artifacts share the dashboard/API origin. Trusted content only.\">ⓘ</span>" else ""
-      val html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>manure — password required</title></head><body>" + warning +
+      val html = "<!doctype html><html><head><meta charset=\"utf-8\"><title>manure — password required</title>" + faviconLink(ctx) + "</head><body>" + warning +
         "<h1>password required</h1><form method=\"post\" action=\"" + ctx.mount + "/__manure/unlock\">" +
         "<label>External password<input type=\"password\" name=\"password\" autocomplete=\"off\" required></label><button type=\"submit\">unlock</button></form></body></html>"
       IO.pure(Response[IO](status).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Referrer-Policy","strict-origin")))
@@ -469,6 +473,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           case error => IO.raiseError(error)
         }
       }
+    else if req.method == Method.GET && path == "/__manure/viewer/favicon.svg" then
+      IO.pure(Response[IO](Status.Ok).withEntity(faviconSvg).putHeaders(raw("Content-Type","image/svg+xml")))
     else if req.method == Method.GET && path.startsWith("/__manure/viewer/") then
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { _ =>
         val name = path.stripPrefix("/__manure/viewer/")
@@ -559,11 +565,11 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
               val message = if continued then "Sign in to open this internal artifact." else "Continuing to internal artifact…"
               val link = if continued then "/#/artifact/" + id else next
               IO.pure(Response[IO](if continued then Status.Unauthorized else Status.Ok).withEntity(
-                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Manure · Internal artifact</title>" + refresh +
+                "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Manure · Internal artifact</title>" + faviconLink(ctx) + refresh +
                   "</head><body><main><p>" + message + "</p><a href=\"" + htmlAttribute(link) + "\">" +
                   (if continued then "Sign in on dashboard" else "Continue") + "</a></main></body></html>")
                 .putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Referrer-Policy","no-referrer"),
-                  raw("Content-Security-Policy","default-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
+                  raw("Content-Security-Policy","default-src 'none'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
             else if c.kind != "cookie" then content(req,ctx,id)
             else
               IO {
