@@ -12,6 +12,18 @@ final class RootIdentitySuite extends munit.FunSuite:
   private def writeMarker(root: ConfinedDirectory,bytes: Array[Byte]): Unit =
     Using.resource(root.createFile(RootMarker.Name)) { file => file.write(0,bytes);file.forceFile() }
     root.forceRootDirectory()
+  test("plain physical root identity is inode-anchored across device renumbering") {
+    val stored=PhysicalRootBinding(64800L,7864321L)
+    val zeros="0"*64
+    assert(RootBinding.sameRoot(stored,stored))
+    assert(RootBinding.sameRoot(stored,PhysicalRootBinding(64816L,7864321L)))
+    assert(!RootBinding.sameRoot(stored,PhysicalRootBinding(64800L,7864322L)))
+    val portable=PortableRootBinding(zeros,7864321L,zeros)
+    assert(RootBinding.sameRoot(portable,portable))
+    assert(!RootBinding.sameRoot(portable,PortableRootBinding(zeros,7864321L,"1"*64)))
+    assert(!RootBinding.sameRoot(stored,portable))
+    assert(!RootBinding.sameRoot(portable,stored))
+  }
   test("CSI identity preserves opaque handles and rejects malformed identifiers") {
     val driver="storage.example.test"
     val volume=RootVolume(driver,"tenant/volume:horse-馬")

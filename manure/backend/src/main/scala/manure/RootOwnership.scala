@@ -13,7 +13,7 @@ final case class AcceptedRootOwnership(binding: RootBinding,imported: Option[Imp
       case portable: PortableRootBinding =>
         val marker=RootMarker.read(root).getOrElse(throw DomainError("migration-pending"))
         PortableRootBinding(portable.volumeDigest,RootBinding.physical(root).inode,SecretCodec.sha256(marker))
-    Require(actual == binding,"migration-required")
+    Require(RootBinding.sameRoot(actual,binding),"migration-required")
 
 object RootOwnership:
   val TemporaryPrefix: RelativeName = RelativeName.parse(".manure-root-prepare-")
@@ -53,6 +53,6 @@ object RootOwnership:
           !files.payload.hasRootEntryPrefix(TemporaryPrefix,config.migrationManifestMaxEntries),"migration-pending")
         Require(provider.isEmpty,"migration-required")
         val observed=RootBinding.physical(files.payload)
-        Require(legacy.forall(_ == observed),"migration-required")
+        Require(legacy.forall(RootBinding.sameRoot(_,observed)),"migration-required")
         AcceptedRootOwnership(observed,None)
       }

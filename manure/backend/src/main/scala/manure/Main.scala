@@ -123,7 +123,7 @@ object Main extends IOApp:
         val bytes=ownership.binding.bytes
         control.foreach(_.physicalIdentity)
         if observation.binding.isEmpty then Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
-        Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
+        Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(stored => RootBinding.sameRoot(RootBinding.decode(stored),ownership.binding)), "migration-required")
       services.projection.initialize(c)
     })
     _ <- Resource.eval(stage("reconcile",if recover then services.artifacts.initialize() else IO.unit))
