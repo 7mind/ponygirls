@@ -242,6 +242,15 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     Require(values.size <= 1, "bad-envelope"); values.headOption
   private def url(ctx: Context,id: String): String = config.contentUrl(id,ctx.origin)
   private def summary(ctx: Context,a: Artifact): wire.Artifact = CurrentWire.artifact(a,url(ctx,a.id))
+  private def dispatch(req: Request[IO],ctx: Context,c: Credentials,e: wire.ClientEnvelope): IO[Response[IO]] =
+    c.identity.traverse_ { expected =>
+      val secret = c.raw.getOrElse(throw DomainError("unauthorized"))
+      val current = c.kind match
+        case "cookie" => accounts.browser(secret)
+        case "bearer" => accounts.bearer(secret)
+        case _ => IO.raiseError(DomainError("unauthorized"))
+      current.flatMap(principal => IO(Require(principal.contains(expected), "unauthorized")))
+    }.flatMap(_ => command(req,ctx,c,e))
   private def command(req: Request[IO],ctx: Context,c: Credentials,e: wire.ClientEnvelope): IO[Response[IO]] =
     val result: IO[wire.Result] = e.command match
       case _: wire.Command.Version => IO.pure(wire.Result.Version(wire.VersionInfo(CurrentWire.version,List(CurrentWire.version))))
@@ -292,7 +301,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     req.method == Method.GET && (path == "/" || Set("/favicon.svg","/app.js","/styles.css","/current-protocol.js","/current-schema.js","/quick-upload.js","/sha256.js","/account.js","/account.css")(path) || path.startsWith("/current/"))
   private def api(req: Request[IO],ctx: Context): IO[Response[IO]] = credentials(req,ctx,dashboardAsset(req)).flatMap { c =>
     apiRequest(req,ctx,c).map { response =>
-      if c.kind == "cookie" && !response.headers.headers.exists(_.name == CIString("Set-Cookie")) then
+      if c.kind == "cookie" && response.status != Status.Unauthorized && !response.headers.headers.exists(_.name == CIString("Set-Cookie")) then
         response.putHeaders(raw("Set-Cookie",sessionCookie(ctx,c.raw.getOrElse(throw DomainError("unauthorized")),false)))
       else response
     }
@@ -302,7 +311,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     if req.method == Method.POST && path == "/api/current" then
       readJson(req).flatMap { value =>
         val id = CurrentWire.requestId(value)
-        IO(CurrentWire.command(value)).flatMap(command(req,ctx,c,_)).handleError(e => failure(id,e))
+        IO(CurrentWire.command(value)).flatMap(dispatch(req,ctx,c,_)).handleError(e => failure(id,e))
       }
     else if req.method == Method.POST && path == "/api/current/login" then
       IO(Require(originHeader(req).contains(ctx.origin.value), "forbidden")) *> IO.raiseError(DomainError("bad-envelope"))

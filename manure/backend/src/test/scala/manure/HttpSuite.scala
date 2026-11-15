@@ -1,6 +1,6 @@
 package manure
 
-import cats.effect.IO
+import cats.effect.{Deferred,IO,Resource}
 import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import org.http4s.{Header,Method,Request,Uri}
@@ -8,6 +8,7 @@ import org.typelevel.ci.CIString
 import manure.{api => wire}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import java.util.UUID
+import scala.concurrent.duration.*
 import munit.FunSuite
 
 /** Actual http4s adapter + real PG/FS; target-process/socket/browser legs are
@@ -47,6 +48,31 @@ final class HttpSuite extends FunSuite:
     legacy <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
     _ <- IO { assertEquals(legacy.status.code,400); assert(!legacy.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
   yield () }}
+  test("domain dispatch rejects a session logged out while its Whoami body is held") { run { (f,h) =>
+    val deadline = 10.seconds
+    for
+      cookie <- browserCookie(h)
+      bodyStarted <- Deferred[IO,Unit]
+      releaseBody <- Deferred[IO,Unit]
+      original = command(wire.Command.Whoami(),None).putHeaders(Header.Raw(CIString("Cookie"),cookie))
+      held = original.withBodyStream(fs2.Stream.eval(bodyStarted.complete(()).void *> releaseBody.get).drain ++ original.body)
+      response <- Resource.make(h.app.run(held).start)(running => releaseBody.complete(()).void *> running.cancel).use { running => for
+        _ <- bodyStarted.get
+        logout <- h.app.run(request(Method.POST,"/api/account/v1/logout",None,Some("http://127.0.0.1:47329"))
+          .withEntity("{}").putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),
+            Header.Raw(CIString("Cookie"),cookie),Header.Raw(CIString("X-Account-Actor"),ponygirls.auth.AccountJson.actor(f.identity.userId))))
+        _ <- IO(assertEquals(logout.status.code,200))
+        _ <- releaseBody.complete(())
+        response <- running.joinWithNever
+      yield response }.timeout(deadline)
+      body <- response.as[String].map(text => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(text)))
+      _ <- IO {
+        assertEquals(response.status.code,401)
+        assertEquals(body.result.asInstanceOf[wire.Result.Error].failure.code,wire.ErrorCode.Unauthorized)
+        assert(!response.headers.headers.exists(_.name == CIString("Set-Cookie")))
+      }
+    yield ()
+  }}
   test("stale browser cookies do not prevent public shell loading and password reauthentication") { run { (f,h) => for
     cookie <- browserCookie(h)
     _ <- new Accounts(f.metadata,f.auth).logout(cookie.split("=",2)(1))

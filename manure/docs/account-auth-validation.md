@@ -114,3 +114,38 @@ A fresh full run used the same exact `test-backend.sh` command above:
 
 `sha256sum --check --quiet` verified every receipt input against the final task
 sources. This follow-up does not establish native or browser acceptance.
+
+## Domain dispatch after asynchronous input
+
+A bounded controlled-http4s/owned-PG regression first admitted a valid browser
+cookie, paused the `Whoami` request body after credential admission, committed
+independent account logout, then released the body. Before correction it
+returned **200 instead of required 401** (one expected failure), recorded in
+`manure/backend/target/auth-dispatch-fail-first.log`. The test uses Deferred
+ordering, a 10-second timeout, and Resource cleanup that releases/cancels the
+held request; it does not rely on sleeps or production data.
+
+The common domain-command dispatch boundary now resolves the captured secret
+using its captured credential kind after envelope input/decoding, requires the
+same complete captured Identity, and only then executes the original command.
+It does not adopt another principal or validate after command execution.
+Unauthorized responses do not renew the captured cookie. Existing artifact
+transaction-local authorization remains unchanged. The corrected regression
+returns 401 Unauthorized without Set-Cookie; anonymous Version/Capabilities,
+public-shell recovery and successful generated/form logout acknowledgements
+remain covered by the full suite.
+
+A fresh full `nix develop .#chronicle --command bash manure/scripts/test-backend.sh`
+run passed **18 backend suites / 224 tests** and **2 storage suites / 33 tests**,
+with **zero failures, errors or skips**. Assembly and single compiled Baboon
+runtime-owner verification also passed. Read-only review found no actionable
+correctness/security defect; its role was source review, not test execution.
+
+- Receipt: `manure/backend/target/validation-runs/20261115T014720Z.lwODNg`.
+- Receipt `source.sha256` SHA-256:
+  `73474b9ed66271b53a3d52c04aab222b5cc278d830017757e1d476f9c0982086`.
+- Assembly SHA-256:
+  `716231984bb513c698c4eebf0348a95c719e6c5896c9ba2320738523150d15a7`.
+
+Every receipt input was verified with `sha256sum --check --quiet`. This is JVM /
+PostgreSQL / filesystem evidence, not a new browser or native acceptance run.
