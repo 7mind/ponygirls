@@ -23,6 +23,7 @@ in runCommand "manure-0.2.0" {
     test -d ${web}/"$shell"
     cp -r ${web}/"$shell" "$out/share/manure/web/"
   done
+  chmod u+w "$out/share/manure/web/dashboard"
   cp --remove-destination ${accountWeb}/account.js ${accountWeb}/account.css "$out/share/manure/web/dashboard/"
   cp -r ${viewer}/share/manure/web/viewer "$out/share/manure/web/viewer"
   ln -s ${clients}/bin/manure "$out/bin/manure"
