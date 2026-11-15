@@ -577,6 +577,7 @@
                     options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                     options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
                     options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; default = { }; };
                     options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
                     options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
                     options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
@@ -629,6 +630,7 @@
                     options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                     options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = true; };
                     options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; default = { }; };
                     options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
                     options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
                     options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
@@ -696,6 +698,7 @@
                     options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                     options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
                     options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; default = { }; };
                     options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
                     options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
                     options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
@@ -1195,7 +1198,7 @@
           '';
           backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
           manure-toolchain-routing = pkgs.runCommand "manure-toolchain-routing-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java} ${./nix/pkg/services/native.nix}
+            python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java} ${./nix/pkg/services/native.nix} ${chronicleTools.graal}/release
             touch "$out"
           '';
           manure-acceptance-policy = pkgs.runCommand "manure-acceptance-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''

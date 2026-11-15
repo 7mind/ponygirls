@@ -104,9 +104,17 @@ const favicon = async (page, key) => {
   assert.equal(await link.getAttribute('type'), 'image/svg+xml');
   const url = new URL(await link.getAttribute('href'), page.url()).href;
   assert.equal(url, root(key) + '/__manure/viewer/favicon.svg');
-  const response = await page.request.get(url);
-  assert.equal(response.status(), 200);
-  assert.equal(response.headers()['content-type'], 'image/svg+xml');
+  // Directory CSP permits images, not fetch; probe via Chromium navigation so
+  // resolver rules apply without changing the original document or its policy.
+  const probe = await page.context().newPage();
+  try {
+    const response = await probe.goto(url, { waitUntil: 'load', timeout: 20000 });
+    assert.ok(response);
+    assert.equal(response.status(), 200);
+    assert.equal(response.headers()['content-type'], 'image/svg+xml');
+  } finally {
+    await probe.close();
+  }
   const decoded = await page.evaluate(async (url) => {
     const image = new Image();
     image.src = url;

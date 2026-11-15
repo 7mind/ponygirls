@@ -148,6 +148,47 @@ re-compared after acknowledged new writes; the persisted physical binding remain
 explicitly without adoption; plan higher finite migration capacity before importing
 large source sets. Payload hashing's aggregate byte bound is the exact receipt sum.
 
+## Plain-host root binding policy
+
+Optional `"root_binding":{"mode":"strict"}` defaults to `strict` when absent.
+Explicit null, unknown fields/modes and malformed objects refuse configuration.
+
+- `strict`: persistent physical binding requires the same device and inode.
+- `inode-anchored`: explicitly tolerate device renumbering for a plain root with
+  the same inode. Retain the existing binding bytes; no automatic rebinding.
+  Another filesystem can have the same inode: this is an operator-selected weaker
+  continuity assumption, **not** portable volume or clone authority.
+- `unsafe-off`: disposable deployments only. Do not enforce or create persistent
+  physical ownership; leave any existing physical binding row untouched. A wrong
+  payload root may attach existing metadata. Do not use this as production recovery.
+
+Nix deployments expose the same enum through
+`smind.services.manure.rootBindingMode` (NixOS) and
+`smind.hm.services.agentic.manure.rootBindingMode` (Home Manager). Both default to
+`"strict"` and omit the default JSON field; no deployment is automatically opted in.
+
+Non-strict modes print `manure warning root-binding-mode=MODE` to stderr whenever
+runtime resources are acquired (serve or schema-only migrate). They do not disable
+physical process claims, locks, leases, no-follow confinement or exact within-process
+root revalidation. `check-config` validates policy without acquiring resources.
+
+Non-strict modes refuse configured root authority/import control paths and persisted
+imported destinations, portable bindings or migration receipts. They cannot bypass
+portable markers, pending preparation, imported OWNER/COMPLETE/PAYLOAD tuple/hash
+checks, SQLite refusal or first-adoption inventory verification. They are not an
+alternative authority adapter for imported or portable deployments.
+
+The no-empty-catalogue adoption gate remains. In `unsafe-off`, even an existing
+physical binding cannot authorize cleanup of unknown nonempty staging/live data
+when the catalogue is empty. This deliberately also refuses orphan recovery after
+last-row deletion if payload cleanup was interrupted. Switching back to strict can
+refuse a drifted historical binding; switching from unsafe-off does not establish
+historical ownership. `migrate` remains schema-only and never adopts a root.
+
+See `../../docs/drafts/20261115-0020-manure-root-binding-policy.md` for the design
+and acceptance boundaries. Selecting a mode is not authorization to edit database
+state, migrate a binding or deploy/restart a live service.
+
 ## Actual target acceptance runner
 
 `manure/scripts/test-target.sh jvm full` builds the current JVM artifact;

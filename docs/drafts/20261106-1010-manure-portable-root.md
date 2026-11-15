@@ -122,8 +122,12 @@ Pod deployments need a separately reviewed contract change, not a silent cap byp
 
 ## Ownership format and exclusion
 
-With authority absent, legacy16-byte big-endian device/inode bindings and original
-physical first-adoption policy remain unchanged. Authority-enabled normal startup
+By default, with authority absent, legacy16-byte big-endian device/inode bindings
+and original physical first-adoption policy remain unchanged. Plain hosts may
+explicitly select the weaker `inode-anchored` or disposable-only `unsafe-off`
+[physical binding policy](20261115-0020-manure-root-binding-policy.md). These modes
+refuse imported destinations and portable/migration state; they do not relax any
+portable authority, marker or imported-receipt requirement described here. Authority-enabled normal startup
 requires an applied portable binding: it refuses unbound and unmigrated V1 roots
 before schema/adoption effects. It never silently adopts V1 or upgrades it. Pending
 receipt/marker/preparation state remains a prior refusal; an unbound import cannot

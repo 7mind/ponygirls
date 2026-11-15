@@ -195,6 +195,9 @@ final class RootMigrationSuite extends munit.FunSuite:
           plan <- RootIdentityMigration.prepare(config,authority,"owned crash fixture original volume")
           _ <- fails("owned-fault",RootIdentityMigration.applyPlan(config,authority,plan,plan.sha256,fault))
           interrupted <- state(config)
+          _ <- Vector(RootBindingMode.InodeAnchored,RootBindingMode.UnsafeOff).traverse_ { mode =>
+            fails("root-binding-policy",Main.resources(config.copy(rootBinding=mode)).use(_ => IO.unit))
+          }
           _ <- if window == RootMigrationPoint.AppliedCommitted then IO(assertEquals(interrupted.binding,Some(plan.portable)))
             else fails("migration-pending",Main.resourcesWithAuthority(config,authority).use(_ => IO.unit))
           result <- applyQuiet(config,plan,authority)

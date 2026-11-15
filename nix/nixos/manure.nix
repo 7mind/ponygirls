@@ -132,6 +132,9 @@ let
     incomplete_session_ttl_s = cfg.incompleteSessionTtl;
     grant_ttl_s = cfg.grantTtl;
     one_time_grant_ttl_s = cfg.oneTimeGrantTtl;
+  # Omit the default for unchanged configs and older package compatibility.
+  } // lib.optionalAttrs (cfg.rootBindingMode != "strict") {
+    root_binding.mode = cfg.rootBindingMode;
   } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; };
 
   templateJson = pkgs.writeText "manure-config.template.json" (builtins.toJSON serverTemplate);
@@ -341,6 +344,11 @@ in
         leaseSeconds = lib.mkOption { type = lib.types.ints.between 3 3600; };
         pollIntervalMs = lib.mkOption { type = lib.types.ints.positive; };
       }; };
+    rootBindingMode = lib.mkOption {
+      type = lib.types.enum [ "strict" "inode-anchored" "unsafe-off" ];
+      default = "strict";
+      description = "Persistent physical payload ownership policy. strict requires device and inode; inode-anchored tolerates device drift with matching inode (not volume identity); unsafe-off disables persistent ownership for disposable deployments only. Locks and exact within-process checks remain enabled. Non-strict modes refuse imported/portable roots and migration receipts.";
+    };
     migrationReceiptDirectory = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Offline converter control receipt root (OWNER/COMPLETE/import.sql), distinct from payload dataDir and operator credentials."; };
     dataDir = lib.mkOption {
       type = lib.types.str;
@@ -429,6 +437,10 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = accounts.assertions "smind.services.manure" cfg.users ++ [
+      {
+        assertion = cfg.rootBindingMode == "strict" || cfg.migrationReceiptDirectory == null;
+        message = "smind.services.manure: migrationReceiptDirectory requires strict rootBindingMode.";
+      }
       {
         assertion = cfg.users != { };
         message = "smind.services.manure: configure at least one declarative user.";

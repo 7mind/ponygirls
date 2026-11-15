@@ -70,6 +70,13 @@ final class CheckConfigSuite extends FunSuite:
         Json.arr(passwordOnly.mapObject(_.add("type",Json.fromString("agent")))),
         Json.arr(passwordOnly,passwordOnly.mapObject(_.add("id",Json.fromString("other")))))
       invalidUsers.foreach(users => assert(!run(config.mapObject(_.add("users",users)),1).contains("MANURE_CONFIG_OK")))
+      Vector("strict","inode-anchored","unsafe-off").foreach { mode =>
+        assert(run(config.mapObject(_.add("root_binding",Json.obj("mode" -> Json.fromString(mode)))),0).contains("MANURE_CONFIG_OK"))
+      }
+      Vector(Json.Null,Json.arr(),Json.obj(),Json.obj("mode" -> Json.fromInt(1)),Json.obj("mode" -> Json.Null),Json.obj("mode" -> Json.fromString("off")),
+        Json.obj("mode" -> Json.fromString("strict"),"extra" -> Json.True)).foreach { invalid =>
+        assert(!run(config.mapObject(_.add("root_binding",invalid)),1).contains("MANURE_CONFIG_OK"))
+      }
       val duplicate=config.mapObject(_.add("allowed_api_origins",Json.arr(Json.fromString("https://api.example.test:8443"))))
       assert(!run(duplicate,1).contains("MANURE_CONFIG_OK"))
       assert(!Files.exists(directory.resolve("nonexistent-data")))

@@ -29,6 +29,17 @@ final class RootIdentitySuite extends munit.FunSuite:
       intercept[DomainError](RootBinding.decode(invalid))
     }
   }
+  test("session revalidation requires exact device identity even without persistent ownership") {
+    BackendFixture.resource(false).use { fixture => IO {
+      val observed=RootBinding.physical(fixture.root)
+      Vector(Some(observed),None).foreach { binding =>
+        val accepted=AcceptedRootOwnership(binding,observed,None)
+        accepted.revalidate(fixture.root)
+        val changed=accepted.copy(observed=observed.copy(device=observed.device ^ 16L))
+        assertEquals(intercept[DomainError](changed.revalidate(fixture.root)).code,"migration-required")
+      }
+    }}.unsafeRunSync()
+  }
   test("durable binding excludes pod/object/mount witnesses but distinguishes cloned volume") {
     BackendFixture.resource(false).use { fixture => IO {
       val bytes=Array.tabulate[Byte](RootMarker.Bytes)(_.toByte)

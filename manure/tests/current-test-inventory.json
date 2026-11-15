@@ -825,9 +825,12 @@
       ],
       "tests": [
         "test_target_root_identity.PortableRootStartupTests.test_apply_command_reports_its_own_error_stage",
+        "test_target_root_identity.PortableRootStartupTests.test_inode_anchored_device_drift_preserves_payload_binding_and_strict_refusal",
+        "test_target_root_identity.PortableRootStartupTests.test_non_strict_cannot_disable_configured_portable_authority",
         "test_target_root_identity.PortableRootStartupTests.test_opted_in_legacy_root_refuses_and_default_auth_payload_remain_usable",
         "test_target_root_identity.PortableRootStartupTests.test_opted_in_unbound_root_refuses_before_schema_or_adoption",
-        "test_target_root_identity.PortableRootStartupTests.test_plan_command_reports_its_own_error_stage"
+        "test_target_root_identity.PortableRootStartupTests.test_plan_command_reports_its_own_error_stage",
+        "test_target_root_identity.PortableRootStartupTests.test_unsafe_off_upload_fetch_restart_without_persistent_binding"
       ]
     },
     {

@@ -105,8 +105,9 @@ object Main extends IOApp:
           // A matching existing binding already establishes this root's domain
           // ownership. Empty metadata can follow a committed last-row delete
           // whose filesystem cleanup was interrupted; normal orphan recovery is
-          // then required. This refusal is ONLY for first, unbound adoption.
-          case None if observation.emptyArtifacts && observation.binding.isEmpty =>
+          // then required. Without persistent ownership enforcement an existing
+          // row cannot authorize that cleanup, even if it was once legitimate.
+          case None if observation.emptyArtifacts && (observation.binding.isEmpty || ownership.binding.isEmpty) =>
             val unexpected=Vector("staging","live").exists { name =>
               try directory.tree(RelativeName.parse(name),config.limits.cleanupEntries,68).nonEmpty
               catch case _: NoSuchFileException => false
@@ -121,10 +122,12 @@ object Main extends IOApp:
         // physical claims remain held; check root identities again before the
         // FIRST insert. migrate is schema-only and NEVER adopts a payload root.
         ownership.revalidate(directory)
-        val bytes=ownership.binding.bytes
         control.foreach(_.physicalIdentity)
-        if observation.binding.isEmpty then Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
-        Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
+        ownership.binding.foreach { binding =>
+          val bytes=binding.bytes
+          if observation.binding.isEmpty then Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
+          Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
+        }
       services.projection.initialize(c)
       ponygirls.auth.AccountSql.initialize(c)
     })

@@ -14,8 +14,8 @@ import sys
 import tempfile
 import unittest
 
-script, feature, packaging = map(lambda value: Path(value).resolve(), sys.argv[1:4])
-del sys.argv[1:4]
+script, feature, native_recipe, pinned_release = map(lambda value: Path(value).resolve(), sys.argv[1:5])
+del sys.argv[1:5]
 
 
 class ToolchainRoutingTest(unittest.TestCase):
@@ -87,9 +87,19 @@ class ToolchainRoutingTest(unittest.TestCase):
     def test_packaging_and_probe_require_the_same_verified_graal_pin(self):
         pattern = r'GRAALVM_VERSION="([^"]+)"'
         probe_pins = re.findall(pattern, script.read_text())
-        package_pins = re.findall(pattern, packaging.read_text())
+        package_pins = re.findall(pattern, native_recipe.read_text())
         self.assertEqual(len(probe_pins), 1)
         self.assertEqual(package_pins, probe_pins)
+
+    def test_production_and_probe_guards_match_actual_pinned_release(self):
+        # Inspect both real build entrypoints; compiler stand-ins alone cannot
+        # catch a production-only pin drift. No assembly/native build is needed.
+        expected = 'GRAALVM_VERSION="25.4.4.1.1"'
+        for entrypoint in [script, native_recipe]:
+            guards = re.findall(r"grep -q '([^']*GRAALVM_VERSION[^']*)'", entrypoint.read_text())
+            self.assertEqual(guards, [expected], str(entrypoint))
+        self.assertIn(expected, pinned_release.read_text().splitlines())
+        self.assertIn("Graal CE 25.4.4.1.1", feature.read_text())
 
     def test_wrong_version_rejected_before_compilers(self):
         self.release.write_text('GRAALVM_VERSION="different"\n')

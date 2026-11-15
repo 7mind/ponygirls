@@ -185,6 +185,11 @@ in
         leaseSeconds = lib.mkOption { type = lib.types.ints.between 3 3600; };
         pollIntervalMs = lib.mkOption { type = lib.types.ints.positive; };
       }; };
+      rootBindingMode = mkOption {
+        type = types.enum [ "strict" "inode-anchored" "unsafe-off" ];
+        default = "strict";
+        description = "Persistent physical payload ownership policy. strict requires device and inode; inode-anchored tolerates device drift with matching inode (not volume identity); unsafe-off disables persistent ownership for disposable deployments only. Locks and exact within-process checks remain enabled. Non-strict modes refuse imported/portable roots and migration receipts.";
+      };
       migrationReceiptDirectory = mkOption { type = types.nullOr types.str; default = null; description = "Explicit offline migration control/OWNER/COMPLETE/import.sql directory, independently of dataDirectory and existing credentials."; };
       allowInsecureHttp = mkOption {
         type = types.bool;
