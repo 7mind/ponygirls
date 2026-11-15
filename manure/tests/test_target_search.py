@@ -24,6 +24,7 @@ from uuid import uuid4
 from manure import auth as A,current_protocol as cp
 from manure.client import ManureClient,ManureError
 from target_server import OwnedDatabase,TargetServer
+import browser_fixtures as bf
 
 
 class ControlledEmbedding:
@@ -245,7 +246,7 @@ class TargetSearchTests(unittest.TestCase):
     def test_dashboard_retrieval_real_browser_controlled_provider_and_no_provider(self):
         with tempfile.TemporaryDirectory(prefix='manure-dashboard-retrieval-') as tmp:
             root=Path(tmp);data=root/'data';data.mkdir(mode=0o700)
-            token=A.generate_token();hashfile=root/'operator.digest';hashfile.write_text(A.sha256_hex(token)+'\n');hashfile.chmod(0o600)
+            identity=bf._make_identity(tmp);token=identity.token;hashfile=Path(identity.hash_file)
             credential=root/'empty-model-credential';credential.write_text('');credential.chmod(0o600)
             model=ControlledEmbedding();model.slow_document_once=0
             database=OwnedDatabase(tmp)
@@ -257,10 +258,12 @@ class TargetSearchTests(unittest.TestCase):
             config={'data_dir':str(data),'api_origin':f'http://127.0.0.1:{port}','listen_address':'127.0.0.1','port':port,
                 'content_mode':'path','content_suffix':'','loopback_dev':True,'chunk_bytes':262144,'sweep_interval_s':3600,
                 'dashboard_dir':str(Path(__file__).resolve().parents[1]/'web/dashboard'),'unlock_shell_dir':None,'embedding':endpoint,
-                'users':[{'id':'search-manager','type':'human','tokens':[{'id':'primary','hashFile':str(hashfile)}]}]}
+                'users':[{'id':'search-manager','type':'human','enabled':True,'login':identity.login,
+                    'passwordHashFile':identity.password_hash_file,'tokens':[{'id':'primary','hashFile':str(hashfile)}]}]}
             server=None
             def browser(stage):
-                payload={'base':server.api_url,'token':token,'stage':stage,'browser':os.environ['MANURE_CHROMIUM_BIN'],
+                payload={'base':server.api_url,'token':token,'login':identity.login,'loginPassword':identity.password,
+                    'stage':stage,'browser':os.environ['MANURE_CHROMIUM_BIN'],
                     'core':os.environ['MANURE_PLAYWRIGHT_CORE_PATH'],'artifacts':os.environ.get('MANURE_UX_ARTIFACTS','')}
                 result=subprocess.run([os.environ.get('MANURE_NODE_BIN','node'),str(Path(__file__).resolve().parent/'browser/dashboard-retrieval.mjs')],
                     input=json.dumps(payload).encode(),capture_output=True,timeout=120)
