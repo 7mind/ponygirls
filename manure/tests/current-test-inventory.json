@@ -63,7 +63,7 @@
         "test_browser_dashboard.ExpiredDeleteCase.test_a2_expired_artifact_can_be_deleted_from_list",
         "test_browser_dashboard.TestAssetHygiene.test_dashboard_js_never_injects_html_or_touches_storage",
         "test_browser_dashboard.TestAssetHygiene.test_grant_handoff_is_form_post_not_url",
-        "test_browser_dashboard.TestAssetHygiene.test_login_token_input_is_transient_password_field",
+        "test_browser_dashboard.TestAssetHygiene.test_login_uses_transient_username_password_fields",
         "test_browser_dashboard.TestAssetHygiene.test_unlock_form_posts_urlencoded_to_own_origin",
         "test_browser_dashboard.TestAssetHygiene.test_unlock_js_never_injects_html_or_touches_storage",
         "test_browser_dashboard.TestAssetHygiene.test_unlock_shell_uses_external_assets_only"
@@ -560,12 +560,14 @@
       "tests": [
         "test_dashboard_markup.DashboardMarkupTests.test_both_shells_offer_dark_mode_without_external_assets",
         "test_dashboard_markup.DashboardMarkupTests.test_catalogue_is_an_accessible_sortable_table",
+        "test_dashboard_markup.DashboardMarkupTests.test_dashboard_account_assets_resolve_to_the_shared_source",
         "test_dashboard_markup.DashboardMarkupTests.test_dashboard_distinguishes_session_unavailability_from_login",
         "test_dashboard_markup.DashboardMarkupTests.test_detail_has_file_table_and_transient_password_actions",
         "test_dashboard_markup.DashboardMarkupTests.test_detail_offers_access_modes_and_live_feedback",
         "test_dashboard_markup.DashboardMarkupTests.test_infinite_scroll_has_keyboard_and_failure_controls",
         "test_dashboard_markup.DashboardMarkupTests.test_path_mode_notice_is_an_icon_with_a_tooltip",
         "test_dashboard_markup.DashboardMarkupTests.test_quick_upload_has_explicit_publish_and_access_controls",
+        "test_dashboard_markup.DashboardMarkupTests.test_shared_account_login_and_settings_hooks",
         "test_dashboard_markup.DashboardMarkupTests.test_single_expression_editor_has_completion_and_secondary_help"
       ]
     },
