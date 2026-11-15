@@ -12,7 +12,13 @@ object AccountJson {
   def parseUtf8(raw: Array[Byte]): Json = json(ponygirls.losslessjson.LosslessJson.parseUtf8(raw, limits).fold(_ => throw AccountFailure("invalid"), identity))
   private def text(value: String): Json = Json.fromString(value)
   private def strings(values: Vector[String]): Json = Json.arr(values.map(text)*)
-  def user(value: AccountUser): Json = Json.obj("id" -> text(value.id), "login" -> text(value.login.getOrElse(value.id)), "displayName" -> text(value.displayName))
+  def actor(userId: String): String = Secrets.digest("account-actor-v1:" + userId)
+  def requireActor(offered: Vector[String], userId: String): Unit = {
+    if (offered.size != 1 || !offered.head.matches("[0-9a-f]{64}")) throw AccountFailure("invalid")
+    if (!Secrets.equal(offered.head, actor(userId))) throw AccountFailure("conflict")
+  }
+  def user(value: AccountUser): Json = Json.obj("id" -> text(value.id), "login" -> text(value.login.getOrElse(value.id)),
+    "displayName" -> text(value.displayName), "actor" -> text(actor(value.id)))
   def token(value: AccountToken): Json = Json.obj("id" -> text(value.id), "name" -> text(value.name), "source" -> text(value.source),
     "createdAt" -> value.createdAt.fold(Json.Null)(text), "revoked" -> Json.fromBoolean(value.revoked), "scopes" -> strings(value.scopes))
   def account(value: AccountUser, tokens: Vector[AccountToken], scopes: Vector[String]): Json =

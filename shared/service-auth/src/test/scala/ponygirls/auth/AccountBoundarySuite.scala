@@ -48,6 +48,17 @@ final class AccountBoundarySuite extends munit.FunSuite {
       assertEquals(intercept[AccountFailure](AccountJson.decodeIssue(value)).code, "invalid"))
     assertEquals(AccountJson.failure("private SQL or secret").hcursor.downField("error").get[String]("code"), Right("unavailable"))
   }
+  test("BA specified: account mutations bind the intended owner independently of cookie changes") {
+    val alice = AccountUser("alice", "human", "Alice", Some("alice"), None, true)
+    val actor = AccountJson.user(alice).hcursor.get[String]("actor").toOption.get
+    AccountJson.requireActor(Vector(actor), "alice")
+    assertEquals(intercept[AccountFailure](AccountJson.requireActor(Vector(actor), "bob")).code, "conflict")
+    Vector(Vector.empty, Vector(actor, actor), Vector("not-an-actor")).foreach { offered =>
+      assertEquals(intercept[AccountFailure](AccountJson.requireActor(offered, "alice")).code, "invalid")
+    }
+    assertEquals(AccountJson.actor("alice"), actor)
+    assertNotEquals(AccountJson.actor("bob"), actor)
+  }
   test("BA specified: raw account JSON rejects duplicate fields malformed Unicode and excess bounds") {
     assertEquals(AccountJson.decodeLogin(AccountJson.parse("{\"login\":\"alice\",\"password\":\"synthetic\"}")), ("alice", "synthetic"))
     Vector("{\"login\":\"alice\",\"login\":\"bob\",\"password\":\"synthetic\"}", "{\"login\":\"alice\",\"password\":\"first\",\"password\":\"second\"}", "[" * 10 + "0" + "]" * 10, " " * (AccountJson.maxBodyBytes + 1)).foreach { raw =>
