@@ -23,6 +23,26 @@ final class RuntimeSuite extends FunSuite:
       }
     }.unsafeRunSync()
   }
+  test("browser sessions and runtime tokens survive complete resource release/reacquisition until explicit revocation") {
+    BackendFixture.configuration.use { (config,token,_) => for
+      created <- Main.resources(config).use { services => for
+        (_,session) <- services.accounts.login("owner","fixture-password",None)
+        issued <- services.accounts.issue(session.secret,"restart",Vector(ponygirls.auth.AccountJson.actor(session.credential.userId)))
+      yield (session,issued) }
+      _ <- Main.resources(config).use { services => for
+        browser <- services.accounts.browser(created._1.secret)
+        bearer <- services.accounts.bearer(created._2.secret)
+        _ <- IO { assert(browser.nonEmpty); assert(bearer.nonEmpty); assertEquals(browser.get.userId,config.users.head.id) }
+        _ <- services.accounts.logout(created._1.secret)
+        _ <- services.accounts.bearer(token).map(principal => assert(principal.nonEmpty))
+      yield () }
+      _ <- Main.resources(config).use { services => for
+        replay <- services.accounts.browser(created._1.secret)
+        bearer <- services.accounts.bearer(created._2.secret)
+        _ <- IO { assertEquals(replay,None); assert(bearer.nonEmpty) }
+      yield () }
+    yield () }.unsafeRunSync()
+  }
   test("cold migration5 preserves frozen ledger/old metadata and upgrades old pinned search snapshots") {
     BackendFixture.configuration.use { (config,token,_) =>
       val identity = new Auth(config.users).authenticate(token).get

@@ -38,6 +38,7 @@ object Main extends IOApp:
   private final case class StartupFailure(stage: String,code: String) extends RuntimeException(code)
   private def safeCode(error: Throwable): String = error match
     case s: StartupFailure => s.code
+    case a: ponygirls.auth.AccountFailure if a.code.matches("[a-z][a-z-]{0,63}") => a.code
     case d: DomainError if d.code.matches("[a-z][a-z-]{0,63}") => d.code
     case r: ponygirls.runtime.RuntimeFailure if r.code.matches("[a-z][a-z-]{0,63}") => r.code
     case j: ponygirls.runtime.JdbcFailure => "jdbc-" + j.sqlState.getOrElse("unknown")
@@ -125,7 +126,9 @@ object Main extends IOApp:
         if observation.binding.isEmpty then Jdbc.exec(c,"INSERT INTO manure.root_owner(singleton,identity) VALUES(true,?) ON CONFLICT DO NOTHING",bytes)
         Require(Jdbc.rows(c,"SELECT identity FROM manure.root_owner WHERE singleton")(_.getBytes(1)).headOption.exists(java.util.Arrays.equals(_,bytes)), "migration-required")
       services.projection.initialize(c)
+      ponygirls.auth.AccountSql.initialize(c)
     })
+    _ <- Resource.eval(stage("auth",if recover then services.accounts.initialize() else IO.unit))
     _ <- Resource.eval(stage("reconcile",if recover then services.artifacts.initialize() else IO.unit))
     _ <- Resource.eval(stage("projection",if recover then backfill(services) else IO.unit))
   yield services

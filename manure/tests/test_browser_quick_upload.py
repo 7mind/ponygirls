@@ -21,7 +21,8 @@ class QuickUploadBrowserTests(unittest.TestCase):
 
     def login(self, fix):
         return [
-            {"op": "fill", "selector": "#token-input", "value": fix.identity.token},
+            {"op": "fill", "selector": "#login-input", "value": fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status", "contains": "shown"},
         ]

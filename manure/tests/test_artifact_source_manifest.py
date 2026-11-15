@@ -32,6 +32,7 @@ SELECTED = {
     'shared/lossless-json/src/main/scala/Json.scala': b'// owned lossless codec\n',
     'shared/service-runtime/src/main/scala/Runtime.scala': b'// owned service runtime\n',
     'shared/service-runtime/src/main/resources/runtime.conf': b'owned-runtime-resource\n',
+    'shared/service-auth/src/main/scala/Account.scala': b'// owned account authentication\n',
     'shared/model-http/src/main/scala/Model.scala': b'// owned model transport source\n',
     'shared/retrieval-core/src/main/scala/Retrieval.scala': b'// owned retrieval core\n',
     'shared/retrieval-postgres/src/main/scala/Postgres.scala': b'// owned retrieval adapter\n',

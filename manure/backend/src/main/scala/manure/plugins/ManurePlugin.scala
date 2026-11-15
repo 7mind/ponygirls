@@ -14,7 +14,7 @@ final class RuntimeTransactions(database: JdbcDatabase,root: RootLease) extends 
   def transaction[A](body: java.sql.Connection => A): IO[A] = database.transaction(c => root.run(body(c)))
 
 final class RuntimeServices(val artifacts: Artifacts,val http: Http,val search: Search,
-  val projection: SearchProjection,val worker: SearchWorker,val database: JdbcTransactions)
+  val projection: SearchProjection,val worker: SearchWorker,val database: JdbcTransactions,val accounts: Accounts)
 
 /** Explicit plugin graph, no native classpath scanning or handwritten constructor
   * forwarding. Lifecycle resources are acquired once by Main in dependency order;
@@ -35,6 +35,7 @@ object ManurePlugin extends PluginDef:
   make[Metadata].from[PostgresMetadata]
   make[Payloads].from[FilesystemPayloads]
   make[Artifacts]
+  make[Accounts]
   make[Catalogue]
   make[Search]
   make[SearchWorker]

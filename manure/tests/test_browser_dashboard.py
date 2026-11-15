@@ -76,10 +76,13 @@ class TestAssetHygiene(unittest.TestCase):
         for path in (UNLOCK_JS, UNLOCK_CSS):
             self.assertTrue(os.path.isfile(path), path)
 
-    def test_login_token_input_is_transient_password_field(self):
+    def test_login_uses_transient_username_password_fields(self):
         html = self._read(DASH_HTML)
         self.assertIn('type="password"', html)
-        self.assertIn('name="token"', html)
+        self.assertIn('name="login"', html)
+        self.assertIn('name="password"', html)
+        self.assertIn('data-account-login', html)
+        self.assertNotIn('name="token"', html)
         for banned in ("localStorage", "sessionStorage"):
             self.assertNotIn(banned, html)
 
@@ -122,13 +125,14 @@ class DashboardFlows:
     def login_steps(self, token):
         return [
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
             {"op": "text", "selector": "#whoami-text"},
             {"op": "eval", "fn": "(s) => document.querySelector(s).value",
-             "arg": "#token-input"},
+             "arg": "#password-input"},
             {"op": "localStorageKeys"},
             {"op": "cookies", "urls": [self.api + "/"]},
         ]
@@ -161,13 +165,13 @@ class DashboardFlows:
 
     def test_b1_login_requires_exact_origin_http(self):
         jar = bf.TestHttp()
-        res = jar.current((self.api), bf.cp.Command_Login(({"token": self.fix.identity.token})["token"]))
+        res = jar.login(self.api, self.fix.identity.login, self.fix.identity.password, headers={})
         self.assertEqual(res.status, 403, res.body[:300])
         self.assertEqual(jar.cookies_for(self.api), {})
-        bad = jar.current((self.api), bf.cp.Command_Login(({"token": self.fix.identity.token})["token"]), headers={"Origin": "https://evil.example"})
+        bad = jar.login(self.api, self.fix.identity.login, self.fix.identity.password, headers={"Origin": "https://evil.example"})
         self.assertEqual(bad.status, 403, bad.body[:300])
         self.assertEqual(jar.cookies_for(self.api), {})
-        wrong = jar.current((self.api), bf.cp.Command_Login(({"token": bf.canonical_secret()})["token"]), headers={"Origin": self.api})
+        wrong = jar.login(self.api, self.fix.identity.login, bf.canonical_secret(), headers={"Origin": self.api})
         self.assertEqual(wrong.status, 401, wrong.body[:300])
         self.assertEqual(jar.cookies_for(self.api), {})
 
@@ -227,7 +231,7 @@ class DashboardFlows:
         aid = created["artifact_id"]
         # Plant a genuine session cookie, then attack cross-origin.
         jar = bf.TestHttp()
-        login = jar.current((self.api), bf.cp.Command_Login(({"token": self.fix.identity.token})["token"]), headers={"Origin": self.api})
+        login = jar.login(self.api, self.fix.identity.login, self.fix.identity.password, headers={"Origin": self.api})
         self.assertEqual(login.status, 200, login.body[:300])
         self.assertTrue(jar.cookies_for(self.api), "login set no cookie")
         evil = {"Origin": "https://evil.example"}
@@ -253,7 +257,8 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
@@ -305,7 +310,8 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
@@ -345,7 +351,8 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
@@ -384,7 +391,8 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
@@ -579,7 +587,8 @@ class DashboardFlows:
         out = bf.run_steps([
             {"op": "networkPhase", "phase": "setup"},
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "networkPhase", "phase": "victim-login"},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
@@ -719,7 +728,8 @@ class DashboardFlows:
         ext_url = bf.content_url_for(self.fix, ext["artifact_id"])
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},
@@ -780,7 +790,8 @@ class ExpiredDeleteCase(unittest.TestCase):
         self.assertEqual(info.status, 410, info.body[:300])
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},

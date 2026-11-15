@@ -234,6 +234,9 @@ class TestHttp:
         self._store_cookies(url, result.headers)
         return result
 
+    def login(self, base, login, password, *, headers):
+        return self.request("POST", base + "/api/account/v1/login", body={"login": login, "password": password}, headers=headers)
+
     def current(self, base, command, *, headers=None):
         request_id=uuid4()
         content=isinstance(command,cp.ContentCommand)
@@ -296,6 +299,9 @@ class TestIdentity:
     token_id: str = "t-browser"
     token: str = ""
     hash_file: str = ""
+    login: str = "browser-human"
+    password: str = ""
+    password_hash_file: str = ""
 
 
 @dataclass
@@ -339,7 +345,15 @@ def _make_identity(tmpdir: str) -> TestIdentity:
     with open(hash_file, "w", encoding="utf-8") as fh:
         fh.write(digest + "\n")
     os.chmod(hash_file, 0o600)
-    return TestIdentity(token=token, hash_file=hash_file)
+    password = canonical_secret()
+    salt = secrets.token_bytes(16)
+    derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 600000, 32)
+    encoded = "pbkdf2-sha256$600000$" + base64.b64encode(salt).decode("ascii") + "$" + base64.b64encode(derived).decode("ascii")
+    password_hash_file = os.path.join(tmpdir, "password.hash")
+    descriptor = os.open(password_hash_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as output:
+        output.write(encoded + "\n")
+    return TestIdentity(token=token, hash_file=hash_file, password=password, password_hash_file=password_hash_file)
 
 
 def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "default",
@@ -385,7 +399,7 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
     # bound one (contract section 11, confirmed by the landed server).
     api_origin = f"http://{api_host}:0"
     users = [{"id":identity.user_id,"type":"human","tokens":[
-        {"id":identity.token_id,"hashFile":identity.hash_file}],"displayName":"browser test human"}]
+        {"id":identity.token_id,"hashFile":identity.hash_file}],"displayName":"browser test human","enabled":True,"login":identity.login,"passwordHashFile":identity.password_hash_file}]
     kwargs = dict(
         data_dir=data_dir,
         api_origin=api_origin,
@@ -734,7 +748,7 @@ def start_https_server(*, config_overrides=None, now_fn=None) -> HttpsFixture:
         tmp.name, openssl,
         [TLS_API_HOST, f"*.{TLS_CONTENT_SUFFIX}"])
     users = [{"id":identity.user_id,"type":"human","tokens":[
-        {"id":identity.token_id,"hashFile":identity.hash_file}],"displayName":"tls smoke human"}]
+        {"id":identity.token_id,"hashFile":identity.hash_file}],"displayName":"tls smoke human","enabled":True,"login":identity.login,"passwordHashFile":identity.password_hash_file}]
     kwargs = dict(
         data_dir=data_dir,
         api_origin=f"https://{TLS_API_HOST}:0",

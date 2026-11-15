@@ -23,13 +23,187 @@ final class HttpSuite extends FunSuite:
     val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
     val engine = new PostgresRetrieval("manure",None)
     val projection = new SearchProjection(config,engine)
-    val search = new Search(f.database.get,f.lease,config,f.auth,f.clock,engine,projection,None)
-    new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),f.auth,f.clock,search)
+    val auth = new Auth(config.users)
+    val search = new Search(f.database.get,f.lease,config,auth,f.clock,engine,projection,None)
+    new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),auth,f.clock,search,new Accounts(f.metadata,auth))
   private def command(c: wire.Command,token: Option[String],origin: Option[String] = None): Request[IO] =
     request(Method.POST,"/api/current",token,origin).withEntity(CurrentWire.encode(wire.ClientEnvelope.codecJson,
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
       .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
+  private def browserLogin(h: Http): IO[org.http4s.Response[IO]] = h.app.run(
+    request(Method.POST,"/api/account/v1/login",None,Some("http://127.0.0.1:47329"))
+      .withEntity("""{"login":"owner","password":"fixture-password"}""")
+      .putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
+  private def browserCookie(h: Http): IO[String] = browserLogin(h).map { response =>
+    assertEquals(response.status.code,200)
+    response.headers.headers.find(_.name == CIString("Set-Cookie")).get.value.takeWhile(_ != ';')
+  }
   private def run(body: (BackendFixture,Http) => IO[Unit]): Unit = BackendFixture.resource(true).use(f => body(f,app(f))).unsafeRunSync()
+  test("account settings requires browser authentication and static bearer cookies are not sessions") { run { (f,h) => for
+    account <- h.app.run(request(Method.GET,"/api/account/v1"))
+    _ <- IO(assertEquals(account.status.code,401))
+    cookie <- h.app.run(command(wire.Command.Whoami(),None).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+    _ <- IO(assertEquals(cookie.status.code,401))
+    legacy <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
+    _ <- IO { assertEquals(legacy.status.code,400); assert(!legacy.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+  yield () }}
+  test("stale browser cookies do not prevent public shell loading and password reauthentication") { run { (f,h) => for
+    cookie <- browserCookie(h)
+    _ <- new Accounts(f.metadata,f.auth).logout(cookie.split("=",2)(1))
+    shell <- h.app.run(request(Method.GET,"/").putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    _ <- IO(assertEquals(shell.status.code,200))
+    relogin <- h.app.run(request(Method.POST,"/api/account/v1/login",None,Some("http://127.0.0.1:47329"))
+      .withEntity("""{"login":"owner","password":"fixture-password"}""").putHeaders(
+        Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cookie"),cookie)))
+    _ <- IO(assertEquals(relogin.status.code,200))
+  yield () }}
+  test("account mutations reject a stale settings actor before any token effect") { run { (f,h) => for
+    cookie <- browserCookie(h)
+    response <- h.app.run(request(Method.POST,"/api/account/v1/tokens",None,Some("http://127.0.0.1:47329"))
+      .withEntity("""{"name":"stale-owner","scopes":["api"]}""").putHeaders(
+        Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cookie"),cookie),
+        Header.Raw(CIString("X-Account-Actor"),"0"*64)))
+    _ <- IO(assertEquals(response.status.code,409))
+    tokens <- new Accounts(f.metadata,f.auth).read(cookie.split("=",2)(1))
+    _ <- IO(assert(!tokens._2.exists(_.name == "stale-owner")))
+  yield () }}
+  test("settings actor from owner A cannot issue/revoke/logout after another tab changes the cookie to owner B") { run { (f,_) =>
+    val owner = f.config.users.find(_.id == f.identity.userId).get
+    val h = app(f,c => c.copy(users=c.users :+ owner.copy(id="owner-B",tokens=Vector.empty,login=Some("owner-B"))))
+    def account(method: Method,path: String,cookie: String,actors: Vector[String],body: String): Request[IO] =
+      val req = request(method,path,None,Some("http://127.0.0.1:47329")).withEntity(body)
+        .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cookie"),cookie))
+      req.withHeaders(org.http4s.Headers(req.headers.headers ++ actors.map(value => Header.Raw(CIString("X-Account-Actor"),value))))
+    for
+      cookieA <- browserCookie(h)
+      settingsA <- h.app.run(account(Method.GET,"/api/account/v1",cookieA,Vector.empty,""))
+      actorA <- settingsA.as[String].map(text => CurrentWire.parse(text).hcursor.downField("user").get[String]("actor").toOption.get)
+      loginB <- h.app.run(request(Method.POST,"/api/account/v1/login",None,Some("http://127.0.0.1:47329"))
+        .withEntity("""{"login":"owner-B","password":"fixture-password"}""").putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
+      cookieB = loginB.headers.headers.find(_.name == CIString("Set-Cookie")).get.value.takeWhile(_ != ';')
+      actorB = ponygirls.auth.AccountJson.actor("owner-B")
+      _ <- Vector((Vector(actorA),409),(Vector.empty,400),(Vector(actorB,actorB),400),(Vector("invalid"),400)).traverse_ { (actors,status) =>
+        h.app.run(account(Method.POST,"/api/account/v1/tokens",cookieB,actors,"""{"name":"stale-settings","scopes":["api"]}""")).flatMap(r => IO(assertEquals(r.status.code,status)))
+      }
+      listed <- h.app.run(account(Method.GET,"/api/account/v1",cookieB,Vector.empty,""))
+      listing <- listed.as[String].map(CurrentWire.parse)
+      _ <- IO(assertEquals(listing.hcursor.get[Vector[io.circe.Json]]("tokens").toOption.get,Vector.empty))
+      issued <- h.app.run(account(Method.POST,"/api/account/v1/tokens",cookieB,Vector(actorB),"""{"name":"owner-B","scopes":["api"]}"""))
+      token <- issued.as[String].map(CurrentWire.parse)
+      id = token.hcursor.downField("token").get[String]("id").toOption.get
+      revoked <- h.app.run(account(Method.POST,s"/api/account/v1/tokens/$id/revoke",cookieB,Vector(actorA),"{}"))
+      logout <- h.app.run(account(Method.POST,"/api/account/v1/logout",cookieB,Vector(actorA),"{}"))
+      intact <- h.app.run(account(Method.GET,"/api/account/v1",cookieB,Vector.empty,""))
+      intactBody <- intact.as[String].map(CurrentWire.parse)
+      _ <- IO {
+        assertEquals(revoked.status.code,409); assertEquals(logout.status.code,409); assertEquals(intact.status.code,200)
+        assertEquals(intactBody.hcursor.downField("tokens").downArray.get[Boolean]("revoked").toOption,Some(false))
+      }
+    yield ()
+  }}
+  test("account HTTP login/settings/one-time token/revoke/logout share only browser session authority") { run { (f,h) =>
+    def account(method: Method,path: String,cookie: String,body: String): Request[IO] =
+      request(method,path,None,Some("http://127.0.0.1:47329")).withEntity(body)
+        .putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cookie"),cookie),
+          Header.Raw(CIString("X-Account-Actor"),ponygirls.auth.AccountJson.actor(f.identity.userId)))
+    for
+      login <- browserLogin(h)
+      loginBody <- login.as[String]
+      cookie <- IO {
+        assertEquals(login.status.code,200)
+        assert(!loginBody.contains(f.token)); assert(!loginBody.contains("fixture-password"))
+        val value = login.headers.headers.find(_.name == CIString("Set-Cookie")).get.value
+        assert(value.contains("Max-Age=34560000")); assert(value.contains("HttpOnly; SameSite=Strict")); assert(!value.contains("Domain="))
+        value.takeWhile(_ != ';')
+      }
+      settings <- h.app.run(account(Method.GET,"/api/account/v1",cookie,""))
+      settingsBody <- settings.as[String].map(CurrentWire.parse)
+      _ <- IO {
+        assertEquals(settings.status.code,200)
+        assertEquals(settingsBody.hcursor.downField("user").get[String]("id").toOption,Some(f.identity.userId))
+        assertEquals(settingsBody.hcursor.downField("tokens").downArray.get[String]("source").toOption,Some("configured"))
+      }
+      issue <- h.app.run(account(Method.POST,"/api/account/v1/tokens",cookie,"""{"name":"terminal","scopes":["api"]}"""))
+      issued <- issue.as[String].map(CurrentWire.parse)
+      secret = issued.hcursor.get[String]("secret").toOption.get
+      id = issued.hcursor.downField("token").get[String]("id").toOption.get
+      _ <- IO(assertEquals(issue.status.code,200))
+      who <- h.app.run(command(wire.Command.Whoami(),Some(secret)))
+      _ <- IO(assertEquals(who.status.code,200))
+      _ <- Vector(
+        request(Method.GET,"/api/account/v1",Some(secret)),
+        request(Method.GET,"/api/account/v1",Some(f.token)),
+        command(wire.Command.Whoami(),Some(cookie.split("=",2)(1))),
+        command(wire.Command.Whoami(),None).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+secret))
+      ).traverse_(r => h.app.run(r).flatMap(response => IO(assertEquals(response.status.code,401))))
+      immutable <- h.app.run(account(Method.POST,"/api/account/v1/tokens/primary/revoke",cookie,"{}"))
+      unknown <- h.app.run(account(Method.POST,"/api/account/v1/tokens/unknown/revoke",cookie,"{}"))
+      invalidScope <- h.app.run(account(Method.POST,"/api/account/v1/tokens",cookie,"""{"name":"terminal","scopes":["admin"]}"""))
+      _ <- IO { assertEquals(immutable.status.code,403); assertEquals(unknown.status.code,404); assertEquals(invalidScope.status.code,403) }
+      listed <- h.app.run(account(Method.GET,"/api/account/v1",cookie,""))
+      listedBody <- listed.as[String]
+      _ <- IO { assert(!listedBody.contains(secret)); assert(listedBody.contains(id)) }
+      revoke <- h.app.run(account(Method.POST,s"/api/account/v1/tokens/$id/revoke",cookie,"{}"))
+      replay <- h.app.run(command(wire.Command.Whoami(),Some(secret)))
+      logout <- h.app.run(account(Method.POST,"/api/account/v1/logout",cookie,"{}"))
+      sessionReplay <- h.app.run(account(Method.GET,"/api/account/v1",cookie,""))
+      configured <- h.app.run(command(wire.Command.Whoami(),Some(f.token)))
+      _ <- IO {
+        assertEquals(revoke.status.code,200); assertEquals(replay.status.code,401); assertEquals(logout.status.code,200)
+        assertEquals(sessionReplay.status.code,401); assertEquals(configured.status.code,200)
+        Vector(login,settings,issue,immutable,unknown,invalidScope,listed,revoke,logout,sessionReplay).foreach { response =>
+          assert(response.headers.headers.exists(x => x.name == CIString("Cache-Control") && x.value == "no-store"))
+        }
+      }
+    yield ()
+  }}
+  test("account boundary rejects wrong origins, duplicate credentials, oversized/ambiguous JSON and content contexts") { run { (f,h) =>
+    def login(body: String): Request[IO] = request(Method.POST,"/api/account/v1/login",None,Some("http://127.0.0.1:47329"))
+      .withEntity(body).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"))
+    for
+      cookie <- browserCookie(h)
+      _ <- Vector(
+        (request(Method.GET,"/api/account/v1?x=secret"),400),
+        (request(Method.GET,"/api/account/v1?"),400),
+        (request(Method.GET,"/api/account/v1",None,Some("http://attacker.test")),403),
+        (request(Method.POST,"/api/account/v1/login").withEntity("{}"),403),
+        (request(Method.GET,"/api/account/v1",Some(f.token)).putHeaders(Header.Raw(CIString("Cookie"),cookie)),400),
+        (request(Method.GET,"/api/account/v1").putHeaders(Header.Raw(CIString("Cookie"),cookie+"; "+cookie)),400),
+        (login("""{"login":"owner","password":"fixture-password","password":"secret"}"""),400),
+        (login("""{"login":"owner","password":"fixture-password","unknown":"secret"}"""),400),
+        (login("[]"),400),
+        (login("x"*16385),413),
+        (login("["*9+"0"+"]"*9),400),
+        (login("""{"login":"owner","password":"secret"}"""),401)
+      ).traverse_ { (req,status) => h.app.run(req).flatMap { response => response.as[String].map { text =>
+        assertEquals(response.status.code,status); assert(!text.contains("secret")); assert(!text.contains("fixture-password"))
+        assert(CurrentWire.parse(text).hcursor.downField("error").get[String]("code").isRight)
+      }}}
+      repeated = request(Method.GET,"/api/account/v1")
+      duplicateHeader <- h.app.run(repeated.withHeaders(repeated.headers ++ org.http4s.Headers(
+        Header.Raw(CIString("Authorization"),"Bearer "+f.token),Header.Raw(CIString("Authorization"),"Bearer "+f.token))))
+      _ <- IO(assertEquals(duplicateHeader.status.code,400))
+      mounted <- h.app.run(request(Method.POST,"/view/"+("a"*32)+"/api/account/v1/login").withEntity("{}"))
+      subdomain <- app(f,_.copy(contentMode="subdomain",contentSuffix="localhost")).app.run(
+        login("{}").putHeaders(Header.Raw(CIString("Host"),("a"*32)+".localhost:47329")))
+      _ <- IO { assertEquals(mounted.status.code,404); assertEquals(subdomain.status.code,404) }
+    yield ()
+  }}
+  test("legacy form logout invalidates the server session as well as credential-bound content grants") { run { (f,h) => for
+    cookie <- browserCookie(h)
+    identity <- new Accounts(f.metadata,f.auth).browser(cookie.split("=",2)(1)).map(_.get)
+    initialized <- f.artifacts.init(identity,InitUpload("logout",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
+    id = initialized.artifact.id
+    _ <- f.artifacts.finish(identity,id)
+    oneTime <- f.artifacts.createGrant(identity,id)
+    (grant,_) <- f.artifacts.redeem(id,oneTime)
+    logout <- h.app.run(request(Method.POST,"/api/current/logout",None,Some("http://127.0.0.1:47329"))
+      .withEntity("").putHeaders(Header.Raw(CIString("Content-Type"),"application/x-www-form-urlencoded"),Header.Raw(CIString("Cookie"),cookie)))
+    replay <- h.app.run(command(wire.Command.Whoami(),None).putHeaders(Header.Raw(CIString("Cookie"),cookie)))
+    denied <- f.artifacts.contentInfo(id,Some(grant),None,None).attempt
+    configured <- h.app.run(command(wire.Command.Whoami(),Some(f.token)))
+    _ <- IO { assertEquals(logout.status.code,303); assertEquals(replay.status.code,401); assert(denied.isLeft); assertEquals(configured.status.code,200) }
+  yield () }}
   test("dashboard favicon is public, same-origin SVG without exposing other files") { run { (f,_) =>
     val directory = f.rootPath.resolve("dashboard-assets")
     val svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path d=\"M0 0h32v32H0z\"/></svg>"
@@ -38,6 +212,8 @@ final class HttpSuite extends FunSuite:
         java.nio.file.Files.createDirectories(directory)
         java.nio.file.Files.writeString(directory.resolve("favicon.svg"),svg)
         java.nio.file.Files.writeString(directory.resolve("private.txt"),"not a dashboard asset")
+        java.nio.file.Files.writeString(directory.resolve("account.js"),"export {};")
+        java.nio.file.Files.writeString(directory.resolve("account.css"),"dialog { display: block; }")
       }
       h = app(f,_.copy(dashboardDir=Some(directory)))
       response <- h.app.run(request(Method.GET,"/favicon.svg"))
@@ -47,20 +223,22 @@ final class HttpSuite extends FunSuite:
         assertEquals(body,svg)
         assertEquals(response.headers.headers.find(_.name == CIString("Content-Type")).map(_.value),Some("image/svg+xml"))
       }
+      _ <- Vector("/account.js","/account.css").traverse_(path => h.app.run(request(Method.GET,path)).flatMap(r => IO(assertEquals(r.status.code,200))))
       privateFile <- h.app.run(request(Method.GET,"/private.txt"))
       _ <- IO(assertEquals(privateFile.status.code,404))
     yield ()
   }}
   test("password retrieval is explicit, live-authenticated and strict cookie-Origin guarded") { run { (f,h) => for
+    session <- browserCookie(h)
     a <- f.artifacts.init(f.identity,InitUpload("external",ArtifactKind.Directory,Visibility.External,Vector.empty,None,Vector.empty,None,None))
     c = wire.Command.GetExternalPassword(a.artifact.id)
     anonymous <- h.app.run(command(c,None))
     _ <- IO(assertEquals(anonymous.status.code,401))
-    cookie <- h.app.run(command(c,None).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+    cookie <- h.app.run(command(c,None).putHeaders(Header.Raw(CIString("Cookie"),session)))
     _ <- IO(assertEquals(cookie.status.code,403))
     hostile <- h.app.run(command(c,Some(f.token),Some("http://attacker.test")))
     _ <- IO(assertEquals(hostile.status.code,403))
-    allowed <- h.app.run(command(c,None,Some("http://127.0.0.1:47329")).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+    allowed <- h.app.run(command(c,None,Some("http://127.0.0.1:47329")).putHeaders(Header.Raw(CIString("Cookie"),session)))
     response <- allowed.as[String].map(s => CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(s)))
     _ <- IO { assertEquals(allowed.status.code,200);assertEquals(response.result,wire.Result.ExternalPasswordRetrieved(a.externalPassword));assert(allowed.headers.headers.exists(x => x.name == CIString("Cache-Control") && x.value == "no-store")) }
     _ <- f.metadata.transaction(_.putExternalPassword(a.artifact.id,None))
@@ -123,20 +301,21 @@ final class HttpSuite extends FunSuite:
   test("generated management mutations require exact Origin for cookie but absent allowed bearer") { run { (f,h) =>
     val init = wire.Command.InitUpload("empty",wire.ArtifactKind.Directory,wire.Visibility.Internal,None,Nil,Nil,None,None)
     for
+      session <- browserCookie(h)
       bearer <- h.app.run(command(init,Some(f.token)))
       _ <- IO(assertEquals(bearer.status.code,200))
-      cookie <- h.app.run(command(init,None).putHeaders(Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+      cookie <- h.app.run(command(init,None).putHeaders(Header.Raw(CIString("Cookie"),session)))
       _ <- IO(assertEquals(cookie.status.code,403))
-      login <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
+      login <- browserLogin(h)
       _ <- IO { assertEquals(login.status.code,200); assert(login.headers.headers.exists(x => x.name == CIString("Set-Cookie") && x.value.contains("HttpOnly"))) }
       hostileForm <- h.app.run(request(Method.POST,"/api/current/logout",None,Some("http://attacker.test"))
-        .withEntity("").putHeaders(Header.Raw(CIString("Content-Type"),"application/x-www-form-urlencoded"),Header.Raw(CIString("Cookie"),"manure-dev="+f.token)))
+        .withEntity("").putHeaders(Header.Raw(CIString("Content-Type"),"application/x-www-form-urlencoded"),Header.Raw(CIString("Cookie"),session)))
       _ <- IO(assertEquals(hostileForm.status.code,403))
     yield ()
   }}
   // Regression: browser login must not mint an agent cookie that makes GET / forbidden.
   for route <- Vector("generated","form") do
-    test(s"browser $route login accepts humans across reload and refuses agents without a cookie") { run { (f,h) =>
+    test(s"legacy browser $route token login rejects humans and agents without a cookie; password login survives reload") { run { (f,h) =>
       def login(token: String): Request[IO] =
         if route == "generated" then command(wire.Command.Login(token),None,Some("http://127.0.0.1:47329"))
         else request(Method.POST,"/api/current/login",None,Some("http://127.0.0.1:47329"))
@@ -146,9 +325,11 @@ final class HttpSuite extends FunSuite:
       val agentToken = SecretCodec.token()
       for
         _ <- IO.blocking(java.nio.file.Files.writeString(f.config.users.find(_.userType == "agent").get.tokens.head.hashFile,SecretCodec.sha256(agentToken)+"\n"))
-        human <- h.app.run(login(f.token))
+        legacyHuman <- h.app.run(login(f.token))
+        _ <- IO { assertEquals(legacyHuman.status.code,400); assert(cookies(legacyHuman).isEmpty) }
+        human <- browserLogin(h)
         cookie <- IO {
-          assertEquals(human.status.code,if route == "generated" then 200 else 303)
+          assertEquals(human.status.code,200)
           assertEquals(cookies(human).size,1)
           assert(cookies(human).head.contains("HttpOnly"))
           cookies(human).head.takeWhile(_ != ';')
@@ -164,7 +345,7 @@ final class HttpSuite extends FunSuite:
         listed <- h.app.run(command(wire.Command.ListArtifacts(wire.CatalogueQuery("",false,None,None,wire.CatalogueSort.Name,wire.SortDirection.Asc,20,None,Nil,None,None)),Some(agentToken)))
         _ <- IO(assertEquals(listed.status.code,200))
         rejected <- h.app.run(login(agentToken))
-        _ <- IO { assert(cookies(rejected).isEmpty,"rejected browser login must not set cookies"); assertEquals(rejected.status.code,403) }
+        _ <- IO { assert(cookies(rejected).isEmpty,"rejected browser login must not set cookies"); assertEquals(rejected.status.code,400) }
       yield ()
     }}
   // Regression: direct path-mode navigation previously ignored the dashboard session.
@@ -182,8 +363,7 @@ final class HttpSuite extends FunSuite:
       _ <- f.artifacts.putChunk(f.identity,id,"nested/secret.md",0,bytes,SecretCodec.sha256(bytes))
       _ <- f.artifacts.putChunk(f.identity,id,"index.html",0,bytes,SecretCodec.sha256(bytes))
       _ <- f.artifacts.finish(f.identity,id)
-      login <- h.app.run(command(wire.Command.Login(f.token),None,Some("http://127.0.0.1:47329")))
-      session = login.headers.headers.find(_.name == CIString("Set-Cookie")).get.value.takeWhile(_ != ';')
+      session <- browserCookie(h)
       _ <- Vector(s"/view/$id",s"/view/$id/nested/",s"/view/$id/nested/secret.md",s"/view/$id/__manure/view/nested/secret.md").traverse_ { path =>
         h.app.run(navigate(path,Some(session))).flatMap { r => IO {
           assertEquals(r.status.code,303)
@@ -195,7 +375,8 @@ final class HttpSuite extends FunSuite:
       grant <- IO {
         assertEquals(handoff.status.code,303)
         assertEquals(handoff.headers.headers.find(_.name == CIString("Location")).map(_.value),Some(s"/view/$id/"))
-        val cookie = handoff.headers.headers.find(_.name == CIString("Set-Cookie")).get.value
+        assertEquals(handoff.headers.headers.count(_.name == CIString("Set-Cookie")),2)
+        val cookie = handoff.headers.headers.find(h => h.name == CIString("Set-Cookie") && h.value.startsWith("mgrant-dev-")).get.value
         assert(cookie.startsWith("mgrant-dev-"+id+"=")); assert(cookie.contains(s"Path=/view/$id/; HttpOnly; SameSite=Lax"))
         assert(!cookie.contains(f.token)); cookie.takeWhile(_ != ';')
       }
@@ -270,8 +451,11 @@ final class HttpSuite extends FunSuite:
       agentToken = SecretCodec.token()
       _ <- IO.blocking(java.nio.file.Files.writeString(f.config.users.find(_.userType == "agent").get.tokens.head.hashFile,SecretCodec.sha256(agentToken)+"\n"))
       agent <- h.app.run(navigate(s"/view/$id/",Some("manure-dev="+agentToken)))
-      _ <- IO { assertEquals(agent.status.code,403); assert(!agent.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
-      _ <- f.artifacts.logout(f.identity)
+      _ <- IO { assertEquals(agent.status.code,401); assert(!agent.headers.headers.exists(_.name == CIString("Set-Cookie"))) }
+      logout <- h.app.run(command(wire.Command.Logout(),None,Some("http://127.0.0.1:47329")).putHeaders(Header.Raw(CIString("Cookie"),session)))
+      _ <- IO(assertEquals(logout.status.code,200))
+      replay <- h.app.run(command(wire.Command.Whoami(),None).putHeaders(Header.Raw(CIString("Cookie"),session)))
+      _ <- IO(assertEquals(replay.status.code,401))
       revoked <- h.app.run(request(Method.GET,s"/view/$id/nested/secret.md").putHeaders(Header.Raw(CIString("Cookie"),grant)))
       _ <- IO(assertEquals(revoked.status.code,401))
     yield ()

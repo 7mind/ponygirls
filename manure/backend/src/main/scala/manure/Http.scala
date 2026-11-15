@@ -10,6 +10,7 @@ import java.net.{URI, URLDecoder, URLEncoder}
 import java.nio.file.{Files, Path}
 import java.util.UUID
 import scala.concurrent.duration.*
+import ponygirls.auth.{AccountFailure,AccountJson,PersistentCookie}
 
 final class Throttle(capacity: Int, clock: DomainClock):
   private val entries = scala.collection.mutable.Map.empty[String,(Double,Int)]
@@ -26,7 +27,7 @@ final class Throttle(capacity: Int, clock: DomainClock):
 /** Domain HTTP adapter. Raw bytes are NEVER put in generated JSON or read as an
   * entire file. Security context is resolved before route/body/domain effects.
   */
-final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, auth: Auth, clock: DomainClock, search: Search):
+final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, auth: Auth, clock: DomainClock, search: Search, accounts: Accounts):
   @volatile private var boundPort = config.port
   def setBoundPort(value: Int): Unit = boundPort = value
   private val throttle = new Throttle(config.rateMapMaxEntries,clock)
@@ -76,16 +77,25 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       Require(config.trustedProxies.exists(_.contains(peer(req))) && header(req,"X-Forwarded-Proto").contains("https"), "tls-required")
     ctx
   private case class Credentials(identity: Option[Identity],kind: String,raw: Option[String])
-  private def credentials(req: Request[IO],ctx: Context): Credentials =
+  private def credentials(req: Request[IO],ctx: Context,publicAssets: Boolean): IO[Credentials] = IO {
     val authorization = header(req,"Authorization")
-    val cookie = Cookies.parse(header(req,"Cookie")).get(Cookies.sessionName(config.loopbackDev,ctx.insecure))
+    val cookie = Cookies.credential(header(req,"Cookie"),Cookies.sessionName(config.loopbackDev,ctx.insecure))
     Require(!(authorization.nonEmpty && cookie.nonEmpty), "ambiguous-credentials")
     val bearer = authorization.map { value =>
       Require(value.startsWith("Bearer "), "unauthorized"); value.substring(7)
     }
-    val raw = bearer.orElse(cookie)
-    val identity = raw.map(v => auth.authenticate(v).getOrElse(throw DomainError("unauthorized")))
-    Credentials(identity,if bearer.nonEmpty then "bearer" else if cookie.nonEmpty then "cookie" else "",raw)
+    (bearer.orElse(cookie),if bearer.nonEmpty then "bearer" else if cookie.nonEmpty then "cookie" else "")
+  }.flatMap { (secret,kind) =>
+    secret match
+      case None => IO.pure(Credentials(None,kind,None))
+      case Some(_) if kind == "cookie" && publicAssets => IO.pure(Credentials(None,"",None))
+      case Some(value) =>
+        val principal = if kind == "bearer" then accounts.bearer(value) else accounts.browser(value)
+        principal.map { identity =>
+          Require(identity.nonEmpty, "unauthorized")
+          Credentials(identity,kind,secret)
+        }
+  }
   private def required(c: Credentials): Identity = c.identity.getOrElse(throw DomainError("unauthorized"))
   private def mutation(req: Request[IO],ctx: Context,c: Credentials): Unit =
     val offered = originHeader(req)
@@ -95,7 +105,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def sessionCookie(ctx: Context,value: String,clear: Boolean): String =
     Cookies.sessionName(config.loopbackDev,ctx.insecure) + "=" + (if clear then "" else value) +
       "; Path=/; HttpOnly; SameSite=Strict" + (if !config.loopbackDev && !ctx.insecure then "; Secure" else "") +
-      "; Max-Age=" + (if clear then "0" else "86400")
+      "; Max-Age=" + (if clear then "0" else PersistentCookie.maxAgeSeconds.toString)
   private def contentCookie(ctx: Context,id: String,value: String,expiry: Double,clear: Boolean): String =
     Cookies.grantName(config.loopbackDev,ctx.insecure,id,config.contentMode == "path") + "=" + (if clear then "" else value) +
       "; Path=" + ctx.mount + "/; HttpOnly; SameSite=Lax" + (if !config.loopbackDev && !ctx.insecure then "; Secure" else "") +
@@ -117,6 +127,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def failure(id: UUID,error: Throwable): Response[IO] =
     val code = error match
       case d: DomainError => d.code
+      case e: AccountFailure => e.code
       case _ => "unavailable"
     val response = envelope(id,CurrentWire.error(code),CurrentWire.status(code))
     if Set("unavailable","rate-limited","session-limit")(code) then response.putHeaders(raw("Retry-After","5")) else response
@@ -134,6 +145,75 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def readJson(req: Request[IO]): IO[io.circe.Json] =
     IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/json"), "bad-envelope")) *>
       body(req,config.limits.maxRequestBodyBytes).map(b => CurrentWire.parse(Exact.string(b)))
+  private def accountPath(req: Request[IO]): Boolean =
+    val path = req.uri.path.renderString
+    path == "/api/account/v1" || path.startsWith("/api/account/v1/")
+  private def accountFailure(error: Throwable): Response[IO] =
+    val code = error match
+      case e: DomainError => e.code
+      case e: AccountFailure => e.code
+      case _ => "unavailable"
+    val normalized = code match
+      case "bad-envelope" | "ambiguous-credentials" | "bad-host" | "invalid-path" => "invalid"
+      case "tls-required" => "forbidden"
+      case "config" => "unavailable"
+      case _ => code
+    json(AccountJson.failure(normalized),if normalized == "conflict" then 409 else CurrentWire.status(normalized))
+  private def accountActors(req: Request[IO]): Vector[String] =
+    req.headers.headers.filter(_.name == CIString("X-Account-Actor")).map(_.value).toVector
+  private def accountJson(req: Request[IO]): IO[io.circe.Json] =
+    IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/json"), "bad-envelope")) *>
+      body(req,math.min(AccountJson.maxBodyBytes,config.limits.maxRequestBodyBytes)).map(AccountJson.parseUtf8)
+  private def emptyAccountBody(req: Request[IO]): IO[Unit] = accountJson(req).flatMap(value =>
+    IO(Require(value.asObject.exists(_.isEmpty), "bad-envelope")))
+  private def account(req: Request[IO],ctx: Context): IO[Response[IO]] = IO {
+    Require(!ctx.content, "not-found")
+    Require(!req.uri.renderString.contains("?"), "bad-envelope")
+    val offered = originHeader(req)
+    Require(if req.method == Method.GET then offered.forall(_ == ctx.origin.value) else offered.contains(ctx.origin.value), "forbidden")
+  } *> {
+    val path = req.uri.path.renderString
+    if req.method == Method.POST && path == "/api/account/v1/login" then
+      IO {
+        Require(header(req,"Authorization").isEmpty, "ambiguous-credentials")
+        val previous = Cookies.credential(header(req,"Cookie"),Cookies.sessionName(config.loopbackDev,ctx.insecure))
+        Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
+        previous
+      }.flatMap { previous => accountJson(req).flatMap(value => IO(AccountJson.decodeLogin(value))).flatMap { (login,password) =>
+        accounts.login(login,password,previous).map { (user,session) =>
+          json(io.circe.Json.obj("user" -> AccountJson.user(user))).putHeaders(raw("Set-Cookie",sessionCookie(ctx,session.secret,false)))
+        }
+      }}
+    else credentials(req,ctx,false).flatMap { c =>
+      IO {
+        Require(c.kind == "cookie", "unauthorized")
+        required(c)
+        c.raw.getOrElse(throw DomainError("unauthorized"))
+      }.flatMap { secret =>
+        val result = if req.method == Method.GET && path == "/api/account/v1" then
+          accounts.read(secret).map { (user,tokens) => json(AccountJson.account(user,tokens,Vector("api"))) }
+        else if req.method == Method.POST && path == "/api/account/v1/logout" then
+          IO(mutation(req,ctx,c)) *> emptyAccountBody(req) *> accounts.logoutAccount(secret,accountActors(req)).as(
+            json(io.circe.Json.obj("ok" -> io.circe.Json.True)).putHeaders(raw("Set-Cookie",sessionCookie(ctx,"",true))))
+        else if req.method == Method.POST && path == "/api/account/v1/tokens" then
+          IO(mutation(req,ctx,c)) *> accountJson(req).flatMap(value => IO(AccountJson.decodeIssue(value))).flatMap { (name,scopes) =>
+            IO(Require(scopes == Vector("api"), "forbidden")) *> accounts.issue(secret,name,accountActors(req)).map(value => json(AccountJson.issued(value)))
+          }
+        else if req.method == Method.POST && path.startsWith("/api/account/v1/tokens/") && path.endsWith("/revoke") then
+          val encodedId = path.stripPrefix("/api/account/v1/tokens/").stripSuffix("/revoke")
+          IO(mutation(req,ctx,c)) *> emptyAccountBody(req) *> IO {
+            val (id,trailing) = decoded("/" + encodedId)
+            Require(!trailing && !id.contains('/'), "bad-envelope")
+            id
+          }.flatMap(id => accounts.revoke(secret,id,accountActors(req))).as(json(io.circe.Json.obj("ok" -> io.circe.Json.True)))
+        else IO.raiseError(DomainError("not-found"))
+        result.map { response =>
+          if response.headers.headers.exists(_.name == CIString("Set-Cookie")) then response
+          else response.putHeaders(raw("Set-Cookie",sessionCookie(ctx,secret,false)))
+        }
+      }
+    }
+  }
   private def decoded(rawPath: String): (String,Boolean) =
     Require(rawPath.startsWith("/"), "invalid-path")
     if rawPath == "/" then ("",false)
@@ -170,16 +250,9 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
           search.modes,true,config.limits.chunkBytes,config.limits.maxListLimit,config.limits.maxRequestBodyBytes,
           config.limits.maxFileBytes,config.limits.maxArtifactBytes,config.limits.maxFilesPerArtifact,31536000,CataloguePolicy.Id)))
       case _: wire.Command.Whoami => IO(wire.Result.Identity(CurrentWire.principal(required(c))))
-      case wire.Command.Login(token) =>
-        return IO {
-          Require(originHeader(req).contains(ctx.origin.value), "forbidden")
-          Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
-          val i = auth.authenticate(token).getOrElse(throw DomainError("unauthorized"))
-          auth.human(i)
-          envelope(e.requestId,wire.Result.Identity(CurrentWire.principal(i))).putHeaders(raw("Set-Cookie",sessionCookie(ctx,token,false)))
-        }
+      case _: wire.Command.Login => IO(Require(originHeader(req).contains(ctx.origin.value), "forbidden")) *> IO.raiseError(DomainError("bad-envelope"))
       case _: wire.Command.Logout =>
-        IO(mutation(req,ctx,c)) *> artifacts.logout(required(c)).as(wire.Result.Ok())
+        IO(mutation(req,ctx,c)) *> logout(c).as(wire.Result.Ok())
       case wire.Command.ListArtifacts(q) => catalogue.list(required(c),q).map { (items,next) => wire.Result.Catalogue(wire.CataloguePage(items.map(summary(ctx,_)).toList,next)) }
       case wire.Command.InitUpload(name,kind,visibility,expiry,files,tags,hostname,projectPath) =>
         IO(mutation(req,ctx,c)) *> artifacts.init(required(c),InitUpload(name,CurrentWire.kind(kind),CurrentWire.visibility(visibility),CurrentWire.manifest(files),expiry.map(_.toLong),tags.toVector,hostname,projectPath))
@@ -211,26 +284,30 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       val response = envelope(e.requestId,result)
       if e.command.isInstanceOf[wire.Command.Logout] then response.putHeaders(raw("Set-Cookie",sessionCookie(ctx,"",true))) else response
     }
-  private def api(req: Request[IO],ctx: Context): IO[Response[IO]] =
+  private def logout(c: Credentials): IO[Unit] =
+    if c.kind == "cookie" then accounts.logout(c.raw.getOrElse(throw DomainError("unauthorized")))
+    else artifacts.logout(required(c))
+  private def dashboardAsset(req: Request[IO]): Boolean =
     val path = req.uri.path.renderString
-    val c = credentials(req,ctx)
+    req.method == Method.GET && (path == "/" || Set("/favicon.svg","/app.js","/styles.css","/current-protocol.js","/current-schema.js","/quick-upload.js","/sha256.js","/account.js","/account.css")(path) || path.startsWith("/current/"))
+  private def api(req: Request[IO],ctx: Context): IO[Response[IO]] = credentials(req,ctx,dashboardAsset(req)).flatMap { c =>
+    apiRequest(req,ctx,c).map { response =>
+      if c.kind == "cookie" && !response.headers.headers.exists(_.name == CIString("Set-Cookie")) then
+        response.putHeaders(raw("Set-Cookie",sessionCookie(ctx,c.raw.getOrElse(throw DomainError("unauthorized")),false)))
+      else response
+    }
+  }
+  private def apiRequest(req: Request[IO],ctx: Context,c: Credentials): IO[Response[IO]] =
+    val path = req.uri.path.renderString
     if req.method == Method.POST && path == "/api/current" then
       readJson(req).flatMap { value =>
         val id = CurrentWire.requestId(value)
         IO(CurrentWire.command(value)).flatMap(command(req,ctx,c,_)).handleError(e => failure(id,e))
       }
     else if req.method == Method.POST && path == "/api/current/login" then
-      IO {
-        Require(originHeader(req).contains(ctx.origin.value), "forbidden")
-        Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
-      } *> form(req).flatMap { fields => IO {
-        val token = fields.getOrElse("token","")
-        val i = auth.authenticate(token).getOrElse(throw DomainError("unauthorized"))
-        auth.human(i)
-        Response[IO](Status.SeeOther).putHeaders(raw("Location","/"),raw("Set-Cookie",sessionCookie(ctx,token,false)))
-      }}
+      IO(Require(originHeader(req).contains(ctx.origin.value), "forbidden")) *> IO.raiseError(DomainError("bad-envelope"))
     else if req.method == Method.POST && path == "/api/current/logout" then
-      IO(mutation(req,ctx,c)) *> form(req) *> artifacts.logout(required(c)).as(
+      IO(mutation(req,ctx,c)) *> form(req) *> logout(c).as(
         Response[IO](Status.SeeOther).putHeaders(raw("Location","/"),raw("Set-Cookie",sessionCookie(ctx,"",true))))
     else if req.method == Method.PUT && path.matches("/api/current/artifacts/[0-9a-f]{32}/chunks") then
       val id = path.split("/")(4)
@@ -254,14 +331,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         case Some(identity) => artifacts.info(identity,id).map(_ => ())
         case None => IO.unit
       eligibility *> serveFile(req,ctx,id,file,true,c.identity)
-    else if req.method == Method.GET && (path == "/" || Set("/favicon.svg","/app.js","/styles.css","/current-protocol.js","/current-schema.js","/quick-upload.js","/sha256.js")(path) || path.startsWith("/current/")) then
+    else if dashboardAsset(req) then
       c.identity.foreach(auth.human)
       asset(config.dashboardDir,if path == "/" then "index.html" else path.drop(1),ctx,true)
     else IO.raiseError(DomainError("not-found"))
   private def asset(directory: Option[Path],name: String,ctx: Context,dashboard: Boolean): IO[Response[IO]] = IO.blocking {
     val root = directory.getOrElse(throw DomainError(if dashboard then "dashboard-disabled" else "not-found"))
     val generated = name.matches("current/(?:manure/api/)?[A-Za-z][A-Za-z0-9_]*\\.js")
-    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js")(name) || dashboard && generated, "not-found")
+    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","account.js","account.css")(name) || dashboard && generated, "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 2097152, "not-found")
     var bytes = Files.readAllBytes(file)
@@ -553,8 +630,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
             val localPath = path.stripPrefix(viewerPrefix)
             val (file,trailing) = decoded(if localPath.isEmpty then "/" else localPath)
             val location = ctx.mount + viewerPrefix + "/" + encoded(file) + (if file.nonEmpty && trailing then "/" else "")
-            (credentials(req,ctx),location)
-          }.flatMap { (c,location) =>
+            location
+          }.flatMap { location => credentials(req,ctx,false).flatMap { c =>
             if c.kind.isEmpty then
               // Strict cookies are withheld on cross-site links. An inert local
               // document establishes the site before one browser-initiated retry.
@@ -579,21 +656,22 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
                 identity
               }.flatMap { identity =>
                 artifacts.createGrant(identity,id).flatMap(artifacts.redeem(id,_)).map { (value,expiry) =>
-                  Response[IO](Status.SeeOther).putHeaders(raw("Location",location),raw("Content-Length","0"),
+                  val response = Response[IO](Status.SeeOther).putHeaders(raw("Location",location),raw("Content-Length","0"),
                     raw("Set-Cookie",contentCookie(ctx,id,value,expiry,false)))
+                  response.withHeaders(Headers(response.headers.headers :+ raw("Set-Cookie",sessionCookie(ctx,c.raw.getOrElse(throw DomainError("unauthorized")),false))))
                 }
               }
-          }
+          }}
         case error => IO.raiseError(error)
       }
   val app: HttpApp[IO] = org.http4s.HttpApp[IO] { req =>
     IO(context(req)).attempt.flatMap {
-      case Left(error) => IO.pure(secure(failure(new UUID(0L,0L),error),false))
+      case Left(error) => IO.pure(secure(if accountPath(req) then accountFailure(error) else failure(new UUID(0L,0L),error),false))
       case Right(ctx) =>
         val action = IO.defer(ctx.contentId match
           case Some(id) => contentNavigation(req,ctx,id)
-          case None => api(req,ctx))
+          case None => if accountPath(req) then account(req,ctx) else api(req,ctx))
         action.timeoutTo(config.requestTimeout,IO.raiseError(DomainError("unavailable")))
-          .handleError(e => failure(new UUID(0L,0L),e)).map(secure(_,ctx.content))
+          .handleError(e => if accountPath(req) && !ctx.content then accountFailure(e) else failure(new UUID(0L,0L),e)).map(secure(_,ctx.content))
     }
   }

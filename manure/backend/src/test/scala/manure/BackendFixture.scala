@@ -62,6 +62,7 @@ object BackendFixture:
   def config(path: Path,url: String,token: String,otherToken: String,quota: Long): Config =
     val hash = path.resolve("owner.hash"); Files.writeString(hash,SecretCodec.sha256(token)+"\n")
     val otherHash = path.resolve("other.hash"); Files.writeString(otherHash,SecretCodec.sha256(otherToken)+"\n")
+    val passwordHash = path.resolve("owner-password.hash"); Files.writeString(passwordHash,ponygirls.auth.Password.hash("fixture-password".toCharArray)+"\n")
     val configFile = path.resolve("config.json")
     val root = Files.createDirectory(path.resolve("payloads"))
     val password = sys.env.getOrElse("MANURE_TEST_JDBC_PASSWORD_FILE",path.resolve("dummy-password").toString)
@@ -72,7 +73,7 @@ object BackendFixture:
       "native_mode" -> Json.fromString("shared"),"posix_library" -> Json.fromString(sys.env("MANURE_POSIX_LIBRARY")),
       "dashboard_dir" -> Json.fromString(source.resolve("manure/web/dashboard").toString),
       "unlock_shell_dir" -> Json.fromString(source.resolve("manure/web/unlock").toString),
-      "users" -> Json.arr(Json.obj("id" -> Json.fromString("owner\u0000馬"),"type" -> Json.fromString("human"),"tokens" -> Json.arr(Json.obj("id" -> Json.fromString("primary"),"hashFile" -> Json.fromString(hash.toString)))),
+      "users" -> Json.arr(Json.obj("id" -> Json.fromString("owner\u0000馬"),"type" -> Json.fromString("human"),"login" -> Json.fromString("owner"),"passwordHashFile" -> Json.fromString(passwordHash.toString),"tokens" -> Json.arr(Json.obj("id" -> Json.fromString("primary"),"hashFile" -> Json.fromString(hash.toString)))),
         Json.obj("id" -> Json.fromString("other"),"type" -> Json.fromString("agent"),"tokens" -> Json.arr(Json.obj("id" -> Json.fromString("primary"),"hashFile" -> Json.fromString(otherHash.toString))))),
       "database" -> Json.obj("jdbcUrl" -> Json.fromString(url),"user" -> Json.fromString(sys.env.getOrElse("MANURE_TEST_JDBC_USER","postgres")),"passwordFile" -> Json.fromString(password),
         "limits" -> Json.obj("maxConnections" -> Json.fromInt(4),"maxQueued" -> Json.fromInt(16),"queueTimeoutMs" -> Json.fromInt(5000),"connectTimeoutMs" -> Json.fromInt(5000),"statementTimeoutMs" -> Json.fromInt(30000),"lockTimeoutMs" -> Json.fromInt(5000),"idleTransactionTimeoutMs" -> Json.fromInt(30000),"socketTimeoutMs" -> Json.fromInt(30000))))
@@ -112,5 +113,5 @@ object BackendFixture:
     faults = new TestFaults
     payloads = new FilesystemPayloads(root,cfg.limits)
     service = new Artifacts(repo,payloads,cfg.limits,clock,auth,lease,gate,faults)
-    _ <- Resource.eval(service.initialize())
+    _ <- Resource.eval(new Accounts(repo,auth).initialize() *> service.initialize())
   yield BackendFixture(cfg,cfg.dataDir,root,lease,auth,auth.authenticate(token).get,auth.authenticate(otherToken).get,clock,faults,repo,service,payloads,token,transactions,if postgres then Some(projection) else None)

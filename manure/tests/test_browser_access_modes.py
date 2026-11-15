@@ -23,7 +23,7 @@ class DashboardAccessModeTests(unittest.TestCase):
                 visibility="internal", files={"index.html": b"<h1>access payload</h1>"}, expires_in_s=3600)
         incomplete = fix.http.current((fix.api_base), bf.init_command({"name": "access-incomplete", "kind": "dir", "visibility": "internal", "files": []}), headers={"Authorization": "Bearer " + fix.identity.token})
         self.assertEqual(incomplete.status, 200)
-        payload = {"base": fix.api_base, "token": fix.identity.token, "core": core,
+        payload = {"base": fix.api_base, "token": fix.identity.token, "login": fix.identity.login, "loginPassword": fix.identity.password, "core": core,
             "browser": chromium, "resolver": bf.HOST_RESOLVER_RULES, "artifacts": artifacts,
             "incomplete": incomplete.json()["artifact_id"], "includeRaces": include_races}
         result = subprocess.run([node, str(Path(__file__).parent / "browser/access-modes.mjs")],

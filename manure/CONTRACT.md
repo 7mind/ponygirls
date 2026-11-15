@@ -37,6 +37,21 @@
 > authorization boundary, payload inspection or deployment is implied. Existing
 > artifacts retain empty tags and absent provenance through migration.
 
+> **2026-11-15 persistent browser-account amendment:**
+> [`docs/account-auth.md`](docs/account-auth.md) is normative for browser
+> password login, durable independent no-expiry sessions and the separately
+> versioned `/api/account/v1` settings/token protocol. It supersedes historical
+> stateless/token-valued/24-hour dashboard cookies and token-login forms/commands
+> below. Browser sessions and API bearer credentials are disjoint. Logout deletes
+> the server session and its bound content grants, not configured/API tokens.
+> Configured token IDs/hashes, user attribution, machine authority, content-grant
+> expiry and live delivery checks remain unchanged. Human users may add paired
+> `login`/`passwordHashFile`, omit static tokens, and set optional `enabled`
+> (default true); agents remain token-only. Settings display immutable configured
+> tokens and issue/revoke owner-bound runtime tokens. New account mutations bind
+> `X-Account-Actor` to the current owner inside their effect transaction. This is
+> not a live deployment, credential mapping or migration authorization.
+
 # manure — file & directory hosting (v0.2.0, amended)
 
 Original implementation freeze, with the explicit §0.1 amendment below.
@@ -267,7 +282,7 @@ Top-level keys are exactly (unknown keys → startup failure, fail closed):
 | `trusted_proxies` | list[str] | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-Proto` is honored (§5.8). All other forwarded headers ignored. |
 | `dashboard_dir` | str\|null | package `manure/manure/web/dashboard` (repo fallback `manure/web/dashboard`, §11) | `null` = JSON API only (`dashboard-disabled`). |
 | `unlock_shell_dir` | str\|null | package `manure/manure/web/unlock` (repo fallback `manure/web/unlock`, §11) | `null` = built-in minimal unlock form (§5.4). |
-| `users` | list | `[]` (≥1 required, fail closed) | `{id, type: human\|agent, displayName?, tokens: [{id, hashFile}]}`. Type is attribution only. |
+| `users` | list | `[]` (≥1 required, fail closed) | `{id,type:human\|agent,displayName?,enabled?,login?,passwordHashFile?,tokens:[{id,hashFile}]}`. Password fields are paired/human-only; see current account amendment. |
 | `storage_quota_bytes` | int | `21474836480` (20 GiB) | Cap enforced by atomic reservation (§6), not best-effort check. |
 | `chunk_bytes` | int | `1048576` | Server-dictated; 256 KiB–4 MiB enforced. |
 | `max_file_bytes` | int | `536870912` (512 MiB) | Per file. |
@@ -289,9 +304,9 @@ Top-level keys are exactly (unknown keys → startup failure, fail closed):
 | `grant_ttl_s` | int | `86400` | Content grant lifetime (capped by artifact TTL). |
 | `one_time_grant_ttl_s` | int | `60` | Single-use handoff grant lifetime. |
 
-Dashboard sessions are stateless (cookie revalidated per request against
-live config; no server-side session table, hence no session-count bound
-beyond the throttle map). Web asset loading: explicit
+Dashboard sessions use independent durable records with no server expiry;
+see the persistent browser-account amendment above. Upload-session caps do not
+limit browser sessions. Web asset loading: explicit
 `dashboard_dir`/`unlock_shell_dir` with the §11 resolution order; a
 configured-but-missing dir → startup failure. `null` semantics above.
 

@@ -8,7 +8,7 @@ report=$(mktemp -d "$PWD/manure/backend/target/validation-runs/$(date -u +%Y%m%d
 for p in manure/backend/target/test-reports manure/backend/target/validation-inventory.txt manure/server/target/test-reports; do
   if [[ -e $p ]]; then mv "$p" "$report/previous-$(basename "$(dirname "$p")")-$(basename "$p")"; fi
 done
-find build.sbt project manure/backend manure/server manure/models manure/generated shared/service-runtime shared/baboon-runtime shared/retrieval-core shared/retrieval-postgres shared/model-http -type f \( -name '*.scala' -o -name '*.sbt' -o -name '*.properties' -o -name '*.sh' -o -name '*.json' -o -name '*.sql' -o -name '*.java' -o -name '*.c' -o -name '*.h' \) ! -path '*/target/*' ! -path 'project/project/*' -print0 | sort -z | xargs -0 sha256sum > "$report/source.sha256"
+find build.sbt project manure/backend manure/server manure/models manure/generated shared/service-runtime shared/service-auth shared/lossless-json shared/baboon-runtime shared/retrieval-core shared/retrieval-postgres shared/model-http -type f \( -name '*.scala' -o -name '*.sbt' -o -name '*.properties' -o -name '*.sh' -o -name '*.json' -o -name '*.sql' -o -name '*.java' -o -name '*.c' -o -name '*.h' \) ! -path '*/target/*' ! -path 'project/project/*' -print0 | sort -z | xargs -0 sha256sum > "$report/source.sha256"
 git rev-parse HEAD > "$report/git-head"
 "$POSTGRES_HOME/bin/postgres" --version > "$report/postgres-version"
 java -version 2> "$report/java-version"

@@ -67,9 +67,7 @@ final case class Config(
       Require(contentSuffix.length <= 253 && contentSuffix.matches("[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)*"), "bad-envelope")
     Require(!loopbackDev || contentSuffix.isEmpty || ApiOrigin.loopback(contentSuffix), "bad-envelope")
     Require(contentMode != "path" || !apiOrigin.host.takeWhile(_ != '.').matches("[0-9a-f]{32}"), "bad-envelope")
-    Require(users.nonEmpty && users.map(_.id).distinct.size == users.size && users.forall(u =>
-      u.id.nonEmpty && Set("human","agent")(u.userType) && u.tokens.nonEmpty &&
-      u.tokens.map(_.id).distinct.size == u.tokens.size && u.tokens.forall(t => t.id.nonEmpty && t.hashFile.toString.nonEmpty)), "bad-envelope")
+    UserConfig.validate(users)
     Require(migrationManifestMaxBytes > 0 && migrationManifestMaxBytes <= 536870912 && migrationManifestMaxEntries > 0, "bad-envelope")
     rootAuthority.foreach { settings =>
       val writable=Vector(dataDir.normalize()) ++ migrationReceiptDir.map(_.normalize())
@@ -100,9 +98,12 @@ object Config:
     Require(c.keys.exists(_.forall(known)), "bad-envelope")
     val users = field[Vector[Json]](c,"users").map { j =>
       val u = j.hcursor
-      UserConfig(field(u,"id"),field(u,"type"),field[Vector[Json]](u,"tokens").map { token =>
+      Require(u.keys.exists(_.forall(Set("id","type","tokens","displayName","enabled","login","passwordHashFile"))), "bad-envelope")
+      UserConfig(field(u,"id"),field(u,"type"),default(u,"tokens",Vector.empty[Json]).map { token =>
         val t = token.hcursor; TokenRef(field(t,"id"),Path.of(field[String](t,"hashFile")))
-      },default(u,"displayName",""))
+      },default(u,"displayName",""),default(u,"enabled",true),
+        u.get[Option[String]]("login").getOrElse(throw DomainError("bad-envelope")),
+        u.get[Option[String]]("passwordHashFile").getOrElse(throw DomainError("bad-envelope")).map(Path.of(_)))
     }
     val l = Limits(default(c,"storage_quota_bytes",21474836480L),default(c,"chunk_bytes",1048576),
       default(c,"max_file_bytes",536870912L),default(c,"max_artifact_bytes",2147483648L),default(c,"max_files_per_artifact",10000),

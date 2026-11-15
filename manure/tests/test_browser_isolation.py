@@ -244,7 +244,8 @@ class IsolationFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
              "contains": "shown"},

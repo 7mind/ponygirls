@@ -46,7 +46,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
         expiry.map(Exact.displayTime),expiry,UploadState.Uploading,total,request.files.size,total,
         password.map(SecretCodec.sha256),now,Manifest.encode(request.files),request.tags,request.hostname,request.projectPath)
       metadata.transaction { tx =>
-        Require(auth.live(identity), "unauthorized")
+        Require(auth.live(tx,identity), "unauthorized")
         Require(total <= limits.storageQuotaBytes - tx.reservation, "quota-exceeded")
         Require(tx.sessions(None) < limits.maxSessionsGlobal && tx.sessions(Some(identity.userId)) < limits.maxSessionsPerUser, "session-limit")
         payloads.stage(a); payloads.sidecar(a); faults("before_init_commit"); tx.put(a)
@@ -58,19 +58,19 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   }
   def info(identity: Identity,id: String, includeExpired: Boolean = false): IO[Artifact] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = get(tx,id); if !includeExpired then a.requireLive(clock.now); a
     }
   }
   def snapshot(identity: Identity, after: Option[String], limit: Int): IO[Vector[Artifact]] = metadata.transaction { tx =>
-    Require(auth.live(identity), "unauthorized"); tx.artifacts(after,limit)
+    Require(auth.live(tx,identity), "unauthorized"); tx.artifacts(after,limit)
   }
   def catalogue(identity: Identity, selection: CataloguePolicy.Selection): IO[Vector[Artifact]] = metadata.transaction { tx =>
-    Require(auth.live(identity), "unauthorized"); tx.catalogue(selection)
+    Require(auth.live(tx,identity), "unauthorized"); tx.catalogue(selection)
   }
   def patch(identity: Identity,id: String, patch: ArtifactPatch): IO[Initialized] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = get(tx,id)
       a.requireOwner(identity.userId)
       patch.name.foreach(UploadRules.name)
@@ -92,7 +92,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   }
   def rotate(identity: Identity,id: String): IO[String] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = get(tx,id)
       Require(a.visibility == Visibility.External, "invalid-visibility")
       val password = SecretCodec.token()
@@ -106,7 +106,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
     */
   def externalPassword(identity: Identity,id: String): IO[Option[String]] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = get(tx,id)
       Require(a.visibility == Visibility.External, "invalid-visibility")
       tx.externalPassword(id).map { secret =>
@@ -117,13 +117,13 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
   }
   def delete(identity: Identity,id: String): IO[Unit] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = get(tx,id); tx.delete(id); a
     }.flatMap(a => blocking(payloads.cleanup(a)))
   }
   def status(identity: Identity,id: String): IO[UploadProgress] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = live(tx,id)
       UploadProgress(id,a.state,a.manifest.filterNot(_.directory).map { e =>
         val ranges = UploadRules.ranges(tx.receipts(id,e.path),e.size)
@@ -136,7 +136,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       Manifest.path(path)
       Require(sha.matches("[a-fA-F0-9]{64}") && SecretCodec.sha256(bytes) == sha.toLowerCase(java.util.Locale.ROOT), "invalid-range")
     } *> metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = owned(tx,identity.userId,id)
       Require(a.state == UploadState.Uploading, "state-conflict")
       val e = a.manifest.find(e => !e.directory && e.path == path).getOrElse(throw DomainError("not-found"))
@@ -184,13 +184,14 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
     }
   def finish(identity: Identity,id: String): IO[Artifact] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized"); owned(tx,identity.userId,id)
+      Require(auth.live(tx,identity), "unauthorized"); owned(tx,identity.userId,id)
     }.flatMap { a =>
       a.state match
         case UploadState.Ready => IO.pure(a)
         case UploadState.Publishing => recover(a).attempt *> IO.raiseError(DomainError("state-conflict"))
         case UploadState.Uploading =>
           metadata.transaction { tx =>
+            Require(auth.live(tx,identity), "unauthorized")
             val current = owned(tx,identity.userId,id)
             if !payloads.complete(current,false) then
               // Repair commits before reporting failure, not rolled back by it.
@@ -264,7 +265,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
     tx.trimContent(a.id,limits.maxGrantsPerArtifact,SecretCodec.sha256(value)); (value,expiry)
   def createGrant(identity: Identity,id: String): IO[String] = serialized {
     metadata.transaction { tx =>
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(tx,identity), "unauthorized")
       val a = live(tx,id)
       Require(a.state == UploadState.Ready, "state-conflict")
       Require(a.visibility == Visibility.Internal, "invalid-visibility")
@@ -282,7 +283,7 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
       Require(g.artifactId == id && !g.used, "grant-invalid")
       Require(clock.now < g.expiresAt, "grant-expired")
       val user = g.userId.getOrElse(""); val token = g.tokenId.getOrElse(""); val digest = g.tokenDigest.getOrElse("")
-      Require(auth.credentialLive(user,token,digest), "grant-invalid")
+      Require(auth.credentialLive(tx.accounts,user,token,digest), "grant-invalid")
       tx.putOneTime(g.copy(used=true)); issue(tx,a,Some(Identity(user,"",token,digest)),None)
     }
   }
@@ -302,10 +303,10 @@ final class Artifacts(metadata: Metadata, payloads: Payloads, limits: Limits,
     Require(a.state == UploadState.Ready && !a.expired(clock.now), "not-found")
     val bound = grant.filter(SecretCodec.canonical).flatMap(v => tx.content(SecretCodec.sha256(v))).exists { g =>
       g.artifactId == id && clock.now < g.expiresAt && (
-        (a.visibility == Visibility.Internal && g.userId.exists(u => auth.credentialLive(u,g.tokenId.getOrElse(""),g.tokenDigest.getOrElse("")))) ||
+        (a.visibility == Visibility.Internal && g.userId.exists(u => auth.credentialLive(tx.accounts,u,g.tokenId.getOrElse(""),g.tokenDigest.getOrElse("")))) ||
         (a.visibility == Visibility.External && g.passwordHash.nonEmpty && g.passwordHash == a.externalPasswordHash))
     }
-    val management = identity.exists(auth.live)
+    val management = identity.exists(auth.live(tx,_))
     val allowed = a.visibility match
       case Visibility.Public => true
       case Visibility.Internal => management || bound

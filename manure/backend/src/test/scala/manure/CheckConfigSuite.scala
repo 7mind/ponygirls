@@ -59,6 +59,17 @@ final class CheckConfigSuite extends FunSuite:
         finally
           child.destroyForcibly();child.waitFor(5,TimeUnit.SECONDS)
       assert(run(config,0).contains("MANURE_CONFIG_OK"))
+      val passwordOnly = Json.obj("id" -> Json.fromString("browser"),"type" -> Json.fromString("human"),
+        "login" -> Json.fromString("browser"),"passwordHashFile" -> Json.fromString(fifo.toString))
+      val human = config.mapObject(_.add("users",Json.arr(passwordOnly)))
+      assert(run(human,0).contains("MANURE_CONFIG_OK"))
+      assertEquals(Config.load(path).users.head.enabled,true)
+      assertEquals(Config.load(path).users.head.tokens,Vector.empty)
+      val invalidUsers = Vector(
+        Json.arr(passwordOnly.mapObject(_.remove("login"))),
+        Json.arr(passwordOnly.mapObject(_.add("type",Json.fromString("agent")))),
+        Json.arr(passwordOnly,passwordOnly.mapObject(_.add("id",Json.fromString("other")))))
+      invalidUsers.foreach(users => assert(!run(config.mapObject(_.add("users",users)),1).contains("MANURE_CONFIG_OK")))
       val duplicate=config.mapObject(_.add("allowed_api_origins",Json.arr(Json.fromString("https://api.example.test:8443"))))
       assert(!run(duplicate,1).contains("MANURE_CONFIG_OK"))
       assert(!Files.exists(directory.resolve("nonexistent-data")))

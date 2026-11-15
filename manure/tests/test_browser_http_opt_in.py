@@ -24,7 +24,8 @@ class HttpOptInBrowserCase(unittest.TestCase):
         out = bf.run_steps([
             {'op': 'goto', 'url': fix.api_base + '/'},
             {'op': 'waitForEval', 'fn': '() => !window.isSecureContext && typeof crypto.subtle === "undefined"'},
-            {'op': 'fill', 'selector': '#token-input', 'value': fix.identity.token},
+            {'op': 'fill', 'selector': '#login-input', 'value': fix.identity.login},
+            {'op': 'fill', 'selector': '#password-input', 'value': fix.identity.password},
             {'op': 'click', 'selector': '#login-form button[type=submit]'},
             {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
             {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + internal + '"]'},

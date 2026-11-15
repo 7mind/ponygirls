@@ -49,7 +49,8 @@ class TlsSmokeCase(unittest.TestCase):
     def _login_steps(self, token):
         return [
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
@@ -94,7 +95,7 @@ class TlsSmokeCase(unittest.TestCase):
         token = self.fix.identity.token
         out = self._browser(self._login_steps(token) + [
             {"op": "eval", "fn": "(s) => document.querySelector(s).value",
-             "arg": "#token-input"},
+             "arg": "#password-input"},
             {"op": "localStorageKeys"},
             {"op": "cookies", "urls": [self.api + "/"]},
         ])
@@ -322,7 +323,8 @@ class TlsSmokeCase(unittest.TestCase):
         out_strict = self._browser([
             {"op": "networkPhase", "phase": "victim-login"},
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
@@ -346,7 +348,8 @@ class TlsSmokeCase(unittest.TestCase):
         out_login = self._browser([
             {"op": "networkPhase", "phase": "victim-login"},
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#token-input", "value": token},
+            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
             {"op": "click", "selector": "#login-form button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
@@ -433,7 +436,7 @@ class TlsSmokeCase(unittest.TestCase):
         self.assertEqual(blob.body, b"tls victim bytes")
         # HTTP complements (urllib, no SameSite/preflight): fresh insecure jars.
         jar = bf.TestHttp(ssl_context=insecure)
-        login_ok = jar.current((self.api), bf.cp.Command_Login(({"token": token})["token"]), headers={"Origin": self.api})
+        login_ok = jar.login(self.api, self.fix.identity.login, self.fix.identity.password, headers={"Origin": self.api})
         self.assertEqual(login_ok.status, 200, login_ok.body[:300])
         self.assertTrue(jar.cookies_for(self.api))
         evil = {"Origin": "https://evil.example"}

@@ -8,11 +8,13 @@ import manure.storage.RootLease
   */
 final class MemoryMetadata(root: RootLease) extends Metadata:
   private case class State(artifacts: Map[String,Artifact],receipts: Map[(String,String,Long),Receipt],
-    oneTime: Map[String,OneTimeGrant],content: Map[String,ContentGrant],passwords: Map[String,ExternalPasswordSecret])
-  private var committed = State(Map.empty,Map.empty,Map.empty,Map.empty,Map.empty)
+    oneTime: Map[String,OneTimeGrant],content: Map[String,ContentGrant],passwords: Map[String,ExternalPasswordSecret],accounts: MemoryAccountState)
+  private var committed = State(Map.empty,Map.empty,Map.empty,Map.empty,Map.empty,MemoryAccountState.empty)
   def transaction[A](body: MetadataTxn => A): IO[A] = IO.blocking { synchronized { root.run {
     var s = committed
+    val accountTx = new MemoryAuthTxn(s.accounts)
     val tx = new MetadataTxn:
+      val accounts: AuthTxn = accountTx
       def artifact(id: String): Option[Artifact] = s.artifacts.get(id)
       def artifacts(after: Option[String],limit: Int): Vector[Artifact] = s.artifacts.values.toVector.filter(a => after.forall(Exact.compare(a.id,_) > 0)).sortWith((a,b) => Exact.compare(a.id,b.id) < 0).take(limit)
       def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact] = CataloguePolicy.select(s.artifacts.values,selection)
@@ -51,6 +53,6 @@ final class MemoryMetadata(root: RootLease) extends Metadata:
         s = s.copy(oneTime=s.oneTime.filterNot((_,g) => g.userId.contains(user) && g.tokenId.contains(token)),content=s.content.filterNot((_,g) => g.userId.contains(user) && g.tokenId.contains(token)))
       def sweepGrants(now: Double): Unit = s = s.copy(oneTime=s.oneTime.filter(_._2.expiresAt > now),content=s.content.filter(_._2.expiresAt > now))
     val result = body(tx)
-    committed = s
+    committed = s.copy(accounts=accountTx.state)
     result
   }}}

@@ -77,8 +77,9 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
   embedding: Option[EmbeddingClient]):
   def modes: List[wire.SearchMode] = if embedding.nonEmpty then List(wire.SearchMode.Lexical,wire.SearchMode.Semantic,wire.SearchMode.Hybrid) else List(wire.SearchMode.Lexical)
   private def filter(key: String,value: String): AttributeFilter = AttributeFilter.Equal(AttributeKey.parse(key),AttributeValue(value))
-  def query(identity: Identity,q: wire.SearchQuery,origin: ApiOrigin): IO[wire.SearchPage] = IO {
-    Require(auth.live(identity), "unauthorized")
+  def query(identity: Identity,q: wire.SearchQuery,origin: ApiOrigin): IO[wire.SearchPage] = database.transaction { c =>
+    Require(auth.live(new PostgresAuthTxn(c),identity), "unauthorized")
+  } *> IO {
     Require(q.query.nonEmpty && q.query.length <= 4096 && q.limit > 0 && q.limit <= config.limits.maxListLimit && q.cursor.isEmpty, "bad-envelope")
     MetadataRules.validate(q.filter.tags,q.filter.hostname,q.filter.projectPath)
     val mode = q.mode match
@@ -93,12 +94,12 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
   }.flatMap { (mode,filters) =>
     val vector = if mode == RetrievalMode.Lexical then IO.pure(None) else embedding.get.query(q.query).map(Some(_))
     vector.flatMap { values => database.transaction { c => root.run {
-      Require(auth.live(identity), "unauthorized")
+      Require(auth.live(new PostgresAuthTxn(c),identity), "unauthorized")
       val query = RetrievalQuery(ManagementSearchPrincipal.fromUser(identity.userId).value,q.query,mode,filters,false,0,q.limit,EpochSeconds.fromDouble(clock.now))
       val page = engine.search(c,query,values)
       val hits = page.hits.flatMap { hit =>
         // Fresh source authorization/expiry before returning any pinned metadata.
-        if !auth.live(identity) || !engine.visible(c,query.copy(now=EpochSeconds.fromDouble(clock.now)),hit.id) then None
+        if !auth.live(new PostgresAuthTxn(c),identity) || !engine.visible(c,query.copy(now=EpochSeconds.fromDouble(clock.now)),hit.id) then None
         else
           val a = projection.pinned(c,hit.id,hit.version).copy(contentUrl=config.contentUrl(hit.id,origin))
           val field = hit.chunk.provenance.field match

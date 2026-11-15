@@ -14,6 +14,7 @@ import manure.storage.RootLease
 trait Metadata:
   def transaction[A](body: MetadataTxn => A): IO[A]
 trait MetadataTxn:
+  def accounts: AuthTxn
   def artifact(id: String): Option[Artifact]
   def artifacts(after: Option[String], limit: Int): Vector[Artifact]
   def catalogue(selection: CataloguePolicy.Selection): Vector[Artifact]
@@ -146,6 +147,7 @@ private[manure] object CatalogueSql:
     (sql,params :+ s.fetch)
 
 private[manure] final class PostgresTxn(c: Connection,projection: SearchProjection) extends MetadataTxn:
+  val accounts: AuthTxn = new PostgresAuthTxn(c)
   import Jdbc.*
   private def readArtifact(r: ResultSet): Artifact = Artifact(
     text(r,"id"),text(r,"name"),ArtifactKind.parse(text(r,"kind")),Visibility.parse(text(r,"visibility")),

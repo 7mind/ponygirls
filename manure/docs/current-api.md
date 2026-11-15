@@ -8,6 +8,18 @@ conversion. This is a coordinated server/owned-client replacement, **not** a
 production activation approval. The historical Python implementation remains
 source evidence until its replacement checks pass.
 
+## Browser-account boundary
+
+[`account-auth.md`](account-auth.md) defines the independent `/api/account/v1`
+password/session/settings protocol; it is not another version of the Baboon
+artifact API. Browser sessions are durable, no-expiry and distinct from
+configured/issued bearer API tokens. The generated `Login(token)` variant is
+retained in current codecs but rejected without a cookie; browser clients use
+account password login. New account mutations bind their displayed `user.actor`
+through `X-Account-Actor`, validated inside the session mutation transaction.
+Domain logout still invalidates browser sessions and bound grants without
+revoking bearer tokens or requiring the account actor header.
+
 ## Transport
 
 * Management: `POST /api/current`, `Content-Type: application/json`.
@@ -49,8 +61,8 @@ source evidence until its replacement checks pass.
 |---|---|---|
 | Version | Version | safe, no cookie mutation |
 | GetCapabilities | CapabilityInfo | finite bounds; available search modes only |
-| Login(token) | Identity | always exact matched API Origin; sets session cookie |
-| Logout | Ok | Origin/auth guards; revoke token-bound grants; clear session |
+| Login(token) | Error(BadEnvelope) | legacy token login rejected; no cookie; exact Origin guard retained |
+| Logout | Ok | Origin/auth guards; delete actual browser session and bound grants; clear cookie; do not revoke bearer credentials |
 | Whoami | Identity | live principal attribution, not role-based authorization |
 | ListArtifacts(query) | Catalogue(page) | all authenticated users; exact catalogue |
 | InitUpload(name,kind,visibility,expiresInSeconds,files,tags,hostname,projectPath) | UploadInitialized | atomic quota/session reservation; initial external password |

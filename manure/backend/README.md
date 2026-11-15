@@ -53,7 +53,8 @@ Example minimal synthetic server configuration:
 {
   "data_dir": "/var/lib/manure", "api_origin": "https://manure.example.test",
   "content_mode": "subdomain", "content_suffix": "artifacts.example.test",
-  "users": [{"id":"operator","type":"human","tokens":[
+  "users": [{"id":"operator","type":"human","enabled":true,"login":"operator",
+    "passwordHashFile":"/run/credentials/manure/operator-password-pbkdf2","tokens":[
     {"id":"primary","hashFile":"/run/credentials/manure/operator-token-sha256"}
   ]}],
   "dashboard_dir": "/opt/manure/share/manure/web/dashboard",
@@ -69,8 +70,22 @@ Example minimal synthetic server configuration:
 }
 ```
 
-Current generated API: `POST /api/current` and raw chunk/file routes documented in
-`../docs/current-api.md`. Server startup migrates the empty/current PostgreSQL
+Browser accounts use the independently versioned `/api/account/v1` protocol in
+[`../docs/account-auth.md`](../docs/account-auth.md): human password login,
+independent durable no-expiry browser sessions, settings and one-time-issued API
+tokens. `enabled` defaults true; `login`/`passwordHashFile` are paired/human-only.
+A password-only human may omit `tokens` or use an empty list. Configured tokens
+remain bearer-only and immutable from settings; their IDs/hashes and machine
+access are preserved. Session cookies never accept a bearer token. Legacy
+`Command.Login(token)` and `/api/current/login` reject without setting cookies.
+Account mutations require `X-Account-Actor` from the displayed `user.actor`,
+checked against the cookie owner in the same transaction; domain logout retains
+its existing Origin contract. Logout invalidates the server session and its
+content grants, not API tokens. Missing/malformed password references fail
+closed; `check-config` still does not open referenced files.
+
+Current generated artifact API: `POST /api/current` and raw chunk/file routes are
+in `../docs/current-api.md`. Server startup migrates the empty/current PostgreSQL
 schema only; NEVER imports SQLite. Offline conversion is a separately invoked
 `python3 manure/migration/convert.py` tool (see migration README for finalized
 arguments), with quiesced matched source snapshot and owned disposable destination.

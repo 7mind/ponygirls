@@ -124,7 +124,7 @@ class ViewerBrowserTests(unittest.TestCase):
                             "docs/guide ü.md": MARKDOWN + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture()},
                kind="dir", visibility="external")
         upload("internal", {"private.md": b"# Internal viewer handoff\n"}, visibility="internal")
-        payload = {"base": fix.api_base, "token": fix.identity.token,
+        payload = {"base": fix.api_base, "token": fix.identity.token, "login": fix.identity.login, "loginPassword": fix.identity.password,
                    "core": core, "browser": browser, "mode": mode,
                    "resolver": bf.HOST_RESOLVER_RULES, "records": records,
                    "artifacts": str(Path(os.environ["MANURE_VIEWER_ARTIFACTS"]).resolve())

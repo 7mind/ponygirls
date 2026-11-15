@@ -39,7 +39,7 @@ class DashboardUXTests(unittest.TestCase):
         cls.fix.close()
 
     def test_catalogue_detail_and_session_flows(self):
-        payload = {"base": self.fix.api_base, "token": self.fix.identity.token, "records": self.records,
+        payload = {"base": self.fix.api_base, "token": self.fix.identity.token, "login": self.fix.identity.login, "loginPassword": self.fix.identity.password, "records": self.records,
             "bundle": self.bundle, "protectedId": self.protected, "password": self.password,
             "publicId": self.public, "expiredId": self.expired, "hostile": self.hostile,
             "browser": self.browser, "engine": "firefox" if self.firefox else "chromium",

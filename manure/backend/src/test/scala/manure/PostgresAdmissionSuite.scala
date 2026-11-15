@@ -58,6 +58,7 @@ final class PostgresAdmissionSuite extends FunSuite:
         var pauseAfterCommit = false
         f.metadata.transaction { tx =>
           val observed = new MetadataTxn:
+            def accounts: AuthTxn = tx.accounts
             def artifact(id: String): Option[Artifact] =
               val result=tx.artifact(id);result.foreach(a => events.add(Observation("read",a)));result
             def artifacts(after: Option[String],limit: Int): Vector[Artifact] =
