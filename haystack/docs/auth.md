@@ -1,12 +1,17 @@
-# Haystack — authentication and transport contract (frozen, Step 0)
+# Haystack — authentication and transport contract
 
-Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
+## 1. Declarative accounts and API credentials
 
-## 1. Tokens and static users
-
-- Users are static: `{ userId, type: human|agent, displayName,
-  tokens: { tokenId: tokenHashFile } }`. Type is attribution, never
-  authorization: every authenticated user reads/writes every item.
+- Users are declarative: `id`, `type: human|agent`, `displayName`, and
+  `tokens: [{id,hashFile}]`. Optional `enabled` defaults to true. Optional
+  `login` and `passwordHashFile` must occur together and are human-only.
+  Password-only humans may have `tokens: []`; agents remain token-only.
+  Type is attribution, never item authorization: every authenticated user
+  reads/writes every item. User/token IDs and audit provenance are preserved.
+- Password files contain a Chronicle-compatible
+  `pbkdf2-sha256$rounds$salt$hash` value, optionally followed by one LF.
+  Invalid/unreadable files fail closed. Passwords and hash contents never
+  belong in configuration, argv, logs, the Nix store or browser storage.
 - Token: 32 random bytes → canonical unpadded base64url (43 ASCII chars).
   Identifies exactly one (user, tokenId). Multiple token IDs per user for
   rotation overlap.
@@ -21,16 +26,22 @@ Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
 - Startup validation (fail closed): unique user IDs and per-user token IDs,
   valid types/digests, no digest assigned twice, all credential files
   readable and nonempty. Never start anonymous or pick another identity.
-- Revocation = remove token/user from config + restart/reload. In-flight
-  committed operations are not retroactively revoked. Cookies revalidate
-  against config on every request (persistence ≠ revocation immunity).
+- Declarative token revocation removes that token from configuration, then
+  reloads/restarts. Settings list declarative tokens as immutable; the server
+  rejects attempts to revoke them. Issued API tokens are durable, independently
+  revocable, and return their random secret only once. Both kinds retain the
+  existing full API authority (`scopes: ["api"]`).
+- Removing/disabling an owner persistently invalidates sessions and issued API
+  tokens. Re-enabling does not resurrect them. Password replacement persistently
+  invalidates browser sessions. Committed operations are not retroactively undone.
 
 ## 2. Transports and credentials
 
 - `/mcp`: bearer only. Browser cookies rejected there (spike-proven 401).
 - Browser API: same-origin cookie OR explicit bearer for non-browser
-  clients; both present → `ambiguous-credentials` fault. Login uses the
-  submitted token, never an existing cookie.
+  clients; both present → `ambiguous-credentials` fault. Browser sessions and
+  API bearers are different random credentials: neither is accepted in the
+  other's transport. Account settings accept browser sessions only.
 - `whoami` (bearer): returns `{ userId, type, tokenId,
   activityProjectId }`. Diagnostic endpoint (preflight is dropped, but the
   server still reports authoritative identity + namespace so clients and
@@ -42,12 +53,16 @@ Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
 
 ## 3. Browser session
 
-- `POST /api/v1/login` verifies the token and sets the session cookie:
-  production name `__Host-haystack` with `HttpOnly`, `Secure`, `Path=/`,
+- `POST /api/account/v1/login` verifies `{login,password}` and creates an
+  independent PostgreSQL-backed browser session. The legacy generated
+  `/api/v1/login` codec/route remains registered but rejects token login without
+  setting a cookie. Cookie production name `__Host-haystack` with `HttpOnly`, `Secure`, `Path=/`,
   no Domain, `SameSite=Strict`; loopback development uses the explicitly
   separate plain name `haystack-dev` without `Secure` (browsers reject
   Secure-less `__Host-` cookies outright — verified by browser tests).
-  180-day lifetime renewed on authenticated activity in both modes.
+  Browser-compatible 400-day persistence is refreshed on authenticated use.
+  Sessions have no server-side idle or absolute expiry. Browser eviction/caps
+  are outside the service's control.
 - Optional `insecureHttpOrigins: string[]` enables plain `haystack-dev`
   cookies for dedicated HTTP authorities while keeping `cookieSecure: true`
   and `__Host-haystack; Secure` on HTTPS. Absent/empty preserves existing
@@ -71,21 +86,59 @@ Normative freeze of plan §5 (minus dropped preflight — see decisions.md).
   exact HTTP Origin and Host; this also applies to reads and live upgrades.
   Login, renewal, logout, and live session replacement use the same selection;
   the other cookie name is never a fallback. `/mcp` rejects either cookie name.
-- **HTTP exposes the static bearer token and all content to interception.**
+- **HTTP exposes browser credentials and all content to interception.**
   Use only on a trusted, encrypted private overlay, with listener/firewall
   restrictions (for example NetBird interface and loopback only). HTTP is not
   made safe merely by adding it to an allowlist. Cookies are host-only, not
   port-scoped: do not serve untrusted applications on the same HTTP hostname.
   The HTTPS cookie remains Secure and is not sent to the HTTP endpoint.
 - Same-origin validation on login and every cookie-authenticated mutation
-  (CSRF). Logout expires the cookie (does not revoke the static token
-  elsewhere). Tokens never in URLs, localStorage, logs, or tracing.
-- Backend restarts do not invalidate the cookie: sessions are checked
-  against the provisioned token digest on each request. A failed connection
+  (CSRF). Both common and legacy domain logout delete the current durable
+  session and expire its cookie. A copied cookie then fails, including after
+  restart; other browser sessions and API bearers remain valid. Password login
+  with a valid existing cookie replaces only that presented session. Secrets
+  never belong in URLs, localStorage/sessionStorage, logs, or tracing.
+- Backend restarts do not invalidate retained sessions: each request checks the
+  durable session and current eligible owner. Live sockets revalidate against
+  the same database on incoming frames, heartbeat, notification admission and
+  frame delivery, including logout performed by another server instance. A failed connection
   or HTTP 502/503/504 preserves the cookie and reports service unavailability.
   Only HTTP 401 or a WebSocket session rejection (4401) prompts sign-in.
   After an outage, refresh or retry revalidates the existing cookie. Its
-  normal expiry and token revocation still apply.
+  browser retention limits and explicit credential revocation still apply.
+
+## Account settings boundary
+
+The independent JSON protocol is `/api/account/v1`, not a Baboon domain version:
+
+| Method/path suffix | Request | Success |
+|---|---|---|
+| POST `/login` | `{login,password}` | `{user}` plus session cookie |
+| GET root | none | `{user,tokens,scopes:["api"]}` |
+| POST `/tokens` | `{name,scopes:["api"]}` | `{token,secret}` (secret once) |
+| POST `/tokens/{id}/revoke` | `{}` | `{ok:true}` |
+| POST `/logout` | `{}` | `{ok:true}` plus expired cookie |
+
+`user` contains `id`, `login`, `displayName`, and opaque `actor`. Token metadata
+contains `id`, `name`, `source: configured|issued`, nullable `createdAt`, `revoked`,
+and `scopes`; no token/session secret or digest appears in listings. Configured
+IDs/names retain their declarative labels. Only an owner may revoke their issued
+token; there is no authority/scope escalation or cross-user administration.
+
+Every mutation except login requires exactly one `X-Account-Actor` header from
+the displayed user's `actor`. Missing/duplicate/malformed actor is 400 `invalid`;
+a valid actor for another owner is 409 `conflict` with no mutation. The check is
+inside the same JDBC transaction as the session/owner lookup and side effect.
+This prevents another tab's replacement cookie from redirecting a stale settings
+action to its new owner. Legacy domain logout deliberately keeps its old envelope.
+
+Account routes reject query strings and bearer credentials. Host and Origin must
+match the configured public authority exactly; absent Origin needs explicit
+`Sec-Fetch-Site: same-origin`. Bodies require JSON, at most16KiB, depth8, strict
+UTF8/duplicate-key validation and exact fields. Responses are no-store and
+no-referrer. Errors are sanitized `{error:{code,message}}`; unavailable config/DB
+is 503, never a fabricated invalid-password response. They do not expose SQL,
+paths, passwords, hashes or submitted content.
 
 ## 4. Cache, referrer, logging privacy
 

@@ -19,8 +19,8 @@ Use generated classes **and codecs**, not interface casts or custom legacy JSON:
 | Route | Generated request → response |
 |---|---|
 | `GET /api/v1/health` | none → `Ack` (no data/auth) |
-| `POST /api/v1/login` | `LoginRequest` → `LoginResult(identity,versions)` + session cookie |
-| `POST /api/v1/logout` | empty object → `Ack` + expired cookie |
+| `POST /api/v1/login` | legacy `LoginRequest` decoded, then `unauthorized`; never sets a bearer cookie |
+| `POST /api/v1/logout` | empty object → `Ack`; deletes the current browser session and expires its cookie |
 | `GET /api/v1/whoami` | none → `Identity(userId,userType,tokenId,activityProjectId)` |
 | `POST /api/v1/get` | `GetRequest(key,revision?)` → `Item` |
 | `POST /api/v1/put` | `PutRequest` → `PutResult` |
@@ -51,6 +51,15 @@ invalid-document/query/cursor, bad-envelope, not-found, conflict/replay-conflict
 unauthorized, forbidden, ambiguous-credentials, too-large, rate-limited,
 version-mismatch and unavailable. Messages never contain submitted values, SQL,
 paths or credentials. Query spans are half-open UTF16 offsets.
+
+## Independent account API
+
+Password sign-in and browser-only token settings use `/api/account/v1`, with
+strict JSON rather than generated domain DTOs. See [auth.md](auth.md#account-settings-boundary)
+for the complete login/account/list/issue/revoke/logout contract, owner-bound
+`X-Account-Actor` header, immutable declarative tokens and sanitized error wrapper.
+The domain's generated version, audit IDs, bearer access and item policy are unchanged.
+Browser cookies authenticate only durable sessions, never configured/issued API tokens.
 
 ## Search, metadata and content retrieval
 

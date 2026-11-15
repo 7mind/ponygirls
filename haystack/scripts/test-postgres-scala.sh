@@ -36,7 +36,7 @@ git diff --binary HEAD >"$report/source-working-diff"
 # Full exact input audit, including synthetic fixtures and shared production
 # dependencies. No credential/env file contents or database payloads are read.
 find haystack/server/src haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations \
-  shared/service-runtime/src shared/baboon-runtime/src shared/lossless-json/src \
+  shared/service-auth/src shared/service-runtime/src shared/baboon-runtime/src shared/lossless-json/src \
   shared/retrieval-core/src shared/retrieval-postgres/src shared/model-http/src \
   -type f -print0 | sort -z | xargs -0 sha256sum >"$report/source-files.sha256"
 sha256sum build.sbt project/build.properties project/plugins.sbt scripts/backend-sbt.sh \

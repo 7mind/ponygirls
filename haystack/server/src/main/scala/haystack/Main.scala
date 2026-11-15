@@ -6,7 +6,7 @@ import distage.*
 import ponygirls.runtime.{JdbcDatabase,CatsIOInjector}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
-import haystack.auth.Auth
+import haystack.auth.{Auth,AccountService}
 import haystack.storage.{Migrations,PostgresItemRepository,ItemRepository}
 import haystack.application.ItemService
 import haystack.http.{Http,LiveHub}
@@ -42,19 +42,21 @@ object Main extends IOApp {
       initial<-IO.blocking(Auth.load(config.auth))
       reference=new AtomicReference[Either[Throwable,Auth]](Right(initial))
       getAuth=()=>reference.get().fold(throw _,identity)
+      accounts=new AccountService(database,getAuth)
+      _<-accounts.reconcile(initial)
       hub<-LiveHub.create
       projection=new HaystackRetrieval(database,config.retrieval.policy,new PostgresRetrieval("haystack",config.retrieval.embedding.map(e=>RetrievalProfile(e.space,config.retrieval.policy.id))),embedding,config.retrieval.batchSize)
       repository=new PostgresItemRepository(database,Some(projection))
       _<-repository.initializeProjection()
       // Every reload is fail-closed; invalid/unreadable replacement config
       // revokes access until repaired, rather than retaining stale authority.
-      reload=(IO.sleep(config.authReloadMs.millis) *> IO.blocking { val next=Config.load(file);if(next.auth.activityProjectId!=config.auth.activityProjectId)throw haystack.domain.Fault("config","activity namespace mismatch");Auth.load(next.auth) }.attempt.flatMap(value=>IO(reference.set(value)))).foreverM
+      reload=(IO.sleep(config.authReloadMs.millis) *> IO.blocking { val next=Config.load(file);if(next.auth.activityProjectId!=config.auth.activityProjectId)throw haystack.domain.Fault("config","activity namespace mismatch");Auth.load(next.auth) }.flatTap(accounts.reconcile).attempt.flatMap(value=>IO(reference.set(value)))).foreverM
       graph=new ModuleDef{
         make[ItemRepository].fromValue(repository)
         make[LiveHub].fromValue(hub)
-        make[ItemService].from((repo:ItemRepository,live:LiveHub)=>new ItemService(repo,(key,revision)=>live.changed(key,revision,getAuth())))
+        make[ItemService].from((repo:ItemRepository,live:LiveHub)=>new ItemService(repo,(key,revision)=>live.changed(key,revision,accounts)))
         make[HaystackRetrieval].fromValue(projection)
-        make[Http].from((service:ItemService,live:LiveHub)=>new Http(getAuth,service,live,config.webRoot,projection))
+        make[Http].from((service:ItemService,live:LiveHub)=>new Http(getAuth,service,live,config.webRoot,projection,accounts))
         make[Services]
       }
       _<-CatsIOInjector().produceGet[Services](graph).use { services=>

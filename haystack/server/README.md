@@ -9,6 +9,9 @@ projections on disposable/offline migration runs. It never rewrites history.
 
 [Complete required config](../docs/scala-config.example.json). All displayed keys
 are required; `webRoot`, `auth.rateLimit`, `retrieval.embedding` may be null.
+Per-user `login`/`passwordHashFile` are an optional human-only pair; optional
+`enabled` defaults true. Password-only humans may use an empty `tokens` list.
+Passwords use runtime PBKDF2 hash files, never literal configuration secrets.
 Credential values are files, never config values/argv. Only the literal prefix
 `$CREDENTIALS_DIRECTORY/` expands to that runtime environment directory. JDBC URL
 must be `jdbc:postgresql://HOST:PORT/DB` without credentials/options. One per-host
@@ -21,8 +24,17 @@ UI serving. Dynamic responses are no-store. No legacy routes/codecs are register
 Auth is reloaded every `authReloadMs` (100..60000); invalid replacement fails
 closed. Change the file atomically. Database/listen/retrieval config changes need
 a restart; changing the authoritative activity project requires deliberate offline
-reconciliation and otherwise prevents auth/startup. Session cookies revalidate
-against the loaded digest set. Restart preserves sessions and durable replays.
+reconciliation and otherwise prevents auth/startup. Independent browser sessions and issued API tokens use shared account tables on
+this same database/transaction engine; initialization is idempotent and requires no
+manual credential migration. Complete loaded users reconcile before serving or
+publishing replacement auth. Removal/disable/password replacement invalidates
+sessions durably; removed/disabled owners' issued tokens do not revive on re-enable.
+Sessions have no server-side expiry and use renewed 400-day browser cookies.
+Restart preserves retained sessions, token revocation and durable write replays.
+The independent [account API](../docs/auth.md#account-settings-boundary) provides
+password login and browser-only list/issue/revoke settings; configured API tokens
+remain immutable. `X-Account-Actor` binds settings mutations to their displayed owner.
+Legacy token login is rejected and both logout routes revoke the actual session.
 
 ## Retrieval policy
 
@@ -70,7 +82,7 @@ or production database is read; the script creates its own cluster/database and
 sets the guarded fixture environment itself. Never set that guard against an
 existing database.
 
-The runner has a 240-second whole-node deadline and 10-second forced cleanup;
+The runner has a 360-second whole-node deadline and 10-second forced cleanup;
 ordinary Node tests are bounded60seconds; the healthy-peer regression has an
 85-second fixture budget to observe two unchanged real30-second protocol heartbeat
 intervals (its heartbeat assertion is bounded62seconds). Readiness15seconds and

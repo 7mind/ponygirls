@@ -29,7 +29,11 @@ object Config {
     def duration(cursor:HCursor,key:String):FiniteDuration={val n=number[Long](cursor,key);if(n<1||n>3600000)fail();n.millis}
     val a=child(c,"auth")
     val users=get[Vector[Json]](a,"users").map { raw=>val u=raw.hcursor
-      UserConfig(get[String](u,"id"),get[String](u,"type"),get[String](u,"displayName"),get[Vector[Json]](u,"tokens").map{ raw=>val t=raw.hcursor;TokenConfig(get[String](t,"id"),expand(get[String](t,"hashFile")))})
+      def optional[A:io.circe.Decoder](key:String):Option[A]=u.downField(key).focus match {
+        case None=>None
+        case Some(_)=>Some(get[A](u,key))
+      }
+      UserConfig(get[String](u,"id"),get[String](u,"type"),get[String](u,"displayName"),get[Vector[Json]](u,"tokens").map{ raw=>val t=raw.hcursor;TokenConfig(get[String](t,"id"),expand(get[String](t,"hashFile")))},optional[String]("login"),optional[String]("passwordHashFile").map(expand),optional[Boolean]("enabled").getOrElse(true))
     }
     val rate=get[Option[Json]](a,"rateLimit").map {raw=>val r=raw.hcursor;RateLimit(number[Long](r,"windowMs"),number[Int](r,"max"))}
     val auth=AuthConfig(get[String](a,"activityProjectId"),users,get[Boolean](a,"cookieSecure"),get[Vector[String]](a,"allowedHosts"),get[Vector[String]](a,"allowedOrigins"),get[Vector[String]](a,"insecureHttpOrigins"),rate)

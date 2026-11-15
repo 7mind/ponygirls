@@ -7,7 +7,7 @@ import {fixture,api,encode,decode,document,rid,sleep} from './fixture.mjs';
 describe('current Scala HTTP/auth/domain',()=>{
  let f;before(async()=>{f=await fixture();});after(async()=>{await f?.stop();});
  const fault=async(response,status,code)=>{assert.equal(response.status,status);assert.equal(response.headers.get('cache-control'),'no-store');const body=decode(api.Failure,await response.json());assert.equal(body.code,code);return body;};
- const login=async(token=f.tokens.alice)=>{const r=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(token)),{headers:{Origin:f.base}});assert.equal(r.status,200);const value=decode(api.LoginResult,await r.json());assert.equal(value.versions.current,'1.0.0');assert.deepEqual(value.versions.supported,['1.0.0']);return r.headers.get('set-cookie');};
+ const login=async()=>{const r=await f.login();const value=await r.json();assert.deepEqual([value.user.id,value.user.login,value.user.displayName],['alice','alice','Alice']);assert.match(value.user.actor,/^[0-9a-f]{64}$/u);return r.headers.get('set-cookie');};
  const get=(key,revision)=>f.call('/api/v1/get',encode(api.GetRequest,new api.GetRequest(key,revision)),{token:f.tokens.alice});
  it('exact bearer, missing/wrong credentials, ambiguous cookie+bearer, no-store errors',async()=>{
   for(const authorization of [undefined,'Bearer nope','bearer '+f.tokens.alice,'Bearer  '+f.tokens.alice,'Bearer '+f.tokens.alice+' x'])await fault(await f.call('/api/v1/get',{},authorization?{headers:{Authorization:authorization}}:{}),401,'unauthorized');
@@ -20,13 +20,14 @@ describe('current Scala HTTP/auth/domain',()=>{
   for(const version of ['0.9.0','9.0.0'])await fault(await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice,headers:{'X-Haystack-Version':version}}),400,'version-mismatch');
  });
  it('login ignores stale cookies; rolling cookie flags/restart persistence/logout',async()=>{
-  const response=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Origin:f.base,Cookie:'haystack-dev=stale'}});assert.equal(response.status,200);
-  const cookie=response.headers.get('set-cookie');for(const flag of ['haystack-dev=','HttpOnly','Path=/','SameSite=Strict','Max-Age=15552000'])assert.ok(cookie.includes(flag));assert.ok(!cookie.includes('Secure'));
+  const response=await f.login({Cookie:'haystack-dev=stale'});assert.equal(response.status,200);
+  const cookie=response.headers.get('set-cookie');for(const flag of ['haystack-dev=','HttpOnly','Path=/','SameSite=Strict','Max-Age=34560000'])assert.ok(cookie.includes(flag));assert.ok(!cookie.includes('Secure'));
   const pair=cookie.split(';')[0];await f.restart();
-  const who=await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Cookie:pair}});assert.equal(who.status,200);assert.ok(who.headers.get('set-cookie').includes('Max-Age=15552000'));
-  const identity=decode(api.Identity,await who.json());assert.deepEqual([identity.userId,identity.userType,identity.tokenId,identity.activityProjectId],['alice','human','browser','agent-activity']);
+  const who=await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Cookie:pair}});assert.equal(who.status,200);assert.ok(who.headers.get('set-cookie').includes('Max-Age=34560000'));
+  const identity=decode(api.Identity,await who.json());assert.deepEqual([identity.userId,identity.userType,identity.activityProjectId],['alice','human','agent-activity']);assert.notEqual(identity.tokenId,'browser');
   const logout=await f.call('/api/v1/logout',{}, {headers:{Cookie:pair,Origin:f.base}});assert.equal(logout.status,200);assert.ok(logout.headers.get('set-cookie').includes('Max-Age=0'));
-  // Logout ends browser session sockets but does not revoke uniform static bearer.
+  // Copied session cookies fail after logout, but the declarative bearer remains valid.
+  await fault(await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Cookie:pair}}),401,'unauthorized');
   assert.equal((await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice})).status,200);
  });
  it('Host and Origin validation, cookie CSRF, bearer without browser Origin',async()=>{
@@ -135,7 +136,7 @@ describe('current Scala HTTP/auth/domain',()=>{
  it('reload revocation and fail-closed invalid replacement, without session secret logging',async()=>{
   const canary='SECRET-QUERY-CANARY';await f.call('/api/v1/search',encode(api.SearchRequest,new api.SearchRequest(canary,undefined,20,undefined,new api.SearchSort('key','asc'))),{token:f.tokens.bot});
   await f.reload(auth=>{auth.users=auth.users.filter(x=>x.id!=='bot');});await fault(await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.bot}),401,'unauthorized');
-  await f.reload(auth=>{auth.users[0].tokens=[];});await fault(await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice}),503,'unavailable');
+  await f.reload(auth=>{auth.users[0].passwordHashFile='/missing-synthetic-password';});await fault(await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice}),503,'unavailable');
   assert.ok(!f.output().includes(f.tokens.alice));assert.ok(!f.output().includes(f.tokens.bot));assert.ok(!f.output().includes(canary));
   const allowed=new Set(['requestId','route','status','result','userId','tokenId','revision','durationMs']);assert.ok(f.logs().length>10);for(const row of f.logs()){for(const key of Object.keys(row))assert.ok(allowed.has(key));for(const key of ['requestId','route','status','result'])assert.ok(key in row);}
  });

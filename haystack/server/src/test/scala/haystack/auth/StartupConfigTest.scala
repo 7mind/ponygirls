@@ -51,6 +51,22 @@ class StartupConfigTest extends munit.FunSuite {
     assertEquals(Auth.load(loaded.auth).authenticate(AliceToken).map(_.userId), Some("alice"))
     assertEquals(Main.run(List("check-config", path.toString)).unsafeRunSync(), ExitCode.Success)
   } }
+  test("optional password-only human fields load without changing legacy omitted defaults") { directory { dir=>
+    val base=valid(dir)
+    val users=base.hcursor.downField("auth").get[Vector[Json]]("users").toOption.get
+    val hash=write(dir,"human.password",ponygirls.auth.Password.hash(AlicePassword.toCharArray))
+    val human=users.head.mapObject(_.add("login",Json.fromString("alice")).add("passwordHashFile",Json.fromString(hash)).add("enabled",Json.False).add("tokens",Json.arr()))
+    val path=file(dir,set(base,"auth/users",Json.arr(human,users(1))))
+    val loaded=Config.load(path)
+    assertEquals(loaded.auth.users.head.login,Some("alice"));assertEquals(loaded.auth.users.head.passwordHashFile,Some(hash))
+    assert(!loaded.auth.users.head.enabled);assert(loaded.auth.users(1).enabled)
+    assertEquals(Auth.load(loaded.auth).users.head.enabled,false)
+    assertEquals(Main.run(List("check-config",path.toString)).unsafeRunSync(),ExitCode.Success)
+    Vector("enabled"->Json.Null,"enabled"->Json.fromString("true"),"login"->Json.Null,"passwordHashFile"->Json.fromInt(1)).foreach { case(key,value)=>
+      val invalid=human.mapObject(_.add(key,value))
+      intercept[Exception](Config.load(file(dir,set(base,"auth/users",Json.arr(invalid,users(1))))))
+    }
+  }}
   Vector(
     "listenPort" -> Json.fromInt(0), "listenPort" -> Json.fromInt(65536), "listenHost" -> Json.fromString(""), "authReloadMs" -> Json.fromInt(99),
     "authReloadMs" -> Json.fromInt(60001), "database/jdbcUrl" -> Json.fromString("jdbc:postgresql://secret:password@localhost/test"),

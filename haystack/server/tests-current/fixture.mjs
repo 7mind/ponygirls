@@ -9,7 +9,7 @@ import {mkdtemp,readFile,writeFile,rename} from 'node:fs/promises';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {once} from 'node:events';
-import {randomBytes,createHash} from 'node:crypto';
+import {randomBytes,createHash,pbkdf2Sync} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import * as api from '../../generated/typescript/haystack/api/index.ts';
 import {BaboonCodecContext} from '../../generated/typescript/BaboonSharedRuntime.ts';
@@ -21,6 +21,7 @@ export const rid=()=>{const bytes=randomBytes(16);let stamp=BigInt(Date.now());f
 export const document=(over={})=>JSON.stringify({title:'t',description:'d',fields:{},type:'fact',status:'actual',importance:'low','human-attention':'cleared',links:[],tags:[],...over});
 export const encode=(Type,value)=>Type.jsonCodec().encode(context,value);
 export const decode=(Type,value)=>Type.jsonCodec().decode(context,value);
+export function passwordHash(value){const salt=randomBytes(16);const rounds=600000;return `pbkdf2-sha256$${rounds}$${salt.toString('base64')}$${pbkdf2Sync(value,salt,rounds,32,'sha256').toString('base64')}`;}
 export async function freePort(){const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port;}
 export async function fixture(overrides={},configure=async()=>{}){
   assert.equal(process.env.HAYSTACK_OWNED_TEST_DB,'1','run scripts/test-current.sh with its owned PostgreSQL; no arbitrary data reads');
@@ -28,6 +29,8 @@ export async function fixture(overrides={},configure=async()=>{}){
   const dir=await mkdtemp(path.join(os.tmpdir(),'haystack-current-'));
   const tokens={alice:randomBytes(32).toString('base64url'),bot:randomBytes(32).toString('base64url')};
   for(const [name,token] of Object.entries(tokens))await writeFile(path.join(dir,name+'.sha'),createHash('sha256').update(token,'ascii').digest('hex')+'\n',{mode:0o600});
+  const passwords={alice:randomBytes(24).toString('base64url')};
+  await writeFile(path.join(dir,'alice.password'),passwordHash(passwords.alice)+'\n',{mode:0o600});
   const port=await freePort();const base=`http://127.0.0.1:${port}`;
   const config=JSON.parse(await readFile(path.join(root,'haystack/docs/scala-config.example.json'),'utf8'));
   Object.assign(config,{listenPort:port,webRoot:null,authReloadMs:100});
@@ -62,8 +65,8 @@ export async function fixture(overrides={},configure=async()=>{}){
   }
   Object.assign(config.database,database);
   Object.assign(config.auth,{cookieSecure:false,allowedHosts:['127.0.0.1','localhost','haystack.test'],allowedOrigins:[base,'http://allowed.test'],insecureHttpOrigins:[],rateLimit:{windowMs:60000,max:10000},users:[
-    {id:'alice',type:'human',displayName:'Alice',tokens:[{id:'browser',hashFile:path.join(dir,'alice.sha')}]},
-    {id:'bot',type:'agent',displayName:'Bot',tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},
+    {id:'alice',type:'human',displayName:'Alice',login:'alice',passwordHashFile:path.join(dir,'alice.password'),enabled:true,tokens:[{id:'browser',hashFile:path.join(dir,'alice.sha')}]},
+    {id:'bot',type:'agent',displayName:'Bot',enabled:true,tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},
   ],...overrides});
   Object.assign(config.retrieval,{approvedFieldPrefixes:['']});
   try{await configure(config,{dir,port,base});}catch(error){await dropDatabase();throw error;}
@@ -92,6 +95,10 @@ export async function fixture(overrides={},configure=async()=>{}){
     });
     return fetch(base+route,{method:options.method??'POST',headers,...(body===undefined?{}:{body})});
   };
+  const login=async(headers={})=>{
+    const response=await call('/api/account/v1/login',{login:'alice',password:passwords.alice},{headers:{Origin:base,...headers}});
+    assert.equal(response.status,200);return response;
+  };
   const put=(key,doc=document(),expected=0,id=rid(),token=tokens.bot)=>call('/api/v1/put',encode(api.PutRequest,new api.PutRequest(key,new api.DocumentPayload(doc),expected,id)),{token});
-  return {dir,port,base,tokens,config,configPath,call,put,async stop(){const result=await stop();await dropDatabase();return result;},start,async restart(){await stop();await start();},async reload(change){change(config.auth);await save();await sleep(250);},async save(){await save();await sleep(250);},logs:()=>output.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),output:()=>output+'\n'+errors};
+  return {dir,port,base,tokens,passwords,login,config,configPath,call,put,async stop(){const result=await stop();await dropDatabase();return result;},start,async restart(){await stop();await start();},async reload(change){change(config.auth);await save();await sleep(250);},async save(){await save();await sleep(250);},logs:()=>output.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),output:()=>output+'\n'+errors};
 }

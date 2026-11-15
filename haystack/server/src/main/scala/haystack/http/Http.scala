@@ -14,35 +14,39 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import io.circe.Json
+import ponygirls.auth.{AccountFailure,AccountJson}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
 /** Transport owns credentials and bounded decoding only. All mutation and
   * search semantics live in the application/repository shared with MCP. */
-final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option[Path],retrieval:haystack.retrieval.HaystackRetrieval) {
+final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option[Path],retrieval:haystack.retrieval.HaystackRetrieval,accounts:AccountService) {
   private val limiter=new RateLimiter
   private def all(r:Request[IO],name:String):Vector[String]=r.headers.headers.filter(_.name==CIString(name)).map(_.value).toVector
   private def headers(r:Request[IO]):RequestHeaders=RequestHeaders(all(r,"Host").headOption.getOrElse(""),all(r,"Authorization"),all(r,"Cookie"),all(r,"Origin"),all(r,"Sec-Fetch-Site").headOption)
   private def json(status:Status,value:Json):Response[IO]=Response[IO](status).withEntity(value.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer"))
   private def ok[A](codec:baboon.runtime.shared.BaboonJsonCodec[A],value:A):Response[IO]=json(Status.Ok,Wire.encode(codec,value))
-  private def body(r:Request[IO]):IO[Json]=IO {
+  private val AccountBodyLimit=AccountJson.maxBodyBytes
+  private def body(r:Request[IO]):IO[Json]=boundedBody(r,Wire.envelopeLimits.maxBytes,Wire.parse)
+  private def accountBody(r:Request[IO]):IO[Json]=boundedBody(r,AccountBodyLimit,AccountJson.parseUtf8)
+  private def boundedBody(r:Request[IO],maxBytes:Int,parse:Array[Byte]=>Json):IO[Json]=IO {
     if(r.uri.query.nonEmpty) throw Fault("bad-envelope","query parameters are not supported")
     if(!r.contentType.exists(_.mediaType==MediaType.application.json)) throw Fault("bad-envelope","application/json required")
-    if(r.contentLength.exists(_>Wire.envelopeLimits.maxBytes)) throw Fault("too-large","body too large")
-  } *> r.body.take(Wire.envelopeLimits.maxBytes.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes =>
-    if(bytes.length>Wire.envelopeLimits.maxBytes) throw Fault("too-large","body too large")
-    Wire.parse(bytes)
+    if(r.contentLength.exists(_>maxBytes)) throw Fault("too-large","body too large")
+  } *> r.body.take(maxBytes.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes =>
+    if(bytes.length>maxBytes) throw Fault("too-large","body too large")
+    parse(bytes)
   }
   /** Initial auth admits bounded body work only. Dispatch must use the same
     * still-current identity/transport after that asynchronous read completes. */
-  private def revalidate(r:Request[IO],captured:Authenticated,mutate:Boolean=false,mcp:Boolean=false):Authenticated={
-    val current=Sessions.resolve(getAuth(),headers(r),mutate,mcp)
-    if(current.principal!=captured.principal || current.token!=captured.token || current.cookie!=captured.cookie)
-      throw Fault("unauthorized","request authority changed")
-    current
-  }
+  private def revalidate(r:Request[IO],captured:Authenticated,mutate:Boolean=false,mcp:Boolean=false):IO[Authenticated]=
+    accounts.resolve(headers(r),mutate,mcp).map { current=>
+      if(current.principal!=captured.principal || current.token!=captured.token || current.cookie!=captured.cookie)
+        throw Fault("unauthorized","request authority changed")
+      current
+    }
   private def authorizedBody(r:Request[IO],captured:Authenticated,mutate:Boolean=false,mcp:Boolean=false):IO[Json]=
-    body(r).flatTap(_=>IO(revalidate(r,captured,mutate,mcp)).void)
+    body(r).flatTap(_=>revalidate(r,captured,mutate,mcp).void)
   private def version(r:Request[IO]):Unit={
     val offered=all(r,"X-Haystack-Version")
     if(offered.size>1 || offered.exists(_!=Wire.versions.current)) throw Fault("version-mismatch","unsupported API version")
@@ -51,12 +55,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   }
   private def authed(r:Request[IO],mutate:Boolean=false)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=IO.defer {
     version(r)
-    val auth=getAuth(); val resolved=Sessions.resolve(auth,headers(r),mutate)
-    limiter.check(resolved.principal,auth.config.rateLimit)
-    f(resolved).attempt.map { outcome =>
-      val response=outcome.fold(failure,identity)
-      val renewal=if(resolved.cookie && response.status!=Status.Unauthorized)scala.util.Try(revalidate(r,resolved,mutate)).toOption else None
-      renewal.fold(response)(current=>response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))))
+    accounts.resolve(headers(r),mutate).flatMap { resolved=>
+      IO(limiter.check(resolved.principal,getAuth().config.rateLimit)) *> f(resolved).flatMap { response=>
+        revalidate(r,resolved,mutate).map { current=>
+          if(current.cookie)response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))) else response
+        }
+      }
     }
   }
   private def status(code:String):Status=code match {
@@ -71,6 +75,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   }
   private def failure(error:Throwable):Response[IO]={
     val (code,spans,current)=error match {
+      case f:AccountFailure=>(if(f.code=="config")"unavailable"else f.code,List.empty[api.Span],None)
       case f:Fault if f.code=="config"=>("unavailable",List.empty[api.Span],None)
       case f:Fault=>(f.code,List.empty[api.Span],f.currentRevision.map(_.toInt))
       case _:ponygirls.retrieval.RetrievalError=>("unavailable",List.empty[api.Span],None)
@@ -82,22 +87,79 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     json(status(code),Wire.encode(api.Failure.codecJson,api.Failure(code,code.replace('-',' '),spans,current)))
   }
   private def handled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError(e=>failure(e))
+  private def accountBoundary(r:Request[IO]):Unit={
+    if(all(r,"Host").size!=1 || all(r,"Sec-Fetch-Site").size>1)throw Fault("forbidden","ambiguous host or fetch metadata")
+    if(r.uri.query.nonEmpty)throw Fault("bad-envelope","query parameters are not supported")
+    Sessions.accountTransport(getAuth().config,headers(r))
+  }
+  private def accountHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError { error=>
+    val category=error match {
+      case e:AccountFailure=>e.code
+      case e:Fault=>e.code
+      case _=>"unavailable"
+    }
+    val code=category match {
+      case "bad-envelope"=>"invalid"
+      case "ambiguous-credentials"=>"unauthorized"
+      case "invalid"|"unauthorized"|"forbidden"|"not-found"|"conflict"|"rate-limited"|"too-large"=>category
+      case _=>"unavailable"
+    }
+    json(status(code),AccountJson.failure(code))
+  }
+  private def accountAuthed(r:Request[IO],renew:Boolean)(f:Authenticated=>IO[Response[IO]]):IO[Response[IO]]=IO.defer {
+    accountBoundary(r)
+    accounts.resolve(headers(r)).flatMap { a=>
+      if(!a.cookie)throw Fault("unauthorized","browser session required")
+      IO(limiter.check(a.principal,getAuth().config.rateLimit)) *> f(a).flatMap { response=>
+        if(!renew)IO.pure(response)
+        else IO(accountBoundary(r)) *> revalidate(r,a).map(current=>response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(current.token),current.secureCookie))))
+      }
+    }
+  }
+  private def emptyAccountBody(r:Request[IO],a:Authenticated):IO[Unit]=accountBody(r).flatMap { raw=>
+    if(!raw.asObject.exists(_.isEmpty))throw Fault("bad-envelope","empty object required")
+    IO(accountBoundary(r)) *> revalidate(r,a).void
+  }
   def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]={
     val core=HttpRoutes.of[IO] {
     case GET -> Root / "api" / "versions" =>IO.pure(ok(api.VersionInfo.codecJson,Wire.versions))
     case GET -> Root / "api" / "v1" / "health" =>IO.pure(ok(api.Ack.codecJson,api.Ack(true)))
-    case r @ POST -> Root / "api" / "v1" / "login" =>handled {
-      IO {version(r);Sessions.validateTransport(getAuth().config,headers(r));Sessions.csrf(getAuth().config,headers(r))} *> body(r).flatMap { raw =>
-        val input=Wire.decode(api.LoginRequest.codecJson,raw); val auth=getAuth()
-        Sessions.validateTransport(auth.config,headers(r));Sessions.csrf(auth.config,headers(r))
-        val principal=auth.authenticate(input.token).getOrElse(throw Fault("unauthorized","invalid credentials"))
-        val old=Sessions.cookie(headers(r),Sessions.name(Sessions.secure(auth.config,headers(r))))
-        old.traverse_(hub.endSession) *> IO.pure(ok(api.LoginResult.codecJson,api.LoginResult(Wire.identity(principal,auth.config.activityProjectId),Wire.versions)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(input.token),Sessions.secure(auth.config,headers(r))))))
+    case r @ POST -> Root / "api" / "account" / "v1" / "login" =>accountHandled {
+      IO(accountBoundary(r)) *> accountBody(r).flatMap { raw=>
+        val (login,password)=AccountJson.decodeLogin(raw)
+        accountBoundary(r)
+        val h=headers(r);val secure=Sessions.secure(getAuth().config,h)
+        val previous=Sessions.cookie(h,Sessions.name(secure))
+        accounts.login(login,password,previous).flatMap { signed=>
+          previous.traverse_(hub.endSession).as(json(Status.Ok,Json.obj("user"->AccountJson.user(signed.user))).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(signed.session.secret),secure))))
+        }
       }
     }
-    case r @ POST -> Root / "api" / "v1" / "logout" =>handled {authed(r,true) { a=>
-      hub.endSession(a.token).as(ok(api.Ack.codecJson,api.Ack(true)))
-    }.map(_.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,Sessions.secure(getAuth().config,headers(r))))))}
+    case r @ GET -> Root / "api" / "account" / "v1" =>accountHandled {accountAuthed(r,true) { a=>
+      accounts.account(a).map(view=>json(Status.Ok,AccountJson.account(view.user,view.tokens,Vector("api"))))
+    }}
+    case r @ POST -> Root / "api" / "account" / "v1" / "tokens" =>accountHandled {accountAuthed(r,true) { a=>
+      accountBody(r).flatMap { raw=>
+        val (name,scopes)=AccountJson.decodeIssue(raw)
+        IO(accountBoundary(r)) *> revalidate(r,a) *> accounts.issue(a,name,scopes,all(r,"X-Account-Actor")).map(issued=>json(Status.Ok,AccountJson.issued(issued)))
+      }
+    }}
+    case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" =>accountHandled {accountAuthed(r,true) { a=>
+      emptyAccountBody(r,a) *> accounts.revoke(a,id,all(r,"X-Account-Actor")).as(json(Status.Ok,Json.obj("ok"->Json.True)))
+    }}
+    case r @ POST -> Root / "api" / "account" / "v1" / "logout" =>accountHandled {accountAuthed(r,false) { a=>
+      emptyAccountBody(r,a) *> accounts.logout(a,all(r,"X-Account-Actor")) *> hub.endSession(a.token).as(json(Status.Ok,Json.obj("ok"->Json.True)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
+    }}
+    case r if r.uri.path.renderString.startsWith("/api/account/")=>accountHandled {IO {accountBoundary(r);json(Status.NotFound,AccountJson.failure("not-found"))}}
+    case r @ POST -> Root / "api" / "v1" / "login" =>handled {
+      IO {version(r);Sessions.validateTransport(getAuth().config,headers(r));Sessions.csrf(getAuth().config,headers(r))} *> body(r).flatMap { raw=>
+        Wire.decode(api.LoginRequest.codecJson,raw)
+        IO.raiseError(Fault("unauthorized","password login required"))
+      }
+    }
+    case r @ POST -> Root / "api" / "v1" / "logout" =>handled {IO(version(r)) *> accounts.resolve(headers(r),mutate=true).flatMap { a=>
+      accounts.logoutLegacy(a) *> hub.endSession(a.token).as(ok(api.Ack.codecJson,api.Ack(true)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
+    }}
     case r @ GET -> Root / "api" / "v1" / "whoami" =>handled {authed(r) { a=>IO.pure(ok(api.Identity.codecJson,Wire.identity(a.principal,getAuth().config.activityProjectId))) }}
     case r @ POST -> Root / "api" / "v1" / "get" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.GetRequest.codecJson,raw)
@@ -118,8 +180,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
         case api.RetrievalMode.Semantic=>ponygirls.retrieval.RetrievalMode.Semantic
         case api.RetrievalMode.Hybrid=>ponygirls.retrieval.RetrievalMode.Hybrid
       }
-      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).map { page=>
-        if(!getAuth().authenticate(a.token).contains(a.principal)) throw Fault("unauthorized","session revoked")
+      retrieval.search(input.query,mode,input.project,input.includeArchived,input.offset,input.limit).flatMap { page=>revalidate(r,a).map { _=>
         val sources=page.hits.map { hit=>
           val revision=hit.version.takeWhile(_!='/').toInt
           val publishedPolicy=hit.version.dropWhile(_!='/').drop(1)
@@ -128,7 +189,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
           api.RetrievedSource(hit.id,revision,hit.chunk.provenance.pointer.getOrElse(""),hit.chunk.text,hit.score,hit.generation,hit.profile,hit.embeddingSpace,publishedPolicy,hit.chunk.provenance.field,hit.chunk.provenance.start,hit.chunk.provenance.end)
         }
         ok(api.RetrieveResult.codecJson,api.RetrieveResult(sources,input.mode,page.countScope.toString,page.total,page.rankingLimit))
-      }
+      }}
     }}}
     case r @ POST -> Root / "api" / "v1" / "history" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap { raw=>
       val input=Wire.decode(api.HistoryRequest.codecJson,raw)
@@ -149,14 +210,15 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     case r @ POST -> Root / "api" / "v1" / "values" =>handled {authed(r) { a=>authorizedBody(r,a).flatMap(raw=>service.values(Wire.decode(api.ValuesRequest.codecJson,raw).field)).map(values=>ok(api.ValuesResult.codecJson,api.ValuesResult(values.toList))) }}
     case r @ GET -> Root / "api" / "v1" / "live" =>handled {socket(r,ws)}
     case r @ POST -> Root / "mcp" =>IO.defer {
-      IO {version(r);val auth=getAuth();val a=Sessions.resolve(auth,headers(r),mcp=true);limiter.check(a.principal,auth.config.rateLimit);a}.flatMap { a=>
+      IO(version(r)) *> accounts.resolve(headers(r),mcp=true).flatMap { a=>
+        limiter.check(a.principal,getAuth().config.rateLimit)
         val accept=all(r,"Accept").mkString(",")
         if(!accept.contains("application/json") || !accept.contains("text/event-stream")) throw Fault("bad-envelope","unsupported accept")
         if(all(r,"MCP-Protocol-Version").exists(_!="2025-11-25")) throw Fault("bad-envelope","unsupported MCP version")
-        authorizedBody(r,a,mcp=true).flatMap(raw=>new Mcp(service).handle(a.principal,raw)).map(_.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)))
+        authorizedBody(r,a,mcp=true).flatMap(raw=>new Mcp(service).handle(a.principal,raw)).flatTap(_=>revalidate(r,a,mcp=true)).map(_.fold(json(Status.Accepted,Json.Null))(json(Status.Ok,_)))
       }
     }.handleError { error=>
-      val code=error match{case f:Fault if f.code=="config"=>"unavailable";case f:Fault=>f.code;case _=>"unavailable"}
+      val code=error match{case f:AccountFailure=>f.code;case f:Fault if f.code=="config"=>"unavailable";case f:Fault=>f.code;case _=>"unavailable"}
       json(status(code),Json.obj("jsonrpc"->Json.fromString("2.0"),"id"->Json.Null,"error"->Json.obj("code"->Json.fromInt(if(code=="unauthorized"||code=="ambiguous-credentials") -32001 else -32000),"message"->Json.fromString(code))))
     }
     case r if r.uri.path.renderString=="/mcp"=>IO.pure(json(Status.MethodNotAllowed,Json.Null).putHeaders(Header.Raw(CIString("Allow"),"POST")))
@@ -168,9 +230,11 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       core(request).semiflatMap { response=>
         val path=request.uri.path.renderString
         val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","health","versions")).getOrElse("unknown") else "static"
-        val principal=scala.util.Try(Sessions.resolve(getAuth(),headers(request),mcp=label=="mcp")).toOption.map(_.principal)
-        val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))
-        IO.println(event.noSpaces).as(response)
+        accounts.resolve(headers(request),mcp=label=="mcp").attempt.flatMap { resolved=>
+          val principal=resolved.toOption.map(_.principal)
+          val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))
+          IO.println(event.noSpaces).as(response)
+        }
       }
     }
   }
@@ -208,33 +272,40 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     upgradeRejection(r) match {
       case Some(response)=>IO.pure(response)
       case None=>
-    val resolved=scala.util.Try(Sessions.resolve(auth,h)).toOption.filter(_.cookie)
-    // This service owns nonce validation. The default builder filters Pong
-    // frames, which would otherwise close healthy peers after two heartbeats.
-    val upgrade=ws.withFilterPingPongs(false).withHeaders(Headers(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
-      .withOnNonWebSocketRequest(IO.pure(failure(Fault("bad-envelope","websocket upgrade required")).withStatus(Status.UpgradeRequired)))
-      .withOnHandshakeFailure(IO.pure(failure(Fault("bad-envelope","invalid websocket handshake")).putHeaders(Header.Raw(CIString("Sec-WebSocket-Version"),"13"))))
-    resolved match {
-      case None=>upgrade.build(Stream.emit(WebSocketFrame.Close(4401,"Sign in required").fold(throw _,identity)),_.drain).map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
-      case Some(a)=>
-        Deferred[IO,Option[WebSocketFrame=>IO[Unit]]].flatMap { receiver=>
-          val outgoing=Stream.eval(IO(revalidate(r,a))).flatMap { current=>
-            Stream.resource(hub.register(current)).flatMap { session=>
-              Stream.eval(liveStreams(session)).flatMap { case(send,receive)=>
-                Stream.eval(receiver.complete(Some(receive))).drain ++ send
+        accounts.resolve(h).attempt.flatMap { resolution=>
+        val resolved=resolution match {
+          case Right(value)=>Option.when(value.cookie)(value)
+          case Left(f:Fault) if Set("unauthorized","ambiguous-credentials").contains(f.code)=>None
+          case Left(f:AccountFailure) if f.code=="unauthorized"=>None
+          case Left(error)=>throw error
+        }
+        // This service owns nonce validation. The default builder filters Pong
+        // frames, which would otherwise close healthy peers after two heartbeats.
+        val upgrade=ws.withFilterPingPongs(false).withHeaders(Headers(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
+          .withOnNonWebSocketRequest(IO.pure(failure(Fault("bad-envelope","websocket upgrade required")).withStatus(Status.UpgradeRequired)))
+          .withOnHandshakeFailure(IO.pure(failure(Fault("bad-envelope","invalid websocket handshake")).putHeaders(Header.Raw(CIString("Sec-WebSocket-Version"),"13"))))
+        resolved match {
+          case None=>upgrade.build(Stream.emit(WebSocketFrame.Close(4401,"Sign in required").fold(throw _,identity)),_.drain).map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
+          case Some(a)=>
+            Deferred[IO,Option[WebSocketFrame=>IO[Unit]]].flatMap { receiver=>
+              val outgoing=Stream.eval(revalidate(r,a)).flatMap { current=>
+                Stream.resource(hub.register(current)).flatMap { session=>
+                  Stream.eval(liveStreams(session)).flatMap { case(send,receive)=>
+                    Stream.eval(receiver.complete(Some(receive))).drain ++ send
+                  }
+                }
+              }.handleErrorWith { error=>
+                val code=error match{
+                  case f:Fault if Set("unauthorized","ambiguous-credentials","forbidden").contains(f.code)=>4401
+                  case _=>1013
+                }
+                Stream.eval(receiver.complete(None)).drain ++ Stream.emit(WebSocketFrame.Close(code,"haystack").fold(throw _,identity))
               }
+              // Resource lifetime is the upgraded stream, not construction of the
+              // HTTP response. Failed/non-upgrade handshakes never reserve a slot.
+              upgrade.withOnClose(receiver.complete(None).void).build(outgoing,_.evalMap(frame=>receiver.get.flatMap(_.fold(IO.unit)(_(frame)))))
+                .map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
             }
-          }.handleErrorWith { error=>
-            val code=error match{
-              case f:Fault if Set("unauthorized","ambiguous-credentials","forbidden").contains(f.code)=>4401
-              case _=>1013
-            }
-            Stream.eval(receiver.complete(None)).drain ++ Stream.emit(WebSocketFrame.Close(code,"haystack").fold(throw _,identity))
-          }
-          // Resource lifetime is the upgraded stream, not construction of the
-          // HTTP response. Failed/non-upgrade handshakes never reserve a slot.
-          upgrade.withOnClose(receiver.complete(None).void).build(outgoing,_.evalMap(frame=>receiver.get.flatMap(_.fold(IO.unit)(_(frame)))))
-            .map(_.putHeaders(Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer")))
         }
     }
     }
@@ -242,7 +313,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   private def liveStreams(session:LiveSession):IO[(Stream[IO,WebSocketFrame],WebSocketFrame=>IO[Unit])]=for {
             nonce<-Ref.of[IO,(scodec.bits.ByteVector,Option[scodec.bits.ByteVector])]((scodec.bits.ByteVector.empty,None))
             pending<-Ref.of[IO,Boolean](false)
-            incoming=(frame:WebSocketFrame)=>hub.authorized(session,getAuth()).flatMap {
+            incoming=(frame:WebSocketFrame)=>hub.authorized(session,accounts).flatMap {
               case false=>IO.unit
               case true=>frame match {
                 case WebSocketFrame.Text(text,_) if text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length>1024=>hub.close(session,1009)
@@ -258,7 +329,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
               }
             }
             heartbeat=Stream.awakeEvery[IO](30.seconds).evalMap { _=>
-              hub.authorized(session,getAuth()).flatMap {
+              hub.authorized(session,accounts).flatMap {
                 case false=>IO.unit
                 case true=>pending.getAndSet(true).flatMap { wasPending=>
                   if(wasPending) hub.close(session,1001) else {
@@ -271,7 +342,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
             }.drain
             outgoing=Stream.repeatEval(hub.take(session)).evalMap { frame=>
               if(frame.isInstanceOf[WebSocketFrame.Close]) IO.pure(frame)
-              else hub.authorized(session,getAuth()).map(ok=>if(ok)frame else WebSocketFrame.Close(4401,"Session revoked").fold(throw _,identity))
+              else hub.authorized(session,accounts).map(ok=>if(ok)frame else WebSocketFrame.Close(4401,"Session revoked").fold(throw _,identity))
             }.takeThrough(!_.isInstanceOf[WebSocketFrame.Close]).concurrently(heartbeat)
   } yield (outgoing,incoming)
 }

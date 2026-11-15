@@ -32,11 +32,11 @@ if [[ -z "${HAYSTACK_TEST_PROVISION_COMMAND:-}" ]]; then export HAYSTACK_FIXTURE
   sha256sum "$HAYSTACK_SERVER_ARTIFACT_FILE"
   if [[ -n "${HAYSTACK_TEST_PROVISION_COMMAND:-}" ]]; then sha256sum "$HAYSTACK_TEST_PROVISION_COMMAND"; fi
   printf 'artifact-kind=%s\ncommand=%s\n' "$HAYSTACK_ARTIFACT_KIND" "$HAYSTACK_SERVER_COMMAND"
-  find haystack/server/src/main/scala haystack/server/tests-current haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations shared/service-runtime/src/main shared/baboon-runtime/src/main shared/lossless-json/src/main shared/retrieval-core/src/main shared/retrieval-postgres/src/main shared/model-http/src/main -type f -print0 | sort -z | xargs -0 sha256sum
+  find haystack/server/src/main/scala haystack/server/tests-current haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations shared/service-auth/src shared/service-runtime/src/main shared/baboon-runtime/src/main shared/lossless-json/src/main shared/retrieval-core/src/main shared/retrieval-postgres/src/main shared/model-http/src/main -type f -print0 | sort -z | xargs -0 sha256sum
 } > "$report/source.txt"
 cd haystack
 set +e
-timeout --signal=TERM --kill-after=10s 240s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency=1 --test-reporter=tap --test-reporter-destination="$report/transport.tap" --test-reporter=junit --test-reporter-destination="$report/transport.xml" server/tests-current/*.test.mjs > "$report/runner.log" 2>&1
+timeout --signal=TERM --kill-after=10s 360s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency=1 --test-reporter=tap --test-reporter-destination="$report/transport.tap" --test-reporter=junit --test-reporter-destination="$report/transport.xml" server/tests-current/*.test.mjs > "$report/runner.log" 2>&1
 status=$?
 set -e
 cat "$report/transport.tap" "$report/runner.log"

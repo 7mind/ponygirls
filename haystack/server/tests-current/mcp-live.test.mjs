@@ -7,7 +7,7 @@ import {StreamableHTTPClientTransport} from '@modelcontextprotocol/sdk/client/st
 import {fixture,api,encode,decode,document,rid,sleep} from './fixture.mjs';
 
 const connectMcp=async f=>{const client=new Client({name:'haystack-current-test',version:'1.0.0'});await client.connect(new StreamableHTTPClientTransport(new URL(f.base+'/mcp'),{requestInit:{headers:{Authorization:'Bearer '+f.tokens.bot}}}));return client;};
-const login=async f=>{const response=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Origin:f.base}});assert.equal(response.status,200);return response.headers.get('set-cookie').split(';')[0];};
+const login=async f=>(await f.login()).headers.get('set-cookie').split(';')[0];
 const open=async(f,cookie,options={})=>{const socket=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,...(cookie?{Cookie:cookie}:{}),...options}});const messages=[];socket.on('message',data=>messages.push(decode(api.LiveFrame,JSON.parse(data.toString()))));socket.on('error',()=>{});await once(socket,'open');return {socket,messages};};
 const waitFor=async(predicate,ms=1000)=>{const end=Date.now()+ms;while(Date.now()<end){if(predicate())return;await sleep(10);}assert.fail('event deadline exceeded');};
 const close=async socket=>{if(socket.readyState===WebSocket.CLOSED)return;const closed=once(socket,'close');socket.close();await closed;};
@@ -92,7 +92,7 @@ describe('current generated WS invalidations heartbeat and session security',()=
  });
  it('logout/login session replacement and loaded-token revocation close sockets4401',async()=>{
   const cookie=await login(f);const live=await open(f,cookie);let closed=once(live.socket,'close');await f.call('/api/v1/logout',{}, {headers:{Origin:f.base,Cookie:cookie}});assert.equal((await closed)[0],4401);
-  const second=await open(f,await login(f));closed=once(second.socket,'close');await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Origin:f.base,Cookie:cookie}});assert.equal((await closed)[0],4401);
+  const secondCookie=await login(f);const second=await open(f,secondCookie);closed=once(second.socket,'close');await f.login({Cookie:secondCookie});assert.equal((await closed)[0],4401);
   const third=await open(f,await login(f));closed=once(third.socket,'close');await f.reload(auth=>{auth.users=auth.users.filter(u=>u.id!=='alice');});await f.put('live:after-revocation');assert.equal((await closed)[0],4401);assert.equal(third.messages.filter(x=>x.kind==='changed').length,0);
  });
 });
@@ -101,14 +101,14 @@ describe('mixed HTTP authority cookies',()=>{
  let f;before(async()=>{f=await fixture({cookieSecure:true});f.config.auth.allowedOrigins.push(`http://haystack.test:${f.port}`,'https://haystack.test:8445');f.config.auth.insecureHttpOrigins=[`http://haystack.test:${f.port}`];await f.save();});after(async()=>{await f?.stop();});
  it('exact opted-in authority alone selects plain cookie, other authorities remain Secure',async()=>{
   for(const [host,origin,name,secure] of [[`haystack.test:${f.port}`,`http://haystack.test:${f.port}`,'haystack-dev',false],['haystack.test:8445','https://haystack.test:8445','__Host-haystack',true]]){
-   const response=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Host:host,Origin:origin,'X-Forwarded-Proto':secure?'http':'https'}});assert.equal(response.status,200);const cookie=response.headers.get('set-cookie');assert.ok(cookie.startsWith(name+'='));assert.equal(cookie.includes('; Secure'),secure);
+   const response=await f.login({Host:host,Origin:origin,'X-Forwarded-Proto':secure?'http':'https'});assert.equal(response.status,200);const cookie=response.headers.get('set-cookie');assert.ok(cookie.startsWith(name+'='));assert.equal(cookie.includes('; Secure'),secure);
    const who=await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Host:host,Origin:origin,Cookie:cookie.split(';')[0]}});assert.equal(who.status,200);assert.ok(who.headers.get('set-cookie').startsWith(name+'='));
    const wrongName=name==='haystack-dev'?'__Host-haystack':'haystack-dev';const wrong=await f.call('/api/v1/whoami',undefined,{method:'GET',headers:{Host:host,Origin:origin,Cookie:wrongName+'='+f.tokens.alice}});assert.equal(wrong.status,401);
   }
  });
  it('mixed-authority live sessions select only the current cookie and reject cross-authority Origin',async()=>{
   for(const [host,origin,name,other] of [[`haystack.test:${f.port}`,`http://haystack.test:${f.port}`,'haystack-dev','__Host-haystack'],['haystack.test:8445','https://haystack.test:8445','__Host-haystack','haystack-dev']]){
-   const cookie=name+'='+f.tokens.alice+'; '+other+'=not-the-session';const live=await open(f,cookie,{Host:host,Origin:origin});const pong=once(live.socket,'message');live.socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'mixed',123,undefined))));assert.equal(decode(api.LiveFrame,JSON.parse(String((await pong)[0]))).nonce,'mixed');
+   const cookie=(await f.login({Host:host,Origin:origin})).headers.get('set-cookie').split(';')[0]+'; '+other+'=not-the-session';const live=await open(f,cookie,{Host:host,Origin:origin});const pong=once(live.socket,'message');live.socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'mixed',123,undefined))));assert.equal(decode(api.LiveFrame,JSON.parse(String((await pong)[0]))).nonce,'mixed');
    const closed=once(live.socket,'close');const logout=await f.call('/api/v1/logout',{}, {headers:{Host:host,Origin:origin,Cookie:cookie}});assert.equal(logout.status,200);assert.equal((await closed)[0],4401);
    const wrong=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Host:host,Origin:origin,Cookie:other+'='+f.tokens.alice}});wrong.on('error',()=>{});assert.equal((await once(wrong,'close'))[0],4401);
   }
@@ -116,6 +116,6 @@ describe('mixed HTTP authority cookies',()=>{
  });
  it('allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade',async()=>{
   for(const [host,origin] of [[`haystack.test:${f.port}`,'https://haystack.test:8445'],['haystack.test:8445',`http://haystack.test:${f.port}`]]){const r=await f.call('/api/v1/whoami',undefined,{method:'GET',token:f.tokens.alice,headers:{Host:host,Origin:origin}});assert.equal(r.status,403);}
-  await f.reload(auth=>{auth.insecureHttpOrigins=[];});const response=await f.call('/api/v1/login',encode(api.LoginRequest,new api.LoginRequest(f.tokens.alice)),{headers:{Host:`haystack.test:${f.port}`,Origin:`http://haystack.test:${f.port}`,'X-Forwarded-Proto':'http'}});assert.equal(response.status,200);assert.ok(response.headers.get('set-cookie').startsWith('__Host-haystack='));assert.ok(response.headers.get('set-cookie').includes('Secure'));
+  await f.reload(auth=>{auth.insecureHttpOrigins=[];});const response=await f.login({Host:`haystack.test:${f.port}`,Origin:`http://haystack.test:${f.port}`,'X-Forwarded-Proto':'http'});assert.equal(response.status,200);assert.ok(response.headers.get('set-cookie').startsWith('__Host-haystack='));assert.ok(response.headers.get('set-cookie').includes('Secure'));
  });
 });

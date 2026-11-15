@@ -6,9 +6,11 @@ import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
 import java.net.URI
 import java.util.{Base64, Locale}
+import ponygirls.auth.{AccountUser,AccountToken,Password,PersistentCookie}
 
 final case class TokenConfig(id: String, hashFile: String)
-final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig])
+final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
+  login: Option[String] = None, passwordHashFile: Option[String] = None, enabled: Boolean = true)
 final case class RateLimit(windowMs: Long, max: Int) {
   require(windowMs > 0 && max > 0, "invalid rate limit")
 }
@@ -44,7 +46,9 @@ object Tokens {
   def readDigest(path: String): String = read(path, 64, "[0-9a-f]{64}")
 }
 
-final class Auth private(val config: AuthConfig, digests: Vector[(Array[Byte], Principal)]) {
+final class Auth private(val config: AuthConfig, val users: Vector[AccountUser], digests: Vector[(Array[Byte], Principal)]) {
+  def user(id:String):AccountUser=users.find(u=>u.id==id && u.enabled).getOrElse(throw Fault("unauthorized","invalid credentials"))
+  def configuredTokens(owner:String):Vector[AccountToken]=config.users.find(_.id==owner).toVector.flatMap(_.tokens).map(t=>AccountToken(t.id,t.id,"configured",None,false,Vector("api")))
   def authenticate(token: String): Option[Principal] = {
     if (!Tokens.canonical(token)) return None
     val presented = Tokens.hash(token).getBytes(StandardCharsets.US_ASCII)
@@ -78,9 +82,20 @@ object Auth {
       c >= '\u2000' && c <= '\u200a' || c == '\u2028' || c == '\u2029' ||
       c == '\u202f' || c == '\u205f' || c == '\u3000' || c == '\ufeff'
     def validId(value:String,max:Int):Boolean=value.nonEmpty && value.length<=max && !value.exists(c=>c==':' || idWhitespace(c))
+    unique(config.users.flatMap(_.login), "duplicate login")
+    val users = config.users.map { user =>
+      if (user.login.isDefined != user.passwordHashFile.isDefined || user.login.isDefined && user.userType != "human") throw Fault("config", "invalid password credentials")
+      user.login.foreach { login =>
+        if (login.isEmpty || login.length > 128 || login != login.trim || login.exists(_.isControl)) throw Fault("config", "invalid login")
+      }
+      val passwordHash=user.passwordHashFile.map { path =>
+        try Password.readHash(Path.of(path)) catch { case _: Exception => throw Fault("config", "invalid password credential file") }
+      }
+      AccountUser(user.id,user.userType,user.displayName,user.login,passwordHash,user.enabled)
+    }
     val entries = config.users.flatMap { user =>
       if (!validId(user.id,128) || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")
-      if (user.tokens.isEmpty) throw Fault("config", "user has no tokens")
+      if (user.tokens.isEmpty && user.login.isEmpty) throw Fault("config", "user has no credentials")
       unique(user.tokens.map(_.id), "duplicate token id")
       user.tokens.map { token =>
         if (!validId(token.id,64)) throw Fault("config", "invalid token id")
@@ -88,7 +103,7 @@ object Auth {
       }
     }
     unique(entries.map(_._1), "digest assigned twice")
-    new Auth(config, entries.map { case (digest, principal) => digest.getBytes(StandardCharsets.US_ASCII) -> principal })
+    new Auth(config, users, entries.filter { case (_,principal)=>users.exists(u=>u.id==principal.userId && u.enabled) }.map { case (digest, principal) => digest.getBytes(StandardCharsets.US_ASCII) -> principal })
   }
 }
 
@@ -111,11 +126,16 @@ object Origin {
 }
 final case class RequestHeaders(host: String, authorization: Vector[String] = Vector.empty, cookie: Vector[String] = Vector.empty,
   origin: Vector[String] = Vector.empty, fetchSite: Option[String] = None)
-final case class Authenticated(principal: Principal, token: String, cookie: Boolean, secureCookie: Boolean)
+final case class Authenticated(principal: Principal, token: String, cookie: Boolean, secureCookie: Boolean) {
+  override def toString:String=s"Authenticated($principal,<redacted>,$cookie,$secureCookie)"
+}
+final case class Presented(token:String,cookie:Boolean,secureCookie:Boolean) {
+  override def toString:String=s"Presented(<redacted>,$cookie,$secureCookie)"
+}
 object Sessions {
   val SecureName = "__Host-haystack"
   val PlainName = "haystack-dev"
-  val MaxAge = 15552000
+  val MaxAge: Long = PersistentCookie.maxAgeSeconds
   def name(secure: Boolean): String = if (secure) SecureName else PlainName
   def serialize(token: Option[String], secure: Boolean): String =
     s"${name(secure)}=${token.getOrElse("")}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${if (token.isDefined) MaxAge else 0}" + (if (secure) "; Secure" else "")
@@ -145,9 +165,23 @@ object Sessions {
     if (!(headers.origin.size == 1 && config.allowedOrigins.contains(headers.origin.head)) && !(headers.origin.isEmpty && headers.fetchSite.contains("same-origin")))
       throw Fault("forbidden", "missing or invalid origin")
   }
-  def resolve(auth: Auth, headers: RequestHeaders, mutate: Boolean = false, mcp: Boolean = false): Authenticated = {
-    validateTransport(auth.config, headers)
-    val secureCookie = secure(auth.config, headers)
+  def accountTransport(config:AuthConfig,headers:RequestHeaders):Unit={
+    validateTransport(config,headers)
+    csrf(config,headers)
+    val request=Origin.requestAuthority(headers.host)
+    def matches(raw:String):Boolean={
+      val origin=Origin.canonical(raw)
+      val port=if(request.getPort>=0)request.getPort else if(origin.getScheme=="https")443 else 80
+      origin.getHost.equalsIgnoreCase(request.getHost) && Origin.port(origin)==port
+    }
+    if(!config.allowedOrigins.exists(matches) || headers.origin.exists(raw=> !matches(raw))) throw Fault("forbidden","origin/host mismatch")
+    if(headers.authorization.nonEmpty) throw Fault("unauthorized","browser session required")
+    cookie(headers,SecureName);cookie(headers,PlainName)
+    ()
+  }
+  def resolve(config: AuthConfig, headers: RequestHeaders, mutate: Boolean = false, mcp: Boolean = false): Presented = {
+    validateTransport(config, headers)
+    val secureCookie = secure(config, headers)
     val session = cookie(headers, name(secureCookie))
     if (headers.authorization.size > 1) throw Fault("ambiguous-credentials", "ambiguous credentials")
     if (mcp && (cookie(headers, SecureName).isDefined || cookie(headers, PlainName).isDefined)) throw Fault("unauthorized", "cookie not accepted")
@@ -157,9 +191,9 @@ object Sessions {
       value.drop(7)
     }
     val token = bearer.orElse(if (mcp) None else session).getOrElse(throw Fault("unauthorized", "invalid credentials"))
-    val principal = auth.authenticate(token).getOrElse(throw Fault("unauthorized", "invalid credentials"))
+    if (!Tokens.canonical(token)) throw Fault("unauthorized", "invalid credentials")
     val isCookie = bearer.isEmpty
-    if (mutate && isCookie) csrf(auth.config, headers)
-    Authenticated(principal, token, isCookie, secureCookie)
+    if (mutate && isCookie) csrf(config, headers)
+    Presented(token, isCookie, secureCookie)
   }
 }

@@ -4,7 +4,7 @@ import cats.effect.{IO,Ref,Resource}
 import cats.effect.std.Queue
 import cats.syntax.all.*
 import org.http4s.websocket.WebSocketFrame
-import haystack.auth.{Auth,Authenticated}
+import haystack.auth.{AccountService,Authenticated}
 import java.util.UUID
 import io.circe.Json
 
@@ -41,14 +41,13 @@ final class LiveHub private(sessions:Ref[IO,Map[UUID,LiveSession]]) {
       def drain:IO[Unit]=session.queue.tryTake.flatMap(_.fold(IO.unit)(_=>drain))
       drain *> session.queuedBytes.set(0L) *> session.queue.tryOffer(WebSocketFrame.Close(code,"haystack").fold(throw _,identity)).void
   }
-  def authorized(session:LiveSession,auth:Auth):IO[Boolean]={
-    val valid=auth.authenticate(session.auth.token).contains(session.auth.principal)
+  def authorized(session:LiveSession,accounts:AccountService):IO[Boolean]=accounts.live(session.auth).flatMap { valid=>
     if(valid) IO.pure(true) else close(session,4401).as(false)
   }
   def endSession(token:String):IO[Unit]=sessions.get.flatMap(_.values.filter(_.auth.token==token).toList.traverse_(close(_,4401)))
-  def changed(key:String,revision:Long,currentAuth:Auth):IO[Unit]={
+  def changed(key:String,revision:Long,accounts:AccountService):IO[Unit]={
     val frame=WebSocketFrame.Text(Wire.encode(haystack.api.LiveFrame.codecJson,haystack.api.LiveFrame("changed",Some(key),Some(revision.toInt),None,None,None)).noSpaces)
-    sessions.get.flatMap(_.values.toList.traverse_(session=>authorized(session,currentAuth).flatMap(ok=>if(ok)send(session,frame)else IO.unit)))
+    sessions.get.flatMap(_.values.toList.traverse_(session=>authorized(session,accounts).flatMap(ok=>if(ok)send(session,frame)else IO.unit)))
   }
 }
 object LiveHub { def create:IO[LiveHub]=Ref.of[IO,Map[UUID,LiveSession]](Map.empty).map(new LiveHub(_)) }

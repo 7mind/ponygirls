@@ -29,6 +29,7 @@ object Migrations {
       case Some(value) if value != activityProjectId => throw Fault("config","activity namespace mismatch")
       case _ => ()
     }
+    ponygirls.auth.AccountSql.initialize(c)
     ()
   }
 }

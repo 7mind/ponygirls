@@ -10,6 +10,8 @@ import scala.jdk.CollectionConverters.*
 private[haystack] object AuthFixtures {
   val AliceToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(1))
   val BotToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(2))
+  val AlicePassword = "synthetic-account-password-not-a-secret"
+  val AliceSession: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(4))
   val RotationToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(3))
   val Plain = "http://nb.test:8085"
   val Secure = "https://ts.test:8445"
@@ -31,6 +33,11 @@ private[haystack] object AuthFixtures {
     AuthConfig("agent-activity", Vector(UserConfig("alice", "human", "Alice", Vector(TokenConfig("browser", alice))),
       UserConfig("bot", "agent", "Bot", Vector(TokenConfig("worker", bot)))), cookieSecure = true,
       allowedHosts = Vector("nb.test", "ts.test"), allowedOrigins = Vector(Plain, Secure), insecureHttpOrigins = Vector(Plain))
+  }
+  def passwordConfig(dir:Path):AuthConfig={
+    val cfg=config(dir)
+    val hash=write(dir,"alice.password",ponygirls.auth.Password.hash(AlicePassword.toCharArray))
+    cfg.copy(users=cfg.users.updated(0,cfg.users.head.copy(login=Some("alice"),passwordHashFile=Some(hash))))
   }
 }
 
@@ -119,6 +126,16 @@ class AuthConfigTest extends munit.FunSuite {
     assertEquals(auth.authenticate(BotToken), Some(Principal("bot", "agent", "worker")))
     Vector("short", "", "A" * 42 + "B", AliceToken + "\n", AliceToken + " ", "A" * 42 + "Á", Tokens.generate()).foreach { raw => assertEquals(auth.authenticate(raw), None) }
   } }
+  test("password-only human accounts are valid while partial/agent credentials fail closed") { directory { dir=>
+    val cfg=passwordConfig(dir)
+    val passwordOnly=cfg.users.head.copy(tokens=Vector.empty)
+    val loaded=Auth.load(cfg.copy(users=Vector(passwordOnly)))
+    assertEquals(loaded.users.head.login,Some("alice"));assert(loaded.users.head.passwordHash.isDefined)
+    Vector(passwordOnly.copy(login=None),passwordOnly.copy(passwordHashFile=None),passwordOnly.copy(userType="agent")).foreach { invalid=>
+      assertEquals(intercept[Fault](Auth.load(cfg.copy(users=Vector(invalid)))).code,"config")
+    }
+    assertEquals(Auth.load(cfg.copy(users=cfg.users.updated(0,cfg.users.head.copy(enabled=false)))).authenticate(AliceToken),None)
+  }}
   val inconsistencies: Vector[(String, AuthConfig => AuthConfig)] = Vector(
     "duplicate users" -> (c => c.copy(users = c.users :+ c.users.head)),
     "duplicate token IDs" -> (c => c.copy(users = Vector(c.users.head.copy(tokens = c.users.head.tokens ++ c.users.head.tokens)))),
@@ -157,10 +174,9 @@ class AuthConfigTest extends munit.FunSuite {
     Files.writeString(Path.of(cfg.users.head.tokens.head.hashFile), "not-a-digest")
     assertEquals(intercept[Fault](Auth.load(cfg)).code, "config")
   } }
-  test("reload revokes removed token/user while exact retained cookie survives restart") { directory { dir =>
+  test("reload revokes removed declarative token/user while retained bearer survives restart") { directory { dir =>
     val cfg = config(dir); val before = Auth.load(cfg); val afterRestart = Auth.load(cfg)
-    val headers = RequestHeaders("ts.test:8445", cookie = Vector(s"__Host-haystack=$AliceToken"))
-    assertEquals(Sessions.resolve(before, headers).principal, Sessions.resolve(afterRestart, headers).principal)
+    assertEquals(before.authenticate(AliceToken), afterRestart.authenticate(AliceToken))
     val revoked = Auth.load(cfg.copy(users = Vector(cfg.users.head)))
     assertEquals(revoked.authenticate(BotToken), None)
     assertEquals(revoked.authenticate(AliceToken), Some(Principal("alice", "human", "browser")))
@@ -168,7 +184,7 @@ class AuthConfigTest extends munit.FunSuite {
     val rotated = Auth.load(cfg.copy(users = Vector(cfg.users.head.copy(tokens = Vector(TokenConfig("browser", replacedHash))))))
     assertEquals(rotated.authenticate(AliceToken), None)
     assertEquals(rotated.authenticate(RotationToken), Some(Principal("alice", "human", "browser")))
-    assertEquals(intercept[Fault](Sessions.resolve(rotated, headers)).code, "unauthorized")
+    assertEquals(rotated.authenticate(AliceToken), None)
   } }
   Vector("https://nb.test:8085", Plain + "/", Plain + "/path", Plain + "?q=1", "http://u:p@nb.test:8085", "null", "http://other.test:8085").zipWithIndex.foreach { case (origin, i) =>
     test(s"insecure opt-in rejects malformed or non-dedicated origin $i") { directory { dir =>
@@ -196,80 +212,80 @@ class SessionsTest extends munit.FunSuite {
 
   test("serialize login/renewal/logout cookies with exact security flags and lifetime") {
     Vector(false, true).foreach { secure =>
-      val cookie = Sessions.serialize(Some(AliceToken), secure)
-      assert(cookie.startsWith(Sessions.name(secure) + "=" + AliceToken + ";"))
-      assert(cookie.contains("Path=/; HttpOnly; SameSite=Strict; Max-Age=15552000"))
+      val cookie = Sessions.serialize(Some(AliceSession), secure)
+      assert(cookie.startsWith(Sessions.name(secure) + "=" + AliceSession + ";"))
+      assert(cookie.contains("Path=/; HttpOnly; SameSite=Strict; Max-Age=34560000"))
       assertEquals(cookie.contains("; Secure"), secure)
       assert(!cookie.contains("Domain=")); assert(!cookie.contains("Expires="))
       val logout = Sessions.serialize(None, secure)
       assert(logout.startsWith(Sessions.name(secure) + "=;")); assert(logout.contains("Max-Age=0")); assertEquals(logout.contains("; Secure"), secure)
     }
   }
-  test("bearer resolves exact principal without mutation CSRF and rejects absent/unknown/malformed") { withAuth { auth =>
+  test("bearer selection needs no mutation CSRF and rejects absent/malformed presentation") { withAuth { auth =>
     val headers = RequestHeaders("ts.test:8445", authorization = Vector("Bearer " + BotToken))
-    val got = Sessions.resolve(auth, headers, mutate = true)
-    assertEquals(got.principal, Principal("bot", "agent", "worker")); assert(!got.cookie); assert(got.secureCookie)
+    val got = Sessions.resolve(auth.config, headers, mutate = true)
+    assertEquals(got.token, BotToken); assert(!got.cookie); assert(got.secureCookie)
     Vector(Vector.empty, Vector("Basic " + AliceToken), Vector("bearer " + AliceToken), Vector("Bearer  " + AliceToken),
-      Vector("Bearer " + AliceToken + "\n"), Vector("Bearer short"), Vector("Bearer " + Tokens.generate())).foreach { values =>
-      unauthorized(Sessions.resolve(auth, headers.copy(authorization = values)))
+      Vector("Bearer " + AliceToken + "\n"), Vector("Bearer short")).foreach { values =>
+      unauthorized(Sessions.resolve(auth.config, headers.copy(authorization = values)))
     }
   } }
   test("duplicate bearer and bearer-plus-selected-cookie are ambiguous; never pick one") { withAuth { auth =>
     val base = RequestHeaders("ts.test:8445", authorization = Vector("Bearer " + AliceToken))
-    unauthorized(Sessions.resolve(auth, base.copy(authorization = Vector("Bearer " + AliceToken, "Bearer " + BotToken))), "ambiguous-credentials")
-    unauthorized(Sessions.resolve(auth, base.copy(cookie = Vector("__Host-haystack=" + BotToken))), "ambiguous-credentials")
-    unauthorized(Sessions.resolve(auth, base.copy(cookie = Vector("__Host-haystack=invalid"))), "ambiguous-credentials")
+    unauthorized(Sessions.resolve(auth.config, base.copy(authorization = Vector("Bearer " + AliceToken, "Bearer " + BotToken))), "ambiguous-credentials")
+    unauthorized(Sessions.resolve(auth.config, base.copy(cookie = Vector("__Host-haystack=" + BotToken))), "ambiguous-credentials")
+    unauthorized(Sessions.resolve(auth.config, base.copy(cookie = Vector("__Host-haystack=invalid"))), "ambiguous-credentials")
   } }
-  test("only authority-selected cookie authenticates; other cookie is never fallback") { withAuth { auth =>
+  test("only authority-selected cookie passes transport selection; other cookie is never fallback") { withAuth { auth =>
     Vector(("nb.test:8085", "haystack-dev", false), ("ts.test:8445", "__Host-haystack", true)).foreach { case (host, name, secure) =>
-      val headers = RequestHeaders(host, cookie = Vector(s"other=x; $name=$AliceToken"))
-      val got = Sessions.resolve(auth, headers)
-      assertEquals(got.principal.userId, "alice"); assert(got.cookie); assertEquals(got.secureCookie, secure)
+      val headers = RequestHeaders(host, cookie = Vector(s"other=x; $name=$AliceSession"))
+      val got = Sessions.resolve(auth.config, headers)
+      assertEquals(got.token, AliceSession); assert(got.cookie); assertEquals(got.secureCookie, secure)
       val wrongName = if (secure) "haystack-dev" else "__Host-haystack"
-      unauthorized(Sessions.resolve(auth, headers.copy(cookie = Vector(s"$wrongName=$AliceToken"))))
-      assertEquals(Sessions.resolve(auth, headers.copy(cookie = Vector(s"$name=$AliceToken; $wrongName=invalid"))).principal.userId, "alice")
+      unauthorized(Sessions.resolve(auth.config, headers.copy(cookie = Vector(s"$wrongName=$AliceSession"))))
+      assertEquals(Sessions.resolve(auth.config, headers.copy(cookie = Vector(s"$name=$AliceSession; $wrongName=invalid"))).token, AliceSession)
     }
   } }
   test("duplicate session cookie across headers or inside one header is ambiguous") { withAuth { auth =>
-    val pair = s"__Host-haystack=$AliceToken"
+    val pair = s"__Host-haystack=$AliceSession"
     Vector(Vector(pair, pair), Vector(pair + "; " + pair)).foreach { cookies =>
-      unauthorized(Sessions.resolve(auth, RequestHeaders("ts.test:8445", cookie = cookies)), "ambiguous-credentials")
+      unauthorized(Sessions.resolve(auth.config, RequestHeaders("ts.test:8445", cookie = cookies)), "ambiguous-credentials")
     }
   } }
   test("cookie mutations require allowed Origin or exact same-origin fetch metadata") { withAuth { auth =>
-    val base = RequestHeaders("ts.test:8445", cookie = Vector("__Host-haystack=" + AliceToken))
-    unauthorized(Sessions.resolve(auth, base, mutate = true), "forbidden")
-    unauthorized(Sessions.resolve(auth, base.copy(fetchSite = Some("same-site")), mutate = true), "forbidden")
-    unauthorized(Sessions.resolve(auth, base.copy(origin = Vector("https://evil.test")), mutate = true), "forbidden")
-    unauthorized(Sessions.resolve(auth, base.copy(origin = Vector(Secure, Secure)), mutate = true), "forbidden")
-    assert(Sessions.resolve(auth, base.copy(origin = Vector(Secure)), mutate = true).cookie)
-    assert(Sessions.resolve(auth, base.copy(fetchSite = Some("same-origin")), mutate = true).cookie)
+    val base = RequestHeaders("ts.test:8445", cookie = Vector("__Host-haystack=" + AliceSession))
+    unauthorized(Sessions.resolve(auth.config, base, mutate = true), "forbidden")
+    unauthorized(Sessions.resolve(auth.config, base.copy(fetchSite = Some("same-site")), mutate = true), "forbidden")
+    unauthorized(Sessions.resolve(auth.config, base.copy(origin = Vector("https://evil.test")), mutate = true), "forbidden")
+    unauthorized(Sessions.resolve(auth.config, base.copy(origin = Vector(Secure, Secure)), mutate = true), "forbidden")
+    assert(Sessions.resolve(auth.config, base.copy(origin = Vector(Secure)), mutate = true).cookie)
+    assert(Sessions.resolve(auth.config, base.copy(fetchSite = Some("same-origin")), mutate = true).cookie)
     unauthorized(Sessions.csrf(auth.config, base.copy(origin = Vector("https://evil.test"), fetchSite = Some("same-origin"))), "forbidden")
   } }
   test("disallowed/malformed Host fails for bearer and cookie, not only mutations") { withAuth { auth =>
     Vector("evil.test", "", "ts.test/path", "ts.test@evil.test", "ts.test?x", "ts.test#x", "ts.test\\evil", "ts.test\n").foreach { host =>
-      unauthorized(Sessions.resolve(auth, RequestHeaders(host, authorization = Vector("Bearer " + AliceToken))), "forbidden")
+      unauthorized(Sessions.resolve(auth.config, RequestHeaders(host, authorization = Vector("Bearer " + AliceToken))), "forbidden")
     }
-    assertEquals(Sessions.resolve(auth, RequestHeaders("TS.TEST:8445", authorization = Vector("Bearer " + AliceToken))).principal.userId, "alice")
+    assertEquals(Sessions.resolve(auth.config, RequestHeaders("TS.TEST:8445", authorization = Vector("Bearer " + AliceToken))).token, AliceToken)
   } }
   test("mixed Host/allowed-Origin spoofing fails even on cookie reads") { withAuth { auth =>
     Vector(("nb.test:8085", Secure), ("ts.test:8445", Plain)).foreach { case (host, origin) =>
-      unauthorized(Sessions.resolve(auth, RequestHeaders(host, origin = Vector(origin), cookie = Vector(s"haystack-dev=$AliceToken; __Host-haystack=$AliceToken"))), "forbidden")
+      unauthorized(Sessions.resolve(auth.config, RequestHeaders(host, origin = Vector(origin), cookie = Vector(s"haystack-dev=$AliceSession; __Host-haystack=$AliceSession"))), "forbidden")
     }
   } }
   test("plain-cookie opt-in never downgrades other ports or absent/empty configuration") { withAuth { auth =>
     assert(Sessions.secure(auth.config, RequestHeaders("nb.test:8086")))
     assert(Sessions.secure(auth.config.copy(insecureHttpOrigins = Vector.empty), RequestHeaders("nb.test:8085")))
     assert(!Sessions.secure(auth.config.copy(cookieSecure = false, insecureHttpOrigins = Vector.empty), RequestHeaders("ts.test:8445")))
-    unauthorized(Sessions.resolve(auth, RequestHeaders("nb.test:8086", cookie = Vector("haystack-dev=" + AliceToken))))
+    unauthorized(Sessions.resolve(auth.config, RequestHeaders("nb.test:8086", cookie = Vector("haystack-dev=" + AliceSession))))
   } }
   test("MCP accepts only bearer and rejects either browser cookie alongside bearer") { withAuth { auth =>
     Vector("nb.test:8085", "ts.test:8445").foreach { host =>
       val base = RequestHeaders(host, authorization = Vector("Bearer " + AliceToken))
-      assertEquals(Sessions.resolve(auth, base, mcp = true).principal.userId, "alice")
+      assertEquals(Sessions.resolve(auth.config, base, mcp = true).token, AliceToken)
       Vector("haystack-dev", "__Host-haystack").foreach { name =>
-        unauthorized(Sessions.resolve(auth, base.copy(cookie = Vector(s"$name=$AliceToken")), mcp = true))
-        unauthorized(Sessions.resolve(auth, base.copy(authorization = Vector.empty, cookie = Vector(s"$name=$AliceToken")), mcp = true))
+        unauthorized(Sessions.resolve(auth.config, base.copy(cookie = Vector(s"$name=$AliceToken")), mcp = true))
+        unauthorized(Sessions.resolve(auth.config, base.copy(authorization = Vector.empty, cookie = Vector(s"$name=$AliceToken")), mcp = true))
       }
     }
   } }
