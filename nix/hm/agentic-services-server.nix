@@ -25,31 +25,40 @@ let
   crawl4ai = cfg.crawl4ai.package;
   pg = pkgs.postgresql_18;
   json = pkgs.formats.json { };
+  serviceUsers = lib.genAttrs [ "haystack" "manure" ] (service: {
+    agent = {
+      type = "agent";
+      displayName = "";
+      enabled = true;
+      login = null;
+      passwordHashFile = null;
+      tokens.default.tokenHashFile = "${credentials}/${service}-agent.sha256";
+    };
+    operator = {
+      type = "human";
+      displayName = "";
+      inherit (cfg.${service}.operator) login enabled;
+      passwordHashFile = if cfg.${service}.operator.passwordHashFile == null
+        then "${credentials}/${service}-operator.pbkdf2"
+        else cfg.${service}.operator.passwordHashFile;
+      tokens.default.tokenHashFile = "${credentials}/${service}-operator.sha256";
+    };
+  } // cfg.${service}.users);
+  renderUsers = service: lib.mapAttrsToList (userId: user: {
+    id = userId;
+    inherit (user) type enabled;
+    tokens = lib.mapAttrsToList (tokenId: token: {
+      id = tokenId;
+      hashFile = token.tokenHashFile;
+    }) user.tokens;
+  } // lib.optionalAttrs (service == "haystack" || user.displayName != "") {
+    displayName = if user.displayName == "" then userId else user.displayName;
+  } // lib.optionalAttrs (user.login != null) {
+    inherit (user) login passwordHashFile;
+  }) serviceUsers.${service};
   haystackAuth = json.generate "agentic-services-haystack-auth.json" {
     inherit (cfg.haystack) activityProjectId;
-    users =
-      map
-        (user: {
-          id = user.id;
-          type = user.type;
-          displayName = user.id;
-          tokens = [
-            {
-              id = "default";
-              hashFile = "${credentials}/haystack-${user.id}.sha256";
-            }
-          ];
-        })
-        [
-          {
-            id = "agent";
-            type = "agent";
-          }
-          {
-            id = "operator";
-            type = "human";
-          }
-        ];
+    users = renderUsers "haystack";
     cookieSecure = !privateHttp;
     allowedHosts = [
       endpoints.hostname
@@ -95,28 +104,7 @@ let
     content_mode = "path";
     loopback_dev = false;
     trusted_proxies = [ "127.0.0.1/32" ];
-    users =
-      map
-        (user: {
-          id = user.id;
-          type = user.type;
-          tokens = [
-            {
-              id = "default";
-              hashFile = "${credentials}/manure-${user.id}.sha256";
-            }
-          ];
-        })
-        [
-          {
-            id = "agent";
-            type = "agent";
-          }
-          {
-            id = "operator";
-            type = "human";
-          }
-        ];
+    users = renderUsers "manure";
   };
   setup = pkgs.writeShellScript "agentic-services-setup" ''
     set -euo pipefail
@@ -135,7 +123,9 @@ let
     done
     ${pkgs.python3}/bin/python3 ${./agentic-services-credentials.py} ${shellCredentials} \
       ${lib.optionalString stores.haystack.enable "--haystack-agent-file ${lib.escapeShellArg cfg.haystack.agentTokenFile}"} \
-      ${lib.optionalString stores.manure.enable "--manure-agent-file ${lib.escapeShellArg cfg.manure.agentTokenFile}"}
+      ${lib.optionalString (stores.haystack.enable && cfg.haystack.operator.passwordHashFile != null) "--haystack-operator-password-hash-file ${lib.escapeShellArg cfg.haystack.operator.passwordHashFile}"} \
+      ${lib.optionalString stores.manure.enable "--manure-agent-file ${lib.escapeShellArg cfg.manure.agentTokenFile}"} \
+      ${lib.optionalString (stores.manure.enable && cfg.manure.operator.passwordHashFile != null) "--manure-operator-password-hash-file ${lib.escapeShellArg cfg.manure.operator.passwordHashFile}"}
     ${lib.optionalString hasPublishToken ''
       # Generate the nginx basic-auth file for static publishing from the runtime token.
       if [ -r ${lib.escapeShellArg cfg.static.publishTokenFile} ]; then
@@ -320,7 +310,7 @@ in
   imports = [
     ./service-postgres.nix (import ./agentic-services-server-options.nix { inherit inputs; }) ];
   config = lib.mkIf cfg.enable {
-    assertions = import ./agentic-services-server-assertions.nix { inherit cfg lib pkgs; };
+    assertions = import ./agentic-services-server-assertions.nix { inherit cfg lib pkgs serviceUsers; };
     # Retain the actual renderer records for no-build configuration checks.
     lib.ponygirls.agenticServices = {
       proxyConfig = nginxConfig;
@@ -368,7 +358,7 @@ in
     // lib.optionalAttrs stores.haystack.enable {
       "${cfg.unitPrefix}-haystack-migrate" = {
         Unit = { Description = "Haystack database-scoped migrations"; After = setupDeps ++ lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit; Requires = lib.optional (cfg.haystack.database.readinessUnit != null) cfg.haystack.database.readinessUnit; Wants = setupDeps; };
-        Service = { Type = "oneshot"; ExecStart = "${cfg.haystack.package}/bin/haystack-server migrate ${haystackConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
+        Service = { Type = "oneshot"; ExecStartPre = "${cfg.haystack.package}/bin/haystack-server check-config ${haystackConfig}"; ExecStart = "${cfg.haystack.package}/bin/haystack-server migrate ${haystackConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
         Install.WantedBy = [ "default.target" ];
       };
       "${cfg.unitPrefix}-haystack" =
@@ -398,7 +388,7 @@ in
     // lib.optionalAttrs stores.manure.enable {
       "${cfg.unitPrefix}-manure-migrate" = {
         Unit = { Description = "Manure database bootstrap under physical-root claims"; After = setupDeps ++ lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit; Requires = lib.optional (cfg.manure.database.readinessUnit != null) cfg.manure.database.readinessUnit; Wants = setupDeps; };
-        Service = { Type = "oneshot"; ExecStart = "${cfg.manure.package}/bin/manure-server migrate ${manureConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
+        Service = { Type = "oneshot"; ExecStartPre = "${cfg.manure.package}/bin/manure-server check-config ${manureConfig}"; ExecStart = "${cfg.manure.package}/bin/manure-server migrate ${manureConfig}"; RemainAfterExit = true; UMask = "0077"; TimeoutStartSec = 180; };
         Install.WantedBy = [ "default.target" ];
       };
       "${cfg.unitPrefix}-manure" =

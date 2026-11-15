@@ -9,6 +9,7 @@
 let
   inherit (lib) mkOption mkEnableOption types;
   cfg = config.smind.hm.services.agentic;
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
   str =
     default: description:
     mkOption {
@@ -43,6 +44,33 @@ let
       inherit default;
       description = "Service package.";
     };
+  accountOptions = service: {
+    operator = {
+      login = str "operator" "Browser login for the preserved operator account. Password defaults to this service's existing operator token; no cross-service password unification is implied.";
+      enabled = mkOption { type = types.bool; default = true; description = "Whether the preserved operator account may authenticate."; };
+      passwordHashFile = runtimePath "Explicit canonical human operator PBKDF2 hash file. Null derives credentials/${service}-operator.pbkdf2 idempotently from the existing ${service}-operator.token without rotating any token. Use the same explicit runtime hash file in each service when intentionally unifying passwords.";
+    };
+    users = mkOption {
+      type = types.attrsOf (types.submodule {
+        options = {
+          type = mkOption { type = types.enum [ "human" "agent" ]; description = "Identity attribution; only humans may configure browser passwords."; };
+          displayName = str "" "Display name (empty uses the account ID).";
+          tokens = mkOption {
+            type = types.attrsOf (types.submodule {
+              options.tokenHashFile = mkOption {
+                type = types.str;
+                description = "Absolute runtime SHA-256 digest file for this immutable configured API token ID. Never a Nix path value, digest value or Nix-store file.";
+              };
+            });
+            default = { };
+            description = "Immutable configured API tokens; password-only humans may leave this empty.";
+          };
+        } // accounts.browserOptions;
+      });
+      default = { };
+      description = "Additional explicit declarative accounts. agent and operator are reserved for the preserved service credentials. No real-user identity mapping is inferred.";
+    };
+  };
   backend = defaultPort: {
     listenAddress = str "127.0.0.1" "Loopback backend bind address; the proxy owns network exposure.";
     port = port defaultPort;
@@ -115,7 +143,7 @@ in
         description = "Caller-provided SearXNG base settings (use_default_settings defaults to true). Bind, port, secret placeholder, limiter and image_proxy are owned by this module.";
       };
     };
-    haystack = backend 47328 // {
+    haystack = backend 47328 // accountOptions "haystack" // {
       enable = mkOption {
         type = types.bool;
         default = true;
@@ -139,7 +167,7 @@ in
       legacyOrigins = strings "Additional allowed backend origins.";
       insecureHttpOrigins = strings "Explicit trusted-private-network HTTP origin opt-ins.";
     };
-    manure = backend 47329 // {
+    manure = backend 47329 // accountOptions "manure" // {
       enable = mkOption {
         type = types.bool;
         default = true;

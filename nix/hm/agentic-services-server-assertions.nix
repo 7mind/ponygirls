@@ -2,8 +2,10 @@
   cfg,
   lib,
   pkgs,
+  serviceUsers,
 }:
 let
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
   runtimePath =
     path:
     path != null
@@ -53,3 +55,9 @@ in
       "haystack"
       "manure"
     ]
+++ lib.concatMap (name:
+  if !cfg.${name}.enable then [ ] else
+  accounts.assertions "smind.hm.services.agentic.${name}" serviceUsers.${name} ++ [
+    (assertThat (!(cfg.${name}.users ? agent) && !(cfg.${name}.users ? operator)) "${name}.users must not replace the reserved agent/operator identities; use ${name}.operator for explicit operator browser credentials.")
+    (assertThat (lib.all (user: lib.all (token: runtimePath token.tokenHashFile) (builtins.attrValues user.tokens)) (builtins.attrValues serviceUsers.${name})) "${name} configured token digests must be absolute runtime file references outside the Nix store.")
+  ]) [ "haystack" "manure" ]

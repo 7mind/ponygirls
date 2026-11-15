@@ -6,10 +6,15 @@
 let
   proxyFailure = (import ../lib/haystack-proxy.nix { }).unavailableJson;
   cfg = config.smind.services.haystack;
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
 
   # Credential names are fixed derivations of user/token ids (no secrets in
   # the store; systemd loads the digest files listed here).
   credName = userId: tokenId: "haystack-hash-${userId}-${tokenId}";
+  passwordCredName = userId: "haystack-password-${accounts.sanitizeId userId}";
+  allCredNames = lib.flatten (lib.mapAttrsToList (userId: user:
+    lib.mapAttrsToList (tokenId: _: credName userId tokenId) user.tokens
+    ++ lib.optional (user.passwordHashFile != null) (passwordCredName userId)) cfg.users);
 
   authSettings = {
     activityProjectId = cfg.activityProjectId;
@@ -18,10 +23,14 @@ let
         id = userId;
         type = user.type;
         displayName = user.displayName;
+        enabled = user.enabled;
         tokens = lib.mapAttrsToList (tokenId: token: {
           id = tokenId;
           hashFile = "$CREDENTIALS_DIRECTORY/${credName userId tokenId}";
         }) user.tokens;
+      } // lib.optionalAttrs (user.login != null) {
+        login = user.login;
+        passwordHashFile = "$CREDENTIALS_DIRECTORY/${passwordCredName userId}";
       })
       cfg.users;
     cookieSecure = true;
@@ -30,7 +39,8 @@ let
     rateLimit = { windowMs = 60000; max = 600; };
   };
   credentials = lib.flatten (lib.mapAttrsToList (userId: user: lib.mapAttrsToList
-    (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}") user.tokens) cfg.users)
+    (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}") user.tokens
+    ++ lib.optional (user.passwordHashFile != null) "${passwordCredName userId}:${user.passwordHashFile}") cfg.users)
     ++ [ "database-password:${cfg.database.passwordFile}" ]
     ++ lib.optional (cfg.retrieval.embedding != null) "embedding-key:${cfg.retrieval.embedding.credentialFile}";
   serverConfig = pkgs.writeText "haystack-server.json" (builtins.toJSON {
@@ -105,7 +115,7 @@ in
     users = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
-          type = lib.mkOption { type = lib.types.enum [ "human" "agent" ]; description = "Attribution only, never authorization."; };
+          type = lib.mkOption { type = lib.types.enum [ "human" "agent" ]; description = "Identity attribution; only humans may configure browser passwords."; };
           displayName = lib.mkOption { type = lib.types.str; default = ""; description = "Display name."; };
           tokens = lib.mkOption {
             type = lib.types.attrsOf (lib.types.submodule {
@@ -115,12 +125,12 @@ in
               };
             });
             default = { };
-            description = "Token IDs to digest files (multiple IDs allow rotation overlap).";
+            description = "Immutable configured API token IDs to digest files (multiple IDs allow rotation overlap).";
           };
-        };
+        } // accounts.browserOptions;
       });
       default = { };
-      description = "Static users and their token digests.";
+      description = "Declarative users, optional human browser credentials and immutable configured API token digests. Password-only humans may have no configured tokens; agent users remain token-only.";
     };
     clients = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
@@ -181,7 +191,7 @@ in
       );
     }
     (lib.mkIf cfg.enable {
-      assertions = [
+      assertions = accounts.assertions "smind.services.haystack" cfg.users ++ [
         { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix "/nix/store/" p)) ([ cfg.database.passwordFile ] ++ lib.concatMap (u: map (t: t.tokenHashFile) (builtins.attrValues u.tokens)) (builtins.attrValues cfg.users) ++ lib.optional (cfg.retrieval.embedding != null) cfg.retrieval.embedding.credentialFile); message = "smind.services.haystack: credentials must be absolute runtime paths, never source/store files."; }
 
         {
@@ -190,11 +200,15 @@ in
         }
         {
           assertion = cfg.users != { };
-          message = "smind.services.haystack: configure at least one user (human browser token + agent tokens).";
+          message = "smind.services.haystack: configure at least one declarative user.";
         }
         {
-          assertion = lib.all (u: u.tokens != { }) (lib.attrValues cfg.users);
-          message = "smind.services.haystack: every user needs at least one token.";
+          assertion = lib.all (name: lib.stringLength name <= 255 && builtins.match "[A-Za-z0-9_.-]+" name != null) allCredNames;
+          message = "smind.services.haystack: credential names must use systemd-safe characters and fit 255 bytes; shorten user/token IDs.";
+        }
+        {
+          assertion = lib.unique allCredNames == allCredNames;
+          message = "smind.services.haystack: credential names collide; choose distinct user/token IDs.";
         }
         {
           assertion =
@@ -230,6 +244,7 @@ in
           User = "haystack";
           DynamicUser = true;
           RemainAfterExit = true;
+          ExecStartPre = "${cfg.package}/bin/haystack-server check-config ${serverConfig}";
           ExecStart = "${cfg.package}/bin/haystack-server migrate ${serverConfig}";
           LoadCredential = credentials;
         };

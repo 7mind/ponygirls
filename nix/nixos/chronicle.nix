@@ -120,7 +120,7 @@ in
       maxFiles = lib.mkOption { type = lib.types.ints.positive; default = 16; };
       maxFileBytes = lib.mkOption { type = lib.types.ints.positive; default = 4194304; };
       maxMessages = lib.mkOption { type = lib.types.ints.positive; default = 10000; };
-      sessionTtlSeconds = lib.mkOption { type = lib.types.ints.positive; default = 30 * 24 * 60 * 60; description = "Browser session lifetime in seconds, renewed by authenticated browser session refresh. Logout, revocation and account disabling still invalidate sessions."; };
+      sessionTtlSeconds = lib.mkOption { type = lib.types.ints.positive; default = 30 * 24 * 60 * 60; description = "Compatibility-only setting retained in generated configuration. Browser sessions have no idle or absolute timeout; logout, revocation and account disabling still invalidate sessions."; };
     };
     proxy = {
       enable = lib.mkOption { type = lib.types.bool; default = true; };

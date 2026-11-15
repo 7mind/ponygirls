@@ -26,9 +26,19 @@ assert current["timers"] == baseline["timers"]
 # network and credential identity binding byte-for-byte.
 for user in current["haystackAuth"]["users"]:
     assert user["displayName"] == user["id"]
-auth_without_display = {**current["haystackAuth"], "users": [{k:v for k,v in u.items() if k != "displayName"} for u in current["haystackAuth"]["users"]]}
-assert auth_without_display == baseline["haystackAuth"]
-assert {k:v for k,v in current["manureConfig"].items() if k not in ("database","migration_receipt_dir","embedding","native_mode","posix_library","dashboard_dir","unlock_shell_dir","viewer_dir")} == baseline["manureConfig"]
+account_fields = ("enabled", "login", "passwordHashFile")
+auth_without_accounts = {**current["haystackAuth"], "users": [{k:v for k,v in u.items() if k not in ("displayName", *account_fields)} for u in current["haystackAuth"]["users"]]}
+assert auth_without_accounts == baseline["haystackAuth"]
+assert {k:v for k,v in current["manureConfig"].items() if k not in ("database","migration_receipt_dir","embedding","native_mode","posix_library","dashboard_dir","unlock_shell_dir","viewer_dir","users")} == {k:v for k,v in baseline["manureConfig"].items() if k != "users"}
+assert [{k:v for k,v in u.items() if k not in account_fields} for u in current["manureConfig"]["users"]] == baseline["manureConfig"]["users"]
+for service, values in (("haystack", current["haystackAuth"]["users"]), ("manure", current["manureConfig"]["users"])):
+    for user in values:
+        assert user["enabled"] is True
+        if user["id"] == "operator":
+            assert user["login"] == "operator"
+            assert user["passwordHashFile"] == f"/home/alice/.local/state/ivm-services/credentials/{service}-operator.pbkdf2"
+        else:
+            assert "login" not in user and "passwordHashFile" not in user
 assert current["haystackConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/haystack"
 assert current["manureConfig"]["database"]["jdbcUrl"] == "jdbc:postgresql://127.0.0.1:15434/manure"
 assert current["manureConfig"]["native_mode"] == "linked"
@@ -41,4 +51,4 @@ for fragment in ("set -euo pipefail", "umask 077", "[ ! -O", "--haystack-agent-f
                  "--manure-agent-file", "passwd -apr1 -stdin", "static.htpasswd.tmp",
                  "/bin/mv -f", "www"):
     assert fragment in setup, f"legacy setup contract missing: {fragment}"
-print("9 legacy renderer/identity comparisons and 10 setup invariants passed")
+print("Legacy renderer/identity comparisons, explicit account fields and setup invariants passed")

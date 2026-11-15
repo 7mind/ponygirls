@@ -1,7 +1,7 @@
 # manure file & directory hosting service (CONTRACT.md v0.2.0 + path-mode amendment).
 #
-# Option names are exactly CONTRACT.md §3.3 (closed set — no other
-# options without an amendment). Notable consequences:
+# Service options follow CONTRACT.md §3.3; users additionally support
+# declarative human browser accounts and enabled state. Notable consequences:
 # - `maxListLimit`/`rateMapMaxEntries` have no Nix options; the server
 #   defaults apply.
 # - There is no `allowPublicListen` ack flag and the synced server binds
@@ -34,18 +34,19 @@
 { config, lib, pkgs, ... }:
 let
   cfg = config.smind.services.manure;
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
 
   # Credential names are sanitized derivations of user/token ids (no
   # secrets in the store; systemd loads the digest files listed here).
   # Sanitizing avoids systemd-credential-invalid characters, and the
   # uniqueness assertion below rejects collisions (e.g. (a-b,c) vs
   # (a,b-c)) fail-closed. [A1]
-  sanitizeId = s: lib.concatMapStrings
-    (c: if builtins.match "[A-Za-z0-9_.-]" c != null then c else "_")
-    (lib.stringToCharacters s);
+  sanitizeId = accounts.sanitizeId;
   credName = userId: tokenId: "manure-hash-${sanitizeId userId}-${sanitizeId tokenId}";
+  passwordCredName = userId: "manure-password-${sanitizeId userId}";
   allCredNames = lib.flatten (lib.mapAttrsToList
-    (userId: user: lib.mapAttrsToList (tokenId: _: credName userId tokenId) user.tokens)
+    (userId: user: lib.mapAttrsToList (tokenId: _: credName userId tokenId) user.tokens
+      ++ lib.optional (user.passwordHashFile != null) (passwordCredName userId))
     cfg.users);
 
   apiHost =
@@ -100,8 +101,12 @@ let
       (userId: user: {
         id = userId;
         type = user.type;
+        enabled = user.enabled;
       } // lib.optionalAttrs (user.displayName != "") {
         displayName = user.displayName;
+      } // lib.optionalAttrs (user.login != null) {
+        login = user.login;
+        passwordCredential = passwordCredName userId;
       } // {
         tokens = lib.mapAttrsToList (tokenId: _: {
           id = tokenId;
@@ -151,6 +156,8 @@ let
         config = json.load(fh)
     digest_re = re.compile(r"[0-9a-f]{64}")
     for user in config["users"]:
+        if "passwordCredential" in user:
+            user["passwordHashFile"] = os.path.join(cred_dir, user.pop("passwordCredential"))
         for tok in user["tokens"]:
             name = tok.pop("credential")
             path = os.path.join(cred_dir, name)
@@ -343,7 +350,7 @@ in
     users = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
-          type = lib.mkOption { type = lib.types.enum [ "human" "agent" ]; description = "Attribution only, never authorization."; };
+          type = lib.mkOption { type = lib.types.enum [ "human" "agent" ]; description = "Identity attribution; only humans may configure browser passwords."; };
           displayName = lib.mkOption { type = lib.types.str; default = ""; description = "Display name (omitted from config when empty)."; };
           tokens = lib.mkOption {
             type = lib.types.attrsOf (lib.types.submodule {
@@ -356,12 +363,12 @@ in
               };
             });
             default = { };
-            description = "Token IDs to digest files.";
+            description = "Immutable configured API token IDs to digest files.";
           };
-        };
+        } // accounts.browserOptions;
       });
       default = { };
-      description = "Static users and their token digests (≥1 user with ≥1 token required).";
+      description = "Declarative users, optional human browser credentials and immutable configured API token digests. Password-only humans may have no configured tokens; agent users remain token-only.";
     };
     storageQuotaBytes = lib.mkOption { type = lib.types.ints.positive; default = 21474836480; description = "Atomic reservation cap (20 GiB)."; };
     chunkBytes = lib.mkOption { type = lib.types.ints.positive; default = 1048576; description = "Server-dictated chunk size (256 KiB–4 MiB)."; };
@@ -421,14 +428,10 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = [
+    assertions = accounts.assertions "smind.services.manure" cfg.users ++ [
       {
         assertion = cfg.users != { };
-        message = "smind.services.manure: configure at least one user (human and/or agent token digests).";
-      }
-      {
-        assertion = lib.all (u: u.tokens != { }) (lib.attrValues cfg.users);
-        message = "smind.services.manure: every user needs at least one token (rotation overlap uses multiple IDs).";
+        message = "smind.services.manure: configure at least one declarative user.";
       }
       {
         assertion = lib.all (n: lib.stringLength n <= 255) allCredNames;
@@ -517,6 +520,7 @@ in
       serviceConfig = {
         Type = "oneshot"; User = "manure"; Group = "manure"; RemainAfterExit = true;
         RuntimeDirectory = "manure-migrate"; RuntimeDirectoryMode = "0700";
+        ExecStartPre = "${launcher}/bin/manure-launcher check-config";
         ExecStart = "${launcher}/bin/manure-launcher migrate";
         LoadCredential = config.systemd.services.manure.serviceConfig.LoadCredential;
         UMask = "0077"; TimeoutStartSec = 180;
@@ -550,7 +554,8 @@ in
         LoadCredential = lib.flatten (lib.mapAttrsToList
           (userId: user: lib.mapAttrsToList
             (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}")
-            user.tokens)
+            user.tokens
+            ++ lib.optional (user.passwordHashFile != null) "${passwordCredName userId}:${user.passwordHashFile}")
           cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ] ++ lib.optional (cfg.embedding != null) "embedding-key:${cfg.embedding.credentialFile}";
         TimeoutStopSec = 60;
         UMask = "0077";
