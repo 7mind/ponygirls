@@ -7,14 +7,15 @@ native runtime. Real JVM/static-musl behavior is manure-posix-acceptance's job.
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
-script, feature = map(lambda value: Path(value).resolve(), sys.argv[1:3])
-del sys.argv[1:3]
+script, feature, native_recipe, pinned_release = map(lambda value: Path(value).resolve(), sys.argv[1:5])
+del sys.argv[1:5]
 
 
 class ToolchainRoutingTest(unittest.TestCase):
@@ -82,6 +83,16 @@ class ToolchainRoutingTest(unittest.TestCase):
         self.assertTrue(native[native.index('-cp') + 1].startswith(str(self.classpath) + ':'))
         self.assertEqual(native[-2:], ['manure.storage.FilesystemCapabilityProbe', str(self.output)])
         self.assertEqual(self.output.read_text(), 'controlled compiler output\n')
+
+    def test_production_and_probe_guards_match_actual_pinned_release(self):
+        # Inspect both real build entrypoints; compiler stand-ins alone cannot
+        # catch a production-only pin drift. No assembly/native build is needed.
+        expected = 'GRAALVM_VERSION="25.4.4.1.1"'
+        for entrypoint in [script, native_recipe]:
+            guards = re.findall(r"grep -q '([^']*GRAALVM_VERSION[^']*)'", entrypoint.read_text())
+            self.assertEqual(guards, [expected], str(entrypoint))
+        self.assertIn(expected, pinned_release.read_text().splitlines())
+        self.assertIn("Graal CE 25.4.4.1.1", feature.read_text())
 
     def test_wrong_version_rejected_before_compilers(self):
         self.release.write_text('GRAALVM_VERSION="different"\n')
