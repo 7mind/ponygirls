@@ -577,6 +577,7 @@
                     options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                     options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
                     options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; default = { }; };
                     options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
                     options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
                     options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
@@ -629,6 +630,7 @@
                     options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                     options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = true; };
                     options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; default = { }; };
                     options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
                     options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
                     options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
@@ -696,6 +698,7 @@
                     options.programs.codex.settings = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
                     options.smind.hm.dev.llm.enable = lib.mkOption { type = lib.types.bool; default = false; };
                     options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
+                    options.smind.hm.dev.llm.pi.mcpServerOverrides = lib.mkOption { type = lib.types.attrsOf lib.types.attrs; default = { }; };
                     options.smind.hm.dev.llm.assetBundles = lib.mkOption { type = lib.types.listOf lib.types.anything; default = [ ]; };
                     options.home.packages = lib.mkOption { type = lib.types.listOf lib.types.package; default = [ ]; };
                     options.home.username = lib.mkOption { type = lib.types.str; default = "alice"; };
