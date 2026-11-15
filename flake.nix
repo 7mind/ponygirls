@@ -1195,7 +1195,7 @@
           '';
           backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };
           manure-toolchain-routing = pkgs.runCommand "manure-toolchain-routing-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java}
+            python3 ${./nix/tests/manure-toolchain-routing.py} ${./scripts/manure-native-image.sh} ${./manure/server/native-image/PosixLinkFeature.java} ${./nix/pkg/services/native.nix}
             touch "$out"
           '';
           manure-acceptance-policy = pkgs.runCommand "manure-acceptance-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''

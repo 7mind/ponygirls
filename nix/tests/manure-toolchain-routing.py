@@ -7,14 +7,15 @@ native runtime. Real JVM/static-musl behavior is manure-posix-acceptance's job.
 from pathlib import Path
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 
-script, feature = map(lambda value: Path(value).resolve(), sys.argv[1:3])
-del sys.argv[1:3]
+script, feature, packaging = map(lambda value: Path(value).resolve(), sys.argv[1:4])
+del sys.argv[1:4]
 
 
 class ToolchainRoutingTest(unittest.TestCase):
@@ -82,6 +83,13 @@ class ToolchainRoutingTest(unittest.TestCase):
         self.assertTrue(native[native.index('-cp') + 1].startswith(str(self.classpath) + ':'))
         self.assertEqual(native[-2:], ['manure.storage.FilesystemCapabilityProbe', str(self.output)])
         self.assertEqual(self.output.read_text(), 'controlled compiler output\n')
+
+    def test_packaging_and_probe_require_the_same_verified_graal_pin(self):
+        pattern = r'GRAALVM_VERSION="([^"]+)"'
+        probe_pins = re.findall(pattern, script.read_text())
+        package_pins = re.findall(pattern, packaging.read_text())
+        self.assertEqual(len(probe_pins), 1)
+        self.assertEqual(package_pins, probe_pins)
 
     def test_wrong_version_rejected_before_compilers(self):
         self.release.write_text('GRAALVM_VERSION="different"\n')
