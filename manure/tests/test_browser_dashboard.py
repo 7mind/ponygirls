@@ -620,8 +620,16 @@ class DashboardFlows:
         # they are not preflight-only passes) ...
         # Keep legitimate same-URL200s as explicit controls, never as attack
         # evidence. Late response events retain their request's original phase.
+        login_controls = [q for q in _reqs(out, "/api/account/v1/login", "victim-login")
+                          if q["method"] == "POST" and q["origin"] == self.api]
+        login_responses = _responses_for(out, login_controls)
+        self.assertTrue(any(r["status"] == 200 for r in login_responses),
+                        "canonical password login must succeed as an explicit control")
+        self.assertTrue(any(set(r["setCookieNames"]) & set(SESSION_NAMES)
+                            for r in login_responses if r["status"] == 200),
+                        "canonical login must establish the victim browser session")
         baseline = _reqs(out, "/api/current", "victim-login")
-        for command in ("Login", "Whoami", "ListArtifacts"):
+        for command in ("Whoami", "ListArtifacts"):
             controls = [q for q in baseline if q.get("command") == command]
             responses = _responses_for(out, controls)
             self.assertTrue(any(r["status"] == 200 for r in responses), command)

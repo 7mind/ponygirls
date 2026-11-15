@@ -85,6 +85,14 @@ class DashboardMarkupTests(unittest.TestCase):
         self.assertIn('src="/account.js"', self.html)
         self.assertIn('href="/account.css"', self.html)
 
+    def test_dashboard_account_assets_resolve_to_the_shared_source(self):
+        shared = WEB.parents[1] / "shared/account-web"
+        for name in ("account.js", "account.css"):
+            with self.subTest(name=name):
+                asset = WEB / "dashboard" / name
+                self.assertTrue(asset.is_file(), "source dashboard must serve the shared account asset")
+                self.assertEqual(asset.resolve(), shared / name)
+
     def test_quick_upload_has_explicit_publish_and_access_controls(self):
         self.assertEqual(self.elements.ids["upload-form"][0], "form")
         self.assertEqual(self.elements.ids["upload-files"][1]["type"], "file")

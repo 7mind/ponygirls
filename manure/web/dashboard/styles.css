@@ -110,7 +110,7 @@ pre { margin: 0; padding: 11px 12px; border: 1px solid var(--line); background: 
 .brand { display: flex; align-items: center; gap: 8px; color: var(--ink); font-size: 18px; line-height: 1.2; font-weight: 650; letter-spacing: -.5px; flex: none; }
 .identity { display: flex; align-items: center; justify-content: flex-end; gap: 9px; min-width: 0; max-width: 65%; margin-left: auto; }
 #whoami-text { min-width: 0; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-#logout-button { flex: none; padding: 6px 8px; font-size: 11px; }
+#account-settings, #logout-button { flex: none; padding: 6px 8px; font-size: 11px; }
 .workspace-main { min-height: 100dvh; display: flex; flex-direction: column; min-width: 0; }
 /* Right padding reserves the fixed path-hosting warning, including its focus ring. */
 .topbar { min-height: 49px; border-bottom: 1px solid var(--line); display: flex; align-items: center; justify-content: space-between; padding: 7px 52px 7px 24px; color: var(--muted); font-size: 11px; gap: 16px; }
