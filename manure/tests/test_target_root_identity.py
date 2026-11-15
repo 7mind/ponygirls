@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import struct
 import tempfile
 import unittest
 
@@ -69,6 +70,54 @@ class PortableRootStartupTests(unittest.TestCase):
             destination = self.root / 'fetched'
             client.fetch_to_dest(artifact, str(destination))
             self.assertEqual((destination / source.name).read_bytes(), source.read_bytes())
+
+    def test_inode_anchored_device_drift_preserves_payload_binding_and_strict_refusal(self):
+        source = self.root / 'source.txt'
+        source.write_bytes(b'plain host retained payload')
+        with TargetServer(self.config, str(self.root), owned_database=self.database, close_database=False) as server:
+            client = ManureClient(server.api_url, token=self.token, cache_dir=str(self.root / 'cache'))
+            artifact = client.upload_path(str(source), access='internal')['artifact_id']
+        original = self.database.runtime_sql("SELECT encode(identity,'hex') FROM manure.root_owner WHERE singleton")
+        device, inode = struct.unpack('>QQ', bytes.fromhex(original))
+        drift = struct.pack('>QQ', device ^ 16, inode).hex()
+        self.database.runtime_sql("UPDATE manure.root_owner SET identity=decode('" + drift + "','hex') WHERE singleton")
+        opted = dict(self.config, root_binding={'mode': 'inode-anchored'})
+        with TargetServer(opted, str(self.root), owned_database=self.database, close_database=False) as server:
+            client = ManureClient(server.api_url, token=self.token, cache_dir=str(self.root / 'cache2'))
+            destination = self.root / 'fetched'
+            client.fetch_to_dest(artifact, str(destination))
+            self.assertEqual((destination / source.name).read_bytes(), source.read_bytes())
+        self.assertIn('manure warning root-binding-mode=inode-anchored', ''.join(server._stderr))
+        self.assertEqual(self.database.runtime_sql("SELECT encode(identity,'hex') FROM manure.root_owner WHERE singleton"), drift)
+        with self.assertRaisesRegex(RuntimeError, 'code=migration-required'):
+            TargetServer(self.config, str(self.root), owned_database=self.database, close_database=False)
+        changed = struct.pack('>QQ', device, inode ^ 16).hex()
+        self.database.runtime_sql("UPDATE manure.root_owner SET identity=decode('" + changed + "','hex') WHERE singleton")
+        with self.assertRaisesRegex(RuntimeError, 'code=migration-required'):
+            TargetServer(opted, str(self.root), owned_database=self.database, close_database=False)
+        self.assertEqual(self.database.runtime_sql("SELECT encode(identity,'hex') FROM manure.root_owner WHERE singleton"), changed)
+
+    def test_unsafe_off_upload_fetch_restart_without_persistent_binding(self):
+        source = self.root / 'source.txt'
+        source.write_bytes(b'disposable deployment payload')
+        opted = dict(self.config, root_binding={'mode': 'unsafe-off'})
+        with TargetServer(opted, str(self.root), owned_database=self.database, close_database=False) as server:
+            client = ManureClient(server.api_url, token=self.token, cache_dir=str(self.root / 'cache'))
+            artifact = client.upload_path(str(source), access='internal')['artifact_id']
+        self.assertIn('manure warning root-binding-mode=unsafe-off', ''.join(server._stderr))
+        with TargetServer(opted, str(self.root), owned_database=self.database, close_database=False) as server:
+            client = ManureClient(server.api_url, token=self.token, cache_dir=str(self.root / 'cache2'))
+            destination = self.root / 'fetched'
+            client.fetch_to_dest(artifact, str(destination))
+            self.assertEqual((destination / source.name).read_bytes(), source.read_bytes())
+        self.assertEqual(self.database.runtime_sql('SELECT count(*) FROM manure.root_owner'), '0')
+
+    def test_non_strict_cannot_disable_configured_portable_authority(self):
+        for mode in ('inode-anchored', 'unsafe-off'):
+            with self.subTest(mode=mode), self.assertRaisesRegex(RuntimeError, 'code=root-binding-policy'):
+                TargetServer(dict(self.portable, root_binding={'mode': mode}), str(self.root),
+                    owned_database=self.database, close_database=False)
+        self.assertEqual(self.database.runtime_sql("SELECT count(*) FROM pg_tables WHERE schemaname='manure'"), '0')
 
     def maintenance_failure(self, arguments, stage, code):
         library = os.environ.get('MANURE_POSIX_LIBRARY')

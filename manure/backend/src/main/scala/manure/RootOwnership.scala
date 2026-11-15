@@ -6,14 +6,14 @@ import manure.storage.{ConfinedDirectory,RelativeName}
 
 final case class RootOwnershipState(destination: Option[ImportedDestination],binding: Option[RootBinding],
   emptyArtifacts: Boolean,migration: Option[StoredRootMigration])
-final case class AcceptedRootOwnership(binding: RootBinding,imported: Option[ImportedRootWitness]):
+final case class AcceptedRootOwnership(binding: Option[RootBinding],observed: RootBinding,imported: Option[ImportedRootWitness]):
   def revalidate(root: ConfinedDirectory): Unit =
-    val actual=binding match
+    val actual=observed match
       case _: PhysicalRootBinding => RootBinding.physical(root)
       case portable: PortableRootBinding =>
         val marker=RootMarker.read(root).getOrElse(throw DomainError("migration-pending"))
         PortableRootBinding(portable.volumeDigest,RootBinding.physical(root).inode,SecretCodec.sha256(marker))
-    Require(RootBinding.sameRoot(actual,binding),"migration-required")
+    Require(actual == observed,"migration-required")
 
 object RootOwnership:
   val TemporaryPrefix: RelativeName = RelativeName.parse(".manure-root-prepare-")
@@ -27,7 +27,9 @@ object RootOwnership:
     val empty= !hasArtifacts || Jdbc.rows(c,"SELECT NOT EXISTS(SELECT 1 FROM manure.artifacts)")(_.getBoolean(1)).head
     RootOwnershipState(record,bound,empty,RootMigrationStore.read(c))
   def verify(config: Config,files: RootDirectories,state: RootOwnershipState,
-    provider: Option[RootAuthorityProvider]): IO[AcceptedRootOwnership] =
+    provider: Option[RootAuthorityProvider]): IO[AcceptedRootOwnership] = IO.defer {
+    Require(config.rootBinding == RootBindingMode.Strict ||
+      provider.isEmpty && state.destination.isEmpty && state.migration.isEmpty && !state.binding.exists(_.isInstanceOf[PortableRootBinding]),"root-binding-policy")
     state.binding match
       case Some(portable: PortableRootBinding) =>
         val authority=provider.getOrElse(throw DomainError("authority-required"))
@@ -47,12 +49,20 @@ object RootOwnership:
                 Require(value.observe(control).volume == imported.controlVolume && RootBinding.physical(control).inode == imported.control.inode,"authority-mismatch")
               }}
             case None => IO.unit
-        yield AcceptedRootOwnership(portable,receipt.plan.imported)
+        yield AcceptedRootOwnership(Some(portable),portable,receipt.plan.imported)
       case legacy => IO.blocking {
         Require(state.migration.isEmpty && RootMarker.read(files.payload).isEmpty &&
           !files.payload.hasRootEntryPrefix(TemporaryPrefix,config.migrationManifestMaxEntries),"migration-pending")
         Require(provider.isEmpty,"migration-required")
         val observed=RootBinding.physical(files.payload)
-        Require(legacy.forall(RootBinding.sameRoot(_,observed)),"migration-required")
-        AcceptedRootOwnership(observed,None)
+        val binding=config.rootBinding match
+          case RootBindingMode.Strict =>
+            Require(legacy.forall(_ == observed),"migration-required")
+            Some(observed)
+          case RootBindingMode.InodeAnchored =>
+            Require(legacy.forall(_.inode == observed.inode),"migration-required")
+            Some(legacy.getOrElse(observed))
+          case RootBindingMode.UnsafeOff => None
+        AcceptedRootOwnership(binding,observed,None)
       }
+  }

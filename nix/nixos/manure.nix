@@ -340,7 +340,7 @@ in
     rootBindingMode = lib.mkOption {
       type = lib.types.enum [ "strict" "inode-anchored" "unsafe-off" ];
       default = "strict";
-      description = "Physical payload root binding policy. strict enforces physical root binding; inode-anchored anchors operations to the opened root inode; unsafe-off disables root binding checks. Non-strict modes cannot import migration receipts.";
+      description = "Persistent physical payload ownership policy. strict requires device and inode; inode-anchored tolerates device drift with matching inode (not volume identity); unsafe-off disables persistent ownership for disposable deployments only. Locks and exact within-process checks remain enabled. Non-strict modes refuse imported/portable roots and migration receipts.";
     };
     migrationReceiptDirectory = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Offline converter control receipt root (OWNER/COMPLETE/import.sql), distinct from payload dataDir and operator credentials."; };
     dataDir = lib.mkOption {

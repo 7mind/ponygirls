@@ -12,6 +12,8 @@ object RootDirectories:
   /** Physical claims and leases precede JDBC, schema, recovery and HTTP. */
   def resource(config: Config,rejectLegacySqlite: Boolean): Resource[IO,RootDirectories] = for
     _ <- Resource.eval(IO(config.validate()))
+    _ <- Resource.eval(if config.rootBinding == RootBindingMode.Strict then IO.unit
+      else IO(System.err.println("manure warning root-binding-mode="+config.rootBinding.label)))
     bridge <- Resource.eval(IO.blocking {
       config.nativeMode match
         case "shared" => PosixNative.shared(config.posixLibrary.get)

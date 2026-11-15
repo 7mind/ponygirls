@@ -47,14 +47,6 @@ object RootBinding:
     val observed=root.physicalIdentity
     Require(observed.size == 2,"root-binding-invalid")
     PhysicalRootBinding(observed(0),observed(1))
-  /** Plain physical-root identity is inode-anchored: device numbers are
-    * volatile across reboots on some filesystems (zfs), while the claimed
-    * root's inode persists. Device-only drift is not root replacement; an
-    * inode change is a different root and must refuse. Portable bindings
-    * and imported-destination receipts keep exact-byte semantics. */
-  def sameRoot(stored: RootBinding,current: RootBinding): Boolean = (stored,current) match
-    case (a: PhysicalRootBinding,b: PhysicalRootBinding) => a.inode == b.inode
-    case _ => java.util.Arrays.equals(stored.bytes,current.bytes)
   def decode(bytes: Array[Byte]): RootBinding =
     val input=ByteBuffer.wrap(bytes)
     if bytes.length == 16 then PhysicalRootBinding(input.getLong(),input.getLong())
