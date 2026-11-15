@@ -12,6 +12,12 @@ password replacement cannot recreate revoked authority. Password hashes themselv
 are not copied into the directory table. Never invoke a second database
 transaction from inside an existing callback.
 
+Use `AccountSql.loginReplacing` when password login replaces an existing cookie.
+It acquires the target and prior owners in sorted order, matching reconciliation,
+then creates the new session and revokes only the valid presented old session.
+Wrong credentials leave the old session intact. Its returned prior credential
+lets the service invalidate derived grants in the same transaction.
+
 Haystack and Manure use the shared tables. Chronicle retains its scoped-token,
 sharing and security-epoch tables and adapts them to the same account boundary.
 Password hashes retain Chronicle's `pbkdf2-sha256$rounds$salt$hash` format.

@@ -44,6 +44,36 @@ abstract class AccountContract extends munit.FunSuite {
     }
   }
 
+  test("BG specified: atomic cross-account login replaces only the presented valid session") {
+    withRepository { repository =>
+      val accounts = new Accounts(repository)
+      val alice = accounts.login(users, "alice", "synthetic-account-password")
+      val independent = accounts.login(users, "alice", "synthetic-account-password")
+      val bearer = accounts.issue(users, alice.credential, "Alice client")
+      val bob = accounts.loginReplacing(users, "bob", "synthetic-account-password", Some(alice.secret))
+      assertEquals(bob.replaced, Some(alice.credential))
+      assertEquals(bob.session.credential.userId, "bob")
+      assertEquals(accounts.browser(users, alice.secret), None)
+      assert(accounts.browser(users, bob.session.secret).nonEmpty)
+      assert(accounts.browser(users, independent.secret).nonEmpty)
+      assert(accounts.bearer(users, bearer.secret).nonEmpty)
+      assert(!bob.toString.contains(bob.session.secret))
+    }
+  }
+
+  test("BG specified: failed replacement preserves the old session and stale cookies cannot block password login") {
+    withRepository { repository =>
+      val accounts = new Accounts(repository)
+      val alice = accounts.login(users, "alice", "synthetic-account-password")
+      rejected("unauthorized")(accounts.loginReplacing(users, "bob", "wrong", Some(alice.secret)))
+      assertEquals(accounts.browser(users, alice.secret), Some(alice.credential))
+      val bob = accounts.loginReplacing(users, "bob", "synthetic-account-password", Some("stale-cookie"))
+      assertEquals(bob.replaced, None)
+      assert(accounts.browser(users, alice.secret).nonEmpty)
+      assert(accounts.browser(users, bob.session.secret).nonEmpty)
+    }
+  }
+
   test("BG specified: session validity has no idle or absolute clock boundary") {
     withRepository { repository =>
       val accounts = new Accounts(repository)

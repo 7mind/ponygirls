@@ -30,6 +30,8 @@ object AccountSql {
   private def accounts(c: Connection): Accounts = new Accounts(new PostgresAccounts(c), Clock.systemUTC())
   def reconcile(c: Connection, users: Vector[AccountUser]): Unit = accounts(c).reconcile(users)
   def login(c: Connection, users: Vector[AccountUser], login: String, password: String): AccountSession = accounts(c).login(users, login, password)
+  def loginReplacing(c: Connection, users: Vector[AccountUser], login: String, password: String, previous: Option[String]): AccountLogin =
+    accounts(c).loginReplacing(users, login, password, previous)
   def browser(c: Connection, users: Vector[AccountUser], secret: String): Option[AccountCredential] = accounts(c).browser(users, secret)
   def bearer(c: Connection, users: Vector[AccountUser], secret: String): Option[AccountCredential] = accounts(c).bearer(users, secret)
   def live(c: Connection, users: Vector[AccountUser], userId: String, tokenId: String, digest: String): Boolean = accounts(c).live(users, userId, tokenId, digest)

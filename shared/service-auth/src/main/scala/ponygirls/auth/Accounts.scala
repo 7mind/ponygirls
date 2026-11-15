@@ -89,6 +89,16 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
     repository.insertSession(StoredSession(id, user.id, digest, Secrets.digest(user.passwordHash.get)))
     AccountSession(credential(user, id, digest, true), secret)
   }
+  def loginReplacing(users: Vector[AccountUser], loginName: String, password: String, previous: Option[String]): AccountLogin = {
+    val all = directory(users)
+    val target = all.values.find(user => eligible(user) && user.login.contains(loginName)).map(_.id)
+    val prior = previous.flatMap(secret => browser(users, secret))
+    (target.toVector ++ prior.map(_.userId)).distinct.sorted.foreach(repository.lockOwner)
+    val session = login(users, loginName, password)
+    val replaced = previous.flatMap(secret => browser(users, secret))
+    replaced.foreach(_ => logout(users, previous.get))
+    AccountLogin(session, replaced)
+  }
   def browser(users: Vector[AccountUser], secret: String): Option[AccountCredential] = {
     val all = directory(users)
     if (!Secrets.canonical(secret)) None

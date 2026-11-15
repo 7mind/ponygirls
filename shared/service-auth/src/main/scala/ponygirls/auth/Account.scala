@@ -23,6 +23,10 @@ final case class AccountSession(credential: AccountCredential, secret: String) {
   override def toString: String = s"AccountSession(${credential.tokenId},<redacted>)"
 }
 
+final case class AccountLogin(session: AccountSession, replaced: Option[AccountCredential]) {
+  override def toString: String = s"AccountLogin(${session.credential.tokenId},<credentials redacted>)"
+}
+
 object PersistentCookie {
   // Chromium caps persistent cookies at 400 days. Refreshing the cookie is a
   // browser-retention policy, never a server-side session-expiration policy.
