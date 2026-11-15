@@ -168,24 +168,26 @@ export function installAccountUI({ document, window, fetch }) {
     if (name.length === 0) { form.elements.namedItem('name').focus(); return; }
     const scopes = [...view.permissions];
     setBusy(view, true); view.error.hidden = true; view.status.textContent = 'Creating access token…';
-    let sent = false, creationAnswered = false;
+    const intent = { name, known: false, reconciled: false };
+    let sent = false;
     try {
       const before = await readAccount(view); if (before === null) return;
-      // Record before sending: dismissal, cancellation and lost replies are uncertain,
-      // not permission to replay a non-idempotent token creation request.
-      uncertainMints.set(view.owner, { name, reconciled: false }); sent = true;
+      // Even an HTTP error can follow committed issuance; v1 has no no-commit
+      // receipt. Retain this intent until disclosure or explicit reconciliation.
+      uncertainMints.set(view.owner, intent); sent = true;
       const result = await request('/tokens', 'POST', { name, scopes }, view.controllers, before.user.actor);
-      creationAnswered = true;
       if (result === null || typeof result.secret !== 'string' || result.secret.length === 0 || !validToken(result.token) || result.token.source !== 'issued') throw new Error('Invalid issued token response');
+      if (uncertainMints.get(view.owner) !== intent) return;
+      intent.known = true;
       const account = await readAccount(view); if (account === null) return;
       if (!account.tokens.some(token => token.id === result.token.id && !token.revoked && token.source === 'issued')) throw new Error('Issued token not in current account');
-      renderTokens(view, account); showSecret(view, result.secret, result.token); uncertainMints.delete(view.owner);
-      renderUncertainty(view); form.elements.namedItem('name').value = ''; view.status.textContent = 'Access token created. Save its one-time secret now.';
+      renderTokens(view, account); showSecret(view, result.secret, result.token);
+      if (!active(view) || uncertainMints.get(view.owner) !== intent) return;
+      uncertainMints.delete(view.owner); renderUncertainty(view); form.elements.namedItem('name').value = ''; view.status.textContent = 'Access token created. Save its one-time secret now.';
     } catch (cause) {
-      if (!creationAnswered && cause instanceof AccountError && cause.status >= 400 && cause.status < 500) uncertainMints.delete(view.owner);
       if (active(view)) {
         showError(view, cause);
-        if (sent && uncertainMints.has(view.owner)) { renderUncertainty(view); view.status.textContent = 'No creation request will be retried automatically.'; }
+        if (sent && uncertainMints.get(view.owner) === intent) { renderUncertainty(view); view.status.textContent = 'No creation request will be retried automatically.'; }
         else view.status.textContent = '';
       }
     } finally { if (active(view)) setBusy(view, false); }
@@ -194,7 +196,7 @@ export function installAccountUI({ document, window, fetch }) {
     view.content.replaceChildren(); view.error.hidden = true;
     view.content.append(node('p', `Signed in as ${account.user.displayName}`, 'account-user'));
     view.secretSlot = node('div', null, null); view.uncertain = node('div', null, 'account-uncertain');
-    view.content.append(view.secretSlot, node('h3', 'Access tokens', null), node('p', 'Access tokens authorize API clients. Signing out ends this browser session without revoking your access tokens.', null));
+    view.content.append(view.secretSlot, node('h3', 'Access tokens', null), node('p', 'Access tokens authorize API clients. Signing out ends this browser session without revoking your access tokens.', null), node('p', 'After interrupted creation or signing in again, refresh the token list before creating another token. Recovery warnings last only while this page stays loaded; reloading clears them and never retries creation.', 'account-token-meta'));
     const form = node('form', null, 'account-token-form');
     const label = node('label', 'Token name', null), name = node('input', null, null);
     name.name = 'name'; name.required = true; name.maxLength = 120; name.autocomplete = 'off'; label.append(name); form.append(label);

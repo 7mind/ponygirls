@@ -43,11 +43,14 @@ async function run(name, body) {
     if (call.actor !== undefined && call.actor !== state.user.actor) return reply(409, { error: { code: 'conflict', message: 'Account changed' } });
     if (path.endsWith('/revoke')) { const token = state.tokens.find(token => token.id === path.split('/').at(-2)); assert.equal(token.source, 'issued'); token.revoked = true; return reply(200, { ok: true }); }
     if (path.endsWith('/tokens')) {
+      const outcome = state.mint, failureStatus = state.postMintStatus;
       const token = { id: `issued-${state.tokens.length}`, name: call.body.name, source: 'issued', createdAt: '2026-11-15T00:00:00Z', revoked: false, scopes: call.body.scopes };
       state.tokens.push(token); state.issuedOwners.push(state.user.id);
-      if (state.mint === 'lost') return route.abort('failed');
-      if (state.mint === 'malformed') return reply(200, { token });
-      if (state.mint === 'held') await new Promise(resolve => { state.held = resolve; });
+      if (outcome === 'committed-unauthorized') { state.get = 401; return reply(401, { error: { code: 'unauthorized', message: 'Session revoked after creation' } }); }
+      if (outcome === 'lost') return route.abort('failed');
+      if (outcome === 'malformed') return reply(200, { token });
+      if (outcome === 'held') await new Promise(resolve => { state.held = resolve; });
+      if (failureStatus !== undefined) return reply(failureStatus, { error: { code: 'unavailable', message: 'Failure after creation' } });
       return reply(200, { token, secret: state.secret });
     }
     throw new Error(`Unexpected fixture request: ${request.method()} ${path}`);
@@ -62,6 +65,7 @@ try {
   await run('shared dialog shows read-only configured tokens, issues/copies/dismisses one-time secret and revokes', async ({ page, state }) => {
     await open(page);
     assert.match(await page.getByRole('dialog').innerText(), /server configuration.*read-only/i);
+    assert.match(await page.getByRole('dialog').innerText(), /Recovery warnings last only while this page stays loaded; reloading clears them and never retries creation/);
     assert.equal(await page.getByRole('button', { name: 'Revoke Configured collector', exact: true }).count(), 0);
     await mint(page); await page.getByLabel('One-time token secret', { exact: true }).waitFor();
     assert.deepEqual(mintCalls(state).map(call => call.body), [{ name: 'Laptop collector', scopes: ['api'] }]);
@@ -109,11 +113,71 @@ try {
     assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
     assert.equal(mintCalls(state).length, 1);
   });
-  await run('post-creation authorization failure preserves unknown creation outcome', async ({ page, state }) => {
+  for (const lateStatus of [401, 200]) await run(`late POST ${lateStatus} cannot alter a newer mint recovery intent`, async ({ page, state }) => {
+    // Deliberately ignore cancellation at the transport boundary: fencing must
+    // still hold if a completion arrives after its dialog lifecycle ended.
+    await page.addInitScript(() => {
+      const original = window.fetch.bind(window); window.__accountMintSettled = 0;
+      window.fetch = (resource, options) => {
+        if (String(resource).endsWith('/tokens')) {
+          const uncancelled = { ...options }; delete uncancelled.signal;
+          return original(resource, uncancelled).finally(() => { window.__accountMintSettled++; });
+        }
+        return original(resource, options);
+      };
+    });
+    await page.reload(); state.mint = 'held';
+    if (lateStatus !== 200) state.postMintStatus = lateStatus;
+    await open(page); await mint(page);
+    while (state.held === null) await new Promise(resolve => setTimeout(resolve, 5));
+    await page.getByRole('button', { name: 'Close settings', exact: true }).click(); await open(page);
+    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
+    await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).click();
+    state.mint = 'lost'; delete state.postMintStatus;
+    await page.getByLabel('Token name', { exact: true }).fill('Replacement collector');
+    await page.getByRole('button', { name: 'Create access token', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown for “Replacement collector”' }).waitFor();
+    state.held(); await page.waitForFunction(() => window.__accountMintSettled === 2);
+    await page.getByRole('button', { name: 'Close settings', exact: true }).click(); await open(page);
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true, 'an old response cannot erase the newer intent');
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown for “Replacement collector”' }).waitFor();
+    assert.equal(mintCalls(state).length, 2);
+    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
+  });
+  await run('POST authorization failure after commit retains recovery across same-owner reauthentication', async ({ page, state }) => {
+    state.mint = 'committed-unauthorized'; await open(page); await mint(page);
+    await page.getByRole('alert').filter({ hasText: 'Sign in again' }).waitFor();
+    assert.equal(state.tokens.filter(token => token.source === 'issued' && !token.revoked).length, 1, 'POST committed before the session was rejected at the response boundary');
+    assert.deepEqual(state.issuedOwners, ['alice']);
+    assert.equal(state.calls.filter(call => call.method === 'GET').length, 2, 'the failure came from POST, not a follow-up GET');
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true, 'a POST 401 is not proof that no token was created');
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
+    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
+    await page.getByRole('button', { name: 'Close settings', exact: true }).click();
+    state.get = 200; await open(page);
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
+    assert.equal(mintCalls(state).length, 1, 'restoring the same account must not repeat a non-idempotent POST');
+    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
+    await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).click();
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), false);
+    assert.equal(mintCalls(state).length, 1);
+  });
+  for (const status of [400, 403, 409, 429, 500]) await run(`POST ${status} after commit requires reconciliation rather than proving no creation`, async ({ page, state }) => {
+    state.postMintStatus = status; await open(page); await mint(page);
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
+    assert.equal(state.tokens.filter(token => token.source === 'issued' && !token.revoked).length, 1);
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
+    assert.equal(mintCalls(state).length, 1);
+  });
+  await run('follow-up GET authorization failure preserves known committed creation and recovery', async ({ page, state }) => {
     await open(page); state.postMintGet = 401; await mint(page);
     await page.getByRole('alert').filter({ hasText: 'Sign in again' }).waitFor();
     assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
+    await page.getByRole('alert').filter({ hasText: 'Creation succeeded, but its one-time secret was cleared' }).waitFor();
+    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
     assert.equal(mintCalls(state).length, 1);
   });
   await run('refocusing during held post-mint validation cannot reveal the previous account secret', async ({ page, state }) => {
