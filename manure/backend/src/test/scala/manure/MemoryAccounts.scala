@@ -1,6 +1,6 @@
 package manure
 
-import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountSession,AccountToken,AccountUser,Password}
+import ponygirls.auth.{AccountCredential,AccountFailure,AccountIssued,AccountLogin,AccountSession,AccountToken,AccountUser,Password}
 
 private[manure] final case class MemoryAccountRow(credential: AccountCredential,metadata: Option[AccountToken])
 private[manure] final case class MemoryAccountState(users: Vector[AccountUser],rows: Vector[MemoryAccountRow])
@@ -26,7 +26,7 @@ private[manure] final class MemoryAuthTxn(initial: MemoryAccountState) extends A
       else if current.exists(_.enabled) then Some(row)
       else Some(row.copy(metadata=row.metadata.map(_.copy(revoked=true))))
     })
-  def login(users: Vector[AccountUser],login: String,password: String): AccountSession =
+  private def login(users: Vector[AccountUser],login: String,password: String): AccountSession =
     val matches = users.filter(u => u.enabled && u.userType == "human" && u.login.contains(login) &&
       u.passwordHash.exists(Password.verify(password.toCharArray,_)))
     require(matches.size == 1,"unauthorized")
@@ -35,6 +35,14 @@ private[manure] final class MemoryAuthTxn(initial: MemoryAccountState) extends A
     val credential = AccountCredential(user.id,user.userType,"session-" + java.util.UUID.randomUUID().toString,SecretCodec.sha256(secret),true)
     state = state.copy(rows=state.rows :+ MemoryAccountRow(credential,None))
     AccountSession(credential,secret)
+  def loginReplacing(users: Vector[AccountUser],loginName: String,password: String,previous: Option[String]): AccountLogin =
+    val session = login(users,loginName,password)
+    val replaced = previous.flatMap { secret =>
+      val prior = browser(users,secret)
+      prior.foreach(_ => logout(users,secret))
+      prior
+    }
+    AccountLogin(session,replaced)
   private def resolve(users: Vector[AccountUser],secret: String,browser: Boolean): Option[AccountCredential] =
     if !SecretCodec.canonical(secret) then None
     else state.rows.filter(r => r.credential.browser == browser && active(r) && eligible(users,r.credential.userId) &&

@@ -60,6 +60,66 @@ abstract class AccountsContract(postgres: Boolean) extends FunSuite:
       (_,staleRecovery) <- accounts.login("owner","fixture-password",Some(prior.secret))
       recovered <- accounts.browser(staleRecovery.secret)
       _ <- IO(assert(recovered.nonEmpty))
+      _ <- Vector("invalid-cookie",SecretCodec.token(),f.token).traverse_ { previous => for
+        (_,ignored) <- accounts.login("owner","fixture-password",Some(previous))
+        valid <- accounts.browser(ignored.secret)
+        independent <- accounts.browser(staleRecovery.secret)
+        bearer <- accounts.bearer(f.token)
+        _ <- IO { assert(valid.nonEmpty); assert(independent.nonEmpty); assertEquals(bearer,Some(f.identity)) }
+      yield () }
+    yield ()
+  }}
+  test("cross-owner password replacement preserves public identities and deletes only the prior session grants") { run { f =>
+    val original = f.config.users.find(_.id == f.identity.userId).get
+    val target = original.copy(id="replacement-owner\u0000馬",tokens=Vector.empty,login=Some("replacement-owner"))
+    val auth = new Auth(f.config.users :+ target)
+    val accounts = new Accounts(f.metadata,auth)
+    for
+      _ <- accounts.initialize()
+      gate <- Semaphore[IO](1L)
+      service = new Artifacts(f.metadata,f.payloads,f.config.limits,f.clock,auth,f.lease,gate,f.faults)
+      (_,prior) <- accounts.login("owner","fixture-password",None)
+      priorIdentity <- accounts.browser(prior.secret).map(_.get)
+      initialized <- service.init(priorIdentity,InitUpload("replacement grants",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
+      id = initialized.artifact.id
+      _ <- service.finish(priorIdentity,id)
+      pending <- service.createGrant(priorIdentity,id)
+      handoff <- service.createGrant(priorIdentity,id)
+      (content,_) <- service.redeem(id,handoff)
+      (_,independent) <- accounts.login("replacement-owner","fixture-password",None)
+      independentIdentity <- accounts.browser(independent.secret).map(_.get)
+      independentHandoff <- service.createGrant(independentIdentity,id)
+      (independentContent,_) <- service.redeem(id,independentHandoff)
+      _ <- rejected(accounts.login("replacement-owner","wrong-password",Some(prior.secret)),"unauthorized")
+      preserved <- accounts.browser(prior.secret)
+      _ <- service.contentInfo(id,Some(content),None,None)
+      _ <- f.metadata.transaction { tx =>
+        assertEquals(preserved,Some(priorIdentity))
+        assertEquals(tx.oneTime(SecretCodec.sha256(pending)).flatMap(_.userId),Some(original.id))
+        assertEquals(tx.content(SecretCodec.sha256(content)).flatMap(_.userId),Some(original.id))
+      }
+      (user,replacement) <- accounts.login("replacement-owner","fixture-password",Some(prior.secret))
+      current <- accounts.browser(replacement.secret)
+      old <- accounts.browser(prior.secret)
+      other <- accounts.browser(independent.secret)
+      _ <- IO {
+        assertEquals(user.id,target.id)
+        assertEquals(replacement.credential.userId,target.id)
+        assertEquals(current.map(_.userId),Some(target.id))
+        assertEquals(old,None)
+        assertEquals(other,Some(independentIdentity))
+      }
+      _ <- f.metadata.transaction { tx =>
+        assertEquals(tx.oneTime(SecretCodec.sha256(pending)),None)
+        assertEquals(tx.oneTime(SecretCodec.sha256(handoff)),None)
+        assertEquals(tx.content(SecretCodec.sha256(content)),None)
+        assertEquals(tx.content(SecretCodec.sha256(independentContent)).flatMap(_.userId),Some(target.id))
+      }
+      _ <- rejected(service.redeem(id,pending),"grant-invalid")
+      _ <- rejected(service.contentInfo(id,Some(content),None,None),"grant-required")
+      _ <- service.contentInfo(id,Some(independentContent),None,None)
+      grant <- service.createGrant(current.get,id)
+      _ <- IO(assert(SecretCodec.canonical(grant)))
     yield ()
   }}
   test("cookie-only issue/list/revoke preserve configured tokens, ownership, and one-time disclosure") { run { f =>

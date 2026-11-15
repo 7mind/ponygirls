@@ -6,7 +6,7 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.Base64
 import java.sql.Connection
 import cats.effect.IO
-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountSession,AccountSql,AccountToken,AccountUser,Password}
+import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountSession,AccountSql,AccountToken,AccountUser,Password}
 
 object SecretCodec:
   private val random = new SecureRandom()
@@ -109,7 +109,7 @@ final class Auth(users: Vector[UserConfig]):
 trait AuthTxn:
   def initialize(): Unit
   def reconcile(users: Vector[AccountUser]): Unit
-  def login(users: Vector[AccountUser],login: String,password: String): AccountSession
+  def loginReplacing(users: Vector[AccountUser],login: String,password: String,previous: Option[String]): AccountLogin
   def browser(users: Vector[AccountUser],secret: String): Option[AccountCredential]
   def bearer(users: Vector[AccountUser],secret: String): Option[AccountCredential]
   def live(users: Vector[AccountUser],user: String,token: String,digest: String): Boolean
@@ -131,9 +131,10 @@ private[manure] final class PostgresAuthTxn(c: Connection) extends AuthTxn:
     credential.copy(userId=users.find(u => key(u.id) == credential.userId).getOrElse(throw DomainError("unavailable")).id)
   def initialize(): Unit = AccountSql.initialize(c)
   def reconcile(users: Vector[AccountUser]): Unit = AccountSql.reconcile(c,directory(users))
-  def login(users: Vector[AccountUser],login: String,password: String): AccountSession =
-    val session = AccountSql.login(c,directory(users),login,password)
-    session.copy(credential=exposed(users,session.credential))
+  def loginReplacing(users: Vector[AccountUser],login: String,password: String,previous: Option[String]): AccountLogin =
+    val result = AccountSql.loginReplacing(c,directory(users),login,password,previous)
+    result.copy(session=result.session.copy(credential=exposed(users,result.session.credential)),
+      replaced=result.replaced.map(exposed(users,_)))
   def browser(users: Vector[AccountUser],secret: String): Option[AccountCredential] = AccountSql.browser(c,directory(users),secret).map(exposed(users,_))
   def bearer(users: Vector[AccountUser],secret: String): Option[AccountCredential] = AccountSql.bearer(c,directory(users),secret).map(exposed(users,_))
   def live(users: Vector[AccountUser],user: String,token: String,digest: String): Boolean = AccountSql.live(c,directory(users),key(user),token,digest)
@@ -151,12 +152,9 @@ final class Accounts(metadata: Metadata,auth: Auth):
   def browser(secret: String): IO[Option[Identity]] = metadata.transaction(tx => auth.browser(tx.accounts,secret))
   def login(login: String,password: String,previous: Option[String]): IO[(AccountUser,AccountSession)] = metadata.transaction { tx =>
     val users = auth.current(tx.accounts)
-    val session = tx.accounts.login(users,login,password)
-    previous.foreach { secret => tx.accounts.browser(users,secret).foreach { prior =>
-      tx.accounts.logout(users,secret)
-      tx.revokeCredential(prior.userId,prior.tokenId)
-    }}
-    (users.find(_.id == session.credential.userId).getOrElse(throw DomainError("unavailable")),session)
+    val result = tx.accounts.loginReplacing(users,login,password,previous)
+    result.replaced.foreach(prior => tx.revokeCredential(prior.userId,prior.tokenId))
+    (users.find(_.id == result.session.credential.userId).getOrElse(throw DomainError("unavailable")),result.session)
   }
   private def session(tx: MetadataTxn,secret: String): (Vector[AccountUser],AccountCredential,AccountUser) =
     val users = auth.current(tx.accounts)

@@ -82,3 +82,35 @@ API security headers and planted-cookie wrong-Origin mutation for both sibling
 and separate content origins. These used the built JVM artifact and owned PG;
 they were not browser executions. Chromium/UI and native executable acceptance
 remain an integration responsibility after the shared web assets are combined.
+
+## Shared replacement ownership follow-up
+
+The follow-up adopts shared `AccountSql.loginReplacing` from c3bef1d0 (locally
+cherry-picked as 220cc29a). Shared account code owns the target/prior owner lock
+order, successful insertion and valid previous-session invalidation. Manure
+maps both returned credentials back to exact public IDs and uses only the
+returned prior credential for grant deletion in the same metadata transaction.
+No HTTP/browser/Python change is included. This is ownership consolidation,
+not a claimed Manure deadlock reproduction: `auth.current` already acquires all
+configured owner locks in sorted order.
+
+Before the adapter change, the expanded dual contract passed **16/16** against
+memory and PostgreSQL. It covers a cross-owner replacement with NUL-containing
+public IDs, actual removal of the prior session's pending/redeemed grant rows,
+preservation of an independent target-owner session/grant, failed password
+preserving the old session/grants, and stale/malformed/unknown/API-token cookie
+values being ignored without revoking independent credentials.
+
+A fresh full run used the same exact `test-backend.sh` command above:
+
+- Backend: **18 suites, 223 tests, 0 failures/errors/skips**.
+- Storage: **2 suites, 33 tests, 0 failures/errors/skips**.
+- Assembly completed and the single Baboon runtime owner check passed.
+- Receipt: `manure/backend/target/validation-runs/20261115T005355Z.nl7FyE`.
+- Receipt `source.sha256` SHA-256:
+  `1a3a24793819a2f9bf9d373af29d9c2b51914250b79854b8a543e3a49ba07a1a`.
+- Assembly SHA-256:
+  `95420a572f732d8247e2940b032a2eb7b4e7e0ec5733ed6658658d3c1b221d1a`.
+
+`sha256sum --check --quiet` verified every receipt input against the final task
+sources. This follow-up does not establish native or browser acceptance.
