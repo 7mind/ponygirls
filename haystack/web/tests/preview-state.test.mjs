@@ -56,6 +56,7 @@ test("preview refuses linked credential files without modifying their targets", 
   const root = await owned(t);
   const target = path.join(root, "unrelated");
   await writeFile(target, "unrelated-data\n", { mode: 0o640 });
+  await chmod(target, 0o640);
   for (const [name, makeLink] of [["symbolic", symlink], ["hard", link]]) {
     const directory = path.join(root, name);
     await mkdir(directory);
@@ -88,6 +89,7 @@ test("preview namespace refuses ancestor symlinks before creating external state
   const root = await owned(t);
   const outside = path.join(root, "outside");
   await mkdir(outside, { mode: 0o750 });
+  await chmod(outside, 0o750);
   await symlink(outside, path.join(root, "linked"));
   await assert.rejects(prepare(path.join(root, "linked", "preview"), 47328, root), /symbolic link/);
   await assert.rejects(lstat(path.join(outside, "preview")), { code: "ENOENT" });
