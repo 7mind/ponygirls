@@ -6,7 +6,10 @@ process using the actual generated current codecs and authenticated public API.
 Browser sign-in uses a synthetic username/password and paired passwordHashFile;
 the API seed token is never installed as a browser cookie. The preview restart
 leg retains its owned private PostgreSQL database to prove session and edited
-record durability, not merely credential-file persistence.
+record durability, not merely credential-file persistence. Controlled process-stub
+and owned-file tests separately check failed-start stop authority, retained
+shutdown guards, exclusive test-directory ownership and namespace-link refusal;
+those checks are not PostgreSQL/backend acceptance.
 
 Run from the repository root inside the pinned shell (provision the locked npm
 cache first if needed; the runner's `npm ci --offline` never changes the lock):
@@ -31,7 +34,7 @@ to 575 seconds plus a ten-second termination grace; individual assertion,
 heartbeat, concurrency and restart deadlines are unchanged. Use the parent's
 background execution lane rather than extending foreground tool timeouts.
 
-`inventory.json` is checked exactly against all 73 JUnit leaf cases (74 Node
+`inventory.json` is checked exactly against all 78 JUnit leaf cases (79 Node
 cases including the helper-mode group), 39 main browser checks, sixteen controlled
 layout checks, the controlled account fixture, HTTPS restart, preview restart,
 and markup case. The original 36 atomic cases remain.

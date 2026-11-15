@@ -3,7 +3,8 @@
 # HAYSTACK_SERVER_COMMAND='java -jar /absolute/haystack-server.jar' ./quick-ui.sh [port] [bind]
 # No TypeScript/Node server fallback. Node is only a build/fixture client tool.
 set -euo pipefail
-HAYSTACK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+HAYSTACK_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_DIR="$(cd -- "$HAYSTACK_DIR/.." && pwd -P)"
 PORT="${1:-47328}"
 BIND="${2:-127.0.0.1}"
 [[ "$PORT" =~ ^[0-9]+$ && "$PORT" -ge 1 && "$PORT" -le 65435 ]] || { echo 'quick-ui: invalid port' >&2; exit 2; }
@@ -25,6 +26,7 @@ JS
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/haystack-ui.XXXXXX")"
 SRVPID=""
 PG_STARTED=0
+PG_START_UNCERTAIN=0
 LOCK_HELD=0
 cleanup() {
   if [[ -n "$SRVPID" ]]; then
@@ -35,20 +37,22 @@ cleanup() {
     wait "$SRVPID" 2>/dev/null || true
   fi
   local stopped=1
+  if [[ "$PG_START_UNCERTAIN" == 1 ]]; then stopped=0; fi
   if [[ "$PG_STARTED" == 1 ]] && ! pg_ctl -D "$PGDATA" -m fast -t 15 stop >/dev/null 2>&1; then
     echo "quick-ui: database shutdown unconfirmed; preserve and inspect $STATE_DIR" >&2
     stopped=0
   fi
   if [[ "$LOCK_HELD" == 1 && "$stopped" == 1 ]]; then rmdir -- "$STATE_DIR/launcher.lock" || echo "quick-ui: launcher lock cleanup failed: $STATE_DIR/launcher.lock" >&2; fi
-  rm -rf -- "$WORK"
+  if [[ "$stopped" == 1 ]]; then rm -rf -- "$WORK";
+  else echo "quick-ui: shutdown/startup ownership uncertain; retain $STATE_DIR and temporary logs/socket $WORK for operator inspection" >&2; fi
 }
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 cd "$HAYSTACK_DIR"
 umask 077
-STATE_DIR="$HAYSTACK_DIR/../debug/haystack-ui/$PORT"
-node web/tests-browser/preview-state.mjs "$STATE_DIR" "$PORT"
+STATE_DIR="$REPO_DIR/debug/haystack-ui/$PORT"
+node web/tests-browser/preview-state.mjs "$STATE_DIR" "$PORT" "$REPO_DIR"
 if ! mkdir -m 700 -- "$STATE_DIR/launcher.lock"; then echo "quick-ui: preview is already running or its lock needs operator inspection: $STATE_DIR/launcher.lock" >&2; exit 2; fi
 LOCK_HELD=1
 if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src generated/typescript web/index.html web/vite.config.ts web/package.json package-lock.json ../shared/account-web -type f -newer web/dist/index.html -print -quit 2>/dev/null)" ]]; then
@@ -60,8 +64,12 @@ export PGDATA="$STATE_DIR/pg" PGSOCK="$WORK/sock"
 mkdir -p "$PGSOCK"
 if [[ ! -f "$PGDATA/PG_VERSION" ]]; then initdb -D "$PGDATA" -U postgres --auth=trust >/dev/null; fi
 if pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then echo 'quick-ui: retained database is already running; refusing to adopt it' >&2; exit 2; fi
+PG_START_UNCERTAIN=1
+if ! pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='127.0.0.1'" start >/dev/null; then
+  echo 'quick-ui: database startup unconfirmed; refusing stop authority' >&2; exit 1
+fi
 PG_STARTED=1
-pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='127.0.0.1'" start >/dev/null
+PG_START_UNCERTAIN=0
 if [[ "$(psql -XAt -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c "SELECT 1 FROM pg_roles WHERE rolname = 'haystack_preview'")" != 1 ]]; then
   psql -X -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE ROLE haystack_preview LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' >/dev/null
 fi

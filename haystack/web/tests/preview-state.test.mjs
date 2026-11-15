@@ -1,11 +1,12 @@
 // Behavioral-Active-Effectual-GoodCommunication: owned temporary files only.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { link, lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, link, lstat, mkdir, mkdtemp, readFile, rename, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
-import { preparePreviewState } from "../tests-browser/preview-state.mjs";
+import { preparePreviewState as prepare, removeStoppedPreviewState, reservePreviewState } from "../tests-browser/preview-state.mjs";
+const preparePreviewState = (directory, port) => prepare(directory, port, path.dirname(directory));
 import { passwordMatches } from "../tests-browser/credentials.mjs";
 
 async function owned(t) {
@@ -67,11 +68,13 @@ test("preview refuses linked credential files without modifying their targets", 
 
 test("preview refuses an unrecognized existing database rather than adopting or deleting it", async (t) => {
   const directory = await owned(t);
-  await mkdir(path.join(directory, "pg"));
+  await chmod(directory, 0o750);
+  await mkdir(path.join(directory, "pg"), { mode: 0o750 });
   const sentinel = path.join(directory, "pg", "unrelated");
   await writeFile(sentinel, "preserve");
   await assert.rejects(preparePreviewState(directory, 47328), /Unrecognized existing preview database/);
   assert.equal(await readFile(sentinel, "utf8"), "preserve");
+  assert.equal((await lstat(directory)).mode & 0o777, 0o750, "rejected unrelated state must retain its permissions");
 });
 
 test("preview state identity cannot be reused for a different port", async (t) => {
@@ -79,4 +82,53 @@ test("preview state identity cannot be reused for a different port", async (t) =
   await preparePreviewState(directory, 47328);
   await assert.rejects(preparePreviewState(directory, 47329), /another version or port/);
   assert.equal(await readFile(path.join(directory, "state.json"), "utf8"), '{"version":1,"port":47328}\n');
+});
+
+test("preview namespace refuses ancestor symlinks before creating external state", async (t) => {
+  const root = await owned(t);
+  const outside = path.join(root, "outside");
+  await mkdir(outside, { mode: 0o750 });
+  await symlink(outside, path.join(root, "linked"));
+  await assert.rejects(prepare(path.join(root, "linked", "preview"), 47328, root), /symbolic link/);
+  await assert.rejects(lstat(path.join(outside, "preview")), { code: "ENOENT" });
+  assert.equal((await lstat(outside)).mode & 0o777, 0o750);
+});
+
+test("preview cleanup preserves state when launcher or database shutdown is unconfirmed", async (t) => {
+  const root = await owned(t);
+  for (const marker of ["launcher.lock", "pg/postmaster.pid"]) {
+    const directory = path.join(root, marker.startsWith("pg/") ? "database" : "launcher");
+    await mkdir(path.dirname(path.join(directory, marker)), { recursive: true });
+    await writeFile(path.join(directory, marker), "retained guard");
+    const ownership = await lstat(directory);
+    await assert.rejects(removeStoppedPreviewState(directory, ownership), /shutdown/);
+    assert.equal(await readFile(path.join(directory, marker), "utf8"), "retained guard");
+  }
+});
+
+test("preview cleanup refuses a replaced test directory rather than deleting unrelated data", async (t) => {
+  const root = await owned(t);
+  const directory = path.join(root, "preview");
+  await mkdir(directory);
+  const ownership = await lstat(directory);
+  await rename(directory, path.join(root, "original"));
+  await mkdir(directory);
+  await writeFile(path.join(directory, "unrelated"), "preserve");
+  await assert.rejects(removeStoppedPreviewState(directory, ownership), /ownership/);
+  assert.equal(await readFile(path.join(directory, "unrelated"), "utf8"), "preserve");
+});
+
+test("preview test reservation is exclusive and cleanup removes only a stopped owned directory", async (t) => {
+  const root = await owned(t);
+  const directory = path.join(root, "preview");
+  const ownership = await reservePreviewState(directory, root);
+  await writeFile(path.join(directory, "sentinel"), "owned");
+  await assert.rejects(reservePreviewState(directory, root), { code: "EEXIST" });
+  assert.equal(await readFile(path.join(directory, "sentinel"), "utf8"), "owned");
+  await removeStoppedPreviewState(directory, ownership);
+  await assert.rejects(lstat(directory), { code: "ENOENT" });
+  const target = path.join(root, "unrelated");
+  await symlink(target, directory);
+  await assert.rejects(reservePreviewState(directory, root), { code: "EEXIST" }, "dangling links are occupied, not an available namespace");
+  assert.equal((await lstat(directory)).isSymbolicLink(), true);
 });

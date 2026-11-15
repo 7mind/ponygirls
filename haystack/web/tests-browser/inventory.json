@@ -72,7 +72,12 @@
     "preview refuses linked credential files without modifying their targets",
     "preview refuses an unrecognized existing database rather than adopting or deleting it",
     "preview state identity cannot be reused for a different port",
-    "superseded identity replies cannot clear the replacement session's pending write"
+    "superseded identity replies cannot clear the replacement session's pending write",
+    "preview startup failure never authorizes stopping an unowned PostgreSQL process",
+    "preview namespace refuses ancestor symlinks before creating external state",
+    "preview cleanup preserves state when launcher or database shutdown is unconfirmed",
+    "preview cleanup refuses a replaced test directory rather than deleting unrelated data",
+    "preview test reservation is exclusive and cleanup removes only a stopped owned directory"
   ],
   "browserCases": [
     "record layout 1101px light: no horizontal overflow; metadata, sorting and open action available",

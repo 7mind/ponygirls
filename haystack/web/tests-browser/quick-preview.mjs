@@ -4,24 +4,28 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import http from "node:http";
 import path from "node:path";
-import { access, readFile, rm, stat } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { removeStoppedPreviewState, reservePreviewState } from "./preview-state.mjs";
 
 const chromiumPath = process.env.HAYSTACK_CHROMIUM;
 await prerequisites("preview");
 const haystackRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 let port;
 let stateDir;
+let stateOwnership;
 for (;;) {
   const socket = http.createServer();
   await new Promise((resolve) => socket.listen(0, "127.0.0.1", resolve));
   const candidate = socket.address().port;
   await new Promise((resolve) => socket.close(resolve));
-  const candidateState = path.join(haystackRoot, "..", "debug", "haystack-ui", String(candidate));
-  try { await access(candidateState); } catch {
-    if (candidate < 65436) { port = candidate; stateDir = candidateState; break; }
-  }
+  const candidateState = path.resolve(haystackRoot, "..", "debug", "haystack-ui", String(candidate));
+  if (candidate >= 65436) continue;
+  try {
+    stateOwnership = await reservePreviewState(candidateState, path.resolve(haystackRoot, ".."));
+    port = candidate; stateDir = candidateState; break;
+  } catch (error) { if (error.code !== "EEXIST") throw error; }
 }
 const base = `http://127.0.0.1:${port}`;
 let preview;
@@ -97,5 +101,5 @@ try {
 } finally {
   if (browser !== undefined) await browser.close();
   await stopPreview();
-  await rm(stateDir, { recursive: true, force: true });
+  await removeStoppedPreviewState(stateDir, stateOwnership);
 }
