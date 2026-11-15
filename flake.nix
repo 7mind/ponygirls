@@ -1177,6 +1177,7 @@
           chronicle-operations-example = import ./nix/tests/chronicle-operations-example.nix { inherit pkgs nixpkgs inputs; ponygirls = self; };
           readme-hm-server = import ./nix/tests/readme-hm-server.nix { inherit pkgs inputs; ponygirls = self; };
           shared-services-modules = import ./nix/tests/shared-services-modules.nix { inherit pkgs nixpkgs inputs; };
+          service-accounts = import ./nix/tests/service-accounts.nix { inherit pkgs nixpkgs inputs; };
           shared-postgres-modules = import ./nix/tests/shared-postgres-modules.nix { inherit pkgs nixpkgs; };
           provider-credential-transports = import ./nix/tests/provider-credential-transports.nix { inherit pkgs; };
           shared-postgres = import ./nix/tests/shared-postgres.nix { inherit pkgs; };
