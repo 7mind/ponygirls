@@ -1,7 +1,8 @@
 # Persistent account backend validation — 2026-11-15
 
-Local source/verification only; no push, deployment, real credential migration,
-or native/browser acceptance claim.
+This document records individual backend checkpoints, not a combined native or
+deployment acceptance claim. Final integrated backend/native/browser results and
+credential-preparation boundaries are in the [validation summary](../../docs/drafts/20261115-0225-accounts-validation.md).
 
 ## Fail-first observations
 

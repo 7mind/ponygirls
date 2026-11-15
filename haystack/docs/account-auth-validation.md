@@ -4,7 +4,11 @@ This change adds the separate account plane while preserving the current domain
 API and audit identities. Browser cookies now identify independent durable
 sessions; declarative and issued API credentials remain bearer-only.
 
-## Observed final backend checks
+Final integrated results (715 backend cases, JVM/native42 and complete browser
+acceptance) are in the [validation summary](../../docs/drafts/20261115-0225-accounts-validation.md).
+The source-bound run below is an earlier implementation checkpoint.
+
+## Initial backend checkpoint
 
 The pinned command:
 
