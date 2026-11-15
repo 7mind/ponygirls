@@ -27,6 +27,9 @@ let
     (legacy.extendModules { modules = [ { smind.hm.services.agentic = settings; } ]; }).config;
   allAssertions = config: lib.all (a: a.assertion) config.assertions;
   fails = settings: !allAssertions (extend settings);
+  bindingModes = [ "inode-anchored" "unsafe-off" ];
+  bindingConfig = mode: extend { manure.rootBindingMode = mode; };
+  bindingArtifact = mode: (bindingConfig mode).lib.ponygirls.agenticServices.manureConfig;
   # Inputs deliberately absent: disabled module must not resolve package defaults.
   inert =
     (lib.evalModules {
@@ -143,6 +146,15 @@ let
     )
   );
 in
+assert allAssertions (extend { manure.migrationReceiptDirectory = "/srv/manure-receipts"; });
+assert builtins.all (mode:
+  allAssertions (bindingConfig mode)
+  && (bindingArtifact mode).value.root_binding == { inherit mode; }
+  && fails { manure = { rootBindingMode = mode; migrationReceiptDirectory = "/srv/manure-receipts"; }; }
+) bindingModes;
+assert !(builtins.tryEval (bindingConfig "invalid").smind.hm.services.agentic.manure.rootBindingMode).success;
+assert !(artifacts.manureConfig.value ? root_binding);
+assert cfg.smind.hm.services.agentic.manure.rootBindingMode == "strict";
 assert allAssertions cfg;
 assert inert.systemd.user.services == { };
 assert inert.systemd.user.timers == { };
@@ -257,8 +269,20 @@ pkgs.runCommandLocal "agentic-services-hm-eval"
     nativeBuildInputs = [ pkgs.python3 ];
     haystackAuth = artifacts.haystackAuth;
     manureConfig = artifacts.manureConfig;
+    anchoredConfig = bindingArtifact "inode-anchored";
+    unsafeConfig = bindingArtifact "unsafe-off";
+    strictConfig = bindingArtifact "strict";
   }
   ''
     python3 ${./agentic-services-snapshot-test.py} ${./fixtures/agentic-services-legacy.json} ${snapshot} "$haystackAuth" "$manureConfig"
+    python3 - "$strictConfig" "$anchoredConfig" "$unsafeConfig" <<'PYTEST'
+    import json, pathlib, sys
+    for path, mode in zip(sys.argv[1:], ["strict", "inode-anchored", "unsafe-off"]):
+        config = json.loads(pathlib.Path(path).read_text())
+        if mode == "strict":
+            assert "root_binding" not in config
+        else:
+            assert config["root_binding"] == {"mode": mode}
+    PYTEST
     touch "$out"
   ''

@@ -76,7 +76,7 @@ let
     database = builtins.removeAttrs cfg.haystack.database [ "readinessUnit" ];
     retrieval = cfg.haystack.retrieval;
   };
-  manureConfig = json.generate "agentic-services-manure.json" {
+  manureConfig = json.generate "agentic-services-manure.json" ({
     database = builtins.removeAttrs cfg.manure.database [ "readinessUnit" ];
     native_mode = "linked";
     posix_library = null;
@@ -117,7 +117,10 @@ let
             type = "human";
           }
         ];
-  };
+  # Omit the default for unchanged configs and older package compatibility.
+  } // lib.optionalAttrs (cfg.manure.rootBindingMode != "strict") {
+    root_binding.mode = cfg.manure.rootBindingMode;
+  });
   setup = pkgs.writeShellScript "agentic-services-setup" ''
     set -euo pipefail
     umask 077

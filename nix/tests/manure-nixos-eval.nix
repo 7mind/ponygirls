@@ -202,6 +202,18 @@ let
     smind.services.manure.proxy.acmeHost = "artifacts.example.net";
   };
 
+  bindingConfig = settings: (evalManure {
+    smind.services.manure = {
+      users = fullUsers;
+      apiOrigin = "https://artifacts.example.net";
+      contentMode = "path";
+      proxy.enable = false;
+    } // settings;
+  }).config;
+  bindingModes = [ "inode-anchored" "unsafe-off" ];
+  allAssertions = c: lib.all (a: a.assertion) c.assertions;
+  bindingLauncher = mode: (bindingConfig { rootBindingMode = mode; }).systemd.services.manure.serviceConfig.ExecStart;
+
   apiVhost = full.services.nginx.virtualHosts."artifacts.example.net";
   contentVhost = full.services.nginx.virtualHosts."content-content.example.net";
   apiLoc = apiVhost.locations."/";
@@ -227,6 +239,14 @@ assert lib.all (a: a.assertion) (evalManure {
   smind.services.manure.contentSuffix = "content.example.net";
   smind.services.manure.proxy.enable = false;
 }).config.assertions;
+# Valid controls ensure receipt incompatibility failures are policy-specific.
+assert allAssertions (bindingConfig { migrationReceiptDirectory = "/srv/manure-receipts"; });
+assert builtins.all (mode:
+  allAssertions (bindingConfig { rootBindingMode = mode; })
+  && !allAssertions (bindingConfig { rootBindingMode = mode; migrationReceiptDirectory = "/srv/manure-receipts"; })
+) bindingModes;
+assert !(builtins.tryEval (bindingConfig { rootBindingMode = "invalid"; }).smind.services.manure.rootBindingMode).success;
+assert pathMode.smind.services.manure.rootBindingMode == "strict";
 assert pathMode.smind.services.manure.contentSuffix == null;
 assert pathMode.smind.services.manure.contentMode == "path";
 assert lib.all (a: a.assertion) (evalManure {
@@ -367,6 +387,10 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   # Realized template + launcher: grep the actual bytes (credential
   # names only; no digest material, no /run/secrets paths, launcher
   # resolves $CREDENTIALS_DIRECTORY at runtime and fails closed).
+  nativeBuildInputs = [ pkgs.python3 ];
+  anchoredLauncherBin = bindingLauncher "inode-anchored";
+  unsafeLauncherBin = bindingLauncher "unsafe-off";
+  strictLauncherBin = bindingLauncher "strict";
   pathLauncherBin = pathMode.systemd.services.manure.serviceConfig.ExecStart;
   launcherBin = (evalManure {
     smind.services.manure.users = fullUsers;
@@ -393,5 +417,15 @@ pkgs.runCommandLocal "manure-nixos-eval-test"
   grep -q '"content_mode":"path"' "$pathTmpl"
   ! grep -q '"content_suffix"' "$pathTmpl"
   grep -q '"content_mode":"subdomain"' "$tmpl"
+  python3 - "$strictLauncherBin" "$anchoredLauncherBin" "$unsafeLauncherBin" <<'PYTEST'
+  import json, pathlib, re, sys
+  for launcher, mode in zip(sys.argv[1:], ["strict", "inode-anchored", "unsafe-off"]):
+      template = re.search(r'/nix/store/[^ "]*manure-config.template.json', pathlib.Path(launcher).read_text()).group()
+      config = json.loads(pathlib.Path(template).read_text())
+      if mode == "strict":
+          assert "root_binding" not in config
+      else:
+          assert config["root_binding"] == {"mode": mode}
+  PYTEST
   touch $out
 ''

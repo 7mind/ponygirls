@@ -127,6 +127,9 @@ let
     incomplete_session_ttl_s = cfg.incompleteSessionTtl;
     grant_ttl_s = cfg.grantTtl;
     one_time_grant_ttl_s = cfg.oneTimeGrantTtl;
+  # Omit the default for unchanged configs and older package compatibility.
+  } // lib.optionalAttrs (cfg.rootBindingMode != "strict") {
+    root_binding.mode = cfg.rootBindingMode;
   } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; };
 
   templateJson = pkgs.writeText "manure-config.template.json" (builtins.toJSON serverTemplate);
@@ -334,6 +337,11 @@ in
         leaseSeconds = lib.mkOption { type = lib.types.ints.between 3 3600; };
         pollIntervalMs = lib.mkOption { type = lib.types.ints.positive; };
       }; };
+    rootBindingMode = lib.mkOption {
+      type = lib.types.enum [ "strict" "inode-anchored" "unsafe-off" ];
+      default = "strict";
+      description = "Physical payload root binding policy. strict enforces physical root binding; inode-anchored anchors operations to the opened root inode; unsafe-off disables root binding checks. Non-strict modes cannot import migration receipts.";
+    };
     migrationReceiptDirectory = lib.mkOption { type = lib.types.nullOr lib.types.str; default = null; description = "Offline converter control receipt root (OWNER/COMPLETE/import.sql), distinct from payload dataDir and operator credentials."; };
     dataDir = lib.mkOption {
       type = lib.types.str;
@@ -422,6 +430,10 @@ in
 
   config = lib.mkIf cfg.enable {
     assertions = [
+      {
+        assertion = cfg.rootBindingMode == "strict" || cfg.migrationReceiptDirectory == null;
+        message = "smind.services.manure: migrationReceiptDirectory requires strict rootBindingMode.";
+      }
       {
         assertion = cfg.users != { };
         message = "smind.services.manure: configure at least one user (human and/or agent token digests).";

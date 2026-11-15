@@ -157,6 +157,11 @@ in
         leaseSeconds = lib.mkOption { type = lib.types.ints.between 3 3600; };
         pollIntervalMs = lib.mkOption { type = lib.types.ints.positive; };
       }; };
+      rootBindingMode = mkOption {
+        type = types.enum [ "strict" "inode-anchored" "unsafe-off" ];
+        default = "strict";
+        description = "Physical payload root binding policy. strict enforces physical root binding; inode-anchored anchors operations to the opened root inode; unsafe-off disables root binding checks. Non-strict modes cannot import migration receipts.";
+      };
       migrationReceiptDirectory = mkOption { type = types.nullOr types.str; default = null; description = "Explicit offline migration control/OWNER/COMPLETE/import.sql directory, independently of dataDirectory and existing credentials."; };
       allowInsecureHttp = mkOption {
         type = types.bool;
