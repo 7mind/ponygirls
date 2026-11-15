@@ -15,6 +15,7 @@ final class PostgresAccountSuite extends AccountContract {
       try {
         AccountSql.initialize(connection)
         Using.resource(connection.createStatement())(_.execute("TRUNCATE ponygirls_account_sessions,ponygirls_account_tokens"))
+        AccountSql.reconcile(connection, users)
         body(new PostgresAccounts(connection))
       } finally connection.rollback()
     }

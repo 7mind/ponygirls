@@ -4,11 +4,15 @@ import java.time.{Clock, Instant}
 import java.time.temporal.ChronoUnit
 import java.util.UUID
 
+private[auth] final case class StoredUser(id: String, identity: String, enabled: Boolean)
 private[auth] final case class StoredSession(id: String, owner: String, digest: String, passwordIdentity: String)
 private[auth] final case class StoredToken(id: String, owner: String, digest: String, name: String, createdAt: Instant, revoked: Boolean)
 
 private[auth] trait AccountRepository {
   def lockOwner(owner: String): Unit
+  def allUsers: Vector[StoredUser]
+  def user(owner: String): Option[StoredUser]
+  def putUser(row: StoredUser): Unit
   def sessions: Vector[StoredSession]
   def session(digest: String): Option[StoredSession]
   def insertSession(row: StoredSession): Unit
@@ -38,8 +42,11 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
     users.map(user => user.id -> user).toMap
   }
   private def eligible(user: AccountUser): Boolean = user.enabled && user.userType == "human"
+  private def stored(user: AccountUser): StoredUser = StoredUser(user.id, Secrets.digest(Vector(user.id, user.userType,
+    user.login.getOrElse(""), user.passwordHash.map(Secrets.digest).getOrElse(""), user.enabled.toString).mkString("\u0000")), user.enabled)
+  private def current(user: AccountUser): Boolean = repository.user(user.id).contains(stored(user))
   private def sessionLive(row: StoredSession, users: Map[String, AccountUser]): Boolean = users.get(row.owner).exists { user =>
-    eligible(user) && user.passwordHash.exists(hash => Secrets.equal(Secrets.digest(hash), row.passwordIdentity))
+    eligible(user) && current(user) && user.passwordHash.exists(hash => Secrets.equal(Secrets.digest(hash), row.passwordIdentity))
   }
   private def credential(user: AccountUser, id: String, digest: String, browser: Boolean): AccountCredential =
     AccountCredential(user.id, user.userType, id, digest, browser)
@@ -57,8 +64,10 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
   }
   def reconcile(users: Vector[AccountUser]): Unit = {
     val all = directory(users)
-    val owners = (all.keySet ++ repository.sessions.map(_.owner) ++ repository.allTokens.map(_.owner)).toVector.sorted
+    val owners = (all.keySet ++ repository.allUsers.map(_.id) ++ repository.sessions.map(_.owner) ++ repository.allTokens.map(_.owner)).toVector.sorted
     owners.foreach(repository.lockOwner)
+    repository.allUsers.filterNot(row => all.contains(row.id)).foreach(row => repository.putUser(row.copy(enabled = false)))
+    users.foreach(user => repository.putUser(stored(user)))
     repository.sessions.filterNot(sessionLive(_, all)).foreach(row => repository.deleteSession(row.digest))
     repository.allTokens.filter(row => !all.get(row.owner).exists(eligible)).foreach(row => repository.revokeToken(row.id))
     owners.foreach(pruneRevoked)
@@ -73,6 +82,7 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
     check(selected.nonEmpty && verified, "unauthorized")
     val user = selected.get
     repository.lockOwner(user.id)
+    check(current(user), "unauthorized")
     val secret = Secrets.generate()
     val digest = Secrets.digest(secret)
     val id = "session-" + UUID.randomUUID().toString
@@ -87,13 +97,13 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
   def bearer(users: Vector[AccountUser], secret: String): Option[AccountCredential] = {
     val all = directory(users)
     if (!Secrets.canonical(secret)) None
-    else repository.tokenByDigest(Secrets.digest(secret)).filter(row => !row.revoked && all.get(row.owner).exists(eligible))
+    else repository.tokenByDigest(Secrets.digest(secret)).filter(row => !row.revoked && all.get(row.owner).exists(user => eligible(user) && current(user)))
       .map(row => credential(all(row.owner), row.id, row.digest, false))
   }
   def live(users: Vector[AccountUser], owner: String, id: String, digest: String): Boolean = {
     val all = directory(users)
     repository.session(digest).exists(row => row.owner == owner && row.id == id && sessionLive(row, all)) ||
-      repository.tokenByDigest(digest).exists(row => row.owner == owner && row.id == id && !row.revoked && all.get(row.owner).exists(eligible))
+      repository.tokenByDigest(digest).exists(row => row.owner == owner && row.id == id && !row.revoked && all.get(row.owner).exists(user => eligible(user) && current(user)))
   }
   def logout(users: Vector[AccountUser], secret: String): Unit = {
     val current = browser(users, secret).getOrElse(throw AccountFailure("unauthorized"))

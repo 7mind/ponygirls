@@ -148,13 +148,21 @@ abstract class AccountContract extends munit.FunSuite {
 }
 
 final class MemoryAccountSuite extends AccountContract {
-  protected def withRepository(body: AccountRepository => Unit): Unit = body(new MemoryAccounts)
+  protected def withRepository(body: AccountRepository => Unit): Unit = {
+    val repository = new MemoryAccounts
+    new Accounts(repository).reconcile(users)
+    body(repository)
+  }
 }
 
 private final class MemoryAccounts extends AccountRepository {
+  private val userRows = mutable.Map.empty[String, StoredUser]
   private val sessionRows = mutable.Map.empty[String, StoredSession]
   private val tokenRows = mutable.Map.empty[String, StoredToken]
   def lockOwner(owner: String): Unit = ()
+  def allUsers: Vector[StoredUser] = userRows.values.toVector
+  def user(owner: String): Option[StoredUser] = userRows.get(owner)
+  def putUser(row: StoredUser): Unit = userRows.update(row.id, row)
   def sessions: Vector[StoredSession] = sessionRows.values.toVector
   def session(digest: String): Option[StoredSession] = sessionRows.get(digest)
   def insertSession(row: StoredSession): Unit = {

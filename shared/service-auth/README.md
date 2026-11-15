@@ -4,8 +4,13 @@
 credentials, and the separately versioned account JSON protocol. It does not own
 service permissions, origins, HTTP admission, database connections or transactions.
 `AccountSql` receives the caller's existing `Connection`; initialize once at startup
-and reconcile loaded declarative users on startup/configuration replacement.
-Never invoke a second database transaction from inside an existing callback.
+and reconcile the complete loaded declarative directory on startup/configuration
+replacement before accepting account operations. Reconciliation persists current
+account fingerprints and disabled tombstones. Login checks that current state
+under the same owner lock: an old request waiting behind removal, disable or a
+password replacement cannot recreate revoked authority. Password hashes themselves
+are not copied into the directory table. Never invoke a second database
+transaction from inside an existing callback.
 
 Haystack and Manure use the shared tables. Chronicle retains its scoped-token,
 sharing and security-epoch tables and adapts them to the same account boundary.
