@@ -9,7 +9,9 @@ import java.util.UUID
 final case class McpReadHandle(requestId: UUID,instanceId: UUID,runId: UUID,afterSequence: Long,limit: Int)
 
 enum BrowserReply {
-  case Ordinary(envelope: ServerEnvelope)
+  case Ordinary(envelope: ServerEnvelope,authority: Identity)
+  case CommittedLogout(envelope: ServerEnvelope)
+  case Control(envelope: ServerEnvelope)
   case McpRead(handle: McpReadHandle)
   case McpCatalog(requestId: UUID)
 }
@@ -46,13 +48,21 @@ final class BrowserRpc(app: Application,runs: McpTestRuns,wire: McpTestWire) {
       case Operation.CancelMcpTest(instance,run) =>
         requireTester()
         runs.cancel(identity,instance,run).as(read(instance,run,0L,initialReadLimit))
-      case _ => ordinary(identity,envelope,version).map(result => BrowserReply.Ordinary(ServerEnvelope(envelope.requestId,result)))
+      case _: Operation.Logout => ordinary(identity,envelope,version).map(result => BrowserReply.CommittedLogout(ServerEnvelope(envelope.requestId,result)))
+      case _ => ordinary(identity,envelope,version).map(result => BrowserReply.Ordinary(ServerEnvelope(envelope.requestId,result),identity))
     }
   }
 
   /** Called only when the socket's outgoing stream pulls a queued handle. */
   def materialize(reply: BrowserReply,currentIdentity: IO[Identity],version: String,protocol: VersionedWire): IO[Json] = IO.defer { reply match {
-    case BrowserReply.Ordinary(envelope) => IO(protocol.encodeServer(version,envelope))
+    case BrowserReply.Ordinary(envelope,authority) => currentIdentity.map { current =>
+      current.requireBrowser()
+      Check(current.user.id==authority.user.id && current.credentialHash==authority.credentialHash,"unauthorized","session expired or revoked")
+      protocol.encodeServer(version,envelope)
+    }
+    // Only execute's committed Logout can acknowledge its own session revocation.
+    case BrowserReply.CommittedLogout(envelope) => IO(protocol.encodeServer(version,envelope))
+    case BrowserReply.Control(envelope) => IO(protocol.encodeServer(version,envelope))
     case BrowserReply.McpCatalog(id) =>
       Check(wire.supportedVersions.contains(version),"version-mismatch",wire.versionRequirement)
       currentIdentity.flatMap(runs.catalog).map(value => wire.encode(ServerEnvelope(id,wire.catalog(value)),version))

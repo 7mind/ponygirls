@@ -18,7 +18,7 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
   def initialize(): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
-    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql","018_model_identity.sql","019_retained_profile_reads.sql").foreach(migrate(c,_))
+    List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql","018_model_identity.sql","019_retained_profile_reads.sql","020_persistent_sessions.sql").foreach(migrate(c,_))
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     Sql.exec(c,"INSERT INTO ch_profile(singleton,active,target,maintenance) VALUES(true,?,?,false) ON CONFLICT DO NOTHING",profiles.preferred.profile,profiles.preferred.profile)
@@ -28,11 +28,12 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     Sql.exec(c,"UPDATE ch_users SET enabled=false")
     config.users.foreach { u =>
       val credential = Config.credential(u.passwordHashFile)
+      Check(ponygirls.auth.Password.validHash(credential),"config","invalid password hash")
       Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=? AND EXISTS(SELECT 1 FROM ch_users WHERE id=? AND credential<>?)",u.id,u.id,credential)
       Sql.exec(c,"INSERT INTO ch_users(id,login,enabled,credential) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET login=excluded.login,enabled=excluded.enabled,credential=excluded.credential",u.id,u.login,u.enabled,credential)
     }
     StaticTokens.reconcile(c,config)
-    Sql.exec(c,"DELETE FROM ch_sessions WHERE owner IN(SELECT id FROM ch_users WHERE NOT enabled) OR expires < now()")
+    Sql.exec(c,"DELETE FROM ch_sessions WHERE owner IN(SELECT id FROM ch_users WHERE NOT enabled) OR expires <= clock_timestamp()")
     Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT id,? FROM ch_users ON CONFLICT DO NOTHING",profiles.preferred.profile)
     }
     ArchiveProjection.backfill(this)

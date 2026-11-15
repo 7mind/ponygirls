@@ -54,7 +54,9 @@ class StaticTokenTest extends munit.FunSuite {
     val wrongOwner=managed.copy(staticTokens=List(t.copy(userId="b")))
     assertEquals(intercept[DomainError](new Database(wrongOwner,IndexProfileCatalog.legacyOnly(wrongOwner)).initialize()).code,"config")
     new Database(c,IndexProfileCatalog.legacyOnly(c)).initialize(); assertEquals(intercept[DomainError](auth.bearer(next)).code,"unauthorized")
-    val issued=auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("issued",List(Scope.Read)))).asInstanceOf[Result.Token].result
+    assertEquals(intercept[DomainError](auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("stale",List(Scope.Read))))).code,"unauthorized")
+    val freshOwner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
+    val issued=auth.mutate(freshOwner,ClientEnvelope(UUID.randomUUID(),Operation.MintToken("issued",List(Scope.Read)))).asInstanceOf[Result.Token].result
     val collision=c.copy(staticTokens=List(t.copy(id=issued.token.id)))
     assertEquals(intercept[DomainError](new Database(collision,IndexProfileCatalog.legacyOnly(collision)).initialize()).code,"config")
     assertEquals(auth.bearer(issued.secret.get).user.id,"a")

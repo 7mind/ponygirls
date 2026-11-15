@@ -28,6 +28,7 @@ class PersistentBrowserSessionTest extends munit.FunSuite {
     }
     def browserPost(path: String,cookie: String): IO[Reply]=post(path,List("Origin"->config.allowedOrigin,"Cookie"->cookie),"")
     def login: IO[Reply]=post("/api/login",List("Origin"->config.allowedOrigin),Wire.encode(LoginRequest.codecJson,LoginRequest("a","synthetic")).noSpaces)
+    def durable(cookie: String): IO[Boolean]=IO.blocking(services.database.transaction(c => Sql.one(c,"SELECT expires IS NULL FROM ch_sessions WHERE hash=?",Wire.hash(cookie.stripPrefix("chronicle_session=")))(_.getBoolean(1)).get))
     def remaining(cookie: String): IO[Double]=IO.blocking(services.database.transaction(c => Sql.one(c,"SELECT extract(epoch FROM expires-clock_timestamp()) FROM ch_sessions WHERE hash=?",Wire.hash(cookie.stripPrefix("chronicle_session=")))(_.getDouble(1)).get))
   }
   private def fixture(ttl: Int,secure: Boolean): Resource[IO,Fixture] = for {
@@ -47,33 +48,67 @@ class PersistentBrowserSessionTest extends munit.FunSuite {
     client <- EmberClientBuilder.default[IO].build
   } yield Fixture(config,services,client,s"http://127.0.0.1:${server.address.getPort}")
 
-  // Specified-origin: the browser renewal contract, including configured rather than hard-coded TTL.
+  test("BG GoodCommunication specified: new browser sessions remain valid beyond the legacy configured TTL") {
+    fixture(1,false).use { f => for {
+      logged <- f.login
+      _ <- IO(assertEquals(logged.status,Status.Ok))
+      _ <- IO.sleep(1200.millis)
+      refreshed <- f.browserPost("/api/session/refresh",logged.cookie)
+      _ <- IO(assertEquals(refreshed.status,Status.Ok))
+    } yield () }.unsafeRunSync()
+  }
+
+  test("BG GoodCommunication specified: migration promotes only live legacy sessions and never revives expired or deleted sessions") {
+    fixture(1,false).use { f => IO.blocking {
+      val live=Wire.secret(); val expired=Wire.secret(); val deleted=Wire.secret()
+      f.services.database.transaction { c =>
+        Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=20")
+        Sql.exec(c,"INSERT INTO ch_sessions(hash,owner,expires) VALUES(?,'a',clock_timestamp()+interval '1 hour')",Wire.hash(live))
+        Sql.exec(c,"INSERT INTO ch_sessions(hash,owner,expires) VALUES(?,'a',clock_timestamp()-interval '1 second')",Wire.hash(expired))
+        Sql.exec(c,"INSERT INTO ch_sessions(hash,owner,expires) VALUES(?,'a',clock_timestamp()+interval '1 hour')",Wire.hash(deleted))
+        Sql.exec(c,"DELETE FROM ch_sessions WHERE hash=?",Wire.hash(deleted))
+        Sql.exec(c,"ALTER TABLE ch_sessions ALTER COLUMN expires SET NOT NULL")
+      }
+      f.services.database.initialize()
+      val auth=new Auth(f.services.database,f.config)
+      assertEquals(auth.browser(live).user.id,"a")
+      assert(f.services.database.transaction(c => Sql.one(c,"SELECT expires IS NULL FROM ch_sessions WHERE hash=?",Wire.hash(live))(_.getBoolean(1)).get))
+      List(expired,deleted).foreach(secret => assertEquals(intercept[DomainError](auth.browser(secret)).code,"unauthorized"))
+      f.services.database.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()-interval '1 second' WHERE hash=?",Wire.hash(live)))
+      f.services.database.initialize()
+      assertEquals(intercept[DomainError](auth.browser(live)).code,"unauthorized")
+      assertEquals(f.services.database.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_sessions")(_.getInt(1)).get),0)
+    }}.unsafeRunSync()
+  }
+
+  // Specified-origin: cookie persistence is independent of the ignored legacy server TTL.
   List((2592000,true),(37,false)).foreach { case (ttl,secure) =>
-    test(s"Effectual GoodCommunication specified: renewable cookie HTTP and database TTL agree ($ttl, secure=$secure)") {
+    test(s"Effectual GoodCommunication specified: persistent cookie HTTP and nonexpiring session survive restart ($ttl, secure=$secure)") {
       fixture(ttl,secure).use { f => for {
         logged <- f.login
-        _ <- IO { assertEquals(logged.status,Status.Ok); assert(logged.header("Set-Cookie").get.contains(s"Max-Age=$ttl")) }
-        before <- f.remaining(logged.cookie)
-        _ <- IO(assert(before<=ttl && before>ttl-10))
-        _ <- IO.blocking(f.services.database.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()+interval '15 seconds'")))
+        _ <- IO { assertEquals(logged.status,Status.Ok); assert(logged.header("Set-Cookie").get.contains(s"Max-Age=${ponygirls.auth.PersistentCookie.maxAgeSeconds}")) }
+        before <- f.durable(logged.cookie)
+        _ <- IO(assert(before,"new sessions have no server deadline"))
         refreshed <- f.browserPost("/api/session/refresh",logged.cookie)
         _ <- IO {
           assertEquals(refreshed.status,Status.Ok)
           assertEquals(Wire.decode(UserInfo.codecJson,Wire.parse(refreshed.body)),Wire.decode(LoginResponse.codecJson,Wire.parse(logged.body)).user)
           assertEquals(refreshed.cookie,logged.cookie)
-          assertEquals(refreshed.header("X-Chronicle-Session-Ttl-Seconds"),Some(ttl.toString))
+          assertEquals(refreshed.header("X-Chronicle-Session-Ttl-Seconds"),Some(ponygirls.auth.PersistentCookie.maxAgeSeconds.toString))
           assertEquals(refreshed.header("Cache-Control"),Some("no-store"))
           val cookie=refreshed.header("Set-Cookie").get
-          assert(cookie.contains(s"Max-Age=$ttl")); assert(cookie.contains("HttpOnly")); assert(cookie.contains("SameSite=Strict")); assert(cookie.contains("Path=/"))
+          assert(cookie.contains(s"Max-Age=${ponygirls.auth.PersistentCookie.maxAgeSeconds}")); assert(cookie.contains("HttpOnly")); assert(cookie.contains("SameSite=Strict")); assert(cookie.contains("Path=/"))
           assertEquals(cookie.split(";").exists(_.trim.equalsIgnoreCase("Secure")),secure)
         }
-        after <- f.remaining(logged.cookie)
-        _ <- IO(assert(after<=ttl && after>ttl-10))
+        after <- f.durable(logged.cookie)
+        _ <- IO(assert(after,"cookie refresh does not add a server deadline"))
         _ <- IO.blocking {
           // A fresh service instance and full initialization preserve the unchanged persisted secret.
           val restarted=new Database(f.config,f.services.database.profiles)
-          restarted.initialize()
-          assertEquals(new Auth(restarted,f.config).browser(logged.cookie.stripPrefix("chronicle_session=")).user.id,"a")
+          try {
+            restarted.initialize()
+            assertEquals(new Auth(restarted,f.config).browser(logged.cookie.stripPrefix("chronicle_session=")).user.id,"a")
+          } finally restarted.close()
         }
         logout <- f.browserPost("/api/logout",logged.cookie)
         _ <- IO(assertEquals(logout.status,Status.Ok))
@@ -187,6 +222,24 @@ class PersistentBrowserSessionTest extends munit.FunSuite {
     } yield () }.unsafeRunSync()
   }
 
+  test("Effectual GoodCommunication specified: repeat startup retains epoch fences for durable deadline imposition and expired-to-durable revival") {
+    fixture(1,false).use { f => for {
+      logged <- f.login
+      _ <- IO.blocking(f.services.database.initialize())
+      _ <- IO.blocking(f.services.database.transaction { c =>
+        val hash=Wire.hash(logged.cookie.stripPrefix("chronicle_session="))
+        assert(Sql.one(c,"SELECT expires IS NULL FROM ch_sessions WHERE hash=?",hash)(_.getBoolean(1)).get)
+        val durable=SecurityEpoch.current(c)
+        Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()+interval '1 hour' WHERE hash=?",hash)
+        assertEquals(SecurityEpoch.current(c),durable+1)
+        Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()-interval '1 second' WHERE hash=?",hash)
+        val expired=SecurityEpoch.current(c)
+        Sql.exec(c,"UPDATE ch_sessions SET expires=NULL WHERE hash=?",hash)
+        assertEquals(SecurityEpoch.current(c),expired+1)
+      })
+    } yield () }.unsafeRunSync()
+  }
+
   test("Effectual GoodCommunication specified: concurrent HTTP logout and renewal never recreate a deleted session") {
     fixture(2592000,false).use { f => for {
       logged <- f.login
@@ -222,7 +275,8 @@ class PersistentBrowserSessionTest extends munit.FunSuite {
                 java.nio.file.Files.writeString(file,Password.hash("different synthetic".toCharArray))
                 f.config.copy(users=f.config.users.map(u => if(u.id=="a") u.copy(passwordHashFile=file.toString) else u))
             }
-            new Database(changed,f.services.database.profiles).initialize()
+            val restarted=new Database(changed,f.services.database.profiles)
+            try restarted.initialize() finally restarted.close()
           }
         }
         denied <- f.browserPost("/api/session/refresh",logged.cookie)

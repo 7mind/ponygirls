@@ -9,8 +9,6 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.{UUID, Base64}
 import ponygirls.runtime.{BoundedSecretFile, JdbcConfig, JdbcLimits}
 import scala.concurrent.duration.*
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
 
 case class DomainError(code: String, detail: String) extends RuntimeException(code)
 object Check {
@@ -146,19 +144,8 @@ object Config {
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }
 object Password {
-  val iterations = 600000
-  def hash(chars: Array[Char]): String = {
-    val salt = new Array[Byte](16); new SecureRandom().nextBytes(salt)
-    s"pbkdf2-sha256$$$iterations$$${Base64.getEncoder.encodeToString(salt)}$$${Base64.getEncoder.encodeToString(derive(chars, salt, iterations))}"
-  }
-  private def derive(chars: Array[Char], salt: Array[Byte], rounds: Int): Array[Byte] = {
-    val spec = new PBEKeySpec(chars, salt, rounds, 256)
-    try SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).getEncoded finally spec.clearPassword()
-  }
-  def verify(chars: Array[Char], encoded: String): Boolean = scala.util.Try {
-    val p = encoded.split("\\$"); val n = p(1).toInt
-    p.length == 4 && p(0) == "pbkdf2-sha256" && n >= 600000 && n <= 2000000 && MessageDigest.isEqual(derive(chars, Base64.getDecoder.decode(p(2)), n), Base64.getDecoder.decode(p(3)))
-  }.getOrElse(false)
+  def hash(chars: Array[Char]): String = ponygirls.auth.Password.hash(chars)
+  def verify(chars: Array[Char],encoded: String): Boolean = ponygirls.auth.Password.verify(chars,encoded)
 }
 final case class Identity(user: UserInfo, browser: Boolean, credentialHash: String) {
   def requireScope(s: Scope): Unit = Check(user.scopes.contains(s), "forbidden", "scope required")

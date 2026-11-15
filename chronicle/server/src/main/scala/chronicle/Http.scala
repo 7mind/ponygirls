@@ -10,6 +10,7 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import java.util.UUID
+import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie}
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
@@ -22,9 +23,10 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def cookie(r: Request[IO]): String = r.cookies.find(_.name=="chronicle_session").map(_.content).getOrElse("")
   private def bearer(r: Request[IO]): Identity = { Check(cookie(r).isEmpty,"forbidden","cookie and bearer transports are separate"); val value = header(r,"Authorization").getOrElse(""); Check(value.startsWith("Bearer "),"unauthorized","bearer credential required"); auth.bearer(value.substring(7)) }
   private def noUrlSecrets(r: Request[IO]): Unit = Check(r.uri.query.isEmpty,"invalid","query parameters are not supported")
-  private def boundedBody(r: Request[IO],maximum: Int): IO[String] = {
+  private def boundedBody(r: Request[IO],maximum: Int): IO[String] = boundedBytes(r,maximum).map(bytes => new String(bytes,java.nio.charset.StandardCharsets.UTF_8))
+  private def boundedBytes(r: Request[IO],maximum: Int): IO[Array[Byte]] = {
     Check(r.contentLength.forall(_<=maximum),"too-large","request body too large")
-    r.body.take(maximum.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes => Check(bytes.length<=maximum,"too-large","request body too large"); new String(bytes,java.nio.charset.StandardCharsets.UTF_8) }
+    r.body.take(maximum.toLong+1).compile.to(Array).timeout(30.seconds).map { bytes => Check(bytes.length<=maximum,"too-large","request body too large"); bytes }
   }
   private def json(status: Status,j: io.circe.Json): Response[IO] = Response[IO](status).withEntity(j.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"))
   private def sessionCookie(secret: String,maxAge: Long): ResponseCookie = ResponseCookie("chronicle_session",secret,path=Some("/"),maxAge=Some(maxAge),secure=config.secureCookies,httpOnly=true,sameSite=Some(SameSite.Strict))
@@ -33,18 +35,78 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     val r = json(status,Wire.encode(Failure.codecJson,Failure(d.code,d.detail)))
     if(status==Status.Unauthorized) r.putHeaders(Header.Raw(CIString("WWW-Authenticate"),"Bearer realm=\"chronicle\"")) else r
   }
+  private def accountBoundary(r: Request[IO],mutating: Boolean): Unit = {
+    noUrlSecrets(r)
+    def count(name: String): Int = r.headers.headers.count(_.name==CIString(name))
+    Check(count("Origin")<=1 && count("Host")==1 && count("Cookie")<=1,"forbidden","ambiguous browser credentials")
+    Check(r.cookies.count(_.name=="chronicle_session")<=1,"forbidden","ambiguous browser credentials")
+    Check(count("Authorization")==0,"forbidden","browser session required")
+    origin(r,mutating)
+    val configured=java.net.URI.create(config.allowedOrigin)
+    val host=scala.util.Try(java.net.URI.create("//"+header(r,"Host").get)).toOption
+    def port(uri: java.net.URI): Int = if(uri.getPort>=0) uri.getPort else if(configured.getScheme=="https") 443 else 80
+    Check(host.exists(uri => uri.getHost!=null && uri.getRawUserInfo==null && Option(uri.getRawPath).forall(_.isEmpty) && uri.getRawQuery==null && uri.getRawFragment==null && uri.getHost.equalsIgnoreCase(configured.getHost) && port(uri)==port(configured)),"forbidden","Host not allowed")
+    if(mutating) Check(count("Content-Type")==1 && r.contentType.exists(_.mediaType==MediaType.application.json),"invalid","Content-Type application/json required")
+  }
+  private def accountActors(r: Request[IO]): Vector[String] = r.headers.headers.filter(_.name==CIString("X-Account-Actor")).map(_.value).toVector
+  private def accountBody(r: Request[IO]): IO[io.circe.Json] = boundedBytes(r,math.min(config.maxBodyBytes,AccountJson.maxBodyBytes)).map(AccountJson.parseUtf8)
+  private def accountEmpty(j: io.circe.Json): Unit = Check(j.asObject.exists(_.isEmpty),"invalid","empty object required")
+  private def accountOk: Response[IO] = json(Status.Ok,io.circe.Json.obj("ok"->io.circe.Json.True))
+  private def handleAccount(io: IO[Response[IO]]): IO[Response[IO]] = IO.defer(io).handleErrorWith {
+    case d: DomainError => IO.pure(json(failure(d).status,AccountJson.failure(d.code)))
+    case a: AccountFailure => IO.pure(json(failure(DomainError(a.code,"")).status,AccountJson.failure(a.code)))
+    case _ => IO(logger.error("account request failed")) *> IO.pure(json(Status.ServiceUnavailable,AccountJson.failure("unavailable")))
+  }
   def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case r @ POST -> Root / "api" / "account" / "v1" / "login" => handleAccount {
+      IO(accountBoundary(r,true)) *> loginGate.permit.use { _ =>
+        accountBody(r).flatMap { j => IO.blocking {
+          val (login,password)=AccountJson.decodeLogin(j)
+          val (user,secret)=auth.accountLogin(login,password)
+          json(Status.Ok,io.circe.Json.obj("user"->AccountJson.user(user))).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+        }}
+      }
+    }
+    case r @ GET -> Root / "api" / "account" / "v1" => handleAccount { IO.blocking {
+      accountBoundary(r,false)
+      val secret=cookie(r)
+      val (user,tokens)=auth.account(auth.browser(secret))
+      json(Status.Ok,AccountJson.account(user,tokens,Vector("Ingest","Read","Raw"))).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+    } }
+    case r @ POST -> Root / "api" / "account" / "v1" / "logout" => handleAccount {
+      IO(accountBoundary(r,true)) *> accountBody(r).flatMap { j => IO.blocking {
+        accountEmpty(j)
+        auth.accountLogout(auth.browser(cookie(r)),accountActors(r))
+        accountOk.addCookie(sessionCookie("",0))
+      }}
+    }
+    case r @ POST -> Root / "api" / "account" / "v1" / "tokens" => handleAccount {
+      IO(accountBoundary(r,true)) *> accountBody(r).flatMap { j => IO.blocking {
+        val (name,scopes)=AccountJson.decodeIssue(j)
+        val secret=cookie(r)
+        val issued=auth.issueAccountToken(auth.browser(secret),name,scopes,accountActors(r))
+        json(Status.Ok,AccountJson.issued(issued)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+      }}
+    }
+    case r @ POST -> Root / "api" / "account" / "v1" / "tokens" / id / "revoke" => handleAccount {
+      IO(accountBoundary(r,true)) *> accountBody(r).flatMap { j => IO.blocking {
+        accountEmpty(j)
+        val secret=cookie(r)
+        auth.revokeAccountToken(auth.browser(secret),id,accountActors(r))
+        accountOk.addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+      }}
+    }
     case r @ GET -> Root / "api" / "versions" => IO(json(Status.Ok,Wire.encode(VersionInfo.codecJson,Wire.versions)))
     case r @ POST -> Root / "api" / "login" => handle {
       IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> loginGate.permit.use { _ =>
-        boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,config.sessionTtlSeconds.toLong)) }
+        boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)) }
       }
     }
     case r @ POST -> Root / "api" / "session" / "refresh" => handle { IO.blocking {
       noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only")
       val secret=cookie(r)
       val user=auth.refreshBrowser(secret)
-      json(Status.Ok,Wire.encode(UserInfo.codecJson,user)).putHeaders(Header.Raw(CIString(Http.sessionTtlHeader),config.sessionTtlSeconds.toString)).addCookie(sessionCookie(secret,config.sessionTtlSeconds.toLong))
+      json(Status.Ok,Wire.encode(UserInfo.codecJson,user)).putHeaders(Header.Raw(CIString(Http.sessionTtlHeader),PersistentCookie.maxAgeSeconds.toString)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
     } }
     case r @ POST -> Root / "api" / "logout" => handle { IO.blocking { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only"); val i = auth.browser(cookie(r)); auth.logout(i); json(Status.Ok,io.circe.Json.obj()).addCookie(sessionCookie("",0)) } }
     case r @ POST -> Root / "api" / "ingest" => handle {
@@ -119,7 +181,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     enqueue = (output: Http.SocketOutput) => closed.get.ifM(IO.unit,queue.tryOffer(output).flatMap { accepted =>
       if(accepted) IO.unit else close(retryableCloseCode,None)
     })
-    send = (envelope: ServerEnvelope) => enqueue(Http.SocketOutput.Reply(BrowserReply.Ordinary(envelope)))
+    send = (envelope: ServerEnvelope) => enqueue(Http.SocketOutput.Reply(BrowserReply.Control(envelope)))
     error = (id: UUID,d: DomainError) => {
       val envelope=ServerEnvelope(id,Result.Error(Failure(d.code,d.detail)))
       d.code match {
@@ -161,8 +223,8 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
                     case Operation.Hello(versions) =>
                       Check(ready.isEmpty,"protocol-error","Hello already negotiated")
                       val selected=Wire.negotiate(versions)
-                      rpc.ordinary(identity,envelope,selected).flatMap(result => negotiated.set(Some(selected)) *> send(ServerEnvelope(envelope.requestId,result)))
-                    case _: Operation.Ping => rpc.ordinary(identity,envelope,ready.get).flatMap(result => send(ServerEnvelope(envelope.requestId,result)))
+                      rpc.ordinary(identity,envelope,selected).flatMap(result => negotiated.set(Some(selected)) *> enqueue(Http.SocketOutput.Reply(BrowserReply.Ordinary(ServerEnvelope(envelope.requestId,result),identity))))
+                    case _: Operation.Ping => rpc.ordinary(identity,envelope,ready.get).flatMap(result => enqueue(Http.SocketOutput.Reply(BrowserReply.Ordinary(ServerEnvelope(envelope.requestId,result),identity))))
                     case operation =>
                       val selected=if(rpc.isControl(operation)) controlQueue else operations
                       selected.tryOffer(envelope).flatMap(accepted => if(accepted) IO.unit else error(envelope.requestId,DomainError("unavailable","socket operation queue is full")))
@@ -201,18 +263,20 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         case Http.SocketOutput.Frame(frame) => IO.pure(Some(frame))
         case Http.SocketOutput.Reply(reply) =>
           val id=reply match {
-            case BrowserReply.Ordinary(envelope) => envelope.requestId
+            case BrowserReply.Ordinary(envelope,_) => envelope.requestId
+            case BrowserReply.CommittedLogout(envelope) => envelope.requestId
+            case BrowserReply.Control(envelope) => envelope.requestId
             case BrowserReply.McpRead(handle) => handle.requestId
             case BrowserReply.McpCatalog(id) => id
           }
           val render=negotiated.get.flatMap { version => rpc.materialize(reply,IO.blocking(auth.browser(cookie(r))),version.getOrElse(Wire.versions.current),protocol) }
           val admitted=reply match {
-            case _: BrowserReply.Ordinary => render
+            case _: BrowserReply.Ordinary | _: BrowserReply.CommittedLogout | _: BrowserReply.Control => render
             case _ => controls.run(render)
           }
           admitted.map(json => Some(WebSocketFrame.Text(json.noSpaces): WebSocketFrame)).handleErrorWith {
-              case d: DomainError => error(id,d).as(None)
-              case _ => error(id,DomainError("unavailable","operation failed")).as(None)
+              case d: DomainError if d.code!="unavailable" => error(id,d).as(None)
+              case _ => IO(logger.error("delivery authorization unavailable")) *> close(retryableCloseCode,None).as(None)
             }
       }.unNone.interruptWhen(ending.get.as(Right(()): Either[Throwable,Unit]))
       val terminal=Stream.eval(ending.get).flatMap { ending =>

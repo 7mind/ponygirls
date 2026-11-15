@@ -72,7 +72,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
       val db=new Database(config,IndexProfileCatalog.legacyOnly(config))
       db.initialize()
       db.transaction { c =>
-        List("/009_transient_security_epoch.sql","/014_renewable_sessions.sql").foreach { migration =>
+        List("/009_transient_security_epoch.sql","/014_renewable_sessions.sql","/020_persistent_sessions.sql").foreach { migration =>
           val stream=getClass.getResourceAsStream(migration)
           Check(stream!=null,"test","security migration missing")
           Using.resource(c.createStatement())(_.execute(Using.resource(scala.io.Source.fromInputStream(stream))(_.mkString)))
@@ -102,6 +102,42 @@ class BrowserWebSocketTest extends munit.FunSuite {
   private val immediateEmbedder: Embedder = new Embedder {
     def query(owner: String,text: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
     def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.pure(text.map(_ => List(1.0,0.0,0.0)))
+  }
+
+  test("BG GoodCommunication specified: queued ordinary replies reject revoked or reassigned browser authority at delivery") {
+    (for {
+      tools <- McpTestFixtures.ordinaryTools
+      model <- McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("unused")))
+      _ <- fixture(immediateEmbedder,model,tools,identity).use { f =>
+        val rpc=new BrowserRpc(f.app,f.runs,f.wire)
+        rpc.connection(UUID.randomUUID()).use { connection =>
+          List("logout","disabled","reassigned").traverse_ { mode => for {
+            _ <- IO.blocking(f.db.initialize())
+            secret <- IO.blocking(f.auth.login(LoginRequest("a","synthetic"))._2)
+            owner <- IO.blocking(f.auth.browser(secret))
+            reply <- rpc.execute(owner,ClientEnvelope(UUID.randomUUID(),Operation.Whoami()),Wire.versions.current,connection)
+            live <- rpc.materialize(reply,IO.blocking(f.auth.browser(secret)),Wire.versions.current,f.protocol)
+            unavailable <- rpc.materialize(reply,IO.raiseError(new java.sql.SQLException("synthetic private delivery marker")),Wire.versions.current,f.protocol).attempt
+            _ <- IO {
+              assert(Wire.decode(ServerEnvelope.codecJson,live).result.isInstanceOf[Result.Whoami])
+              assert(unavailable.left.toOption.exists(_.isInstanceOf[java.sql.SQLException]),"delivery must propagate auth-store failure, not emit captured bytes")
+            }
+            _ <- IO.blocking {
+              mode match {
+                case "logout" => f.auth.logout(owner)
+                case "disabled" => f.db.transaction(c => Sql.exec(c,"UPDATE ch_users SET enabled=false WHERE id='a'"))
+                case "reassigned" => f.db.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET owner='b' WHERE hash=?",Wire.hash(secret)))
+              }
+            }
+            delivered <- rpc.materialize(reply,IO.blocking(f.auth.browser(secret)),Wire.versions.current,f.protocol).attempt
+            _ <- IO(delivered match {
+              case Left(error: DomainError) => assertEquals(error.code,"unauthorized")
+              case other => fail(s"$mode must prevent delivery of previously captured ordinary bytes: $other")
+            })
+          } yield () }
+        }
+      }
+    } yield ()).unsafeRunSync()
   }
 
   test("BG GoodCommunication specified: current negotiated API retains tester catalog and run reads") {
@@ -174,7 +210,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
               _ <- IO.sleep(1200.millis)
               after <- expires
               _ <- IO(assertEquals(after,before,"heartbeat authentication must remain read-only"))
-              _ <- IO.blocking(f.db.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()+interval '3 seconds' WHERE hash=?",Wire.hash(secret))))
+              _ <- IO(assertEquals(before,null,"new sessions have no server deadline to extend"))
               request=Request[IO](Method.POST,Uri.unsafeFromString(url.replace("ws://","http://").stripSuffix("/api/ws")+"/api/session/refresh"))
                 .putHeaders(Header.Raw(org.typelevel.ci.CIString("Origin"),f.config.allowedOrigin),Header.Raw(org.typelevel.ci.CIString("Cookie"),s"chronicle_session=$secret"))
               _ <- httpClient.run(request).use { response => IO(assertEquals(response.status,Status.Ok)) *> response.body.compile.drain }
@@ -196,9 +232,10 @@ class BrowserWebSocketTest extends munit.FunSuite {
   }
 
   // Regression-origin: an unavailable session store is not evidence of revoked authentication.
-  List("negotiated heartbeat","pre-Hello heartbeat","Hello lookup").foreach { phase =>
+  List("negotiated heartbeat","pre-Hello heartbeat","Hello lookup","Hello delivery").foreach { phase =>
     test(s"BG GoodCommunication regression: heartbeat JDBC failure is retryable without false deauthentication or disclosure ($phase)") {
       val failing=new java.util.concurrent.atomic.AtomicBoolean(false)
+      val failedLookups=new java.util.concurrent.atomic.AtomicInteger(0)
       val prefix="jdbc:heartbeat-"+UUID.randomUUID()+":"
       val driver=new java.sql.Driver {
         private val delegate=new org.postgresql.Driver()
@@ -208,7 +245,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
           val connection=delegate.connect(url.stripPrefix(prefix),properties)
           java.lang.reflect.Proxy.newProxyInstance(classOf[java.sql.Connection].getClassLoader,Array(classOf[java.sql.Connection]),(_,method,args) => {
             val arguments=if(args==null) Array.empty[Object] else args
-            if(method.getName=="prepareStatement" && arguments(0).asInstanceOf[String].startsWith("SELECT u.id,u.login FROM ch_sessions") && failing.get())
+            if(method.getName=="prepareStatement" && arguments(0).asInstanceOf[String].startsWith("SELECT u.id,u.login FROM ch_sessions") && failing.get() && (phase!="Hello delivery" || failedLookups.incrementAndGet()>=2))
               throw new java.sql.SQLException("synthetic private JDBC credential marker")
             try method.invoke(connection,arguments*) catch { case e: java.lang.reflect.InvocationTargetException => throw e.getCause }
           }).asInstanceOf[java.sql.Connection]
@@ -231,9 +268,9 @@ class BrowserWebSocketTest extends munit.FunSuite {
               _ <- server(f.copy(auth=auth)).use(url => socket(url,f.config,secret).use { client => for {
                 _ <- if(phase=="negotiated heartbeat") client.request(Operation.Hello(List(Wire.versions.current))).flatMap(hello => IO(assert(hello.isInstanceOf[Result.Hello]))) else IO.unit
                 _ <- IO(failing.set(true))
-                _ <- if(phase=="Hello lookup") client.send(Operation.Hello(List(Wire.versions.current)),UUID.randomUUID()) else IO.unit
+                _ <- if(phase=="Hello lookup" || phase=="Hello delivery") client.send(Operation.Hello(List(Wire.versions.current)),UUID.randomUUID()) else IO.unit
                 code <- IO.blocking(client.closed.get(5,TimeUnit.SECONDS))
-                _ <- IO(assertEquals(code,1013))
+                _ <- IO { assertEquals(code,1013); if(phase=="Hello delivery") assertEquals(failedLookups.get(),2) }
                 _ <- IO(assertEquals(client.inbox.size(),0,"session-store failures close retryably without racing Hello with an ordinary application envelope"))
               } yield () })
               _ <- IO(failing.set(false))

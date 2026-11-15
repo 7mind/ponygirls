@@ -5,6 +5,9 @@ import scala.jdk.CollectionConverters.*
 import scala.util.Using
 
 class NativeResourcesTest extends munit.FunSuite {
+  test("Blackbox-Group: persistent-session migration is available on the packaged classpath") {
+    assert(getClass.getResource("/020_persistent_sessions.sql")!=null,"persistent-session migration missing")
+  }
   test("Blackbox-Group: renewable-session migration is available on the packaged classpath") {
     assert(getClass.getResource("/014_renewable_sessions.sql")!=null,"renewable-session migration missing")
   }
