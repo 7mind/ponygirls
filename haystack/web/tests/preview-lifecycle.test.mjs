@@ -45,13 +45,15 @@ test("preview startup failure never authorizes stopping an unowned PostgreSQL pr
   await writeFile(path.join(fixture, "web/dist/index.html"), "fixture shell");
   const stopMarker = path.join(root, "stop-called");
   const startMarker = path.join(root, "start-refused");
+  const interpreter = (await execute("bash", ["-c", 'printf "%s" "$BASH"'], { timeout: 5000 })).stdout;
+  assert.ok(path.isAbsolute(interpreter), "fixture stubs require the selected Bash interpreter");
   const stubs = {
-    initdb: '#!/usr/bin/env bash\nmkdir -p "$PGDATA"\nprintf 16 > "$PGDATA/PG_VERSION"\n',
-    pg_ctl: '#!/usr/bin/env bash\ncase " $* " in *" status "*) exit 3;; *" start "*) printf refused > "$PREVIEW_START_MARKER"; exit 1;; *" stop "*) printf called > "$PREVIEW_STOP_MARKER"; exit 0;; *) exit 99;; esac\n',
-    psql: "#!/usr/bin/env bash\nexit 99\n",
-    curl: "#!/usr/bin/env bash\nexit 99\n",
+    initdb: 'mkdir -p "$PGDATA"\nprintf 16 > "$PGDATA/PG_VERSION"\n',
+    pg_ctl: 'case " $* " in *" status "*) exit 3;; *" start "*) printf refused > "$PREVIEW_START_MARKER"; exit 1;; *" stop "*) printf called > "$PREVIEW_STOP_MARKER"; exit 0;; *) exit 99;; esac\n',
+    psql: "exit 99\n",
+    curl: "exit 99\n",
   };
-  for (const [name, content] of Object.entries(stubs)) await writeFile(path.join(tools, name), content, { mode: 0o700 });
+  for (const [name, content] of Object.entries(stubs)) await writeFile(path.join(tools, name), `#!${interpreter}\n${content}`, { mode: 0o700 });
   const port = await availablePort();
   await assert.rejects(execute("bash", [path.join(fixture, "quick-ui.sh"), String(port), "127.0.0.1"], {
     env: { ...process.env, PATH: `${tools}:${process.env.PATH}`, TMPDIR: temporary, HAYSTACK_SERVER_COMMAND: "false", PREVIEW_START_MARKER: startMarker, PREVIEW_STOP_MARKER: stopMarker },
