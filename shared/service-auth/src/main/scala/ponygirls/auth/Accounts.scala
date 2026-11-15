@@ -44,6 +44,9 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
   private def credential(user: AccountUser, id: String, digest: String, browser: Boolean): AccountCredential =
     AccountCredential(user.id, user.userType, id, digest, browser)
   private def listed(row: StoredToken): AccountToken = AccountToken(row.id, row.name, "issued", Some(row.createdAt.toString), row.revoked, Vector("api"))
+  private def pruneRevoked(owner: String): Unit =
+    repository.tokens(owner).filter(_.revoked).sortBy(row => (row.createdAt, row.id)).dropRight(Accounts.maximumRetainedRevoked)
+      .foreach(old => repository.deleteToken(old.id))
   private def sessionAuthority(users: Vector[AccountUser], session: AccountCredential): AccountUser = {
     check(session.browser, "forbidden")
     val all = directory(users)
@@ -58,6 +61,7 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
     owners.foreach(repository.lockOwner)
     repository.sessions.filterNot(sessionLive(_, all)).foreach(row => repository.deleteSession(row.digest))
     repository.allTokens.filter(row => !all.get(row.owner).exists(eligible)).foreach(row => repository.revokeToken(row.id))
+    owners.foreach(pruneRevoked)
   }
   def login(users: Vector[AccountUser], login: String, password: String): AccountSession = {
     check(login.nonEmpty && login.length <= 128 && password.nonEmpty && password.length <= 1024, "invalid")
@@ -111,8 +115,7 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
     val user = sessionAuthority(users, session)
     val row = repository.token(id).filter(_.owner == user.id).getOrElse(throw AccountFailure("not-found"))
     repository.revokeToken(row.id)
-    repository.tokens(user.id).filter(_.revoked).sortBy(row => (row.createdAt, row.id)).dropRight(Accounts.maximumRetainedRevoked)
-      .foreach(old => repository.deleteToken(old.id))
+    pruneRevoked(user.id)
   }
 }
 private[auth] object Accounts {

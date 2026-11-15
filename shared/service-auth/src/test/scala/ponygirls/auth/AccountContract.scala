@@ -122,6 +122,18 @@ abstract class AccountContract extends munit.FunSuite {
     }
   }
 
+  test("BG specified: account reconciliation also bounds retained revoked metadata") {
+    withRepository { repository =>
+      val accounts = new Accounts(repository)
+      val session = accounts.login(users, "alice", "synthetic-account-password")
+      val old = (1 to Accounts.maximumRetainedRevoked).map(n => accounts.issue(users, session.credential, s"Old $n"))
+      old.foreach(issued => accounts.revoke(users, session.credential, issued.token.id))
+      (1 to Accounts.maximumActiveTokens).foreach(n => accounts.issue(users, session.credential, s"Current $n"))
+      accounts.reconcile(users.filterNot(_.id == "alice"))
+      assertEquals(accounts.tokens("alice").count(_.revoked), Accounts.maximumRetainedRevoked)
+    }
+  }
+
   test("BG specified: active issued tokens have a bounded per-owner limit") {
     withRepository { repository =>
       val accounts = new Accounts(repository)
