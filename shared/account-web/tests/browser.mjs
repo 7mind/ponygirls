@@ -21,8 +21,8 @@ const origin = `http://127.0.0.1:${server.address().port}`;
 const browser = await chromium.launch({ headless: true });
 let cases = 0;
 function fixture() {
-  const user = { id: 'alice', login: 'alice', displayName: 'Alice' };
-  return { user, tokens: [{ id: 'configured-1', name: 'Configured collector', source: 'configured', createdAt: null, revoked: false, scopes: ['api'] }], scopes: ['api'], calls: [], secret: 'synthetic-one-time-secret', mint: 'ok', get: 200, login: 401, held: null };
+  const user = { id: 'alice', login: 'alice', displayName: 'Alice', actor: 'actor-alice' };
+  return { user, tokens: [{ id: 'configured-1', name: 'Configured collector', source: 'configured', createdAt: null, revoked: false, scopes: ['api'] }], scopes: ['api'], calls: [], issuedOwners: [], secret: 'synthetic-one-time-secret', mint: 'ok', get: 200, login: 401, held: null };
 }
 async function run(name, body) {
   const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
@@ -30,19 +30,21 @@ async function run(name, body) {
   page.setDefaultTimeout(5000); page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/account/v1{,/**}', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
-    const call = { path, method: request.method(), body: request.postDataJSON() }; state.calls.push(call);
+    const call = { path, method: request.method(), body: request.postDataJSON(), owner: state.user.id, actor: request.headers()['x-account-actor'] }; state.calls.push(call);
     const reply = (status, data, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'no-store', ...headers }, body: JSON.stringify(data) });
     if (path.endsWith('/login')) return reply(state.login, state.login === 200 ? { user: state.user } : { error: { code: state.login === 401 ? 'unauthorized' : 'unavailable', message: 'sanitized' } }, state.login === 200 ? { 'Set-Cookie': 'test_session=opaque; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000' } : {});
     if (request.method() === 'GET') {
       const status = state.postMintGet === undefined || state.tokens.length < 2 ? state.get : state.postMintGet;
       const account = JSON.parse(JSON.stringify({ user: state.user, tokens: state.tokens, scopes: state.scopes }));
+      if (state.switchAfterRead) { state.switchAfterRead = false; state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' }; }
       if (state.holdPostMintRead && state.tokens.length > 1) { state.holdPostMintRead = false; await new Promise(resolve => { state.readHeld = resolve; }); }
       return reply(status, status === 200 ? account : { error: { code: status === 401 ? 'unauthorized' : 'unavailable', message: 'sanitized' } });
     }
+    if (call.actor !== undefined && call.actor !== state.user.actor) return reply(409, { error: { code: 'conflict', message: 'Account changed' } });
     if (path.endsWith('/revoke')) { const token = state.tokens.find(token => token.id === path.split('/').at(-2)); assert.equal(token.source, 'issued'); token.revoked = true; return reply(200, { ok: true }); }
     if (path.endsWith('/tokens')) {
       const token = { id: `issued-${state.tokens.length}`, name: call.body.name, source: 'issued', createdAt: '2026-11-15T00:00:00Z', revoked: false, scopes: call.body.scopes };
-      state.tokens.push(token);
+      state.tokens.push(token); state.issuedOwners.push(state.user.id);
       if (state.mint === 'lost') return route.abort('failed');
       if (state.mint === 'malformed') return reply(200, { token });
       if (state.mint === 'held') await new Promise(resolve => { state.held = resolve; });
@@ -117,7 +119,7 @@ try {
   await run('refocusing during held post-mint validation cannot reveal the previous account secret', async ({ page, state }) => {
     state.holdPostMintRead = true; await open(page); await mint(page);
     while (state.readHeld === undefined) await new Promise(resolve => setTimeout(resolve, 5));
-    state.user = { id: 'bob', login: 'bob', displayName: 'Bob' }; state.tokens = [];
+    state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' }; state.tokens = [];
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     state.readHeld(); await page.getByRole('dialog').waitFor({ state: 'detached' });
     assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
@@ -127,15 +129,30 @@ try {
     await page.waitForFunction(() => document.querySelector('[data-account-dialog]').getAttribute('aria-busy') === 'true');
     while (state.held === null) await new Promise(resolve => setTimeout(resolve, 5));
     await page.evaluate(() => { document.dispatchEvent(new Event('account:invalidate')); document.querySelector('[data-account-settings]').dataset.accountUserId = 'bob'; });
-    state.user = { id: 'bob', login: 'bob', displayName: 'Bob' }; state.tokens = [];
+    state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' }; state.tokens = [];
     state.held(); await page.getByRole('dialog').waitFor({ state: 'detached' });
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await page.getByText('Signed in as Bob', { exact: true }).waitFor();
     assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
     assert.equal(await page.getByText('Laptop collector', { exact: true }).count(), 0);
   });
+  await run('refocus clears an unsaved secret with explicit lost-secret recovery', async ({ page, state }) => {
+    await open(page); await mint(page); await page.getByLabel('One-time token secret', { exact: true }).waitFor();
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await page.getByRole('alert').filter({ hasText: 'Creation succeeded, but its one-time secret was cleared' }).waitFor();
+    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
+    assert.equal(mintCalls(state).length, 1);
+  });
+  await run('cookie switch between preflight and POST cannot issue for the wrong owner', async ({ page, state }) => {
+    await open(page); state.switchAfterRead = true;
+    const response = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/tokens'));
+    await mint(page); await response;
+    assert.deepEqual(state.issuedOwners, [], 'preflight account must bind mutation atomically; no token may be created for Bob');
+    assert.equal(mintCalls(state)[0].owner, 'bob', 'fixture switches cookie owner only after the preflight snapshot');
+  });
   await run('account switch before mutation fails closed without issuing', async ({ page, state }) => {
-    await open(page); state.user = { id: 'bob', login: 'bob', displayName: 'Bob' };
+    await open(page); state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' };
     await mint(page); await page.getByRole('dialog').waitFor({ state: 'detached' });
     assert.equal(mintCalls(state).length, 0);
   });

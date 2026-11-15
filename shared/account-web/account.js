@@ -24,19 +24,20 @@ export function installAccountUI({ document, window, fetch }) {
     if (cause instanceof AccountError && cause.status >= 400 && cause.status < 500) return 'The account request was rejected. Check your input and refresh settings before trying again.';
     return 'The account service is unavailable or returned an invalid response. Your credentials have not been rejected. Retry when the service is available.';
   }
-  async function request(path, method, body, controllers) {
+  async function request(path, method, body, controllers, actor) {
     const controller = new window.AbortController(); controllers.add(controller);
     const timeout = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     try {
       const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal, headers: { Accept: 'application/json' } };
       if (body !== null) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+      if (actor !== null) options.headers['X-Account-Actor'] = actor;
       const response = await fetch(API + path, options);
       if (!response.ok) throw new AccountError(response.status);
       return await response.json();
     } finally { window.clearTimeout(timeout); controllers.delete(controller); }
   }
   function validUser(user) {
-    return user !== null && typeof user === 'object' && typeof user.id === 'string' && user.id.length > 0 && typeof user.login === 'string' && typeof user.displayName === 'string';
+    return user !== null && typeof user === 'object' && typeof user.id === 'string' && user.id.length > 0 && typeof user.login === 'string' && typeof user.displayName === 'string' && typeof user.actor === 'string' && user.actor.length > 0;
   }
   function validToken(token) {
     return token !== null && typeof token === 'object' && typeof token.id === 'string' && token.id.length > 0 && typeof token.name === 'string' && ['configured', 'issued'].includes(token.source) && (token.createdAt === null || typeof token.createdAt === 'string') && typeof token.revoked === 'boolean' && Array.isArray(token.scopes) && token.scopes.every(scope => typeof scope === 'string');
@@ -48,12 +49,13 @@ export function installAccountUI({ document, window, fetch }) {
     return current === view && view.dialog.isConnected && view.trigger.isConnected && view.trigger.dataset.accountUserId === view.owner;
   }
   function clearSecret(view) {
-    if (view.secret !== null) { view.secret.querySelector('input').value = ''; view.secret.remove(); view.secret = null; }
+    if (view.secret !== null) { view.secret.querySelector('input').value = ''; view.secret.remove(); view.secret = null; view.secretToken = null; }
   }
   function close() {
     if (current === null) return;
     const view = current; current = null;
     for (const controller of view.controllers) controller.abort();
+    if (view.secret !== null) uncertainMints.set(view.owner, { name: view.secretToken.name, known: true, reconciled: false });
     clearSecret(view); view.dialog.close(); view.dialog.remove();
     if (view.trigger.isConnected && view.trigger.dataset.accountUserId === view.owner) view.trigger.focus();
   }
@@ -68,7 +70,7 @@ export function installAccountUI({ document, window, fetch }) {
   }
   async function readAccount(view) {
     if (!active(view)) return null;
-    const account = await request('', 'GET', null, view.controllers);
+    const account = await request('', 'GET', null, view.controllers, null);
     if (!validAccount(account)) throw new Error('Invalid account response');
     if (!active(view)) return null;
     if (account.user.id !== view.owner) {
@@ -100,7 +102,8 @@ export function installAccountUI({ document, window, fetch }) {
     view.uncertain.replaceChildren(); view.acknowledge = null;
     const pending = uncertainMints.get(view.owner);
     if (pending === undefined) return;
-    const warning = node('p', `Creation outcome is unknown for “${pending.name}”. Do not blindly create it again. Refresh the token list and check for an issued token. A lost one-time secret cannot be recovered: revoke that token before creating a replacement.`, null);
+    const outcome = pending.known === true ? `Creation succeeded, but its one-time secret was cleared for “${pending.name}”.` : `Creation outcome is unknown for “${pending.name}”.`;
+    const warning = node('p', `${outcome} Do not blindly create it again. Refresh the token list and check for an issued token. A lost one-time secret cannot be recovered: revoke that token before creating a replacement if you did not save it.`, null);
     warning.setAttribute('role', 'alert');
     const acknowledge = button('I checked the list; allow another token', () => {
       if (!active(view) || view.busy || !pending.reconciled) return;
@@ -125,9 +128,9 @@ export function installAccountUI({ document, window, fetch }) {
     setBusy(view, true); view.error.hidden = true; view.status.textContent = 'Revoking access token…';
     let sent = false;
     try {
-      if (await readAccount(view) === null) return;
+      const before = await readAccount(view); if (before === null) return;
       sent = true;
-      const result = await request(`/tokens/${encodeURIComponent(token.id)}/revoke`, 'POST', {}, view.controllers);
+      const result = await request(`/tokens/${encodeURIComponent(token.id)}/revoke`, 'POST', {}, view.controllers, before.user.actor);
       if (result === null || result.ok !== true) throw new Error('Invalid revocation response');
       const account = await readAccount(view); if (account === null) return;
       renderTokens(view, account); view.status.textContent = 'Access token revoked.';
@@ -138,10 +141,10 @@ export function installAccountUI({ document, window, fetch }) {
       }
     } finally { if (active(view)) setBusy(view, false); }
   }
-  function showSecret(view, secret) {
+  function showSecret(view, secret, token) {
     clearSecret(view);
     const panel = node('section', null, 'account-secret'); panel.setAttribute('aria-label', 'One-time secret');
-    panel.append(node('h3', 'Save your token now', null), node('p', 'Shown once. Store this secret securely outside the browser. Closing settings or dismissing it clears it from this page; it cannot be retrieved again.', null));
+    panel.append(node('h3', 'Save your token now', null), node('p', 'Shown once. Store this secret securely outside the browser. Closing settings, returning to this window, or dismissing it clears it from this page; it cannot be retrieved again.', null));
     const label = node('label', 'One-time token secret', null), input = node('input', null, null);
     input.type = 'text'; input.readOnly = true; input.autocomplete = 'off'; input.spellcheck = false; input.value = secret; label.append(input);
     const status = node('p', '', null); status.setAttribute('role', 'status');
@@ -157,7 +160,7 @@ export function installAccountUI({ document, window, fetch }) {
     });
     const dismiss = button('Dismiss secret', () => { clearSecret(view); setBusy(view, false); view.create.focus(); });
     const actions = node('div', null, 'account-actions'); actions.append(copy, dismiss);
-    panel.append(label, actions, status); view.secret = panel; view.secretSlot.append(panel); input.focus(); input.select();
+    panel.append(label, actions, status); view.secret = panel; view.secretToken = token; view.secretSlot.append(panel); input.focus(); input.select();
   }
   async function issueToken(view, form) {
     if (!active(view) || view.busy || view.secret !== null || uncertainMints.has(view.owner) || view.permissions.length === 0) return;
@@ -167,16 +170,16 @@ export function installAccountUI({ document, window, fetch }) {
     setBusy(view, true); view.error.hidden = true; view.status.textContent = 'Creating access token…';
     let sent = false, creationAnswered = false;
     try {
-      if (await readAccount(view) === null) return;
+      const before = await readAccount(view); if (before === null) return;
       // Record before sending: dismissal, cancellation and lost replies are uncertain,
       // not permission to replay a non-idempotent token creation request.
       uncertainMints.set(view.owner, { name, reconciled: false }); sent = true;
-      const result = await request('/tokens', 'POST', { name, scopes }, view.controllers);
+      const result = await request('/tokens', 'POST', { name, scopes }, view.controllers, before.user.actor);
       creationAnswered = true;
       if (result === null || typeof result.secret !== 'string' || result.secret.length === 0 || !validToken(result.token) || result.token.source !== 'issued') throw new Error('Invalid issued token response');
       const account = await readAccount(view); if (account === null) return;
       if (!account.tokens.some(token => token.id === result.token.id && !token.revoked && token.source === 'issued')) throw new Error('Issued token not in current account');
-      renderTokens(view, account); showSecret(view, result.secret); uncertainMints.delete(view.owner);
+      renderTokens(view, account); showSecret(view, result.secret, result.token); uncertainMints.delete(view.owner);
       renderUncertainty(view); form.elements.namedItem('name').value = ''; view.status.textContent = 'Access token created. Save its one-time secret now.';
     } catch (cause) {
       if (!creationAnswered && cause instanceof AccountError && cause.status >= 400 && cause.status < 500) uncertainMints.delete(view.owner);
@@ -239,7 +242,7 @@ export function installAccountUI({ document, window, fetch }) {
     const content = node('div', null, 'account-dialog-content'), status = node('p', '', 'account-status'), error = node('p', '', 'account-error');
     status.setAttribute('role', 'status'); error.setAttribute('role', 'alert'); error.hidden = true;
     dialog.append(heading, status, error, content);
-    const view = { owner, trigger, dialog, content, status, error, controllers: new Set(), busy: false, create: null, acknowledge: null, permissions: [], tokens: null, uncertain: null, secret: null, secretSlot: null };
+    const view = { owner, trigger, dialog, content, status, error, controllers: new Set(), busy: false, create: null, acknowledge: null, permissions: [], tokens: null, uncertain: null, secret: null, secretToken: null, secretSlot: null };
     current = view; document.body.append(dialog);
     dialog.addEventListener('cancel', event => { event.preventDefault(); close(); });
     dialog.addEventListener('keydown', event => {
@@ -264,7 +267,7 @@ export function installAccountUI({ document, window, fetch }) {
     loginRequests.add(form); controls.forEach(element => { element.disabled = true; }); form.setAttribute('aria-busy', 'true');
     error.hidden = true; status.textContent = 'Signing in…';
     try {
-      const result = await request('/login', 'POST', credentials, new Set());
+      const result = await request('/login', 'POST', credentials, new Set(), null);
       if (result === null || !validUser(result.user)) throw new Error('Invalid login response');
       close(); window.location.reload();
     } catch (cause) { if (form.isConnected) { error.textContent = message(cause, true); error.hidden = false; status.textContent = ''; password.focus(); } }
