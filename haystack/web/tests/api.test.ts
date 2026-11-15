@@ -179,6 +179,43 @@ test("API session auth loss clears pending but an unreadable success keeps it un
   await assert.rejects(api.whoami(currentRequest), AuthError); assert.equal(api.pendingWrite(), undefined);
 });
 
+for (const status of [200, 401]) test(`superseded domain HTTP ${status} replies cannot affect replacement-session recovery`, async (t) => {
+  for (const returnToOriginal of [false, true]) {
+    api.clearSessionWrites();
+    t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
+    await api.whoami(currentRequest);
+    let release: ((value: Response) => void) | undefined;
+    t.mock.method(globalThis, "fetch", () => new Promise<Response>((resolve) => { release = resolve; }));
+    const old = api.get("p:i");
+    t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), new Identity("replacement", "human", "new-session", "agent-activity")));
+    await api.whoami(currentRequest);
+    if (returnToOriginal) {
+      t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
+      await api.whoami(currentRequest);
+    }
+    t.mock.method(globalThis, "fetch", async () => new Response("unavailable", { status: 503 }));
+    await assert.rejects(api.put("p:i", documentJson, 7, "replacement-domain-write"), NetworkError);
+    assert.equal(api.pendingWrite()?.requestId, "replacement-domain-write");
+    assert.ok(release !== undefined);
+    release(status === 200 ? response(Item.jsonCodec(), new Item("p:i", 7, new DocumentPayload(documentJson), metadata)) : new Response("unauthorized", { status }));
+    await assert.rejects(old, error => error instanceof Error && !(error instanceof AuthError), "a superseded response is not current-session authentication loss");
+    assert.equal(api.pendingWrite()?.requestId, "replacement-domain-write");
+  }
+  api.clearSessionWrites();
+});
+
+test("current domain HTTP 401 still clears pending session writes", async (t) => {
+  api.clearSessionWrites();
+  t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
+  await api.whoami(currentRequest);
+  t.mock.method(globalThis, "fetch", async () => new Response("unavailable", { status: 503 }));
+  await assert.rejects(api.put("p:i", documentJson, 7, "current-session-write"), NetworkError);
+  assert.equal(api.pendingWrite()?.requestId, "current-session-write");
+  t.mock.method(globalThis, "fetch", async () => new Response("unauthorized", { status: 401 }));
+  await assert.rejects(api.get("p:i"), AuthError);
+  assert.equal(api.pendingWrite(), undefined);
+});
+
 test("superseded identity replies cannot clear the replacement session's pending write", async (t) => {
   for (const status of [200, 401]) {
     api.clearSessionWrites();
@@ -196,7 +233,7 @@ test("superseded identity replies cannot clear the replacement session's pending
     assert.equal(api.pendingWrite()?.requestId, `new-session-${status}`);
     assert.ok(release !== undefined);
     release(status === 200 ? response(Identity.jsonCodec(), identity) : new Response("unauthorized", { status }));
-    if (status === 200) await old; else await assert.rejects(old, AuthError);
+    await assert.rejects(old, error => error instanceof Error && !(error instanceof AuthError));
     assert.equal(api.pendingWrite()?.requestId, `new-session-${status}`, "stale identity/auth failure must not discard the new session's recovery payload");
   }
   api.clearSessionWrites();

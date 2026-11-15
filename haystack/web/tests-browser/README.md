@@ -34,7 +34,7 @@ to 575 seconds plus a ten-second termination grace; individual assertion,
 heartbeat, concurrency and restart deadlines are unchanged. Use the parent's
 background execution lane rather than extending foreground tool timeouts.
 
-`inventory.json` is checked exactly against all 78 JUnit leaf cases (79 Node
+`inventory.json` is checked exactly against all 81 JUnit leaf cases (82 Node
 cases including the helper-mode group), 39 main browser checks, sixteen controlled
 layout checks, the controlled account fixture, HTTPS restart, preview restart,
 and markup case. The original 36 atomic cases remain.

@@ -77,7 +77,10 @@
     "preview namespace refuses ancestor symlinks before creating external state",
     "preview cleanup preserves state when launcher or database shutdown is unconfirmed",
     "preview cleanup refuses a replaced test directory rather than deleting unrelated data",
-    "preview test reservation is exclusive and cleanup removes only a stopped owned directory"
+    "preview test reservation is exclusive and cleanup removes only a stopped owned directory",
+    "superseded domain HTTP 200 replies cannot affect replacement-session recovery",
+    "superseded domain HTTP 401 replies cannot affect replacement-session recovery",
+    "current domain HTTP 401 still clears pending session writes"
   ],
   "browserCases": [
     "record layout 1101px light: no horizontal overflow; metadata, sorting and open action available",

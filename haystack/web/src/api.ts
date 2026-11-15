@@ -8,6 +8,13 @@ export class AuthError extends Error {
   }
 }
 
+class SupersededRequestError extends Error {
+  constructor() {
+    super("request belongs to a superseded session");
+    this.name = "SupersededRequestError";
+  }
+}
+
 export class NetworkError extends Error {
   constructor() {
     super("server unreachable");
@@ -53,27 +60,33 @@ interface Codec<T> {
   encode(context: BaboonCodecContext, value: T): unknown;
   decode(context: BaboonCodecContext, json: unknown): T;
 }
-async function request(path: string, init: RequestInit, isCurrent: () => boolean): Promise<Response> {
+async function request(path: string, init: RequestInit): Promise<Response> {
   let res: Response;
   try { res = await fetch(path, init); } catch { throw new NetworkError(); }
-  if (res.status === 401) {
-    if (isCurrent()) { writes.clear(); sessionIdentity = undefined; }
-    throw new AuthError();
-  }
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
   return res;
 }
 async function call<T>(path: string, codec: Codec<T>, body?: unknown, method = "POST"): Promise<T> {
-  return callCurrent(path, codec, body, method, () => true);
+  const owner = sessionIdentity;
+  return callCurrent(path, codec, body, method, () => sessionIdentity === owner);
 }
 async function callCurrent<T>(path: string, codec: Codec<T>, body: unknown, method: string, isCurrent: () => boolean): Promise<T> {
   const res = await request(path, {
     method, headers: { "Content-Type": "application/json", "X-Haystack-Version": version },
     body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
-  }, isCurrent);
+  });
+  if (!isCurrent()) throw new SupersededRequestError();
+  if (res.status === 401) {
+    writes.clear(); sessionIdentity = { key: undefined };
+    throw new AuthError();
+  }
   let parsed: unknown;
   try { parsed = await res.json(); }
-  catch { throw new ApiError(res.status, { code: "unavailable", message: "bad response" }); }
+  catch {
+    if (!isCurrent()) throw new SupersededRequestError();
+    throw new ApiError(res.status, { code: "unavailable", message: "bad response" });
+  }
+  if (!isCurrent()) throw new SupersededRequestError();
   if (!res.ok) {
     try {
       const fault = Failure.jsonCodec().decode(context, parsed);
@@ -234,7 +247,8 @@ export function uuidv7(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-let sessionIdentity: string | undefined;
+interface SessionIdentity { readonly key: string | undefined }
+let sessionIdentity: SessionIdentity = { key: undefined };
 const identityKey = (identity: Identity): string => JSON.stringify([identity.userId, identity.tokenId]);
 const writes = new WriteCoordinator<PutResult>(
   async (op) => {
@@ -251,16 +265,16 @@ const writes = new WriteCoordinator<PutResult>(
 );
 export const api = {
   pendingWrite: writes.snapshot,
-  clearSessionWrites: () => { writes.clear(); sessionIdentity = undefined; },
+  clearSessionWrites: () => { writes.clear(); sessionIdentity = { key: undefined }; },
   subscribePendingWrite: writes.subscribe,
   retryPendingWrite: () => writes.retry(),
-  logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); sessionIdentity = undefined; return result; },
+  logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); sessionIdentity = { key: undefined }; return result; },
   whoami: async (isCurrent: () => boolean): Promise<Principal> => {
     const identity = await callCurrent("/api/v1/whoami", Identity.jsonCodec(), undefined, "GET", isCurrent);
     if (isCurrent()) {
       const key = identityKey(identity);
-      if (sessionIdentity !== undefined && sessionIdentity !== key) writes.clear();
-      sessionIdentity = key;
+      if (sessionIdentity.key !== undefined && sessionIdentity.key !== key) writes.clear();
+      if (sessionIdentity.key !== key) sessionIdentity = { key };
     }
     return { userId: identity.userId, type: identity.userType as Principal["type"], tokenId: identity.tokenId, activityProjectId: identity.activityProjectId };
   },
