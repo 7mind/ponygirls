@@ -74,7 +74,8 @@ object BackendFixture:
       "dashboard_dir" -> Json.fromString(source.resolve("manure/web/dashboard").toString),
       "unlock_shell_dir" -> Json.fromString(source.resolve("manure/web/unlock").toString),
       "users" -> Json.arr(Json.obj("id" -> Json.fromString("owner\u0000馬"),"type" -> Json.fromString("human"),"login" -> Json.fromString("owner"),"passwordHashFile" -> Json.fromString(passwordHash.toString),"tokens" -> Json.arr(Json.obj("id" -> Json.fromString("primary"),"hashFile" -> Json.fromString(hash.toString)))),
-        Json.obj("id" -> Json.fromString("other"),"type" -> Json.fromString("agent"),"tokens" -> Json.arr(Json.obj("id" -> Json.fromString("primary"),"hashFile" -> Json.fromString(otherHash.toString))))),
+        Json.obj("id" -> Json.fromString("other"),"type" -> Json.fromString("agent"),"tokens" -> Json.arr(Json.obj("id" -> Json.fromString("primary"),"hashFile" -> Json.fromString(otherHash.toString)))),
+        Json.obj("id" -> Json.fromString("loginonly"),"type" -> Json.fromString("human"),"login" -> Json.fromString("loginonly"),"passwordHashFile" -> Json.fromString(passwordHash.toString),"tokens" -> Json.arr())),
       "database" -> Json.obj("jdbcUrl" -> Json.fromString(url),"user" -> Json.fromString(sys.env.getOrElse("MANURE_TEST_JDBC_USER","postgres")),"passwordFile" -> Json.fromString(password),
         "limits" -> Json.obj("maxConnections" -> Json.fromInt(4),"maxQueued" -> Json.fromInt(16),"queueTimeoutMs" -> Json.fromInt(5000),"connectTimeoutMs" -> Json.fromInt(5000),"statementTimeoutMs" -> Json.fromInt(30000),"lockTimeoutMs" -> Json.fromInt(5000),"idleTransactionTimeoutMs" -> Json.fromInt(30000),"socketTimeoutMs" -> Json.fromInt(30000))))
     Files.writeString(configFile,json.noSpaces); Config.load(configFile)

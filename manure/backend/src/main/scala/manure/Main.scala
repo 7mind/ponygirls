@@ -36,19 +36,38 @@ object Main extends IOApp:
     case List("--config",path) => runServer(Path.of(path)).as(ExitCode.Success).handleErrorWith(safeFailure)
     case _ => IO.println("usage: manure-server serve CONFIG.json | migrate CONFIG.json | check-config CONFIG.json | --config CONFIG.json | plan-root-identity CONFIG.json PRIVATE_PLAN.json PRIOR_VOLUME_EVIDENCE | migrate-root-identity CONFIG.json PRIVATE_PLAN.json EXPECTED_SHA256").as(ExitCode.Error)
   private final case class StartupFailure(stage: String,code: String) extends RuntimeException(code)
-  private def safeCode(error: Throwable): String = error match
-    case s: StartupFailure => s.code
-    case a: ponygirls.auth.AccountFailure if a.code.matches("[a-z][a-z-]{0,63}") => a.code
-    case d: DomainError if d.code.matches("[a-z][a-z-]{0,63}") => d.code
-    case r: ponygirls.runtime.RuntimeFailure if r.code.matches("[a-z][a-z-]{0,63}") => r.code
-    case j: ponygirls.runtime.JdbcFailure => "jdbc-" + j.sqlState.getOrElse("unknown")
-    case n: manure.storage.NativeFailure => "posix-" + n.errno()
-    case _: RootLocked => "root-locked"
-    case _: java.nio.file.FileSystemException => "filesystem"
-    case _: java.io.IOException => "io"
-    case e if e.getClass.getName.startsWith("izumi.") => "wiring"
-    case _: IllegalArgumentException => "configuration"
-    case _ => "internal"
+  private def safeCode(error: Throwable): String = category(error).orElse(deep(error)).getOrElse {
+    if error.getClass.getName.startsWith("izumi.") then "wiring" else "internal"
+  }
+  /** Enumerated category by exact failure type only; never message, path or cause detail. */
+  private def category(error: Throwable): Option[String] = error match
+    case s: StartupFailure => Some(s.code)
+    case a: ponygirls.auth.AccountFailure if a.code.matches("[a-z][a-z-]{0,63}") => Some(a.code)
+    case d: DomainError if d.code.matches("[a-z][a-z-]{0,63}") => Some(d.code)
+    case r: ponygirls.runtime.RuntimeFailure if r.code.matches("[a-z][a-z-]{0,63}") => Some(r.code)
+    case j: ponygirls.runtime.JdbcFailure => Some("jdbc-" + j.sqlState.getOrElse("unknown"))
+    case n: manure.storage.NativeFailure => Some("posix-" + n.errno())
+    case _: RootLocked => Some("root-locked")
+    case _: java.nio.file.FileSystemException => Some("filesystem")
+    case _: java.io.IOException => Some("io")
+    case _: IllegalArgumentException => Some("configuration")
+    case _ => None
+  /** distage wraps any provisioning-step failure into izumi.* (ProvisioningException)
+    * with no cause and the actual failure attached only as a SUPPRESSED exception
+    * (FailedProvision.toThrowable). A constructor-time credential failure must
+    * classify by its own category, never as "wiring": a misprovisioned password
+    * hash file is a config failure even though it surfaces during graph acquire.
+    */
+  private def deep(error: Throwable): Option[String] =
+    val seen = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap[Throwable,java.lang.Boolean]())
+    def loop(pending: List[Throwable]): Option[String] = pending match
+      case Nil => None
+      case head :: rest =>
+        if !seen.add(head) then loop(rest)
+        else category(head) match
+          case some @ Some(_) => some
+          case None => loop(rest ++ Option(head.getCause).toList ++ head.getSuppressed.toList)
+    loop(Option(error.getCause).toList ++ error.getSuppressed.toList)
   private def stage[A](name: String,work: IO[A]): IO[A] = work.handleErrorWith(error => IO.raiseError(StartupFailure(name,safeCode(error))))
   private def safeFailure(error: Throwable): IO[ExitCode] =
     val label = error match

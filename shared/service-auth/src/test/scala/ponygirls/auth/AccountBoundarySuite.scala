@@ -15,7 +15,10 @@ final class AccountBoundarySuite extends munit.FunSuite {
     assert(Password.verify("synthetic-new-password".toCharArray, generated))
   }
   test("BA specified: malformed password hashes are rejected without exposing input") {
-    Vector("", "pbkdf2-sha256", "pbkdf2-sha256$1$AA==$AA==", "pbkdf2-sha256$2147483647$AA==$AA==", "x" * 1000).foreach { value =>
+    // A token digest (SHA-256 hex, 64 chars) is a different codec from the
+    // PBKDF2 password hash and must never validate as one.
+    Vector("", "pbkdf2-sha256", "pbkdf2-sha256$1$AA==$AA==", "pbkdf2-sha256$2147483647$AA==$AA==", "a" * 64,
+      "0e6b8f4bbf1c118b7f2a92a12bb4a38b2b6c3f58b5b7cc0d34b7ee228b7f0e21", "x" * 1000).foreach { value =>
       assert(!Password.validHash(value))
       assert(!Password.verify("synthetic".toCharArray, value))
     }
