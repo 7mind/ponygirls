@@ -39,5 +39,6 @@
   "account boundary rejects ambiguous credentials, cross-authority origin, query strings and malformed JSON",
   "disabled and removed account credentials are durably invalidated rather than resurrected on re-enable",
   "password replacement invalidates existing sessions and unavailable config is not reported as bad credentials",
-  "cross-process logout is revalidated at live delivery and closes before any private changed frame"
+  "cross-process logout is revalidated at live delivery and closes before any private changed frame",
+  "fixed account assets serve same-size timestamp-preserving updates while hashed bundles retain 304"
 ]

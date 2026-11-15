@@ -246,7 +246,10 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       if(!target.startsWith(base)|| !Files.isRegularFile(target)|| !target.toRealPath().startsWith(base)) None else Some(target)
     }.flatMap {
       case None=>IO.pure(json(Status.NotFound,Json.Null))
-      case Some(file)=>StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),Some(r)).getOrElseF(IO.pure(json(Status.NotFound,Json.Null))).map(_.putHeaders(Header.Raw(CIString("Referrer-Policy"),"no-referrer"),Header.Raw(CIString("Cache-Control"),if(file.getFileName.toString.matches("[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\\.(js|css|woff2?|svg|png|jpg|webp)")) "public, max-age=31536000, immutable" else "no-store")))
+      case Some(file)=>
+        // Fixed account entrypoints cannot use normalized mtime/size as content identity.
+        val accountEntry=Set("account.js","account.css").contains(file.getFileName.toString)
+        StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),if(accountEntry)None else Some(r)).getOrElseF(IO.pure(json(Status.NotFound,Json.Null))).map(_.putHeaders(Header.Raw(CIString("Referrer-Policy"),"no-referrer"),Header.Raw(CIString("Cache-Control"),if(file.getFileName.toString.matches("[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\\.(js|css|woff2?|svg|png|jpg|webp)")) "public, max-age=31536000, immutable" else "no-store")))
     }
   }
   private def upgradeRejection(r:Request[IO]):Option[Response[IO]]={

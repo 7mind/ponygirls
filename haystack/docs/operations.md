@@ -82,6 +82,19 @@ This uses dedicated `haystack_browser` and `haystack_restart` databases,
 recreated by the test. The launcher regression also runs its own disposable
 PostgreSQL instance on a separate port. Full release verification must execute all cases with zero skips; missing prerequisites fail the gate, not a successful release.
 
+## Account asset freshness
+
+The fixed `/account.js` and `/account.css` entrypoints are served unconditionally
+with `Cache-Control: no-store` by the direct HTTP server, including when old
+validators match a same-length replacement with a normalized Nix timestamp.
+Content-fingerprinted bundles retain their existing immutable caching policy.
+
+The pinned NixOS nginx package uses the Nix store root hash in ETags and omits
+normalized Last-Modified values; changing the asset package therefore changes
+its content identity. External edges serving unpackaged files must provide an
+equivalent content-aware validator or unconditional fresh responses for these
+two fixed entrypoints, not modification-time/length validation alone.
+
 ## Backup and restore
 
 Automated `pg_dump -Fc` runs on `backup.schedule` into `backup.directory`
