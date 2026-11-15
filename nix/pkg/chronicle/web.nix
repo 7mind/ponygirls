@@ -2,6 +2,10 @@
 let
   src = (callPackage ./source.nix { }).web;
   hashes = import ./hashes.nix;
+  accountWeb = lib.fileset.toSource {
+    root = ../../../shared/account-web;
+    fileset = lib.fileset.unions [ ../../../shared/account-web/account.js ../../../shared/account-web/account.css ];
+  };
 in
 buildNpmPackage {
   pname = "chronicle-web";
@@ -21,7 +25,7 @@ buildNpmPackage {
     runHook preBuild
     cd web
     npm run typecheck
-    npm run build
+    ACCOUNT_WEB_ROOT=${accountWeb} npm run build
     cd ..
     runHook postBuild
   '';

@@ -1,5 +1,10 @@
 { lib, buildNpmPackage }:
-buildNpmPackage {
+let
+  accountWeb = lib.fileset.toSource {
+    root = ../../../shared/account-web;
+    fileset = lib.fileset.unions [ ../../../shared/account-web/account.js ../../../shared/account-web/account.css ];
+  };
+in buildNpmPackage {
   pname = "haystack-web";
   version = "0.1.0";
   src = lib.cleanSourceWith {
@@ -13,7 +18,7 @@ buildNpmPackage {
   buildPhase = ''
     runHook preBuild
     npm run typecheck -w web
-    npm run build:web
+    ACCOUNT_WEB_ROOT=${accountWeb} npm run build:web
     runHook postBuild
   '';
   doCheck = true;

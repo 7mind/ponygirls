@@ -1,0 +1,74 @@
+.account-dialog {
+  color-scheme: light dark;
+  --account-bg: #fff;
+  --account-fg: #17212e;
+  --account-muted: #526071;
+  --account-border: #c9d2df;
+  --account-panel: #f1f5f9;
+  --account-danger: #a61b26;
+  box-sizing: border-box;
+  width: min(42rem, calc(100vw - 1.5rem));
+  max-width: calc(100vw - 1.5rem);
+  max-height: calc(100dvh - 1.5rem);
+  margin: auto;
+  padding: 1.25rem;
+  overflow: auto;
+  border: 1px solid var(--account-border);
+  border-radius: .65rem;
+  background: var(--account-bg);
+  color: var(--account-fg);
+  font: 1rem/1.5 system-ui, sans-serif;
+  box-shadow: 0 1rem 4rem #0004;
+  overflow-wrap: anywhere;
+}
+.account-dialog::backdrop { background: #101c2b99; }
+.account-dialog *, .account-dialog *::before, .account-dialog *::after { box-sizing: border-box; }
+.account-dialog [hidden], [data-account-login] [hidden] { display: none !important; }
+.account-dialog h2, .account-dialog h3, .account-dialog p { margin: 0 0 .75rem; }
+.account-dialog h2 { font-size: 1.3rem; letter-spacing: normal; }
+.account-dialog h3 { font-size: 1.1rem; }
+.account-dialog-heading { display: flex; align-items: start; justify-content: space-between; gap: 1rem; margin-bottom: 1rem; }
+.account-dialog-heading h2 { margin: 0; }
+.account-dialog button, .account-dialog input {
+  font: inherit;
+  max-width: 100%;
+  min-height: 2.6rem;
+  border: 1px solid var(--account-border);
+  border-radius: .3rem;
+  background: var(--account-bg);
+  color: var(--account-fg);
+  padding: .4rem .65rem;
+}
+.account-dialog button { cursor: pointer; white-space: normal; text-align: center; }
+.account-dialog button:disabled { opacity: .55; cursor: not-allowed; }
+.account-dialog :focus-visible { outline: 3px solid #5278e4; outline-offset: 2px; }
+.account-dialog label { display: grid; gap: .25rem; font-size: .95rem; color: var(--account-fg); }
+.account-dialog input:not([type=checkbox]) { width: 100%; min-width: 0; }
+.account-dialog input[type=checkbox] { width: 1.1rem; height: 1.1rem; min-height: auto; padding: 0; margin: 0; }
+.account-token-form { display: grid; gap: .75rem; margin: 1rem 0; }
+.account-token-form > button { justify-self: start; }
+.account-scopes { display: flex; gap: .75rem 1.25rem; flex-wrap: wrap; margin: 0; padding: .75rem; border: 1px solid var(--account-border); }
+.account-scopes label { display: flex; align-items: center; gap: .5rem; }
+.account-dialog .account-token-meta { color: var(--account-muted); font-size: .85rem; margin: .2rem 0; }
+.account-tokens { list-style: none; margin: 1rem 0 0; padding: 0; }
+.account-token { border-top: 1px solid var(--account-border); padding: 1rem 0; }
+.account-token > button { margin-top: .5rem; }
+.account-token-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.account-token-id { display: block; font: .8rem/1.5 ui-monospace, monospace; overflow-wrap: anywhere; }
+.account-badge { display: inline-block; padding: .05rem .4rem; border: 1px solid var(--account-border); border-radius: .3rem; font-size: .75rem; }
+.account-secret, .account-uncertain:not(:empty) { padding: 1rem; margin-bottom: 1rem; background: var(--account-panel); border: 1px solid var(--account-border); border-radius: .3rem; }
+.account-secret input { font-family: ui-monospace, monospace; }
+.account-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: .75rem 0; }
+.account-error { color: #a61b26; overflow-wrap: anywhere; }
+.account-dialog .account-error { color: var(--account-danger); }
+.account-status:empty, .account-error:empty { display: none; }
+@media (prefers-color-scheme: dark) {
+  .account-dialog { --account-bg: #17212e; --account-fg: #edf2f9; --account-muted: #b4c0cf; --account-border: #455569; --account-panel: #202f41; --account-danger: #ffadb4; }
+  .account-error { color: #ffadb4; }
+}
+html[data-theme=dark] .account-dialog { --account-bg: #17212e; --account-fg: #edf2f9; --account-muted: #b4c0cf; --account-border: #455569; --account-panel: #202f41; --account-danger: #ffadb4; }
+html[data-theme=light] .account-dialog { --account-bg: #fff; --account-fg: #17212e; --account-muted: #526071; --account-border: #c9d2df; --account-panel: #f1f5f9; --account-danger: #a61b26; }
+@media (max-width: 400px) {
+  .account-dialog { padding: .8rem; }
+  .account-dialog-heading { flex-direction: column; gap: .5rem; }
+}

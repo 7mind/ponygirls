@@ -4,6 +4,10 @@ let
   nativeArtifact = callPackage ../services/native.nix { inherit squishLib; service = "manure"; };
   clients = callPackage ./client.nix { };
   viewer = callPackage ./viewer.nix { };
+  accountWeb = lib.fileset.toSource {
+    root = ../../../shared/account-web;
+    fileset = lib.fileset.unions [ ../../../shared/account-web/account.js ../../../shared/account-web/account.css ];
+  };
   web = lib.cleanSourceWith { src = ../../../manure/web; filter = path: type: lib.cleanSourceFilter path type && !(builtins.elem (baseNameOf path) [ "node_modules" "dist" "test-results" ]); };
 in runCommand "manure-0.2.0" {
   pname = "manure";
@@ -19,6 +23,7 @@ in runCommand "manure-0.2.0" {
     test -d ${web}/"$shell"
     cp -r ${web}/"$shell" "$out/share/manure/web/"
   done
+  cp ${accountWeb}/account.js ${accountWeb}/account.css "$out/share/manure/web/dashboard/"
   cp -r ${viewer}/share/manure/web/viewer "$out/share/manure/web/viewer"
   ln -s ${clients}/bin/manure "$out/bin/manure"
   ln -s ${clients}/bin/manure-mcp "$out/bin/manure-mcp"
