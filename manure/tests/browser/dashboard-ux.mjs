@@ -58,11 +58,12 @@ const check = async (name, run) => {
       };
     });
     await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
-    await page.locator("#token-input").fill(input.token);
+    await page.locator("#login-input").fill(input.login);
+    await page.locator("#password-input").fill(input.loginPassword);
     await page.locator("#login-form button[type=submit]").click();
     await page.locator("#whoami-text").waitFor({ state: "visible" });
     await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("shown"));
-    assert.equal((await page.locator("#token-input").inputValue()).length, 0);
+    assert.equal((await page.locator("#password-input").inputValue()).length, 0);
     await run(page, context);
     assert.deepEqual(errors, []);
     assert.equal(urls.some((url) => url.includes(input.token)), false, "credential must not travel in a URL");
@@ -204,16 +205,44 @@ await check("confirmed logout clears owner/query fragment and next login does no
   await page.locator("#list-form button[type=submit]").click();
   await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes("owner:private-creator"));
   await page.waitForFunction(() => window.__ux.readCommands.some(c => c.mode === "Lexical"));
-  const before = await page.evaluate(() => window.__ux.readCommands.length);
   await page.locator("#logout-button").click();
   await page.locator("#login-section").waitFor({ state: "visible" });
   assert.equal(page.url().includes("private-creator"), false, "logout must remove owner from URL");
   assert.equal(page.url().includes("ux-public"), false, "logout must remove query from URL");
-  await page.locator("#token-input").fill(input.token);
+  await page.locator("#login-input").fill(input.login);
+  await page.locator("#password-input").fill(input.loginPassword);
   await page.locator("#login-form button[type=submit]").click();
   await page.locator("#whoami-text").waitFor({ state: "visible" });
   assert.equal(await page.locator("#filter-text").inputValue(), "", "new login clears expression");
-  assert.equal(await page.evaluate((start) => window.__ux.readCommands.slice(start).some(c => c.mode !== "catalogue"), before), false, "no retrieval replay across logout/login");
+  assert.ok(await page.evaluate(() => window.__ux.readCommands.length > 0), "reloaded dashboard must load an authenticated catalogue");
+  assert.equal(await page.evaluate(() => window.__ux.readCommands.some(c => c.mode !== "catalogue")), false, "no retrieval replay across logout/login");
+});
+
+await check("account settings issue, one-time secret dismissal and revoke use the password session", async (page) => {
+  await page.locator("#account-settings").click();
+  const settings = page.getByRole("dialog", { name: "Account settings", exact: true });
+  await settings.getByLabel("Token name", { exact: true }).waitFor();
+  const configured = settings.locator(".account-token").filter({ has: page.getByText("Configured", { exact: true }) });
+  assert.ok(await configured.count() > 0, "declarative credentials remain visible in settings");
+  assert.equal(await configured.locator("button, input").count(), 0, "configured tokens are immutable");
+  await settings.getByLabel("Token name", { exact: true }).fill("Browser acceptance collector");
+  await settings.getByRole("button", { name: "Create access token", exact: true }).click();
+  const secret = settings.getByLabel("One-time token secret", { exact: true });
+  await secret.waitFor();
+  assert.ok(await secret.evaluate(input => input.value.length > 20));
+  assert.equal(await page.evaluate(() => {
+    const value = document.querySelector('.account-secret input').value;
+    return JSON.stringify([localStorage, sessionStorage]).includes(value);
+  }), false, "one-time secrets must not enter browser storage");
+  await settings.getByRole("button", { name: "Copy secret", exact: true }).click();
+  await settings.getByRole("status").filter({ hasText: /Secret copied|Clipboard unavailable/ }).waitFor();
+  await settings.getByRole("button", { name: "Dismiss secret", exact: true }).click();
+  assert.equal(await secret.count(), 0);
+  page.once("dialog", dialog => dialog.accept());
+  await settings.getByRole("button", { name: "Revoke Browser acceptance collector", exact: true }).click();
+  await settings.locator(".account-token").filter({ hasText: "Browser acceptance collector" }).getByText("Revoked", { exact: true }).waitFor();
+  await settings.getByRole("button", { name: "Close settings", exact: true }).click();
+  assert.equal(await page.locator("#account-settings").evaluate(button => button === document.activeElement), true);
 });
 
 await check("unauthenticated incoming retrieval deep link survives login without implicit Search", async (page) => {
@@ -223,7 +252,8 @@ await check("unauthenticated incoming retrieval deep link survives login without
   await page.goto(link, { waitUntil: "domcontentloaded" });
   await page.locator("#login-section").waitFor({ state: "visible" });
   assert.equal(page.url(), link);
-  await page.locator("#token-input").fill(input.token);
+  await page.locator("#login-input").fill(input.login);
+  await page.locator("#password-input").fill(input.loginPassword);
   await page.locator("#login-form button[type=submit]").click();
   await page.locator("#whoami-text").waitFor({ state: "visible" });
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical owner:one-user ux-public");

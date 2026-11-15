@@ -186,7 +186,33 @@ export class ChronicleFixture {
   whoamiFailure = null;
   refreshStatus = 200; refreshTtl = '2592000'; refreshRequests = [];
   goal50Operation = undefined;
+  accountRequests = [];
   async install(page) {
+    await page.route('**/api/account/v1{,/**}', route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      const body = request.postDataJSON(); this.accountRequests.push({ path, method: request.method(), body });
+      const user = () => ({ id: this.user.id, login: this.user.login, displayName: this.user.login, actor: `actor-${this.user.id}` });
+      const token = (info, source) => ({ id: info.id, name: info.name, source, createdAt: info.createdAt, revoked: info.revoked, scopes: info.scopes });
+      const reply = (status, data, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'no-store', ...headers }, body: JSON.stringify(data) });
+      if (path.endsWith('/login')) {
+        if (!['alice', 'bob'].includes(body.login) || body.password !== 'synthetic-password') return reply(401, { error: { code: 'unauthorized', message: 'Invalid credentials' } });
+        this.user = new api.UserInfo(body.login, body.login, [api.Scope.Read, api.Scope.Raw]); this.signedIn = true; this.mode = 'normal';
+        return reply(200, { user: user() }, { 'Set-Cookie': 'chronicle_session=synthetic; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000' });
+      }
+      if (!this.signedIn || this.mode === 'unauthorized') return reply(401, { error: { code: 'unauthorized', message: 'Sign in' } });
+      if (request.method() === 'GET') return reply(200, { user: user(), tokens: [...this.staticTokens.map(info => token(info, 'configured')), ...this.tokens.map(info => token(info, 'issued'))], scopes: [api.Scope.Ingest, api.Scope.Read, api.Scope.Raw] });
+      if (request.headers()['x-account-actor'] !== user().actor) return reply(409, { error: { code: 'conflict', message: 'Account changed' } });
+      if (path.endsWith('/revoke')) {
+        const id = path.split('/').at(-2); this.tokens = this.tokens.map(info => info.id === id ? info.with({ revoked: true }) : info);
+        return reply(200, { ok: true });
+      }
+      if (path.endsWith('/tokens')) {
+        const info = new api.TokenInfo(`00000000-0000-4000-8000-${String(this.tokens.length + 3).padStart(12, '0')}`, body.name, body.scopes, '2026-11-15T00:00:00Z', false); this.tokens.push(info);
+        if (this.mintUncertain) return route.abort('failed');
+        return reply(200, { token: token(info, 'issued'), secret: 'synthetic-secret-shown-once' });
+      }
+      throw new Error(`Unhandled account fixture: ${path}`);
+    });
     // Synthetic renewal server; real backend cookie/revocation semantics are tested separately.
     await page.route('**/api/session/refresh', route => {
       this.refreshRequests.push({ method: route.request().method(), headers: route.request().headers(), body: route.request().postData() });

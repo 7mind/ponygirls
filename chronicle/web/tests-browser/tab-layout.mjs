@@ -23,7 +23,7 @@ const junk = [
 async function visit(page, tab) {
   await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: tab, exact: true }).click();
   if (tab === 'activity') await page.locator('.activity-job-row').first().waitFor();
-  if (tab === 'access') await page.getByRole('heading', { name: 'Agent tokens', exact: true }).waitFor();
+  if (tab === 'access') await page.getByRole('heading', { name: 'Access tokens', exact: true }).waitFor();
   if (tab === 'mcp') await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor();
 }
 async function metrics(page) {

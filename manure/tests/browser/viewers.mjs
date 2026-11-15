@@ -323,7 +323,8 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
 
 await check("internal dashboard Open hands off a grant and renders the standalone private viewer", async (page) => {
   await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
-  await page.locator("#token-input").fill(input.token);
+  await page.locator("#login-input").fill(input.login);
+  await page.locator("#password-input").fill(input.loginPassword);
   await page.locator("#login-form button[type=submit]").click();
   await page.locator("#whoami-text").waitFor({ state: "visible" });
   await page.goto(input.base + "/#/artifact/" + record("internal").artifact_id, { waitUntil: "domcontentloaded" });

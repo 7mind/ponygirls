@@ -28,6 +28,11 @@ async function sceneAt(sceneOrigin, waitForArchive, configure) {
   if (waitForArchive) await archiveReady(page);
   return { context, page, fixture };
 }
+async function openSettings(page) {
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('dialog', { name: 'Account settings', exact: true }).waitFor();
+  await page.getByLabel('Token name', { exact: true }).waitFor();
+}
 async function archiveReady(page) {
   await page.getByRole('table', { name: 'Conversations', exact: true }).waitFor();
   await page.locator('.archive-table[aria-busy="false"]').waitFor();
@@ -98,11 +103,16 @@ try {
     await page.locator('.connection-widget[data-state="live"]').waitFor({ timeout: 5000 });
     await search(page);
     await page.getByRole('button', { name: 'access', exact: true }).click();
+    await page.getByRole('textbox', { name: 'New group name' }).fill('Private HTTP group');
+    await page.getByRole('button', { name: 'Create group', exact: true }).click();
+    await page.getByRole('heading', { name: 'Private HTTP group', exact: true }).waitFor({ timeout: 5000 });
+    await openSettings(page);
     await page.getByRole('textbox', { name: 'Token name' }).fill('Private HTTP token');
-    await page.getByRole('button', { name: 'Mint token ↗' }).click();
-    await page.getByRole('heading', { name: 'Save your token now.' }).waitFor({ timeout: 5000 });
+    await page.getByRole('button', { name: 'Create access token', exact: true }).click();
+    await page.getByLabel('One-time token secret', { exact: true }).waitFor({ timeout: 5000 });
     assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_Hello));
-    assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_MintToken));
+    assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_CreateGroup));
+    assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
     for (const envelope of fixture.calls) assert.match(envelope.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
     await context.close(); console.log('PASS browser: non-loopback insecure HTTP supports Hello, reads and mutation UUIDs without randomUUID');
   }
@@ -112,17 +122,18 @@ try {
       fixture.staticTokens = [new api.TokenInfo('00000000-0000-4000-8000-000000000088', 'Configured collector', [api.Scope.Ingest], '2026-10-24T00:00:00Z', false)];
       fixture.tokens = [new api.TokenInfo('00000000-0000-4000-8000-000000000089', 'Issued collector', [api.Scope.Ingest], '2026-10-24T00:00:00Z', false)];
     });
-    await page.getByRole('button', { name: 'access', exact: true }).click();
-    const configured = page.locator('.token-row').filter({ hasText: 'Configured collector' });
-    await configured.getByText('StaticConfig', { exact: true }).waitFor();
+    await openSettings(page);
+    const configured = page.locator('.account-token').filter({ hasText: 'Configured collector' });
+    await configured.getByText('Configured', { exact: true }).waitFor();
     assert.match(await configured.innerText(), /Managed in server configuration; read-only here/);
     assert.equal(await configured.locator('button, input, textarea').count(), 0);
     assert.equal(await page.locator('.token-secret').count(), 0);
-    const issued = page.locator('.token-row').filter({ hasText: 'Issued collector' });
+    const issued = page.locator('.account-token').filter({ hasText: 'Issued collector' });
     await issued.getByText('Issued', { exact: true }).waitFor();
-    await issued.getByRole('button', { name: 'Revoke', exact: true }).click();
+    page.once('dialog', dialog => dialog.accept());
+    await issued.getByRole('button', { name: 'Revoke Issued collector', exact: true }).click();
     await issued.getByText('Revoked', { exact: true }).waitFor();
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_RevokeToken).length, 1);
+    assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/revoke')).length, 1);
     await context.close(); console.log('PASS browser: static token metadata has no secret or modification controls; issued revoke preserved');
   }
   {
@@ -407,10 +418,12 @@ try {
   await page.locator('.conversation-intro h2').getByText('Following the migration thread', { exact: true }).waitFor();
   await closeConversation(page);
   await page.getByRole('button', { name: 'access', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Token name' }).fill('Synthetic collector'); await page.getByRole('button', { name: 'Mint token ↗' }).click();
-  await page.getByRole('heading', { name: 'Save your token now.' }).waitFor();
-  assert.equal(await page.locator('.token-secret').textContent(), 'synthetic-secret-shown-once');
-  await page.getByRole('button', { name: 'I have saved it · dismiss' }).click(); assert.equal(await page.locator('.token-secret').count(), 0);
+  await openSettings(page);
+  await page.getByRole('textbox', { name: 'Token name' }).fill('Synthetic collector'); await page.getByRole('button', { name: 'Create access token', exact: true }).click();
+  await page.getByLabel('One-time token secret', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('One-time token secret', { exact: true }).inputValue(), 'synthetic-secret-shown-once');
+  await page.getByRole('button', { name: 'Dismiss secret', exact: true }).click(); assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Close settings', exact: true }).click();
   await page.getByRole('textbox', { name: 'New group name' }).fill('Synthetic group'); await page.getByRole('button', { name: 'Create group', exact: true }).click();
   await page.getByRole('heading', { name: 'Synthetic group', exact: true }).waitFor();
   const owner = page.locator('.group-card').filter({ has: page.getByRole('heading', { name: 'Systems workshop' }) });
@@ -423,7 +436,8 @@ try {
   await page.locator('.group-card').filter({ has: page.getByRole('heading', { name: 'Synthetic group', exact: true }) }).getByRole('button', { name: 'Delete group', exact: true }).click();
   await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.getByRole('button', { name: 'Retry indexing', exact: true }).click();
   await page.locator('.activity-job-row .job-state').getByText('Queued', { exact: true }).waitFor();
-  for (const Operation of [api.Operation_MintToken, api.Operation_CreateGroup, api.Operation_Invite, api.Operation_AcceptInvite, api.Operation_RemoveMember, api.Operation_LeaveGroup, api.Operation_DeleteGroup, api.Operation_RetryJob]) assert.ok(fixture.calls.some(call => call.operation instanceof Operation));
+  assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
+  for (const Operation of [api.Operation_CreateGroup, api.Operation_Invite, api.Operation_AcceptInvite, api.Operation_RemoveMember, api.Operation_LeaveGroup, api.Operation_DeleteGroup, api.Operation_RetryJob]) assert.ok(fixture.calls.some(call => call.operation instanceof Operation));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('button', { name: 'archive', exact: true }).click();
   await archiveReady(page); await openConversation(page);
@@ -450,14 +464,16 @@ try {
   }
   {
     const { context, page, fixture } = await scene(); fixture.mintUncertain = true;
-    await page.getByRole('button', { name: 'access', exact: true }).click(); await page.getByRole('textbox', { name: 'Token name' }).fill('Uncertain collector'); await page.getByRole('button', { name: 'Mint token ↗' }).click();
-    await page.getByRole('heading', { name: 'Confirm before repeating' }).waitFor();
-    await page.getByRole('button', { name: 'Look up receipt' }).click();
-    await page.getByRole('heading', { name: 'Token committed; secret unavailable' }).waitFor();
-    assert.equal(fixture.calls.filter(envelope => envelope.operation instanceof api.Operation_MintToken).length, 1);
-    assert.equal(await page.locator('.token-secret').count(), 0);
-    await page.getByRole('button', { name: 'Revoke unrecoverable token', exact: true }).click(); await page.getByText('Revoked', { exact: true }).waitFor();
-    await context.close(); console.log('PASS browser: uncertain token mint never replayed, receipt resolved, lost secret requires revoke/remint');
+    await openSettings(page); await page.getByRole('textbox', { name: 'Token name' }).fill('Uncertain collector'); await page.getByRole('button', { name: 'Create access token', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
+    await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).waitFor();
+    assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
+    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: 'Revoke Uncertain collector', exact: true }).click(); await page.getByText('Revoked', { exact: true }).waitFor();
+    await context.close(); console.log('PASS browser: uncertain account mint never replayed, list reconciled, lost secret requires revoke/remint');
   }
   {
     const { context, page, fixture } = await sceneAt(origin, false, fixture => { fixture.signedIn = false; });
@@ -473,19 +489,20 @@ try {
     assert.equal(await page.evaluate(() => localStorage.length + sessionStorage.length), 0);
     fixture.dropLogout = true; await page.getByRole('button', { name: 'Sign out', exact: true }).click();
     await page.getByRole('heading', { name: 'Confirm before repeating' }).waitFor({ timeout: 5000 });
-    await context.close(); console.log('PASS browser: generated HTTP login uses only cookie; uncertain logout is visible outside management tabs');
+    await context.close(); console.log('PASS browser: account v1 HTTP login uses only cookie; uncertain logout is visible outside management tabs');
   }
   {
     const { context, page, fixture } = await scene(); fixture.mintUncertain = true;
-    await page.getByRole('button', { name: 'access', exact: true }).click();
+    await openSettings(page);
     await page.getByRole('textbox', { name: 'Token name' }).fill('Private token metadata');
-    await page.getByRole('button', { name: 'Mint token ↗' }).click();
-    await page.getByRole('heading', { name: 'Confirm before repeating' }).waitFor();
-    await page.getByRole('button', { name: 'Look up receipt' }).click();
-    await page.getByRole('heading', { name: 'Token committed; secret unavailable' }).waitFor();
+    await page.getByRole('button', { name: 'Create access token', exact: true }).click();
+    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
+    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
+    await page.getByRole('list', { name: 'Your access tokens', exact: true }).getByText('Private token metadata', { exact: true }).waitFor();
     fixture.mode = 'unauthorized'; fixture.restart();
     await page.locator('.connection-widget[data-state="unauthorized"]').waitFor();
-    assert.equal(await page.getByRole('heading', { name: 'Token committed; secret unavailable' }).count(), 0, 'forbidden token metadata must not remain visible after auth denial');
+    assert.equal(await page.getByRole('dialog', { name: 'Account settings', exact: true }).count(), 0, 'forbidden token metadata must not remain visible after auth denial');
+    assert.equal(await page.getByText('Private token metadata', { exact: true }).count(), 0);
     await context.close(); console.log('PASS browser: auth denial also hides token-recovery metadata');
   }
   assert.deepEqual(errors, [], 'no uncaught browser application errors');

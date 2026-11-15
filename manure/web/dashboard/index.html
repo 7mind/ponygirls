@@ -6,6 +6,8 @@
 <title>manure — artifact workspace</title>
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <link rel="stylesheet" href="./styles.css">
+<link rel="stylesheet" href="/account.css">
+<script type="module" src="/account.js"></script>
 <script type="module" src="./app.js"></script>
 </head>
 <body>
@@ -27,15 +29,16 @@
 <p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
 <h1 id="login-heading">Log in</h1>
 <p>Log in to manage files, directories, and published artifacts.</p>
-<form id="login-form" method="post" action="/api/current/login">
-<label for="token-input">API token</label>
-<input type="password" id="token-input" name="token"
-required spellcheck="false" autocapitalize="off" autocomplete="current-password"
-aria-describedby="token-note">
+<form id="login-form" data-account-login method="post" action="/api/account/v1/login">
+<label for="login-input">Login</label>
+<input type="text" id="login-input" name="login" required maxlength="200"
+spellcheck="false" autocapitalize="off" autocomplete="username">
+<label for="password-input">Password</label>
+<input type="password" id="password-input" name="password" maxlength="1000"
+required autocomplete="current-password" aria-describedby="login-note">
 <button type="submit" class="primary">Log in</button>
 </form>
-<p id="login-error" class="error" role="alert" hidden></p>
-<p id="token-note" class="auth-note">Your token is sent in the login request body, then cleared from the input and JavaScript reference. Your session uses a host-only HttpOnly cookie, not web storage or a URL.</p>
+<p id="login-note" class="auth-note">Your password is sent only to sign in, then cleared from the input. Your session uses a host-only HttpOnly cookie, not web storage or a URL. Create API access tokens in Settings after signing in.</p>
 <div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> File and directory uploads.</div>
 </div>
 </section>
@@ -47,6 +50,7 @@ aria-describedby="token-note">
 <span class="brand"><span class="brand-mark" aria-hidden="true"></span>manure</span>
 <div id="whoami" class="identity" hidden>
 <span id="whoami-text"></span>
+<button type="button" id="account-settings" data-account-settings class="quiet">Settings</button>
 <button type="button" id="logout-button" class="quiet">Log out</button>
 </div>
 </header>

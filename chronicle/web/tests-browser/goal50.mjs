@@ -43,9 +43,8 @@ try {
         assert.equal(await main.getByRole('button', { name: 'Rebuild archive index', exact: true }).isVisible(), true);
         assert.equal(await main.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).isVisible(), true);
       } else if (tab === 'access') {
-        assert.equal(await main.getByRole('textbox', { name: 'Token name', exact: true }).isVisible(), true);
-        assert.equal(await main.getByRole('group', { name: 'Permissions', exact: true }).isVisible(), true);
-        assert.equal(await main.getByRole('button', { name: 'Mint token ↗', exact: true }).isVisible(), true);
+        assert.equal(await main.getByRole('button', { name: 'Open token settings', exact: true }).isVisible(), true);
+        assert.equal(await main.getByRole('textbox', { name: 'Token name', exact: true }).count(), 0, 'token creation belongs to account settings, not a competing Access form');
         await main.getByText('all your eligible existing and future sessions', { exact: true }).waitFor();
       } else {
         assert.equal(await main.getByRole('textbox', { name: 'Fresh prompt', exact: true }).isVisible(), true);

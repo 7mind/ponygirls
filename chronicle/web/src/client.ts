@@ -1,19 +1,7 @@
-import { BaboonCodecContext, LoginRequest, LoginRequest_JsonCodec, LoginResponse_JsonCodec, Failure_JsonCodec, Operation_ArchiveSearch, type LoginResponse, type Operation, type Result } from './api.ts';
+import { Operation_ArchiveSearch, type Operation, type Result } from './api.ts';
 import type { ConnectionManager } from './transport/manager.ts';
 export type ChronicleConnection = ConnectionManager<Operation, Result>;
 const ARCHIVE_SEARCH_TIMEOUT_MILLIS = 60_000;
-export async function login(fetcher: typeof fetch, username: string, password: string): Promise<LoginResponse> {
-  const response = await fetcher('/api/login', {
-    method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(LoginRequest_JsonCodec.instance.encode(BaboonCodecContext.Default, new LoginRequest(username, password))),
-  });
-  const json: unknown = await response.json();
-  if (!response.ok) {
-    const failure = Failure_JsonCodec.instance.decode(BaboonCodecContext.Default, json);
-    throw new Error(failure.message);
-  }
-  return LoginResponse_JsonCodec.instance.decode(BaboonCodecContext.Default, json);
-}
 export async function read<T>(connection: ChronicleConnection, operation: Operation, extract: (result: Result) => T | null): Promise<T> {
   const result = await connection.request(operation, operation instanceof Operation_ArchiveSearch
     ? { mutation: false, receiptId: null, timeoutMillis: ARCHIVE_SEARCH_TIMEOUT_MILLIS }

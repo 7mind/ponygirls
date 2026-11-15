@@ -32,7 +32,8 @@ await page.addInitScript(() => {
 page.on('request',request=>requests.push(request.url()));
 try{
   await page.goto(input.base+'/',{waitUntil:'domcontentloaded'});
-  await page.locator('#token-input').fill(input.token);
+  await page.locator('#login-input').fill(input.login);
+  await page.locator('#password-input').fill(input.loginPassword);
   await page.locator('#login-form button[type=submit]').click();
   await page.locator('#whoami-text').waitFor({state:'visible',timeout:15000});
   await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('shown'),null,{timeout:15000});

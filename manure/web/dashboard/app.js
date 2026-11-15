@@ -119,7 +119,7 @@ function expressionInput(input, list, change, compositionChange) {
   function apiFetch(descriptor) {
     var epoch = sessionEpoch;
     return current.request(fetch, descriptor).catch(function (error) {
-      if (error.status === 401 && !(descriptor[0].constructor.name === "Command_Login")) {
+      if (error.status === 401) {
         if (epoch === sessionEpoch) { showLoggedOut(); }
         throw new Error("unauthorized");
       }
@@ -319,6 +319,8 @@ function expressionInput(input, list, change, compositionChange) {
   }
 
   function clearAccount() {
+    document.dispatchEvent(new window.Event('account:invalidate'));
+    delete $("account-settings").dataset.accountUserId;
     clearUploads();
     var hadAccount = authenticated;
     sessionEpoch++; invalidateNavigation(); authenticated = false;
@@ -363,6 +365,7 @@ function expressionInput(input, list, change, compositionChange) {
       $("whoami").hidden = false;
       $("dashboard-section").hidden = false;
       setText("whoami-text", body.user_id);
+      $("account-settings").dataset.accountUserId = body.user_id;
       updateControls(); handleRoute();
       if (capabilities === null) { checkHostingMode(); }
       return true;
@@ -375,26 +378,8 @@ function expressionInput(input, list, change, compositionChange) {
       return false;
     }).finally(function () { $("session-retry-button").disabled = false; });
   }
-  function onLoginSubmit(event) {
-    event.preventDefault();
-    sessionEpoch++;
-    var epoch = sessionEpoch;
-    var token = $("token-input").value;
-    $("token-input").value = "";
-    $("login-error").hidden = true;
-    var button = $("login-form").querySelector("button[type=submit]");
-    button.disabled = true;
-    var request = apiFetch(current.login(token));
-    token = "";
-    request.then(function () {
-      if (epoch === sessionEpoch) { return checkSession(); }
-    }).catch(function (error) {
-      if (epoch !== sessionEpoch) { return; }
-      setText("login-error", "Login failed (" + errorLabel(error) + ").");
-      $("login-error").hidden = false;
-    }).finally(function () { button.disabled = false; });
-  }
   function onLogout() {
+    document.dispatchEvent(new window.Event('account:invalidate'));
     clearUploads();
     openGeneration++;
     hideRotateOutput();
@@ -1071,7 +1056,6 @@ function expressionInput(input, list, change, compositionChange) {
     }
   });
 
-  $("login-form").addEventListener("submit", onLoginSubmit);
   $("logout-button").addEventListener("click", onLogout);
   $("session-retry-button").addEventListener("click", checkSession);
   $("list-form").addEventListener("submit", function (event) {
@@ -1153,6 +1137,7 @@ function expressionInput(input, list, change, compositionChange) {
   $("copy-link-button").addEventListener("click", function () { if (currentDetailInfo !== null) { copy(contentUrl(currentDetailInfo), "detail-status", "Content link copied."); } });
   $("files-retry-button").addEventListener("click", loadFiles);
   $("detail-back-button").addEventListener("click", function () { invalidateNavigation(); window.location.hash = routeHash(null); });
+  document.addEventListener('account:changed', function () { clearAccount(); checkSession(); });
   window.addEventListener("hashchange", handleRoute);
   checkHostingMode();
   checkSession();

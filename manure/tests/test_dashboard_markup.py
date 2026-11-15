@@ -71,7 +71,19 @@ class DashboardMarkupTests(unittest.TestCase):
         for key in ("workspace-shell", "session-section", "session-status", "session-retry-button"):
             self.assertIn(key, self.elements.ids)
         self.assertIn("hidden", self.elements.ids["workspace-shell"][1])
-        self.assertEqual(self.elements.ids["token-input"][1]["type"], "password")
+        self.assertEqual(self.elements.ids["password-input"][1]["type"], "password")
+
+    def test_shared_account_login_and_settings_hooks(self):
+        form = self.elements.ids["login-form"][1]
+        self.assertIn("data-account-login", form)
+        self.assertEqual(form["action"], "/api/account/v1/login")
+        self.assertEqual(self.elements.ids["login-input"][1]["name"], "login")
+        self.assertEqual(self.elements.ids["login-input"][1]["autocomplete"], "username")
+        self.assertEqual(self.elements.ids["password-input"][1]["name"], "password")
+        self.assertNotIn("token-input", self.elements.ids)
+        self.assertIn("data-account-settings", self.elements.ids["account-settings"][1])
+        self.assertIn('src="/account.js"', self.html)
+        self.assertIn('href="/account.css"', self.html)
 
     def test_quick_upload_has_explicit_publish_and_access_controls(self):
         self.assertEqual(self.elements.ids["upload-form"][0], "form")
