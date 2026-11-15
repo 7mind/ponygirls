@@ -21,7 +21,7 @@ let
   # Shared JVM inputs participate in consumer identities. Never include the full
   # repository: Manure/Haystack UIs, data and unrelated tooling are not inputs.
   shared = [ "shared/lossless-json/src/main" "shared/baboon-runtime/src/main"
-    "shared/service-runtime/src/main" "shared/model-http/src/main"
+    "shared/service-runtime/src/main" "shared/service-auth/src/main" "shared/model-http/src/main"
     "shared/retrieval-core/src/main" "shared/retrieval-postgres/src/main" ];
   manure = [ "manure/server/src" "manure/server/native-image" ];
   manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
@@ -30,7 +30,7 @@ let
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json" "chronicle/scripts" ];
   sharedTests = [ "shared/lossless-json/src/test" "shared/baboon-runtime/src/test"
-    "shared/service-runtime/src/test" "shared/model-http/src/test"
+    "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
     "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
   ontologyRuntime = [ "ontology/generated/scala" "ontology/generated/wire"
     "ontology/server/src/main" "ontology/migrations" ];
@@ -57,8 +57,8 @@ in {
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
   haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/server/src" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
-  haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" ]);
-  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [ "manure" ] ++ manureWitnesses);
+  haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" ]);
+  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [ "manure" "shared/account-web" ] ++ manureWitnesses);
   manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
   manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"

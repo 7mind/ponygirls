@@ -128,17 +128,18 @@ lazy val baboonAssemblySettings = Seq(
   }
 )
 lazy val serviceRuntime = project.in(file("shared/service-runtime")).settings(serviceSettings).settings(name := "service-runtime")
+lazy val serviceAuth = project.in(file("shared/service-auth")).dependsOn(serviceRuntime, losslessJson).settings(serviceSettings).settings(name := "service-auth")
 lazy val modelHttp = project.in(file("shared/model-http")).dependsOn(serviceRuntime, retrievalCore).settings(serviceSettings).settings(name := "model-http")
 lazy val retrievalCore = project.in(file("shared/retrieval-core")).settings(scala3LibrarySettings).settings(name := "retrieval-core", libraryDependencies ++= Seq("io.circe" %% "circe-core" % "0.14.17" cross CrossVersion.for3Use2_13, "io.circe" %% "circe-parser" % "0.14.17" cross CrossVersion.for3Use2_13))
 lazy val retrievalPostgres = project.in(file("shared/retrieval-postgres")).dependsOn(serviceRuntime, retrievalCore, modelHttp).settings(serviceSettings).settings(name := "retrieval-postgres")
-lazy val haystackServer = project.in(file("haystack/server")).dependsOn(haystackContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
+lazy val haystackServer = project.in(file("haystack/server")).dependsOn(haystackContracts, serviceRuntime, serviceAuth, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "haystack-server",
   Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
   Compile / mainClass := Some("haystack.Main"),
   assembly / mainClass := Some("haystack.Main"),
   assembly / assemblyJarName := "haystack-server.jar"
 )
-lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContracts, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings ++ manureTestChildSettings).settings(
+lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContracts, manureStorage, serviceRuntime, serviceAuth, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings ++ manureTestChildSettings).settings(
   name := "manure-server",
   Compile / mainClass := Some("manure.Main"),
   assembly / mainClass := Some("manure.Main"),
@@ -170,7 +171,7 @@ lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontology
   assembly / mainClass := Some("ontology.Main"),
   assembly / assemblyJarName := "ontology-server.jar"
 )
-lazy val root = project.in(file(".")).aggregate(ontologyContracts, ontologyServer, baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, ritesContracts, haystackServer, manureServer, ritesServer).settings(
+lazy val root = project.in(file(".")).aggregate(ontologyContracts, ontologyServer, baboonRuntime, contracts, chronicleServer, losslessJson, manureStorage, serviceRuntime, serviceAuth, modelHttp, retrievalCore, retrievalPostgres, haystackContracts, manureContracts, ritesContracts, haystackServer, manureServer, ritesServer).settings(
   name := "backend-foundation",
   publish / skip := true,
   cleanFiles += baseDirectory.value / "target" / "contracts-coassembly.jar",
@@ -203,7 +204,7 @@ lazy val root = project.in(file(".")).aggregate(ontologyContracts, ontologyServe
     output
   }
 )
-lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, serviceRuntime, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
+lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, serviceRuntime, serviceAuth, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "chronicle-server",
   // PostgreSQL suites truncate shared tables and mutate profile state.
   Test / parallelExecution := false,
