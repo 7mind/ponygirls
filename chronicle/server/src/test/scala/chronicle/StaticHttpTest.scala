@@ -87,6 +87,44 @@ class StaticHttpTest extends munit.FunSuite {
       } yield () }
     }
   }
+  for(path <- List("/account.js","/account.css"); condition <- List("If-None-Match","If-Modified-Since","both")) {
+    test(s"Blackbox-GoodCommunication: $path ignores stale $condition after equal-metadata account asset replacement") {
+      withRoutes { (app,dir) =>
+        val oldAsset=if(path.endsWith(".js")) "document.body.dataset.account='old';" else ".account{color:#aaa}"
+        val newAsset=if(path.endsWith(".js")) "document.body.dataset.account='new';" else ".account{color:#bbb}"
+        val file=dir.resolve(path.stripPrefix("/"))
+        for {
+          _ <- IO.blocking {
+            assertEquals(oldAsset.length,newAsset.length)
+            Files.writeString(file,oldAsset)
+            Files.writeString(dir.resolve(asset.stripPrefix("/")),oldAsset)
+            Files.setLastModifiedTime(file,FileTime.fromMillis(1000))
+            Files.setLastModifiedTime(dir.resolve(asset.stripPrefix("/")),FileTime.fromMillis(1000))
+          }
+          before <- get(app,path)
+          beforeBody <- before.as[String]
+          _ <- IO { assertEquals(before.status,Status.Ok); assertEquals(beforeBody,oldAsset) }
+          legacy <- get(app,asset)
+          _ <- legacy.body.compile.drain
+          _ <- IO.blocking {
+            Files.writeString(file,newAsset)
+            Files.setLastModifiedTime(file,FileTime.fromMillis(1000))
+          }
+          validators=List("If-None-Match"->header(legacy,"ETag").get,"If-Modified-Since"->header(legacy,"Last-Modified").get)
+          response <- get(app,path,if(condition=="both") validators else validators.filter(_._1==condition))
+          body <- response.as[String]
+          _ <- IO {
+            assertEquals(response.status,Status.Ok,s"changed account asset must not produce a stale 304 for $condition")
+            assertEquals(body,newAsset)
+            assertEquals(header(response,"Cache-Control"),Some("no-store"))
+            assertEquals(header(response,"ETag"),None)
+            assertEquals(header(response,"Last-Modified"),None)
+            security(response)
+          }
+        } yield ()
+      }
+    }
+  }
   test("Blackbox-GoodCommunication: HTML is never stored; hashed asset conditional caching and security headers are preserved") {
     withRoutes { (app,_) => for {
       html <- get(app,"/")

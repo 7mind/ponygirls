@@ -149,12 +149,13 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     }.flatMap {
       case None => NotFound()
       case Some(file) =>
-        // Nix store mtimes are normalized: equal-length HTML can share metadata validators
-        // across deployments. Never let an old validator hide the current asset references.
+        // Nix store mtimes are normalized: equal-length unversioned entry points can share
+        // metadata validators across deployments. Always send their current bytes.
         val name=file.getFileName.toString.toLowerCase(java.util.Locale.ROOT)
         val html=name.endsWith(".html") || name.endsWith(".htm")
-        StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),if(html) None else Some(r)).getOrElseF(NotFound()).map { response =>
-          val cached=if(html) response.transformHeaders(h => Headers(h.headers.filterNot(v => v.name==CIString("ETag") || v.name==CIString("Last-Modified")))).putHeaders(Header.Raw(CIString("Cache-Control"),"no-store")) else response
+        val entryPoint=html || Set("/account.js","/account.css").contains(r.uri.path.renderString)
+        StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),if(entryPoint) None else Some(r)).getOrElseF(NotFound()).map { response =>
+          val cached=if(entryPoint) response.transformHeaders(h => Headers(h.headers.filterNot(v => v.name==CIString("ETag") || v.name==CIString("Last-Modified")))).putHeaders(Header.Raw(CIString("Cache-Control"),"no-store")) else response
           cached.putHeaders(Header.Raw(CIString("Content-Security-Policy"),"default-src 'self'; connect-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'"),Header.Raw(CIString("X-Content-Type-Options"),"nosniff"),Header.Raw(CIString("Referrer-Policy"),"no-referrer"))
         }
     }
