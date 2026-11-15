@@ -33,8 +33,8 @@ in stdenv.mkDerivation {
     ${lib.optionalString (service == "manure") ''
       # The hosted feature is build-only. Production classes use only the JDK;
       # this is the proven POSIX seam, not a JVM/legacy Python fallback.
-      grep -q 'GRAALVM_VERSION="25.4.4.1.1"' "$JAVA_HOME/release" || {
-        echo 'POSIX hosted feature requires verified Graal CE 25.4.4.1.1' >&2; exit 1;
+      grep -q 'GRAALVM_VERSION="25.5.5.0.3"' "$JAVA_HOME/release" || {
+        echo 'POSIX hosted feature requires verified Graal CE 25.5.5.0.3' >&2; exit 1;
       }
       mkdir hosted-feature
       javac --add-modules org.graalvm.nativeimage -cp "$JAVA_HOME/lib/svm/builder/*" \
