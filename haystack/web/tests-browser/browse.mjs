@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export async function checkBrowse({ browser, base, login, humanToken, check, seed, agent, docOf, rid, artifacts, interceptSearch }) {
+export async function checkBrowse({ browser, base, login, humanPassword, check, seed, agent, docOf, rid, artifacts, interceptSearch }) {
   const total = 45;
   // Reverse insertion order makes real modified-at desc match the original
   // constant-clock/key-order fixture, without injecting private server state.
@@ -8,7 +8,7 @@ export async function checkBrowse({ browser, base, login, humanToken, check, see
     await seed.put({ key: `scroll:${String(index).padStart(2, "0")}`, documentJson: docOf({ title: `Record ${String(total - index - 1).padStart(2, "0")}`, tags: [index % 2 ? "odd" : "even"] }), expectedRevision: 0, requestId: rid() }, agent);
   }
   const open = async (page) => {
-    await login(page, humanToken);
+    await login(page, humanPassword);
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await page.goto(`${base}/#/browse?${new URLSearchParams({ q: "project:scroll" })}`);
     await page.waitForFunction(() => document.querySelectorAll(".records-panel tbody .record-open").length === 20);
@@ -164,7 +164,7 @@ export async function checkBrowse({ browser, base, login, humanToken, check, see
       const archive = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "archived:true");
       await page.getByRole("button", { name: "Archive", exact: true }).click();
       assert.equal((await archive).request().postDataJSON().project, null);
-      assert.equal(await query.inputValue(), "archived:true", "sidebar presets also use the expression");
+      assert.equal(await query.inputValue(), "archived:true", "navigation presets also use the expression");
       await page.getByRole("button", { name: "ui:old", exact: true }).waitFor();
     } finally { await ctx.close(); }
   });

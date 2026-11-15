@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Disposable PostgreSQL + the selected Scala/native executable + built UI.
+# Private per-port PostgreSQL preview + selected Scala/native executable + built UI.
 # HAYSTACK_SERVER_COMMAND='java -jar /absolute/haystack-server.jar' ./quick-ui.sh [port] [bind]
 # No TypeScript/Node server fallback. Node is only a build/fixture client tool.
 set -euo pipefail
@@ -12,63 +12,83 @@ PGPORT="$((PORT + 100))"
 need() { command -v "$1" >/dev/null 2>&1 || { echo "quick-ui: missing $1 (use the pinned chronicle development shell)" >&2; return 1; }; }
 for tool in node npm initdb pg_ctl psql curl; do need "$tool"; done
 # A selected port must belong to this disposable preview, never an existing app.
-node --input-type=module - "$PORT" "$BIND" <<'JS'
+node --input-type=module - "$PORT" "$BIND" "$PGPORT" <<'JS'
 import { createServer } from 'node:net';
-const socket = createServer();
-socket.once('error', () => { console.error('quick-ui: selected port is unavailable; refusing to contact an existing listener'); process.exitCode = 2; });
-socket.listen(Number(process.argv[2]), process.argv[3], () => socket.close());
+for (const [port, host] of [[Number(process.argv[2]), process.argv[3]], [Number(process.argv[4]), '127.0.0.1']]) {
+  const socket = createServer();
+  await new Promise((resolve, reject) => {
+    socket.once('error', () => reject(new Error('quick-ui: selected port is unavailable; refusing to contact an existing listener')));
+    socket.listen(port, host, () => socket.close(resolve));
+  });
+}
 JS
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/haystack-ui.XXXXXX")"
 SRVPID=""
+PG_STARTED=0
+LOCK_HELD=0
 cleanup() {
-  if [[ -n "${SRVPID:-}" ]]; then kill "$SRVPID" 2>/dev/null || true; wait "$SRVPID" 2>/dev/null || true; fi
-  if [[ -d "$WORK/pg" ]]; then pg_ctl -D "$WORK/pg" -m fast stop >/dev/null 2>&1 || true; fi
+  if [[ -n "$SRVPID" ]]; then
+    kill "$SRVPID" 2>/dev/null || true
+    local deadline=$((SECONDS + 15))
+    while kill -0 "$SRVPID" 2>/dev/null && ((SECONDS < deadline)); do sleep 0.1; done
+    if kill -0 "$SRVPID" 2>/dev/null; then echo 'quick-ui: server exceeded graceful shutdown deadline' >&2; kill -KILL "$SRVPID" 2>/dev/null || true; fi
+    wait "$SRVPID" 2>/dev/null || true
+  fi
+  local stopped=1
+  if [[ "$PG_STARTED" == 1 ]] && ! pg_ctl -D "$PGDATA" -m fast -t 15 stop >/dev/null 2>&1; then
+    echo "quick-ui: database shutdown unconfirmed; preserve and inspect $STATE_DIR" >&2
+    stopped=0
+  fi
+  if [[ "$LOCK_HELD" == 1 && "$stopped" == 1 ]]; then rmdir -- "$STATE_DIR/launcher.lock" || echo "quick-ui: launcher lock cleanup failed: $STATE_DIR/launcher.lock" >&2; fi
   rm -rf -- "$WORK"
 }
 trap cleanup EXIT
 trap 'exit 143' TERM
 trap 'exit 130' INT
 cd "$HAYSTACK_DIR"
-if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src generated/typescript web/index.html web/vite.config.ts web/package.json package-lock.json -type f -newer web/dist/index.html -print -quit 2>/dev/null)" ]]; then
+umask 077
+STATE_DIR="$HAYSTACK_DIR/../debug/haystack-ui/$PORT"
+node web/tests-browser/preview-state.mjs "$STATE_DIR" "$PORT"
+if ! mkdir -m 700 -- "$STATE_DIR/launcher.lock"; then echo "quick-ui: preview is already running or its lock needs operator inspection: $STATE_DIR/launcher.lock" >&2; exit 2; fi
+LOCK_HELD=1
+if [[ ! -f web/dist/index.html ]] || [[ -n "$(find web/src generated/typescript web/index.html web/vite.config.ts web/package.json package-lock.json ../shared/account-web -type f -newer web/dist/index.html -print -quit 2>/dev/null)" ]]; then
   echo 'quick-ui: building browser…' >&2
   [[ -d node_modules ]] || npm ci --offline --no-audit --no-fund >&2
   npm run build -w web >&2
 fi
-umask 077
-export PGDATA="$WORK/pg" PGSOCK="$WORK/sock"
+export PGDATA="$STATE_DIR/pg" PGSOCK="$WORK/sock"
 mkdir -p "$PGSOCK"
-initdb -D "$PGDATA" -U postgres --auth=trust >/dev/null
+if [[ ! -f "$PGDATA/PG_VERSION" ]]; then initdb -D "$PGDATA" -U postgres --auth=trust >/dev/null; fi
+if pg_ctl -D "$PGDATA" status >/dev/null 2>&1; then echo 'quick-ui: retained database is already running; refusing to adopt it' >&2; exit 2; fi
+PG_STARTED=1
 pg_ctl -D "$PGDATA" -l "$WORK/pg.log" -o "-k $PGSOCK -p $PGPORT -c listen_addresses='127.0.0.1'" start >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE ROLE haystack_preview LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' >/dev/null
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE DATABASE haystack OWNER haystack_preview;' >/dev/null
+if [[ "$(psql -XAt -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c "SELECT 1 FROM pg_roles WHERE rolname = 'haystack_preview'")" != 1 ]]; then
+  psql -X -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE ROLE haystack_preview LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION;' >/dev/null
+fi
+if [[ "$(psql -XAt -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c "SELECT 1 FROM pg_roles WHERE rolname = 'haystack_preview' AND NOT rolsuper AND NOT rolcreatedb AND NOT rolcreaterole AND NOT rolreplication")" != 1 ]]; then
+  echo 'quick-ui: retained runtime role is not least-privilege; refusing startup' >&2; exit 2
+fi
+if [[ "$(psql -XAt -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c "SELECT 1 FROM pg_database WHERE datname = 'haystack'")" != 1 ]]; then
+  psql -X -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -c 'CREATE DATABASE haystack OWNER haystack_preview;' >/dev/null
+fi
 # Extension installation is an explicit owned-cluster administrator operation;
 # the selected application runtime remains NOSUPERUSER/NOCREATEDB.
-psql -h "$PGSOCK" -p "$PGPORT" -U postgres -d haystack -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null
-TOKEN_FILE="$HAYSTACK_DIR/../debug/haystack-ui/$PORT/token.txt"
-mkdir -p -- "$(dirname -- "$TOKEN_FILE")"
-TOKEN="$(node --input-type=module - "$TOKEN_FILE" <<'JS'
-import { writeFile, readFile } from 'node:fs/promises';
-import { randomBytes } from 'node:crypto';
-const file = process.argv[2];
-try { await writeFile(file, randomBytes(32).toString('base64url') + '\n', { flag: 'wx', mode: 0o600 }); }
-catch (error) { if (error.code !== 'EEXIST') throw error; }
-const token = (await readFile(file, 'utf8')).replace(/\n$/, '');
-if (!/^[A-Za-z0-9_-]{43}$/.test(token) || Buffer.from(token, 'base64url').toString('base64url') !== token) throw new Error('Invalid saved preview token');
-process.stdout.write(token);
+psql -X -v ON_ERROR_STOP=1 -h "$PGSOCK" -p "$PGPORT" -U postgres -d haystack -c 'CREATE EXTENSION IF NOT EXISTS vector;' >/dev/null
+node --input-type=module - "$STATE_DIR/token.txt" "$WORK/token.sha" <<'JS'
+import { readFile, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+await writeFile(process.argv[3], createHash('sha256').update((await readFile(process.argv[2], 'utf8')).trimEnd(), 'ascii').digest('hex') + '\n', { mode: 0o600 });
 JS
-)"
-chmod 600 -- "$TOKEN_FILE"
-printf '%s' "$TOKEN" | sha256sum | cut -d' ' -f1 > "$WORK/token.sha"
 printf 'unused-preview-password\n' > "$WORK/database-password"
 LANIP="$( (ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+' || hostname -I 2>/dev/null | awk '{print $1}' || true) | head -1)"
-node --input-type=module - "$WORK" "$PORT" "$BIND" "$PGPORT" "$HAYSTACK_DIR/web/dist" "$LANIP" <<'JS'
+node --input-type=module - "$WORK" "$PORT" "$BIND" "$PGPORT" "$HAYSTACK_DIR/web/dist" "$LANIP" "$STATE_DIR" <<'JS'
 import { writeFile } from 'node:fs/promises';
-const [dir, port, bind, pgport, webRoot, lan] = process.argv.slice(2);
+const [dir, port, bind, pgport, webRoot, lan, state] = process.argv.slice(2);
 const hosts = [...new Set(['127.0.0.1', 'localhost', bind, ...(bind !== '127.0.0.1' && lan ? [lan] : [])])];
 const origins = hosts.map(h => `http://${h}:${port}`);
 const config = {
   listenHost: bind, listenPort: Number(port), webRoot, authReloadMs: 1000,
-  auth: { activityProjectId: 'demo', users: [{id:'op',type:'human',displayName:'Op',tokens:[{id:'browser',hashFile:`${dir}/token.sha`}]}],
+  auth: { activityProjectId: 'demo', users: [{id:'op',type:'human',displayName:'Op',enabled:true,login:'op',passwordHashFile:`${state}/password.hash`,tokens:[{id:'seed',hashFile:`${dir}/token.sha`}]}],
     cookieSecure: true, allowedHosts: hosts, allowedOrigins: origins, insecureHttpOrigins: origins,
     rateLimit: {windowMs:60000,max:600} },
   database: {jdbcUrl:`jdbc:postgresql://127.0.0.1:${pgport}/haystack`,user:'haystack_preview',passwordFile:`${dir}/database-password`,
@@ -87,23 +107,34 @@ for _ in $(seq 1 300); do
 done
 if [[ "$READY" != 1 ]]; then echo 'quick-ui: server never became ready:' >&2; cat "$WORK/server.log" >&2; exit 1; fi
 # Seed exclusively through current generated codecs and authenticated public API.
-TOKEN="$TOKEN" node --import ./scripts/register-generated.mjs --input-type=module - "$PORT" <<'JS'
+node --import ./scripts/register-generated.mjs --input-type=module - "$PORT" "$STATE_DIR/token.txt" <<'JS'
+import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { publicClient } from './web/tests-browser/native.mjs';
-const client = publicClient(`http://127.0.0.1:${process.argv[2]}`, process.env.TOKEN);
+import { BaboonCodecContext } from './generated/typescript/BaboonSharedRuntime.ts';
+import { GetRequest, Item } from './generated/typescript/haystack/api/index.ts';
+const base = `http://127.0.0.1:${process.argv[2]}`;
+const token = (await readFile(process.argv[3], 'utf8')).trimEnd();
+const client = publicClient(base, token);
 const doc = (over) => JSON.stringify({title:'Hello haystack',description:'Try editing me, then check history.',fields:{},type:'fact',status:'actual',importance:'high','human-attention':'cleared',links:[],tags:[],...over});
 const rows = [
   ['demo:hello',doc({}).replace('"fields":{}','"fields":{"n":9007199254740993}')],
   ['demo:todo',doc({title:'Needs a human',type:'todo','human-attention':'required',links:[['related-to','demo:hello']]})],
   ['demo:old',doc({title:'Buried one',status:'archived',importance:'low'})],
 ];
-for (let i=0;i<rows.length;i++) await client.put({key:rows[i][0],documentJson:rows[i][1],expectedRevision:0,requestId:`0193e8d5-6f5c-7a1b-8c2d-${String(501+i).padStart(12,'0')}`});
+for (let i=0;i<rows.length;i++) {
+  const response = await fetch(`${base}/api/v1/get`, { method:'POST', signal:AbortSignal.timeout(15000), headers:{'Content-Type':'application/json','X-Haystack-Version':'1.0.0',Authorization:`Bearer ${token}`}, body:JSON.stringify(GetRequest.jsonCodec().encode(BaboonCodecContext.Default,new GetRequest(rows[i][0],undefined))) });
+  if (response.status === 404) await client.put({key:rows[i][0],documentJson:rows[i][1],expectedRevision:0,requestId:`0193e8d5-6f5c-7a1b-8c2d-${String(501+i).padStart(12,'0')}`});
+  else { assert.equal(response.status,200,'preview seed lookup failed'); Item.jsonCodec().decode(BaboonCodecContext.Default,await response.json()); }
+}
 JS
 echo
 echo "  UI (this host):  http://127.0.0.1:$PORT/#/browse"
 if [[ "$BIND" != "127.0.0.1" && -n "$LANIP" ]]; then echo "  UI (other hosts): http://$LANIP:$PORT/#/browse"; fi
-echo "  Token:   $TOKEN"
-echo "  Saved:   $TOKEN_FILE (retained across launches)"
-echo '  WARNING: no TLS; URL + token grants full access. Throwaway testing only.'
-echo '  Stop: Ctrl-C (server, database and demo data removed; token retained)'
+echo '  Username: op'
+echo "  Password: $(cat "$STATE_DIR/password.txt")"
+echo "  Saved:    $STATE_DIR (private credentials, demo data and sessions retained)"
+echo '  WARNING: no TLS; URL + password grants full access. Local testing only.'
+echo '  Stop: Ctrl-C (server and database stop; private preview state is retained)'
 echo
 wait "$SRVPID"

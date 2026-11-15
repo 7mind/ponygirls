@@ -32,9 +32,22 @@ const vite = await createServer({ root, optimizeDeps: { include: ["react", "reac
     return `import React from 'react';
         import { createRoot } from 'react-dom/client';
         import { App } from '/src/App.tsx'; import { api } from '/src/api.ts'; import '/src/styles.css';
-        api.whoami = async () => ({userId:'operator',type:'human',tokenId:'test',activityProjectId:'activity'});
+        window.layoutUser = 'operator'; window.accountInvalidations = 0;
+        document.addEventListener('account:invalidate', () => window.accountInvalidations++);
+        api.whoami = async () => {
+          const userId = window.layoutUser;
+          if (window.holdWhoami === userId) await new Promise(resolve => { window.releaseWhoami = resolve; });
+          return {userId,type:'human',tokenId:'test',activityProjectId:'corporate-activity'};
+        };
+        api.logout = async () => { window.logoutInvalidations = window.accountInvalidations; return {ok:true}; };
         api.search = async () => ({items:location.search === "?fixture=normal" ? ${JSON.stringify(normalItems)} : [${JSON.stringify(item)}],cursor:undefined});
         api.analyze = async () => ({valid:true,diagnostics:[]});
+        if (new URLSearchParams(location.search).has('pending')) {
+          let pending = {key:'project:' + 'uncertainwrite'.repeat(30)}; const listeners = new Set();
+          api.pendingWrite = () => pending;
+          api.subscribePendingWrite = listener => { listeners.add(listener); return () => listeners.delete(listener); };
+          api.retryPendingWrite = async () => { pending = undefined; listeners.forEach(listener => listener()); return {revision:7}; };
+        }
         createRoot(document.getElementById('root')).render(React.createElement(App));`;
   },
   configureServer(server) {
@@ -55,6 +68,25 @@ try {
       await page.emulateMedia({ colorScheme });
       await page.goto(`${vite.resolvedUrls.local[0]}layout.html#/browse`);
       await page.locator(".record-open").waitFor();
+      assert.equal(await page.locator(".sidebar").count(), 0, "workspace navigation must not reserve a sidebar");
+      assert.equal(await page.locator(".topbar .brand").count(), 1, "brand belongs in the workspace header");
+      assert.equal(await page.locator(".topbar .connection-widget").count(), 1, "live status must flow with header controls, not overlay them");
+      assert.equal(await page.locator(".activity-namespace").isVisible(), true, "activity namespace remains visible on mobile");
+      assert.equal(await page.getByRole("button", { name: "Settings", exact: true }).getAttribute("data-account-settings"), "");
+      assert.equal(await page.getByRole("button", { name: "Settings", exact: true }).getAttribute("data-account-user-id"), "operator");
+      await page.locator(".connection-button").click();
+      const connection = await page.locator(".connection-panel").boundingBox();
+      assert.ok(connection.x >= 0 && connection.x + connection.width <= width, "connection details fit the viewport");
+      await page.getByRole("button", { name: "Close connection details", exact: true }).click();
+      for (const name of ["Browse", "Attention inbox", "Upstream activity", "Skill candidates", "Archive", "Settings", "Sign out"]) {
+        const control = page.getByRole("button", { name, exact: true });
+        assert.equal(await control.isVisible(), true, `${width}: ${name} remains visible`);
+        assert.ok(await control.evaluate(element => {
+          const rect = element.getBoundingClientRect();
+          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+          return rect.left >= 0 && rect.right <= innerWidth && target !== null && element.contains(target);
+        }), `${width}: ${name} fits and is not covered by another control`);
+      }
       if (artifacts) await page.screenshot({ path: `${artifacts}/haystack-layout-${width}-${colorScheme}.png`, fullPage: true });
       const dimensions = await page.evaluate(() => {
         const panel = document.querySelector(".records-panel");
@@ -80,12 +112,42 @@ try {
         await page.keyboard.press("Enter");
         await page.waitForFunction(label => document.querySelector(`[aria-label="Sort by ${label}"]`).closest("th").getAttribute("aria-sort") !== "none", label);
       }
+      const appliedHash = new URL(page.url()).hash;
+      await page.getByRole("link", { name: "Skip to main content", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+      assert.equal(new URL(page.url()).hash, appliedHash, "skip navigation must not replace the applied hash route");
+      assert.equal(await page.locator(".workspace-main").evaluate(element => element === document.activeElement), true);
       await page.locator(".record-open").focus();
       await page.keyboard.press("Enter");
       assert.ok(new URL(page.url()).hash.startsWith("#/item/"), "record action must remain available");
       console.log(`ok - record layout ${width}px ${colorScheme}: no horizontal overflow; metadata, sorting and open action available`);
     }
   }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${vite.resolvedUrls.local[0]}layout.html?fixture=normal#/browse`);
+  await page.locator(".record-open").first().waitFor();
+  for (const row of await page.locator("tbody tr").all()) {
+    assert.ok((await row.boundingBox()).height <= 64, "ordinary desktop rows stay compact");
+  }
+  assert.equal(await page.locator(".workspace-main").evaluate(element => element.getBoundingClientRect().left), 0, "records use the full workspace width");
+  await page.evaluate(() => { window.layoutUser = "stale"; window.holdWhoami = "stale"; document.dispatchEvent(new Event("account:changed")); });
+  await page.waitForFunction(() => typeof window.releaseWhoami === "function");
+  await page.evaluate(() => { window.layoutUser = "replacement"; document.dispatchEvent(new Event("account:changed")); });
+  await page.waitForFunction(() => document.querySelector("[data-account-settings]").dataset.accountUserId === "replacement");
+  await page.evaluate(() => { window.releaseWhoami(); });
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await page.locator("[data-account-settings]").getAttribute("data-account-user-id"), "replacement", "a late identity response cannot restore a superseded account");
+  assert.ok(await page.evaluate(() => window.accountInvalidations > 0), "identity replacement invalidates stale account state");
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByLabel("Username", { exact: true }).waitFor();
+  assert.ok(await page.evaluate(() => window.logoutInvalidations >= 2), "account state is invalidated before logout dispatch");
+  await page.setViewportSize({ width: 320, height: 900 });
+  await page.goto(`${vite.resolvedUrls.local[0]}layout.html?fixture=normal&pending=1#/browse`);
+  await page.getByRole("button", { name: "Retry original write", exact: true }).waitFor();
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "uncertain-write recovery must fit the mobile workspace");
+  await page.getByRole("button", { name: "Retry original write", exact: true }).click();
+  await page.getByText(/Original write confirmed as revision 7/).waitFor();
   if (artifacts) {
     await page.setViewportSize({ width: 1440, height: 900 });
     for (const colorScheme of ["light", "dark"]) {

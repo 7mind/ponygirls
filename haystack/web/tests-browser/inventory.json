@@ -3,7 +3,7 @@
     "UUIDv7 carries its creation timestamp, version, and variant",
     "parseTagsInput splits on commas and trims",
     "buildDocumentJson carries tags verbatim",
-    "login/logout/whoami consume generated current identity and version shapes",
+    "logout/whoami consume generated current acknowledgement and identity shapes",
     "get and historical get decode nested DocumentPayload without rounding or old route",
     "put encodes DocumentPayload and current camelCase CAS/replay fields",
     "search uses generated defaults/explicit sort and projects docType for UI only",
@@ -65,7 +65,14 @@
     "every evaluated proxy target must match the declared loopback backend and exact input contract",
     "configured proxy input fails on malformed duplicate invalid UTF8 or missing files without a fallback",
     "proxy unavailability decodes only the direct current generated Failure and rejects retired nested errors",
-    "occupied fixture ports are rejected without probing or contacting another listener"
+    "occupied fixture ports are rejected without probing or contacting another listener",
+    "preview state keeps its password hash, API seed and existing database across launches",
+    "preview upgrade preserves an existing API seed without reusing it as the password",
+    "preview refuses a mismatched password hash without replacing retained credentials",
+    "preview refuses linked credential files without modifying their targets",
+    "preview refuses an unrecognized existing database rather than adopting or deleting it",
+    "preview state identity cannot be reused for a different port",
+    "superseded identity replies cannot clear the replacement session's pending write"
   ],
   "browserCases": [
     "record layout 1101px light: no horizontal overflow; metadata, sorting and open action available",
@@ -124,7 +131,8 @@
     "legacy URL filters become the exact visible applied expression",
     "unsafe legacy URL filters show a migration error without searching",
     "HTTPS session survives backend stop, refresh, restart, refresh; logout still expires it",
-    "quick-ui.sh restart retains its token and the existing browser session"
+    "quick-ui.sh restart retains its private database, password and independent browser session",
+    "Haystack password login, settings lifecycle and token controls fit desktop and mobile"
   ],
   "markupCases": [
     "browse initial markup exposes one expression, secondary help and sortable columns without pagination"

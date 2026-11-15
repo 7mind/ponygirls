@@ -3,6 +3,10 @@
 No leg skips successfully when a required prerequisite is absent. No historical
 TypeScript server is launched or imported. Fixtures seed the selected JVM/native
 process using the actual generated current codecs and authenticated public API.
+Browser sign-in uses a synthetic username/password and paired passwordHashFile;
+the API seed token is never installed as a browser cookie. The preview restart
+leg retains its owned private PostgreSQL database to prove session and edited
+record durability, not merely credential-file persistence.
 
 Run from the repository root inside the pinned shell (provision the locked npm
 cache first if needed; the runner's `npm ci --offline` never changes the lock):
@@ -27,9 +31,10 @@ to 575 seconds plus a ten-second termination grace; individual assertion,
 heartbeat, concurrency and restart deadlines are unchanged. Use the parent's
 background execution lane rather than extending foreground tool timeouts.
 
-`inventory.json` is checked exactly against all 66 JUnit leaf cases (67 Node
-cases including the helper-mode group), 39 main browser checks, sixteen controlled layout checks, the HTTPS
-restart, preview restart, and markup case. The original 36 atomic cases remain.
+`inventory.json` is checked exactly against all 73 JUnit leaf cases (74 Node
+cases including the helper-mode group), 39 main browser checks, sixteen controlled
+layout checks, the controlled account fixture, HTTPS restart, preview restart,
+and markup case. The original 36 atomic cases remain.
 A fresh report records source and inventory hashes, dependency identities,
 JAR/ELF SHA256 before and after, complete logs, XML, and a zero-skip receipt.
 Failed/missing case inventories fail the runner; existing reports are never
@@ -107,14 +112,31 @@ own selected child emits the exact `haystack: ready` marker; an unrelated health
 service cannot satisfy fixture readiness. Private Nix-network fixed ports remain
 valid without changing the evaluated JSON.
 
+## Controlled account integration
+
+`npm run test:account` uses the real React app and shared account assets with
+owned HTTP fixtures. It checks username/password sign-in, distinct invalid-login
+and outage feedback, independent HttpOnly cookies, configured-token immutability,
+create/copy/dismiss/revoke, secret-free web storage, focus restoration, logout,
+and Settings-to-Haystack identity-change hooks at 1440, 390 and 320 pixels in
+both themes. It does not establish backend account authorization or persistence.
+The default assets are `shared/account-web`; an explicit absolute
+`HAYSTACK_ACCOUNT_WEB_ROOT` can select another task worktree for integration
+checks. The fixture records both asset SHA-256 digests without secrets.
+
 ## Viewport layout regression
 
 The controlled-API layout fixture renders the actual App in pinned Chromium.
 It checks 1440, 1101, 1100, 1024, 801, 800, 390 and 320 pixel viewports in
 light/dark mode with long
 unbroken titles, identifiers, projects, types, tags and modifier identities.
+The header/toolbar must expose every workspace destination, Settings, Sign out,
+and the activity namespace without a sidebar or overlapping controls; live
+connection details must fit the viewport. Ordinary desktop rows stay compact.
 Page, results region and table must fit horizontally without clipping metadata;
-every sort control and the open-record action is exercised by keyboard.
+every sort control and the open-record action is exercised by keyboard. Account
+identity changes refresh the principal and invalidate stale Settings state
+before logout or identity replacement.
 Accessibility snapshots retain the table, rows, column headers and cells. This is UI layout
 coverage, not backend/protocol acceptance. It also runs in `test:browser`.
 

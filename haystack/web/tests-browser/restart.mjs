@@ -10,6 +10,7 @@ import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
+import { writePasswordHash } from "./credentials.mjs";
 import { Failure } from "../../generated/typescript/haystack/api/Failure.ts";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import { readProxyConfig, validateProxyConfig } from "./proxy-config.mjs";
@@ -25,6 +26,9 @@ const repoRoot = path.resolve(webRoot, "..", "..");
 const dir = await mkdtemp(path.join(process.env.HAYSTACK_UI_ARTIFACTS ?? os.tmpdir(), "haystack-restart-"));
 const token = randomBytes(32).toString("base64url");
 const hashFile = path.join(dir, "token.sha");
+const password = randomBytes(32).toString("base64url");
+const passwordHashFile = path.join(dir, "password.hash");
+await writePasswordHash(passwordHashFile, password);
 await writeFile(hashFile, createHash("sha256").update(token, "ascii").digest("hex"), { mode: 0o600 });
 
 let host;
@@ -39,7 +43,7 @@ await assertPortAvailable(proxyPort, publicUrl.hostname.replace(/^\[|\]$/gu, "")
 const serverConfig = path.join(dir, "config.json");
 const auth = {
   activityProjectId: "agent-activity", cookieSecure: true,
-  users: [{ id: "op", type: "human", displayName: "Operator", tokens: [{ id: "browser", hashFile }] }],
+  users: [{ id: "op", type: "human", displayName: "Operator", enabled: true, login: "op", passwordHashFile, tokens: [{ id: "browser", hashFile }] }],
   allowedHosts: [publicUrl.hostname.replace(/^\[|\]$/gu, "")], allowedOrigins: [base], insecureHttpOrigins: [], rateLimit: { windowMs: 60000, max: 600 },
 };
 
@@ -130,7 +134,7 @@ try {
     if (diagnostic.responses.length < 200) {
       const entry = { path: new URL(response.url()).pathname, status: response.status(), contentType: response.headers()["content-type"] };
       diagnostic.responses.push(entry);
-      if (entry.path === "/api/v1/login" && entry.status >= 400) try { entry.code = Failure.jsonCodec().decode(BaboonCodecContext.Default, await response.json()).code; } catch { entry.code = "not-current-json-failure"; }
+      if (entry.path === "/api/account/v1/login" && entry.status >= 400) try { entry.code = (await response.json()).error.code; } catch { entry.code = "not-account-json-failure"; }
     }
   });
   page.on("pageerror", (error) => { if (diagnostic.pageErrors.length < 20) diagnostic.pageErrors.push(error.message); });
@@ -138,19 +142,21 @@ try {
     if (diagnostic.failedRequests.length < 20) diagnostic.failedRequests.push({ path: new URL(request.url()).pathname, error: request.failure()?.errorText });
   });
   page.on("request", async (request) => {
-    if (new URL(request.url()).pathname === "/api/v1/login") {
+    if (new URL(request.url()).pathname === "/api/account/v1/login") {
       const headers = await request.allHeaders();
       diagnostic.loginTransport = { origin: headers.origin ?? null, fetchSite: headers["sec-fetch-site"] ?? null };
     }
   });
   diagnostic.phase = "login";
   assert.equal((await page.goto(base)).status(), 200, "UI shell must be served by nginx");
-  await page.getByLabel("Token").fill(token);
+  await page.getByLabel("Username", { exact: true }).fill("op");
+  await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
   await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
   const session = (await ctx.cookies()).find((cookie) => cookie.name === "__Host-haystack");
   assert.ok(session && session.secure && session.httpOnly);
+  assert.ok(session.value !== token && session.value !== password, "browser session must not be an API token or password");
   diagnostic.phase = "backend-stop";
   await stop(backend);
   assert.equal(backend.exitCode, 0, "backend shutdown must be clean");
@@ -167,7 +173,7 @@ try {
   }
   await page.reload();
   await page.getByRole("alert").filter({ hasText: "Server unreachable" }).waitFor();
-  assert.equal(await page.getByLabel("Token").count(), 0);
+  assert.equal(await page.getByLabel("Password", { exact: true }).count(), 0);
   assert.ok((await ctx.cookies()).find((cookie) => cookie.name === session.name).value === session.value, "outage must preserve the session token");
   diagnostic.phase = "backend-restart";
   await startBackend();

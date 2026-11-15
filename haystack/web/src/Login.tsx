@@ -1,53 +1,23 @@
-import { useState } from "react";
-import { api, AuthError, NetworkError } from "./api";
 import { Icon } from "./Icon";
 
-export function Login({ onLogin }: { onLogin: () => void }) {
-  const [token, setToken] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  async function submit(event: React.FormEvent) {
-    event.preventDefault();
-    setError(null);
-    setBusy(true);
-    try {
-      await api.login(token);
-      setToken("");
-      onLogin();
-    } catch (err) {
-      if (err instanceof AuthError) setError("Invalid token.");
-      else if (err instanceof NetworkError) setError("Server unreachable — the service may be down.");
-      else setError("Login failed.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
+export function Login() {
   return (
     <main className="auth-screen">
       <div className="auth-card"><span className="brand-mark"><Icon name="stack" /></span>
       <h1>Sign in to Haystack</h1>
       <p>Records, upstream activity, and skill candidates.</p>
-      <form onSubmit={submit}>
+      <form data-account-login="" method="post" action="/api/account/v1/login">
         <label>
-          Token
-          <input
-            type="password"
-            value={token}
-            onChange={(e) => setToken(e.target.value)}
-            autoComplete="off"
-            aria-label="Token"
-          />
+          Username
+          <input name="login" autoComplete="username" autoCapitalize="none" spellCheck={false} required />
         </label>
-        <button className="primary" type="submit" disabled={busy || token.length === 0}>
-          {busy ? "Signing in…" : "Sign in"}
-        </button>
+        <label>
+          Password
+          <input name="password" type="password" autoComplete="current-password" required />
+        </label>
+        <button className="primary" type="submit">Sign in</button>
       </form>
-      {error !== null && (
-        <p role="alert">{error}</p>
-      )}
-      <small className="auth-note">Use your provisioned token. Your session stays in an HttpOnly browser cookie.</small>
+      <small className="auth-note">Use your account username and password. Your session stays in an HttpOnly browser cookie until you sign out.</small>
       </div>
     </main>
   );

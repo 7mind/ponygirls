@@ -42,7 +42,7 @@ import { parseRaw as parse } from "./lossless-json.ts";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import {
   Ack, AnalyzeResult, CompletionResult, DocumentPayload, Failure, GetRequest,
-  HistoryRequest, HistoryResult, Identity, Item as WireItem, LoginRequest, LoginResult,
+  HistoryRequest, HistoryResult, Identity, Item as WireItem,
   PutRequest, PutResult, QueryRequest, SearchRequest, SearchResult, SearchSort as WireSearchSort,
   ValuesRequest, ValuesResult,
 } from "../../generated/typescript/haystack/api/index.ts";
@@ -53,18 +53,24 @@ interface Codec<T> {
   encode(context: BaboonCodecContext, value: T): unknown;
   decode(context: BaboonCodecContext, json: unknown): T;
 }
-async function request(path: string, init: RequestInit): Promise<Response> {
+async function request(path: string, init: RequestInit, isCurrent: () => boolean): Promise<Response> {
   let res: Response;
   try { res = await fetch(path, init); } catch { throw new NetworkError(); }
-  if (res.status === 401) { writes.clear(); sessionIdentity = undefined; throw new AuthError(); }
+  if (res.status === 401) {
+    if (isCurrent()) { writes.clear(); sessionIdentity = undefined; }
+    throw new AuthError();
+  }
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
   return res;
 }
 async function call<T>(path: string, codec: Codec<T>, body?: unknown, method = "POST"): Promise<T> {
+  return callCurrent(path, codec, body, method, () => true);
+}
+async function callCurrent<T>(path: string, codec: Codec<T>, body: unknown, method: string, isCurrent: () => boolean): Promise<T> {
   const res = await request(path, {
     method, headers: { "Content-Type": "application/json", "X-Haystack-Version": version },
     body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
-  });
+  }, isCurrent);
   let parsed: unknown;
   try { parsed = await res.json(); }
   catch { throw new ApiError(res.status, { code: "unavailable", message: "bad response" }); }
@@ -248,16 +254,14 @@ export const api = {
   clearSessionWrites: () => { writes.clear(); sessionIdentity = undefined; },
   subscribePendingWrite: writes.subscribe,
   retryPendingWrite: () => writes.retry(),
-  login: async (token: string) => {
-    const result = await call("/api/v1/login", LoginResult.jsonCodec(), encode(LoginRequest.jsonCodec(), new LoginRequest(token)));
-    writes.clear(); sessionIdentity = identityKey(result.identity); return result;
-  },
   logout: async () => { const result = await call("/api/v1/logout", Ack.jsonCodec()); writes.clear(); sessionIdentity = undefined; return result; },
-  whoami: async (): Promise<Principal> => {
-    const identity = await call("/api/v1/whoami", Identity.jsonCodec(), undefined, "GET");
-    const key = identityKey(identity);
-    if (sessionIdentity !== undefined && sessionIdentity !== key) writes.clear();
-    sessionIdentity = key;
+  whoami: async (isCurrent: () => boolean): Promise<Principal> => {
+    const identity = await callCurrent("/api/v1/whoami", Identity.jsonCodec(), undefined, "GET", isCurrent);
+    if (isCurrent()) {
+      const key = identityKey(identity);
+      if (sessionIdentity !== undefined && sessionIdentity !== key) writes.clear();
+      sessionIdentity = key;
+    }
     return { userId: identity.userId, type: identity.userType as Principal["type"], tokenId: identity.tokenId, activityProjectId: identity.activityProjectId };
   },
   get: async (key: string, revision?: number) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),

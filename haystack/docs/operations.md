@@ -50,13 +50,20 @@ on refresh or retry, within the cookie's normal lifetime.
 
 The standalone preview serves its own assets. If that whole process is
 stopped, the browser cannot load the page until it restarts. `quick-ui.sh`
-retains its per-port login token in `debug/haystack-ui/<port>/token.txt`
-under the repository root, so its cookie survives launcher restarts too.
-The token file is private and ignored by git; demo data is still recreated
-on each launch. Delete that token file to deliberately reset preview login.
-To keep a session from an older disposable launcher, save its printed token
-to this file before stopping that launcher; otherwise the first launch of
-the updated script requires a new login.
+retains private per-port state under `debug/haystack-ui/<port>/`: the PostgreSQL
+database, independent browser sessions, `password.txt`, and `password.hash`.
+It prints username `op` and the generated password for local testing. The
+existing `token.txt` is retained only as the API seed credential, never as a
+browser cookie or password. An old token-only preview needs a fresh password
+sign-in once; its token cannot migrate an old browser cookie.
+
+Restarting with the same port preserves signed-in sessions and edited demo
+records. Ctrl-C stops the owned server and database without deleting state;
+the directory is private and ignored by git. To deliberately reset the preview,
+stop it first, then remove only that port's state directory. Unrecognized
+existing databases, linked credentials, mismatched password/hash files, and
+stale launcher locks fail closed for operator inspection, never automatic
+replacement or deletion. Do not expose this non-TLS preview to untrusted users.
 The independent outage screen requires the nginx proxy.
 
 The browser restart regression runs a real backend process and nginx over

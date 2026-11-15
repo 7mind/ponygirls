@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { api, AuthError, NetworkError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse } from "./Browse";
 import { browseHash, readBrowseState, type BrowseState } from "./browse-state";
 import { Detail } from "./Detail";
-import { LiveProvider } from "./Live";
+import { ConnectionIndicator, LiveProvider } from "./Live";
 import { Icon, type IconName } from "./Icon";
 
 type Route = { name: "browse" | "inbox"; state: BrowseState } | { name: "item"; key: string };
@@ -26,18 +26,27 @@ export function App() {
   const [boot, setBoot] = useState<"loading" | "login" | "ready" | "unreachable">("loading");
   const [route, setRoute] = useState<Route>(() => routeFromHash());
   const [notice, setNotice] = useState("");
+  const main = useRef<HTMLElement>(null);
+  const refreshSequence = useRef(0);
 
   const refresh = useCallback(async () => {
+    const request = ++refreshSequence.current;
     try {
-      const who = await api.whoami();
+      const who = await api.whoami(() => request === refreshSequence.current);
+      if (request !== refreshSequence.current) return;
       // In-memory identity only; clear stale UI state on identity change.
       setPrincipal((prev) => {
-        if (prev !== null && (prev.userId !== who.userId || prev.tokenId !== who.tokenId)) setNotice("Signed-in identity changed — views reloaded.");
+        if (prev !== null && (prev.userId !== who.userId || prev.tokenId !== who.tokenId)) {
+          document.dispatchEvent(new Event("account:invalidate"));
+          setNotice("Signed-in identity changed — views reloaded.");
+        }
         return who;
       });
       setBoot("ready");
     } catch (err) {
+      if (request !== refreshSequence.current) return;
       if (err instanceof AuthError) {
+        document.dispatchEvent(new Event("account:invalidate"));
         setPrincipal(null);
         setBoot("login");
       } else {
@@ -49,11 +58,18 @@ export function App() {
   useEffect(() => {
     void refresh();
     const onHash = () => setRoute(routeFromHash());
+    const onAccountChanged = () => { void refresh(); };
     window.addEventListener("hashchange", onHash);
-    return () => window.removeEventListener("hashchange", onHash);
+    document.addEventListener("account:changed", onAccountChanged);
+    return () => {
+      window.removeEventListener("hashchange", onHash);
+      document.removeEventListener("account:changed", onAccountChanged);
+    };
   }, [refresh]);
 
   async function logout() {
+    refreshSequence.current++;
+    document.dispatchEvent(new Event("account:invalidate"));
     try {
       await api.logout();
     } catch (error) {
@@ -69,6 +85,8 @@ export function App() {
   // Stable identity: Detail's data effect depends on this. An inline closure
   // would remount item data (and wipe save outcomes) on every App render.
   const handleAuthLost = useCallback(() => {
+    refreshSequence.current++;
+    document.dispatchEvent(new Event("account:invalidate"));
     api.clearSessionWrites();
     setPrincipal(null);
     setBoot("login");
@@ -85,7 +103,7 @@ export function App() {
     );
   }
   if (boot === "login" || principal === null) {
-    return <Login onLogin={() => void refresh()} />;
+    return <Login />;
   }
 
   const goBrowse = () => {
@@ -103,10 +121,20 @@ export function App() {
   return (
     <LiveProvider key={`${principal.userId}:${principal.tokenId}`} onAuthLost={handleAuthLost}>
     <div className="app-shell">
-      <aside className="sidebar">
+      <a className="skip" href="#main" onClick={(event) => { event.preventDefault(); main.current!.focus(); }}>Skip to main content</a>
+      <header className="topbar">
         <a className="brand" href="#/browse"><span className="brand-mark"><Icon name="stack" /></span><span>haystack</span></a>
-        <div className="workspace-label">WORKSPACE</div>
-        <nav aria-label="Workspace">{nav.map((entry) => {
+        <div className="header-actions">
+          <div className="identity"><span className="avatar" aria-hidden="true">{principal.userId.slice(0, 1).toUpperCase()}</span><div><strong>{principal.userId}</strong><small>{principal.type} account</small></div></div>
+          <button type="button" data-account-settings="" data-account-user-id={principal.userId}>Settings</button>
+          <button type="button" className="sign-out" onClick={() => void logout()}><Icon name="logout" />Sign out</button>
+          <ConnectionIndicator />
+        </div>
+      </header>
+      <main ref={main} id="main" className="workspace-main" tabIndex={-1}>
+      <div className="workspace-content">
+        <div className="workspace-toolbar">
+        <nav className="workspace-nav" aria-label="Workspace">{nav.map((entry) => {
           const active = route.name === "inbox" ? entry.hash === "#/inbox" : route.name === "browse" &&
             (route.state.query === "archived:true" || route.state.query === 'archived:"true"' ? entry.label === "Archive" : route.state.query === "type:skill-draft" ? entry.label === "Skill candidates" :
               route.state.query === "type:github-issue OR type:github-pr" ? entry.label === "Upstream activity" : entry.label === "Browse");
@@ -114,13 +142,8 @@ export function App() {
             onClick={() => { location.hash = entry.hash; }}><Icon name={entry.icon} />{entry.label}</button>;
         })}</nav>
         <div className="activity-namespace"><small>Activity namespace</small><strong>{principal.activityProjectId}</strong></div>
-        <PendingWriteNotice />
-        <div className="identity"><span className="avatar">{principal.userId.slice(0, 1).toUpperCase()}</span><div><strong>{principal.userId}</strong><small>{principal.type} account</small></div>
-          <button type="button" className="icon-button" aria-label="Sign out" title="Sign out" onClick={() => void logout()}><Icon name="logout" /></button></div>
-      </aside>
-      <main className="workspace-main">
-      <header className="topbar"><span>Workspace <span className="breadcrumb-separator">/</span> {route.name === "item" ? "Record" : route.name === "inbox" ? "Attention inbox" : "Records"}</span></header>
-      <div className="workspace-content">
+        </div>
+      <PendingWriteNotice />
       {notice !== "" && <p role="status" className="notice">{notice}</p>}
       {route.name === "browse" && (
         <Browse

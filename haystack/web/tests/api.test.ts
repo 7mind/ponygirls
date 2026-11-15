@@ -53,10 +53,11 @@ import { api, ApiError, AuthError, NetworkError } from "../src/api.ts";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import {
   Ack, AnalyzeResult, CompletionResult, DocumentPayload, Failure, HistoryResult, Identity,
-  Item, LoginResult, Metadata, PutResult, RevisionInfo, SearchResult, Span, Summary,
-  ValuesResult, VersionInfo,
+  Item, Metadata, PutResult, RevisionInfo, SearchResult, Span, Summary,
+  ValuesResult,
 } from "../../generated/typescript/haystack/api/index.ts";
 const context = BaboonCodecContext.Default;
+const currentRequest = () => true;
 const metadata = new Metadata("2026-10-07T18:00:00Z", "agent", "2026-10-07T18:01:00Z", "op");
 const identity = new Identity("op", "human", "browser", "agent-activity");
 const documentJson = '{"title":"t","description":"d","fields":{"n":9007199254740993,"decimal":0.12345678901234567890123456789},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[],"tags":["mcp"]}';
@@ -64,19 +65,15 @@ function response<T>(codec: { encode(ctx: BaboonCodecContext, value: T): unknown
   return Response.json(codec.encode(context, value), { status });
 }
 
-test("login/logout/whoami consume generated current identity and version shapes", async (t) => {
+test("logout/whoami consume generated current acknowledgement and identity shapes", async (t) => {
   const requests: Array<{ path: string; init: RequestInit }> = [];
-  const replies = [response(LoginResult.jsonCodec(), new LoginResult(identity, new VersionInfo("1.0.0", "1.0.0", ["1.0.0"]))),
-    response(Identity.jsonCodec(), identity), response(Ack.jsonCodec(), new Ack(true))];
+  const replies = [response(Identity.jsonCodec(), identity), response(Ack.jsonCodec(), new Ack(true))];
   t.mock.method(globalThis, "fetch", async (path: string, init: RequestInit) => { requests.push({ path, init }); return replies.shift()!; });
-  const login = await api.login("secret");
-  assert.equal(login.identity.userId, "op"); assert.equal(login.versions.current, "1.0.0");
-  assert.deepEqual(await api.whoami(), { userId: "op", type: "human", tokenId: "browser", activityProjectId: "agent-activity" });
+  assert.deepEqual(await api.whoami(currentRequest), { userId: "op", type: "human", tokenId: "browser", activityProjectId: "agent-activity" });
   assert.equal((await api.logout()).ok, true);
-  assert.deepEqual(requests.map(r => r.path), ["/api/v1/login", "/api/v1/whoami", "/api/v1/logout"]);
-  assert.deepEqual(JSON.parse(requests[0]!.init.body as string), { token: "secret" });
+  assert.deepEqual(requests.map(r => r.path), ["/api/v1/whoami", "/api/v1/logout"]);
   for (const r of requests) assert.equal(new Headers(r.init.headers).get("X-Haystack-Version"), "1.0.0");
-  assert.equal(requests[1]!.init.method, "GET");
+  assert.equal(requests[0]!.init.method, "GET");
 });
 
 test("get and historical get decode nested DocumentPayload without rounding or old route", async (t) => {
@@ -148,12 +145,12 @@ test("current direct Failure preserves diagnostics/status; outages and auth rema
   await assert.rejects(api.search("bad"), (e: unknown) => e instanceof ApiError && e.code === "invalid-query" && e.status === 400 && e.spans?.[0]?.start === 1);
   for (const status of [502, 503, 504]) {
     t.mock.method(globalThis, "fetch", async () => new Response("gateway", { status }));
-    await assert.rejects(api.whoami(), NetworkError);
+    await assert.rejects(api.whoami(currentRequest), NetworkError);
   }
   t.mock.method(globalThis, "fetch", async () => new Response("auth", { status: 401 }));
-  await assert.rejects(api.whoami(), AuthError);
+  await assert.rejects(api.whoami(currentRequest), AuthError);
   t.mock.method(globalThis, "fetch", async () => { throw new TypeError("offline"); });
-  await assert.rejects(api.whoami(), NetworkError);
+  await assert.rejects(api.whoami(currentRequest), NetworkError);
 });
 
 test("malformed current item payload cannot fall back to an old document envelope", async (t) => {
@@ -179,19 +176,42 @@ test("API session auth loss clears pending but an unreadable success keeps it un
   await assert.rejects(api.put("p:i", documentJson, 7, "lost-id"), ApiError);
   assert.equal(api.pendingWrite()?.requestId, "lost-id");
   t.mock.method(globalThis, "fetch", async () => new Response("unauthenticated", { status: 401 }));
-  await assert.rejects(api.whoami(), AuthError); assert.equal(api.pendingWrite(), undefined);
+  await assert.rejects(api.whoami(currentRequest), AuthError); assert.equal(api.pendingWrite(), undefined);
+});
+
+test("superseded identity replies cannot clear the replacement session's pending write", async (t) => {
+  for (const status of [200, 401]) {
+    api.clearSessionWrites();
+    t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
+    await api.whoami(currentRequest);
+    let release: ((value: Response) => void) | undefined;
+    t.mock.method(globalThis, "fetch", () => new Promise<Response>((resolve) => { release = resolve; }));
+    let isCurrent = true;
+    const old = api.whoami(() => isCurrent);
+    isCurrent = false;
+    t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), new Identity("replacement", "human", "new-session", "agent-activity")));
+    await api.whoami(currentRequest);
+    t.mock.method(globalThis, "fetch", async () => new Response("unavailable", { status: 503 }));
+    await assert.rejects(api.put("p:i", documentJson, 7, `new-session-${status}`), NetworkError);
+    assert.equal(api.pendingWrite()?.requestId, `new-session-${status}`);
+    assert.ok(release !== undefined);
+    release(status === 200 ? response(Identity.jsonCodec(), identity) : new Response("unauthorized", { status }));
+    if (status === 200) await old; else await assert.rejects(old, AuthError);
+    assert.equal(api.pendingWrite()?.requestId, `new-session-${status}`, "stale identity/auth failure must not discard the new session's recovery payload");
+  }
+  api.clearSessionWrites();
 });
 
 test("WebSocket auth loss and observed identity changes discard the previous session's pending lane", async (t) => {
   t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
-  await api.whoami();
+  await api.whoami(currentRequest);
   t.mock.method(globalThis, "fetch", async () => new Response("offline", { status: 503 }));
   await assert.rejects(api.put("p:i", documentJson, 7, "old-session-id"), NetworkError);
   api.clearSessionWrites(); assert.equal(api.pendingWrite(), undefined);
   t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), identity));
-  await api.whoami();
+  await api.whoami(currentRequest);
   t.mock.method(globalThis, "fetch", async () => new Response("offline", { status: 503 }));
   await assert.rejects(api.put("p:i", documentJson, 7, "old-session-id"), NetworkError);
   t.mock.method(globalThis, "fetch", async () => response(Identity.jsonCodec(), new Identity("other", "human", "other-token", "agent-activity")));
-  await api.whoami(); assert.equal(api.pendingWrite(), undefined);
+  await api.whoami(currentRequest); assert.equal(api.pendingWrite(), undefined);
 });

@@ -1,9 +1,16 @@
 # Browsing records
 
 Browse, Attention inbox, Archive, Upstream activity, and Skill candidates use
-one scrollable table. Columns show the record title and item id, project, type,
-status, priority, attention, tags, modification details, and revision. On narrow
-screens the table scrolls horizontally rather than hiding its columns.
+one scrollable table. Workspace navigation is in a wrapping toolbar, not a
+sidebar. The header keeps account identity, Settings, Sign out, and live
+connection details together; the activity namespace stays visible on mobile.
+Columns show the record title and item id, project, type, status, priority,
+attention, tags, modification details, and revision. On narrow screens each row
+reflows into labeled metadata, keeping every field and sort control available
+without horizontal scrolling or clipped values.
+
+Sign in with your account username and password. Settings manages account API
+tokens through the shared account dialog; API tokens are not browser sessions.
 
 Select a column heading to sort the **complete search result**, then select it
 again to reverse direction. Modified time defaults to newest first; revision is

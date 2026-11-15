@@ -4,6 +4,8 @@ import { uuidv7 } from "./api";
 
 interface Invalidation { version: number; key: string | null; revision: number | null }
 const LiveContext = createContext<Invalidation>({ version: 0, key: null, revision: null });
+interface ConnectionView { stats: ConnectionStats | null; retry: () => void }
+const ConnectionContext = createContext<ConnectionView | null>(null);
 export function useLiveUpdates(): Invalidation { return useContext(LiveContext); }
 
 export function LiveProvider({ children, onAuthLost }: { children: ReactNode; onAuthLost: () => void }) {
@@ -28,8 +30,9 @@ export function LiveProvider({ children, onAuthLost }: { children: ReactNode; on
     return () => { manager.current = null; connection.destroy(); document.title = "Haystack"; };
   }, [onAuthLost]);
   return <LiveContext.Provider value={invalidation}>
-    {children}
-    <ConnectionIndicator stats={stats} retry={() => { if (manager.current !== null) manager.current.retry(); }} />
+    <ConnectionContext.Provider value={{ stats, retry: () => { if (manager.current !== null) manager.current.retry(); } }}>
+      {children}
+    </ConnectionContext.Provider>
   </LiveContext.Provider>;
 }
 
@@ -38,7 +41,10 @@ const LABELS: Record<ConnectionStats["state"], string> = {
   STOPPED: "Connection stopped", DEFERRED: "Reconnect deferred", SUSPENDED: "Connection paused",
 };
 
-function ConnectionIndicator({ stats, retry }: { stats: ConnectionStats | null; retry: () => void }) {
+export function ConnectionIndicator() {
+  const connection = useContext(ConnectionContext);
+  if (connection === null) throw new Error("ConnectionIndicator requires LiveProvider");
+  const { stats, retry } = connection;
   const [expanded, setExpanded] = useState(false);
   const ring = useRef<SVGCircleElement | null>(null);
   useEffect(() => {
