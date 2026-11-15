@@ -108,12 +108,31 @@ try {
       await settings.waitFor();
       const session = (await context.cookies(base)).find(cookie => cookie.name === "haystack-ui");
       assert.ok(session.httpOnly && session.value !== password && session.value !== apiToken);
+      const query = page.getByRole("combobox", { name: "Query", exact: true });
+      await query.fill("background query");
+      await query.evaluate(input => input.setSelectionRange(3, 3));
       await settings.click();
       const dialog = page.getByRole("dialog", { name: "Account settings", exact: true });
       await dialog.getByText("Managed in server configuration; read-only here.", { exact: true }).waitFor();
       assert.equal(await dialog.getByRole("button", { name: `Revoke ${configured.name}`, exact: true }).count(), 0, "configured tokens have no mutation control");
       const tokenName = `Browser fixture ${width} ${colorScheme}`;
       await dialog.getByLabel("Token name", { exact: true }).fill(tokenName);
+      await page.evaluate(() => {
+        window.shortcutProbe = [];
+        window.addEventListener("keydown", event => {
+          if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") return;
+          queueMicrotask(() => {
+            const query = document.querySelector('input[role="combobox"]');
+            window.shortcutProbe.push({ prevented: event.defaultPrevented, selection: [query.selectionStart, query.selectionEnd] });
+          });
+        });
+      });
+      for (const shortcut of ["Control+k", "Meta+k"]) {
+        await page.keyboard.press(shortcut);
+        const probe = await page.evaluate(() => window.shortcutProbe.at(-1));
+        assert.equal(probe.prevented, false, "native Settings must fence the background search shortcut");
+        assert.deepEqual(probe.selection, [3, 3], "inert background query selection must not change while Settings is open");
+      }
       await dialog.getByRole("button", { name: "Create access token", exact: true }).click();
       const secret = dialog.getByLabel("One-time token secret", { exact: true });
       await secret.waitFor();

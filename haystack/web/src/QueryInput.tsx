@@ -70,7 +70,7 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
     function focusSearch(event: globalThis.KeyboardEvent) {
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k" || event.altKey) return;
       const target = event.target as HTMLElement | null;
-      if (document.querySelector('[role="dialog"], [aria-modal="true"]') || target?.closest('[role="dialog"], [aria-modal="true"]')) return;
+      if (document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]') || target?.closest('dialog[open], [role="dialog"], [aria-modal="true"]')) return;
       event.preventDefault(); input.current?.focus(); input.current?.select();
       setCaret(-1); setDismissed(true);
     }
