@@ -236,9 +236,13 @@ def main():
             assert observed['state'] == 'Cancelled' and observed['events'] == []
             rpc('MCP run-key cancellation', 'CancelMcpTest', dict(instanceId=catalog['instanceId'], runId=run_id), extra=['--yes'])
             failed_plan = call('failed retry preview', ['retry-failed', 'preview'])['RetryFailedPreview']['result']
-            call('confirmed empty failed retry', ['retry-failed', 'apply', '--target-profile', failed_plan['targetProfile'], '--selection-hash', failed_plan['selectionHash'], '--yes'])
+            retried = call('confirmed empty failed retry', ['retry-failed', 'apply', '--target-profile', failed_plan['targetProfile'], '--selection-hash', failed_plan['selectionHash'], '--yes'])['RetryFailed']['result']
+            recovered_retry = call('retry receipt lookup binds its historical request', ['receipt', retried['requestId']])['RetryFailed']['result']
+            assert recovered_retry == retried
             plan = call('owner reindex preview', ['reindex', 'preview'])['OwnerReindexPreview']['result']
             rebuilt = call('confirmed owner reindex apply', ['reindex', 'apply', '--target-profile', plan['targetProfile'], '--selection-hash', plan['selectionHash'], '--yes'])['OwnerReindexed']['result']
+            recovered_reindex = call('owner reindex receipt lookup binds its historical request', ['receipt', rebuilt['requestId']])['OwnerReindexed']['result']
+            assert recovered_reindex == rebuilt
             status = call('captured reindex cohort status', ['reindex', 'status', rebuilt['requestId']])['ReindexStatus']['result']
             assert int(status['total']) == 1 and sum(int(status[k]) for k in ['complete', 'superseded', 'failed', 'pending']) == 1
             issued_file = root / 'issued-token'
@@ -254,7 +258,10 @@ def main():
             recovered = call('WS one-time secret receipt metadata only', ['receipt', mutation_id])
             assert recovered['Token']['result']['secret'] is None
             rpc('WS token revoke', 'RevokeToken', dict(tokenId=token_result['Token']['result']['token']['id']), extra=['--yes'])
-            group = call('create group', ['groups', 'create', 'owned-test-sharing', '--yes'])['Mutation']['receipt']['entityId']
+            created = call('create group', ['groups', 'create', 'owned-test-sharing', '--yes'])['Mutation']['receipt']
+            recovered_group = call('ordinary mutation receipt lookup binds its historical request', ['receipt', created['requestId']])['Mutation']['receipt']
+            assert recovered_group == created
+            group = created['entityId']
             invite = call('invite member', ['groups', 'invite', group, 'bob', '--yes'])['Mutation']['receipt']['entityId']
             call('list invitations', ['groups'], 'bob')
             call('accept explicit archive sharing', ['groups', 'accept', invite, '--confirm-sharing', '--yes'], 'bob')

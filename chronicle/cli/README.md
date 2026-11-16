@@ -144,6 +144,15 @@ failures must match their independent account wrapper or generated Failure DTO,
 recognized status/code semantics and route before they count as rejections;
 malformed, wrong-family and availability faults after dispatch remain uncertain.
 
+A schema-valid acknowledgement must also bind to the submitted request UUID,
+operation and known entity/target. A mismatched receipt remains uncertain with
+its **original** UUID; it is never printed as success. Retry/reindex apply binds
+both UUID and target profile. Receipt lookup instead validates the historical
+UUID requested by the lookup, not its new transport-envelope UUID. Token results
+contain no request UUID: dispatch checks the requested name/permission set;
+lookup can verify metadata-only/no-secret semantics but cannot independently
+bind an absent UUID or infer an unknown original operation/entity payload.
+
 All token mints additionally require `--secret-out NEW_PATH` in an existing
 private0700 directory. The secret is written exclusively as0600, never printed.
 The response contains metadata with null/omitted secret plus `secretSaved`.

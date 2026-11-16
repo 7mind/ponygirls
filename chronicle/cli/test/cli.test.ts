@@ -244,3 +244,95 @@ for (const [name, fault, expected] of [
   const f = await fixture((q, r) => { if (q.url === '/api/versions') reply(r, 200, VERSION, {}); else { dispatched++; reply(r, 400, fault, {}); } }, null);
   try { const result = await cli(['report-progress', '--file', '-', '--yes', '--json'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, JSON.stringify(report)); assert.equal(result.code, expected, result.stderr); assert.ok(!result.stderr.includes('private-domain-canary')); assert.equal(result.stdout, ''); assert.equal(dispatched, 1); } finally { await f.close(); }
 });
+const ACK_REQUEST = '0193e8d5-6f5c-7a1b-8c2d-000000000077';
+const ACK_OTHER = '0193e8d5-6f5c-7a1b-8c2d-000000000078';
+const ACK_SECRET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-';
+interface AckProbe { code: number; stdout: string; stderr: string; requests: number; effects: number; secretSaved: boolean; sessionRetained: boolean }
+async function acknowledgement(request: import('../src/json.js').JsonObject, response: import('../src/json.js').JsonObject, options: { requestId: string; secret: boolean }): Promise<AckProbe> {
+  let requests = 0; let effects = 0;
+  const mutation = !['Receipt', 'GetReindexStatus'].includes(Object.keys(request)[0]!);
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, operation) => { assert.deepEqual(operation, request); assert.equal(id, options.requestId); requests++; if (mutation) effects++; send(socket, id, response); }));
+  try { state(f); const secret = join(f.root, 'issued-secret'); const result = await cli(['rpc', '--file', '-', '--yes', '--json', '--request-id', options.requestId, ...(options.secret ? ['--secret-out', secret] : [])], f, {}, JSON.stringify(request)); return { ...result, requests, effects, secretSaved: existsSync(secret), sessionRetained: readdirSync(join(f.root, 'state')).length === 1 }; } finally { await f.close(); }
+}
+const MUTATION_RECEIPTS: readonly { name: string; input: import('../src/json.js').JsonObject; entityId: string | null }[] = [
+  { name: 'RetryJob', input: { jobId: ID }, entityId: ID },
+  { name: 'RevokeToken', input: { tokenId: ID }, entityId: ID },
+  { name: 'CreateGroup', input: { name: 'owned-ack-fixture' }, entityId: GENERATION },
+  { name: 'Invite', input: { groupId: ID, targetId: 'bob' }, entityId: GENERATION },
+  { name: 'AcceptInvite', input: { invitationId: ID, confirmSharing: true }, entityId: GENERATION },
+  { name: 'RemoveMember', input: { groupId: ID, userId: 'bob' }, entityId: ID },
+  { name: 'LeaveGroup', input: { groupId: ID }, entityId: ID },
+  { name: 'DeleteGroup', input: { groupId: ID }, entityId: ID },
+  { name: 'Purge', input: { sessionId: ID }, entityId: ID },
+  { name: 'Logout', input: {}, entityId: null },
+];
+for (const example of MUTATION_RECEIPTS) {
+  test(`applicable ${example.name} acknowledgement binds its request, operation and entity domain`, async () => {
+    const result = await acknowledgement({ [example.name]: example.input }, { Mutation: { receipt: { requestId: ACK_REQUEST, operation: example.name, entityId: example.entityId } } }, { requestId: ACK_REQUEST, secret: false });
+    assert.equal(result.code, 0, result.stderr); assert.equal(result.effects, 1); assert.equal(result.requests, 1); assert.equal(result.sessionRetained, example.name !== 'Logout');
+  });
+  test(`inapplicable ${example.name} entity acknowledgement cannot establish a committed outcome`, async () => {
+    const wrongEntity = example.entityId === ID || example.entityId === null ? ACK_OTHER : null;
+    const result = await acknowledgement({ [example.name]: example.input }, { Mutation: { receipt: { requestId: ACK_REQUEST, operation: example.name, entityId: wrongEntity } } }, { requestId: ACK_REQUEST, secret: false });
+    assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, new RegExp(`chronicle receipt ${ACK_REQUEST}`)); assert.equal(result.effects, 1); assert.equal(result.requests, 1); assert.equal(result.sessionRetained, true);
+  });
+}
+for (const [name, receipt] of [
+  ['wrong request ID', { requestId: ACK_OTHER, operation: 'CreateGroup', entityId: ID }],
+  ['wrong operation', { requestId: ACK_REQUEST, operation: 'DeleteGroup', entityId: ID }],
+] as const) test(`schema-valid Mutation with ${name} is uncertain, not a success receipt`, async () => {
+  const result = await acknowledgement({ CreateGroup: { name: 'owned-ack-fixture' } }, { Mutation: { receipt } }, { requestId: ACK_REQUEST, secret: false });
+  assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, new RegExp(`chronicle receipt ${ACK_REQUEST}`)); assert.equal(result.effects, 1); assert.equal(result.requests, 1);
+});
+const RETRY_COUNTS = { eligibleCurrentFailed: '1', supersededRevisionFailed: '0', obsoleteProfileFailed: '0', supersededRevisionAndProfileFailed: '0', unchangedQueued: '0', unchangedRunning: '0', unchangedComplete: '0' };
+const APPLIED_RESULTS: readonly { operation: string; branch: string; result: import('../src/json.js').JsonObject }[] = [
+  { operation: 'ApplyRetryFailed', branch: 'RetryFailed', result: { requestId: ACK_REQUEST, targetProfile: 'selected-profile', retried: '1', counts: RETRY_COUNTS } },
+  { operation: 'ApplyOwnerReindex', branch: 'OwnerReindexed', result: { requestId: ACK_REQUEST, targetProfile: 'selected-profile', heads: '1', queued: '1', alreadyCurrent: '0', invalidatedClaims: '0' } },
+];
+for (const example of APPLIED_RESULTS) for (const field of ['valid', 'requestId', 'targetProfile']) test(`${example.operation} acknowledgement ${field} matches the admitted intent`, async () => {
+  const value = field === 'valid' ? example.result : { ...example.result, [field]: field === 'requestId' ? ACK_OTHER : 'other-profile' };
+  const result = await acknowledgement({ [example.operation]: { targetProfile: 'selected-profile', selectionHash: 'a'.repeat(64), confirm: true } }, { [example.branch]: { result: value } }, { requestId: ACK_REQUEST, secret: false });
+  assert.equal(result.code, field === 'valid' ? 0 : 7, result.stderr); assert.equal(result.effects, 1); assert.equal(result.requests, 1); if (field !== 'valid') { assert.equal(result.stdout, ''); assert.match(result.stderr, new RegExp(`chronicle receipt ${ACK_REQUEST}`)); }
+});
+for (const name of ['CreateGroup', 'ApplyRetryFailed', 'ApplyOwnerReindex', 'MintToken']) test(`wrong result family after ${name} dispatch is uncertain`, async () => {
+  const input = name === 'CreateGroup' ? { name: 'owned-ack-fixture' } : name === 'MintToken' ? { name: 'owned-token', scopes: ['Read'] } : { targetProfile: 'selected-profile', selectionHash: 'a'.repeat(64), confirm: true };
+  const result = await acknowledgement({ [name]: input }, { Whoami: { user: { id: 'alice', login: 'alice', scopes: ['Read'] } } }, { requestId: ACK_REQUEST, secret: name === 'MintToken' });
+  assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, new RegExp(`chronicle receipt ${ACK_REQUEST}`)); assert.equal(result.effects, 1); assert.equal(result.requests, 1); assert.equal(result.secretSaved, false);
+});
+for (const field of ['valid', 'name', 'scopes']) test(`MintToken acknowledgement ${field} binds requested metadata before saving its secret`, async () => {
+  const token = { id: ID, name: field === 'name' ? 'unrelated-token' : 'owned-token', scopes: field === 'scopes' ? ['Read', 'Raw'] : ['Read'], createdAt: '2026-11-16T00:00:00Z', revoked: false };
+  const result = await acknowledgement({ MintToken: { name: 'owned-token', scopes: ['Read'] } }, { Token: { result: { token, secret: ACK_SECRET } } }, { requestId: ACK_REQUEST, secret: true });
+  assert.equal(result.code, field === 'valid' ? 0 : 7, result.stderr); assert.equal(result.secretSaved, field === 'valid'); assert.ok(!result.stdout.includes(ACK_SECRET)); assert.ok(!result.stderr.includes(ACK_SECRET)); if (field !== 'valid') assert.equal(result.stdout, '');
+});
+const STORED_RECEIPTS: readonly { branch: string; payload: import('../src/json.js').JsonObject }[] = [
+  { branch: 'Mutation', payload: { receipt: { requestId: ACK_REQUEST, operation: 'DeleteGroup', entityId: ID } } },
+  { branch: 'RetryFailed', payload: { result: APPLIED_RESULTS[0]!.result } },
+  { branch: 'OwnerReindexed', payload: { result: APPLIED_RESULTS[1]!.result } },
+  { branch: 'Token', payload: { result: { token: { id: ID, name: 'previous-token', scopes: ['Read'], createdAt: '2026-11-16T00:00:00Z', revoked: false }, secret: null } } },
+];
+for (const stored of STORED_RECEIPTS) test(`Receipt lookup accepts original ${stored.branch} identity distinct from its lookup envelope`, async () => {
+  const result = await acknowledgement({ Receipt: { mutationId: ACK_REQUEST } }, { [stored.branch]: stored.payload }, { requestId: ACK_OTHER, secret: false });
+  assert.equal(result.code, 0, result.stderr); assert.equal(result.effects, 0); assert.equal(result.requests, 1); assert.equal(result.secretSaved, false);
+});
+for (const stored of STORED_RECEIPTS.filter(s => s.branch !== 'Token')) test(`Receipt lookup rejects unrelated historical ${stored.branch} identity`, async () => {
+  const original = stored.payload[stored.branch === 'Mutation' ? 'receipt' : 'result']; assert.ok(isObject(original));
+  const result = await acknowledgement({ Receipt: { mutationId: ACK_REQUEST } }, { [stored.branch]: { [stored.branch === 'Mutation' ? 'receipt' : 'result']: { ...original, requestId: ID } } }, { requestId: ACK_OTHER, secret: false });
+  assert.equal(result.code, 6, result.stderr); assert.equal(result.stdout, ''); assert.equal(result.effects, 0); assert.equal(result.requests, 1);
+});
+test('Receipt lookup cannot recover or save a one-time token secret', async () => {
+  const stored = STORED_RECEIPTS[3]!.payload['result']; assert.ok(isObject(stored));
+  const result = await acknowledgement({ Receipt: { mutationId: ACK_REQUEST } }, { Token: { result: { ...stored, secret: ACK_SECRET } } }, { requestId: ACK_OTHER, secret: true });
+  assert.equal(result.code, 6, result.stderr); assert.equal(result.stdout, ''); assert.equal(result.secretSaved, false); assert.ok(!result.stderr.includes(ACK_SECRET));
+});
+for (const valid of [true, false]) test(`reindex status ${valid ? 'retains' : 'rejects a different'} captured request identity rather than its lookup envelope`, async () => {
+  const result = await acknowledgement({ GetReindexStatus: { requestId: ACK_REQUEST } }, { ReindexStatus: { result: { requestId: valid ? ACK_REQUEST : ID, targetProfile: 'selected-profile', total: '1', complete: '0', superseded: '0', failed: '0', pending: '1' } } }, { requestId: ACK_OTHER, secret: false });
+  assert.equal(result.code, valid ? 0 : 6, result.stderr); if (!valid) assert.equal(result.stdout, '');
+});
+test('UUID entity binding preserves canonical-equivalent hex spellings', async () => {
+  const result = await acknowledgement({ RevokeToken: { tokenId: ACK_OTHER.toUpperCase() } }, { Mutation: { receipt: { requestId: ACK_REQUEST, operation: 'RevokeToken', entityId: ACK_OTHER } } }, { requestId: ACK_REQUEST, secret: false });
+  assert.equal(result.code, 0, result.stderr);
+});
+test('MintToken acknowledgement preserves permission-set semantics without requiring incidental list order', async () => {
+  const result = await acknowledgement({ MintToken: { name: 'owned-token', scopes: ['Read', 'Raw'] } }, { Token: { result: { token: { id: ID, name: 'owned-token', scopes: ['Raw', 'Read'], createdAt: '2026-11-16T00:00:00Z', revoked: false }, secret: ACK_SECRET } } }, { requestId: ACK_REQUEST, secret: true });
+  assert.equal(result.code, 0, result.stderr); assert.equal(result.secretSaved, true); assert.ok(!result.stdout.includes(ACK_SECRET));
+});

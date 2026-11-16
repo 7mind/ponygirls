@@ -102,7 +102,7 @@ export async function run(args: Arguments, env: Environment): Promise<{ value: u
   if (effect === 'mutation' || effect === 'secret') confirm(args);
   if (effect === 'secret' && option(args, 'secret-out') === null) throw new CliError('usage', 'Mint requires --secret-out to a new private file; secrets are never printed.');
   if (effect === 'secret') checkSecretDestination(option(args, 'secret-out')!);
-  if (auth === 'bearer') { const tool = operationTool(operation); const token = bearer(env, option(args, 'token-file')); await current(http); const result = await mcp(http, token, tool); validateResponse(operation, result); return { value: encodeWire('Result', result), text: false }; }
+  if (auth === 'bearer') { const tool = operationTool(operation); const token = bearer(env, option(args, 'token-file')); await current(http); const result = await mcp(http, token, tool); validateResponse(operation, result, null); return { value: encodeWire('Result', result), text: false }; }
   const requestId = option(args, 'request-id') === null ? randomUUID() : uuid(option(args, 'request-id')!);
   const sessionStore = store(); const session = sessionStore.load();
   const result = await websocket(endpoint, session, operation, requestId, effect !== 'read', deadline);

@@ -113,7 +113,7 @@ export async function websocket(origin: string, session: Session, operation: Ope
           const definiteRejection = activeOperation === operation && preAdmissionCodes.includes(result.failure.code);
           if (mutation && !definiteRejection) failure(error); else finish(null, error); return;
         }
-        validateResponse(activeOperation, result);
+        validateResponse(activeOperation, result, activeId);
         if (operation instanceof Operation_StartMcpTest && result instanceof Result_McpTestRun) {
           const snapshot = result.result;
           if (snapshot.state === 'AuthorizationLost') { failure(remoteFailure('unauthorized')); return; }

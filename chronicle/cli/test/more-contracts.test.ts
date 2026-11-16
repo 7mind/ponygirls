@@ -15,9 +15,9 @@ test('strict JSON rejects duplicate keys, deep nesting, trailing data and nonfin
 });
 test('responses reject wrong branch and any silently retargeted exact content pin', () => {
   const op = decodeOperation({ GetMessages: { sessionId: ID, offset: 0, limit: 20, view: { revision: 4, generationId: null } } });
-  assert.throws(() => validateResponse(op, decodeWire('Result', { Whoami: { user: { id: 'a', login: 'a', scopes: ['Read'] } } })));
-  assert.throws(() => validateResponse(op, decodeWire('Result', { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 5, generationId: null } } } })));
-  validateResponse(op, decodeWire('Result', { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: null } } } }));
+  assert.throws(() => validateResponse(op, decodeWire('Result', { Whoami: { user: { id: 'a', login: 'a', scopes: ['Read'] } } }), null));
+  assert.throws(() => validateResponse(op, decodeWire('Result', { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 5, generationId: null } } } }), null));
+  validateResponse(op, decodeWire('Result', { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: null } } } }), null);
 });
 test('current MCP run read event pages permit all 256 events, and tag cursor preserves an empty exact value', async () => {
   const { parseArgs } = await import('../src/commands.js');

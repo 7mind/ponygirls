@@ -11,7 +11,7 @@ import { VersionInfo_JsonCodec, type VersionInfo } from '../../generated/typescr
 import { Failure_JsonCodec, type Failure } from '../../generated/typescript/chronicle/api/Failure.js';
 import { schemaData } from './schema-data.js';
 import { CliError } from './errors.js';
-import { isObject } from './json.js';
+import { isObject, type JsonObject } from './json.js';
 export const schema = schemaData;
 type DataDefinition = { readonly kind: 'data'; readonly fields: readonly (readonly [string, string])[] };
 type Definition = DataDefinition | { readonly kind: 'enum'; readonly values: readonly string[] } | { readonly kind: 'adt'; readonly variants: Readonly<Record<string, DataDefinition>> };
@@ -78,12 +78,47 @@ export function operationHelp(name: string): unknown {
 const expectedResults = {
   Hello: ['Hello'], Ping: ['Pong'], Pong: ['Pong'], Whoami: ['Whoami'], Search: ['Search'], GetSession: ['Session'], GetChunks: ['Chunks'], GetMessages: ['Messages'], SearchSessionMessages: ['SessionMessageSearch'], ReadMessageContext: ['MessageContext'], GetRaw: ['Raw'], Related: ['Related'], Facets: ['Facets'], CollectionStatus: ['CollectionStatus'], IngestStatus: ['Status'], RetryJob: ['Mutation'], ListTokens: ['Tokens'], MintToken: ['Token'], RevokeToken: ['Mutation'], ListGroups: ['Groups'], CreateGroup: ['Mutation'], Invite: ['Mutation'], AcceptInvite: ['Mutation'], RemoveMember: ['Mutation'], LeaveGroup: ['Mutation'], DeleteGroup: ['Mutation'], Receipt: ['Mutation', 'Token', 'RetryFailed', 'OwnerReindexed'], Purge: ['Mutation'], Logout: ['Mutation'], Archive: ['Archive'], ArchiveSearch: ['ArchiveSearch'], Activity: ['Activity'], ActivityJobs: ['ActivityJobs'], LocateMessage: ['LocatedMessage'], PreviewRetryFailed: ['RetryFailedPreview'], ApplyRetryFailed: ['RetryFailed'], ExpressionHints: ['ExpressionHints'], ModelUsage: ['ModelUsage'], GetPassages: ['Passages'], GetPassageSpans: ['PassageSpans'], PreviewOwnerReindex: ['OwnerReindexPreview'], ApplyOwnerReindex: ['OwnerReindexed'], GetReindexStatus: ['ReindexStatus'], McpTestTools: ['McpTestTools'], StartMcpTest: ['McpTestRun'], ReadMcpTest: ['McpTestRun'], CancelMcpTest: ['McpTestRun'],
 } satisfies Record<OperationName, string[]>;
-export function validateResponse(operation: Operation, result: Result): void {
+type ReceiptEntityBinding = { readonly kind: 'argument'; readonly field: 'jobId' | 'tokenId' | 'groupId' | 'sessionId' } | { readonly kind: 'assigned' } | { readonly kind: 'absent' };
+const RECEIPT_ENTITIES = {
+  RetryJob: { kind: 'argument', field: 'jobId' }, RevokeToken: { kind: 'argument', field: 'tokenId' },
+  CreateGroup: { kind: 'assigned' }, Invite: { kind: 'assigned' }, AcceptInvite: { kind: 'assigned' },
+  RemoveMember: { kind: 'argument', field: 'groupId' }, LeaveGroup: { kind: 'argument', field: 'groupId' }, DeleteGroup: { kind: 'argument', field: 'groupId' },
+  Purge: { kind: 'argument', field: 'sessionId' }, Logout: { kind: 'absent' },
+} as const satisfies Partial<Record<OperationName, ReceiptEntityBinding>>;
+function sameUuid(expected: unknown, actual: unknown): boolean { return typeof expected === 'string' && typeof actual === 'string' && expected.toLowerCase() === actual.toLowerCase(); }
+function invalidAcknowledgement(): never { throw new CliError('protocol-error', 'Acknowledgement does not match the requested operation, receipt identity or target.'); }
+function validateAcknowledgement(name: OperationName, body: JsonObject, branch: string, wrapper: JsonObject, requestId: string | null): void {
+  const lookup = name === 'Receipt'; const expectedId = lookup ? body['mutationId'] : requestId;
+  if (branch === 'Mutation') {
+    const receipt = wrapper['receipt'];
+    if (!isObject(receipt) || !sameUuid(expectedId, receipt['requestId'])) return invalidAcknowledgement();
+    // Lookup knows the historical UUID, not the original operation or its entity arguments.
+    if (lookup) return;
+    if (receipt['operation'] !== name || !Object.hasOwn(RECEIPT_ENTITIES, name)) return invalidAcknowledgement();
+    const binding: ReceiptEntityBinding = RECEIPT_ENTITIES[name as keyof typeof RECEIPT_ENTITIES];
+    if (binding.kind === 'absent') { if (receipt['entityId'] !== null) invalidAcknowledgement(); }
+    else if (typeof receipt['entityId'] !== 'string' || (binding.kind === 'argument' && !sameUuid(body[binding.field], receipt['entityId']))) invalidAcknowledgement();
+  }
+  const data = wrapper['result'];
+  if ((branch === 'RetryFailed' || branch === 'OwnerReindexed') && (!isObject(data) || !sameUuid(expectedId, data['requestId']) || (!lookup && data['targetProfile'] !== body['targetProfile']))) invalidAcknowledgement();
+  if (branch === 'Token') {
+    if (!isObject(data)) return invalidAcknowledgement();
+    // Token metadata has no request UUID. Stored receipt lookup never recovers a secret.
+    if (lookup) { if (data['secret'] !== null) invalidAcknowledgement(); return; }
+    const token = data['token']; const scopes = body['scopes'];
+    if (!isObject(token) || token['name'] !== body['name'] || !Array.isArray(scopes) || !Array.isArray(token['scopes'])) return invalidAcknowledgement();
+    const returned = token['scopes'];
+    if (scopes.length !== returned.length || new Set(scopes).size !== scopes.length || new Set(returned).size !== returned.length || !scopes.every(scope => returned.includes(scope))) invalidAcknowledgement();
+  }
+  if (name === 'GetReindexStatus' && (!isObject(data) || !sameUuid(body['requestId'], data['requestId']))) invalidAcknowledgement();
+}
+export function validateResponse(operation: Operation, result: Result, requestId: string | null): void {
   const name = operationName(operation); const encoded = encodeWire('Result', result); const request = encodeWire('Operation', operation);
   const reject = (): never => { throw new CliError('protocol-error', 'Response branch, page or immutable content view does not match the request.'); };
   if (!isObject(encoded) || !isObject(request)) return reject();
   const branch = Object.keys(encoded)[0]!; if (!expectedResults[name].includes(branch)) reject();
-  const body = request[name]; const wrapper = encoded[branch]; if (!isObject(body) || !isObject(wrapper)) return reject(); const data = wrapper['result'];
+  const body = request[name]; const wrapper = encoded[branch]; if (!isObject(body) || !isObject(wrapper)) return reject();
+  validateAcknowledgement(name, body, branch, wrapper, requestId); const data = wrapper['result'];
   if (isObject(data)) {
     const selected = name === 'GetSession' && isObject(data['session']) ? data['session'] : data;
     if (isObject(body['view']) && (!isObject(selected['view']) || selected['view']['revision'] !== body['view']['revision'] || selected['view']['generationId'] !== body['view']['generationId'])) reject();
