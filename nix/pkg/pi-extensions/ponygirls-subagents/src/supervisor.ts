@@ -122,6 +122,7 @@ export interface AgentView {
   externalTools: string[];
   model: string;
   observed: string;
+  desiredLifecycle: AgentRecord["desiredLifecycle"];
   pendingIntent: string;
   currentTaskRunId: TaskRunId | null;
   generation: number;
@@ -5421,6 +5422,7 @@ export class Supervisor implements GateHost {
       externalTools: [...(r.grants.externalTools ?? [])],
       model: r.model ? `${r.model.provider}/${r.model.id}` : "unresolved",
       observed: r.observed,
+      desiredLifecycle: r.desiredLifecycle,
       ...(this.storageFailure !== null ? { storageFailure: this.storageFailure } : {}),
       pendingIntent: this.storageFailure !== null ? "storage failed: restart/reopen required; observed state is last known" : rt.activeRun?.interruptRequested === true ? "interrupt pending" : pendingIntentOf(rt),
       currentTaskRunId: r.currentTaskRunId,

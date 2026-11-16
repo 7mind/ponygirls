@@ -25,6 +25,7 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     externalTools: [],
     model: "p/m",
     observed: "running",
+    desiredLifecycle: "open",
     pendingIntent: "running",
     currentTaskRunId: null,
     generation: 1,
@@ -107,6 +108,66 @@ test("the inspector fills the terminal, keeps its selection across refreshes, an
   ui.handleMouse({ ...click, clickCount: 2 });
   assert.equal(ui.selectedId(), "a-1");
   assert.deepEqual(actions, [{ kind: "transcript", agentId: "a-1" }]);
+});
+
+// Behavioral-Active × Blackbox × Group; specified pane visibility and action targeting.
+test("the inspector defaults to non-closed agents and toggles all retained agents with f", () => {
+  const closed = view({ id: "closed", path: "/root/closed", observed: "settled", desiredLifecycle: "closed", pendingIntent: "closed" });
+  const idle = view({ id: "idle", path: "/root/idle", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" });
+  const { ui, actions } = inspector([closed, idle]);
+  assert.equal(ui.selectedId(), "idle");
+  assert.doesNotMatch(ui.render(120).join("\n"), /\/root\/closed/);
+  assert.match(ui.render(120).join("\n"), /f show all/);
+  ui.handleInput("f");
+  assert.equal(ui.selectedId(), "idle");
+  assert.match(ui.render(120).join("\n"), /\/root\/closed/);
+  assert.match(ui.render(120).join("\n"), /f hide closed/);
+  ui.handleInput(UP);
+  ui.handleInput(ENTER);
+  assert.deepEqual(actions, [{ kind: "transcript", agentId: "closed" }]);
+  ui.handleInput("r");
+  assert.equal(ui.selectedId(), "closed");
+  ui.handleInput("f");
+  assert.equal(ui.selectedId(), "idle");
+  ui.refreshViews([closed, { ...idle, desiredLifecycle: "closed", pendingIntent: "closed" }]);
+  assert.equal(ui.selectedId(), null);
+  assert.match(ui.render(120).join("\n"), /No active subagents/);
+  ui.handleInput(DOWN);
+  ui.handleInput(ENTER);
+  assert.equal(actions.length, 1);
+  ui.refreshViews([closed, idle]);
+  assert.equal(ui.selectedId(), "idle");
+  ui.handleInput("f");
+  ui.refreshViews([closed, idle, view({ id: "new-closed", desiredLifecycle: "closed", pendingIntent: "closed" })]);
+  assert.match(ui.render(120)[0]!, /agents 3/);
+});
+
+test("closed agents stay hidden when a storage failure overrides their display intent", () => {
+  const closed = view({ id: "closed", path: "/root/closed", desiredLifecycle: "closed", pendingIntent: "storage failed: restart/reopen required; observed state is last known" });
+  const { ui } = inspector([closed]);
+  assert.equal(ui.selectedId(), null);
+  assert.ok(ui.render(40).every((line) => visibleWidth(line) <= 40));
+  ui.handleInput("f");
+  assert.equal(ui.selectedId(), "closed");
+  ui.handleInput("f");
+  assert.equal(ui.selectedId(), null);
+});
+
+test("filtered mouse rows target visible agents and toggling resets a scrolled empty list", () => {
+  const closed = Array.from({ length: 10 }, (_, i) => view({ id: `closed-${i}`, path: `/root/closed-${i}`, desiredLifecycle: "closed", pendingIntent: "closed" }));
+  const { ui, actions } = inspector([...closed, view()], { rows: 24 });
+  ui.handleMouse({ type: "click", button: "left", x: 3, y: 2, screenX: 3, screenY: 2, width: 120, height: 24, shift: false, alt: false, ctrl: false, clickCount: 2 });
+  assert.deepEqual(actions, [{ kind: "transcript", agentId: "a-1" }]);
+  ui.handleInput("f");
+  ui.render(120);
+  ui.refreshViews(closed);
+  ui.render(120);
+  ui.handleInput("f");
+  assert.equal(ui.selectedId(), null);
+  assert.match(ui.render(120).join("\n"), /No active subagents/);
+  ui.handleInput("f");
+  assert.equal(ui.selectedId(), "closed-0");
+  assert.match(ui.render(120)[0]!, /1–4 of 10/);
 });
 
 test("chat answers an open question, steers a running task, and otherwise starts a task", () => {
@@ -210,7 +271,7 @@ test("scrolling moves through history by line, page, and wheel", () => {
 });
 
 test("the screen switches between the list and a transcript and passes focus to the chat line", () => {
-  const views = [view()];
+  const views = [view(), view({ id: "closed", path: "/root/closed", desiredLifecycle: "closed", pendingIntent: "closed" })];
   const screen = new AgentsScreen({
     list: () => views,
     describe: () => ({ result: null, question: null }),
@@ -233,6 +294,9 @@ test("the screen switches between the list and a transcript and passes focus to 
     theme: PLAIN_THEME,
   });
   screen.focused = true;
+  assert.doesNotMatch(screen.render(100).join("\n"), /\/root\/closed/);
+  screen.handleInput("f");
+  assert.match(screen.render(100).join("\n"), /\/root\/closed/);
   screen.handleInput(ENTER);
   assert.ok(screen.transcript, "enter opened the transcript");
   assert.equal(screen.transcript!.focused, true);
@@ -240,6 +304,10 @@ test("the screen switches between the list and a transcript and passes focus to 
   screen.handleInput(ESC);
   assert.equal(screen.transcript, null);
   assert.ok(screen.render(70).some((l) => l.includes("Subagents")));
+  screen.refresh();
+  assert.match(screen.render(100).join("\n"), /\/root\/closed/);
+  screen.handleInput("f");
+  assert.doesNotMatch(screen.render(100).join("\n"), /\/root\/closed/);
 });
 
 test("a gated agent's transcript shows each review in a gate frame where it happened", () => {
@@ -296,9 +364,9 @@ test("the inspector is framed: title with counts, dim column header, aligned cel
     view({ id: "a-3", path: "/root/b/fix", parentId: "a-2", depth: 2, profile: "writer", isolation: "worktree", model: "kimi-k3", observed: "settled", pendingIntent: "settled", taskOutcome: "failed" }),
   ];
   const { ui } = inspector(views, { rows: 30, theme: TAG_THEME });
-  const lines = ui.render(120);
+  const lines = ui.render(140);
   assert.equal(lines.length, 30);
-  assert.ok(lines.every((l) => visibleWidth(l) <= 120));
+  assert.ok(lines.every((l) => visibleWidth(l) <= 140));
   const plain = lines.map((l) => tags(l).replace(/<[^>]*>/g, ""));
   assert.match(plain[0]!, /^── Subagents · agents 3 · running 1 ─+──$/);
   assert.match(tags(lines[1]!), /^<dim> {2}AGENT +KIND +STATE +OUTCOME +MODEL<\/>$/);
@@ -315,7 +383,7 @@ test("the inspector is framed: title with counts, dim column header, aligned cel
   assert.ok(plain.some((l) => /^kind reader · none {2}model p\/m {2}state settled {2}outcome ✓ succeeded/.test(l)));
   assert.match(tags(lines.find((l) => tags(l).includes("model"))!), /<muted>kind<\/> reader/, "detail labels are muted");
   assert.match(plain[28]!, /^─+$/);
-  assert.match(plain[29]!, /^↑↓ select {2}⏎ transcript {2}m note {2}t task {2}i interrupt {2}c close {2}a answer {2}g gate {2}r refresh {2}esc close$/);
+  assert.match(plain[29]!, /^f show all {2}↑↓ select {2}⏎ transcript {2}m note {2}t task {2}i interrupt {2}c close {2}a answer {2}g gate {2}r refresh {2}esc close$/);
 });
 
 test("the selected row spans the width, keeps state and outcome colours, and uses muted rather than dim", () => {

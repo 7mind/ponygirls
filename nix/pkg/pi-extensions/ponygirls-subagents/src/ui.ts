@@ -194,6 +194,8 @@ function inspectorColumns(views: AgentView[]): Column[] {
  */
 export class AgentInspector extends PanelLayout {
   private views: AgentView[];
+  private allViews: AgentView[];
+  private showClosed = false;
   private selected = 0;
   private scrollTop = 0;
   private statusLine = "";
@@ -202,7 +204,8 @@ export class AgentInspector extends PanelLayout {
   constructor(initial: AgentView[], deps: InspectorDeps) {
     super((width) => this.renderParts(width));
     this.deps = deps;
-    this.views = initial;
+    this.allViews = initial;
+    this.views = initial.filter((v) => v.desiredLifecycle !== "closed");
   }
 
   notice(text: string): void {
@@ -211,9 +214,11 @@ export class AgentInspector extends PanelLayout {
 
   refreshViews(views: AgentView[]): void {
     const current = this.views[this.selected]?.id;
-    this.views = views;
-    const kept = current ? views.findIndex((v) => v.id === current) : -1;
-    this.selected = kept >= 0 ? kept : Math.min(this.selected, Math.max(0, views.length - 1));
+    this.allViews = views;
+    this.views = this.showClosed ? views : views.filter((v) => v.desiredLifecycle !== "closed");
+    const kept = current ? this.views.findIndex((v) => v.id === current) : -1;
+    this.selected = kept >= 0 ? kept : Math.min(this.selected, Math.max(0, this.views.length - 1));
+    if (this.views.length === 0) this.scrollTop = 0;
   }
 
   selectedId(): string | null {
@@ -249,7 +254,7 @@ export class AgentInspector extends PanelLayout {
     const shownEnd = Math.min(this.views.length, this.scrollTop + height);
     const position = this.views.length > height ? t.fg("dim", `${this.scrollTop + 1}–${shownEnd} of ${this.views.length}`) : undefined;
     lines.push(frameTitle(t, w, { title: "Subagents", meta: widgetLine(this.views), right: position }, "none").line);
-    if (this.views.length === 0) lines.push(t.fg("muted", "  No subagents yet."));
+    if (this.views.length === 0) lines.push(t.fg("muted", this.allViews.length > 0 && !this.showClosed ? "  No active subagents. f shows all." : "  No subagents yet."));
     else {
       const columns = inspectorColumns(this.views);
       lines.push(fit(columnHeader(t, columns, COLUMN_GAP), w));
@@ -261,7 +266,7 @@ export class AgentInspector extends PanelLayout {
       lines.push(...this.detailLines(current, w));
     }
     // Fixed chrome stays outside the allocated scrolling body.
-    const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, INSPECTOR_HINTS).lines];
+    const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, [{ key: "f", action: this.showClosed ? "hide closed" : "show all" }, ...INSPECTOR_HINTS]).lines];
     const rows = this.height(this.deps.rows());
     while (lines.length + footer.length < rows) lines.push("");
     return { header: lines.slice(0, 1), body: lines.slice(1, Math.max(1, rows - footer.length)), footer };
@@ -277,7 +282,12 @@ export class AgentInspector extends PanelLayout {
       return;
     }
     if (matchesKey(data, Key.down) || data === "j") {
-      this.selected = Math.min(this.views.length - 1, this.selected + 1);
+      this.selected = Math.min(Math.max(0, this.views.length - 1), this.selected + 1);
+      return;
+    }
+    if (data === "f") {
+      this.showClosed = !this.showClosed;
+      this.refreshViews(this.allViews);
       return;
     }
     if (data === "r") {

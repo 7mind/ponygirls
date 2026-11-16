@@ -286,7 +286,11 @@ gap; native child tools and provider requests continue independently.
 `/agents` opens a full-screen view of the tree: path (nested agents
 indented), profile and isolation, state, outcome, and model per row, with
 the selected agent's workdir, usage, open question, and result below. The
-list refreshes on its own.
+list refreshes on its own. By default it shows only non-closed agents,
+including idle and completed agents. Press `f` to show all retained agents
+(including closed ones), or press it again to hide closed agents. The toggle
+lasts while the pane is open, including visits to transcripts; reopening the
+pane restores the default. Tools and retained history are unchanged.
 
 - `enter` (or a double click) opens the agent's **transcript**: its
   conversation as its native pi session records it (tasks, thinking, tool
