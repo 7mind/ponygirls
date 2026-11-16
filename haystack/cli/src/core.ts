@@ -32,7 +32,7 @@ export function key(value: string): string {
     const parts = value.split(':'); if (parts.length !== 2) throw new Error();
     for (const part of parts) {
       const raw = decodeURIComponent(part);
-      if (raw.length === 0 || raw.includes('\0') || [...raw].length > 256 || Buffer.byteLength(raw) > 1024 || component(raw) !== part) throw new Error();
+      if (raw.length === 0 || raw.includes('\0') || raw.length > 256 || Buffer.byteLength(raw) > 1024 || component(raw) !== part) throw new Error();
     }
     return value;
   } catch { return fail('invalid-id', 'use a canonical fully qualified project:item ID (RFC3986 uppercase percent escapes)', 2); }

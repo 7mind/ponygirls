@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import {open} from 'node:fs/promises';
 import {constants} from 'node:fs';
+import {performance} from 'node:perf_hooks';
 import {Arguments,parse,validate,text,required,number,HELP} from './args.ts';
 import {Client,settings,protectedFile,validateInput} from './client.ts';
 import {State,stateDirectory,readBounded} from './state.ts';
@@ -9,6 +10,8 @@ import {api,encode,routes,type Operation} from './protocol.ts';
 import * as writes from './writes.ts';
 import * as accounts from './account.ts';
 import {watch} from './watch.ts';
+import {human,humanWatch} from './human.ts';
+import {LiveOutput} from './output.ts';
 async function output(stream:NodeJS.WritableStream,value:string):Promise<void>{return new Promise((resolve,reject)=>{stream.write(value,error=>{if(error!==undefined&&error!==null)reject(new CliError('output-failed','could not write command output',6,{}));else resolve();});});}
 async function source(file:string,limit:number,timeout:number,secret:boolean):Promise<string> {
   if(file==='-'){
@@ -22,23 +25,17 @@ async function source(file:string,limit:number,timeout:number,secret:boolean):Pr
 }
 function fileOption(args:Arguments):string {const file=text(args,'file');if(file!==undefined&&args.flags.has('stdin'))usage('choose --file or --stdin, not both');return args.flags.has('stdin')?'-':required(args,'file');}
 function wireItem(value:unknown):Record<string,unknown>{if(!object(value))return fail('invalid-response','invalid item response',6);return value;}
-function human(command:string,result:unknown,request:string|undefined):string {
-  if(command==='health')return 'healthy\n';
-  if(command==='search'&&object(result)&&Array.isArray(result.items)){const lines=[`Returned ${result.items.length} summaries (not a total)`];for(const item of result.items)if(object(item))lines.push(`${item.key}  revision ${item.revision}  ${item.title}`);if(typeof result.cursor==='string')lines.push('Cursor: '+result.cursor);return lines.map(safe).join('\n')+'\n';}
-  const lines:string[]=[];
-  if(command==='retrieve'&&object(result))lines.push(`${result.countScope}: ${result.total}${result.rankingLimit===null?'':` (ranking limit ${result.rankingLimit})`}`);
-  if(request!==undefined)lines.push('Request ID: '+request);
-  // Pretty JSON is a human data view, never the machine contract; control bytes are escaped.
-  lines.push(exact(result,true));return lines.map(line=>line.split('\n').map(safe).join('\n')).join('\n')+'\n';
-}
 async function run(args:Arguments,env:NodeJS.ProcessEnv):Promise<void> {
   if(args.flags.has('version')){if(args.words.length)usage('--version does not take a command');await output(process.stdout,args.json?exact({ok:true,command:'version',result:{version:VERSION}},false)+'\n':`haystack ${VERSION}\n`);return;}
   if(args.flags.has('help')||args.words.length===0){await output(process.stdout,args.json?exact({ok:true,command:'help',result:{text:HELP}},false)+'\n':HELP);return;}
   const command=validate(args);const session=['login','logout','status','account','token','watch'].includes(command);
   const config=settings(args,env,session,command==='health'||command==='versions'||command==='pending');const state=new State(stateDirectory(env,text(args,'state-dir')),config.origin);const client=new Client(config,state);
   const word=args.words[1];let result:unknown;let operationId:string|undefined;
-  const emit=async(frame:unknown)=>output(process.stdout,args.json?exact({ok:true,command:'watch',event:frame},false)+'\n':human('watch',frame,undefined));
-  if(command==='watch'){const duration=number(args,'duration-ms',60_000,1,86_400_000);const max=number(args,'max-events',1000,1,1_000_000);await watch(client,duration,max,emit);return;}
+  if(command==='watch'){
+    const duration=number(args,'duration-ms',60_000,1,86_400_000);const max=number(args,'max-events',1000,1,1_000_000);const destination=new LiveOutput(process.stdout);
+    const emit=async(frame:unknown,signal:AbortSignal)=>destination.write(args.json?exact({ok:true,command:'watch',event:frame},false)+'\n':humanWatch(frame),signal);
+    try{await watch(client,duration,max,emit);}finally{destination.close();}return;
+  }
   if(command==='health')result=await client.health();
   else if(command==='versions')result=await client.versions();
   else if(command==='whoami')result=encode(api.Identity.jsonCodec(),await client.identity());
@@ -51,14 +48,16 @@ async function run(args:Arguments,env:NodeJS.ProcessEnv):Promise<void> {
     result=await client.domain('retrieve',encode(api.RetrieveRequest.jsonCodec(),new api.RetrieveRequest(word!,mode,text(args,'project'),args.flags.has('include-archived'),number(args,'offset',0,0,2147483647),number(args,'limit',20,1,100))));
   } else if(command==='search'){
     const query=word??'';const limit=number(args,'limit',20,1,100);const sort=new api.SearchSort(text(args,'sort')??'modified-at',text(args,'direction')??'desc');let cursor=text(args,'cursor');
-    const seen=new Set<string>();const items:unknown[]=[];const deadline=Date.now()+config.timeout;let pages=0;let totalBytes=0;
+    const seen=new Set<string>();const items:unknown[]=[];const deadline=performance.now()+config.timeout;let pages=0;let totalBytes=0;
     do {
-      if(Date.now()>=deadline||++pages>1000)fail('pagination-limit','pagination exceeded its finite request deadline or 1000-page bound; resume explicitly with the last cursor',6);
-      const response=wireItem(await client.domain('search',encode(api.SearchRequest.jsonCodec(),new api.SearchRequest(query,text(args,'project'),limit,cursor,sort))));
+      if(performance.now()>=deadline||++pages>1000)fail('pagination-limit','pagination exceeded its finite request deadline or 1000-page bound; resume explicitly with the last cursor',6);
+      const request=encode(api.SearchRequest.jsonCodec(),new api.SearchRequest(query,text(args,'project'),limit,cursor,sort));
+      const response=wireItem(await(args.flags.has('all')?client.searchBefore(request,deadline):client.domain('search',request)));
       totalBytes+=Buffer.byteLength(exact(response,false));if(totalBytes>config.maxResponse)fail('too-large','combined search pages exceed the configured response byte limit',6);
       items.push(...response.items as unknown[]);cursor=typeof response.cursor==='string'?response.cursor:undefined;
       if(cursor!==undefined){if(seen.has(cursor))fail('invalid-response','server repeated a pagination cursor; refusing an unbounded loop',6);seen.add(cursor);}
     } while(args.flags.has('all')&&cursor!==undefined);
+    if(args.flags.has('all')&&performance.now()>=deadline)fail('pagination-limit','pagination exceeded its total request deadline; no partial result returned',6);
     result={items,cursor:cursor??null};
   } else if(command==='put'||command==='call'){
     let input:Record<string,unknown>;let op:Operation;
@@ -104,7 +103,7 @@ async function run(args:Arguments,env:NodeJS.ProcessEnv):Promise<void> {
     else if(word==='issue'&&args.words.length===2){const name=required(args,'name');const file=required(args,'secret-file');if(name.length===0||name.length>128||name!==name.trim()||/[\p{Cc}]/u.test(name))usage('token name must be 1..128 characters without surrounding whitespace or control characters');result=await state.locked(()=>accounts.issue(client,name,file));}
     else usage('use token list, issue, revoke ID or acknowledge');
   } else usage('unimplemented command');
-  await output(process.stdout,args.json?exact({ok:true,command,...(operationId===undefined?{}:{requestId:operationId}),result},false)+'\n':human(command,result,operationId));
+  await output(process.stdout,args.json?exact({ok:true,command,...(operationId===undefined?{}:{requestId:operationId}),result},false)+'\n':human({command,arguments:args.words.slice(1),requestId:operationId},result));
 }
 async function main(argv:string[],env:NodeJS.ProcessEnv):Promise<void> {
   process.stdout.on('error',()=>{process.exitCode=6;});process.stderr.on('error',()=>{process.exitCode=6;});

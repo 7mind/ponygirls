@@ -1,5 +1,6 @@
 import {open,realpath,lstat} from 'node:fs/promises';
 import {constants} from 'node:fs';
+import {performance} from 'node:perf_hooks';
 import {State, readBounded} from './state.ts';
 import {type Arguments,text,number} from './args.ts';
 import {CliError,fail,object,envelope,TIMEOUT_MS,RESPONSE_BYTES,PROTOCOL,serverFault,key,parseDocument,parseStoredDocument,requestId,usage} from './core.ts';
@@ -57,16 +58,25 @@ export class Client {
     const value=tokenValue(saved.cookie.slice(name.length+1));return{Cookie:name+'='+value,Origin:this.config.origin};
   }
   async raw(path:string,body:unknown,method:'GET'|'POST',authenticated:boolean,extra:Readonly<Record<string,string>>):Promise<{body:unknown;response:Response}> {
+    return this.request(path,body,method,authenticated,extra,undefined);
+  }
+  private requestFailure(deadline:number|undefined,message:string):never {
+    if(deadline!==undefined&&performance.now()>=deadline)fail('pagination-limit','pagination exceeded its total request deadline; no partial result returned',6);
+    return fail('unavailable',message,6);
+  }
+  private async request(path:string,body:unknown,method:'GET'|'POST',authenticated:boolean,extra:Readonly<Record<string,string>>,deadline:number|undefined):Promise<{body:unknown;response:Response}> {
     const credentials=authenticated?await this.credentials():{};
-    const timeout=AbortSignal.timeout(this.config.timeout);let response:Response;
+    const remaining=deadline===undefined?this.config.timeout:Math.min(this.config.timeout,deadline-performance.now());
+    if(remaining<=0)fail('pagination-limit','pagination exceeded its total request deadline; no partial result returned',6);
+    const timeout=AbortSignal.timeout(Math.ceil(remaining));let response:Response;
     try{response=await fetch(this.config.origin+path,{method,redirect:'manual',headers:{Accept:'application/json','Content-Type':'application/json','X-Haystack-Version':PROTOCOL,...credentials,...extra},...(method==='POST'?{body:JSON.stringify(body)}:{}),signal:timeout});}
-    catch {return fail('unavailable','request failed or deadline exceeded; no automatic retry',6);}
+    catch {return this.requestFailure(deadline,'request failed or deadline exceeded; no automatic retry');}
     if(response.status>=300&&response.status<400){await response.body?.cancel();return fail('redirect-refused','redirect refused; credentials and request bodies are never forwarded or replayed',6);}
     const declared=response.headers.get('content-length');if(declared!==null&&(!/^\d+$/.test(declared)||Number(declared)>this.config.maxResponse)){await response.body?.cancel();return fail('too-large','response exceeds the configured byte limit',6);}
     const reader=response.body?.getReader();if(reader===undefined)return fail('invalid-response','response body missing',6);
     const chunks:Uint8Array[]=[];let bytes=0;
     try {while(true){const next=await reader.read();if(next.done)break;bytes+=next.value.length;if(bytes>this.config.maxResponse){await reader.cancel();fail('too-large','response exceeds the configured byte limit',6);}chunks.push(next.value);}}
-    catch(error){if(error instanceof CliError)throw error;return fail('unavailable','response interrupted or deadline exceeded; no automatic retry',6);}finally{reader.releaseLock();}
+    catch(error){if(error instanceof CliError)throw error;return this.requestFailure(deadline,'response interrupted or deadline exceeded; no automatic retry');}finally{reader.releaseLock();}
     let parsed:unknown;
     try {if(!/^application\/json(?:\s*;|$)/i.test(response.headers.get('content-type')??''))throw new Error();parsed=envelope(new TextDecoder('utf-8',{fatal:true}).decode(Buffer.concat(chunks)));}
     catch{return fail('invalid-response','server returned an invalid current-protocol JSON response',6);}
@@ -77,11 +87,17 @@ export class Client {
     }
     return{body:parsed,response};
   }
-  async domain(operation:Operation,input:unknown):Promise<unknown> {
+  async domain(operation:Operation,input:unknown):Promise<unknown> {return this.domainRequest(operation,input,undefined);}
+  async searchBefore(input:unknown,deadline:number):Promise<unknown> {
+    const result=await this.domainRequest('search',input,deadline);
+    if(performance.now()>=deadline)fail('pagination-limit','pagination exceeded its total request deadline; no partial result returned',6);
+    return result;
+  }
+  private async domainRequest(operation:Operation,input:unknown,deadline:number|undefined):Promise<unknown> {
     input=validateInput(operation,input);const d=routes[operation];
     // Both directions use the generated codecs; schemas close their intentional TS cast-only boundary.
     const request:Codec<unknown>=d.request;const response:Codec<unknown>=d.response;
-    const wire=encode(request,decode(request,input));const result=await this.raw(d.path,wire,'POST',true,{});
+    const wire=encode(request,decode(request,input));const result=await this.request(d.path,wire,'POST',true,{},deadline);
     if(!check(d.output,result.body))return fail('invalid-response','server response violates the selected generated model',6);
     try {
       const decoded=decode(response,materialize(d.output,result.body));const out=encode(response,decoded);

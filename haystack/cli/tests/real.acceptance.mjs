@@ -11,11 +11,14 @@ import {fixture,document,rid,sleep} from '../../server/tests-current/fixture.mjs
 const cli=fileURLToPath(new URL('../dist/cli/src/main.js',import.meta.url));
 let f,home;
 const exactDoc='{"title":"distinctive zebra","description":"quartz protocol recovery","fields":{"n":9007199254740993,"d":0.10,"e":1e2,"z":-0,"visible":"quartz retrieval fixture"},"type":"fact","status":"actual","importance":"low","human-attention":"cleared"}';
-function start(args,env={},input=''){
- const child=spawn(process.env.HAYSTACK_CLI_EXECUTABLE||process.execPath,[...(process.env.HAYSTACK_CLI_EXECUTABLE?[]:[cli]),...args,'--json','--allow-http'],{env:{PATH:process.env.PATH,HOME:home,HAYSTACK_STATE_DIR:path.join(home,'state'),HAYSTACK_URL:f.base,HAYSTACK_TOKEN:f.tokens.bot,...env},stdio:['pipe','pipe','pipe']});
+function start(args,env={},input=''){return startProcess(args,env,input,true);}
+function startProcess(args,env,input,machine){
+ const child=spawn(process.env.HAYSTACK_CLI_EXECUTABLE||process.execPath,[...(process.env.HAYSTACK_CLI_EXECUTABLE?[]:[cli]),...args,...(machine?['--json']:[]),'--allow-http'],{env:{PATH:process.env.PATH,HOME:home,HAYSTACK_STATE_DIR:path.join(home,'state'),HAYSTACK_URL:f.base,HAYSTACK_TOKEN:f.tokens.bot,...env},stdio:['pipe','pipe','pipe']});
  const done=new Promise((resolve,reject)=>{let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);child.on('error',reject);child.on('close',(code,signal)=>resolve({code,signal,stdout,stderr}));});child.stdin.end(input);return{child,done};
 }
 const run=(args,env,input)=>start(args,env,input).done;
+const runHuman=(args,input)=>startProcess(args,{},input,false).done;
+function human(r){assert.equal(r.code,0,r.stderr);assert.equal(r.stderr,'');return r.stdout;}
 function ok(r){assert.equal(r.code,0,r.stderr);assert.equal(r.stderr,'');return JSON.parse(r.stdout);}
 function fault(r,exit,code){assert.equal(r.code,exit,r.stderr);assert.equal(r.stdout,'');assert.equal(JSON.parse(r.stderr).error.code,code);}
 before(async()=>{assert.equal(process.env.HAYSTACK_OWNED_TEST_DB,'1');home=await mkdtemp(path.join(os.tmpdir(),'haystack-cli-real-'));f=await fixture();});
@@ -53,6 +56,24 @@ test('real password session/account/one-time token/revoke survive server restart
  const file=path.join(home,'new-token');const issued=ok(await run(['token','issue','--name','owned-cli','--secret-file',file]));assert.equal(issued.result.secretSaved,true);assert.equal((await stat(file)).mode&0o777,0o600);const token=(await readFile(file,'utf8')).trim();assert.ok(!JSON.stringify(issued).includes(token));
  await f.restart();assert.equal(ok(await run(['status'])).result.user.id,'alice');assert.equal(ok(await run(['whoami'],{HAYSTACK_TOKEN:token})).result.userId,'alice');
  ok(await run(['token','revoke',issued.result.token.id]));fault(await run(['whoami'],{HAYSTACK_TOKEN:token}),3,'unauthorized');
+});
+test('real human views decode documents and label receipts, provenance and account operations',async()=>{
+ const request=rid();const saved=human(await runHuman(['put','cli:human','--file','-','--expected-revision','0','--request-id',request],exactDoc));assert.match(saved,/^Saved: cli:human\nRevision: 1/);assert.ok(saved.includes('Request ID: '+request));
+ assert.match(human(await runHuman(['whoami'],'')),/^User: bot\nType: agent\nToken: default/);
+ const item=human(await runHuman(['get','cli:human'],''));assert.match(item,/Title: distinctive zebra/);assert.match(item,/Description:\n  quartz protocol recovery/);assert.match(item,/Fields \(JSON\):/);for(const n of ['9007199254740993','0.10','1e2','-0'])assert.ok(item.includes(n));assert.match(item,/Modified: .* by bot/);assert.ok(!item.includes('"json"'));
+ assert.match(human(await runHuman(['history','cli:human'],'')),/Revision 1.*bot.*default/);assert.match(human(await runHuman(['search','--project','cli'],'')),/Modified: .* by bot/);assert.match(human(await runHuman(['values','type'],'')),/  - fact/);assert.match(human(await runHuman(['pending'],'')),/No pending writes\./);
+ const retrieved=human(await runHuman(['retrieve','quartz','--project','cli'],''));for(const label of ['ExactMatches:','Generation:','Policy:','Pointer:','UTF16 span:'])assert.ok(retrieved.includes(label));
+ const pass=path.join(home,'password');assert.match(human(await runHuman(['login','alice','--password-file',pass],'')),/Signed in: Alice/);assert.match(human(await runHuman(['account'],'')),/Account: alice/);assert.match(human(await runHuman(['status'],'')),/Session: authenticated/);assert.match(human(await runHuman(['token','list'],'')),/browser.*configured.*active/);
+ const file=path.join(home,'human-token');const issued=human(await runHuman(['token','issue','--name','human-display','--secret-file',file],''));assert.match(issued,/Token issued:/);assert.match(issued,/Secret: saved/);assert.ok(!issued.includes((await readFile(file,'utf8')).trim()));const id=ok(await run(['token','list'])).result.tokens.find(token=>token.name==='human-display').id;assert.ok(human(await runHuman(['token','revoke',id],'')).includes('Token revoked: '+id));
+});
+test('real qualified IDs agree with exact UTF16 component limits',async()=>{
+ const valid='cli-unicode:'+encodeURIComponent('😀'.repeat(128));ok(await run(['put',valid,'--file','-','--expected-revision','0'],{},exactDoc));assert.equal(ok(await run(['get',valid])).result.key,valid);
+ const invalid='cli-unicode:'+encodeURIComponent('😀'.repeat(129));fault(await run(['get',invalid]),2,'invalid-id');const rejected=await f.put(invalid);assert.equal(rejected.status,400);assert.equal((await rejected.json()).code,'invalid-id');
+});
+test('real live watch preserves a complete legal key exceeding one KiB',async()=>{
+ const key='A'.repeat(256)+':'+ '%25'.repeat(256);const watching=start(['watch','--duration-ms','10000','--max-events','1']);let settled=false;watching.done.finally(()=>settled=true);
+ for(let i=0;i<30&&!settled;i++){await sleep(100);assert.equal((await f.put(key,document(),i)).status,200);}
+ const result=ok(await watching.done);assert.equal(result.event.key,key);assert.equal(result.event.kind,'changed');
 });
 test('real idle watch crosses two full 30-second transport heartbeat periods',async()=>{
  const result=await run(['watch','--duration-ms','65000','--max-events','100']);assert.equal(result.code,0,result.stderr);assert.equal(result.stdout,'');assert.equal(result.stderr,'');

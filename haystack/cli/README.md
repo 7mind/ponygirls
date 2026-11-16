@@ -78,7 +78,9 @@ haystack values type
 IDs must be full canonical `encode(project):encode(item)` IDs, using uppercase
 RFC3986 percent escapes. Namespace `--project` is a **raw** component, not a
 qualified ID. IDs, revisions, request IDs, cursors and provenance are never
-shortened. Revisions use the generated i32 bounds. Document JSON numeric source
+shortened. Each decoded ID component is limited to256 UTF16 code units and1024
+UTF8 bytes, matching the server; supplementary characters occupy two units.
+Revisions use the generated i32 bounds. Document JSON numeric source
 tokens (`9007199254740993`, `0.10`, `1e2`, `-0`) remain exact; duplicate keys,
 invalid Unicode and exponent overflow are rejected rather than rounded.
 
@@ -97,8 +99,9 @@ Search excludes archived items by default; use the query language's
 `archived:all`/`archived:only` selectors when intended. A cursor is bound to its
 original query/project/limit/sort. `--all` deliberately follows pages, with a
 1000-page guard, a combined response-byte bound and a total pagination deadline
-based on `--timeout-ms`. It fails instead of returning an undisclosed partial
-answer. Save the explicit cursor for manual continuation.
+based on `--timeout-ms`. Every page's in-flight request/body is aborted when the
+remaining total budget expires, without replacing the captured credential promise.
+It fails instead of returning an undisclosed partial answer. Save the explicit cursor for manual continuation.
 
 For scripts/rare request shapes, `call OP --file FILE|-` accepts **only** the
 current generated requests for `get`, `put`, `search`, `history`, `analyze`,
@@ -195,7 +198,35 @@ was never received.
 
 ## Output, errors and streaming
 
-Ordinary success: human text by default, or one JSON object on stdout:
+Ordinary success uses domain-labeled human views, including when piped: identity
+and write receipts, decoded document title/status/attention/description and audit
+metadata, complete browse/retrieval provenance, revision/token rows, bounded
+suggestion lists, pending-operation recovery identifiers and explicit empty states.
+Only arbitrary document fields are rendered as clearly labeled lossless JSON;
+ordinary DTOs and escaped `document.json` are not the default interface. Rare
+structured results use indented keys/lists. For example:
+
+```text
+Item: project:fact
+Revision: 1
+Title: Exact counts
+Type: fact
+Status: actual
+Attention: required
+Importance: low
+Created: 2026-11-16T00:00:00Z by bot
+Modified: 2026-11-16T00:00:00Z by bot
+Description:
+  A readable description, not an escaped envelope string.
+Fields (JSON):
+  {
+    "n": 9007199254740993
+  }
+Links: none
+Tags: none
+```
+
+`--json` instead emits one unchanged machine-contract object on stdout:
 
 ```json
 {"ok":true,"command":"get","result":{"key":"p:i","revision":1,"document":{"json":"..."},"metadata":{}}}
@@ -229,12 +260,17 @@ JSON mode is **NDJSON**, one `{ok:true,command:"watch",event:<LiveFrame>}` per
 changed frame. No progress banners or heartbeats appear on stdout. Errors still
 go to stderr and terminate nonzero; earlier events are not retracted. Human mode
 prints escaped frames. WS follows the current generated framing, application
-ping/pong plus transport heartbeat,1024-byte frame and bounded queue safeguards.
+ping/pong plus transport heartbeat. Incoming frames are bounded to64KiB, matching
+the server's outgoing queue budget and admitting complete legal encoded keys.
+The client queue is bounded to64KiB/64frames, including pending delivery.
 No auto-reconnect or hidden cursor recovery occurs. Default bound60seconds or
 1000changed events; configurable finite maxima1day/1million. Ctrl-C/SIGTERM
 cancels and closes the stream. Expiry before an authenticated application frame
 is observed is an error, not successful observation. Application pongs must echo
-the pending nonce/clock exactly.
+the pending nonce/clock exactly. A stalled output consumer does not extend the
+observation deadline or prevent Ctrl-C cleanup: undelivered output is cancelled,
+the owned pipe is closed, and `output-failed`/exit6 reports incomplete delivery
+instead of silently dropping a partial frame and claiming success.
 
 Requests default to30seconds (maximum10minutes); responses default32MiB
 (maximum64MiB). Inputs are bounded, invalid UTF8 and truncation are errors.
