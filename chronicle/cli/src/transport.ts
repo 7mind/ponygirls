@@ -5,7 +5,7 @@ import { Result_Error, Result_Hello, Result_Ping, Result_McpTestRun, type Result
 import { CliError, RemoteError, remoteFailure, uncertain } from './errors.js';
 import { MAX_BYTES, type Session } from './files.js';
 import { isObject, parseJson, type Json } from './json.js';
-import { decodeWire, encodeWire, schema, validateResponse } from './wire.js';
+import { decodeWire, encodeWire, schema, sameUuid, validateResponse } from './wire.js';
 export function origin(raw: string | null, allowHttp: boolean): string {
   if (raw === null || raw === '') throw new CliError('usage', 'Set --url or CHRONICLE_URL to the exact service origin.');
   let url: URL; try { url = new URL(raw); } catch { throw new CliError('usage', 'URL must be an exact HTTPS origin.'); }
@@ -99,13 +99,13 @@ export async function websocket(origin: string, session: Session, operation: Ope
         if (typeof event.data !== 'string' || Buffer.byteLength(event.data) > MAX_BYTES) throw new CliError('protocol-error', 'Expected a bounded text frame.');
         const envelope = decodeWire('ServerEnvelope', parseJson(event.data)); const result = envelope.result;
         if (result instanceof Result_Ping) { if (!negotiated) throw new CliError('protocol-error', 'Heartbeat before negotiation.'); send(envelope.requestId, new Operation_Pong(result.nonce)); return; }
-        if (envelope.requestId === helloId && !negotiated) {
+        if (sameUuid(envelope.requestId, helloId) && !negotiated) {
           if (result instanceof Result_Error) { finish(null, remoteFailure(result.failure.code)); return; }
           if (!(result instanceof Result_Hello) || result.versions.current !== schema.version || result.versions.minimum !== schema.version || result.versions.supported.length !== 1 || result.versions.supported[0] !== schema.version) throw new CliError('version-mismatch', 'Server requires a different application protocol.');
           if (result.user.id !== session.user.id || result.user.login !== session.user.login) throw new CliError('unauthorized', 'Session owner changed; login again.');
           negotiated = true; send(requestId, operation); sent = true; return;
         }
-        if (!negotiated || envelope.requestId !== activeId || result instanceof Result_Hello) throw new CliError('protocol-error', 'Unexpected or uncorrelated application reply.');
+        if (!negotiated || !sameUuid(envelope.requestId, activeId) || result instanceof Result_Hello) throw new CliError('protocol-error', 'Unexpected or uncorrelated application reply.');
         if (result instanceof Result_Error) {
           const error = remoteFailure(result.failure.code);
           const preAdmissionCodes = operation instanceof Operation_StartMcpTest ? ['invalid', 'version-mismatch', 'mcp-approval-required', 'mcp-active-run', 'conflict']
@@ -118,7 +118,7 @@ export async function websocket(origin: string, session: Session, operation: Ope
           const snapshot = result.result;
           if (snapshot.state === 'AuthorizationLost') { failure(remoteFailure('unauthorized')); return; }
           if (snapshot.state === 'Cancelled' || snapshot.state === 'Expired') { finish(result, null); return; }
-          if (snapshot.instanceId !== operation.instanceId || snapshot.runId !== operation.runId) throw new CliError('protocol-error', 'MCP test identity changed.');
+          if (!sameUuid(snapshot.instanceId, operation.instanceId) || !sameUuid(snapshot.runId, operation.runId)) throw new CliError('protocol-error', 'MCP test identity changed.');
           for (const event of snapshot.events) {
             if (event.sequence <= sequence) throw new CliError('protocol-error', 'MCP event sequence did not advance.');
             sequence = event.sequence; events.push(event);

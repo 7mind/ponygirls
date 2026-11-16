@@ -85,7 +85,8 @@ const RECEIPT_ENTITIES = {
   RemoveMember: { kind: 'argument', field: 'groupId' }, LeaveGroup: { kind: 'argument', field: 'groupId' }, DeleteGroup: { kind: 'argument', field: 'groupId' },
   Purge: { kind: 'argument', field: 'sessionId' }, Logout: { kind: 'absent' },
 } as const satisfies Partial<Record<OperationName, ReceiptEntityBinding>>;
-function sameUuid(expected: unknown, actual: unknown): boolean { return typeof expected === 'string' && typeof actual === 'string' && expected.toLowerCase() === actual.toLowerCase(); }
+export function sameUuid(expected: unknown, actual: unknown): boolean { return typeof expected === 'string' && typeof actual === 'string' && expected.toLowerCase() === actual.toLowerCase(); }
+function sameNullableUuid(expected: unknown, actual: unknown): boolean { return expected === null && actual === null || sameUuid(expected, actual); }
 function invalidAcknowledgement(): never { throw new CliError('protocol-error', 'Acknowledgement does not match the requested operation, receipt identity or target.'); }
 function validateAcknowledgement(name: OperationName, body: JsonObject, branch: string, wrapper: JsonObject, requestId: string | null): void {
   const lookup = name === 'Receipt'; const expectedId = lookup ? body['mutationId'] : requestId;
@@ -121,11 +122,11 @@ export function validateResponse(operation: Operation, result: Result, requestId
   validateAcknowledgement(name, body, branch, wrapper, requestId); const data = wrapper['result'];
   if (isObject(data)) {
     const selected = name === 'GetSession' && isObject(data['session']) ? data['session'] : data;
-    if (isObject(body['view']) && (!isObject(selected['view']) || selected['view']['revision'] !== body['view']['revision'] || selected['view']['generationId'] !== body['view']['generationId'])) reject();
+    if (isObject(body['view']) && (!isObject(selected['view']) || selected['view']['revision'] !== body['view']['revision'] || !sameNullableUuid(body['view']['generationId'], selected['view']['generationId']))) reject();
     if (typeof body['offset'] === 'number' && typeof data['offset'] === 'number' && data['offset'] !== body['offset']) reject();
     if (name === 'GetRaw' && body['revision'] !== null && data['revision'] !== body['revision']) reject();
-    if (name === 'GetSession' && selected['id'] !== body['sessionId']) reject();
-    if (name === 'ReadMessageContext' && data['sessionId'] !== body['sessionId']) reject();
+    if (name === 'GetSession' && !sameUuid(body['sessionId'], selected['id'])) reject();
+    if (name === 'ReadMessageContext' && !sameUuid(body['sessionId'], data['sessionId'])) reject();
     if (name === 'Search') {
       if (data['countScope'] === 'CandidateWindow') { if (typeof data['rankingLimit'] !== 'number' || data['rankingLimit'] < 1 || typeof data['total'] !== 'number' || data['total'] > data['rankingLimit']) reject(); }
       else if (data['rankingLimit'] !== null) reject();

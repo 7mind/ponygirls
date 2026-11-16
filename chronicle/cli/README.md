@@ -92,7 +92,14 @@ All RPC input is validated against a checked-in boundary schema derived directly
 from `models/chronicle.baboon`, **then** decoded/encoded with its sole current
 Baboon generated codecs. Missing/extra fields, duplicate JSON keys, invalid
 UUIDs, primitives, enum values, unsupported unions, unsafe numeric i64 and
-out-of-range integers fail before transport. `rpc help Operation` describes
+out-of-range integers fail before transport.
+
+UUID comparisons use their case-insensitive domain identity, including envelope
+correlation, receipt IDs, pinned generations and MCP run keys. Accepted input
+spellings and payload text are not rewritten. Null generation equals only null;
+opaque user/source identifiers, JSON-RPC IDs and profile names remain exact.
+
+`rpc help Operation` describes
 required-present nullable fields and nested types. JSON i64 output is exact
 decimal strings; safe numeric input is accepted, unsafe numeric input is
 rejected rather than silently rounded. No removed-version compatibility path.

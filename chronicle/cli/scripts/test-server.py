@@ -195,31 +195,33 @@ def main():
             records = [dict(type='session', id='session', version=3)] + [dict(type='message', id=m['id'], message=dict(role='user', content=[dict(type='text', text=m['text'])])) for m in messages]
             raw = ''.join(json.dumps(record, ensure_ascii=False) + '\n' for record in records)
             sha = hashlib.sha256(raw.encode()).hexdigest()
-            request = dict(requestId=str(uuid.uuid4()), source=dict(collectorNamespace='cli-owned-test', discoveryRootId='synthetic-root', format='Pi', producerSessionId='synthetic-session', subagentId=None), expectedRevision=0, digest=sha, completion='Quiescent', redacted=False,
+            request = dict(requestId=str(uuid.uuid4()).upper(), source=dict(collectorNamespace='cli-owned-test', discoveryRootId='synthetic-root', format='Pi', producerSessionId='synthetic-session', subagentId=None), expectedRevision=0, digest=sha, completion='Quiescent', redacted=False,
                            metadata=dict(title='CLI synthetic fixture', project='cli-project', workdir=None, gitRemote=None, gitBranch='main', gitCommit=None, producer='pi', model=None, startedAt=None, endedAt=None, tags=['synthetic']), messages=messages,
                            files=[dict(path='session.jsonl', sha256=sha, content=raw)])
             receipt = call('explicit stdin ingestion', ['ingest', '--file', '-', '--yes'], document=request)
             replay = call('deliberate exact payload ingest receipt replay', ['ingest', '--file', '-', '--yes'], document=request)
-            assert replay == receipt
+            assert replay == receipt and receipt['requestId'] == request['requestId'].lower()
             conflict = dict(request, requestId=str(uuid.uuid4()))
             call('generated ingest CAS conflict remains definitive', ['ingest', '--file', '-', '--yes'], expected=5, document=conflict)
             session_id, job_id = receipt['sessionId'], receipt['jobId']
             report_data = dict(collectorId='cli-owned-test', sequence='1', runId=str(uuid.uuid4()), phase='Idle', startedAt='2026-11-16T00:00:00Z',
                                counters={**{k: 0 for k in ['discovered', 'scanned', 'waiting', 'excluded', 'unchanged', 'enqueued', 'uploaded', 'uploadFailures', 'quarantined', 'pending', 'stopped', 'conflicts']}, 'scannedBytes': '0'}, totalUploadBytes='0', uploadedBytes='0', currentUploadTotalBytes=None, error=None)
             call('explicit collector progress', ['report-progress', '--file', '-', '--yes'], document=report_data)
-            session = call('session discovery and provenance', ['session', session_id])['Session']['result']['session']
+            session = call('session discovery and provenance', ['session', session_id.upper()])['Session']['result']['session']
             assert session['view'] == dict(revision=1, generationId=None)
+            raw_session = rpc('raw RPC uppercase session UID', 'GetSession', dict(sessionId=session_id.upper(), view=dict(revision=1, generationId=None)))['Session']['result']['session']
+            assert raw_session['id'] == session_id
             page = call('pinned message page one', ['messages', session_id, '--revision', '1', '--limit', '2'])['Messages']['result']
             assert len(page['messages']) == 2 and page['total'] == 3 and page['view'] == session['view']
             page = call('pinned message page two', ['messages', session_id, '--revision', '1', '--offset', '2', '--limit', '2'])['Messages']['result']
             assert [m['id'] for m in page['messages']] == ['m3']
-            call('bearer pinned messages', ['messages', session_id, '--revision', '1', '--auth', 'bearer'])
+            call('bearer pinned messages', ['messages', session_id.upper(), '--revision', '1', '--auth', 'bearer'])
             call('revision-only chunks', ['chunks', session_id, '--revision', '1'])
             call('revision-only passages', ['passages', session_id, '--revision', '1'])
             hits = call('selected history find', ['find', session_id, 'Needle', '--revision', '1'])['SessionMessageSearch']['result']['hits']
             assert [h['messageId'] for h in hits] == ['m2']
             call('locate exact message', ['locate', session_id, 'm2', '--revision', '1'])
-            context = call('exact byte-context', ['context', session_id, '--revision', '1', '--message', 'm2', '--start', '0', '--end', '6'])['MessageContext']['result']
+            context = call('exact byte-context', ['context', session_id.upper(), '--revision', '1', '--message', 'm2', '--start', '0', '--end', '6'])['MessageContext']['result']
             assert context['view'] == session['view'] and context['anchor']['messageId'] == 'm2'
             archived = call('raw JSONL fidelity', ['raw', session_id, '--revision', '1'])['Raw']['result']
             assert archived['files'][0]['content'] == raw
@@ -229,8 +231,8 @@ def main():
             rpc('typed expression hints', 'ExpressionHints', dict(query=dict(target=dict(Archive={}), expression='', caretUtf16=0, limit=10)))
             catalog = rpc('MCP test tool catalog', 'McpTestTools', {})['McpTestTools']['result']
             run_id = str(uuid.uuid4())
-            tested = rpc('connection-owned MCP test through actual scripted model/tool loop', 'StartMcpTest', dict(instanceId=catalog['instanceId'], runId=run_id, prompt='Use whoami once, then finish the owned synthetic test.'), extra=['--yes'])['McpTestRun']['result']
-            assert tested['state'] == 'Complete' and len(tested['events']) == 3
+            tested = rpc('connection-owned MCP test through actual scripted model/tool loop', 'StartMcpTest', dict(instanceId=catalog['instanceId'].upper(), runId=run_id.upper(), prompt='Use whoami once, then finish the owned synthetic test.'), extra=['--yes'])['McpTestRun']['result']
+            assert tested['state'] == 'Complete' and len(tested['events']) == 3 and tested['instanceId'] == catalog['instanceId'] and tested['runId'] == run_id
             assert len(model_calls) == 2
             observed = rpc('MCP trace erased after owner socket closes', 'ReadMcpTest', dict(instanceId=catalog['instanceId'], runId=run_id, afterSequence='0', limit=256))['McpTestRun']['result']
             assert observed['state'] == 'Cancelled' and observed['events'] == []
@@ -243,7 +245,7 @@ def main():
             rebuilt = call('confirmed owner reindex apply', ['reindex', 'apply', '--target-profile', plan['targetProfile'], '--selection-hash', plan['selectionHash'], '--yes'])['OwnerReindexed']['result']
             recovered_reindex = call('owner reindex receipt lookup binds its historical request', ['receipt', rebuilt['requestId']])['OwnerReindexed']['result']
             assert recovered_reindex == rebuilt
-            status = call('captured reindex cohort status', ['reindex', 'status', rebuilt['requestId']])['ReindexStatus']['result']
+            status = call('captured reindex cohort status', ['reindex', 'status', rebuilt['requestId'].upper()])['ReindexStatus']['result']
             assert int(status['total']) == 1 and sum(int(status[k]) for k in ['complete', 'superseded', 'failed', 'pending']) == 1
             issued_file = root / 'issued-token'
             issued = call('account token mint to private file', ['tokens', 'mint', '--name', 'acceptance-issued', '--scopes', 'Read,Raw', '--secret-out', str(issued_file), '--yes'])
@@ -257,9 +259,11 @@ def main():
             assert token_result['Token']['result']['secret'] is None and ws_secret.stat().st_mode & 0o777 == 0o600
             recovered = call('WS one-time secret receipt metadata only', ['receipt', mutation_id])
             assert recovered['Token']['result']['secret'] is None
-            rpc('WS token revoke', 'RevokeToken', dict(tokenId=token_result['Token']['result']['token']['id']), extra=['--yes'])
-            created = call('create group', ['groups', 'create', 'owned-test-sharing', '--yes'])['Mutation']['receipt']
-            recovered_group = call('ordinary mutation receipt lookup binds its historical request', ['receipt', created['requestId']])['Mutation']['receipt']
+            rpc('WS token revoke', 'RevokeToken', dict(tokenId=token_result['Token']['result']['token']['id'].upper()), extra=['--yes'])
+            group_request_id = str(uuid.uuid4()).upper()
+            created = call('create group with uppercase request UUID', ['groups', 'create', 'owned-test-sharing', '--yes', '--request-id', group_request_id])['Mutation']['receipt']
+            assert created['requestId'] == group_request_id.lower()
+            recovered_group = call('ordinary mutation receipt lookup binds its historical request', ['receipt', created['requestId'].upper()])['Mutation']['receipt']
             assert recovered_group == created
             group = created['entityId']
             invite = call('invite member', ['groups', 'invite', group, 'bob', '--yes'])['Mutation']['receipt']['entityId']

@@ -5,7 +5,7 @@ import { allow, flag, HELP, integer, makeOperation, option, parseArgs, type Argu
 import { bearer, checkSecretDestination, exclusiveSecret, MAX_BYTES, readBounded, readStdin, SessionStore, type Environment } from './files.js';
 import { output } from './output.js';
 import { isObject, parseJson } from './json.js';
-import { decodeOperation, decodeWire, encodeWire, operationHelp, operationName, operationNames, operationPolicy, schema, uuid, validateResponse } from './wire.js';
+import { decodeOperation, decodeWire, encodeWire, operationHelp, operationName, operationNames, operationPolicy, schema, uuid, sameUuid, validateResponse } from './wire.js';
 import { Deadline, Http, origin, websocket } from './transport.js';
 import { accountAcknowledgement, accountIssued, login, settings } from './account.js';
 import { mcp, operationTool } from './mcp.js';
@@ -84,7 +84,7 @@ export async function run(args: Arguments, env: Environment): Promise<{ value: u
     try { reply = await http.request(command === 'ingest' ? '/api/ingest' : '/api/collector/progress', 'POST', body, { token }, true); }
     catch (error) { if (error instanceof CliError && error.code === 'uncertain') throw unknownOutcome(); throw error; }
     try {
-      if (command === 'ingest') { const receipt = decodeWire('IngestReceipt', reply.data); if (!isObject(body) || receipt.requestId !== body['requestId']) throw new Error(); return { value: encodeWire('IngestReceipt', receipt), text: false }; }
+      if (command === 'ingest') { const receipt = decodeWire('IngestReceipt', reply.data); if (!isObject(body) || !sameUuid(body['requestId'], receipt.requestId)) throw new Error(); return { value: encodeWire('IngestReceipt', receipt), text: false }; }
       const ack = decodeWire('CollectorProgressAck', reply.data); if (!isObject(body) || String(ack.sequence) !== body['sequence']) throw new Error(); return { value: encodeWire('CollectorProgressAck', ack), text: false };
     } catch { throw unknownOutcome(); }
   }
