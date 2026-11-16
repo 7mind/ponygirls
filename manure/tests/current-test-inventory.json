@@ -341,6 +341,31 @@
       ]
     },
     {
+      "module": "test_cli_ux",
+      "path": "manure/tests/test_cli_ux.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_cli_ux.CliColorProcessTests.test_abbreviated_long_options_are_rejected_consistently",
+        "test_cli_ux.CliColorProcessTests.test_auto_colors_only_each_human_terminal_stream",
+        "test_cli_ux.CliColorProcessTests.test_auto_environment_controls_and_explicit_overrides",
+        "test_cli_ux.CliColorProcessTests.test_help_and_errors_obey_explicit_modes_before_or_after_commands",
+        "test_cli_ux.CliColorProcessTests.test_invalid_color_is_sanitized_usage_without_credentials",
+        "test_cli_ux.CliColorProcessTests.test_json_suppresses_all_ansi_for_results_help_and_errors",
+        "test_cli_ux.CliColorProcessTests.test_last_explicit_color_wins_and_end_of_options_is_respected",
+        "test_cli_ux.CliUsageTests.test_cache_global_works_on_either_side_and_last_explicit_value_wins",
+        "test_cli_ux.CliUsageTests.test_color_changes_only_presentation_for_every_result_and_json_payload",
+        "test_cli_ux.CliUsageTests.test_colored_ranked_search_preserves_evidence_exact_integers_and_provenance",
+        "test_cli_ux.CliUsageTests.test_common_help_explains_operand_and_safety_constraints",
+        "test_cli_ux.CliUsageTests.test_http_global_works_on_either_side_without_changing_opt_in",
+        "test_cli_ux.CliUsageTests.test_local_error_paths_are_terminal_escaped",
+        "test_cli_ux.CliUsageTests.test_parser_errors_do_not_echo_values_or_terminal_controls",
+        "test_cli_ux.CliUsageTests.test_required_upload_access_is_documented_and_checked_before_credentials",
+        "test_cli_ux.CliUsageTests.test_resuming_still_requires_explicit_access_before_credentials"
+      ],
+      "acceptanceScope": "CLI usage and per-stream presentation with owned typed transport plus actual subprocess PTYs/pipes; synthetic credentials only. Not native-server acceptance."
+    },
+    {
       "module": "test_client_external",
       "path": "manure/tests/test_client_external.py",
       "classification": "current",

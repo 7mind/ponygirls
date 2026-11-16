@@ -225,12 +225,25 @@ Empty lists and continuation cursors are explicit. Names and metadata escape
 terminal controls without changing stored values. IDs, URLs and passwords are
 not abbreviated.
 
+`--color auto|always|never` works before or after every command. The default
+`auto` styles human output only on each terminal stream; pipes remain plain.
+Nonempty `NO_COLOR` or `TERM=dumb` disables automatic color. Explicit `always`
+and `never` override those environment controls; `--json` always disables ANSI,
+including help and errors. Color never changes the output format or stored data.
+The existing `--cache-dir` and `--allow-insecure-http` globals also work before
+or after the command.
+
 Every command accepts `--json`, before or after the command, for the existing
 JSON result shape. Scripts should request it explicitly; there is no automatic
 TTY-dependent format switching. Errors remain sanitized text on stderr in both
 modes, with no success result on stdout (exit 0 success, 2 usage/validation,
 1 service/local failure). Generated external passwords are secret-bearing
-stdout in either format; do not log them.
+stdout in either format; do not log them. Help documents operands, access modes,
+TTL bounds and password handling. `--access` is required for every upload,
+including explicit/automatic resume, and missing operands/options fail before
+credential files are read. Parser diagnostics identify usage mistakes without
+echoing arbitrary argument values (which may contain passwords). Spell long
+options in full; abbreviated forms are not accepted.
 
 `search QUERY [--limit N] [--cursor C]` uses the same [query dialect](docs/query.md)
 as the dashboard and MCP. Default catalogue mode filters the full accessible

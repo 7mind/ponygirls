@@ -144,7 +144,19 @@ manure fetch <artifact-id-or-content-url> <dest-dir> [--password P] [--password-
 manure delete <artifact-id> [--json]
 manure rotate-password <artifact-id> [--json]
 manure --cache-dir <dir> <subcommand>...
+manure <subcommand>... --color auto|always|never
 ```
+
+All global options (`--json`, `--color`, `--cache-dir`, `--allow-insecure-http`)
+work before or after the command. `--color auto` is the default: style human
+terminal streams only, keeping pipes plain. Nonempty `NO_COLOR` or `TERM=dumb`
+disables automatic color; explicit `always`/`never` overrides the environment.
+`--json` always disables ANSI, including help and diagnostics. Use `--help` on
+any command for operands, limits and safety notes; it never reads credentials.
+`--access` remains required on every upload, including resume, and missing
+required arguments fail before credential-file reads. Parser errors omit argv
+values to avoid disclosing misplaced passwords. Spell long options in full;
+implicit abbreviations are not accepted.
 
 Output is human-readable by default, even when piped: artifact tables, labeled
 metadata and upload/download/mutation receipts. For automation, pass `--json`

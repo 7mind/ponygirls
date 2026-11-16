@@ -238,10 +238,29 @@ let
         human = run_cli(["whoami"], {})
         assert human == "User: check\nType: agent\nToken ID: default\n", human
         assert run_cli(["--json", "whoami"], {}) == me
+        styled = run_cli(["whoami", "--color", "always"], {"NO_COLOR": "1", "TERM": "dumb"})
+        import re
+        ansi = re.compile(r"\x1b\[[0-9;]*m")
+        assert "\x1b[" in styled and ansi.sub("", styled) == human
+        assert run_cli(["--color", "always", "whoami", "--json"], {}) == me
+        assert run_cli(["--color", "always", "whoami", "--color", "never"], {}) == human
+        assert run_cli(["whoami", "--allow-insecure-http"], {}) == human
+        help_text = run_cli(["upload", "--help", "--color", "never"],
+                            {"MANURE_TOKEN_FILE": os.path.join(work, "absent-token")})
+        assert "--access {internal,external,public}" in help_text and "[--access" not in help_text
+        for args in (["whoami", "--unknown=\x1b[31mprivate-parser-canary"],
+                     ["--password", "private-parser-canary", "fetch", "http://localhost", "out"],
+                     ["whoami", "--col", "never"], ["--j", "whoami"],
+                     ["upload", big, "--resume", "a" * 32]):
+            rejected = subprocess.run([cli, "--json", "--color", "always"] + args,
+                capture_output=True, text=True, env=child_env, cwd=work, timeout=60)
+            assert rejected.returncode == 2 and rejected.stdout == "" and "--help" in rejected.stderr
+            assert "private-parser-canary" not in rejected.stderr and "\x1b" not in rejected.stderr
+            assert raw not in rejected.stderr
         passed.append("cli-human-default-and-global-json-selection")
         # Flag wins over env: record lands in the flag cache only.
         rec = interrupt_upload(
-            ["--cache-dir", flag_cache, "upload", big,
+            ["upload", big, "--cache-dir", flag_cache,
              "--access", "internal", "--json"],
             {"MANURE_CACHE_DIR": env_cache}, flag_cache)
         assert_no_secrets(rec)

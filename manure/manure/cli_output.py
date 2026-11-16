@@ -1,7 +1,56 @@
 """Human presentation of client-local results; never used by JSON or MCP."""
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Literal, NotRequired, TypedDict, cast
+
+
+ColorMode = Literal['auto', 'always', 'never']
+BOLD = '\x1b[1m'
+HEADING = '\x1b[1;36m'
+SUCCESS = '\x1b[1;32m'
+ERROR = '\x1b[1;31m'
+RESET = '\x1b[0m'
+
+
+@dataclass(frozen=True)
+class Presentation:
+    colored: bool
+
+    @classmethod
+    def for_stream(cls, mode: ColorMode, as_json: bool, is_terminal: bool,
+                   no_color: str | None, term: str | None) -> Presentation:
+        return cls(not as_json and (mode == 'always' or
+            (mode == 'auto' and is_terminal and not no_color and term != 'dumb')))
+
+    def _paint(self, text: str, style: str) -> str:
+        return style + text + RESET if self.colored else text
+
+    def human(self, text: str) -> str:
+        lines = []
+        for line in text.split('\n'):
+            if line.startswith('ID ') or line == 'Metadata search results (not file contents)':
+                lines.append(self._paint(line, HEADING))
+            elif line.startswith(('Uploaded artifact ', 'Fetched artifact ',
+                                  'Deleted artifact ', 'Rotated password for artifact ')):
+                lines.append(self._paint(line, SUCCESS))
+            else:
+                label, separator, value = line.partition(': ')
+                lines.append(self._paint(label + separator, BOLD) + value if separator
+                             else self._paint(line, BOLD) if line.endswith(':') else line)
+        return '\n'.join(lines)
+
+    def help(self, text: str) -> str:
+        lines = []
+        for line in text.split('\n'):
+            if line.startswith('usage: '):
+                lines.append(self._paint('usage: ', HEADING) + line[len('usage: '):])
+            else:
+                lines.append(self._paint(line, HEADING) if line.endswith(':') else line)
+        return '\n'.join(lines)
+
+    def error(self, text: str) -> str:
+        return self._paint(terminal_text(text), ERROR)
 
 
 Access = Literal['internal', 'external', 'public']

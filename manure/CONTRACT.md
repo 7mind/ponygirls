@@ -1026,6 +1026,19 @@ failure). The upload fields below describe JSON; text carries the same receipt
 information with human labels, `never` for no expiry and an explicit unavailable
 password/resume note instead of literal null.
 
+CLI ergonomics amendment: `--color auto|always|never` is global and accepted
+before or after every command, as are `--cache-dir` and `--allow-insecure-http`.
+`auto` styles only human output on the particular terminal stream; nonempty
+`NO_COLOR` or `TERM=dumb` disables it. Explicit `always`/`never` overrides those
+environment controls. `--json` disables all ANSI, including help and errors,
+without changing JSON payloads, integer precision or provenance. Help and usage
+errors follow the same stream-specific policy independently of Python's argparse
+version. Parser diagnostics never reflect arbitrary argv values or raw terminal
+controls. Structural usage validation precedes credential-file reads; `--access`
+remains required on every upload, including explicit and cached resume. This does
+not infer access from cache or change source/cache/server matching. Long option
+names must be spelled in full; implicit argparse abbreviations are not accepted.
+
 CLI search amendment: `manure search QUERY [--limit N] [--cursor C] [--json]`
 uses the existing shared dashboard/MCP expression grammar and management API.
 Default catalogue results preserve catalogue JSON; `mode:lexical|semantic|hybrid`
