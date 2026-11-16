@@ -38,3 +38,11 @@ test('Chronicle bearer validation accepts its full configured alphabet/length, n
   assert.throws(() => bearer({ CHRONICLE_TOKEN: valid + ':' }, null));
   assert.throws(() => bearer({ CHRONICLE_TOKEN: valid.repeat(16) }, null));
 });
+test('Chronicle trailing-whitespace token normalization applies to literal and protected-file inputs without narrowing static tokens', async () => {
+  const { bearer } = await import('../src/files.js');
+  const { mkdtempSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os'); const { join } = await import('node:path');
+  const root = mkdtempSync(join(tmpdir(), 'chronicle-token-contract-'));
+  const token = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-';
+  try { const file = join(root, 'token'); writeFileSync(file, `${token}\r\n\n\t `, { mode: 0o600 }); assert.equal(bearer({ CHRONICLE_TOKEN_FILE: file }, null), token); assert.equal(bearer({ CHRONICLE_TOKEN: `${token}\r\n\n\t ` }, null), token); assert.throws(() => bearer({ CHRONICLE_TOKEN: ` ${token}` }, null)); } finally { rmSync(root, { recursive: true }); }
+});

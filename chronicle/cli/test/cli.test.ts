@@ -203,3 +203,43 @@ test('typed post-effect cancellation error is uncertain with its original run ke
 test('MCP terminal Complete cannot silently omit events advertised by lastSequence', async () => {
   const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id) => send(socket, id, { McpTestRun: { result: { instanceId: ID, runId: GENERATION, state: 'Complete', observedAt: '2026-11-16T00:00:00Z', events: [], lastSequence: '1', hasMore: false, failure: null } } }))); try { state(f); const result = await cli(['rpc', '--file', '-', '--yes', '--json'], f, {}, JSON.stringify({ StartMcpTest: { instanceId: ID, runId: GENERATION, prompt: 'synthetic' } })); assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, ''); } finally { await f.close(); }
 });
+for (const code of ['unauthorized', 'unavailable', 'protocol-error', 'unknown-after-delivery']) test(`post-commit WS mutation ${code} remains uncertain with its original receipt identity`, async () => {
+  let committed = 0;
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, operation) => {
+    assert.ok('CreateGroup' in operation); committed++;
+    send(socket, id, { Error: { failure: { code, message: 'private-delivery-canary' } } });
+    if (code === 'unauthorized') socket.end(Buffer.from([0x88, 2, 0x11, 0x31]));
+  }));
+  try { state(f); const result = await cli(['groups', 'create', 'owned-fixture', '--yes', '--request-id', GENERATION, '--json'], f, {}, null); assert.equal(result.code, 7, result.stderr); assert.match(result.stderr, new RegExp(`chronicle receipt ${GENERATION}`)); assert.ok(!result.stderr.includes('private-delivery-canary')); assert.equal(result.stdout, ''); assert.equal(committed, 1); } finally { await f.close(); }
+});
+for (const [code, expected] of [['invalid', 2], ['conflict', 5], ['not-found', 4], ['forbidden', 3]] as const) test(`proven WS business rejection ${code} remains definitive`, async () => {
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id) => send(socket, id, { Error: { failure: { code, message: 'private-rejection-canary' } } })));
+  try { state(f); const result = await cli(['groups', 'create', 'rejected-fixture', '--yes', '--request-id', GENERATION], f, {}, null); assert.equal(result.code, expected, result.stderr); assert.ok(!result.stderr.includes('chronicle receipt')); assert.ok(!result.stderr.includes('private-rejection-canary')); assert.equal(result.stdout, ''); } finally { await f.close(); }
+});
+for (const [name, fault] of [
+  ['code-only', { error: { code: 'invalid' } }],
+  ['wrong-family', { code: 'invalid', message: 'private-fault-canary' }],
+  ['outer-extra', { error: { code: 'invalid', message: 'private-fault-canary' }, extra: true }],
+  ['inner-extra', { error: { code: 'invalid', message: 'private-fault-canary', extra: true } }],
+  ['unrecognized', { error: { code: 'unknown-fault', message: 'private-fault-canary' } }],
+] as const) test(`post-dispatch account ${name} fault lookalike is not an acknowledged rejection`, async () => {
+  let committed = 0;
+  const f = await fixture((_q, r) => { committed++; reply(r, 400, fault, {}); }, null);
+  try { state(f); const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('private-fault-canary')); assert.equal(committed, 1); assert.equal(readdirSync(join(f.root, 'state')).length, 1); } finally { await f.close(); }
+});
+for (const [status, code, expected] of [[400, 'invalid', 2], [409, 'conflict', 5], [401, 'unauthorized', 3], [503, 'unavailable', 7], [500, 'invalid', 7]] as const) test(`account current fault ${code}/${status} uses route-specific outcome semantics`, async () => {
+  const f = await fixture((_q, r) => reply(r, status, { error: { code, message: 'private-fault-canary' } }, {}), null);
+  try { state(f); const result = await cli(['logout', '--yes', '--json'], f, {}, null); assert.equal(result.code, expected, result.stderr); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('private-fault-canary')); } finally { await f.close(); }
+});
+for (const [name, fault, expected] of [
+  ['code-only', { code: 'invalid' }, 7],
+  ['wrong-family', { error: { code: 'invalid', message: 'private-domain-canary' } }, 7],
+  ['extra-field', { code: 'invalid', message: 'private-domain-canary', extra: true }, 7],
+  ['unrecognized', { code: 'unknown-fault', message: 'private-domain-canary' }, 7],
+  ['current-generated', { code: 'invalid', message: 'private-domain-canary' }, 2],
+] as const) test(`ordinary HTTP ${name} failure is validated separately from account faults`, async () => {
+  let dispatched = 0;
+  const report = { collectorId: 'owned-test', sequence: '19', runId: ID, phase: 'Idle', startedAt: '2026-11-16T00:00:00Z', counters: { discovered: 0, scanned: 0, waiting: 0, excluded: 0, unchanged: 0, enqueued: 0, uploaded: 0, uploadFailures: 0, quarantined: 0, pending: 0, stopped: 0, conflicts: 0, scannedBytes: '0' }, totalUploadBytes: '0', uploadedBytes: '0', currentUploadTotalBytes: null, error: null };
+  const f = await fixture((q, r) => { if (q.url === '/api/versions') reply(r, 200, VERSION, {}); else { dispatched++; reply(r, 400, fault, {}); } }, null);
+  try { const result = await cli(['report-progress', '--file', '-', '--yes', '--json'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, JSON.stringify(report)); assert.equal(result.code, expected, result.stderr); assert.ok(!result.stderr.includes('private-domain-canary')); assert.equal(result.stdout, ''); assert.equal(dispatched, 1); } finally { await f.close(); }
+});

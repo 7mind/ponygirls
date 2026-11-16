@@ -18,6 +18,26 @@ export class Deadline {
   remaining(): number { const n = Math.ceil(this.expires - performance.now()); if (n <= 0) throw new CliError('deadline', 'Command deadline exceeded.'); return n; }
 }
 export interface HttpReply { data: Json; headers: Headers }
+interface HttpFault { readonly code: string; readonly definitive: boolean }
+const HTTP_FAULT_STATUSES: Readonly<Record<string, readonly number[]>> = {
+  invalid: [400], unauthorized: [401], forbidden: [403], 'not-found': [404], conflict: [409], gone: [410], 'too-large': [413], unavailable: [500, 503], 'rate-limited': [400],
+};
+const ACCOUNT_FAULT_CODES = new Set(['invalid', 'unauthorized', 'forbidden', 'not-found', 'conflict', 'rate-limited', 'too-large', 'unavailable']);
+function httpFault(path: string, data: Json, status: number): HttpFault {
+  const invalid = (): never => { throw new CliError('protocol-error', 'HTTP failure does not match the current route-specific fault protocol.'); };
+  let code: string;
+  if (path === '/api/account/v1' || path.startsWith('/api/account/v1/')) {
+    if (!isObject(data) || Object.keys(data).join(',') !== 'error') return invalid();
+    const failure = data['error'];
+    if (!isObject(failure) || Object.keys(failure).sort().join(',') !== 'code,message' || typeof failure['code'] !== 'string' || typeof failure['message'] !== 'string' || !ACCOUNT_FAULT_CODES.has(failure['code'])) return invalid();
+    code = failure['code'];
+  } else {
+    try { code = decodeWire('Failure', data).code; } catch { return invalid(); }
+    if (code === 'rate-limited') return invalid();
+  }
+  if (!Object.hasOwn(HTTP_FAULT_STATUSES, code) || !HTTP_FAULT_STATUSES[code]!.includes(status)) return invalid();
+  return { code, definitive: code !== 'unavailable' && code !== 'rate-limited' };
+}
 export class Http {
   constructor(readonly origin: string, private readonly deadline: Deadline) {}
   async request(path: string, method: 'GET' | 'POST', body: unknown, auth: { token: string } | { session: Session; actor: boolean } | null, mutation: boolean): Promise<HttpReply> {
@@ -37,10 +57,11 @@ export class Http {
       try { for (;;) { const result = await reader.read(); if (result.done) break; size += result.value.length; if (size > MAX_BYTES) throw new CliError('too-large', 'Response exceeded 8MiB.'); chunks.push(result.value); } } finally { await reader.cancel().catch(() => {}); }
       const contentType = response.headers.get('content-type') ?? ''; if (!/^application\/json(?:\s*;|$)/i.test(contentType)) throw new CliError('protocol-error', 'Expected a JSON response.');
       const data = parseJson(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
-      if (!response.ok) { if (isObject(data)) { const failure = isObject(data['error']) ? data['error'] : data; throw remoteFailure(failure['code']); } throw remoteFailure(null); }
+      if (!response.ok) { const failure = httpFault(path, data, response.status); if (mutation && !failure.definitive) throw uncertain(null); throw remoteFailure(failure.code); }
       return { data, headers: response.headers };
     } catch (error) {
-      // A typed server failure is definitive; transport/decoder failures after dispatch are not.
+      // Only validated route/status rejections are definitive; a fault-shaped body
+      // or an availability failure does not establish that a mutation rolled back.
       if (error instanceof RemoteError) throw error;
       if (sent && mutation) throw uncertain(null);
       if (error instanceof CliError) throw error;
@@ -87,10 +108,10 @@ export async function websocket(origin: string, session: Session, operation: Ope
         if (!negotiated || envelope.requestId !== activeId || result instanceof Result_Hello) throw new CliError('protocol-error', 'Unexpected or uncorrelated application reply.');
         if (result instanceof Result_Error) {
           const error = remoteFailure(result.failure.code);
-          const runOperation = operation instanceof Operation_StartMcpTest || operation instanceof Operation_CancelMcpTest;
-          const preAdmissionCodes = operation instanceof Operation_StartMcpTest ? ['invalid', 'version-mismatch', 'mcp-approval-required', 'mcp-active-run', 'conflict'] : ['invalid', 'version-mismatch'];
-          const definiteRunRejection = activeOperation === operation && preAdmissionCodes.includes(result.failure.code);
-          if (runOperation && !definiteRunRejection) failure(error); else finish(null, error); return;
+          const preAdmissionCodes = operation instanceof Operation_StartMcpTest ? ['invalid', 'version-mismatch', 'mcp-approval-required', 'mcp-active-run', 'conflict']
+            : operation instanceof Operation_CancelMcpTest ? ['invalid', 'version-mismatch'] : ['invalid', 'conflict', 'not-found', 'forbidden'];
+          const definiteRejection = activeOperation === operation && preAdmissionCodes.includes(result.failure.code);
+          if (mutation && !definiteRejection) failure(error); else finish(null, error); return;
         }
         validateResponse(activeOperation, result);
         if (operation instanceof Operation_StartMcpTest && result instanceof Result_McpTestRun) {

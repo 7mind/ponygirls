@@ -37,7 +37,10 @@ network privacy. Neither HTTP nor WS follows credential-bearing redirects.
 `CHRONICLE_TOKEN` and `CHRONICLE_TOKEN_FILE` are mutually exclusive when nonempty;
 `--token-file` is an alternative, not an overriding third credential. Tokens use
 Chronicle's43..1024-character `[A-Za-z0-9_+/.=-]` domain (not exact43/base64url);
-credential files are bounded to4096bytes and trailing whitespace is removed. Ambiguity
+credential files are bounded to4096bytes. Trailing whitespace is removed from
+both literal and file inputs; leading whitespace is rejected. This follows the
+Chronicle configured-token normalization rather than the separate runtime-token
+wrapper's exact43/single-LF boundary. Password handling is independent. Ambiguity
 for the selected family fails before credential reads/network. Human login,
 settings and WS commands do not read unrelated bearer credential contents.
 Bearer credentials never accompany cookies. No token/password argv option is
@@ -132,6 +135,14 @@ Every mutation requires `--yes`. Sharing acceptance also requires
 `--confirm-sharing`. Reindex/failed-retry apply binds an exact reviewed
 `--target-profile`/`--selection-hash`; it does not preview and silently apply.
 No automatic mutation retry, WS reconnect or token-secret replay is performed.
+
+Typed faults do not by themselves prove rejection before commit. A dispatched
+WS mutation followed by a delivery-time authentication, availability, protocol
+or unrecognized error remains uncertain and retains its original receipt UUID.
+Current transaction/pre-admission business rejections remain definitive. HTTP
+failures must match their independent account wrapper or generated Failure DTO,
+recognized status/code semantics and route before they count as rejections;
+malformed, wrong-family and availability faults after dispatch remain uncertain.
 
 All token mints additionally require `--secret-out NEW_PATH` in an existing
 private0700 directory. The secret is written exclusively as0600, never printed.
