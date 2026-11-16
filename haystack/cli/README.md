@@ -6,9 +6,10 @@ output is the default even when piped; `--json` is explicit and accepted before
 or after commands. Help/version need neither credentials, state nor network.
 Use `haystack COMMAND --help` or `haystack help COMMAND` for focused usage,
 examples and command-specific safeguards; token actions likewise support
-`haystack token issue --help` / `haystack help token issue`. Irrelevant token
-options and incorrect action arity are rejected before configuration or session
-lookup, rather than ignored.
+`haystack token issue --help` / `haystack help token issue`. Required option
+presence, exclusive `--file`/`--stdin` sources, irrelevant token options and
+incorrect action arity are checked before configuration, credentials, state or
+input reads. Static validation does not read files or authenticate.
 
 `--color auto|always|never` works before or after commands. The default `auto`
 styles human headings/help only on that output stream's TTY; redirected human

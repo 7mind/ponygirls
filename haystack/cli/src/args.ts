@@ -29,6 +29,7 @@ export function parse(args: string[], flags:Map<string,string|boolean>): Argumen
 export function text(args: Arguments, name: string): string|undefined { const value=args.flags.get(name); return typeof value==='string'?value:undefined; }
 export function required(args: Arguments, name: string): string { const value=text(args,name); if(value===undefined || value==='') usage(`--${name} is required`); return value; }
 export function number(args: Arguments, name: string, fallback: number, min: number, max: number): number {const value=text(args,name);return value===undefined?fallback:integer(value,min,max,name);}
+export function fileOption(args:Arguments):string {const file=text(args,'file');if(file!==undefined&&args.flags.has('stdin'))usage('choose --file or --stdin, not both');return args.flags.has('stdin')?'-':required(args,'file');}
 const common = ['json','help','color','url','auth','token-file','state-dir','allow-http','timeout-ms','max-response-bytes'];
 interface CommandSelection {readonly command:string;readonly name:string;readonly spec:CommandSpec}
 function select(words:readonly string[],actionRequired:boolean):CommandSelection {
@@ -56,6 +57,8 @@ export function validate(args: Arguments): string {
   const {command,name,spec}=select(args.words,true);
   const allowed=new Set([...common,...spec.options]);for(const flag of args.flags.keys())if(!allowed.has(flag))usage(`--${flag} is not valid for ${name}; see haystack ${name} --help`);
   const count=args.words.length-1;if(count<spec.arity[0]||count>spec.arity[1])usage(`incorrect ${name} arguments; usage: haystack ${spec.usage}`);
+  if(spec.requiredOptions!==undefined)for(const option of spec.requiredOptions)required(args,option);
+  if(spec.inputSource===true)fileOption(args);
   number(args,'timeout-ms',TIMEOUT_MS,10,600_000);number(args,'max-response-bytes',RESPONSE_BYTES,1024,64*1024*1024);
   const auth=text(args,'auth');if(auth!==undefined&&auth!=='token'&&auth!=='session')usage('--auth must be token or session');
   return command;

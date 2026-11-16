@@ -340,3 +340,31 @@ test('styled human data still escapes untrusted terminal controls and preserves 
  const key='p:colour';ok(await run(['put',key,'--file','-','--expected-revision','0','--json','--allow-http'],{},doc));
  const unstyled=human(await run(['get',key,'--allow-http']));const styled=human(await run(['get',key,'--color','always','--allow-http']));assert.ok(styled.includes('\x1b['));assert.equal(plain(styled),unstyled);assert.match(styled,/horse\\u\{1b\}\[31m/);assert.ok(!plain(styled).includes('\x1b'));for(const value of [key,'9007199254740993','0.10','1e2','-0'])assert.ok(styled.includes(value));
 });
+// Regression: static command requirements must precede URL, credentials, state and input reads.
+test('required command options are checked before configuration or input access',async()=>{
+ const before=hits.length;const unavailable={HAYSTACK_URL:'',HAYSTACK_STATE_DIR:'/missing/state',HAYSTACK_TOKEN_FILE:'/missing/token'};
+ const cases=[
+  [['token','issue','--name','fixture'],'--secret-file'],[['token','issue','--secret-file','/missing/secret'],'--name'],[['token','issue'],'--name'],
+  [['login','alice'],'--password-file'],[['put','p:i','--file','/missing/document'],'--expected-revision'],[['put','p:i','--expected-revision','0'],'--file'],
+  [['edit','p:i'],'--file'],[['call','get'],'--file'],[['restore','p:i'],'--revision'],[['unarchive','p:i'],'--status'],
+  [['token','issue','--name','','--secret-file','/missing/secret'],'--name'],[['token','issue','--name','fixture','--secret-file',''],'--secret-file'],
+  [['login','alice','--password-file',''],'--password-file'],[['put','p:i','--expected-revision','','--stdin'],'--expected-revision'],
+  [['put','p:i','--expected-revision','0','--file',''],'--file'],[['edit','p:i','--file',''],'--file'],[['call','get','--file',''],'--file'],
+  [['restore','p:i','--revision',''],'--revision'],[['unarchive','p:i','--status',''],'--status'],
+ ];
+ for(const [args,option] of cases){const result=await run([...args,'--json'],unavailable);fault(result,2,'usage');assert.ok(JSON.parse(result.stderr).error.message.includes(option),JSON.stringify({args,error:JSON.parse(result.stderr).error}));}
+ const human=await run(['token','issue','--name','SENSITIVE-INPUT'],unavailable);assert.equal(human.code,2);assert.match(human.stderr,/--secret-file is required/);assert.match(human.stderr,/haystack token issue --help/);assert.ok(!human.stderr.includes('SENSITIVE-INPUT'));assert.equal(hits.length,before);
+});
+test('exclusive file and stdin command sources are checked before configuration or input access',async()=>{
+ const before=hits.length;
+ for(const args of [['put','p:i','--expected-revision','0'],['edit','p:i'],['call','get']]){
+  const result=await run([...args,'--file','/missing/input','--stdin','--json'],{HAYSTACK_URL:'',HAYSTACK_STATE_DIR:'/missing/state'});fault(result,2,'usage');assert.equal(JSON.parse(result.stderr).error.message,'choose --file or --stdin, not both');
+ }
+ assert.equal(hits.length,before);
+});
+test('valid static requirements preserve file stdin alternatives and ordinary configuration checks',async()=>{
+ const before=hits.length;const shapes=[['token','issue','--name','fixture','--secret-file','/missing/secret'],['login','alice','--password-file','/missing/password'],['restore','p:i','--revision','1'],['unarchive','p:i','--status','actual']];
+ for(const command of [['put','p:i','--expected-revision','0'],['edit','p:i'],['call','get']])for(const source of [['--file','/missing/input'],['--file','-'],['--stdin']])shapes.push([...command,...source]);
+ for(const args of shapes){const result=await run([...args,'--json'],{HAYSTACK_URL:'',HAYSTACK_STATE_DIR:'/missing/state'});fault(result,2,'usage');assert.equal(JSON.parse(result.stderr).error.message,'--url or HAYSTACK_URL is required',JSON.stringify(args));}
+ assert.equal(hits.length,before);
+});

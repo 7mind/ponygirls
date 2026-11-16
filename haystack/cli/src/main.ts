@@ -2,7 +2,7 @@
 import {open} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {performance} from 'node:perf_hooks';
-import {Arguments,parse,validate,text,required,number,help,helpHint} from './args.ts';
+import {Arguments,parse,validate,text,required,number,help,helpHint,fileOption} from './args.ts';
 import {Client,settings,protectedFile,validateInput} from './client.ts';
 import {State,stateDirectory,readBounded} from './state.ts';
 import {CliError,fail,usage,key,integer,uuidv7,requestId,parseDocument,envelope,object,exact,VERSION,INPUT_BYTES,DOCUMENT_BYTES} from './core.ts';
@@ -24,7 +24,6 @@ async function source(file:string,limit:number,timeout:number,secret:boolean):Pr
   if(secret)return protectedFile(file,limit);
   let handle;try{handle=await open(file,constants.O_RDONLY|constants.O_NONBLOCK);const info=await handle.stat();if(!info.isFile()||info.size>limit)throw new Error();return await readBounded(handle,limit);}catch{return fail('invalid-input','input must be a bounded UTF8 regular file',2);}finally{await handle?.close();}
 }
-function fileOption(args:Arguments):string {const file=text(args,'file');if(file!==undefined&&args.flags.has('stdin'))usage('choose --file or --stdin, not both');return args.flags.has('stdin')?'-':required(args,'file');}
 function wireItem(value:unknown):Record<string,unknown>{if(!object(value))return fail('invalid-response','invalid item response',6);return value;}
 async function run(args:Arguments,env:NodeJS.ProcessEnv,presentation:Presentation):Promise<void> {
   if(args.flags.has('version')){if(args.words.length)usage('--version does not take a command');await output(process.stdout,args.json?exact({ok:true,command:'version',result:{version:VERSION}},false)+'\n':presentation.heading(`haystack ${VERSION}`)+'\n');return;}
