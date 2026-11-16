@@ -13,7 +13,8 @@ let
   settings = pkgs.writeText "agent-notify-matrix.json" (builtins.toJSON {
     inherit (notifyCfg) homeserver roomId tokenFile minTurnSeconds;
     inherit (notifyCfg) transport sender passwordFile recoveryKeyFile;
-    inherit (notifyCfg) includeMessageBody includeWorkdir includeHostname;
+    inherit (notifyCfg) includeMessageBody includeWorkdir includeHostname includeTmuxPane;
+    tmuxCommand = "${pkgs.tmux}/bin/tmux";
   });
   notifyScript = pkgs.writeShellScriptBin "agent-notify-matrix" ''
     export PYTHONPATH="${e2eEnv}/${pkgs.python3.sitePackages}''${PYTHONPATH:+:$PYTHONPATH}"
@@ -88,6 +89,11 @@ in
       default = false;
       description = "Append the notifying machine hostname to notifications. The name is read at runtime, so roaming hosts report correctly.";
     };
+    includeTmuxPane = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Append the originating tmux pane index and title when available. Titles may contain work context. Inside yolo, labels are captured at launch without exposing the host tmux socket.";
+    };
     claude.enable = lib.mkEnableOption "Matrix agent notifications for Claude Code" // {
       default = notifyCfg.enable;
     };
@@ -118,6 +124,7 @@ in
     }
     (lib.mkIf active {
       home.packages = [ notifyScript ];
+      smind.hm.dev.llm.yolo.captureTmuxPaneContext = lib.mkIf notifyCfg.includeTmuxPane true;
       smind.hm.dev.llm.yolo.extraReadOnlyPaths =
         lib.optional (notifyCfg.tokenFile != null) "${notifyCfg.tokenFile}"
         ++ lib.optional (transportE2EE && notifyCfg.passwordFile != null) "${notifyCfg.passwordFile}"

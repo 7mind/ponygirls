@@ -913,5 +913,26 @@ OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
 assert_zero "default marker child launch succeeds" "$?"
 assert_eq "default marker overrides ambient and CLI env in child" 0 "$OUT"
 
+PANE_HELPER="$FAKE_BIN/pane-context"
+printf '%s\n' "#!$_bash_path" "printf '%s\\n' '{\"index\":0,\"title\":\"backend | named\"}'" > "$PANE_HELPER"
+chmod +x "$PANE_HELPER"
+OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
+  YOLO_TMUX_CONTEXT_HELPER="$PANE_HELPER" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+  bash "$SCRIPT" --profile foo --env SMIND_TMUX_PANE_CONTEXT=wrong cmd printenv SMIND_TMUX_PANE_CONTEXT 2>&1)"
+assert_zero "origin pane context launch succeeds" "$?"
+assert_eq "origin pane snapshot reaches child and overrides caller metadata" '{"index":0,"title":"backend | named"}' "$OUT"
+OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
+  YOLO_TMUX_CONTEXT_HELPER="$PANE_HELPER" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+  bash "$SCRIPT" --profile foo cmd "$_bash_path" -c 'printf "%s" "${YOLO_TMUX_CONTEXT_HELPER-unset}"' 2>&1)"
+assert_zero "pane helper privacy check succeeds" "$?"
+assert_eq "host-only pane helper is not passed to child" unset "$OUT"
+printf '%s\n' "#!$_bash_path" 'exit 9' > "$PANE_HELPER"
+OUT="$(cd "$PROJECT_DIR" && HOME="$RESHARE_HOME" PATH="$FAKE_BIN:$PATH" \
+  YOLO_TMUX_CONTEXT_HELPER="$PANE_HELPER" YOLO_SANDBOX_EXEC="$FAKE_BIN/capture-sandbox" \
+  bash "$SCRIPT" --profile foo cmd printenv SMIND_TMUX_PANE_CONTEXT 2>&1)"
+assert_zero "unavailable pane context does not block launch" "$?"
+assert_contains "pane capture failure is observable" "$OUT" "warning: tmux pane context unavailable"
+assert_contains "unavailable pane context is explicit" "$OUT" null
+
 echo "$TESTS_RUN assertions run, $FAILURES failed."
 [[ "$FAILURES" -eq 0 ]]

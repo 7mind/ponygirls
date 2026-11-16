@@ -16,6 +16,7 @@ from pathlib import Path
 
 from unittest import mock
 from notify import FileTurnStore, MatrixSender, Notifier, Turn, make_sender, parse_turn
+from tmux_context import TmuxPane
 
 
 class MemoryTurnStore:
@@ -132,6 +133,72 @@ class NotificationTests(unittest.TestCase):
                         self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertEqual(len(messages) - before, 1)
                     self.assertEqual(messages[-1], f"agent: turn complete [{harness}] session")
+
+    def test_client_callbacks_include_originating_tmux_pane(self):
+        for harness in ("claude", "codex", "pi"):
+            for index, title, suffix in ((0, "backend", " [tmux pane 0: backend]"), (7, "", " [tmux pane 7]"), (None, "", "")):
+                with self.subTest(harness=harness, index=index):
+                    with adapters(True) as (_store, sender, messages), tempfile.TemporaryDirectory() as directory:
+                        root = Path(directory)
+                        config = root / "config.json"
+                        config.write_text(json.dumps({
+                            "homeserver": sender.homeserver,
+                            "roomId": "!room:test",
+                            "tokenFile": str(sender.token_file),
+                            "minTurnSeconds": 0,
+                            "includeTmuxPane": True,
+                            "tmuxCommand": str(root / "must-not-run-tmux"),
+                        }))
+                        environment = dict(os.environ, XDG_CACHE_HOME=str(root),
+                                           SMIND_TMUX_PANE_CONTEXT=json.dumps(None if index is None else {"index": index, "title": title}))
+                        payload = json.dumps({"session_id": "session", "turn_id": "turn"})
+                        for action in (["--start"], [], ["--attention"]):
+                            command = [sys.executable, str(Path(__file__).with_name("notify.py")), str(config), harness, *action, payload]
+                            result = subprocess.run(command, text=True, capture_output=True, env=environment, timeout=5)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(messages, [
+                            f"agent: turn complete [{harness}] session{suffix}",
+                            f"agent: input needed [{harness}] session{suffix}",
+                        ])
+
+    def test_tmux_metadata_across_sender_adapters(self):
+        for real in (False, True):
+            with self.subTest(real=real), adapters(real) as (store, sender, messages):
+                notifier = Notifier(store, sender, Clock().now, 60, pane_context=lambda: TmuxPane(0, "backend | 雪"))
+                self.assertTrue(notifier.handle("attention", Turn("pi", "session", "turn")))
+                self.assertEqual(messages, ["agent: input needed [pi] session [tmux pane 0: backend | 雪]"])
+
+    def test_suppressed_notifications_do_not_query_pane_context(self):
+        def unexpected_lookup():
+            raise AssertionError("suppressed notification queried pane context")
+
+        for real in (False, True):
+            with self.subTest(real=real), adapters(real) as (store, sender, messages):
+                clock = Clock()
+                notifier = Notifier(store, sender, clock.now, 60, pane_context=unexpected_lookup)
+                turn = Turn("pi", "session", "turn")
+                self.assertFalse(notifier.handle("start", turn))
+                clock.value += 59
+                self.assertFalse(notifier.handle("complete", turn))
+                with contextlib.redirect_stderr(io.StringIO()):
+                    self.assertFalse(notifier.handle("complete", turn))
+                self.assertEqual(messages, [])
+
+    def test_disabled_tmux_metadata_does_not_parse_context(self):
+        with adapters(True) as (_store, sender, messages), tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "config.json"
+            config.write_text(json.dumps({
+                "homeserver": sender.homeserver, "roomId": "!room:test",
+                "tokenFile": str(sender.token_file), "minTurnSeconds": 0,
+                "includeTmuxPane": False,
+            }))
+            environment = dict(os.environ, XDG_CACHE_HOME=str(root), SMIND_TMUX_PANE_CONTEXT="invalid")
+            result = subprocess.run([sys.executable, str(Path(__file__).with_name("notify.py")), str(config),
+                                     "pi", "--attention", '{"session_id":"session"}'],
+                                    text=True, capture_output=True, env=environment, timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(messages, ["agent: input needed [pi] session"])
 
     def test_completion_policy_across_harnesses_and_adapters(self):
         for real in (False, True):

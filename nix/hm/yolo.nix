@@ -325,6 +325,7 @@ let
     # Device paths bound with device access (bwrap --dev-bind), e.g. GPU nodes.
     extraDevicePaths = cfg.yolo.extraDevicePaths;
     piSharedAssets = cfg.yolo.piSharedAssets;
+    captureTmuxPaneContext = cfg.yolo.captureTmuxPaneContext;
     # Extra packages exposed ONLY inside the sandbox (not the host profile);
     # codegraph rides along here so its CLI / `init -i` work inside the sandbox.
     sandboxPackages =
@@ -479,6 +480,13 @@ in
         utilities to the sandbox. It does not expose host block devices,
         `/dev/net/tun`, libvirt/Incus sockets, or a broad `/dev` tree.
       '';
+    };
+
+    smind.hm.dev.llm.yolo.captureTmuxPaneContext = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      internal = true;
+      description = "Capture optional originating pane labels before entering the sandbox.";
     };
 
     smind.hm.dev.llm.yolo.piSharedAssets = lib.mkOption {
@@ -922,6 +930,7 @@ in
           extraReadOnlyPaths = cfg.yolo.extraReadOnlyPaths ++ lib.optional sshKeySet cfg.llmSshKeyPath;
           extraReadWritePaths = cfg.yolo.extraReadWritePaths;
           piSharedAssets = cfg.yolo.piSharedAssets;
+          captureTmuxPaneContext = cfg.yolo.captureTmuxPaneContext;
           sandboxPackages = cfg.yolo.packages ++ [ tuiTmux ] ++ lib.optional codegraphSet cfg.yolo.codegraph;
           sessionVariables = cfg.yolo.sessionVariables;
           secretSessionVariables = cfg.yolo.secretSessionVariables;

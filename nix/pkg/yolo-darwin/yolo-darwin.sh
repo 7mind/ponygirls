@@ -923,6 +923,15 @@ yolo_exec_agent() {
   fi
   local named_profile=0
   [[ -z "$PROFILE" ]] || named_profile=1
+  local -a tmux_context_env=()
+  if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
+    local pane_context
+    if ! pane_context="$("$YOLO_TMUX_CONTEXT_HELPER")"; then
+      echo "warning: tmux pane context unavailable; notification labels will be omitted" >&2
+      pane_context=null
+    fi
+    tmux_context_env=("SMIND_TMUX_PANE_CONTEXT=$pane_context")
+  fi
   env -i \
     "${base_env_pairs[@]}" \
     "${PROFILE_ENV_PAIRS[@]}" \
@@ -930,6 +939,7 @@ yolo_exec_agent() {
     "${SANDBOX_PACKAGE_ENV_PAIRS[@]}" \
     "${SESSION_ENV_PAIRS[@]}" \
     "${ENV_PAIRS[@]}" \
+    "${tmux_context_env[@]}" \
     SMIND_SANDBOXED=1 \
     CLAUDE_CODE_SANDBOXED=1 \
     "${codegraph_env[@]}" \

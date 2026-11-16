@@ -14,6 +14,7 @@
 , extraReadWritePaths ? [ ]
 , managedConfigHome ? null
 , piSharedAssets ? [ ]
+, captureTmuxPaneContext ? false
 , promptJson ? "[]"
 , prehooksJson ? "[]"
 , sandboxHooksJson ? "[]"
@@ -92,6 +93,7 @@ let
     export YOLO_SQLITE="${sqlite}/bin/sqlite3"
     export YOLO_CUSTOM_PROMPT="${customPromptScript}"
     export YOLO_MANAGED_CONFIG_HOME=${lib.escapeShellArg (if managedConfigHome == null then "" else managedConfigHome)}
+    export YOLO_TMUX_CONTEXT_HELPER=${lib.escapeShellArg (if captureTmuxPaneContext then import ../../lib/tmux-pane-context.nix { inherit pkgs; } else "")}
     export YOLO_SANDBOX_ENTRYPOINT="${sandboxEntrypoint}/bin/yolo-sandbox-entrypoint"
     ${podmanExports}
     ${extraRoExports}

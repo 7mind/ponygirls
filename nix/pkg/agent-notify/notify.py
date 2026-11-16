@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
+from tmux_context import TmuxPane, notification_pane
+
 
 REQUEST_TIMEOUT_SECONDS = 10
 UUID_TEXT_LENGTH = 36
@@ -89,7 +91,8 @@ class MatrixSender:
 class Notifier:
     def __init__(self, store: TurnStore, sender: Sender, now: Callable[[], float],
                  minimum_seconds: int, show_message: bool = False,
-                 show_workdir: bool = False, show_hostname: bool = False):
+                 show_workdir: bool = False, show_hostname: bool = False,
+                 pane_context: Callable[[], TmuxPane | None] | None = None):
         self.store = store
         self.sender = sender
         self.now = now
@@ -97,6 +100,7 @@ class Notifier:
         self.show_message = show_message
         self.show_workdir = show_workdir
         self.show_hostname = show_hostname
+        self.pane_context = pane_context
 
     def handle(self, action: str, turn: Turn) -> bool:
         if action == "start":
@@ -117,6 +121,10 @@ class Notifier:
         label = "turn complete" if action == "complete" else "input needed"
         session = turn.session[:UUID_PREVIEW_LENGTH] if len(turn.session) == UUID_TEXT_LENGTH else turn.session[:SESSION_PREVIEW_LENGTH]
         body = f"agent: {label} [{turn.harness}] {session}"
+        pane = self.pane_context() if self.pane_context is not None else None
+        if pane is not None:
+            title = f": {pane.title}" if pane.title else ""
+            body = f"{body} [tmux pane {pane.index}{title}]"
         if self.show_workdir and turn.workdir:
             body = f"{body} @ {turn.workdir}"
         if self.show_hostname:
@@ -200,17 +208,23 @@ def main() -> None:
     cache = Path(os.environ.get("XDG_CACHE_HOME", str(Path(os.environ["HOME"]) / ".cache")))
     store = FileTurnStore(cache / "ponygirls-notify" / "turns")
     sender = make_sender(configuration)
-    notifier = Notifier(
-        store, sender, time.monotonic, configuration["minTurnSeconds"],
-        show_message=configuration.get("includeMessageBody", False),
-        show_workdir=configuration.get("includeWorkdir", False),
-        show_hostname=configuration.get("includeHostname", False),
-    )
     if arguments.payload is None and sys.stdin.isatty():
         raise ValueError("no payload given and stdin is a terminal; pass hook JSON as the payload argument")
     payload = arguments.payload if arguments.payload is not None else sys.stdin.read()
     turn = parse_turn(arguments.harness, payload)
     action = "start" if arguments.start else "attention" if arguments.attention else "complete"
+    pane_context = None
+    if configuration.get("includeTmuxPane", False) and action != "start":
+        environment = dict(os.environ)
+        tmux_command = configuration["tmuxCommand"]
+        pane_context = lambda: notification_pane(environment, tmux_command)
+    notifier = Notifier(
+        store, sender, time.monotonic, configuration["minTurnSeconds"],
+        show_message=configuration.get("includeMessageBody", False),
+        show_workdir=configuration.get("includeWorkdir", False),
+        show_hostname=configuration.get("includeHostname", False),
+        pane_context=pane_context,
+    )
     notifier.handle(action, turn)
 
 

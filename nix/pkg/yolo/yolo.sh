@@ -1544,6 +1544,14 @@ case "$SUBCMD" in
     ;;
 esac
 
+if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
+  if ! _pane_context="$("$YOLO_TMUX_CONTEXT_HELPER")"; then
+    echo "warning: tmux pane context unavailable; notification labels will be omitted" >&2
+    _pane_context=null
+  fi
+  BASE_ARGS+=(--env "SMIND_TMUX_PANE_CONTEXT=$_pane_context")
+fi
+
 # The sandbox clears inherited variables, including YOLO_* orchestration
 # settings. Stash the two paths needed for the final exec.
 _yolo_sandbox="$YOLO_LLM_SANDBOX"
