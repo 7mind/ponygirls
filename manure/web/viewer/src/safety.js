@@ -22,6 +22,15 @@ export function artifactResourceUrl(value, base, mountPath) {
     return href;
   } catch { return null; }
 }
+export function markdownLinkUrl(value, base, mountPath) {
+  if (/[\u0000-\u001f\u007f]/.test(value)) return null;
+  if (value.startsWith('#')) return value;
+  try {
+    const url = new URL(value, base);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
+    return url.origin === new URL(base).origin ? artifactResourceUrl(value, base, mountPath) : url.href;
+  } catch { return null; }
+}
 export function diagramCount(count) {
   if (count > 32) throw new Error('Markdown exceeds the preview limit of 32 diagrams.');
 }

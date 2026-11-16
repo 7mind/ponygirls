@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { localUrl, artifactResourceUrl, boundedBytes, graphSource, diagramCount } from '../src/safety.js';
+import { localUrl, artifactResourceUrl, markdownLinkUrl, boundedBytes, graphSource, diagramCount } from '../src/safety.js';
 // Behavioral / Active / Blackbox / Atomic; specified safety contracts.
 test('only local HTTP(S) asset URLs are accepted', () => {
   const base = 'https://artifacts.example/view/id/docs/readme.md';
@@ -27,6 +27,39 @@ test('legal manifest resource names retain single-pass percent and nested-direct
     assert.equal(artifactResourceUrl(encoded,base,mount),new URL(encoded,base).href,name);
   }
   assert.equal(artifactResourceUrl('/view/chart.svg','https://artifact.example/docs/a.md',''),'https://artifact.example/view/chart.svg');
+});
+// Regression: the automatic-resource policy previously stripped safe hyperlink hrefs.
+test('Markdown links allow external HTTP(S) navigation without allowing external resources', () => {
+  const base = 'https://artifacts.example/view/abc/docs/README.md';
+  const mount = '/view/abc';
+  for (const value of ['https://example.com/review/182749', 'http://example.com/review/182749', '//example.com/review/182749']) {
+    assert.equal(markdownLinkUrl(value,base,mount),new URL(value,base).href,value);
+    assert.equal(artifactResourceUrl(value,base,mount),null,value);
+  }
+});
+test('Markdown links preserve fragments and confine absolute and relative same-origin navigation', () => {
+  const base = 'https://artifacts.example/view/abc/docs/README.md';
+  const mount = '/view/abc';
+  assert.equal(markdownLinkUrl('#heading',base,mount),'#heading');
+  for (const value of ['../photo.svg', './CPU%2090%25.md', 'https://artifacts.example/view/abc/guide.md']) {
+    assert.equal(markdownLinkUrl(value,base,mount),new URL(value,base).href,value);
+  }
+  for (const path of ['/api/users', '/view/other/image.png', '/view/abc/__manure/logout', '/view/abc/%5f%5fmanure/logout',
+    '/view/abc/%61pi/users', '/view/abc/%2fapi/users', '/view/abc/%5capi/users', '/view/abc/bad%00name']) {
+    for (const value of [path, new URL(path,base).href]) assert.equal(markdownLinkUrl(value,base,mount),null,value);
+  }
+  for (const value of ['/api/users', 'https://artifact.example/__manure/logout']) {
+    assert.equal(markdownLinkUrl(value,'https://artifact.example/docs/README.md',''),null,value);
+  }
+});
+test('Markdown links reject non-HTTP(S) schemes, userinfo, controls and malformed URLs', () => {
+  const base = 'https://artifacts.example/view/abc/README.md';
+  for (const value of ['javascript:alert(1)', 'data:text/html,unsafe', 'vbscript:unsafe', 'file:///tmp/unsafe',
+    'blob:https://example.com/unsafe', 'mailto:review@example.com', 'https://user:pass@example.com/review',
+    'https://user@example.com/review', 'https://exa\tmple.com/review', 'https://example.com/\nreview',
+    'java\r\nscript:alert(1)', '#heading\t', 'http://[broken']) {
+    assert.equal(markdownLinkUrl(value,base,'/view/abc'),null,value);
+  }
 });
 test('whole-document diagram count is bounded', () => {
   assert.doesNotThrow(() => diagramCount(32));

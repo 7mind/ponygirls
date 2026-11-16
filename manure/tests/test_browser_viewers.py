@@ -2,7 +2,7 @@
 
 Behavioral-Active / Effectual / Good Communication: rendering and attempted
 network side effects are observed through browser APIs, never mocked renderers.
-These are new feature requirements, not historical regression claims.
+Hyperlink navigation assertions also cover the external-href stripping regression.
 """
 import base64
 import binascii
@@ -77,6 +77,33 @@ digraph G { alpha -> beta; }
 <svg onload="window.__viewerExecuted = true"></svg>
 [unsafe](javascript:window.__viewerExecuted=true)
 ![remote](https://viewer-attacker.invalid/remote.png)
+
+[!182749](https://example.com/review/182749)
+[HTTP review](http://example.com/review/182749)
+[Protocol-relative review](//example.com/review/182749)
+[Local review](./related.md?view=1#topic)
+[Encoded resource](./CPU%2090%25.md)
+[Jump to title](#viewer-specification)
+<a href="https://example.com/raw?left=1&amp;right=2" rel="opener" ping="https://viewer-attacker.invalid/ping" referrerpolicy="unsafe-url" onclick="window.__viewerExecuted=true">Raw review</a>
+
+<a href="jav&#x61;script:window.__viewerExecuted=true">Entity script scheme</a>
+<a href="jav&#x09;ascript:window.__viewerExecuted=true">Tab script scheme</a>
+<a href="java&#x0d;&#x0a;script:window.__viewerExecuted=true">Line script scheme</a>
+<a href="data:text/html,unsafe">Data scheme</a>
+<a href="vbscript:unsafe">Legacy script scheme</a>
+<a href="file:///tmp/unsafe">Local file scheme</a>
+<a href="blob:https://example.com/unsafe">Blob scheme</a>
+<a href="mailto:review@example.com">Mail scheme</a>
+<a href="https://user:pass@example.com/review">Credential URL</a>
+<a href="https://exa&#x09;mple.com/review">Control URL</a>
+<a href="http://[broken">Malformed URL</a>
+<a href="/__manure/logout">Reserved route</a>
+<a href="/api/users">Management route</a>
+<a href="../%5f%5fmanure/logout">Encoded reserved route</a>
+<a href="../%61pi/users">Encoded management route</a>
+<a href="../%2fapi/users">Encoded slash path</a>
+<a href="../%5capi/users">Encoded backslash path</a>
+<a href="../bad%00name">Encoded null path</a>
 '''
 SVG = b'''<svg xmlns="http://www.w3.org/2000/svg" width="120" height="80" onload="window.__viewerExecuted=true"><script>window.__viewerExecuted=true</script><rect width="120" height="80" fill="orange"/></svg>'''
 
@@ -94,6 +121,9 @@ class ViewerBrowserTests(unittest.TestCase):
             "viewer_dir": str(viewer_dir), "rate_limit_per_min": 10000,
             "login_rate_per_min_per_ip": 1000})
         self.addCleanup(fix.close)
+        markdown = MARKDOWN + (f'\n<a href="{fix.api_base}/api/users">Absolute management route</a>\n'
+                               f'<a href="{fix.api_base}/__manure/logout">Absolute reserved route</a>\n'
+                               f'<a href="{fix.api_base}/view/other/README.md">Absolute sibling mount</a>\n').encode()
         records = {}
 
         def upload(key, files, *, visibility="public", kind="file", empty_dirs=None):
@@ -104,7 +134,7 @@ class ViewerBrowserTests(unittest.TestCase):
             record["files"] = {name: base64.b64encode(blob).decode() for name, blob in files.items()}
             records[key] = record
 
-        upload("markdown", {"guide ü.md": MARKDOWN})
+        upload("markdown", {"guide ü.md": markdown})
         upload("mermaid", {"flow.mmd": b"flowchart LR\n A[Start] --> B[Finish]\n"})
         upload("dot", {"graph.dot": b"digraph G { alpha -> beta; }\n"})
         upload("svg", {"drawing.svg": SVG})
@@ -114,14 +144,14 @@ class ViewerBrowserTests(unittest.TestCase):
         upload("graph-limit", {"large-graph.dot": b"digraph G { a -> b; }\n" + b"// padding\n" * 6000})
         upload("oversized", {"large.dot": b"digraph G { a -> b; }\n" + b"// padding\n" * 200000})
         upload("directory", {"index.html": b"<!doctype html><h1>Original directory index</h1>",
-                             "docs/guide ü.md": MARKDOWN + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture(),
+                             "docs/guide ü.md": markdown + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture(),
                              "assets/data.bin": b"\x00raw\xff\r\n"}, kind="dir")
-        upload("browse", {"README.md": MARKDOWN,
+        upload("browse", {"README.md": markdown,
                           "nested/readme.md": b"# Nested directory preview\n",
                           "nested/a & <b> + ü.md": b"# Encoded child preview\n",
                           "original.bin": b"\x00original\xff"}, kind="dir", empty_dirs=["empty"])
         upload("external", {"index.html": b"<h1>Protected directory index</h1>",
-                            "docs/guide ü.md": MARKDOWN + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture()},
+                            "docs/guide ü.md": markdown + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture()},
                kind="dir", visibility="external")
         upload("internal", {"private.md": b"# Internal viewer handoff\n"}, visibility="internal")
         payload = {"base": fix.api_base, "token": fix.identity.token, "login": fix.identity.login, "loginPassword": fix.identity.password,
@@ -136,7 +166,7 @@ class ViewerBrowserTests(unittest.TestCase):
             output = output.replace(secret, "[REDACTED]")
         self.assertEqual(result.returncode, 0, output[-12000:])
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 9, report)
+        self.assertEqual(len(report), 12, report)
         self.assertTrue(all(item["ok"] for item in report), report)
         for item in report:
             print("ok - " + mode + " viewer: " + item["name"])

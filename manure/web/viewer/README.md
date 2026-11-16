@@ -95,9 +95,14 @@ quotes, ampersands and angle brackets):
 The four metadata values live on `meta#manure-viewer` in `data-path`,
 `data-raw-url`, `data-download-url`, `data-kind`. No inline JS is needed.
 Relative Markdown links/images resolve against the original document location,
-not its reserved viewer/raw location. External URLs, all non-HTTP(S) URLs,
+not its reserved viewer/raw location. HTTP(S) anchor links may navigate to other
+origins when explicitly followed; rendering them does not fetch the destination.
+Links retain `rel="noopener noreferrer"`. Same-origin links (absolute or relative)
+and all automatically loaded resources remain confined to the artifact:
 management/reserved routes and sibling artifact mounts are removed before live
-DOM creation. Malformed URLs are removed without aborting the document.
+DOM creation. External resource URLs and non-HTTP(S) links (including `mailto:`)
+are removed. Anchor URLs with userinfo or ASCII control characters and malformed
+URLs are removed without aborting the document.
 Markdown cannot introduce active embeds or inline styles. Rendered diagrams are sanitized and displayed as blob images,
 never injected into the active document as SVG. Diagram config frontmatter and
 legacy directives are rejected, rather than overriding strict renderer settings.

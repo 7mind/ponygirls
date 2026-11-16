@@ -2,7 +2,7 @@ import { renderMarkdown } from './markdown.js';
 import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import * as pdfjs from 'pdfjs-dist/build/pdf.mjs';
-import { localUrl, artifactResourceUrl, boundedBytes, graphSource, diagramCount, TEXT_LIMIT } from './safety.js';
+import { localUrl, artifactResourceUrl, markdownLinkUrl, boundedBytes, graphSource, diagramCount, TEXT_LIMIT } from './safety.js';
 
 const meta = document.querySelector('#manure-viewer').dataset;
 const content = document.querySelector('#content');
@@ -64,8 +64,8 @@ function sanitizedMarkdown(html) {
     for (const attr of ['src','href']) {
       if (!node.hasAttribute?.(attr)) continue;
       const value = node.getAttribute(attr);
-      if (value.startsWith('#') && attr === 'href') continue;
-      const url = artifactResourceUrl(value,base,mountPath);
+      if (value.startsWith('#') && attr === 'href' && node.tagName !== 'A') continue;
+      const url = node.tagName === 'A' && attr === 'href' ? markdownLinkUrl(value,base,mountPath) : artifactResourceUrl(value,base,mountPath);
       if (url) node.setAttribute(attr,url); else node.removeAttribute(attr);
     }
     if (node.tagName === 'A') node.setAttribute('rel','noopener noreferrer');

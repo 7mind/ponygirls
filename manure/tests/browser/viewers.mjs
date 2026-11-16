@@ -40,6 +40,8 @@ const check = async (name, run, hostileFixture) => {
   page.setDefaultTimeout(15000);
   page.setDefaultNavigationTimeout(20000);
   const offOrigin = [];
+  const userNavigations = [];
+  let navigationDestination = null;
   const pageErrors = [];
   const cspErrors = [];
   const blockedInlineHandlers = [];
@@ -58,8 +60,14 @@ const check = async (name, run, hostileFixture) => {
   // Observe AND abort accidental internet access: failures are deterministic and
   // this controlled-system test never depends on a third-party server.
   await context.route("**/*", async (route) => {
-    const url = new URL(route.request().url());
+    const request = route.request();
+    const url = new URL(request.url());
     if (["http:", "https:"].includes(url.protocol) && !allowedOrigins.has(url.origin)) {
+      if (request.isNavigationRequest() && url.href === navigationDestination) {
+        navigationDestination = null;
+        userNavigations.push({ url: url.href, referer: request.headers().referer });
+        return route.fulfill({ contentType: "text/html", body: "<!doctype html><h1>Controlled hyperlink destination</h1>" });
+      }
       offOrigin.push(url.origin + url.pathname);
       return route.abort("blockedbyclient");
     }
@@ -74,7 +82,16 @@ const check = async (name, run, hostileFixture) => {
   context.on("request", (request) => requestURLs.push(request.url()));
   await context.addInitScript(() => { window.__viewerExecuted = false; });
   try {
-    await run(page, context);
+    await run(page, context, async (link, destination) => {
+      assert.deepEqual(offOrigin, [], "no remote resource or navigation request before the explicit click");
+      const count = userNavigations.length;
+      navigationDestination = destination;
+      await Promise.all([page.waitForURL((url) => url.href === destination, { waitUntil: "domcontentloaded" }), link.click()]);
+      await page.getByRole("heading", { name: "Controlled hyperlink destination", exact: true }).waitFor();
+      assert.equal(navigationDestination, null, "the clicked href must issue its navigation request");
+      assert.equal(userNavigations.length, count + 1);
+      assert.deepEqual(userNavigations.at(-1), { url: destination, referer: undefined }, "navigation must not disclose the artifact URL");
+    });
     assert.equal(await page.evaluate(() => window.__viewerExecuted), false, "uploaded code must stay inert");
     assert.equal(dialogs, 0, "uploaded code must not open dialogs");
     assert.deepEqual(offOrigin, [], "viewer must never automatically request third-party resources");
@@ -190,6 +207,52 @@ await check("markdown renders headings, GFM and both fenced diagrams without exe
   await downloadEqual(page, "markdown");
   await capture(page, "markdown-diagrams");
 }, true);
+
+for (const [key, name] of [["markdown", filename("markdown")], ["directory", "docs/guide ü.md"], ["browse", "README.md"]]) {
+  await check(`${key} Markdown hyperlinks preserve safe navigation without automatic external requests`, async (page, context, followLink) => {
+    const preview = async () => {
+      if (key === "browse") {
+        await page.goto(root(key) + "/", { waitUntil: "domcontentloaded" });
+        await shell(page, key, name);
+      } else await open(page, key, name);
+      await markdownRendered(page);
+    };
+    await preview();
+    const article = page.locator("article.markdown");
+    const base = root(key) + "/" + encoded(name);
+    for (const [label, href] of [["!182749", "https://example.com/review/182749"],
+      ["HTTP review", "http://example.com/review/182749"],
+      ["Protocol-relative review", "http://example.com/review/182749"],
+      ["Local review", new URL("./related.md?view=1#topic", base).href],
+      ["Encoded resource", new URL("./CPU%2090%25.md", base).href],
+      ["Jump to title", "#viewer-specification"],
+      ["Raw review", "https://example.com/raw?left=1&right=2"]]) {
+      const link = article.getByText(label, { exact: true });
+      assert.equal(await link.count(), 1, label);
+      assert.equal(await link.getAttribute("href"), href, `${key}: ${label} must retain a navigable href`);
+      assert.equal(await link.getAttribute("rel"), "noopener noreferrer");
+      assert.equal(await link.getAttribute("ping"), null, "links must not introduce tracking requests");
+    }
+    for (const label of ["Entity script scheme", "Tab script scheme", "Line script scheme", "Data scheme",
+      "Legacy script scheme", "Local file scheme", "Blob scheme", "Mail scheme", "Credential URL", "Control URL",
+      "Malformed URL", "Reserved route", "Management route", "Encoded reserved route", "Encoded management route",
+      "Encoded slash path", "Encoded backslash path", "Encoded null path"]) {
+      const link = article.getByText(label, { exact: true });
+      assert.equal(await link.count(), 1, label);
+      assert.equal(await link.getAttribute("href"), null, `${key}: ${label} must remain inert`);
+    }
+    for (const [label, path] of [["Absolute management route", "/api/users"],
+      ["Absolute reserved route", "/__manure/logout"], ["Absolute sibling mount", "/view/other/README.md"]]) {
+      const sameOrigin = new URL(input.base).origin === new URL(base).origin;
+      assert.equal(await article.getByText(label, { exact: true }).getAttribute("href"), sameOrigin ? null : input.base + path,
+        `${key}: absolute URLs retain same-origin confinement, not a service-host allowlist`);
+    }
+    for (const [label, destination] of [["!182749", "https://example.com/review/182749"], ["Raw review", "https://example.com/raw?left=1&right=2"]]) {
+      await followLink(article.getByRole("link", { name: label, exact: true }), destination);
+      await preview();
+    }
+  }, true);
+}
 
 await check("standalone Mermaid and Graphviz produce decoded diagram images and exact original downloads", async (page) => {
   for (const key of ["mermaid", "dot"]) {
