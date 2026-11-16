@@ -218,6 +218,31 @@ Portable Python entrypoints: `manure` (CLI) and `manure-mcp`
 Scala/native service, not a Python console script; `python -m manure.server`
 is deliberately fail-closed.
 
+Output is human-readable by default, including when redirected or piped. `list`
+shows a compact table with full artifact IDs, access/state and readable sizes;
+`info` shows full metadata, and mutations/downloads print concise receipts.
+Empty lists and continuation cursors are explicit. Names and metadata escape
+terminal controls without changing stored values. IDs, URLs and passwords are
+not abbreviated.
+
+Every command accepts `--json`, before or after the command, for the existing
+JSON result shape. Scripts should request it explicitly; there is no automatic
+TTY-dependent format switching. Errors remain sanitized text on stderr in both
+modes, with no success result on stdout (exit 0 success, 2 usage/validation,
+1 service/local failure). Generated external passwords are secret-bearing
+stdout in either format; do not log them.
+
+```bash
+manure whoami
+# User: me
+# Type: human
+# Token ID: t1
+manure list
+manure info <hex32>
+manure --json list --limit 10 | jq '.artifacts[].artifact_id'
+manure delete <hex32> --json
+```
+
 Secrets are fail-closed ambiguous — flags do **not** override env.
 **URL/token pairs** (`MANURE_URL`/`_FILE`, `MANURE_TOKEN`/`_FILE`):
 URL values strip one trailing LF plus surrounding whitespace; direct tokens
@@ -253,8 +278,9 @@ manure rotate-password <hex32> --json                 # re-issues, revokes old p
 ```
 
 `--expires-in`: seconds or `<n>s|m|h|d`, within 60..31536000.
-Resumed external uploads print `external_password: null` + a
-`rotate-password` note (cache holds source/manifest/metadata references only — never bearer
+Resumed external uploads explain that no password was returned and show a
+`rotate-password` note; `--json` preserves `external_password: null` and
+`password_note` (cache holds source/manifest/metadata references only — never bearer
 secrets or passwords). Token-free external fetch needs only the
 content URL + `--password[-file]`; public fetch needs no token. No
 secret ever goes in a URL, log, or error.

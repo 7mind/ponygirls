@@ -1011,11 +1011,24 @@ Commands: `list [--limit N] [--cursor C] [--include-expired]
 `upload <path> [--name N] --access internal|external|public
 [--expires-in 3600|30m|7d|...] [--resume ID] [--fresh] [--json]`,
 `fetch <id-or-url> <dest> [--password P] [--password-file F] [--json]`,
-`delete <id>`, `rotate-password <id> [--json]`, `whoami [--json]`;
+`delete <id> [--json]`, `rotate-password <id> [--json]`, `whoami [--json]`;
 global `--cache-dir D` (overrides `MANURE_CACHE_DIR` over HM default).
+
+CLI presentation amendment: human-readable text is the default for all commands,
+including redirected/piped stdout. `list` renders a compact table and explicit
+empty/pagination states; other commands render labeled details or receipts.
+Untrusted text escapes terminal controls; full IDs, URLs and passwords are not
+abbreviated. Every command accepts `--json` both globally and after the command,
+with unchanged JSON success shapes. This is explicit selection, not automatic
+TTY detection. Errors remain sanitized text on stderr with empty stdout and
+unchanged exit codes in either mode (0 success, 2 usage/validation, 1 other
+failure). The upload fields below describe JSON; text carries the same receipt
+information with human labels, `never` for no expiry and an explicit unavailable
+password/resume note instead of literal null.
+
 `upload` of a directory walks regular files + empty dirs (never
 symlinks), posts the manifest, streams chunk-resumable PUTs, publishes,
-prints `{artifact_id, content_url, access, expires_at}` and — ONLY for
+prints `{artifact_id, content_url, access, expires_at}` with `--json` and — ONLY for
 the generating call with `--access external` — `{external_password}`
 once (resumed uploads that did not generate it print
 `{external_password: null, password_note: "rotate-password to re-issue"}`).

@@ -278,6 +278,28 @@
       "acceptanceScope": "Complementary historical ArtifactStore/SQLite supported-query oracle only, eleven independently expected full-casefold queries; no HTTP/main. NOT replacement-target acceptance. Pinned CPython3.14 / Unicode16 assertion fails rather than skips."
     },
     {
+      "module": "test_cli_output",
+      "path": "manure/tests/test_cli_output.py",
+      "classification": "current",
+      "requires": [],
+      "tests": [
+        "test_cli_output.CliOutputTests.test_empty_list_and_pagination_are_explicit",
+        "test_cli_output.CliOutputTests.test_errors_keep_exit_codes_stderr_and_empty_stdout_in_both_modes",
+        "test_cli_output.CliOutputTests.test_expiry_and_absent_optional_metadata_are_readable",
+        "test_cli_output.CliOutputTests.test_fetch_reports_destination_and_verified_file_totals",
+        "test_cli_output.CliOutputTests.test_help_documents_output_selection_without_credentials_or_network",
+        "test_cli_output.CliOutputTests.test_info_shows_metadata_without_nested_container_representations",
+        "test_cli_output.CliOutputTests.test_json_flag_works_before_and_after_every_command_without_changing_payloads",
+        "test_cli_output.CliOutputTests.test_list_is_a_compact_table_with_full_ids_and_readable_sizes",
+        "test_cli_output.CliOutputTests.test_mutation_acknowledgements_identify_the_artifact",
+        "test_cli_output.CliOutputTests.test_resumed_external_upload_explains_missing_password",
+        "test_cli_output.CliOutputTests.test_size_boundaries_and_plural_counts_are_readable",
+        "test_cli_output.CliOutputTests.test_untrusted_text_cannot_emit_terminal_controls_or_forge_extra_rows",
+        "test_cli_output.CliOutputTests.test_upload_describes_access_and_generated_password_only_when_present",
+        "test_cli_output.CliOutputTests.test_whoami_is_readable_even_when_stdout_is_not_a_terminal"
+      ]
+    },
+    {
       "module": "test_cli_process",
       "path": "manure/tests/test_cli_process.py",
       "classification": "current",
@@ -287,7 +309,8 @@
       "tests": [
         "test_cli_process.TestOwnedFetchResumeRange.test_interrupted_fetch_resumes_exact_range",
         "test_cli_process.TestSubprocessKillResume.test_kill_auto_resume",
-        "test_cli_process.TestSubprocessKillResume.test_kill_manual_resume"
+        "test_cli_process.TestSubprocessKillResume.test_kill_manual_resume",
+        "test_cli_process.TestSubprocessOutput.test_human_and_json_commands_against_real_target"
       ]
     },
     {

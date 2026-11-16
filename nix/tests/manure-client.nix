@@ -235,6 +235,10 @@ let
 
         me = run_cli(["whoami", "--json"], {})
         assert me["user_id"] == "check", me
+        human = run_cli(["whoami"], {})
+        assert human == "User: check\nType: agent\nToken ID: default\n", human
+        assert run_cli(["--json", "whoami"], {}) == me
+        passed.append("cli-human-default-and-global-json-selection")
         # Flag wins over env: record lands in the flag cache only.
         rec = interrupt_upload(
             ["--cache-dir", flag_cache, "upload", big,
@@ -278,11 +282,11 @@ let
     assert all((viewer / name).stat().st_size > 0 for name in expected_viewer)
     assert "__MANURE_ASSET_BASE__/viewer.js" in (viewer / "index.html").read_text()
     passed.append("installed-offline-viewer-assets")
-    assert len(passed) == 9 and len(passed) == len(set(passed))
+    assert len(passed) == 10 and len(passed) == len(set(passed))
     receipt = {"tests":passed,"cases":len(passed),"failures":0,"errors":0,"skips":0,
       "package":pkg,"artifact":str(artifact),"artifactSHA256":hashlib.sha256(artifact.read_bytes()).hexdigest(),
       "driverSHA256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-      "clients":{name:hashlib.sha256(Path(site,"manure",name+".py").read_bytes()).hexdigest() for name in ("client","current_protocol","cli","mcp")},
+      "clients":{name:hashlib.sha256(Path(site,"manure",name+".py").read_bytes()).hexdigest() for name in ("client","current_protocol","cli","cli_output","mcp")},
       "assets":{str(path.relative_to(assets)):hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(assets.rglob("*")) if path.is_file()},
       "scope":"Installed current-protocol portable clients and immutable UI assets on actual native server/owned non-superuser shared-provider role. Not full browser/domain/migration acceptance."}
     Path(os.environ["MANURE_CLIENT_RECEIPT"]).write_text(json.dumps(receipt,indent=2)+"\n")

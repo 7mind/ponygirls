@@ -140,10 +140,19 @@ manure list [--limit N] [--cursor C] [--include-expired] [--visibility V] [--sta
 manure info <artifact-id> [--json]
 manure upload <path> --access internal|external|public [--name N] [--tag T ...] [--hostname H] [--project-path P] [--expires-in 7d] [--resume ID] [--fresh] [--json]
 manure fetch <artifact-id-or-content-url> <dest-dir> [--password P] [--password-file F] [--json]
-manure delete <artifact-id>
+manure delete <artifact-id> [--json]
 manure rotate-password <artifact-id> [--json]
 manure --cache-dir <dir> <subcommand>...
 ```
+
+Output is human-readable by default, even when piped: artifact tables, labeled
+metadata and upload/download/mutation receipts. For automation, pass `--json`
+before or after any command (including `delete`); JSON success shapes are
+unchanged. Errors remain sanitized text on stderr with empty stdout and the
+same exit codes (0 success, 2 usage/validation, 1 other failure). Human output
+escapes terminal controls, does not abbreviate IDs/URLs/passwords, and displays
+pagination cursors explicitly; continue with `--cursor` and the same list options.
+Generated external passwords appear on stdout in either format: do not log them.
 
 - `upload` walks regular files plus empty dirs; symlinks are rejected
   before network. Manifest topology (`__manure`/`api` reserved, no `..`,
@@ -157,7 +166,8 @@ manure --cache-dir <dir> <subcommand>...
   metadata only, not a wildcard. Resume verifies the actual server metadata
   before mutation or success; changed metadata never reuses the old artifact.
   Changed sources fail `source-changed` (exit 2). A resumed external
-  upload prints `external_password: null` plus
+  upload explains the missing password with a `rotate-password to re-issue`
+  note. With `--json` this remains `external_password: null` plus
   `password_note: "rotate-password to re-issue"`.
 - `fetch` streams with `Range`, writes temp plus atomic rename, verifies
   SHA-256 per file, recreates empty dirs, and never creates, follows, or

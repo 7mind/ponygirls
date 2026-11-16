@@ -104,6 +104,62 @@ class TestSubprocessKillResume(unittest.TestCase):
     def test_kill_manual_resume(self):self._kill_resume(True)
 
 
+class TestSubprocessOutput(unittest.TestCase):
+    def test_human_and_json_commands_against_real_target(self):
+        from manure.client import ManureClient
+        with tempfile.TemporaryDirectory() as td:
+            server, token = _make_server(td)
+            try:
+                source = Path(td) / 'report.md'
+                source.write_bytes(b'report\n' * 256)
+                env = _env_for(server, td, token)
+                client = ManureClient(server.effective_api_origin, token, cache_dir=Path(td) / 'api-cache')
+                for as_json in (False, True):
+                    with self.subTest(as_json=as_json):
+                        def command(*args):
+                            prefix = ['--json'] if as_json else []
+                            result = _cli(env, *prefix, *args)
+                            self.assertEqual(result.returncode, 0, result.stderr)
+                            self.assertEqual(result.stderr, '')
+                            return result.stdout
+                        upload = command('upload', str(source), '--access', 'external', '--fresh')
+                        artifacts = client.list_artifacts()['artifacts']
+                        self.assertEqual(len(artifacts), 1)
+                        aid = artifacts[0]['artifact_id']
+                        who = command('whoami')
+                        listing = command('list')
+                        info = command('info', aid)
+                        dest = Path(td) / ('json' if as_json else 'human')
+                        fetch = command('fetch', aid, str(dest))
+                        self.assertEqual((dest / source.name).read_bytes(), source.read_bytes())
+                        rotate = command('rotate-password', aid)
+                        delete = command('delete', aid)
+                        self.assertEqual(client.list_artifacts()['artifacts'], [])
+                        if as_json:
+                            self.assertEqual(json.loads(upload)['artifact_id'], aid)
+                            self.assertTrue(json.loads(upload)['external_password'])
+                            self.assertEqual(set(json.loads(who)), {'user_id', 'token_id', 'type'})
+                            self.assertEqual(json.loads(listing)['artifacts'][0]['artifact_id'], aid)
+                            self.assertEqual(json.loads(info)['artifact_id'], aid)
+                            self.assertEqual(json.loads(fetch), {'artifact_id': aid, 'dest': str(dest),
+                                'file_count': 1, 'total_bytes': source.stat().st_size})
+                            self.assertTrue(json.loads(rotate)['external_password'])
+                            self.assertEqual(json.loads(delete), {'ok': True})
+                        else:
+                            self.assertIn('Uploaded artifact ' + aid, upload)
+                            self.assertIn('External password: ', upload)
+                            self.assertIn('User: ', who)
+                            self.assertTrue(listing.startswith('ID '))
+                            self.assertIn(aid, listing)
+                            self.assertTrue(info.startswith('report.md\n'))
+                            self.assertIn('Fetched artifact ' + aid, fetch)
+                            self.assertIn('Destination: ' + str(dest), fetch)
+                            self.assertIn('Rotated password for artifact ' + aid, rotate)
+                            self.assertEqual(delete, 'Deleted artifact ' + aid + '.\n')
+            finally:
+                server.close()
+
+
 class TestOwnedFetchResumeRange(unittest.TestCase):
     def test_interrupted_fetch_resumes_exact_range(self):
         from manure.client import ManureClient,StdlibTransport,FETCH_RANGE_BYTES
