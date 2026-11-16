@@ -210,13 +210,20 @@ nix develop .#chronicle --command bash -c 'cd chronicle/cli && npm ci && npm run
 
 The fast CLI suite includes specified blackbox codec/command/output contracts
 and actual CLI subprocesses against owned HTTP/WS fixtures. Nix packaging also
-runs the complete process suite against the final installed `bin/chronicle`,
-not just its imports or help. Set `CHRONICLE_CLI_EXECUTABLE` to an installed
+runs the complete process suite against the final installed `bin/chronicle`
+and the resource suite against its exported transport modules, not just imports
+or help. Set `CHRONICLE_CLI_EXECUTABLE` to an installed
 absolute binary path to run those process tests explicitly: `node --test
 dist/cli/test/cli.test.js` from `cli/` after a source build. No live credential
 or service is used. Regenerate the boundary schema only when the current model
 changes: `cd chronicle/cli && node scripts/schema.mjs`, then inspect/test it.
 A normal build checks that this generated boundary is current.
+
+An expired absolute budget rejects before WebSocket acquisition. Post-acquisition
+budget/timer setup is covered by socket ownership and cleanup; it never restarts
+the command budget. Direct native-adapter tests cover these resource guarantees.
+The held-stdin CLI case checks input-budget rejection, not a whole-process
+reproduction of the exported transport acquisition defect.
 
 Real-server acceptance requires a source-bound executable, fresh owned provider
 cluster and Linux `/proc` listener-ownership proof. For example, inside the

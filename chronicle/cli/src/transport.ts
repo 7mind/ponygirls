@@ -72,17 +72,18 @@ export class Http {
 }
 export async function websocket(origin: string, session: Session, operation: Operation, requestId: string, mutation: boolean, deadline: Deadline): Promise<Result> {
   if (session.origin !== origin) throw new CliError('credentials', 'Session belongs to a different origin.');
+  deadline.remaining();
   const helloId = randomUUID();
   return new Promise<Result>((resolve, reject) => {
     // Node24's WebSocketInit supports headers and uses redirect:error. Native receive
     // limits are 128MiB/131072 fragments; decoded application messages are bounded below.
     const socket = new (WebSocket as unknown as typeof import('undici-types').WebSocket)(`${origin.replace(/^http/, 'ws')}/api/ws`, { headers: { Origin: origin, Cookie: `chronicle_session=${session.cookie}` } });
     let sent = false; let finished = false; let negotiated = false;
-    let activeId = requestId; let activeOperation = operation; let poll: NodeJS.Timeout | null = null;
+    let activeId = requestId; let activeOperation = operation; let poll: NodeJS.Timeout | null = null; let timer: NodeJS.Timeout | null = null;
     const events: import('../../generated/typescript/chronicle/api/McpTestEvent.js').McpTestEvent[] = []; let eventBytes = 0; let sequence = 0n;
 
     const finish = (result: Result | null, error: CliError | null): void => {
-      if (finished) return; finished = true; clearTimeout(timer); if (poll !== null) clearTimeout(poll); socket.close();
+      if (finished) return; finished = true; if (timer !== null) clearTimeout(timer); if (poll !== null) clearTimeout(poll); socket.close();
       if (error !== null) reject(error); else if (result !== null) resolve(result); else reject(new CliError('protocol-error', 'Missing application result.'));
     };
     const failure = (error: CliError): void => {
@@ -90,7 +91,6 @@ export async function websocket(origin: string, session: Session, operation: Ope
       if (sent && operation instanceof Operation_CancelMcpTest) { finish(null, new CliError('uncertain', `MCP cancellation acknowledgement lost. Inspect ReadMcpTest with instanceId=${operation.instanceId} runId=${operation.runId}; this operation has no durable request-ID receipt.`)); return; }
       finish(null, sent && mutation ? uncertain(requestId) : error);
     };
-    const timer = setTimeout(() => failure(new CliError('deadline', 'Command deadline exceeded.')), deadline.remaining());
     const send = (id: string, op: Operation): void => { const text = JSON.stringify(encodeWire('ClientEnvelope', new ClientEnvelope(id, op))); if (Buffer.byteLength(text) > 65536) throw new CliError('too-large', 'WS request exceeded 64KiB.'); socket.send(text); };
     socket.onopen = () => { try { send(helloId, new Operation_Hello([schema.version])); } catch { failure(new CliError('protocol-error', 'Unable to send protocol negotiation.')); } };
     socket.onmessage = event => {
@@ -141,5 +141,7 @@ export async function websocket(origin: string, session: Session, operation: Ope
       const error = event.code === 4401 ? remoteFailure('unauthorized') : event.code === 4406 ? remoteFailure('version-mismatch') : event.code === 4400 ? remoteFailure('protocol-error') : new CliError('unavailable', 'WebSocket closed before acknowledgement.');
       failure(error);
     };
+    try { timer = setTimeout(() => failure(new CliError('deadline', 'Command deadline exceeded.')), deadline.remaining()); }
+    catch (error) { failure(error instanceof CliError ? error : new CliError('unavailable', 'Unable to initialize WebSocket request.')); }
   });
 }

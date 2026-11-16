@@ -388,3 +388,14 @@ test('UUID equivalence never case-folds opaque target profile names', async () =
   const result = await acknowledgement({ ApplyRetryFailed: { targetProfile: 'a'.repeat(64), selectionHash: 'b'.repeat(64), confirm: true } }, { RetryFailed: { result: { requestId: ACK_REQUEST, targetProfile: 'A'.repeat(64), retried: '1', counts: RETRY_COUNTS } } }, { requestId: ACK_REQUEST, secret: false });
   assert.equal(result.code, 7, result.stderr); assert.equal(result.stdout, '');
 });
+test('CLI input-budget boundary rejects held stdin without acquiring a WebSocket', { timeout: 10000 }, async () => {
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), () => assert.fail('No WebSocket may be acquired while RPC input is incomplete.'));
+  try {
+    state(f); const installed = process.env['CHRONICLE_CLI_EXECUTABLE']; const args = ['rpc', '--file', '-', '--timeout-ms', '100', '--url', f.origin, '--allow-insecure-http', '--json'];
+    const child = installed === undefined ? spawn(process.execPath, [CLI, ...args], { env: { PATH: process.env['PATH']!, HOME: f.root, CHRONICLE_STATE_DIR: join(f.root, 'state') }, stdio: ['pipe', 'pipe', 'pipe'] }) : spawn(installed, args, { env: { PATH: process.env['PATH']!, HOME: f.root, CHRONICLE_STATE_DIR: join(f.root, 'state') }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const PROCESS_GUARD_MS = 9000; const guard = setTimeout(() => child.kill(), PROCESS_GUARD_MS);
+    let stdout = ''; let stderr = ''; child.stdout.on('data', data => stdout += String(data)); child.stderr.on('data', data => stderr += String(data));
+    try { const code = await new Promise<number | null>((done, reject) => { child.on('error', reject); child.on('close', done); }); assert.equal(code, 6, stderr); assert.equal(stdout, ''); assert.match(stderr, /^chronicle: deadline: Stdin deadline exceeded\.\n$/); assert.equal(f.requests.length, 0); }
+    finally { clearTimeout(guard); child.stdin.destroy(); if (child.exitCode === null && child.signalCode === null) child.kill(); }
+  } finally { await f.close(); }
+});

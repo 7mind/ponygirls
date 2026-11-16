@@ -59,7 +59,7 @@ buildNpmPackage {
   installCheckPhase = ''
     runHook preInstallCheck
     cd cli
-    CHRONICLE_CLI_EXECUTABLE="$out/bin/chronicle" node --test dist/cli/test/cli.test.js
+    CHRONICLE_CLI_EXECUTABLE="$out/bin/chronicle" node --test dist/cli/test/cli.test.js dist/cli/test/transport.test.js
     cd ..
     runHook postInstallCheck
   '';
