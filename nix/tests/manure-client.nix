@@ -269,6 +269,26 @@ let
                  "--resume", aid2, "--json"],
                 {"MANURE_CACHE_DIR": env_cache})
         passed.append("cli-env-cache-default-and-explicit-resume")
+        expression = 'state:ready text:"big.bin" sort:name direction:asc'
+        catalogue = run_cli(["search", expression, "--json"], {})
+        assert {item["artifact_id"] for item in catalogue["artifacts"]} == {aid, aid2}
+        assert run_cli(["--json", "search", expression], {}) == catalogue
+        human = run_cli(["search", expression], {})
+        assert aid in human and aid2 in human
+        ranked_expression = 'mode:lexical text:"big.bin"'
+        ranked = run_cli(["search", ranked_expression, "--json"], {})
+        assert {hit["artifact"]["artifact_id"] for hit in ranked["hits"]} == {aid, aid2}
+        assert ranked["count_scope"] == "exactmatches" and all(hit["evidence"] for hit in ranked["hits"])
+        human_ranked = run_cli(["search", ranked_expression], {})
+        assert "Metadata search results (not file contents)" in human_ranked and "Source version: " in human_ranked
+        assert raw not in human_ranked
+        for expression, expected, code in [("unknown:private-query", 2, "bad-query"),
+                                            ("mode:semantic big.bin", 1, "search-unavailable")]:
+            rejected = subprocess.run([cli, "search", expression], capture_output=True, text=True,
+                                      env=child_env, cwd=work, timeout=60)
+            assert rejected.returncode == expected and rejected.stdout == "" and code in rejected.stderr
+            assert "private-query" not in rejected.stderr and raw not in rejected.stderr
+        passed.append("cli-shared-search-catalogue-ranked-metadata-and-explicit-errors")
         print("manure-client: CLI cache precedence + resume + round-trip OK")
     finally:
         server.terminate()
@@ -282,11 +302,11 @@ let
     assert all((viewer / name).stat().st_size > 0 for name in expected_viewer)
     assert "__MANURE_ASSET_BASE__/viewer.js" in (viewer / "index.html").read_text()
     passed.append("installed-offline-viewer-assets")
-    assert len(passed) == 10 and len(passed) == len(set(passed))
+    assert len(passed) == 11 and len(passed) == len(set(passed))
     receipt = {"tests":passed,"cases":len(passed),"failures":0,"errors":0,"skips":0,
       "package":pkg,"artifact":str(artifact),"artifactSHA256":hashlib.sha256(artifact.read_bytes()).hexdigest(),
       "driverSHA256":hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-      "clients":{name:hashlib.sha256(Path(site,"manure",name+".py").read_bytes()).hexdigest() for name in ("client","current_protocol","cli","cli_output","mcp")},
+      "clients":{name:hashlib.sha256(Path(site,"manure",name+".py").read_bytes()).hexdigest() for name in ("client","current_protocol","query","cli","cli_output","mcp")},
       "assets":{str(path.relative_to(assets)):hashlib.sha256(path.read_bytes()).hexdigest() for path in sorted(assets.rglob("*")) if path.is_file()},
       "scope":"Installed current-protocol portable clients and immutable UI assets on actual native server/owned non-superuser shared-provider role. Not full browser/domain/migration acceptance."}
     Path(os.environ["MANURE_CLIENT_RECEIPT"]).write_text(json.dumps(receipt,indent=2)+"\n")

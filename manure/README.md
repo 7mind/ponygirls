@@ -232,6 +232,17 @@ modes, with no success result on stdout (exit 0 success, 2 usage/validation,
 1 service/local failure). Generated external passwords are secret-bearing
 stdout in either format; do not log them.
 
+`search QUERY [--limit N] [--cursor C]` uses the same [query dialect](docs/query.md)
+as the dashboard and MCP. Default catalogue mode filters the full accessible
+catalogue and supports opaque continuation cursors; repeat the identical expression
+and options. `mode:lexical`, `mode:semantic` and `mode:hybrid` retrieve indexed
+metadata and manifest paths, **not file contents**, and reject cursors. Semantic
+and hybrid modes require server configuration and fail explicitly when unavailable.
+Human retrieval output preserves evidence, source/index provenance, exact counts
+and count scope; `--json` returns the existing catalogue or SearchPage payload.
+Invalid expressions exit 2 without a search request; there is no automatic mode
+fallback.
+
 ```bash
 manure whoami
 # User: me
@@ -239,6 +250,9 @@ manure whoami
 # Token ID: t1
 manure list
 manure info <hex32>
+manure search 'release tag:report'
+manure search 'mode:lexical text:"nested/report.md"'
+manure search 'mode:semantic release' --json
 manure --json list --limit 10 | jq '.artifacts[].artifact_id'
 manure delete <hex32> --json
 ```

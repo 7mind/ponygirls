@@ -1026,6 +1026,15 @@ failure). The upload fields below describe JSON; text carries the same receipt
 information with human labels, `never` for no expiry and an explicit unavailable
 password/resume note instead of literal null.
 
+CLI search amendment: `manure search QUERY [--limit N] [--cursor C] [--json]`
+uses the existing shared dashboard/MCP expression grammar and management API.
+Default catalogue results preserve catalogue JSON; `mode:lexical|semantic|hybrid`
+results preserve SearchPage JSON, evidence, pinned source/index provenance,
+count scope and ranking limit. Search indexes metadata/manifest paths, not file
+contents. Cursors are catalogue-only and bind the same expression/options;
+invalid expressions or retrieval cursors exit 2 without a search request.
+Unavailable retrieval modes fail explicitly, without a catalogue fallback.
+
 `upload` of a directory walks regular files + empty dirs (never
 symlinks), posts the manifest, streams chunk-resumable PUTs, publishes,
 prints `{artifact_id, content_url, access, expires_at}` with `--json` and — ONLY for

@@ -92,6 +92,8 @@ def _print_result[T](obj: T, as_json: bool, human: Callable[[T], str]) -> None:
 
 
 def _exit_for_error(e: ManureError) -> int:
+    if e.code == "bad-query":
+        return 2
     if e.code in ("ambiguous-credentials", "missing-credentials", "source-changed",
                   "invalid-ttl", "invalid-visibility", "invalid-manifest",
                   "invalid-path", "invalid-url", "bad-envelope"):
@@ -128,6 +130,17 @@ def build_parser() -> argparse.ArgumentParser:
     p_list.add_argument("--include-expired", action="store_true")
     p_list.add_argument("--visibility", default=None)
     p_list.add_argument("--state", default=None)
+    p_search = sub.add_parser("search", parents=[output_options],
+        help="search artifact metadata and manifest paths",
+        description="Search metadata, not file contents, using the dashboard/MCP query syntax.",
+        epilog='Default: catalogue. Use mode:lexical, mode:semantic or mode:hybrid for ranked retrieval; '
+               'semantic/hybrid require server configuration. Fields: text, access, state, expired, '
+               'kind, owner, sort, direction, tag, hostname, project. Quote values with JSON strings. '
+               'Catalogue mode supports --cursor; ranked retrieval does not. '
+               'Examples: manure search \'release tag:report\'; manure search \'mode:lexical "quarterly report"\'.')
+    p_search.add_argument("query", help="shared search expression (quote it as one shell argument)")
+    p_search.add_argument("--limit", type=int, default=None, help="maximum returned artifacts/hits (server cap applies)")
+    p_search.add_argument("--cursor", default=None, help="opaque catalogue continuation cursor; repeat the same expression")
     p_info = sub.add_parser("info", parents=[output_options], help="show artifact details")
     p_info.add_argument("id")
     p_up = sub.add_parser("upload", parents=[output_options], help="upload a file or directory")
@@ -243,6 +256,10 @@ def main(argv: list[str] | None = None) -> int:
                                         include_expired=bool(args.include_expired),
                                         visibility=args.visibility, state=args.state)
             _print_result(res, as_json, cli_output.catalogue)
+            return 0
+        if cmd == "search":
+            res = client.search_expression(args.query, limit=args.limit, cursor=args.cursor)
+            _print_result(res, as_json, cli_output.search)
             return 0
         if cmd == "info":
             res = client.get_artifact(args.id)

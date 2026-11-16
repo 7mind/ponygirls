@@ -203,12 +203,103 @@ class CliOutputTests(unittest.TestCase):
                     self.assertEqual(json.loads(out), expected)
                     self.assertEqual(out, json.dumps(expected, sort_keys=True, indent=2) + '\n')
 
+    def test_search_catalogue_routes_the_shared_expression_and_pagination(self):
+        cursor = 'catalogue-next'
+        def page(method, url, headers, body):
+            request = p.decode(p.ClientEnvelope, p.loads(body))
+            self.assertIsInstance(request.command, p.Command_ListArtifacts)
+            query = request.command.query
+            self.assertEqual((query.query, query.limit, query.cursor), ('report.md', 2, 'previous'))
+            self.assertEqual((query.sort, query.direction), (p.CatalogueSort.Name, p.SortDirection.Asc))
+            self.assertEqual(query.tags, ['release'])
+            self.assertEqual((query.hostname, query.projectPath), ('build-host', '/work/project'))
+            return 200, {}, p.dumps(p.ServerEnvelope(request.requestId,
+                p.Result_Catalogue(p.CataloguePage([self.transport.artifact()], cursor))))
+        self.transport.override = page
+        expression = 'report.md tag:release hostname:build-host project:/work/project sort:name direction:asc'
+        out = self.invoke('search', expression, '--limit', '2', '--cursor', 'previous')
+        self.assertIn(AID, out)
+        self.assertIn('Next cursor: ' + cursor, out)
+        self.assertIn('same search expression', out)
+        self.assertEqual(len(self.transport.requests), 1)
+
+    def test_search_retrieval_modes_preserve_evidence_provenance_and_exact_counts(self):
+        for mode in ['lexical', 'semantic', 'hybrid']:
+            with self.subTest(mode=mode):
+                scope = p.SearchCountScope.ExactMatches if mode == 'lexical' else p.SearchCountScope.CandidateWindow
+                page = p.SearchPage([p.SearchHit(self.transport.artifact(), 'source-version',
+                    'generation-id', 'policy-id', 'profile-id', 'embedding-space',
+                    [p.SearchEvidence(p.EvidenceField.ManifestPath, 'nested/report.md',
+                        'report\ntext\x1b[31m', 0.125)], 0.25)], 2**63-1, scope, 1000, None)
+                def reply(method, url, headers, body):
+                    request = p.decode(p.ClientEnvelope, p.loads(body))
+                    self.assertIsInstance(request.command, p.Command_Search)
+                    query = request.command.query
+                    self.assertEqual((query.query, query.mode, query.limit),
+                                     ('report', p.SearchMode(mode.capitalize()), 2))
+                    self.assertEqual(query.filter.tags, ['release'])
+                    return 200, {}, p.dumps(p.ServerEnvelope(request.requestId, p.Result_SearchResults(page)))
+                self.transport.override = reply
+                expression = 'mode:' + mode + ' report tag:release'
+                out = self.invoke('search', expression, '--limit', '2')
+                for text in ['Metadata search', 'not file contents', AID, CONTENT,
+                             'source-version', 'generation-id', 'policy-id', 'profile-id',
+                             'embedding-space', 'nested/report.md', str(2**63-1),
+                             'exactmatches' if mode == 'lexical' else 'candidatewindow',
+                             'Ranking limit: 1000', '0.125', '0.25', r'report\ntext\x1b[31m']:
+                    self.assertIn(text, out)
+                self.assertNotIn('\x1b', out)
+                self.assertNotIn(TOKEN, out)
+                for prefix, suffix in [(['--json'], []), ([], ['--json']), (['--json'], ['--json'])]:
+                    machine = self.invoke(*prefix, 'search', expression, '--limit', '2', *suffix)
+                    self.assertEqual(json.loads(machine), p.local(page))
+                    self.assertEqual(machine, json.dumps(p.local(page), sort_keys=True, indent=2) + '\n')
+
+    def test_search_empty_catalogue_and_retrieval_are_explicit(self):
+        for expression in ['report', 'mode:lexical report']:
+            with self.subTest(expression=expression):
+                def reply(method, url, headers, body):
+                    request = p.decode(p.ClientEnvelope, p.loads(body))
+                    result = (p.Result_Catalogue(p.CataloguePage([], None))
+                              if isinstance(request.command, p.Command_ListArtifacts) else
+                              p.Result_SearchResults(p.SearchPage([], 0, p.SearchCountScope.ExactMatches, None, None)))
+                    return 200, {}, p.dumps(p.ServerEnvelope(request.requestId, result))
+                self.transport.override = reply
+                out = self.invoke('search', expression)
+                self.assertIn('No artifacts found.' if expression == 'report' else 'No search hits.', out)
+
+    def test_search_bad_expression_or_retrieval_cursor_is_usage_without_network(self):
+        for args in [('search', 'unknown:value'), ('search', 'mode:lexical report', '--cursor', 'opaque')]:
+            with self.subTest(args=args):
+                code, out, err = run_cli(list(args), self.env, self.transport)
+                self.assertEqual((code, out), (2, ''))
+                self.assertIn('bad-query', err)
+                self.assertEqual(self.transport.requests, [])
+
+    def test_search_unavailable_is_an_error_not_a_catalogue_fallback(self):
+        def failure(method, url, headers, body):
+            request = p.decode(p.ClientEnvelope, p.loads(body))
+            self.assertIsInstance(request.command, p.Command_Search)
+            return 503, {}, p.dumps(p.ServerEnvelope(request.requestId,
+                p.Result_Error(p.Failure(p.ErrorCode.SearchUnavailable, 'private-' + TOKEN, None))))
+        self.transport.override = failure
+        for suffix in [[], ['--json']]:
+            code, out, err = run_cli(['search', 'mode:semantic report', *suffix], self.env, self.transport)
+            self.assertEqual((code, out), (1, ''))
+            self.assertIn('search-unavailable', err)
+            self.assertNotIn(TOKEN, err)
+        self.assertEqual(len(self.transport.requests), 2)
+
     def test_help_documents_output_selection_without_credentials_or_network(self):
-        for argv in [['--help'], ['delete', '--help'], ['list', '--help']]:
+        for argv in [['--help'], ['delete', '--help'], ['list', '--help'], ['search', '--help']]:
+
             with self.subTest(argv=argv):
                 code, out, err = run_cli(argv, {}, self.transport)
                 self.assertEqual((code, err), (0, ''))
                 self.assertIn('--json', out)
+                if argv[0] == 'search':
+                    for text in ['mode:lexical', 'mode:semantic', 'mode:hybrid', 'not file contents', '--cursor']:
+                        self.assertIn(text, out)
         self.assertEqual(self.transport.requests, [])
 
     def test_untrusted_text_cannot_emit_terminal_controls_or_forge_extra_rows(self):

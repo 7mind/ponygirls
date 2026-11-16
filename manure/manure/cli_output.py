@@ -1,7 +1,7 @@
 """Human presentation of client-local results; never used by JSON or MCP."""
 from __future__ import annotations
 
-from typing import Literal, NotRequired, TypedDict
+from typing import Literal, NotRequired, TypedDict, cast
 
 
 Access = Literal['internal', 'external', 'public']
@@ -37,6 +37,32 @@ class Artifact(Metadata):
 
 class Catalogue(TypedDict):
     artifacts: list[Artifact]
+    next_cursor: str | None
+
+
+class SearchEvidence(TypedDict):
+    field: str
+    path: str | None
+    text: str
+    score: float
+
+
+class SearchHit(TypedDict):
+    artifact: Artifact
+    source_version: str
+    generation_id: str
+    policy_id: str
+    embedding_profile: str | None
+    embedding_space: str | None
+    evidence: list[SearchEvidence]
+    score: float
+
+
+class SearchPage(TypedDict):
+    hits: list[SearchHit]
+    total: int
+    count_scope: str
+    ranking_limit: int | None
     next_cursor: str | None
 
 
@@ -103,6 +129,10 @@ def identity(result: Identity) -> str:
 
 
 def catalogue(result: Catalogue) -> str:
+    return _catalogue(result, 'Pass --cursor with the same list options to continue.')
+
+
+def _catalogue(result: Catalogue, continuation: str) -> str:
     artifacts = result['artifacts']
     if artifacts:
         rows = [('ID', 'ACCESS', 'STATE', 'SIZE', 'NAME')]
@@ -118,7 +148,37 @@ def catalogue(result: Catalogue) -> str:
         lines = ['No artifacts found.']
     if result['next_cursor'] is not None:
         lines += ['', 'Next cursor: ' + terminal_text(result['next_cursor']),
-                  'Pass --cursor with the same list options to continue.']
+                  continuation]
+    return '\n'.join(lines)
+
+
+def search(result: Catalogue | SearchPage) -> str:
+    if 'artifacts' in result:
+        return _catalogue(cast(Catalogue, result),
+                          'Pass --cursor with the same search expression and options to continue.')
+    page = cast(SearchPage, result)
+    lines = ['Metadata search results (not file contents)',
+             f"Returned hits: {len(page['hits'])}",
+             f"Count: {page['total']} (scope: {terminal_text(page['count_scope'])})"]
+    if page['ranking_limit'] is not None:
+        lines.append(f"Ranking limit: {page['ranking_limit']}")
+    if not page['hits']:
+        lines.append('No search hits.')
+    for hit in page['hits']:
+        lines += ['', artifact(hit['artifact']),
+                  'Source version: ' + terminal_text(hit['source_version']),
+                  'Generation: ' + terminal_text(hit['generation_id']),
+                  'Policy: ' + terminal_text(hit['policy_id']),
+                  'Embedding profile: ' + terminal_text(hit['embedding_profile'] if hit['embedding_profile'] is not None else 'none'),
+                  'Embedding space: ' + terminal_text(hit['embedding_space'] if hit['embedding_space'] is not None else 'none'),
+                  f"Score: {hit['score']}"]
+        for evidence in hit['evidence']:
+            lines += ['Evidence: ' + terminal_text(evidence['field']),
+                      '  Path: ' + terminal_text(evidence['path'] if evidence['path'] is not None else 'none'),
+                      '  Text: ' + terminal_text(evidence['text']),
+                      f"  Score: {evidence['score']}"]
+    if page['next_cursor'] is not None:
+        lines += ['', 'Next cursor: ' + terminal_text(page['next_cursor'])]
     return '\n'.join(lines)
 
 

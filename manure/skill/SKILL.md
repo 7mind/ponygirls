@@ -137,6 +137,7 @@ hostname (253) and project path (4096). Invalid values fail before network.
 ```bash
 manure whoami [--json]
 manure list [--limit N] [--cursor C] [--include-expired] [--visibility V] [--state S] [--json]
+manure search 'QUERY' [--limit N] [--cursor C] [--json]
 manure info <artifact-id> [--json]
 manure upload <path> --access internal|external|public [--name N] [--tag T ...] [--hostname H] [--project-path P] [--expires-in 7d] [--resume ID] [--fresh] [--json]
 manure fetch <artifact-id-or-content-url> <dest-dir> [--password P] [--password-file F] [--json]
@@ -189,8 +190,11 @@ Generated external passwords appear on stdout in either format: do not log them.
 
 ### Search expressions
 
-MCP `search` takes required `query` and optional `limit` / `cursor`, with no
-separate filtering arguments. It shares the dashboard query dialect:
+CLI `manure search 'QUERY' [--limit N] [--cursor C] [--json]` and MCP `search`
+(required `query`, optional `limit` / `cursor`) share the dashboard query dialect,
+with no separate filtering arguments. CLI output is human-readable unless
+`--json` is supplied; retrieval output includes evidence, provenance and count
+scope. Bad expressions exit 2; unavailable modes are errors, not fallbacks:
 
 ```text
 access:public state:ready sort:name direction:asc report
