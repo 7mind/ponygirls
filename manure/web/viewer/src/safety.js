@@ -28,7 +28,14 @@ export function markdownLinkUrl(value, base, mountPath) {
   try {
     const url = new URL(value, base);
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) return null;
-    return url.origin === new URL(base).origin ? artifactResourceUrl(value, base, mountPath) : url.href;
+    if (url.origin !== new URL(base).origin) return url.href;
+    const resource = artifactResourceUrl(value, base, mountPath);
+    if (resource) return resource;
+    // Config.contentMount uses /view/<32 lowercase hex> only in path mode.
+    if (!/^\/view\/[0-9a-f]{32}$/.test(mountPath) || !/^(?:https?:\/\/|\/)/i.test(value)) return null;
+    const target = url.pathname.match(/^(\/view\/[0-9a-f]{32})(?:\/|$)/);
+    if (!target) return null;
+    return url.pathname === target[1] ? url.href : artifactResourceUrl(url.href, base, target[1]);
   } catch { return null; }
 }
 export function diagramCount(count) {

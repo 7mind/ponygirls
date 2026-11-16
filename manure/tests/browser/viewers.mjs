@@ -210,12 +210,24 @@ await check("markdown renders headings, GFM and both fenced diagrams without exe
 
 for (const [key, name] of [["markdown", filename("markdown")], ["directory", "docs/guide ü.md"], ["browse", "README.md"]]) {
   await check(`${key} Markdown hyperlinks preserve safe navigation without automatic external requests`, async (page, context, followLink) => {
+    const siblingRequests = [];
+    context.on("request", (request) => {
+      const url = new URL(request.url());
+      const sibling = new URL(root("sibling"));
+      const mount = sibling.pathname.replace(/\/$/, "");
+      if (url.origin === sibling.origin && (url.pathname === mount || url.pathname.startsWith(mount + "/"))) {
+        siblingRequests.push({ url: request.url(), navigation: request.isNavigationRequest(), referer: request.headers().referer });
+      }
+    });
     const preview = async () => {
+      const siblingCount = siblingRequests.length;
       if (key === "browse") {
         await page.goto(root(key) + "/", { waitUntil: "domcontentloaded" });
         await shell(page, key, name);
       } else await open(page, key, name);
       await markdownRendered(page);
+      assert.equal(siblingRequests.length, siblingCount, "rendering must not automatically request a sibling artifact");
+      assert.equal(await page.locator('article.markdown img[alt="Sibling image"]').getAttribute("src"), null);
     };
     await preview();
     const article = page.locator("article.markdown");
@@ -226,7 +238,14 @@ for (const [key, name] of [["markdown", filename("markdown")], ["directory", "do
       ["Local review", new URL("./related.md?view=1#topic", base).href],
       ["Encoded resource", new URL("./CPU%2090%25.md", base).href],
       ["Jump to title", "#viewer-specification"],
-      ["Raw review", "https://example.com/raw?left=1&right=2"]]) {
+      ["Raw review", "https://example.com/raw?left=1&right=2"],
+      [root("sibling"), new URL(root("sibling")).href],
+      ["Sibling entry", new URL(root("sibling")).href],
+      ["Sibling slash", root("sibling") + "/"],
+      ["Sibling section", root("sibling") + "/#7-limits"],
+      ["Sibling subpath", root("sibling") + "/docs/guide.html#topic"],
+      ["Raw sibling", new URL(root("sibling")).href],
+      ...(input.mode === "path" ? [["Rooted sibling", root("sibling")]] : [])]) {
       const link = article.getByText(label, { exact: true });
       assert.equal(await link.count(), 1, label);
       assert.equal(await link.getAttribute("href"), href, `${key}: ${label} must retain a navigable href`);
@@ -249,6 +268,18 @@ for (const [key, name] of [["markdown", filename("markdown")], ["directory", "do
     }
     for (const [label, destination] of [["!182749", "https://example.com/review/182749"], ["Raw review", "https://example.com/raw?left=1&right=2"]]) {
       await followLink(article.getByRole("link", { name: label, exact: true }), destination);
+      await preview();
+    }
+    for (const [label, suffix] of [["Sibling entry", "/"], ["Sibling slash", "/"],
+      ["Sibling section", "/#7-limits"], ["Sibling subpath", "/docs/guide.html#topic"]]) {
+      const count = siblingRequests.length;
+      await Promise.all([page.waitForURL(root("sibling") + suffix, { waitUntil: "domcontentloaded" }),
+        article.getByRole("link", { name: label, exact: true }).click()]);
+      await page.getByRole("heading", { name: suffix.includes("/docs/") ? "Sibling subpath destination" : "Sibling artifact destination", exact: true }).waitFor();
+      const navigations = siblingRequests.slice(count).filter(request => request.navigation);
+      assert.ok(navigations.length > 0, "explicit sibling clicks must reach the owned artifact");
+      assert.equal(navigations[0].referer, undefined, "sibling navigation must not disclose the source artifact URL");
+      assert.equal(new URL(navigations.at(-1).url).href, new URL(root("sibling") + suffix).href.split("#")[0]);
       await preview();
     }
   }, true);

@@ -52,6 +52,31 @@ test('Markdown links preserve fragments and confine absolute and relative same-o
     assert.equal(markdownLinkUrl(value,'https://artifact.example/docs/README.md',''),null,value);
   }
 });
+// Regression: path-hosted sibling artifact URLs are navigation, not automatic resources.
+test('Markdown links allow explicit canonical sibling artifact navigation but not relative escapes or resources', () => {
+  const current = '11111111111111111111111111111111';
+  const sibling = '22222222222222222222222222222222';
+  const mount = `/view/${current}`;
+  const base = `https://artifacts.example${mount}/docs/README.md`;
+  for (const suffix of ['', '/', '#7-limits', '/?view=1#7-limits', '/docs/guide%20name.md#topic']) {
+    const path = `/view/${sibling}${suffix}`;
+    for (const value of [path, `https://artifacts.example${path}`, `//artifacts.example${path}`]) {
+      assert.equal(markdownLinkUrl(value,base,mount),new URL(value,base).href,value);
+      assert.equal(artifactResourceUrl(value,base,mount),null,value);
+    }
+  }
+  for (const value of [`../../${sibling}/guide.md`, `../../../view/${sibling}/guide.md`,
+    '/view/other/guide.md', `/view/${sibling.slice(1)}/`, `/view/${sibling}2/`, '/view/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/',
+    `/view/%32${sibling.slice(1)}/`, `/view/${sibling}/api/users`, `/view/${sibling}/%61pi/users`,
+    `/view/${sibling}/__manure/logout`, `/view/${sibling}/%5f%5fmanure/logout`,
+    `/view/${sibling}/%2fapi/users`, `/view/${sibling}/%5capi/users`, `/view/${sibling}/bad%00name`]) {
+    assert.equal(markdownLinkUrl(value,base,mount),null,value);
+  }
+  const subdomainBase = `https://${current}.artifacts.example/docs/README.md`;
+  const subdomainSibling = `https://${sibling}.artifacts.example/guide.md`;
+  assert.equal(markdownLinkUrl(subdomainSibling,subdomainBase,''),subdomainSibling);
+  assert.equal(artifactResourceUrl(subdomainSibling,subdomainBase,''),null);
+});
 test('Markdown links reject non-HTTP(S) schemes, userinfo, controls and malformed URLs', () => {
   const base = 'https://artifacts.example/view/abc/README.md';
   for (const value of ['javascript:alert(1)', 'data:text/html,unsafe', 'vbscript:unsafe', 'file:///tmp/unsafe',

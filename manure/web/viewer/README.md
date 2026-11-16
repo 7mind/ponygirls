@@ -97,11 +97,17 @@ The four metadata values live on `meta#manure-viewer` in `data-path`,
 Relative Markdown links/images resolve against the original document location,
 not its reserved viewer/raw location. HTTP(S) anchor links may navigate to other
 origins when explicitly followed; rendering them does not fetch the destination.
-Links retain `rel="noopener noreferrer"`. Same-origin links (absolute or relative)
-and all automatically loaded resources remain confined to the artifact:
-management/reserved routes and sibling artifact mounts are removed before live
-DOM creation. External resource URLs and non-HTTP(S) links (including `mailto:`)
-are removed. Anchor URLs with userinfo or ASCII control characters and malformed
+Links retain `rel="noopener noreferrer"`. Relative same-origin links and all
+automatically loaded resources remain confined to the artifact. In path mode,
+explicit absolute, protocol-relative or root-relative anchors may also navigate
+to canonical `/view/<32-lowercase-hex-artifact-id>` entry/content paths, including
+bare entry URLs, trailing slashes, fragments and nested content. The `/view/`
+prefix matches the backend's fixed `Config.contentMount` contract; subdomain mode
+uses separate origins instead. Same-origin management/reserved routes, arbitrary
+sibling paths and relative escapes are removed before live DOM creation. Sibling
+artifact images remain blocked; allowing an anchor never fetches its destination.
+External resource URLs and non-HTTP(S) links (including `mailto:`) are removed.
+Anchor URLs with userinfo or ASCII control characters and malformed
 URLs are removed without aborting the document.
 Markdown cannot introduce active embeds or inline styles. Rendered diagrams are sanitized and displayed as blob images,
 never injected into the active document as SVG. Diagram config frontmatter and
@@ -150,6 +156,7 @@ output or an uploaded file, so uploaded site favicons and raw bytes are unchange
 Focused Node tests cover safety contracts (Blackbox/Atomic) and the production
 PDF page-operation closure (Whitebox/Atomic regression tests), all Behavioral/Active.
 After building, run `CHROMIUM_BIN=/path/to/chromium npm run test:browser` for the
-real-browser Mermaid regression: sanitized labels must survive as SVG text under
-the production CSP without permitting foreignObject. Authentication, complete
+real-browser regressions, including sibling hyperlinks without automatic sibling
+requests and sanitized Mermaid labels under the production CSP without
+permitting foreignObject. Authentication, complete
 browser journeys and PDF fidelity remain parent-project acceptance checks.

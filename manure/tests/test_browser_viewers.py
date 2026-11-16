@@ -121,9 +121,6 @@ class ViewerBrowserTests(unittest.TestCase):
             "viewer_dir": str(viewer_dir), "rate_limit_per_min": 10000,
             "login_rate_per_min_per_ip": 1000})
         self.addCleanup(fix.close)
-        markdown = MARKDOWN + (f'\n<a href="{fix.api_base}/api/users">Absolute management route</a>\n'
-                               f'<a href="{fix.api_base}/__manure/logout">Absolute reserved route</a>\n'
-                               f'<a href="{fix.api_base}/view/other/README.md">Absolute sibling mount</a>\n').encode()
         records = {}
 
         def upload(key, files, *, visibility="public", kind="file", empty_dirs=None):
@@ -134,6 +131,20 @@ class ViewerBrowserTests(unittest.TestCase):
             record["files"] = {name: base64.b64encode(blob).decode() for name, blob in files.items()}
             records[key] = record
 
+        upload("sibling", {"README.md": b"# Sibling artifact destination\n\n## 7 Limits\n",
+                           "docs/guide.html": b"<!doctype html><h1 id=topic>Sibling subpath destination</h1>",
+                           "image.png": png_fixture()}, kind="dir")
+        sibling = records["sibling"]["content_url"].rstrip("/")
+        markdown = MARKDOWN + (f'\n<a href="{fix.api_base}/api/users">Absolute management route</a>\n'
+                               f'<a href="{fix.api_base}/__manure/logout">Absolute reserved route</a>\n'
+                               f'<a href="{fix.api_base}/view/other/README.md">Absolute sibling mount</a>\n'
+                               f'\n{sibling}\n\n[Sibling entry]({sibling})\n\n[Sibling slash]({sibling}/)\n'
+                               f'\n[Sibling section]({sibling}/#7-limits)\n'
+                               f'\n[Sibling subpath]({sibling}/docs/guide.html#topic)\n'
+                               f'\n<a href="{sibling}">Raw sibling</a>\n'
+                               f'\n![Sibling image]({sibling}/image.png)\n').encode()
+        if mode == "path":
+            markdown += f'\n[Rooted sibling](/view/{records["sibling"]["artifact_id"]})\n'.encode()
         upload("markdown", {"guide ü.md": markdown})
         upload("mermaid", {"flow.mmd": b"flowchart LR\n A[Start] --> B[Finish]\n"})
         upload("dot", {"graph.dot": b"digraph G { alpha -> beta; }\n"})
