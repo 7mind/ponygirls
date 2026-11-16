@@ -260,7 +260,10 @@ The main knobs (all under `smind.hm.dev.llm`):
   `rules`; integration guidance and contributed assets remain independent.
   See the examples below.
 - **`pi.providers.<name>.enable`** — opt-in inference provider packages for Pi
-  (xAI/Grok, Ollama Cloud, …).
+  (Claude Code, xAI/Grok, Ollama Cloud, …). Set
+  `smind.hm.dev.llm.pi.providers.claude-code.enable = true;` to load the pinned
+  Claude Code provider from the Nix store, without Git/npm installation at Pi
+  startup. It uses the existing Claude Code login, including the active yolo profile.
 - **`crawl4ai`** — register the Crawl4AI MCP endpoint with Claude Code, Codex,
   and Pi via the shared `programs.mcp` registry, without writing the API token
   into the Nix store.

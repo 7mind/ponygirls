@@ -57,6 +57,7 @@ let
   # nixpkgs lags at 0.75.x, and its older releases have broken Codex/ChatGPT
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
+  piClaudeCode = pkgs.callPackage ../pkg/pi-claude-code/package.nix { pi-coding-agent = piBase; };
 
   piSettings = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = piBase; };
   piUi = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; ponygirls-pi-settings = piSettings; };
@@ -383,6 +384,7 @@ let
   # `settings.packages` is pinned to an exact version so the managed install
   # stays reproducible.
   inferenceProviderPackages = {
+    claude-code = "${piClaudeCode}";
     xai = "npm:pi-xai@0.18.0";
     ollama = "npm:pi-ollama-cloud@0.13.1";
   };

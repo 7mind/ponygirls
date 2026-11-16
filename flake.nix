@@ -362,6 +362,9 @@
           claude-code = pkgs.callPackage ./nix/pkg/claude-code/package.nix { };
           codex = pkgs.callPackage ./nix/pkg/codex/package.nix { };
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
+          pi-claude-code = pkgs.callPackage ./nix/pkg/pi-claude-code/package.nix {
+            pi-coding-agent = self.packages.${system}.pi-coding-agent;
+          };
           ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { inherit (self.packages.${system}) pi-coding-agent ponygirls-pi-settings; };
           ponygirls-pi-settings = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
           ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix {
@@ -427,6 +430,7 @@
           chronicle-web = self.packages.${system}.chronicle-web;
           chronicle-collector = self.packages.${system}.chronicle-collector;
           default-models = defaultModelsCheck;
+          pi-providers-hm-eval = pkgs.callPackage ./nix/tests/pi-providers-hm-eval.nix { };
           general-context-hm-eval = import ./nix/tests/general-context-hm-eval.nix { inherit pkgs nixpkgs inputs; };
           notify-module = pkgs.callPackage ./nix/tests/notify-module.nix { };
           atlassian-hm-eval = import ./nix/tests/atlassian-hm-eval.nix { inherit pkgs nixpkgs inputs; };
@@ -881,6 +885,9 @@
           '';
           rites-web = self.packages.${system}.rites-web;
           pi-search-hub = self.packages.${system}.pi-search-hub;
+          pi-claude-code = pkgs.callPackage ./nix/pkg/pi-claude-code/check.nix {
+            inherit (self.packages.${system}) pi-coding-agent pi-claude-code;
+          };
           pi-search-hub-eval = pkgs.callPackage ./nix/pkg/pi-search-hub/eval/check.nix {
             inherit (self.packages.${system}) pi-coding-agent pi-search-hub;
           };
