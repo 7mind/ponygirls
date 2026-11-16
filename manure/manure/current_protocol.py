@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from types import UnionType
-from typing import ClassVar, NewType, get_args, get_origin, get_type_hints
+from typing import ClassVar, NewType, Union, get_args, get_origin, get_type_hints
 from uuid import UUID
 import json
 import math
@@ -630,7 +630,11 @@ def encode(value):
 
 def _encode_as(expected, value):
     origin, args = get_origin(expected), get_args(expected)
-    if origin is UnionType:
+    # typing.Union must be matched alongside types.UnionType: `NewType | None`
+    # (e.g. Optional[Int32] fields) yields typing.Union, which is only unified
+    # with types.UnionType on Python 3.14+. On <=3.13 the bare UnionType check
+    # falls through and rejects valid envelopes.
+    if origin is UnionType or origin is Union:
         return None if value is None else _encode_as(args[0], value)
     if origin is list:
         if type(value) is not list: raise ProtocolError()
@@ -664,7 +668,9 @@ def decode(expected, value):
 
 def _decode(expected, value):
     origin, args = get_origin(expected), get_args(expected)
-    if origin is UnionType:
+    # See _encode_as: typing.Optional/typing.Union origins (NewType | None)
+    # must match on every supported Python, not just 3.14+.
+    if origin is UnionType or origin is Union:
         return None if value is None else _decode(args[0], value)
     if origin is list:
         if type(value) is not list: raise ProtocolError()
