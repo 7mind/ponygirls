@@ -184,9 +184,10 @@ def main():
                 return call(label, ['rpc', '--file', '-', *(extra or [])], user, expected, {name: body})
 
             call('public current versions', ['versions'])
+            call('configured static token defaults to bearer without human login', ['whoami'])
             for user in ('alice', 'bob'):
                 call('independent login ' + user, ['login', '--login', user, '--password-file', str(password_file)], user)
-                call('session identity ' + user, ['whoami'], user)
+                call('session identity ' + user, ['whoami', '--auth', 'session'], user)
             call('account settings and configured token metadata', ['settings'])
             call('account configured token rejection remains definitive', ['tokens', 'revoke', static_tokens[0]['id'], '--yes'], expected=3)
             call('account unknown token rejection remains definitive', ['tokens', 'revoke', str(uuid.uuid4()), '--yes'], expected=4)
@@ -211,9 +212,9 @@ def main():
             assert session['view'] == dict(revision=1, generationId=None)
             raw_session = rpc('raw RPC uppercase session UID', 'GetSession', dict(sessionId=session_id.upper(), view=dict(revision=1, generationId=None)))['Session']['result']['session']
             assert raw_session['id'] == session_id
-            page = call('pinned message page one', ['messages', session_id, '--revision', '1', '--limit', '2'])['Messages']['result']
+            page = call('pinned message page one', ['messages', session_id, '--revision', '1', '--limit', '2', '--auth', 'session'])['Messages']['result']
             assert len(page['messages']) == 2 and page['total'] == 3 and page['view'] == session['view']
-            page = call('pinned message page two', ['messages', session_id, '--revision', '1', '--offset', '2', '--limit', '2'])['Messages']['result']
+            page = call('pinned message page two', ['messages', session_id, '--revision', '1', '--offset', '2', '--limit', '2', '--auth', 'session'])['Messages']['result']
             assert [m['id'] for m in page['messages']] == ['m3']
             call('bearer pinned messages', ['messages', session_id.upper(), '--revision', '1', '--auth', 'bearer'])
             call('revision-only chunks', ['chunks', session_id, '--revision', '1'])
@@ -276,7 +277,8 @@ def main():
             call('purge only owned synthetic source', ['purge', session_id, '--yes'])
             call('purged source unavailable', ['session', session_id], expected=4)
             call('independent logout', ['logout', '--yes'])
-            call('logged out session rejected', ['whoami'], expected=3)
+            call('logged out session rejected', ['whoami', '--auth', 'session'], expected=3)
+            call('configured static token remains independent after human logout', ['whoami'])
             call('other human session remains independent', ['session-status'], 'bob')
             summary.update(status='passed', tests=len(cases), failures=0, errors=0, skips=0)
         except BaseException:

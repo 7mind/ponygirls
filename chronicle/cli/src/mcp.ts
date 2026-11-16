@@ -6,7 +6,7 @@ import { Http } from './transport.js';
 import { decodeWire, encodeWire, operationName } from './wire.js';
 import { isObject, parseJson, type JsonObject } from './json.js';
 export interface ToolCall { name: string; arguments: JsonObject }
-export function operationTool(operation: Operation): ToolCall {
+export function operationTool(operation: Operation): ToolCall | null {
   const name = operationName(operation); const encoded = encodeWire('Operation', operation);
   if (!isObject(encoded) || !isObject(encoded[name])) throw new CliError('protocol-error', 'Invalid internal operation encoding.');
   const body = encoded[name] as JsonObject;
@@ -24,7 +24,7 @@ export function operationTool(operation: Operation): ToolCall {
   if (name === 'Related') return { name: 'related_sessions', arguments: body };
   if (name === 'Facets') return { name: 'list_facets', arguments: filter(body['filter']) };
   if (name === 'IngestStatus') return { name: 'ingest_status', arguments: body };
-  throw new CliError('usage', 'This operation is not one of the bearer read-only MCP tools. Use the independent human session.');
+  return null;
 }
 export async function mcp(http: Http, token: string, tool: ToolCall): Promise<Result> {
   const id = randomUUID();

@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 import { randomUUID } from 'node:crypto';
 import { CliError, uncertain } from './errors.js';
-import { allow, flag, HELP, integer, makeOperation, option, parseArgs, type Arguments } from './commands.js';
+import { ArgumentError, flag, integer, makeOperation, option, parseArgs, validateInvocation, type Arguments } from './commands.js';
+import { help, helpHint } from './help.js';
 import { bearer, checkSecretDestination, exclusiveSecret, MAX_BYTES, readBounded, readStdin, SessionStore, type Environment } from './files.js';
-import { output } from './output.js';
-import { isObject, parseJson } from './json.js';
+import { Presentation, useColor } from './output.js';
+import { isObject, parseJson, type JsonObject } from './json.js';
 import { decodeOperation, decodeWire, encodeWire, operationHelp, operationName, operationNames, operationPolicy, schema, uuid, sameUuid, validateResponse } from './wire.js';
 import { Deadline, Http, origin, websocket } from './transport.js';
 import { accountAcknowledgement, accountIssued, login, settings } from './account.js';
@@ -14,13 +15,43 @@ async function input(args: Arguments, deadline: Deadline): Promise<string> {
   if (file !== '-') return readBounded(file, MAX_BYTES, 'input');
   return timedStdin(MAX_BYTES, deadline);
 }
+interface IngestionInput { readonly document: JsonObject; readonly body: unknown }
+async function ingestionInput(command: 'ingest' | 'report-progress', args: Arguments, deadline: Deadline): Promise<IngestionInput> {
+  const data = parseJson(await input(args, deadline));
+  const body = command === 'ingest' ? encodeWire('IngestRequest', decodeWire('IngestRequest', data)) : encodeWire('CollectorProgressUpdate', decodeWire('CollectorProgressUpdate', data));
+  return { document: data as JsonObject, body };
+}
 async function timedStdin(maximum: number, deadline: Deadline): Promise<string> {
   let timer: NodeJS.Timeout | null = null;
   try { return await Promise.race([readStdin(maximum), new Promise<never>((_resolve, reject) => { timer = setTimeout(() => { process.stdin.destroy(); reject(new CliError('deadline', 'Stdin deadline exceeded.')); }, deadline.remaining()); })]); }
   finally { if (timer !== null) clearTimeout(timer); }
 }
 function confirm(args: Arguments): void { if (!flag(args, 'yes')) throw new CliError('usage', 'Mutation requires explicit --yes after reviewing its exact target and effect.'); }
-function family(args: Arguments): 'session' | 'bearer' { const selected = option(args, 'auth') ?? 'session'; if (selected !== 'session' && selected !== 'bearer') throw new CliError('usage', '--auth must be session or bearer.'); return selected; }
+type Support = 'public' | 'session' | 'bearer' | 'either';
+function family(args: Arguments, env: Environment, support: Support): 'session' | 'bearer' {
+  const selected = option(args, 'auth') ?? 'auto'; if (selected !== 'auto' && selected !== 'session' && selected !== 'bearer') throw new CliError('usage', '--auth must be auto, session or bearer.');
+  if (support === 'public' && option(args, 'auth') !== null) throw new CliError('usage', '--auth is not used by public versions.');
+  if (support === 'session' && selected === 'bearer') throw new CliError('usage', 'This operation requires the independent human session; bearer authentication is not supported.');
+  if (support === 'bearer' && selected === 'session') throw new CliError('usage', 'This operation requires bearer authentication, not a human session.');
+  const configured = (env['CHRONICLE_TOKEN'] ?? '') !== '' || (env['CHRONICLE_TOKEN_FILE'] ?? '') !== '' || option(args, 'token-file') !== null;
+  const auth = selected === 'auto' ? support === 'bearer' || (support === 'either' && configured) ? 'bearer' : 'session' : selected;
+  if (auth !== 'bearer' && option(args, 'token-file') !== null) throw new CliError('usage', '--token-file requires a bearer operation, not a human session or public command.');
+  return auth;
+}
+function checkBearerSources(args: Arguments, env: Environment, auth: 'session' | 'bearer'): void {
+  if (auth !== 'bearer') return;
+  const token = env['CHRONICLE_TOKEN'] ?? ''; const file = env['CHRONICLE_TOKEN_FILE'] ?? ''; const explicit = option(args, 'token-file');
+  if ((token !== '' && (file !== '' || explicit !== null)) || (file !== '' && explicit !== null)) throw new CliError('credentials', 'Ambiguous bearer credentials; select exactly one source.');
+}
+function executionOptions(args: Arguments, mutation: boolean, secret: boolean, ws: boolean): void {
+  for (const [key, consumed] of [['yes', mutation], ['secret-out', secret], ['request-id', ws]] as const) if (option(args, key) !== null && !consumed) throw new CliError('usage', `--${key} is not used by this command or selected authentication family.`);
+  if (option(args, 'request-id') !== null) uuid(option(args, 'request-id')!);
+}
+function mintScopes(args: Arguments): string[] {
+  const scopes = option(args, 'scopes'); if (option(args, 'name') === null || scopes === null) throw new CliError('usage', 'Mint requires --name, --scopes and --secret-out.');
+  const requested = scopes.split(','); if (new Set(requested).size !== requested.length || requested.some(s => !['Ingest', 'Read', 'Raw'].includes(s)) || (requested.includes('Raw') && !requested.includes('Read'))) throw new CliError('usage', 'Scopes are distinct Ingest,Read,Raw; Raw requires Read.');
+  return requested;
+}
 async function current(http: Http): Promise<unknown> {
   const reply = await http.request('/api/versions', 'GET', null, null, false); const versions = decodeWire('VersionInfo', reply.data);
   if (versions.current !== schema.version || versions.minimum !== schema.version || versions.supported.length !== 1 || versions.supported[0] !== schema.version) throw new CliError('version-mismatch', 'Server does not advertise the sole current API 1.9.0.'); return encodeWire('VersionInfo', versions);
@@ -39,47 +70,57 @@ function withoutSecret(value: unknown, args: Arguments): unknown {
 }
 export async function run(args: Arguments, env: Environment): Promise<{ value: unknown; text: boolean }> {
   const [command, subcommand] = args.words;
-  if (flag(args, 'help') || command === undefined || command === 'help') return args.json ? { value: { help: HELP }, text: false } : { value: HELP, text: true };
-  if ((command === 'rpc' || command === 'call') && subcommand === 'help') { allow(args, [], args.words.length === 3 ? 3 : 2); return { value: args.words[2] === undefined ? { version: schema.version, operations: operationNames.map(name => ({ name, effect: operationPolicy[name as keyof typeof operationPolicy] })) } : operationHelp(args.words[2]), text: false }; }
-  const deadline = new Deadline(integer(args, 'timeout-ms', 30000, 100, 900000)); const auth = family(args);
-  // Selected-family ambiguity is rejected before opening credentials or contacting any endpoint.
-  if (auth === 'bearer' || command === 'ingest' || command === 'report-progress') {
-    const token = env['CHRONICLE_TOKEN'] ?? ''; const file = env['CHRONICLE_TOKEN_FILE'] ?? ''; const explicit = option(args, 'token-file');
-    if ((token !== '' && (file !== '' || explicit !== null)) || (file !== '' && explicit !== null)) throw new CliError('credentials', 'Ambiguous bearer credentials; select exactly one source.');
-  } else if (option(args, 'token-file') !== null) throw new CliError('usage', '--token-file requires a bearer operation, not a human session.');
+  if (flag(args, 'help') || command === undefined || command === 'help') {
+    const text = help(command === 'help' ? args.words.slice(1) : args.words, command === 'help'); if (text === '') throw new CliError('usage', 'Unknown help command. Run chronicle --help.');
+    return args.json ? { value: { help: text }, text: false } : { value: text, text: true };
+  }
+  const spec = validateInvocation(args);
+  if (['rpc', 'call', 'ingest', 'report-progress'].includes(command) && subcommand !== 'help' && option(args, 'file') === null) throw new CliError('usage', 'An explicit --file PATH or --file - is required.');
+  if ((command === 'rpc' || command === 'call') && subcommand === 'help') return { value: args.words[2] === undefined ? { version: schema.version, operations: operationNames.map(name => ({ name, effect: operationPolicy[name as keyof typeof operationPolicy] })) } : operationHelp(args.words[2]), text: false };
+  const deadline = new Deadline(integer(args, 'timeout-ms', 30000, 100, 900000));
+  const operation = spec.kind === 'operation' ? makeOperation(args) : command === 'rpc' || command === 'call' ? decodeOperation(parseJson(await input(args, deadline))) : null;
+  const name = operation === null ? null : operationName(operation); const effect = name === null ? null : operationPolicy[name];
+  if (effect === 'control') throw new CliError('usage', 'Hello/Ping/Pong are transport-owned controls.');
+  const tool = operation === null ? null : operationTool(operation);
+  const support: Support = command === 'versions' ? 'public' : command === 'ingest' || command === 'report-progress' || command === 'tags' ? 'bearer' : tool === null ? 'session' : 'either';
+  const auth = family(args, env, support);
+  const mutation = effect === 'mutation' || effect === 'secret' || command === 'logout' || command === 'ingest' || command === 'report-progress' || (command === 'tokens' && (subcommand === 'mint' || subcommand === 'revoke'));
+  const secret = effect === 'secret' || (command === 'tokens' && subcommand === 'mint');
+  executionOptions(args, mutation, secret, operation !== null && auth === 'session');
+  if (mutation) confirm(args);
+  if (secret && option(args, 'secret-out') === null) throw new CliError('usage', 'Mint requires --secret-out to a new private file; secrets are never printed.');
+  if (command === 'login' && (option(args, 'login') === null || ((option(args, 'password-file') === null) === !flag(args, 'password-stdin')))) throw new CliError('usage', 'Login requires --login and exactly one --password-file/--password-stdin.');
+  if (command === 'tokens' && subcommand === 'revoke') uuid(args.words[2]!);
+  const requestedScopes = command === 'tokens' && subcommand === 'mint' ? mintScopes(args) : null;
+  if (command === 'tags') integer(args, 'limit', 20, 1, 100);
+  checkBearerSources(args, env, auth);
+  const ingestion = command === 'ingest' || command === 'report-progress' ? await ingestionInput(command, args, deadline) : null;
   const endpoint = origin(option(args, 'url') ?? env['CHRONICLE_URL'] ?? null, flag(args, 'allow-insecure-http')); const http = new Http(endpoint, deadline);
   const store = () => new SessionStore(env, endpoint);
-  if (command === 'versions') { allow(args, [], 1); return { value: await current(http), text: false }; }
+  if (command === 'versions') return { value: await current(http), text: false };
   if (command === 'login') {
-    allow(args, ['login', 'password-file', 'password-stdin'], 1); if (auth !== 'session') throw new CliError('usage', 'Login requires the independent human-session family.');
-    const name = option(args, 'login'); const passwordFile = option(args, 'password-file');
-    if (name === null || ((passwordFile === null) === !flag(args, 'password-stdin'))) throw new CliError('usage', 'Login requires --login and exactly one --password-file/--password-stdin.');
+    const name = option(args, 'login')!; const passwordFile = option(args, 'password-file');
     const password = (passwordFile === null ? await timedStdin(4096, deadline) : readBounded(passwordFile, 4096, 'credential')).replace(/\r?\n$/, '');
     if (password.length === 0 || password.length > 1024 || /[\r\n\0]/.test(password)) throw new CliError('credentials', 'Password input must contain one nonempty line of at most 1024 characters.');
     return { value: await login(http, store(), name, password), text: false };
   }
   if (command === 'settings' || command === 'session-status' || command === 'logout' || command === 'tokens') {
-    if (auth !== 'session') throw new CliError('usage', 'Account operations require the independent human session; bearer authentication is not accepted.');
-    if (command === 'logout') { allow(args, [], 1); confirm(args); const state = store(); const session = state.load(); const reply = await http.request('/api/account/v1/logout', 'POST', {}, { session, actor: true }, true); accountAcknowledgement(reply.data); state.remove(session); return { value: { loggedOut: true }, text: false }; }
-    if (command !== 'tokens') { allow(args, [], 1); return { value: await settings(http, store().load()), text: false }; }
-    if (subcommand === 'list') { allow(args, [], 2); return { value: await settings(http, store().load()), text: false }; }
+    if (command === 'logout') { const state = store(); const session = state.load(); const reply = await http.request('/api/account/v1/logout', 'POST', {}, { session, actor: true }, true); accountAcknowledgement(reply.data); state.remove(session); return { value: { loggedOut: true }, text: false }; }
+    if (command !== 'tokens' || subcommand === 'list') return { value: await settings(http, store().load()), text: false };
     if (subcommand === 'mint') {
-      allow(args, ['name', 'scopes'], 2); confirm(args); const name = option(args, 'name'); const scopes = option(args, 'scopes'); if (name === null || scopes === null || option(args, 'secret-out') === null) throw new CliError('usage', 'Mint requires --name, --scopes and --secret-out.');
-      const requested = scopes.split(','); if (requested.length === 0 || new Set(requested).size !== requested.length || requested.some(s => !['Ingest', 'Read', 'Raw'].includes(s)) || (requested.includes('Raw') && !requested.includes('Read'))) throw new CliError('usage', 'Scopes are distinct Ingest,Read,Raw; Raw requires Read.');
-      checkSecretDestination(option(args, 'secret-out')!); const session = store().load(); await settings(http, session); const reply = await http.request('/api/account/v1/tokens', 'POST', { name, scopes: requested }, { session, actor: true }, true);
+      checkSecretDestination(option(args, 'secret-out')!); const session = store().load(); await settings(http, session); const reply = await http.request('/api/account/v1/tokens', 'POST', { name: option(args, 'name')!, scopes: requestedScopes! }, { session, actor: true }, true);
       try { accountIssued(reply.data); return { value: withoutSecret(reply.data, args), text: false }; } catch { throw uncertain(null); }
     }
-    if (subcommand === 'revoke') { allow(args, [], 3); confirm(args); const session = store().load(); await settings(http, session); const reply = await http.request(`/api/account/v1/tokens/${uuid(args.words[2]!)}/revoke`, 'POST', {}, { session, actor: true }, true); return { value: accountAcknowledgement(reply.data), text: false }; }
+    if (subcommand === 'revoke') { const session = store().load(); await settings(http, session); const reply = await http.request(`/api/account/v1/tokens/${uuid(args.words[2]!)}/revoke`, 'POST', {}, { session, actor: true }, true); return { value: accountAcknowledgement(reply.data), text: false }; }
     throw new CliError('usage', 'Tokens requires list, mint or revoke.');
   }
   if (command === 'ingest' || command === 'report-progress') {
-    allow(args, ['file'], 1); confirm(args); const data = parseJson(await input(args, deadline));
-    const request = command === 'ingest' ? decodeWire('IngestRequest', data) : decodeWire('CollectorProgressUpdate', data);
+    if (ingestion === null) throw new CliError('protocol-error', 'Missing prepared ingestion input.');
+    const { document: data, body } = ingestion;
     const token = bearer(env, option(args, 'token-file')); await current(http);
-    const body = command === 'ingest' ? encodeWire('IngestRequest', request as import('../../generated/typescript/chronicle/api/IngestRequest.js').IngestRequest) : encodeWire('CollectorProgressUpdate', request as import('../../generated/typescript/chronicle/api/CollectorProgressUpdate.js').CollectorProgressUpdate);
     const unknownOutcome = (): CliError => new CliError('uncertain', command === 'ingest'
-      ? `Ingestion acknowledgement lost. Preserve requestId=${(data as import('./json.js').JsonObject)['requestId']} and its exact payload/CAS revision; inspect progress before deliberately resending that identical request. No automatic retry occurred.`
-      : `Collector progress acknowledgement lost. Preserve runId=${(data as import('./json.js').JsonObject)['runId']} and sequence=${(data as import('./json.js').JsonObject)['sequence']}; inspect collectors before deliberately resending the exact report.`);
+      ? `Ingestion acknowledgement lost. Preserve requestId=${data['requestId']} and its exact payload/CAS revision; inspect progress before deliberately resending that identical request. No automatic retry occurred.`
+      : `Collector progress acknowledgement lost. Preserve runId=${data['runId']} and sequence=${data['sequence']}; inspect collectors before deliberately resending the exact report.`);
     let reply: import('./transport.js').HttpReply;
     try { reply = await http.request(command === 'ingest' ? '/api/ingest' : '/api/collector/progress', 'POST', body, { token }, true); }
     catch (error) { if (error instanceof CliError && error.code === 'uncertain') throw unknownOutcome(); throw error; }
@@ -89,20 +130,15 @@ export async function run(args: Arguments, env: Environment): Promise<{ value: u
     } catch { throw unknownOutcome(); }
   }
   if (command === 'tags') {
-    allow(args, ['cursor', 'limit', 'project', 'branch', 'after', 'before', 'tag'], 2); if (auth !== 'bearer') throw new CliError('usage', 'The tag catalog is a bearer MCP tool; select --auth bearer.');
+
     const arguments_: import('./json.js').JsonObject = { query: subcommand!, limit: integer(args, 'limit', 20, 1, 100) };
     for (const [key, field] of [['cursor', 'afterTag'], ['project', 'project'], ['branch', 'gitBranch'], ['after', 'after'], ['before', 'before']]) { const value = option(args, key!); if (value !== null) arguments_[field!] = value; }
     const tags = args.options.get('tag'); if (tags !== undefined) arguments_['tags'] = [...tags];
     const token = bearer(env, option(args, 'token-file')); await current(http); return { value: encodeWire('Result', await mcp(http, token, { name: 'search_tags', arguments: arguments_ })), text: false };
   }
-  let operation;
-  if (command === 'rpc' || command === 'call') { allow(args, ['file'], 1); operation = decodeOperation(parseJson(await input(args, deadline))); } else operation = makeOperation(args);
-  const name = operationName(operation); const effect = operationPolicy[name];
-  if (effect === 'control') throw new CliError('usage', 'Hello/Ping/Pong are transport-owned controls.');
-  if (effect === 'mutation' || effect === 'secret') confirm(args);
-  if (effect === 'secret' && option(args, 'secret-out') === null) throw new CliError('usage', 'Mint requires --secret-out to a new private file; secrets are never printed.');
+  if (operation === null) throw new CliError('usage', 'Unknown command or subcommand. Run chronicle --help.');
   if (effect === 'secret') checkSecretDestination(option(args, 'secret-out')!);
-  if (auth === 'bearer') { const tool = operationTool(operation); const token = bearer(env, option(args, 'token-file')); await current(http); const result = await mcp(http, token, tool); validateResponse(operation, result, null); return { value: encodeWire('Result', result), text: false }; }
+  if (auth === 'bearer') { if (tool === null) throw new CliError('usage', 'This operation requires the independent human session.'); const token = bearer(env, option(args, 'token-file')); await current(http); const result = await mcp(http, token, tool); validateResponse(operation, result, null); return { value: encodeWire('Result', result), text: false }; }
   const requestId = option(args, 'request-id') === null ? randomUUID() : uuid(option(args, 'request-id')!);
   const sessionStore = store(); const session = sessionStore.load();
   const result = await websocket(endpoint, session, operation, requestId, effect !== 'read', deadline);
@@ -111,8 +147,15 @@ export async function run(args: Arguments, env: Environment): Promise<{ value: u
 }
 async function write(stream: NodeJS.WriteStream, text: string): Promise<void> { await new Promise<void>((resolve, reject) => { stream.write(text, error => error === null || error === undefined ? resolve() : reject(error)); }); }
 async function main(): Promise<number> {
-  try { const args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env); await write(process.stdout, result.text ? String(result.value) : output(result.value, args.json)); return 0; }
-  catch (error) { const failure = error instanceof CliError ? error : new CliError('unavailable', 'Operation failed; no credential or remote diagnostic was printed.'); await write(process.stderr, `chronicle: ${failure.code}: ${failure.message}\n`); return failure.exitCode; }
+  let args: Arguments | null = null;
+  try { args = parseArgs(process.argv.slice(2)); const result = await run(args, process.env); const presentation = new Presentation(useColor(args.color, args.json, process.stdout.isTTY === true, process.env)); await write(process.stdout, result.text ? presentation.help(String(result.value)) : presentation.output(result.value, args.json)); return 0; }
+  catch (error) {
+    const failure = error instanceof CliError ? error : new CliError('unavailable', 'Operation failed; no credential or remote diagnostic was printed.');
+    if (error instanceof ArgumentError) args = error.arguments_;
+    const presentation = new Presentation(useColor(args === null ? 'auto' : args.color, args !== null && args.json, process.stderr.isTTY === true, process.env));
+    const hint = failure.code === 'usage' || failure.code === 'invalid' ? helpHint(args === null ? [] : args.words) : '';
+    await write(process.stderr, presentation.failure(failure, hint)); return failure.exitCode;
+  }
 }
 // Exit only after stream callbacks: this also bounds native WS close-handshake waits.
 if (process.argv[1] !== undefined && import.meta.url === new URL(`file://${process.argv[1]}`).href) void main().then(code => process.exit(code));

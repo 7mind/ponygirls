@@ -2,37 +2,56 @@ import { CliError } from './errors.js';
 import { decodeOperation } from './wire.js';
 import type { Operation } from '../../generated/typescript/chronicle/api/Operation.js';
 import type { Json, JsonObject } from './json.js';
+import { commandSpec, usage, type CommandSpec } from './help.js';
+import type { ColorMode } from './output.js';
 const SWITCHES = new Set(['json', 'help', 'yes', 'allow-insecure-http', 'password-stdin', 'confirm-sharing', 'ascending', 'no-relevance']);
-const VALUES = new Set(['url', 'timeout-ms', 'token-file', 'auth', 'request-id', 'secret-out', 'file', 'login', 'password-file', 'mode', 'project', 'branch', 'after', 'before', 'tag', 'limit', 'offset', 'revision', 'generation', 'cursor', 'sort', 'scope', 'collector', 'message', 'start', 'end', 'before-bytes', 'after-bytes', 'target-profile', 'selection-hash', 'name', 'scopes']);
-export interface Arguments { readonly words: string[]; readonly options: ReadonlyMap<string, readonly string[]>; readonly json: boolean }
+const VALUES = new Set(['color', 'url', 'timeout-ms', 'token-file', 'auth', 'request-id', 'secret-out', 'file', 'login', 'password-file', 'mode', 'project', 'branch', 'after', 'before', 'tag', 'limit', 'offset', 'revision', 'generation', 'cursor', 'sort', 'scope', 'collector', 'message', 'start', 'end', 'before-bytes', 'after-bytes', 'target-profile', 'selection-hash', 'name', 'scopes']);
+export interface Arguments { readonly words: string[]; readonly options: ReadonlyMap<string, readonly string[]>; readonly json: boolean; readonly color: ColorMode }
+export class ArgumentError extends CliError { constructor(message: string, readonly arguments_: Arguments) { super('usage', message); } }
 export function parseArgs(argv: readonly string[]): Arguments {
-  const words: string[] = []; const options = new Map<string, string[]>(); let literal = false;
+  const words: string[] = []; const options = new Map<string, string[]>(); let literal = false; let failure: string | null = null;
+  const fail = (message: string): void => { if (failure === null) failure = message; };
+  // Finish scanning known options after a syntax error so --json/--color also govern diagnostics.
   for (let i = 0; i < argv.length; i++) {
-    let arg = argv[i]!; if (arg === '--') { literal = true; continue; }
-    if (arg === '-h') arg = '--help';
+    let arg = argv[i]!; if (!literal && arg === '--') { literal = true; continue; }
+    if (!literal && arg === '-h') arg = '--help';
     if (!literal && arg.startsWith('-')) {
-      if (!arg.startsWith('--')) throw new CliError('usage', 'Unknown option. Run chronicle --help.');
+      if (!arg.startsWith('--')) { fail('Unknown option. Run chronicle --help.'); continue; }
       const eq = arg.indexOf('='); const key = arg.slice(2, eq === -1 ? undefined : eq);
-      if (!SWITCHES.has(key) && !VALUES.has(key)) throw new CliError('usage', 'Unknown option. Run chronicle --help.');
-      if (options.has(key) && key !== 'tag') throw new CliError('usage', 'Duplicate option.');
-      let value = 'true'; if (SWITCHES.has(key)) { if (eq !== -1) throw new CliError('usage', 'Boolean options do not take values.'); }
-      else { if (eq !== -1) value = arg.slice(eq + 1); else { i++; if (i >= argv.length || argv[i]!.startsWith('--')) throw new CliError('usage', 'Option requires a value.'); value = argv[i]!; } if (value === '' && key !== 'cursor') throw new CliError('usage', 'Option requires a nonempty value.'); }
+      if (!SWITCHES.has(key) && !VALUES.has(key)) { fail('Unknown option. Run chronicle --help.'); continue; }
+      if (options.has(key) && key !== 'tag') fail(`--${key} may only be supplied once.`);
+      let value = 'true'; if (SWITCHES.has(key)) { if (eq !== -1) fail(`--${key} is a switch and does not take a value.`); }
+      else {
+        if (eq !== -1) value = arg.slice(eq + 1);
+        else { if (i + 1 >= argv.length || argv[i + 1]!.startsWith('--')) { fail(`--${key} requires a value.`); continue; } value = argv[++i]!; }
+        if (value === '' && key !== 'cursor') fail(`--${key} requires a nonempty value.`);
+      }
       options.set(key, [...(options.get(key) ?? []), value]);
     } else words.push(arg);
   }
-  return { words, options, json: options.has('json') };
+  const rawColor = options.get('color')?.[0] ?? 'auto'; let color: ColorMode = 'auto';
+  if (rawColor === 'auto' || rawColor === 'always' || rawColor === 'never') color = rawColor; else fail('--color must be auto, always or never.');
+  const result = { words, options, json: options.has('json'), color };
+  if (failure !== null) throw new ArgumentError(failure, result);
+  return result;
 }
 export function option(args: Arguments, key: string): string | null { return args.options.get(key)?.[0] ?? null; }
 export function flag(args: Arguments, key: string): boolean { return args.options.has(key); }
 export function integer(args: Arguments, key: string, fallback: number, minimum: number, maximum: number): number {
   const raw = option(args, key); if (raw === null) return fallback;
-  if (!/^\d+$/.test(raw)) throw new CliError('usage', 'Expected a bounded nonnegative integer option.'); const value = Number(raw);
-  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new CliError('usage', 'Numeric option outside the supported range.'); return value;
+  if (!/^\d+$/.test(raw)) throw new CliError('usage', `--${key} must be an integer in ${minimum}..${maximum}.`); const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) throw new CliError('usage', `--${key} must be an integer in ${minimum}..${maximum}.`); return value;
 }
-const GLOBAL = new Set(['json', 'help', 'yes', 'url', 'allow-insecure-http', 'timeout-ms', 'token-file', 'auth', 'request-id', 'secret-out']);
+const GLOBAL = new Set(['json', 'help', 'color', 'yes', 'url', 'allow-insecure-http', 'timeout-ms', 'token-file', 'auth', 'request-id', 'secret-out']);
 export function allow(args: Arguments, keys: readonly string[], count: number): void {
-  if (args.words.length !== count) throw new CliError('usage', 'Incorrect command arguments. Run chronicle --help.');
-  for (const key of args.options.keys()) if (!GLOBAL.has(key) && !keys.includes(key)) throw new CliError('usage', 'Option is not valid for this command.');
+  if (args.words.length !== count) throw new CliError('usage', `Incorrect command arguments.\n${usage(args.words)}`);
+  for (const key of args.options.keys()) if (!GLOBAL.has(key) && !keys.includes(key)) throw new CliError('usage', `--${key} is not valid for this command.`);
+}
+export function validateInvocation(args: Arguments): CommandSpec {
+  const spec = commandSpec(args.words); if (spec === null) throw new CliError('usage', 'Unknown command. Run chronicle --help.');
+  if (spec.kind === 'group') throw new CliError('usage', `A valid subcommand is required.\n${usage(args.words)}`);
+  if (args.words.length < spec.minimum || args.words.length > spec.maximum) throw new CliError('usage', `Incorrect command arguments.\n${usage(args.words)}`);
+  allow(args, spec.options, args.words.length); return spec;
 }
 const PAGE = ['offset', 'limit']; const CURSOR = ['cursor', 'limit']; const VIEW = ['revision', 'generation']; const FILTER = ['project', 'branch', 'after', 'before', 'tag'];
 export function makeOperation(args: Arguments): Operation {
@@ -79,82 +98,3 @@ export function makeOperation(args: Arguments): Operation {
   }
   throw new CliError('usage', 'Unknown command or subcommand. Run chronicle --help.');
 }
-export const HELP = `chronicle — Chronicle application client (API 1.9.0)
-
-Usage: chronicle [global options] COMMAND [options]
-Readable output is the default, including pipes. --json before/after any command
-emits one JSON document on stdout; diagnostics go only to stderr.
-
-Authentication (independent credentials; no automatic interchange):
-  login --login NAME (--password-file PATH | --password-stdin)
-  logout --yes                  Revoke this independent human session
-  session-status | settings     Check cookie owner and account token metadata
-  tokens list | mint --name NAME --scopes Read,Raw --secret-out PATH --yes
-  tokens revoke TOKEN_UUID --yes
-  --auth session                Default: private cookie + exact-Origin WS
-  --auth bearer                 Ten read-only MCP tools only; never settings
-  CHRONICLE_TOKEN or CHRONICLE_TOKEN_FILE; both nonempty is an error
-
-Discovery and retrieval:
-  versions                      Public supported protocol versions
-  whoami                        Identity of selected credential family
-  search 'TEXT' [--mode lexical|semantic|hybrid] [--limit N --offset N]
-  archive ['EXPRESSION'] [--cursor CURSOR --limit N --sort LastTimestamp]
-  session UUID                  Metadata, full source identity and ContentView
-  messages UUID | chunks UUID   [--revision N --generation UUID --offset N]
-  passages UUID | passage-spans UUID PASSAGE_UUID   --revision N [--generation UUID]
-  find UUID 'LITERAL' --revision N [--generation UUID --cursor CURSOR]
-  locate UUID MESSAGE_ID --revision N [--generation UUID]
-  context UUID --revision N --message ID --start BYTE --end BYTE
-      [--generation UUID --before-bytes N --after-bytes N]
-  raw UUID [--revision N]        Raw JSONL fidelity as encoded data; no implicit extraction
-  related UUID | facets         Facets/search filters: --project --branch --after --before --tag
-  tags 'QUERY' [--cursor TAG]   Bearer MCP tag catalog; requires --auth bearer
-
-Activity and management (session only except progress):
-  activity ['EXPRESSION'] | jobs ['EXPRESSION'] [--cursor CURSOR --limit N]
-  jobs retry JOB_UUID --yes
-  usage | collectors | progress [--offset N --limit N]
-  reindex preview | retry-failed preview
-  reindex apply | retry-failed apply --target-profile P --selection-hash H --yes
-  reindex status REQUEST_UUID
-  groups [list] | create NAME | invite GROUP_UUID USER | accept INVITE_UUID --confirm-sharing
-  groups remove GROUP_UUID USER | leave GROUP_UUID | delete GROUP_UUID
-      All group changes require --yes; acceptance explicitly shares your archive.
-  purge SESSION_UUID --yes       Irreversible; no automatic retries
-  receipt REQUEST_UUID           Recover durable WS mutation metadata after uncertainty
-
-Explicit ingestion (bearer Ingest scope; NEVER discovers local history):
-  ingest --file PATH|- --yes     Current generated IngestRequest JSON; stable requestId
-  report-progress --file PATH|- --yes    Current CollectorProgressUpdate JSON
-
-Complete current API, including expression hints and MCP test runs:
-  rpc help [OPERATION]           Local typed fields, enums and effect policy
-  rpc --file PATH|-             One current generated Operation ADT, validated before I/O
-      Mutations require --yes; MintToken also requires --secret-out (new private file).
-      Hello/Ping/Pong are owned by the transport and cannot be called directly.
-
-Global options:
-  --url ORIGIN                  Or CHRONICLE_URL; exact HTTPS origin, no path/credentials/query
-  --allow-insecure-http         Explicit trusted private-network HTTP opt-in (plaintext secrets!)
-  --timeout-ms N                Whole command deadline, 100..900000 (default 30000)
-  --request-id UUID             Deliberate WS receipt identity; never auto replayed
-  --secret-out PATH             New 0600 file in a private 0700 directory, never stdout
-  --json | --help                Lazy: help requires no credential file or network
-
-Examples:
-  chronicle --url https://archive.example login --login alice --password-file /private/password
-  chronicle search 'deployment failure' --json
-  chronicle messages 11111111-1111-4111-8111-111111111111 --revision 3 --offset 20
-  chronicle --auth bearer tags 'postgres' --json
-  chronicle rpc help StartMcpTest
-
-Pages are explicit: pass returned nextCursor/offset; no hidden all-pages requests,
-HEAD repinning, semantic fallback, credential redirects, reconnect or mutation retry.
-Human text escapes terminal controls/bidi; --json preserves exact text as JSON strings.
-i64 fields use generated decimal strings, never lossy JavaScript numbers.
-State: CHRONICLE_STATE_DIR or \${XDG_STATE_HOME:-$HOME/.local/state}/chronicle-cli,
-0700 directory / origin-bound 0600 files. No credentials on argv or URLs.
-Exit: 0 success; 2 usage/invalid; 3 auth/credentials; 4 missing/gone/retired;
-5 conflict; 6 transport/protocol/deadline/state/availability; 7 uncertain mutation.
-`;

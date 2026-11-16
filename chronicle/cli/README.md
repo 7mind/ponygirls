@@ -5,8 +5,20 @@ administration executable. No server/Graal dependency is installed. Run
 `chronicle --help` for commands/examples; help and `rpc help` need neither
 credentials nor a running service.
 
-Human-readable, untruncated output is the default, even in pipes. `--json` before
-or after a command emits one JSON document; errors are sanitized stderr only.
+Human-readable, untruncated output is the default, even in pipes. Use
+`chronicle COMMAND --help` or `chronicle help COMMAND` for relevant options and
+examples (including `chronicle groups invite --help`). Invalid commands, arity,
+unused flags and numeric bounds fail locally with usage guidance, without
+requiring an origin, credential file or service. Use `--` before literal
+option-like positional text, for example `chronicle search -- '--help'`.
+
+`--color auto|always|never` works before or after a command. Auto styles human
+output only when that output stream is a TTY, unless `NO_COLOR` is nonempty or
+`TERM=dumb`; explicit always/never overrides those environment conventions.
+Stdout and diagnostic stderr resolve TTY support independently. Pipes stay plain
+human text unless always is selected. `--json` always disables ANSI, including
+errors, and before or after a command emits one JSON document on success;
+errors are sanitized stderr only.
 Both forms escape terminal controls and directional-formatting characters while
 preserving Unicode and exact parsed text. Full IDs, source identities, views,
 spans, counts and cursors remain visible. Spans are half-open **UTF-8 bytes**, not
@@ -21,10 +33,13 @@ chronicle search 'database migration'
 chronicle messages SESSION_UUID --revision 3 --generation GENERATION_UUID --json
 chronicle logout --yes
 
-# Bearer authentication is explicitly selected; a human session is not a bearer.
+# A configured static or issued bearer token works without a human login.
 export CHRONICLE_TOKEN_FILE=/private/archive-token
-chronicle --auth bearer search 'database migration' --json
-chronicle --auth bearer tags '' --limit 100
+chronicle search 'database migration' --json
+chronicle tags '' --limit 100
+# Explicit selection wins when both independent credentials exist:
+chronicle --auth session search 'database migration'
+chronicle --auth bearer whoami
 ```
 
 `--url` overrides nonsecret `CHRONICLE_URL`; there is no URL_FILE setting. Require
@@ -33,6 +48,19 @@ HTTPS is required unless **each invocation** explicitly opts into trusted
 private-network plaintext with `--allow-insecure-http`. That flag exposes
 passwords, cookies, tokens and source data to observers; it does not establish
 network privacy. Neither HTTP nor WS follows credential-bearing redirects.
+
+`--auth auto` is the default. For supported MCP reads (`whoami`, `search`,
+`session`, `messages`, `chunks`, `context`, `related`, `facets`, `progress`, and
+their typed `rpc` forms), auto selects a configured `CHRONICLE_TOKEN`,
+`CHRONICLE_TOKEN_FILE` or explicit `--token-file`; otherwise it selects the human
+session. `tags`, `ingest` and `report-progress` are bearer-only. Login, logout,
+settings, account token management and WS-only operations remain independent
+human-session operations and ignore unrelated bearer environment credentials.
+`versions` is public. There is no family conversion, credential mixing or
+fallback after credential/authentication failure. A configured bearer therefore
+wins supported reads even when a different human session exists; use
+`--auth session` to choose that session deliberately. Explicit unsupported
+families and unused `--token-file` fail before credential reads or network I/O.
 
 `CHRONICLE_TOKEN` and `CHRONICLE_TOKEN_FILE` are mutually exclusive when nonempty;
 `--token-file` is an alternative, not an overriding third credential. Tokens use
@@ -81,7 +109,7 @@ revocation and cookie lifetime, not a fabricated local TTL.
 | Interface | Commands / coverage |
 |---|---|
 | Public discovery | `versions` requires the sole current1.9.0 API |
-| Bearer Read/MCP | Explicit `--auth bearer`: `whoami`, `search`, `session`, `messages`, `chunks`, `context`, `related`, `facets`, `progress`, `tags` (all ten current tools) |
+| Bearer Read/MCP | Auto with a configured token, or explicit `--auth bearer`: `whoami`, `search`, `session`, `messages`, `chunks`, `context`, `related`, `facets`, `progress`, `tags` (all ten current tools) |
 | Bearer Ingest | `ingest --file PATH\|- --yes`, `report-progress --file PATH\|- --yes` |
 | Human retrieval | `search`, `archive`, `session`, `messages`, `chunks`, `passages`, `passage-spans`, `find`, `locate`, `context`, `raw`, `related`, `facets` |
 | Activity/settings | `activity`, `jobs`, `usage`, `collectors`, `progress`, `settings`, `session-status`, `tokens list` |
@@ -138,7 +166,10 @@ cursor/relevance/sort metadata without treating MCP filters as expressions.
 
 ### Mutations, secrets and uncertainty
 
-Every mutation requires `--yes`. Sharing acceptance also requires
+Every mutation requires `--yes`. Read commands reject unused `--yes` rather than
+silently ignoring it. `--request-id` is accepted only for WS operations, and
+`--secret-out` only for token mints; supplying either to another operation is a
+usage error. Sharing acceptance also requires
 `--confirm-sharing`. Reindex/failed-retry apply binds an exact reviewed
 `--target-profile`/`--selection-hash`; it does not preview and silently apply.
 No automatic mutation retry, WS reconnect or token-secret replay is performed.
@@ -211,8 +242,8 @@ nix develop .#chronicle --command bash -c 'cd chronicle/cli && npm ci && npm run
 The fast CLI suite includes specified blackbox codec/command/output contracts
 and actual CLI subprocesses against owned HTTP/WS fixtures. Nix packaging also
 runs the complete process suite against the final installed `bin/chronicle`
-and the resource suite against its exported transport modules, not just imports
-or help. Set `CHRONICLE_CLI_EXECUTABLE` to an installed
+and the resource/presentation suites against its exported installed modules,
+not just imports or help. Set `CHRONICLE_CLI_EXECUTABLE` to an installed
 absolute binary path to run those process tests explicitly: `node --test
 dist/cli/test/cli.test.js` from `cli/` after a source build. No live credential
 or service is used. Regenerate the boundary schema only when the current model

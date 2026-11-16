@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
-import { decodeWire, encodeWire } from '../src/wire.js';
+import { decodeWire, encodeWire, operationPolicy } from '../src/wire.js';
 import { parseJson, isObject } from '../src/json.js';
 const CLI = fileURLToPath(new URL('../src/main.js', import.meta.url));
 const ID = '11111111-1111-4111-8111-111111111111'; const GENERATION = '22222222-2222-4222-8222-222222222222';
@@ -63,6 +63,99 @@ async function cli(args: string[], f: Fixture | null, environment: Record<string
   try { const code = await new Promise<number>((resolve, reject) => { child.on('error', reject); child.on('exit', (code, signal) => signal === null ? resolve(code!) : reject(new Error(`CLI terminated ${signal}`))); }); return { code, stdout, stderr }; } finally { clearTimeout(timer); }
 }
 // Specified: actual CLI subprocesses against disposable owned HTTP/WS fixtures.
+// Regression: command discovery and invalid invocations must not require a configured service.
+test('command-specific help is local, concise and available through both help spellings', async () => {
+  for (const args of [['messages', '--help'], ['help', 'messages']]) {
+    const result = await cli(args, null, { CHRONICLE_TOKEN_FILE: '/unreadable' }, null);
+    assert.equal(result.code, 0, result.stderr); assert.match(result.stdout, /Usage: chronicle messages UUID/); assert.match(result.stdout, /--generation/); assert.match(result.stdout, /Examples:/); assert.ok(!result.stdout.includes('tokens mint')); assert.ok(result.stdout.split('\n').length < 30);
+  }
+  const result = await cli(['groups', 'invite', '--help'], null, {}, null); assert.equal(result.code, 0, result.stderr); assert.match(result.stdout, /Usage: chronicle groups invite GROUP_UUID USER/); assert.match(result.stdout, /--yes/);
+});
+test('invalid commands, arity and unused flags are diagnosed before origin or credential acquisition', async () => {
+  for (const [args, expected] of [
+    [['sarch', 'needle'], /Unknown command/], [['help', 'search', 'ignored'], /help command/], [['messages'], /Usage: chronicle messages UUID/], [['versions', '--limit', '2'], /--limit/], [['search', 'x', '--limit', '0'], /--limit.*1\.\.100/], [['tags', '', '--limit', '0'], /--limit.*1\.\.100/], [['search', '--limit'], /--limit.*value/], [['search', 'x', '--limit', '2', '--limit', '3'], /--limit.*once/],
+  ] as [string[], RegExp][]) {
+    const result = await cli(args, null, { CHRONICLE_TOKEN: 'unrelated', CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(result.code, 2, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, expected); assert.ok(!result.stderr.includes('Set --url'));
+  }
+});
+test('explicit ingestion documents are validated locally before origin configuration', async () => {
+  for (const command of ['ingest', 'report-progress']) for (const url of [[], ['--url', 'https://example.org/path']]) { const result = await cli([command, '--file', '-', '--yes', ...url], null, {}, '{}'); assert.equal(result.code, 2); assert.equal(result.stdout, ''); assert.match(result.stderr, /typed API schema/); assert.ok(!result.stderr.includes('Set --url')); }
+});
+test('previously ignored control flags reject before sending even a public request', async () => {
+  const f = await fixture((_q, r) => reply(r, 200, VERSION, {}), null);
+  try {
+    for (const args of [['versions', '--request-id', 'invalid'], ['versions', '--secret-out', '/nonexistent/unused'], ['versions', '--yes'], ['whoami', '--secret-out', '/nonexistent/unused'], ['settings', '--yes']]) {
+      const result = await cli(args, f, {}, null); assert.equal(result.code, 2, result.stderr); assert.equal(result.stdout, ''); assert.match(result.stderr, /not valid|not used/);
+    }
+    assert.equal(f.requests.length, 0);
+  } finally { await f.close(); }
+});
+test('literal option-like search text survives -- without rewriting or dropping values', async () => {
+  const seen: string[] = [];
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, op) => { const search = op['Search'] as { query: { query: string } }; seen.push(search.query.query); send(socket, id, { Search: { result: { hits: [], total: 0, countScope: 'ExactMatches', rankingLimit: null } } }); }));
+  try {
+    state(f); for (const query of ['--', '-h', '--help']) { const result = await cli(['search', '--', query], f, {}, null); assert.equal(result.code, 0, result.stderr); }
+    assert.deepEqual(seen, ['--', '-h', '--help']);
+  } finally { await f.close(); }
+});
+// Specified: automatic selection uses configured bearer authority only on supported read tools.
+test('configured token file selects bearer for supported commands without a human session or fallback', async () => {
+  const token = 'synthetic-token-0123456789-abcdefghijklmnopqrstuvwxyz-ABCDEF'; let calls = 0;
+  const f = await fixture((q, r, body) => { if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; } calls++; assert.equal(q.headers.authorization, `Bearer ${token}`); assert.equal(q.headers.cookie, undefined); const rpc = JSON.parse(body) as { id: string }; reply(r, 200, { jsonrpc: '2.0', id: rpc.id, result: { isError: false, content: [{ type: 'text', text: JSON.stringify({ Whoami: { user: { id: 'alice', login: 'alice', scopes: ['Read'] } } }) }] } }, {}); }, null);
+  try {
+    const file = join(f.root, 'token'); writeFileSync(file, token + '\n', { mode: 0o600 });
+    for (const args of [['whoami'], ['whoami', '--auth', 'auto'], ['whoami', '--token-file', file]]) { const result = await cli([...args, '--json'], f, args.includes('--token-file') ? {} : { CHRONICLE_TOKEN_FILE: file }, null); assert.equal(result.code, 0, result.stderr); assert.equal(JSON.parse(result.stdout).Whoami.user.id, 'alice'); }
+    assert.equal(calls, 3); const session = await cli(['whoami', '--auth', 'session'], f, { CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(session.code, 3); assert.equal(calls, 3);
+  } finally { await f.close(); }
+});
+test('unsupported explicit authentication families fail locally without reading unselected credentials', async () => {
+  for (const args of [['settings', '--auth', 'bearer'], ['groups', '--auth', 'bearer'], ['ingest', '--file', '-', '--yes', '--auth', 'session'], ['tags', '', '--auth', 'session']]) { const result = await cli(args, null, { CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(result.code, 2, result.stderr); assert.match(result.stderr, /session|bearer/); assert.ok(!result.stderr.includes('Set --url')); }
+});
+test('colour is explicit in pipes, suppressed for JSON, and diagnostics never echo invalid values', async () => {
+  const plain = await cli(['messages', '--help'], null, {}, null); assert.equal(plain.code, 0); assert.ok(!plain.stdout.includes('\u001b'));
+  for (const args of [['--color', 'always', 'messages', '--help'], ['messages', '--help', '--color=always']]) { const result = await cli(args, null, { NO_COLOR: '1', TERM: 'dumb' }, null); assert.equal(result.code, 0, result.stderr); assert.match(result.stdout, /\u001b\[/); }
+  for (const args of [['--color', 'never', '--help'], ['--color', 'always', '--help', '--json']]) { const result = await cli(args, null, {}, null); assert.equal(result.code, 0, result.stderr); assert.ok(!result.stdout.includes('\u001b')); if (args.includes('--json')) assert.ok(isObject(JSON.parse(result.stdout))); }
+  for (const args of [['--color', 'always', 'messages'], ['--color', 'always', '--unknown']]) { const result = await cli(args, null, {}, null); assert.equal(result.code, 2); assert.match(result.stderr, /\u001b\[/); }
+  const invalid = await cli(['search', 'x', '--limit', '\u001b]52;do-not-echo\u0007', '--color', 'always', '--json'], null, {}, null); assert.equal(invalid.code, 2); assert.ok(!invalid.stderr.includes('\u001b')); assert.ok(!invalid.stderr.includes('do-not-echo'));
+});
+test('auto authentication keeps account and WS-only operations independent of ambient bearer ambiguity', async () => {
+  let wsCalls = 0;
+  const f = await fixture((q, r) => { assert.equal(q.headers.authorization, undefined); assert.equal(q.headers.cookie, `chronicle_session=${COOKIE}`); reply(r, 200, { user: USER, tokens: [], scopes: ['Read'] }, {}); }, ws((socket, id, op) => { assert.deepEqual(op, { ListGroups: {} }); wsCalls++; send(socket, id, { Groups: { result: { groups: [], invitations: [] } } }); }));
+  try {
+    state(f); const unrelated = { CHRONICLE_TOKEN: 'unrelated', CHRONICLE_TOKEN_FILE: '/unreadable' };
+    for (const command of ['settings', 'session-status', 'tokens', 'groups']) { const result = await cli(command === 'tokens' ? ['tokens', 'list', '--json'] : [command, '--json'], f, unrelated, null); assert.equal(result.code, 0, result.stderr); }
+    assert.equal(wsCalls, 1);
+  } finally { await f.close(); }
+});
+test('auto-selected bearer rejection never falls back to an available human session', async () => {
+  let mcpCalls = 0; let wsCalls = 0;
+  const f = await fixture((q, r) => { if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; } mcpCalls++; reply(r, 401, { code: 'unauthorized', message: 'private-fixture-detail' }, {}); }, ws(() => { wsCalls++; }));
+  try {
+    state(f); const result = await cli(['whoami'], f, { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }, null); assert.equal(result.code, 3, result.stderr); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('private-fixture-detail')); assert.equal(mcpCalls, 1); assert.equal(wsCalls, 0);
+    const missing = await cli(['whoami'], f, { CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(missing.code, 3); assert.equal(mcpCalls, 1); assert.equal(wsCalls, 0);
+    const ambiguous = await cli(['whoami'], null, { CHRONICLE_TOKEN: 'unrelated', CHRONICLE_TOKEN_FILE: '/unreadable' }, null); assert.equal(ambiguous.code, 3); assert.match(ambiguous.stderr, /Ambiguous bearer/);
+  } finally { await f.close(); }
+});
+test('typed RPC automatically selects the same configured read tool and explicit session wins', async () => {
+  let mcpCalls = 0; let wsCalls = 0; const user = { id: 'alice', login: 'alice', scopes: ['Read'] };
+  const f = await fixture((q, r, body) => { if (q.url === '/api/versions') { reply(r, 200, VERSION, {}); return; } mcpCalls++; const rpc = JSON.parse(body) as { id: string; params: { name: string } }; assert.equal(rpc.params.name, 'whoami'); reply(r, 200, { jsonrpc: '2.0', id: rpc.id, result: { isError: false, content: [{ type: 'text', text: JSON.stringify({ Whoami: { user } }) }] } }, {}); }, ws((socket, id, op) => { wsCalls++; assert.deepEqual(op, { Whoami: {} }); send(socket, id, { Whoami: { user } }); }));
+  try {
+    state(f); const env = { CHRONICLE_TOKEN: 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-' }; const document = '{"Whoami":{}}';
+    for (const args of [['rpc', '--file', '-'], ['whoami', '--auth', 'bearer']]) assert.equal((await cli(args, f, env, document)).code, 0);
+    assert.equal((await cli(['rpc', '--file', '-', '--auth', 'session'], f, { CHRONICLE_TOKEN: 'unrelated', CHRONICLE_TOKEN_FILE: '/unreadable' }, document)).code, 0);
+    assert.equal(mcpCalls, 2); assert.equal(wsCalls, 1);
+  } finally { await f.close(); }
+});
+test('styled actual command data and JSON preserve controls and exact numeric fields', async () => {
+  const expected = { ReindexStatus: { result: { requestId: ID, targetProfile: 'owned-source\u001b]52;attack\u0007', total: '9223372036854775807', complete: '0', superseded: '0', failed: '0', pending: '9223372036854775807' } } };
+  const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id) => send(socket, id, expected)));
+  try {
+    state(f); for (const json of [false, true]) { const result = await cli(['reindex', 'status', ID, '--color', 'always', ...(json ? ['--json'] : [])], f, {}, null); assert.equal(result.code, 0, result.stderr); assert.ok(result.stdout.includes('9223372036854775807')); assert.ok(!result.stdout.includes('\u001b]52')); if (json) { assert.ok(!result.stdout.includes('\u001b')); assert.deepEqual(JSON.parse(result.stdout), expected); } else { assert.match(result.stdout, /\u001b\[/); assert.match(result.stdout, /owned-source\\u001b/); } }
+  } finally { await f.close(); }
+});
+test('invalid colour selectors are safe usage failures and JSON suppresses parser diagnostic colour anywhere', async () => {
+  for (const args of [['--color', 'invalid\u001b]52;private\u0007'], ['--color'], ['--color=always', '--color=never'], ['--unknown', '--color=always', '--json'], ['--json', '--color=always', '--unknown']]) { const result = await cli(args, null, {}, null); assert.equal(result.code, 2); assert.equal(result.stdout, ''); assert.ok(!result.stderr.includes('private')); if (args.includes('--json')) assert.ok(!result.stderr.includes('\u001b')); }
+});
 test('help/catalog are lazy and --json help remains one machine-readable document', async () => {
   for (const args of [['--help'], ['rpc', 'help'], ['rpc', 'help', 'ReadMcpTest']]) { const result = await cli(args, null, { CHRONICLE_TOKEN_FILE: '/unreadable', CHRONICLE_TOKEN: 'ambiguous' }, null); assert.equal(result.code, 0, result.stderr); assert.equal(result.stderr, ''); }
   const result = await cli(['--json', '--help'], null, {}, null); assert.equal(result.code, 0); assert.ok(isObject(parseJson(result.stdout)));
@@ -250,9 +343,9 @@ const ACK_SECRET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz01234567
 interface AckProbe { code: number; stdout: string; stderr: string; requests: number; effects: number; secretSaved: boolean; sessionRetained: boolean }
 async function acknowledgement(request: import('../src/json.js').JsonObject, response: import('../src/json.js').JsonObject, options: { requestId: string; secret: boolean }): Promise<AckProbe> {
   let requests = 0; let effects = 0;
-  const mutation = !['Receipt', 'GetReindexStatus'].includes(Object.keys(request)[0]!);
+  const mutation = operationPolicy[Object.keys(request)[0] as keyof typeof operationPolicy] !== 'read';
   const f = await fixture((_q, r) => reply(r, 404, {}, {}), ws((socket, id, operation) => { assert.deepEqual(operation, request); assert.equal(id, options.requestId); requests++; if (mutation) effects++; send(socket, id, response); }));
-  try { state(f); const secret = join(f.root, 'issued-secret'); const result = await cli(['rpc', '--file', '-', '--yes', '--json', '--request-id', options.requestId, ...(options.secret ? ['--secret-out', secret] : [])], f, {}, JSON.stringify(request)); return { ...result, requests, effects, secretSaved: existsSync(secret), sessionRetained: readdirSync(join(f.root, 'state')).length === 1 }; } finally { await f.close(); }
+  try { state(f); const secret = join(f.root, 'issued-secret'); const result = await cli(['rpc', '--file', '-', ...(mutation ? ['--yes'] : []), '--json', '--request-id', options.requestId, ...(options.secret && mutation ? ['--secret-out', secret] : [])], f, {}, JSON.stringify(request)); return { ...result, requests, effects, secretSaved: existsSync(secret), sessionRetained: readdirSync(join(f.root, 'state')).length === 1 }; } finally { await f.close(); }
 }
 const MUTATION_RECEIPTS: readonly { name: string; input: import('../src/json.js').JsonObject; entityId: string | null }[] = [
   { name: 'RetryJob', input: { jobId: ID }, entityId: ID },
