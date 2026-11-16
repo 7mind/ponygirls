@@ -436,7 +436,7 @@ test('different agentDirs contend on the same project-target lock', async t => {
     );
   });
 
-  await assert.rejects(attempted, /owned|locked/i);
+  await assert.rejects(attempted, /Historian project settings lock timed out after 5000ms/);
   assert.equal(
     readProject(first.ctx, f.directory).document.enabled,
     true,

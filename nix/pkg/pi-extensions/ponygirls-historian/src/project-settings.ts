@@ -29,7 +29,7 @@ import {
   type ProjectSnapshot,
   type ScopedConfiguration,
 } from './project-config.ts';
-import { acquireSessionLock } from './store.ts';
+import { acquireSettingsLock } from './store.ts';
 import type { WorkerModel } from './worker.ts';
 import type { ScopedSettingsScope } from '@ponygirls/pi-settings';
 import { assertHistorianTarget, candidateHistorianModel, checkedHistorianChanges, historianSettingsSnapshot,
@@ -55,9 +55,10 @@ export function acquireProjectTargetLock(
   target: string,
 ): () => void {
   checkProjectDirectory(target);
-  const release = acquireSessionLock(
+  const release = acquireSettingsLock(
     join(dirname(target), '.historian-settings-lock'),
     target,
+    'project',
   );
   try {
     checkProjectDirectory(target);

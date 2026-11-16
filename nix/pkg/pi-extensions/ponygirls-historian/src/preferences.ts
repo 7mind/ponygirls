@@ -4,7 +4,7 @@ import type { ThinkingLevel } from '@earendil-works/pi-agent-core';
 import { object, text } from './model.ts';
 import type { WorkerModel } from './worker.ts';
 import { dirname, isAbsolute, join } from 'node:path';
-import { acquireSessionLock } from './store.ts';
+import { acquireSettingsLock } from './store.ts';
 
 export const ENABLED_TYPE = 'historian.enabled';
 export const MODEL_TYPE = 'historian.model';
@@ -118,7 +118,7 @@ export class PreferenceStore {
     return readJsonPreferences<StoredPreferenceOverrides | null>(this.path, () => null, localPreferenceDocument, 'Historian defaults');
   }
   withDomainTransaction<T>(use: (current: StoredPreferences, overrides: Readonly<PreferenceOverrides>, commit: (mutation: DomainPreferenceMutation) => void) => T): T {
-    const release = acquireSessionLock(join(dirname(this.path), 'historian'), 'global-preferences');
+    const release = acquireSettingsLock(join(dirname(this.path), 'historian'), 'global-preferences', 'global');
     let active = true, attempted = false;
     try {
       const files = this.unmergedSnapshot(), local = files.local ?? emptyPreferenceOverrides();

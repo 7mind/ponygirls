@@ -225,7 +225,7 @@ for (const stage of ['capture', 'commit']) test(`global OFF cannot complete betw
   assert.equal(calls, 1);
   assert.equal(attempted.status, 1, 'OFF must report contention rather than complete ahead of an already-authorized operation');
   assert.match(controller.journal(), /Authorized experiment/); assert.match(controller.status(), /pending events: 0/);
-  assert.match(attempted.stderr, /already owned/); assert.equal(preferences.read().enabled, true);
+  assert.match(attempted.stderr, /Historian global settings lock timed out after 5000ms/); assert.equal(preferences.read().enabled, true);
   const retry = disableGlobally(preferences); assert.equal(retry.status, 0, retry.stderr); assert.equal(preferences.read().enabled, false);
   entries.push({ type: 'message', id: 'after-off', parentId: null, timestamp: new Date().toISOString(), message: { role: 'user', content: 'PRIVATE_AFTER_OFF', timestamp: 1 } });
   await controller.reconcile(); assert.match(controller.status(), /pending events: 0/); assert.doesNotMatch(controller.journal(), /PRIVATE_AFTER_OFF/);

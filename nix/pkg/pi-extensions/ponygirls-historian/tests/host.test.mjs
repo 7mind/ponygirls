@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { fork } from 'node:child_process';
 import * as sdk from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, getCurrentTools } from '@earendil-works/pi-ai';
 import { resolveProject } from '../../ponygirls-decisions/src/project.ts';
@@ -12,6 +13,7 @@ import { digest } from '../src/evidence.ts';
 import { JournalStore } from '../src/store.ts';
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
+const SHARED_SETTINGS_RELEASE_DELAY_MS = 200;
 async function eventually(check) {
   const deadline = Date.now() + 5000;
   while (!check()) { if (Date.now() > deadline) throw new Error('Fixture state deadline'); await new Promise(r => setTimeout(r, 10)); }
@@ -170,4 +172,52 @@ test('real Pi: separate Chronicle command approval uploads only new summaries an
   await f.session.prompt('/historian chronicle status');
   assert.equal(received.length, 1, 'restart/reenablement must not discover disabled historical summaries');
   assert.deepEqual(f.errors, []);
+});
+
+test('real Pi: independent session processes share settings and publish both owners without ownership errors', { timeout: 30000 }, async t => {
+  const directory = mkdtempSync(join(tmpdir(), 'historian-two-hosts-'));
+  mkdirSync(join(directory, 'agent')); mkdirSync(join(directory, 'project'));
+  const model = { provider: 'historian', id: 'scripted', thinking: 'off' };
+  writeFileSync(join(directory, 'agent', 'historian.json'), JSON.stringify({ version: 2, enabled: true, enabledGeneration: 1, model, approvedModel: model }), { mode: 0o600 });
+  const children = [];
+  t.after(async () => {
+    for (const child of children) if (child.exitCode === null && child.signalCode === null) {
+      const exited = once(child, 'exit'); child.kill('SIGKILL'); await exited;
+    }
+    rmSync(directory, { recursive: true, force: true });
+  });
+  const spawn = (file, args) => {
+    const child = fork(new URL(file, import.meta.url), args, { stdio: ['ignore', 'ignore', 'inherit', 'ipc'] });
+    children.push(child);
+    const exited = once(child, 'exit');
+    const next = () => Promise.race([once(child, 'message').then(([value]) => value),
+      exited.then(([code, signal]) => { throw new Error(`SDK fixture exited before response: ${code}/${signal}`); })]);
+    return { child, exited, next };
+  };
+  const first = spawn('./fixtures/sdk-session-child.mjs', [directory, 'EXPERIMENT_FIRST_SESSION']);
+  const second = spawn('./fixtures/sdk-session-child.mjs', [directory, 'EXPERIMENT_SECOND_SESSION']);
+  const [a, b] = await Promise.all([first.next(), second.next()]);
+  assert.equal(a.prepared, true); assert.equal(b.prepared, true); assert.notEqual(a.sessionId, b.sessionId);
+  const holder = spawn('./fixtures/settings-lock-child.mjs', [directory, 'global', 'hold', 'settings-holder']);
+  assert.deepEqual(await holder.next(), { holding: true });
+  const bound = Promise.all([first.next(), second.next()]);
+  first.child.send('bind'); second.child.send('bind');
+  const release = setTimeout(() => writeFileSync(join(directory, 'release-holder'), ''), SHARED_SETTINGS_RELEASE_DELAY_MS);
+  t.after(() => clearTimeout(release));
+  for (const value of await bound) {
+    assert.equal(value.bound, true, JSON.stringify(value)); assert.equal(value.baseline, true, JSON.stringify(value));
+    assert.deepEqual(value.errors, []); assert.deepEqual(value.notifications.filter(n => n.type === 'error'), []);
+    assert.ok(value.notifications.some(n => n.message.includes('Error: none')));
+  }
+  assert.equal((await holder.exited)[0], 0);
+  const published = Promise.all([first.next(), second.next()]);
+  first.child.send('capture'); second.child.send('capture');
+  for (const value of await published) {
+    assert.equal(value.published, true, JSON.stringify(value)); assert.ok(value.providerAdmissions > 0);
+    assert.ok(value.revisionOwners.length > 0); assert.ok(value.revisionOwners.every(owner => owner === value.sessionId));
+    assert.deepEqual(value.errors, []); assert.deepEqual(value.notifications.filter(n => n.type === 'error'), []);
+    assert.ok(value.notifications.some(n => n.message.includes('Error: none')));
+  }
+  first.child.send('shutdown'); second.child.send('shutdown');
+  assert.equal((await first.exited)[0], 0); assert.equal((await second.exited)[0], 0);
 });

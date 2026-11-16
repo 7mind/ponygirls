@@ -21,13 +21,37 @@ function privatePath(path: string): string {
   return absolute;
 }
 
-/** A separate SQLite transaction holds an OS-backed per-session lock; process death releases it. */
-export function acquireSessionLock(directory: string, sessionId: string): () => void {
-  const db = new DatabaseSync(privatePath(join(directory, `session-${digest(sessionId)}.lock.sqlite`)));
-  try { db.exec('PRAGMA busy_timeout=0; BEGIN EXCLUSIVE;'); }
-  catch (cause) { db.close(); throw new Error('Historian session is already owned by another process', { cause }); }
+export const SETTINGS_LOCK_TIMEOUT_MS = 5000;
+const SESSION_LOCK_TIMEOUT_MS = 0;
+const SQLITE_BUSY = 5;
+const SQLITE_LOCKED = 6;
+const SQLITE_PRIMARY_CODE_MASK = 0xff;
+type SettingsLockScope = 'global' | 'project' | 'Chronicle';
+
+function lockContention(cause: unknown): boolean {
+  if (!(cause instanceof Error) || !('errcode' in cause) || typeof cause.errcode !== 'number') return false;
+  const code = cause.errcode & SQLITE_PRIMARY_CODE_MASK;
+  return code === SQLITE_BUSY || code === SQLITE_LOCKED;
+}
+function acquireLock(directory: string, key: string, timeout: number, context: string): () => void {
+  const db = new DatabaseSync(privatePath(join(directory, `session-${digest(key)}.lock.sqlite`)));
+  try { db.exec(`PRAGMA busy_timeout=${timeout}; BEGIN EXCLUSIVE;`); }
+  catch (cause) {
+    db.close();
+    const message = lockContention(cause)
+      ? timeout === SESSION_LOCK_TIMEOUT_MS ? `${context} is already owned by another process` : `${context} lock timed out after ${timeout}ms`
+      : `${context} lock acquisition failed`;
+    throw new Error(message, { cause });
+  }
   let held = true;
   return () => { if (held) { held = false; db.exec('ROLLBACK'); db.close(); } };
+}
+/** A separate SQLite transaction holds an OS-backed per-session lock; process death releases it. */
+export function acquireSessionLock(directory: string, sessionId: string): () => void {
+  return acquireLock(directory, sessionId, SESSION_LOCK_TIMEOUT_MS, 'Historian session');
+}
+export function acquireSettingsLock(directory: string, key: string, scope: SettingsLockScope): () => void {
+  return acquireLock(directory, key, SETTINGS_LOCK_TIMEOUT_MS, `Historian ${scope} settings`);
 }
 
 export class JournalStore {

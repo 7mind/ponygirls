@@ -75,8 +75,10 @@ consent is independent of enablement inheritance. A fork gets a new session
 identity and does not inherit copied session-local approval. OFF is not a
 project-wide switch: another enabled root can keep publishing to the project.
 Defaults mutations serialize with capture/admission and canonical commits. A
-contending command reports an ownership error rather than pretending it changed
-the setting; retry it after the current short transaction finishes.
+contending settings operation waits up to five seconds for the current short
+transaction, then rereads/revalidates under the lock. Exhaustion reports the
+settings scope and timeout; it does not claim the setting changed. Actual session
+ownership remains fail-fast and exclusive.
 
 `HIST` shows enablement, `HIST …` active work, `HIST !` a fault or requested ON awaiting approval. Click the badge or
 use `status` to distinguish requested enablement, backlog, provider drain,
@@ -344,6 +346,7 @@ The Historian check runs TypeScript, every `tests/*.test.mjs`, and real Pi loade
 checks against the packaged extension. Local equivalents are `tsc -p tsconfig.json`
 and `PI_OFFLINE=1 PI_TELEMETRY=0 node --test tests/*.test.mjs` with the same pinned
 SDK links. Store contracts exercise memory/real SQLite; process tests exercise
-ownership, process death and shared publication. Runtime tests use in-process
-scripted providers with no live network. The supervisor suite includes real SDK
+ownership, process death, shared publication and bounded settings contention.
+Runtime tests use isolated scripted providers with no live network, including two
+independent Pi SDK processes sharing a project and agent directory. The supervisor suite includes real SDK
 checkpoint/reload/migration and reconstruction-boundary checks.

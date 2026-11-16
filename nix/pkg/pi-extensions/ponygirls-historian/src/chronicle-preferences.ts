@@ -2,7 +2,7 @@ import { readJsonPreferences, writeJsonPreferences } from '@ponygirls/pi-setting
 import { isIP } from 'node:net';
 import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { exactObject, text } from './model.ts';
-import { acquireSessionLock } from './store.ts';
+import { acquireSettingsLock } from './store.ts';
 
 export interface ChroniclePreferencesValue {
   enabled: boolean;
@@ -86,7 +86,7 @@ export class ChroniclePreferences {
       () => ({ enabled: false, endpoint: '', tokenFile: '', collectorNamespace: '', tokenHash: null }), checkedManaged, 'Historian Chronicle managed defaults');
   }
   withSnapshot<T>(use: (current: ChroniclePreferencesValue) => T): T {
-    const release = acquireSessionLock(join(dirname(this.path), 'historian'), 'chronicle-preferences');
+    const release = acquireSettingsLock(join(dirname(this.path), 'historian'), 'chronicle-preferences', 'Chronicle');
     try { return synchronousResult(use(this.read())); }
     finally { release(); }
   }

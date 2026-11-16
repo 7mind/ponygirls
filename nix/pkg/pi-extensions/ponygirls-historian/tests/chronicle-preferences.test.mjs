@@ -293,8 +293,8 @@ test('a snapshot excludes concurrent settings changes in this process and return
   const other = new ChroniclePreferences(f.preferences.path);
   assert.equal(f.preferences.withSnapshot(current => {
     assert.deepEqual(current, approved);
-    assert.throws(() => other.update(value => ({ ...value, enabled: false })), /already owned/);
-    assert.throws(() => other.withSnapshot(() => undefined), /already owned/);
+    assert.throws(() => other.update(value => ({ ...value, enabled: false })), /Historian Chronicle settings lock timed out after 5000ms/);
+    assert.throws(() => other.withSnapshot(() => undefined), /Historian Chronicle settings lock timed out after 5000ms/);
     assert.deepEqual(other.read(), approved);
     return 'canonical commit completed';
   }), 'canonical commit completed');
@@ -312,7 +312,7 @@ test('a snapshot holds the same short cross-process lock as ON/OFF updates', { t
         new ChroniclePreferences(${JSON.stringify(f.preferences.path)}).update(current => ({ ...current, enabled: false }));
         process.exit(24);
       } catch (error) {
-        if (!/already owned/.test(String(error))) throw error;
+        if (!/Historian Chronicle settings lock timed out after 5000ms/.test(String(error))) throw error;
         process.exit(23);
       }
     `], { encoding: 'utf8', timeout: 10000 });
