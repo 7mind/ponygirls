@@ -96,7 +96,7 @@ ranges. Semantic/hybrid unavailability is an error, never a lexical fallback.
 Values/completion are bounded suggestions, not exhaustive facets or counts.
 
 Search excludes archived items by default; use the query language's
-`archived:all`/`archived:only` selectors when intended. A cursor is bound to its
+`archived:all`/`archived:true` selectors when intended. A cursor is bound to its
 original query/project/limit/sort. `--all` deliberately follows pages, with a
 1000-page guard, a combined response-byte bound and a total pagination deadline
 based on `--timeout-ms`. Every page's in-flight request/body is aborted when the
