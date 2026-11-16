@@ -494,12 +494,13 @@ The token is read at runtime and exposed read-only inside yolo only when
 notifications are configured and enabled. Each client can be disabled through
 `notify.codex.enable`, `notify.claude.enable`, or `notify.pi.enable`.
 
-Set `notify.includeTmuxPane = true;` to append the originating pane's index and
-available title, for example `[tmux pane 0: backend]`. This is off by default;
-titles may contain work context. Yolo captures these labels before isolation,
-without exposing the host tmux socket, so they reflect the pane at launch.
-Outside yolo, the notifier queries its own pane when sending. Missing pane
-information leaves the notification unchanged.
+Set `notify.includeTmuxWindow = true;` to append the originating window's index and
+available name, for example `[tmux window 3: backend]`. This is off by default;
+names may contain work context. Yolo captures these labels before isolation,
+without exposing the host tmux socket, so they reflect the window at launch.
+Outside yolo, the notifier queries the window containing its originating pane when
+sending. Missing window information leaves the notification unchanged. Restart existing yolo sessions
+after deploying this option so they capture the window snapshot.
 
 With `transport = "e2ee"`, delivery goes through matrix-nio instead: set
 `sender` and `passwordFile`, and the notifier provisions a per-host device

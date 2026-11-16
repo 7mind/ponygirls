@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Protocol
 
-from tmux_context import TmuxPane, notification_pane
+from tmux_context import TmuxWindow, notification_window
 
 
 REQUEST_TIMEOUT_SECONDS = 10
@@ -92,7 +92,7 @@ class Notifier:
     def __init__(self, store: TurnStore, sender: Sender, now: Callable[[], float],
                  minimum_seconds: int, show_message: bool = False,
                  show_workdir: bool = False, show_hostname: bool = False,
-                 pane_context: Callable[[], TmuxPane | None] | None = None):
+                 window_context: Callable[[], TmuxWindow | None] | None = None):
         self.store = store
         self.sender = sender
         self.now = now
@@ -100,7 +100,7 @@ class Notifier:
         self.show_message = show_message
         self.show_workdir = show_workdir
         self.show_hostname = show_hostname
-        self.pane_context = pane_context
+        self.window_context = window_context
 
     def handle(self, action: str, turn: Turn) -> bool:
         if action == "start":
@@ -121,10 +121,10 @@ class Notifier:
         label = "turn complete" if action == "complete" else "input needed"
         session = turn.session[:UUID_PREVIEW_LENGTH] if len(turn.session) == UUID_TEXT_LENGTH else turn.session[:SESSION_PREVIEW_LENGTH]
         body = f"agent: {label} [{turn.harness}] {session}"
-        pane = self.pane_context() if self.pane_context is not None else None
-        if pane is not None:
-            title = f": {pane.title}" if pane.title else ""
-            body = f"{body} [tmux pane {pane.index}{title}]"
+        window = self.window_context() if self.window_context is not None else None
+        if window is not None:
+            name = f": {window.name}" if window.name else ""
+            body = f"{body} [tmux window {window.index}{name}]"
         if self.show_workdir and turn.workdir:
             body = f"{body} @ {turn.workdir}"
         if self.show_hostname:
@@ -213,17 +213,17 @@ def main() -> None:
     payload = arguments.payload if arguments.payload is not None else sys.stdin.read()
     turn = parse_turn(arguments.harness, payload)
     action = "start" if arguments.start else "attention" if arguments.attention else "complete"
-    pane_context = None
-    if configuration.get("includeTmuxPane", False) and action != "start":
+    window_context = None
+    if configuration.get("includeTmuxWindow", False) and action != "start":
         environment = dict(os.environ)
         tmux_command = configuration["tmuxCommand"]
-        pane_context = lambda: notification_pane(environment, tmux_command)
+        window_context = lambda: notification_window(environment, tmux_command)
     notifier = Notifier(
         store, sender, time.monotonic, configuration["minTurnSeconds"],
         show_message=configuration.get("includeMessageBody", False),
         show_workdir=configuration.get("includeWorkdir", False),
         show_hostname=configuration.get("includeHostname", False),
-        pane_context=pane_context,
+        window_context=window_context,
     )
     notifier.handle(action, turn)
 

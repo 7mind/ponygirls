@@ -230,20 +230,20 @@ run_yolo() {
 
 run_yolo_cmd() { run_yolo "$@" --profile foo cmd true; }
 
-PANE_HELPER="$FAKE_BIN/pane-context"
-printf '%s\n' "#!$_bash_path" "printf '%s\\n' '{\"index\":0,\"title\":\"backend | named\"}'" > "$PANE_HELPER"
-chmod +x "$PANE_HELPER"
-OUT="$(YOLO_TMUX_CONTEXT_HELPER="$PANE_HELPER" run_yolo --profile foo --env SMIND_TMUX_PANE_CONTEXT=wrong cmd true)"
-assert_eq "origin pane context launch succeeds" "0" "$?"
-assert_eq "origin pane snapshot overrides caller metadata" 'SMIND_TMUX_PANE_CONTEXT={"index":0,"title":"backend | named"}' \
-  "$(printf '%s\n' "$OUT" | grep '^SMIND_TMUX_PANE_CONTEXT=' | tail -1)"
+WINDOW_HELPER="$FAKE_BIN/window-context"
+printf '%s\n' "#!$_bash_path" "printf '%s\\n' '{\"index\":0,\"name\":\"backend | named\"}'" > "$WINDOW_HELPER"
+chmod +x "$WINDOW_HELPER"
+OUT="$(YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" run_yolo --profile foo --env SMIND_TMUX_WINDOW_CONTEXT=wrong cmd true)"
+assert_eq "origin window context launch succeeds" "0" "$?"
+assert_eq "origin window snapshot overrides caller metadata" 'SMIND_TMUX_WINDOW_CONTEXT={"index":0,"name":"backend | named"}' \
+  "$(printf '%s\n' "$OUT" | grep '^SMIND_TMUX_WINDOW_CONTEXT=' | tail -1)"
 OUT="$(YOLO_TMUX_CONTEXT_HELPER= run_yolo --profile foo cmd true)"
-assert_not_contains "disabled pane capture does not forward metadata" "$OUT" "SMIND_TMUX_PANE_CONTEXT="
-printf '%s\n' "#!$_bash_path" 'exit 9' > "$PANE_HELPER"
-OUT="$(YOLO_TMUX_CONTEXT_HELPER="$PANE_HELPER" run_yolo --profile foo cmd true)"
-assert_eq "unavailable pane context does not block launch" "0" "$?"
-assert_contains "pane capture failure is observable" "$OUT" "warning: tmux pane context unavailable"
-assert_contains "unavailable pane context is explicit" "$OUT" "SMIND_TMUX_PANE_CONTEXT=null"
+assert_not_contains "disabled window capture does not forward metadata" "$OUT" "SMIND_TMUX_WINDOW_CONTEXT="
+printf '%s\n' "#!$_bash_path" 'exit 9' > "$WINDOW_HELPER"
+OUT="$(YOLO_TMUX_CONTEXT_HELPER="$WINDOW_HELPER" run_yolo --profile foo cmd true)"
+assert_eq "unavailable window context does not block launch" "0" "$?"
+assert_contains "window capture failure is observable" "$OUT" "warning: tmux window context unavailable"
+assert_contains "unavailable window context is explicit" "$OUT" "SMIND_TMUX_WINDOW_CONTEXT=null"
 
 TARGETED_HOST_HOOKS='[{"command":"printf host-target-marker","tags":["codegraph"],"targets":["claude","codex"]}]'
 TARGETED_HOOKS='[{"command":"printf codegraph-target-marker","tags":["codegraph"],"targets":["claude","codex"]},{"command":"printf shared-hook-marker","tags":[]}]'

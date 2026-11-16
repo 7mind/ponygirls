@@ -925,12 +925,12 @@ yolo_exec_agent() {
   [[ -z "$PROFILE" ]] || named_profile=1
   local -a tmux_context_env=()
   if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
-    local pane_context
-    if ! pane_context="$("$YOLO_TMUX_CONTEXT_HELPER")"; then
-      echo "warning: tmux pane context unavailable; notification labels will be omitted" >&2
-      pane_context=null
+    local window_context
+    if ! window_context="$("$YOLO_TMUX_CONTEXT_HELPER")"; then
+      echo "warning: tmux window context unavailable; notification labels will be omitted" >&2
+      window_context=null
     fi
-    tmux_context_env=("SMIND_TMUX_PANE_CONTEXT=$pane_context")
+    tmux_context_env=("SMIND_TMUX_WINDOW_CONTEXT=$window_context")
   fi
   env -i \
     "${base_env_pairs[@]}" \

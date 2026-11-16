@@ -7,26 +7,26 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 
 
-CONTEXT_ENVIRONMENT_VARIABLE = "SMIND_TMUX_PANE_CONTEXT"
+CONTEXT_ENVIRONMENT_VARIABLE = "SMIND_TMUX_WINDOW_CONTEXT"
 TMUX_QUERY_TIMEOUT_SECONDS = 1
-PANE_TITLE_PREVIEW_LENGTH = 160
+WINDOW_NAME_PREVIEW_LENGTH = 160
 
 
 @dataclass(frozen=True)
-class TmuxPane:
+class TmuxWindow:
     index: int
-    title: str
+    name: str
 
     def __post_init__(self):
         if type(self.index) is not int or self.index < 0:
-            raise ValueError("tmux pane index must be a nonnegative integer")
-        if not isinstance(self.title, str):
-            raise ValueError("tmux pane title must be a string")
-        title = "".join(character if character.isprintable() else " " for character in self.title)
-        object.__setattr__(self, "title", " ".join(title.split())[:PANE_TITLE_PREVIEW_LENGTH])
+            raise ValueError("tmux window index must be a nonnegative integer")
+        if not isinstance(self.name, str):
+            raise ValueError("tmux window name must be a string")
+        name = "".join(character if character.isprintable() else " " for character in self.name)
+        object.__setattr__(self, "name", " ".join(name.split())[:WINDOW_NAME_PREVIEW_LENGTH])
 
 
-def capture_pane(environment: Mapping[str, str], tmux_command: str) -> TmuxPane | None:
+def capture_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWindow | None:
     target = environment.get("TMUX_PANE", "")
     socket = environment.get("TMUX", "").partition(",")[0]
     if not re.fullmatch(r"%[0-9]+", target) or not socket.startswith("/"):
@@ -34,7 +34,7 @@ def capture_pane(environment: Mapping[str, str], tmux_command: str) -> TmuxPane 
     try:
         result = subprocess.run(
             [tmux_command, "-N", "-S", socket, "display-message", "-p", "-t", target,
-             "#{pane_id}|#{pane_index}|#{pane_title}"],
+             "#{pane_id}|#{window_index}|#{window_name}"],
             env=dict(environment), capture_output=True, encoding="utf-8",
             timeout=TMUX_QUERY_TIMEOUT_SECONDS, check=False,
         )
@@ -45,32 +45,32 @@ def capture_pane(environment: Mapping[str, str], tmux_command: str) -> TmuxPane 
     parts = result.stdout.rstrip("\n").split("|", 2)
     if len(parts) != 3 or parts[0] != target or not re.fullmatch(r"[0-9]+", parts[1]):
         return None
-    return TmuxPane(int(parts[1]), parts[2])
+    return TmuxWindow(int(parts[1]), parts[2])
 
 
-def notification_pane(environment: Mapping[str, str], tmux_command: str) -> TmuxPane | None:
+def notification_window(environment: Mapping[str, str], tmux_command: str) -> TmuxWindow | None:
     snapshot = environment.get(CONTEXT_ENVIRONMENT_VARIABLE)
     if snapshot is not None:
         try:
             value = json.loads(snapshot)
         except (ValueError, TypeError):
-            raise ValueError("Invalid captured tmux pane context") from None
+            raise ValueError("Invalid captured tmux window context") from None
         if value is None:
             return None
-        if not isinstance(value, dict) or set(value) != {"index", "title"}:
-            raise ValueError("Invalid captured tmux pane context fields")
-        return TmuxPane(value["index"], value["title"])
+        if not isinstance(value, dict) or set(value) != {"index", "name"}:
+            raise ValueError("Invalid captured tmux window context fields")
+        return TmuxWindow(value["index"], value["name"])
     if environment.get("SMIND_SANDBOXED") == "1":
         return None
-    return capture_pane(environment, tmux_command)
+    return capture_window(environment, tmux_command)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Capture the originating tmux pane labels without exposing its socket")
+    parser = argparse.ArgumentParser(description="Capture the originating tmux window labels without exposing its socket")
     parser.add_argument("--tmux", required=True)
     arguments = parser.parse_args()
-    pane = capture_pane(os.environ, arguments.tmux)
-    print(json.dumps(None if pane is None else asdict(pane)))
+    window = capture_window(os.environ, arguments.tmux)
+    print(json.dumps(None if window is None else asdict(window)))
 
 
 if __name__ == "__main__":

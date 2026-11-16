@@ -11,7 +11,7 @@
   extraDevicePaths ? [ ],
   managedConfigHome ? null,
   piSharedAssets ? [ ],
-  captureTmuxPaneContext ? false,
+  captureTmuxWindowContext ? false,
   promptJson ? "[]",
   prehooksJson ? "[]",
   sandboxHooksJson ? "[]",
@@ -160,7 +160,7 @@ pkgs.writeShellScriptBin "yolo" ''
   export YOLO_CLIPBOARD_PROXY="${clipboardProxy}/bin/yolo-clipboard-proxy"
   export YOLO_CLIPBOARD_SHIM_DIR="${clipboardProxy}/tmux-shim"
   export YOLO_TMUX="${pkgs.tmux}/bin/tmux"
-  export YOLO_TMUX_CONTEXT_HELPER=${lib.escapeShellArg (if captureTmuxPaneContext then import ../../lib/tmux-pane-context.nix { inherit pkgs; } else "")}
+  export YOLO_TMUX_CONTEXT_HELPER=${lib.escapeShellArg (if captureTmuxWindowContext then import ../../lib/tmux-window-context.nix { inherit pkgs; } else "")}
   ${podmanExports}
   ${vmExports}
   ${extraRoExports}

@@ -30,7 +30,7 @@ let
             type = lib.types.listOf lib.types.str;
             default = [ ];
           };
-          smind.hm.dev.llm.yolo.captureTmuxPaneContext = lib.mkOption {
+          smind.hm.dev.llm.yolo.captureTmuxWindowContext = lib.mkOption {
             type = lib.types.bool;
             default = false;
           };
@@ -88,15 +88,15 @@ let
     notify.recoveryKeyFile = "/run/agenix/matrix-notify-recovery-key";
   };
   testPython = pkgs.python3.withPackages (ps: [ ps.matrix-nio ps.vodozemac ps.pycryptodome ps.cachetools ps.atomicwrites ps.peewee ]);
-  tmuxMetadata = evaluate { notify.includeTmuxPane = true; };
-  tmuxDisabled = evaluate { notify.enable = false; notify.includeTmuxPane = true; };
+  tmuxMetadata = evaluate { notify.includeTmuxWindow = true; };
+  tmuxDisabled = evaluate { notify.enable = false; notify.includeTmuxWindow = true; };
   bodyOnPlaintext = evaluate { notify.includeMessageBody = true; };
   bodyOnE2EE = evaluate { notify.transport = "e2ee"; notify.includeMessageBody = true; };
 in
 assert lib.all (assertion: assertion.assertion) enabled.assertions;
-assert !enabled.smind.hm.dev.llm.yolo.captureTmuxPaneContext;
-assert tmuxMetadata.smind.hm.dev.llm.yolo.captureTmuxPaneContext;
-assert !tmuxDisabled.smind.hm.dev.llm.yolo.captureTmuxPaneContext;
+assert !enabled.smind.hm.dev.llm.yolo.captureTmuxWindowContext;
+assert tmuxMetadata.smind.hm.dev.llm.yolo.captureTmuxWindowContext;
+assert !tmuxDisabled.smind.hm.dev.llm.yolo.captureTmuxWindowContext;
 assert builtins.elem tokenFile enabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
 assert builtins.elem existingPath enabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths;
 assert disabled.smind.hm.dev.llm.yolo.extraReadOnlyPaths == [ existingPath ];
