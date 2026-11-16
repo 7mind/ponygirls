@@ -18,6 +18,19 @@ class CodecFixtureTest extends munit.FunSuite {
   test("BA: crosslanguage client fixture UUID ADT enum timestamp Unicode nullable") { check("client",ClientEnvelope.codecJson) }
   test("BA: crosslanguage chunk result UTF8 spans and score") { check("server",ServerEnvelope.codecJson) }
   test("BA: crosslanguage collector ingest fixture") { check("ingest",IngestRequest.codecJson) }
+  test("BA specified: current Historian ingest codec retains structured claims and evidence references without evidence bodies") {
+    val decoded=SourceFormat_JsonCodec.instance.decode(baboon.runtime.shared.BaboonCodecContext.Default,io.circe.Json.fromString("Historian"))
+    assert(decoded.isRight,decoded.toString)
+    check("historian-ingest",IngestRequest.codecJson)
+    val request=HistorianFixtures.snapshot()
+    assertEquals(request.source.format.toString,"Historian")
+    assertEquals(request.metadata.producer,"Historian")
+    assertEquals(request.messages.map(message => (message.id,message.role,message.recordIndex)),List(("episode","historian",0)))
+    val record=Wire.parse(request.files.head.content)
+    assertEquals(record.hcursor.downField("episode").downField("claims").downArray.get[List[String]]("evidence"),Right(List("synthetic-ref-1")))
+    assert(record.hcursor.downField("evidence").focus.get.asArray.get.forall(value => !value.asObject.get.contains("text")))
+    assert(request.messages.head.text.contains("[synthetic-ref-1]"))
+  }
   test("BA: crosslanguage progress decimal i64 strings preserve exact sequence and payload sizes") { check("progress",CollectorProgressUpdate.codecJson) }
   test("BA specified: API1.4 client fixtures cover every additive branch and exact i64 sequence") {
     val envelopes=checkList("api14-clients",ClientEnvelope.codecJson)

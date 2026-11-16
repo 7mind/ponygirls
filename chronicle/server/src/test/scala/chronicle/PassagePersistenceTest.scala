@@ -26,6 +26,26 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
     assert(f.archive.publishProblems(current,publication))
     (receipt,current,publication,f.archive.session("a",receipt.sessionId).view)
   }
+  test("BG/GoodCommunication specified: Historian raw revisions, indexed source bytes and pinned reads retain live sharing ACLs") { withFixture { f =>
+    val original=HistorianFixtures.snapshot(); val (receipt,_,_,view)=publish(f,original)
+    def source(reader: String,selected: ContentView): String = f.chunks(reader,receipt.sessionId,selected).chunks.map(_.text).mkString
+    assertEquals(source("a",view),original.messages.head.text)
+    assertEquals(f.raw("a",receipt.sessionId,1).files,original.files)
+    assertEquals(intercept[DomainError](source("b",view)).code,"not-found")
+    assertEquals(intercept[DomainError](f.raw("b",receipt.sessionId,1)).code,"not-found")
+    f.share(); assertEquals(source("b",view),original.messages.head.text)
+    val revised=HistorianFixtures.next(original); val updated=f.archive.ingest("a",revised)
+    assertEquals(updated.sessionId,receipt.sessionId)
+    val current=claim(f,"a"); assert(f.archive.publishProblems(current,oneProblem(current)))
+    val latest=f.archive.session("a",receipt.sessionId).view
+    assertEquals(source("b",latest),revised.messages.head.text)
+    assertEquals(source("b",view),original.messages.head.text)
+    assertEquals(f.raw("b",receipt.sessionId,1).files,original.files)
+    assertEquals(f.raw("b",receipt.sessionId,2).files,revised.files)
+    f.revoke()
+    List(view,latest).foreach(selected => assertEquals(intercept[DomainError](source("b",selected)).code,"not-found"))
+    List(1,2).foreach(revision => assertEquals(intercept[DomainError](f.raw("b",receipt.sessionId,revision)).code,"not-found"))
+  }}
   test("BG/GoodCommunication: intramessage A/B/A persists three exact Unicode passages, pieces and normalized positions") { withFixture { f =>
     val original=request(List("","A🙂\u0001sameBαsameA🙂"))
     val (receipt,current,publication,view)=publish(f,original)

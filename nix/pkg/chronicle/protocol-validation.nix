@@ -2,7 +2,7 @@
 let
   sources = callPackage ./source.nix { };
   hashes = import ./hashes.nix;
-  expectedFixtureGroups = 16;
+  expectedFixtureGroups = 17;
 in buildNpmPackage {
   pname = "chronicle-protocol-validation";
   version = "0.1.0";

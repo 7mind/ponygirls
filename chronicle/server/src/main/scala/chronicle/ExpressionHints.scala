@@ -25,7 +25,7 @@ private[chronicle] object ExpressionHintVocabulary {
   def fixed(target: ExpressionHintTarget,field: HintField): Option[List[String]] = field match {
     case HintField.Agent => Some(List("main","subagent"))
     case HintField.Mode => Some(List("hybrid","lexical","semantic"))
-    case HintField.Format => Some(List("claude","codex","pi"))
+    case HintField.Format => Some(SourceFormat.all.map(_.toString.toLowerCase(Locale.ROOT)).sorted)
     case HintField.Status => Some(List("complete","failed","queued","running")++(if(target.isInstanceOf[ExpressionHintTarget.Archive]) List("unscheduled") else Nil))
     case HintField.Classification => Some(List("current","obsolete-profile","superseded-revision","superseded-revision-and-profile"))
     case HintField.Lease => Some(List("active","expired","inactive","unleased"))

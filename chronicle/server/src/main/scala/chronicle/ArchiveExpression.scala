@@ -71,12 +71,7 @@ object ArchiveExpression {
       case "subagent" => AgentKind.Subagent
       case _ => field.valueLocation.invalid("invalid agent")
     })
-    case "format" => ArchivePredicate.Format(field.value.toLowerCase(Locale.ROOT) match {
-      case "claude" => SourceFormat.Claude
-      case "codex" => SourceFormat.Codex
-      case "pi" => SourceFormat.Pi
-      case _ => field.valueLocation.invalid("invalid format")
-    })
+    case "format" => ArchivePredicate.Format(SourceFormat.all.find(_.toString.toLowerCase(Locale.ROOT)==field.value.toLowerCase(Locale.ROOT)).getOrElse(field.valueLocation.invalid("invalid format")))
     case "status" => ArchivePredicate.Status(field.value.toLowerCase(Locale.ROOT) match {
       case "queued" => ArchiveStatus.Queued
       case "running" => ArchiveStatus.Running

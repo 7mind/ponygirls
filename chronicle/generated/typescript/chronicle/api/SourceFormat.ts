@@ -3,13 +3,15 @@ import {BaboonCodecContext, BaboonDecoderFailure, Lazy} from '../../BaboonShared
 export enum SourceFormat {
     Claude = "Claude",
     Codex = "Codex",
-    Pi = "Pi"
+    Pi = "Pi",
+    Historian = "Historian"
 }
 
 export const SourceFormat_values: ReadonlyArray<SourceFormat> = [
     SourceFormat.Claude,
     SourceFormat.Codex,
-    SourceFormat.Pi
+    SourceFormat.Pi,
+    SourceFormat.Historian
 ] as const;
 
 export function SourceFormat_parse(s: string): SourceFormat {

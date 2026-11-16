@@ -3,6 +3,8 @@ import { dirname, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { digest, redact } from './evidence.ts';
+import { projectDisplayName } from '../../ponygirls-decisions/src/project.ts';
+import { CHRONICLE_MAX_ATTEMPTS, chronicleTarget, summaryDocument, type ChronicleBinding, type ChroniclePending, type ChronicleReceipt, type ChronicleStatus } from './chronicle-model.ts';
 import { FAILURE_MESSAGES, type Attempt, type AttemptFinish, type AttemptSummary } from './attempt.ts';
 import type { WorkerModel } from './worker.ts';
 import { text, MAX_BATCH_CHARS, MAX_BATCH_EVENTS, MAX_PENDING_EVENTS, validateProposals, type Batch, type CaptureState, type Evidence, type Proposal, type ReceiptMeta, type Revision, type SourceCursor } from './model.ts';
@@ -38,7 +40,7 @@ export class JournalStore {
       this.db.exec('PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;');
       this.transaction(() => {
         const version = this.db.prepare('PRAGMA user_version').get()!.user_version;
-        if (version !== 0 && version !== 1 && version !== 2) throw new Error(`Unsupported Historian schema ${version}`);
+        if (version !== 0 && version !== 1 && version !== 2 && version !== 3) throw new Error(`Unsupported Historian schema ${version}`);
         if (version === 0) {
           if (this.db.prepare("SELECT name FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%'").all().length) throw new Error('Unversioned nonempty Historian database');
           this.db.exec(`
@@ -55,12 +57,23 @@ export class JournalStore {
           this.db.prepare('INSERT INTO identity VALUES(?)').run(project);
         }
         if (this.db.prepare('SELECT project FROM identity').get()!.project !== project) throw new Error('Historian project identity mismatch');
-        if (version !== 2) this.db.exec(`
+        if (version < 2) this.db.exec(`
           CREATE TABLE attempts(seq INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, owner TEXT NOT NULL, batch TEXT NOT NULL, outcome TEXT NOT NULL, body TEXT NOT NULL) STRICT;
           CREATE INDEX attempts_owner ON attempts(owner,seq);
           CREATE UNIQUE INDEX attempts_running ON attempts(owner) WHERE outcome='running';
           PRAGMA user_version=2;
         `);
+        if (version < 3) {
+          this.db.exec(`
+            ALTER TABLE identity ADD COLUMN journal TEXT;
+            CREATE TABLE chronicle_heads(target TEXT NOT NULL, episode TEXT NOT NULL, revision INTEGER NOT NULL, session TEXT NOT NULL, PRIMARY KEY(target,episode)) STRICT;
+            CREATE TABLE chronicle_outbox(seq INTEGER PRIMARY KEY, request TEXT NOT NULL UNIQUE, target TEXT NOT NULL, binding TEXT NOT NULL, episode TEXT NOT NULL, document TEXT NOT NULL, expected INTEGER, payload TEXT, attempts INTEGER NOT NULL DEFAULT 0, stopped INTEGER NOT NULL DEFAULT 0, error TEXT, receipt TEXT) STRICT;
+            CREATE INDEX chronicle_pending ON chronicle_outbox(target,seq) WHERE receipt IS NULL;
+            PRAGMA user_version=3;
+          `);
+          this.db.prepare('UPDATE identity SET journal=?').run(randomUUID());
+        }
+        if (typeof this.db.prepare('SELECT journal FROM identity').get()!.journal !== 'string') throw new Error('Historian journal identity missing');
         this.db.exec('UPDATE projection SET dirty=1');
         const checks = this.db.prepare('PRAGMA quick_check').all();
         if (checks.length !== 1 || checks[0].quick_check !== 'ok') throw new Error('Historian integrity check failed');
@@ -187,6 +200,17 @@ export class JournalStore {
         const revision: Revision = { episodeId, revision: p.expectedRevision + 1, owner: batch.owner, recordedAt: new Date().toISOString(),
           title: redact(p.title), kind: p.kind, status: p.status, claims: p.claims.map(c => ({ ...c, text: redact(c.text) })) };
         this.db.prepare('INSERT INTO revisions(episode,revision,body) VALUES(?,?,?)').run(episodeId, revision.revision, JSON.stringify(revision));
+        if (meta.chronicle !== undefined) {
+          const refs = [...new Set(revision.claims.flatMap(claim => claim.evidence))];
+          const evidence = refs.map(ref => {
+            const row = this.db.prepare('SELECT body FROM evidence WHERE ref=?').get(ref);
+            if (row === undefined || row.body === null) throw new Error('Summary evidence unavailable');
+            return JSON.parse(String(row.body)) as Evidence;
+          });
+          const journalId = String(this.db.prepare('SELECT journal FROM identity').get()!.journal);
+          const document = summaryDocument(journalId, projectDisplayName(String(this.db.prepare('SELECT project FROM identity').get()!.project)), revision, meta, evidence, batch.gaps);
+          this.db.prepare('INSERT INTO chronicle_outbox(request,target,binding,episode,document) VALUES(?,?,?,?,?)').run(randomUUID(), chronicleTarget(meta.chronicle), JSON.stringify(meta.chronicle), episodeId, JSON.stringify(document));
+        }
         return revision;
       });
       const retained = new Set(validated.flatMap(p => p.claims.flatMap(c => c.evidence)));
@@ -199,6 +223,62 @@ export class JournalStore {
       this.db.exec('UPDATE projection SET dirty=1');
       return revisions;
     });
+  }
+  nextChronicle(binding: ChronicleBinding): ChroniclePending | null {
+    const row = this.db.prepare(`SELECT o.*,h.revision AS head,h.session FROM chronicle_outbox o
+      LEFT JOIN chronicle_heads h ON h.target=o.target AND h.episode=o.episode
+      WHERE o.target=? AND o.receipt IS NULL AND o.stopped=0 AND o.attempts<? AND NOT EXISTS
+        (SELECT 1 FROM chronicle_outbox prior WHERE prior.target=o.target AND prior.episode=o.episode AND prior.seq<o.seq AND prior.receipt IS NULL)
+      ORDER BY o.seq LIMIT 1`).get(chronicleTarget(binding), CHRONICLE_MAX_ATTEMPTS);
+    if (row === undefined) return null;
+    const expectedRevision = row.head === null ? 0 : Number(row.head);
+    if (row.expected !== null && row.expected !== expectedRevision) throw new Error('Chronicle source head invariant violated');
+    return { requestId: String(row.request), binding: JSON.parse(String(row.binding)) as ChronicleBinding,
+      document: JSON.parse(String(row.document)) as ChroniclePending['document'], expectedRevision,
+      sessionId: row.session === null ? null : String(row.session), payload: row.payload === null ? null : String(row.payload), attempts: Number(row.attempts) };
+  }
+  prepareChronicle(requestId: string, payload: string, expectedRevision: number): void {
+    this.transaction(() => {
+      const row = this.db.prepare('SELECT * FROM chronicle_outbox WHERE request=? AND receipt IS NULL').get(requestId);
+      if (row === undefined) throw new Error('Chronicle pending request missing');
+      if (row.payload !== null && (row.payload !== payload || row.expected !== expectedRevision)) throw new Error('Chronicle immutable payload changed');
+      const head = this.db.prepare('SELECT revision FROM chronicle_heads WHERE target=? AND episode=?').get(String(row.target), String(row.episode));
+      if ((head === undefined ? 0 : Number(head.revision)) !== expectedRevision) throw new Error('Chronicle source head changed');
+      this.db.prepare('UPDATE chronicle_outbox SET expected=?,payload=? WHERE request=?').run(expectedRevision, payload, requestId);
+    });
+  }
+  attemptChronicle(requestId: string): void {
+    const result = this.db.prepare('UPDATE chronicle_outbox SET attempts=attempts+1 WHERE request=? AND receipt IS NULL AND stopped=0 AND payload IS NOT NULL AND attempts<?').run(requestId, CHRONICLE_MAX_ATTEMPTS);
+    if (result.changes !== 1) throw new Error('Chronicle request cannot be attempted');
+  }
+  failChronicle(requestId: string, code: string): void {
+    if (!/^[a-z][a-z0-9-]{0,63}$/.test(code)) throw new Error('Invalid Chronicle error code');
+    const retryable = code === 'network-failed' || /^http-(408|429|5[0-9]{2})$/.test(code);
+    this.db.prepare('UPDATE chronicle_outbox SET error=?,stopped=? WHERE request=? AND receipt IS NULL').run(code, retryable ? 0 : 1, requestId);
+  }
+  ackChronicle(requestId: string, receipt: ChronicleReceipt): void {
+    this.transaction(() => {
+      const row = this.db.prepare('SELECT * FROM chronicle_outbox WHERE request=?').get(requestId);
+      if (row === undefined || receipt.requestId !== requestId || row.expected === null || receipt.revision !== Number(row.expected) + 1) throw new Error('Invalid Chronicle receipt');
+      if (row.receipt !== null) {
+        if (row.receipt !== JSON.stringify(receipt)) throw new Error('Changed Chronicle receipt');
+        return;
+      }
+      const head = this.db.prepare('SELECT * FROM chronicle_heads WHERE target=? AND episode=?').get(String(row.target), String(row.episode));
+      if ((head === undefined ? 0 : Number(head.revision)) !== row.expected || (head !== undefined && head.session !== receipt.sessionId)) throw new Error('Invalid Chronicle receipt source');
+      this.db.prepare('INSERT INTO chronicle_heads VALUES(?,?,?,?) ON CONFLICT(target,episode) DO UPDATE SET revision=excluded.revision').run(String(row.target), String(row.episode), receipt.revision, receipt.sessionId);
+      this.db.prepare('UPDATE chronicle_outbox SET receipt=?,error=NULL WHERE request=?').run(JSON.stringify(receipt), requestId);
+    });
+  }
+  retryChronicle(binding: ChronicleBinding): void {
+    this.db.prepare('UPDATE chronicle_outbox SET attempts=0,stopped=0,error=NULL WHERE target=? AND receipt IS NULL').run(chronicleTarget(binding));
+  }
+  chronicleStatus(binding: ChronicleBinding | null): ChronicleStatus {
+    const target = binding === null ? '' : chronicleTarget(binding);
+    const count = (where: string): number => Number(this.db.prepare(`SELECT count(*) AS n FROM chronicle_outbox WHERE ${where}`).get(target)!.n);
+    const error = this.db.prepare('SELECT error FROM chronicle_outbox WHERE target=? AND receipt IS NULL AND error IS NOT NULL ORDER BY seq DESC LIMIT 1').get(target);
+    return { pending: count('target=? AND receipt IS NULL'), stopped: Number(this.db.prepare('SELECT count(*) AS n FROM chronicle_outbox WHERE target=? AND receipt IS NULL AND (stopped=1 OR attempts>=?)').get(target, CHRONICLE_MAX_ATTEMPTS)!.n),
+      acknowledged: count('target=? AND receipt IS NOT NULL'), otherDestinations: count('target<>? AND receipt IS NULL'), error: error === undefined ? null : String(error.error) };
   }
   render(): string {
     const lines = ['# Historian project journal', '', 'Historical observations, not current external state. All revisions retained.', ''];

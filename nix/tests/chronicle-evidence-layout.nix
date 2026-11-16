@@ -28,7 +28,7 @@ let
   '';
   protocol = pkgs.writeTextDir "protocol.json" (builtins.toJSON {
     schemaVersion = 2; status = "passed"; versions = 1; apiVersion = "1.9.0";
-    fixtureGroups = 16; protocolSource = toString sources.protocol;
+    fixtureGroups = 17; protocolSource = toString sources.protocol;
   });
   inputs = pkgs.writeText "chronicle-layout-fixture-inputs.json" (builtins.toJSON {
     nativeArtifact = toString native;

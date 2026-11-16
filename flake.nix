@@ -222,6 +222,14 @@
             historianOptions = { journalRoot = "/srv/pi-journals"; model = { provider = "fixture"; id = "custom"; thinking = "high"; }; };
             historianConfigured = evalPi { } historianOptions;
             historianUnconfigured = evalPi { } { model = null; };
+            historianChronicleOptions = { endpoint = "https://chronicle.example"; tokenFile = "/run/user/1000/chronicle-token"; collectorNamespace = "historian-fixture"; };
+            historianChronicleConfigured = evalPi { } { model = null; chronicle = historianChronicleOptions; };
+            historianChronicleUnicode = evalPi { } { chronicle = historianChronicleOptions // { collectorNamespace = nixpkgs.lib.concatStrings (nixpkgs.lib.replicate 129 "é"); }; };
+            historianChronicleInvalid = map (patch: evalPi { } { chronicle = historianChronicleOptions // patch; }) [
+              { endpoint = "http://remote.example"; } { endpoint = "https://chronicle.example/other"; }
+              { tokenFile = "relative/token"; } { tokenFile = "/nix/store/token"; }
+              { collectorNamespace = " "; }
+            ];
             historianInvalid = evalPi { } { journalRoot = "relative"; };
             historianInvalidModels = map (model: evalPi { } { inherit model; }) [
               (historianOptions.model // { provider = ""; })
@@ -300,6 +308,14 @@
           assert !(historianUnconfigured.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
           assert !(historianUnconfigured.home.file ? "/home/alice/.pi/agent/historian.json");
           assert !(historianConfigured.home.file ? "/home/alice/.pi/agent/historian.json");
+          assert limitsDefault.programs.pi.historian.chronicle == null;
+          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/historian-chronicle-defaults.json");
+          assert !(historianChronicleConfigured.home.file ? "/home/alice/.pi/agent/historian-chronicle.json");
+          assert !(historianChronicleConfigured.home.file ? "/home/alice/.pi/agent/historian-defaults.json");
+          assert builtins.fromJSON historianChronicleConfigured.home.file."/home/alice/.pi/agent/historian-chronicle-defaults.json".text == historianChronicleOptions // { version = 1; };
+          assert builtins.all (a: a.assertion) historianChronicleConfigured.assertions;
+          assert builtins.all (a: a.assertion) historianChronicleUnicode.assertions;
+          assert builtins.all (c: builtins.any (a: !a.assertion && builtins.match ".*historian.chronicle.*" a.message != null) c.assertions) historianChronicleInvalid;
           assert builtins.fromJSON historianConfigured.home.file."/home/alice/.pi/agent/historian-defaults.json".text == historianOptions // { version = 1; };
           assert builtins.all (a: a.assertion) historianConfigured.assertions;
           assert builtins.any (a: !a.assertion && builtins.match ".*historian.journalRoot.*" a.message != null) historianInvalid.assertions;
@@ -1003,6 +1019,7 @@
             chmod -R u+w ponygirls-historian
             cd ponygirls-historian
             mkdir -p node_modules/@ponygirls node_modules/@earendil-works
+            ln -s ${self.packages.${system}.ponygirls-pi-extensions}/node_modules/@ponygirls/chronicle-api node_modules/@ponygirls/chronicle-api
             ln -s ${self.packages.${system}.ponygirls-pi-settings} node_modules/@ponygirls/pi-settings
             ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
             ln -s "$sdk" node_modules/@earendil-works/pi-coding-agent

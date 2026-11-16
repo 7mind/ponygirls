@@ -28,7 +28,7 @@ export interface Revision extends Omit<Proposal, 'episodeId' | 'expectedRevision
   episodeId: string; revision: number; owner: string; recordedAt: string;
 }
 export interface Batch { id: string; owner: string; epoch: number; evidence: Evidence[]; gaps: string[] }
-export interface ReceiptMeta { provider: string; model: string; thinking: string; objective: string; usage: unknown; attemptId?: string }
+export interface ReceiptMeta { provider: string; model: string; thinking: string; objective: string; usage: unknown; attemptId?: string; chronicle?: import('./chronicle-model.ts').ChronicleBinding }
 
 export function object(value: unknown): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error('Expected an object');

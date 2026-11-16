@@ -47,6 +47,35 @@ class ArchiveSearchTest extends munit.FunSuite {
     assert(f.archive.publish(claim,Fragments.split(request.messages).map(chunk => IndexedChunk(chunk.copy(sessionId=out.sessionId),List(1.0,0.0,0.0)))))
     out.sessionId
   }
+  test("Historian capsules use generic HEAD search, current publication, activity metadata and live ACL filtering") { database { f =>
+    val original=HistorianFixtures.snapshot(); val out=f.archive.ingest("a",original)
+    val privateSource=f.archive.ingest("b",original.copy(requestId=UUID.randomUUID()))
+    val expression="mode:lexical format:HiStOrIaN producer:Historian capsule"
+    val initial=f.search(query(expression),"a")
+    assertEquals(initial.page.rows.map(_.head.id),List(out.sessionId)); assertEquals(initial.page.total,1L)
+    assertEquals(initial.page.rows.head.head.source,original.source)
+    assertEquals(initial.evidence.head.matches.head.span.messageId,"episode")
+    assertEquals(f.archive.messages("a",out.sessionId,0,100,Some(ContentView(1,None))).messages,original.messages)
+    val claim=f.archive.claim(Set(f.config.profile),ClaimScope.Owner("a"),300).get
+    assert(f.archive.publishProblems(claim,ProblemPublicationFixtures.oneProblem(claim)))
+    val published=f.search(query("mode:semantic format:historian capsule"),"a")
+    assertEquals(published.page.rows.map(_.head.id),List(out.sessionId))
+    assertEquals(published.evidence.head.matches.head.kind,ArchiveMatchKind.Semantic)
+    val revised=HistorianFixtures.next(original); val updated=f.archive.ingest("a",revised)
+    assertEquals(updated.sessionId,out.sessionId)
+    val head=f.search(query(expression+" succeeded"),"a")
+    assertEquals(head.page.rows.map(_.head.id),List(out.sessionId)); assertEquals(head.page.rows.head.head.revision,2)
+    val activity=new PostgresActivity(f.db,Clock.systemUTC())
+    val jobs=ActivityJobsQuery(None,ActivityJobScope.Current,"format:historian",ActivityJobSort.JobId,SortDirection.Asc,None,100)
+    assertEquals(activity.jobs("a",jobs).jobs.map(_.job.id),List(updated.jobId))
+    assertEquals(activity.jobs("b",jobs).jobs.map(_.job.id),List(privateSource.jobId))
+    val group=UUID.randomUUID()
+    f.db.transaction { c => Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','synthetic historian sharing')",group); Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b')",group,group) }
+    assertEquals(f.search(query(expression),"a").page.total,2L)
+    assertEquals(activity.jobs("a",jobs).jobs.map(_.job.id),List(updated.jobId))
+    f.db.transaction(c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id='b'",group))
+    assertEquals(f.search(query(expression),"a").page.total,1L)
+  }}
   test("same Archive kernel preserves every field, Boolean mode, order, exact cursor and all-HEAD count scope") { database { f =>
     publish(f,"a",snapshot(List("needle amber")))
     f.archive.ingest("a",snapshot(List("amber unindexed")))

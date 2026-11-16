@@ -5,7 +5,7 @@ import hashlib
 import json
 from pathlib import Path
 
-EXPECTED_PROTOCOL_FIXTURE_GROUPS = 16
+EXPECTED_PROTOCOL_FIXTURE_GROUPS = 17
 
 
 def read(path: Path) -> dict:

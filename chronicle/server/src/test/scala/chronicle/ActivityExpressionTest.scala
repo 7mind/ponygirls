@@ -38,6 +38,7 @@ class ActivityExpressionTest extends munit.FunSuite {
       ("format:CLAUDE",ArchivePredicate.Format(SourceFormat.Claude)),
       ("format:Codex",ArchivePredicate.Format(SourceFormat.Codex)),
       ("format:pi",ArchivePredicate.Format(SourceFormat.Pi)),
+      ("format:HiStOrIaN",ArchivePredicate.Format(SourceFormat.Historian)),
       ("AGENT:MAIN",ArchivePredicate.Agent(AgentKind.Main)),
       ("agent:SubAgent",ArchivePredicate.Agent(AgentKind.Subagent)),
       ("status:QUEUED",ArchivePredicate.Status(ArchiveStatus.Queued)),

@@ -16,6 +16,9 @@ import { ConfigurationFence, type ConfigurationObservation } from './configurati
 import { acquireSessionLock, JournalStore } from './store.ts';
 import { HistorianWorker, OBJECTIVE_VERSION } from './worker.ts';
 import { WorkerFailure, type AttemptFinish } from './attempt.ts';
+import { ChroniclePreferences, type ChroniclePreferencesValue } from './chronicle-preferences.ts';
+import { chronicleTarget } from './chronicle-model.ts';
+import { approvedChronicleBinding, configuredChronicleBinding, resolveChronicleBinding, deliverChronicle, HttpChronicleTransport, CHRONICLE_TIMEOUT_MS } from './chronicle-upload.ts';
 
 export const RECONCILE_INTERVAL_MS = 10000;
 const MAX_BASELINE_PAGES = 1000;
@@ -52,6 +55,12 @@ export class HistorianController {
   private activeConfiguration: string | null = null;
   private readonly configurationFence = new ConfigurationFence();
   private readonly projectSettings: ProjectSettings;
+  private readonly chroniclePreferences: ChroniclePreferences;
+  private uploading: Promise<void> | null = null;
+  private uploadRequest: AbortController | null = null;
+  private uploadTarget: string | null = null;
+  private uploadRetryAt = 0;
+  private uploadError: string | null = null;
 
   constructor(pi: ExtensionAPI, preferences: PreferenceStore, ctx: ExtensionContext, changed: () => void) {
     this.pi = pi; this.preferences = preferences; this.ctx = ctx; this.owner = ctx.sessionManager.getSessionId();
@@ -59,6 +68,7 @@ export class HistorianController {
     this.projectSettings = new ProjectSettings(pi, preferences, this.project,
       candidate => !this.disposed && candidate === this.ctx && candidate.sessionManager.getSessionId() === this.owner, { token: randomUUID });
     this.worker = new HistorianWorker(ctx.modelRegistry);
+    this.chroniclePreferences = new ChroniclePreferences(join(dirname(preferences.path), 'historian-chronicle.json'));
   }
   private observeConfiguration(config: ScopedConfiguration): { config: ScopedConfiguration; observation: ConfigurationObservation } {
     const observation = this.configurationFence.observe(config.boundaryKey);
@@ -132,6 +142,7 @@ export class HistorianController {
     return this.capture;
   }
   private async collect(): Promise<void> {
+    this.reconcileChronicle();
     const current = this.configuration(); const config = current.config;
     if (!config.enabled) {
       this.request?.abort(); this.activeConfiguration = null;
@@ -225,7 +236,20 @@ export class HistorianController {
               finish({ outcome: 'validated', failure: null, ...result.metrics });
               if (this.disposed || request.signal.aborted) return;
               const committed = this.withAuthorization(key, () => {
-                store.commit(batch, result.proposals, { ...result.meta, attemptId: attempt.id }); return true;
+                let uploadObserved = false;
+                try {
+                  this.chroniclePreferences.withSnapshot(upload => {
+                    uploadObserved = true;
+                    const chronicle = upload.enabled ? approvedChronicleBinding(upload) : undefined;
+                    store.commit(batch, result.proposals, { ...result.meta, attemptId: attempt.id, ...(chronicle === undefined ? {} : { chronicle }) });
+                  });
+                } catch (error) {
+                  if (uploadObserved) throw error;
+                  this.uploadError = 'upload-settings-unavailable';
+                  store.commit(batch, result.proposals, { ...result.meta, attemptId: attempt.id });
+                  if (result.proposals.length > 0) this.ctx.ui.notify('Historian summaries saved locally; Chronicle upload settings unavailable, so these revisions were not queued (no backfill).', 'error');
+                }
+                return true;
               }) ?? false;
               if (!committed) return;
               this.projectMarkdown(store);
@@ -246,6 +270,88 @@ export class HistorianController {
     });
     if (this.failures === 0) this.error = null;
     this.projectMarkdown(store);
+  }
+  chronicleConfiguration(): ChroniclePreferencesValue { return this.chroniclePreferences.read(); }
+  private checkChronicleSnapshot(current: ChroniclePreferencesValue, expected: ChroniclePreferencesValue | null): void {
+    if (expected !== null && JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('Chronicle settings changed; reopen the dialog');
+  }
+  async configureChronicle(endpoint: string, tokenFile: string, expected: ChroniclePreferencesValue | null): Promise<void> {
+    this.chroniclePreferences.update(previous => {
+      this.checkChronicleSnapshot(previous, expected);
+      return { enabled: false, endpoint, tokenFile, tokenHash: null,
+        collectorNamespace: previous.collectorNamespace.length === 0 ? `historian-${randomUUID()}` : previous.collectorNamespace };
+    });
+    await this.chronicleSettingsChanged();
+  }
+  async enableChronicle(enabled: boolean, expected: ChroniclePreferencesValue | null): Promise<void> {
+    this.chroniclePreferences.update(previous => {
+      this.checkChronicleSnapshot(previous, expected);
+      const tokenHash = enabled ? resolveChronicleBinding(previous).tokenHash : previous.tokenHash;
+      return { ...previous, enabled, tokenHash };
+    });
+    await this.chronicleSettingsChanged();
+  }
+  async retryChronicle(expected: ChroniclePreferencesValue | null): Promise<void> {
+    if (this.uploading !== null) throw new Error('Chronicle upload is active; retry after it finishes');
+    const release = acquireSessionLock(this.directory, 'chronicle-uploader');
+    try { this.chroniclePreferences.withSnapshot(settings => {
+      this.checkChronicleSnapshot(settings, expected);
+      this.open().retryChronicle(approvedChronicleBinding(settings));
+    }); }
+    finally { release(); }
+    this.uploadRetryAt = 0; this.uploadError = null;
+    await this.reconcile();
+  }
+  private async chronicleSettingsChanged(): Promise<void> {
+    this.uploadRequest?.abort();
+    if (this.uploading !== null) await this.uploading;
+    this.uploadRetryAt = 0; this.uploadError = null;
+    await this.reconcile();
+  }
+  private reconcileChronicle(): void {
+    try {
+      const settings = this.chroniclePreferences.read();
+      if (!settings.enabled) { this.uploadRequest?.abort(); this.uploadTarget = null; return; }
+      const binding = approvedChronicleBinding(settings), target = chronicleTarget(binding);
+      if (target !== this.uploadTarget) { this.uploadRequest?.abort(); this.uploadTarget = target; }
+      if (this.uploading !== null || performance.now() < this.uploadRetryAt || (!existsSync(join(this.directory, 'journal.sqlite')) && this.store === null)) return;
+      const store = this.open();
+      if (store.nextChronicle(binding) === null) return;
+      let release: () => void;
+      try { release = acquireSessionLock(this.directory, 'chronicle-uploader'); }
+      catch { this.uploadError = 'uploader-unavailable-or-owned'; return; }
+      const request = new AbortController(); this.uploadRequest = request;
+      this.uploading = deliverChronicle(store, binding, new HttpChronicleTransport(CHRONICLE_TIMEOUT_MS), request.signal, (expected, admit) => {
+        let authorized = false;
+        this.chroniclePreferences.withSnapshot(current => {
+          if (this.disposed || request.signal.aborted || !current.enabled || JSON.stringify(approvedChronicleBinding(current)) !== JSON.stringify(expected)) return;
+          admit(); authorized = true;
+        });
+        return authorized;
+      })
+        .then(result => {
+          this.uploadError = result.error;
+          this.uploadRetryAt = result.state === 'failed' ? performance.now() + RETRY_BASE_MS : 0;
+          if (result.state === 'acknowledged') this.schedule(0);
+        }).catch(() => { this.uploadError = 'upload-storage-unavailable'; this.uploadRetryAt = performance.now() + RETRY_BASE_MS; })
+        .finally(() => {
+          release(); this.uploading = null;
+          if (this.uploadRequest === request) this.uploadRequest = null;
+          if (!this.disposed) { this.changed(); this.schedule(RECONCILE_INTERVAL_MS); }
+        });
+    } catch { this.uploadRequest?.abort(); this.uploadError = 'upload-settings-unavailable'; }
+  }
+  chronicleStatus(): string {
+    try {
+      const settings = this.chroniclePreferences.read();
+      const binding = configuredChronicleBinding(settings);
+      const status = this.store === null ? null : this.store.chronicleStatus(binding);
+      return `Chronicle upload: ${settings.enabled ? 'ON' : 'OFF'} (private global settings; new commits only)\n` +
+        `Chronicle destination: ${settings.endpoint || 'unconfigured'}\n` +
+        `Chronicle delivery: ${this.uploading === null ? 'idle' : 'uploading'}; pending: ${status === null ? 'unknown (journal not open)' : status.pending}; stopped: ${status === null ? 'unknown' : status.stopped}; acknowledged: ${status === null ? 'unknown' : status.acknowledged}; paused/other destinations: ${status === null ? 'unknown' : status.otherDestinations}\n` +
+        `Chronicle error: ${this.uploadError ?? (status === null ? null : status.error) ?? 'none'}\n` +
+        'Only summary claims and provenance references are sent, never underlying evidence bodies. Existing claims may recur in new revisions. Chronicle indexing providers and account sharing apply. OFF retains queued work, does not retract admitted requests or delete remote copies.\n';
+    } catch { return 'Chronicle upload: unavailable (invalid settings; no new upload authority)\n'; }
   }
   private projectMarkdown(store: JournalStore): void {
     try { store.publishMarkdown(); this.projectionError = null; }
@@ -307,22 +413,23 @@ export class HistorianController {
       `Model: ${config.model === null ? 'unconfigured' : `${config.model.provider}/${config.model.id} (${config.model.thinking})`} (${config.modelSource})\n` +
       `Activity: ${this.working !== null ? 'journaling' : this.worker.busy ? 'cancelled; waiting for provider drain' : 'idle'}; pending events: ${this.store === null ? 0 : this.store.pending(this.owner)}\n` +
       `Last commit this runtime: ${this.lastCommit ?? 'none'}; failed attempts: ${this.failures}/${MAX_RETRIES}\n` +
-      this.attemptStatus() +
+      this.chronicleStatus() + this.attemptStatus() +
       `Error: ${this.error ?? 'none'}\nMarkdown projection error: ${this.projectionError ?? 'none'}\nCoverage: ${state === null ? 'not capturing' : state.gaps.join('; ') || 'native transcript (not tool internals)'}\n` +
       'Configured provider receives this session family’s eligible evidence and shared published project episodes. Journals are historical, not current-state verification.';
   }
   badge(): string | null {
-    if (this.error !== null || this.projectionError !== null) return 'HIST !';
+    if (this.error !== null || this.projectionError !== null || this.uploadError !== null) return 'HIST !';
     try { const config = this.effective(); if (!config.enabled) return null; if (!config.disclosureApproved) return 'HIST !'; } catch { return 'HIST !'; }
     return this.working === null ? 'HIST' : 'HIST …';
   }
   journal(): string { return this.open().render(); }
   async dispose(): Promise<void> {
     this.disposed = true; this.projectSettings.dispose(); if (this.timer !== null) clearTimeout(this.timer); this.timer = null;
-    this.unsubscribe?.(); this.unsubscribe = null; this.request?.abort();
+    this.unsubscribe?.(); this.unsubscribe = null; this.request?.abort(); this.uploadRequest?.abort();
     if (this.capture !== null) await this.capture;
     // Worker cancellation is bounded and late results are fenced by disposed above.
     if (this.working !== null) await this.working;
+    if (this.uploading !== null) await this.uploading;
     const cleanup = () => { this.store?.close(); this.store = null; this.release?.(); this.release = null; };
     if (this.worker.busy) {
       this.ctx.ui.notify('Historian cancellation is awaiting provider drain; session ownership remains locked until it settles', 'warning');

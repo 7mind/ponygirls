@@ -15,6 +15,7 @@ for (const [name, codec] of [
   ['client', ClientEnvelope_JsonCodec.instance],
   ['server', ServerEnvelope_JsonCodec.instance],
   ['ingest', IngestRequest_JsonCodec.instance],
+  ['historian-ingest', IngestRequest_JsonCodec.instance],
   ['progress', CollectorProgressUpdate_JsonCodec.instance],
 ]) {
   const golden = fixture(name);

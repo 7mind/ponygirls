@@ -388,6 +388,28 @@ abstract class ArchiveContract extends munit.FunSuite {
     val receipt=a.ingest("a",r)
     assertEquals(a.headSnapshot("a",receipt.sessionId),r)
   }}
+  test("BG/GoodCommunication specified: Historian revisions reuse source identity, durable receipts, CAS and generic indexing jobs") { withArchive { (a,c) =>
+    val original=HistorianFixtures.snapshot(); val first=a.ingest("a",original)
+    assertEquals(a.ingest("a",original),first)
+    assertEquals(a.headSnapshot("a",first.sessionId),original)
+    assertEquals(intercept[DomainError](a.ingest("a",original.copy(metadata=original.metadata.copy(title="changed replay")))).code,"conflict")
+    val stale=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
+    val revised=HistorianFixtures.next(original); val second=a.ingest("a",revised)
+    assertEquals(second.sessionId,first.sessionId); assertEquals(second.revision,2); assert(second.jobId!=first.jobId)
+    assertEquals(a.ingest("a",original),first); assertEquals(a.ingest("a",revised),second)
+    assertEquals(intercept[DomainError](a.ingest("a",original.copy(requestId=UUID.randomUUID()))).code,"conflict")
+    assertEquals(a.headSnapshot("a",first.sessionId),revised)
+    assert(!a.publishProblems(stale,ProblemPublicationFixtures.oneProblem(stale)))
+    val current=a.claim(Set(c.profile),ClaimScope.Owner("a"),300).get
+    assertEquals(current.jobId,second.jobId); assertEquals(current.snapshot,revised)
+    assertEquals(current.snapshot.messages.head.role,"historian")
+    val publication=ProblemPublicationFixtures.oneProblem(current)
+    assertEquals(publication.chunks.map(_.chunk.text).mkString,revised.messages.head.text)
+    assert(a.publishProblems(current,publication))
+    assertEquals(a.session("a",first.sessionId).indexedRevision,Some(2))
+    assertEquals(a.session("a",first.sessionId).source,original.source)
+    assertEquals(intercept[DomainError](a.headSnapshot("b",first.sessionId)).code,"not-found")
+  }}
   test("B-Atomic/GoodCommunication: durable replay binding CAS and raw retention") { withArchive { (a,c) =>
     val r=Fixtures.snapshot(); val out=a.ingest("a",r)
     assertEquals(a.ingest("a",r),out)

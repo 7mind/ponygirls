@@ -208,6 +208,24 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
       assertEquals(f.evidence(receipt.jobId),WorkerEvidence(2,2,if(reservationFailure) 0 else 1))
     }}
   }
+  test("BG/GoodCommunication specified: Historian role and normalized summary reach the unchanged annotation and embedding pipeline") { withFixture { f =>
+    val archive=f.archive(); val original=HistorianFixtures.snapshot(); val receipt=archive.ingest("a",original)
+    var annotations=0; val embedded=ListBuffer.empty[String]
+    val model=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO {
+        annotations+=1; assertEquals(window.fragments.map(_.role).distinct,Vector("historian"))
+        assertEquals(window.fragments.map(_.text).mkString,original.messages.head.text)
+        one(window,previous)
+      }
+    }
+    val embedding=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected query embedding"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO { embedded++=text; text.map(_ => List(1.0,0.0,0.0)) }
+    }
+    assert(worker(f,model,embedding).once.unsafeRunSync()); assertEquals(annotations,1)
+    assertEquals(embedded.mkString,original.messages.head.text)
+    assertEquals(archive.session("a",receipt.sessionId).indexedRevision,Some(1))
+  }}
   test("BG/GoodCommunication: long bootstrap and context-only source publish truthfully without any embedding call") { withFixture { f =>
     val archive=f.archive(); val receipt=archive.ingest("a",request(List.fill(130)("system"->"synthetic runtime context")))
     var annotations=0

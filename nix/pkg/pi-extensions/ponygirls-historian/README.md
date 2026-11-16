@@ -83,6 +83,82 @@ use `status` to distinguish requested enablement, backlog, provider drain,
 projection errors and coverage. After three failed attempts, use `on` in that
 root to retry; no silent provider fallback occurs.
 
+## Chronicle summary uploads
+
+Summary upload is a separate, **global-only opt-in, default OFF**. `/historian on`
+approves the capture model, not upload; Chronicle approval does not enable capture
+or approve a model. The existing scoped capture settings dialog is unchanged.
+
+```text
+/historian chronicle configure URL ABSOLUTE_TOKEN_FILE
+/historian chronicle settings
+/historian chronicle on
+/historian chronicle status
+/historian chronicle off
+/historian chronicle retry
+```
+
+`configure` stores a disabled destination, with an installation namespace generated
+by the command and no credential approval pin. It accepts an HTTPS origin or full
+`/api/ingest` URL; HTTP is allowed only for loopback. URL credentials, queries and
+fragments are rejected. The bearer must be in a private runtime file at an absolute
+path outside `/nix/store`; never put the bearer in a command, URL or Nix expression.
+`settings` edits only global upload settings, not session/project capture settings.
+`on` explicitly approves the destination, reads the private bearer file and stores
+its SHA-256 `tokenHash` fingerprint. That fingerprint is not the secret bearer;
+the bearer itself is never written to the preferences file.
+
+Approval applies only to **newly committed episode revisions after upload is ON**,
+across active and future project journals. There is no journal scanner, historical
+backfill or upload of revisions committed while upload was OFF or its settings were unavailable. Invalid upload settings are reported visibly; local summaries still publish without enqueueing or spending inference retries. The canonical
+commit and durable enqueue share the short authorization transaction; they use the
+stored credential pin without opening the bearer file. Missing or rotated
+credentials therefore do not prevent local summary publication.
+
+The delivery pump runs only while Pi is active, without model inference.
+`/historian off` stops new local capture/publication as before, but already-authorized queued
+summaries can still drain while Chronicle upload is ON. `/historian chronicle off`
+explicitly pauses upload and retains pending items. It cannot retract a request
+already admitted or data already accepted by Chronicle.
+
+Each queued payload has a stable UUID and at most three automatic delivery
+attempts, durably counted across reloads. Pending items remain bound to the endpoint,
+namespace and approved bearer fingerprint. OFF, a destination change or a different
+bearer fingerprint pauses incompatible pending work rather than silently rerouting
+it. Each network attempt reopens the current token-file path and checks the pin;
+moving the same credential file does not change its binding. For token rotation,
+explicitly approve again; old pending items are not reassigned to the new credential.
+A changed credential/destination starts an isolated wire source namespace, even for
+the same Chronicle owner, because an Ingest-only bearer cannot establish owner
+continuity. Earlier streams remain separate archived sources; there is no automatic
+merge or backfill. `retry` retries the same approved binding and exact payload, not
+permission to send old work somewhere else. Permanent rejections and oversized
+payloads stop visibly; other episodes continue. Status counts refer to the current
+configured bearer binding, including while OFF; pending other bindings are reported
+separately. Status does not open the credential file.
+
+Payloads contain summary text, summary/provenance metadata and evidence references,
+**never raw evidence bodies**. Summary redaction is best effort, not a guarantee
+that summaries contain no secrets. Chronicle's configured providers and ACL/sharing
+rules apply after ingestion. Review the destination and its downstream disclosure
+policy before enabling; capture-provider consent is not Chronicle consent.
+
+Upload settings live only in `<agentDir>/historian-chronicle.json`. Version 1 requires
+all fields, including `enabled`, `endpoint`, `tokenFile`, `collectorNamespace` and
+`tokenHash` (null until approved). Disabled settings may be incomplete; nonempty
+values still must be valid. ON requires a complete destination and lowercase
+SHA-256 pin. Namespaces must be nonblank Unicode scalar text of at most 256 UTF-16
+code units. Reading settings never creates files, generates a namespace, opens a
+bearer file or contacts a server. A malformed file fails closed; it does not fall
+back to another destination. A writable global document replaces the entire managed
+destination, including explicitly empty fields. Project files cannot select upload
+routes or credentials. Cooperating commit/enqueue and ON/OFF updates use the same
+short synchronous global lock. Dialog Apply compares its displayed configuration
+inside that lock; each delivery admission rechecks ON and the exact binding there.
+No lock spans a dialog or asynchronous network wait. A request admitted before OFF
+can still be accepted afterward; cancellation is best effort. Arbitrary
+external file replacement is not made atomically revocable by that lock.
+
 ## Home Manager defaults
 
 Home Manager defaults to `openai-codex/gpt-6.1-sol` with `medium` effort. It does
@@ -109,6 +185,25 @@ override → writable global override → managed default → unconfigured. Enab
 inherited model. Changing a managed model preserves existing approval, not approval
 for the new model; use an explicit `on` after reviewing the disclosure.
 
+The optional Chronicle destination is independent of the model and journal root:
+
+```nix
+programs.pi.historian.chronicle = {
+  endpoint = "https://chronicle.example";
+  tokenFile = "/run/user/1000/chronicle-token";
+  collectorNamespace = "historian-alice-workstation";
+};
+```
+
+It defaults to null. When non-null, all three fields are required. Supply a stable
+namespace across rebuilds; Home Manager never generates one. Home Manager writes
+only `{ version = 1; endpoint; tokenFile; collectorNamespace; }` to the separate
+`historian-chronicle-defaults.json`, never mutable `historian-chronicle.json`,
+`enabled`, `tokenHash` or bearer contents. Managed defaults alone always remain OFF
+and unapproved. Runtime global settings fully override them; capture/model changes
+do not alter upload settings. Provision the private bearer file separately and
+make it available at that runtime path inside any sandbox.
+
 The root is the parent of `projects/<identity>/`. It is read when constructing a
 session controller (restart/reload to change it). Existing journals and pending
 evidence are **not migrated**. Keep it outside repositories and explicitly bind a
@@ -125,7 +220,9 @@ Default storage is outside the repository:
 
 ```text
 <agentDir>/historian.json                    # writable preferences
-<agentDir>/historian-defaults.json           # optional managed defaults
+<agentDir>/historian-defaults.json           # optional managed capture defaults
+<agentDir>/historian-chronicle.json          # private global upload settings
+<agentDir>/historian-chronicle-defaults.json # optional managed upload destination; never ON
 <agentDir>/historian/projects/<sha256-project-identity>/journal.sqlite
 <agentDir>/historian/projects/<sha256-project-identity>/journal.md
 ```
@@ -181,8 +278,9 @@ identity, a context digest, provider/model/effort, objective version, audit time
 monotonic duration, safe outcome/category, and available numeric response/usage
 metrics. They do not retain arbitrary rejected response/error bodies or duplicate
 raw evidence. Receipt metadata remains for the journal's lifetime; the display, not
-retention, is bounded. Schema-1 journals upgrade to schema 2 without inventing
-historical attempt counts.
+retention, is bounded. Schema-1/2 journals upgrade to schema 3 without inventing
+historical attempt counts or upload eligibility. A persisted journal UUID and durable
+summary outbox preserve source identities and exact pending request bytes.
 
 - Counts are controller **admissions**, not wire requests; prerequisite failures
   can submit nothing, and SDK/provider retries can occur within one admission.

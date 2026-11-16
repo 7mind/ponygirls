@@ -3,6 +3,8 @@ import test from 'node:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { createServer } from 'node:http';
+import { once } from 'node:events';
 import * as sdk from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, getCurrentTools } from '@earendil-works/pi-ai';
 import { resolveProject } from '../../ponygirls-decisions/src/project.ts';
@@ -139,5 +141,33 @@ test('real Pi: OFF aborts a running worker and prevents its publication; pending
   await f.session.prompt('/historian on');
   await eventually(() => f.revisions().length === 1);
   assert.doesNotMatch(JSON.stringify(f.calls.historian), /EXPERIMENT_OFF/);
+  assert.deepEqual(f.errors, []);
+});
+
+test('real Pi: separate Chronicle command approval uploads only new summaries and survives reload without backfill', { timeout: 20000 }, async t => {
+  const f = await fixture(t), received = [];
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const payload = JSON.parse(body); received.push(payload);
+    res.end(JSON.stringify({ requestId: payload.requestId, sessionId: '00000000-0000-4000-8000-000000000001', revision: payload.expectedRevision + 1, jobId: '00000000-0000-4000-8000-000000000002' }));
+  });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  t.after(() => new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }));
+  const token = join(f.agentDir, 'chronicle-token'); writeFileSync(token, 'synthetic-chronicle-secret-'.repeat(3), { mode: 0o600 });
+  await f.session.prompt('/historian model historian scripted off'); await f.session.prompt('/historian on');
+  await f.session.prompt('EXPERIMENT_BEFORE_UPLOAD'); await eventually(() => f.revisions().length === 1);
+  await f.session.prompt(`/historian chronicle configure http://127.0.0.1:${server.address().port} ${token}`);
+  const config = () => JSON.parse(readFileSync(join(f.agentDir, 'historian-chronicle.json'), 'utf8'));
+  assert.equal(config().enabled, false); assert.equal(config().tokenHash, null);
+  await f.session.prompt('/historian chronicle on'); assert.equal(config().enabled, true);
+  assert.equal(received.length, 0);
+  await f.session.prompt('EXPERIMENT_WITH_UPLOAD'); await eventually(() => received.length === 1);
+  assert.equal(received[0].source.format, 'Historian');
+  assert.doesNotMatch(JSON.stringify(received), /EXPERIMENT_BEFORE_UPLOAD|EXPERIMENT_WITH_UPLOAD|synthetic-chronicle-secret/);
+  await f.session.prompt('/historian chronicle off'); await f.session.prompt('EXPERIMENT_UPLOAD_DISABLED');
+  await eventually(() => f.revisions().length === 3);
+  await f.session.prompt('/historian chronicle on'); await f.session.reload();
+  await f.session.prompt('/historian chronicle status');
+  assert.equal(received.length, 1, 'restart/reenablement must not discover disabled historical summaries');
   assert.deepEqual(f.errors, []);
 });

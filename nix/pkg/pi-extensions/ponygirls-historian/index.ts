@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth } from '@earendil-works/pi-tui';
-import { CustomViewToggle, StatusView } from '@ponygirls/pi-ui';
+import { CustomViewToggle, StatusView, confirmOperatorAction } from '@ponygirls/pi-ui';
 import { parseToggleCommand } from '@ponygirls/pi-settings';
 import { HistorianController } from './src/controller.ts';
 import { completeHistorianArguments } from './src/complete.ts';
@@ -62,6 +62,53 @@ export default function (pi: ExtensionAPI): void {
       applied: () => publish(),
     }, ctx), { title: 'Historian settings' });
   }
+  async function chronicleCommand(args: string, ctx: ExtensionContext): Promise<void> {
+    const selected = controller;
+    if (selected === null) throw new Error('Historian session initialization failed');
+    const current = currentOwner(selected, ctx);
+    let command = args.trim();
+    if (command === '' || command === 'status') { ctx.ui.notify(selected.chronicleStatus(), 'info'); return; }
+    if (command === 'settings') {
+      if (ctx.mode !== 'tui' || !ctx.hasUI) throw new Error('Chronicle settings dialog requires interactive TUI mode; use chronicle configure/on/off/status/retry');
+      settingsView.dispose(); settingsView = newHistorianSettingsView(); pane.dispose(); pane = new CustomViewToggle(); cancelDirectApproval();
+      const operation = new AbortController(); directProjectApproval = operation;
+      const signal = ctx.signal === undefined ? operation.signal : AbortSignal.any([operation.signal, ctx.signal]);
+      try {
+        const before = JSON.stringify(selected.chronicleConfiguration());
+        const fresh = () => {
+          signal.throwIfAborted();
+          if (!current() || JSON.stringify(selected.chronicleConfiguration()) !== before) throw new Error('Chronicle settings changed; reopen the dialog');
+        };
+        const configuration = selected.chronicleConfiguration();
+        const action = await ctx.ui.select('Chronicle upload — private global settings', ['Cancel', 'Configure destination (saves OFF)', configuration.enabled ? 'Disable uploads' : 'Enable uploads', 'Retry stopped uploads'], { signal });
+        fresh();
+        if (action === undefined || action === 'Cancel') return;
+        if (action === 'Configure destination (saves OFF)') {
+          const endpoint = await ctx.ui.input('Chronicle HTTPS origin or /api/ingest URL', configuration.endpoint, { signal });
+          if (endpoint === undefined) return; fresh();
+          const tokenFile = await ctx.ui.input('Private Chronicle Ingest-token file (absolute path, not token)', configuration.tokenFile, { signal });
+          if (tokenFile === undefined) return; fresh();
+          await selected.configureChronicle(endpoint, tokenFile, configuration);
+        } else if (action === 'Enable uploads') {
+          const approved = await confirmOperatorAction(ctx, 'Approve Chronicle summary upload',
+            `Upload newly committed Historian summaries from active/future project journals to ${configuration.endpoint}? No historical scan or evidence bodies. New revisions may repeat old claims. Redaction is best effort; Chronicle indexing providers and account sharing apply. OFF retains queued work and cannot retract admitted requests or remote copies.`, signal);
+          fresh(); if (!approved) return;
+          await selected.enableChronicle(true, configuration);
+        } else if (action === 'Disable uploads') await selected.enableChronicle(false, configuration);
+        else if (action === 'Retry stopped uploads') await selected.retryChronicle(configuration);
+      } finally { if (directProjectApproval === operation) directProjectApproval = null; }
+      if (current()) { publish(); ctx.ui.notify(selected.chronicleStatus(), 'info'); }
+      return;
+    }
+    if (command.startsWith('configure ')) {
+      const words = command.split(/\s+/);
+      if (words.length !== 3) throw new Error('Syntax: /historian chronicle configure URL ABSOLUTE_TOKEN_FILE; use chronicle settings for paths containing spaces');
+      await selected.configureChronicle(words[1]!, words[2]!, null);
+    } else if (command === 'on' || command === 'off') await selected.enableChronicle(command === 'on', null);
+    else if (command === 'retry') await selected.retryChronicle(null);
+    else throw new Error('Usage: /historian chronicle settings|configure URL ABSOLUTE_TOKEN_FILE|on|off|status|retry');
+    if (current()) { publish(); ctx.ui.notify(selected.chronicleStatus(), 'info'); }
+  }
   async function retire(): Promise<void> {
     const selected = controller, previous = context;
     controller = null; context = null;
@@ -70,13 +117,14 @@ export default function (pi: ExtensionAPI): void {
     finally { await selected?.dispose(); }
   }
   pi.registerCommand('historian', {
-    description: 'Project journals (on approves configured-provider disclosure): settings|project on|on|off|inherit|default on|default off|status|journal; [default] model PROVIDER MODEL THINKING; [default] focus TEXT; [default] model inherit; focus inherit',
+    description: 'Project journals: settings|project on|on|off|inherit|default on|default off|status|journal; chronicle settings|configure URL TOKEN_FILE|on|off|status|retry; [default] model PROVIDER MODEL THINKING; [default] focus TEXT',
     getArgumentCompletions: prefix => completeHistorianArguments(prefix, context === null ? [] : context.modelRegistry.getAvailable()),
     handler: async (args, ctx) => {
       const enteredGeneration = generation;
       try {
         if (controller === null) throw new Error('Historian session initialization failed; inspect extension errors');
         const trimmed = args.trim();
+        if (trimmed === 'chronicle' || trimmed.startsWith('chronicle ')) { await chronicleCommand(trimmed.slice('chronicle'.length), ctx); return; }
         if (trimmed === 'settings') { await showSettings(ctx); return; }
         if (trimmed === 'project on') {
           const selected = controller;

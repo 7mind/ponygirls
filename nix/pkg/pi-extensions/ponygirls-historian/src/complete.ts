@@ -5,6 +5,14 @@ const choice = (token: string, description: string, continues: boolean): Argumen
 
 export function completeHistorianArguments(prefix: string, models: readonly CompletionModel[]): CompletionItem[] | null {
   return completeArgument(prefix, tokens => {
+    if (tokens[0] === 'chronicle') return tokens.length === 1 ? [
+      choice('settings', 'Configure global summary upload with separate disclosure approval', false),
+      choice('configure', 'Store URL and absolute token-file path; leave upload OFF', true),
+      choice('on', 'Approve new-summary upload to the configured Chronicle destination', false),
+      choice('off', 'Pause Chronicle upload; retain pending summaries', false),
+      choice('status', 'Show Chronicle upload configuration and delivery diagnostics', false),
+      choice('retry', 'Retry stopped pending summaries without changing request identities', false),
+    ] : null;
     if (tokens[0] === 'project') return tokens.length === 1 ? [choice('on', 'Confirm runtime-local project disclosure approval', false)] : null;
     const global = tokens[0] === 'default';
     const previous = global ? tokens.slice(1) : tokens;
@@ -13,7 +21,8 @@ export function completeHistorianArguments(prefix: string, models: readonly Comp
       choice('off', 'Disable capture', false),
       ...(!global ? [choice('inherit', 'Use the default enabled setting', false), choice('status', 'Show configuration and diagnostics', false),
         choice('journal', 'Read the shared project journal', false), choice('default', 'Change defaults for new sessions', true),
-        choice('settings', 'Open scoped settings', false), choice('project', 'Project disclosure approval', true)] : []),
+        choice('settings', 'Open scoped settings', false), choice('project', 'Project disclosure approval', true),
+        choice('chronicle', 'Opt-in summary upload, separate from capture/provider approval', true)] : []),
       choice('model', 'Choose PROVIDER MODEL THINKING, or inherit', true),
       choice('focus', 'Set free-text journal focus', true),
     ];

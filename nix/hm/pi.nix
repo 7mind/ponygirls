@@ -14,6 +14,8 @@ let
   cfg = config.smind.hm.dev.llm;
   piCfg = config.programs.pi;
   jsonFormat = pkgs.formats.json { };
+  chronicleEndpointPattern = "([hH][tT][tT][pP][sS]://[^/@?#[:space:]\\\\]+|"
+    + "[hH][tT][tT][pP]://([lL][oO][cC][aA][lL][hH][oO][sS][tT]|127([.][0-9]{1,3}){3}|[[]::1[]])(:[0-9]+)?)(/api/ingest|/)?";
 
   # Retry/timeout policy for transient provider failures (e.g. 503
   # service_overloaded): agent-level turn re-drive with exponential backoff
@@ -491,6 +493,41 @@ in
         historian.json. Global runtime and session selections take precedence.
         Does not enable Historian or grant provider disclosure approval; use
         /historian on after reviewing the effective selection.
+      '';
+    };
+
+    programs.pi.historian.chronicle = lib.mkOption {
+      type = lib.types.nullOr (lib.types.submodule {
+        options = {
+          endpoint = lib.mkOption {
+            type = lib.types.str;
+            description = "Chronicle HTTPS origin or /api/ingest URL; HTTP is allowed only for loopback.";
+          };
+          tokenFile = lib.mkOption {
+            type = lib.types.str;
+            description = "Absolute runtime bearer-token file path outside /nix/store. Never put the token or a Nix path literal here.";
+          };
+          collectorNamespace = lib.mkOption {
+            type = lib.types.str;
+            description = "Stable, nonblank installation namespace; supply the same value across rebuilds. Runtime requires Unicode scalar text of at most 256 UTF-16 code units.";
+          };
+        };
+      });
+      default = null;
+      example = {
+        endpoint = "https://chronicle.example";
+        tokenFile = "/run/user/1000/chronicle-token";
+        collectorNamespace = "historian-alice-workstation";
+      };
+      description = ''
+        Complete managed fallback destination for global Historian summary uploads.
+        Null leaves historian-chronicle-defaults.json unmanaged. A non-null value
+        writes only version, endpoint, tokenFile and collectorNamespace, never
+        enablement, an approval hash or a bearer secret. Runtime validates the
+        full destination; a writable global historian-chronicle.json completely
+        overrides this fallback. No project-controlled upload configuration is read.
+        This does not enable capture, upload or provider disclosure; explicitly use
+        /historian chronicle on after reviewing the destination and credential.
       '';
     };
 
@@ -974,6 +1011,12 @@ in
         inherit (piCfg.historian) journalRoot model;
       };
     })
+    (lib.mkIf (piCfg.historian.chronicle != null) {
+      home.file."${piCfg.configDir}/historian-chronicle-defaults.json".text = builtins.toJSON {
+        version = 1;
+        inherit (piCfg.historian.chronicle) endpoint tokenFile collectorNamespace;
+      };
+    })
     # Declarative keybindings (see piKeybindingsJson). RO store symlink like
     # settings.json: manage via programs.pi.keybindings, not by hand-editing
     # the file. The /tree footer resolves labels through the live keybinding
@@ -993,6 +1036,20 @@ in
         {
           assertion = piCfg.historian.model == null || (piCfg.historian.model.provider != "" && piCfg.historian.model.id != "");
           message = "programs.pi.historian.model requires nonempty provider and id.";
+        }
+        {
+          assertion = piCfg.historian.chronicle == null || builtins.match chronicleEndpointPattern piCfg.historian.chronicle.endpoint != null;
+          message = "programs.pi.historian.chronicle.endpoint must be an HTTPS or loopback-HTTP origin or /api/ingest URL without credentials, query or fragment; runtime performs full URL validation.";
+        }
+        {
+          assertion = piCfg.historian.chronicle == null || (lib.hasPrefix "/" piCfg.historian.chronicle.tokenFile
+            && piCfg.historian.chronicle.tokenFile != "/nix/store"
+            && !(lib.hasPrefix "/nix/store/" piCfg.historian.chronicle.tokenFile));
+          message = "programs.pi.historian.chronicle.tokenFile must be an absolute runtime file path outside /nix/store, never a token value.";
+        }
+        {
+          assertion = piCfg.historian.chronicle == null || builtins.match "[[:space:]]*" piCfg.historian.chronicle.collectorNamespace == null;
+          message = "programs.pi.historian.chronicle.collectorNamespace must be nonblank; runtime validates Unicode scalar text and the 256-UTF-16-code-unit limit.";
         }
         {
           assertion = !(cfg.pi.subagentsNesting && cfg.pi.subagentsMaxDepth < 2);

@@ -73,6 +73,15 @@ abstract class ExpressionHintsContract extends munit.FunSuite {
   def fixture(seed: Seed)(f: HintFixture => Unit): Unit
   private def query(target: ExpressionHintTarget,expression: String,limit: Int): ExpressionHintQuery = ExpressionHintQuery(target,expression,expression.length,limit)
   private def labels(f: HintFixture,reader: String,target: ExpressionHintTarget,expression: String): List[String] = f.index.hints(reader,query(target,expression,20)).hints.map(_.label)
+  test("Blackbox Atomic/GoodCommunication specified: format hints include Historian independently of corpus and preserve parser insertion contracts") { fixture(seed.copy(heads=Nil,jobs=Nil,reports=Nil)) { f =>
+    List(archive,jobs(ActivityJobScope.Current,None),jobs(ActivityJobScope.Historical,Some("missing"))).foreach { target =>
+      assertEquals(labels(f,"a",target,"format:"),List("claude","codex","historian","pi"))
+      assertEquals(labels(f,"a",target,"project:missing AND format:HI"),List("historian"))
+      val result=f.index.hints("a",query(target,"format:hi",20))
+      assertEquals(result.hints.map(_.insertText),List("\"historian\""))
+    }
+    assertEquals(labels(f,"a",collectors,"format:"),Nil)
+  }}
   test("Blackbox Atomic/GoodCommunication specified: agent hints are fixed independently of corpus, scope and other clauses") { fixture(seed.copy(heads=Nil,jobs=Nil,reports=Nil)) { f =>
     List(archive,jobs(ActivityJobScope.Current,None),jobs(ActivityJobScope.Historical,Some("missing"))).foreach { target =>
       assertEquals(labels(f,"a",target,"agent:"),List("main","subagent"))

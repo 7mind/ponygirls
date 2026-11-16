@@ -3,7 +3,7 @@ version "1.9.0"
 
 enum SearchMode { Lexical Semantic Hybrid }
 
-enum SourceFormat { Claude Codex Pi }
+enum SourceFormat { Claude Codex Pi Historian }
 
 enum Completion { Quiescent Closed }
 

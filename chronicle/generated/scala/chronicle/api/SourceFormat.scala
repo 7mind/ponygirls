@@ -8,12 +8,14 @@ package chronicle.api {
     case object Claude extends SourceFormat
     case object Codex extends SourceFormat
     case object Pi extends SourceFormat
+    case object Historian extends SourceFormat
     
     def parse(s: String): Option[SourceFormat] = {
       s match {
         case "Claude" => Some(Claude)
         case "Codex" => Some(Codex)
         case "Pi" => Some(Pi)
+        case "Historian" => Some(Historian)
         case _ => None
       }
     }
@@ -21,7 +23,8 @@ package chronicle.api {
     def all: List[SourceFormat] = List(
       Claude,
       Codex,
-      Pi
+      Pi,
+      Historian
     ) 
   }
   

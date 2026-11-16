@@ -58,7 +58,7 @@ for (const memory of [true, false]) {
 test('file receipts persist across reopening and schema-1 migration preserves existing evidence', t => {
   const { store, path, batch } = fixture(t, false);
   store.close();
-  const legacy = new DatabaseSync(path); legacy.exec('DROP TABLE attempts; PRAGMA user_version=1;'); legacy.close();
+  const legacy = new DatabaseSync(path); legacy.exec('DROP TABLE attempts; DROP TABLE chronicle_outbox; DROP TABLE chronicle_heads; ALTER TABLE identity DROP COLUMN journal; PRAGMA user_version=1;'); legacy.close();
   const upgraded = new JournalStore(path, '/repo/.git'); t.after(() => upgraded.close());
   assert.deepEqual(upgraded.batch('root'), batch);
   const first = upgraded.beginAttempt(batch, model, 'v1', context);
