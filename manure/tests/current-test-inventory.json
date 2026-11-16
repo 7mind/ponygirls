@@ -358,6 +358,7 @@
         "test_cli_ux.CliUsageTests.test_colored_ranked_search_preserves_evidence_exact_integers_and_provenance",
         "test_cli_ux.CliUsageTests.test_common_help_explains_operand_and_safety_constraints",
         "test_cli_ux.CliUsageTests.test_http_global_works_on_either_side_without_changing_opt_in",
+        "test_cli_ux.CliUsageTests.test_invalid_upload_access_is_rejected_before_credentials_without_echoing_values",
         "test_cli_ux.CliUsageTests.test_local_error_paths_are_terminal_escaped",
         "test_cli_ux.CliUsageTests.test_parser_errors_do_not_echo_values_or_terminal_controls",
         "test_cli_ux.CliUsageTests.test_required_upload_access_is_documented_and_checked_before_credentials",

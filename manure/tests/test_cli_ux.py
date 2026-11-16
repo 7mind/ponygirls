@@ -61,6 +61,25 @@ class CliUsageTests(unittest.TestCase):
                 self.assertNotIn('credentials', err)
         self.assertEqual(self.transport.requests, [])
 
+    def test_invalid_upload_access_is_rejected_before_credentials_without_echoing_values(self):
+        invalid = 'private-access-canary\n\x1b[31m'
+        environments = [{}, self.env,
+            {'MANURE_URL': ORIGIN, 'MANURE_TOKEN_FILE': str(self.root / 'absent-token')}]
+        for env in environments:
+            for resume in [[], ['--resume', AID], ['--fresh']]:
+                for output in [[], ['--json', '--color', 'always']]:
+                    with self.subTest(env=sorted(env), resume=resume, output=output):
+                        code, out, err = run_cli(['upload', str(self.source), '--access', invalid,
+                                                 *resume, *output], env, self.transport)
+                        self.assertEqual((code, out), (2, ''))
+                        self.assertIn('invalid-visibility', err)
+                        for text in ['--access', 'internal', 'external', 'public']:
+                            self.assertIn(text, err)
+                        self.assertNotIn('private-access-canary', err)
+                        self.assertNotIn('\x1b', err)
+                        self.assertNotIn('credentials', err)
+        self.assertEqual(self.transport.requests, [])
+
     def test_resuming_still_requires_explicit_access_before_credentials(self):
         cache = self.root / 'cache' / 'uploads'
         cache.mkdir(parents=True)

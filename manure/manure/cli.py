@@ -93,7 +93,8 @@ class _ArgumentParser(argparse.ArgumentParser):
                 if detail.startswith('invalid choice:'):
                     choices = names[name].choices
                     accepted = ', '.join(choices) if choices is not None else 'see --help'
-                    return f'argument {name}: choose from {accepted}'
+                    code = 'invalid-visibility: ' if name == '--access' else ''
+                    return f'{code}argument {name}: choose from {accepted}'
                 if detail in ('expected one argument', 'expected at least one argument'):
                     return f'argument {name}: {detail}'
                 return f'argument {name}: invalid value'
@@ -253,7 +254,8 @@ def build_parser(stdout_presentation: cli_output.Presentation,
     p_up.add_argument("--tag", action="append", default=None, help="exact tag (repeatable, max 32)")
     p_up.add_argument("--hostname", default=None, help="explicit source hostname (never inferred)")
     p_up.add_argument("--project-path", default=None, help="explicit project path (never inferred)")
-    p_up.add_argument("--access", required=True, metavar='{internal,external,public}',
+    p_up.add_argument("--access", required=True, choices=['internal', 'external', 'public'],
+        metavar='{internal,external,public}',
         help="required access mode: authenticated readers, password link, or anonymous readers")
     p_up.add_argument("--expires-in", default=None,
         help="TTL: seconds or 30m/2h/7d; range 60..31536000 seconds (default: no expiry)")
@@ -390,9 +392,6 @@ def main(argv: list[str] | None = None) -> int:
             _print_result(res, as_json, lambda result: cli_output.password_rotated(args.id, result), stdout_presentation)
             return 0
         if cmd == "upload":
-            if args.access not in ("internal", "external", "public"):
-                _eprint("invalid-visibility: --access must be internal|external|public", stderr_presentation)
-                return 2
             try:
                 exp = parse_expires_in(args.expires_in) if args.expires_in is not None else None
             except ManureError as e:

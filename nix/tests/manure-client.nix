@@ -257,6 +257,14 @@ let
             assert rejected.returncode == 2 and rejected.stdout == "" and "--help" in rejected.stderr
             assert "private-parser-canary" not in rejected.stderr and "\x1b" not in rejected.stderr
             assert raw not in rejected.stderr
+        for resume in ([], ["--resume", "a" * 32]):
+            rejected = subprocess.run([cli, "--json", "--color", "always", "upload", big,
+                "--access", "private-access-canary\x1b", *resume], capture_output=True, text=True,
+                env={**child_env, "MANURE_URL": "", "MANURE_TOKEN_FILE": os.path.join(work, "absent-token")},
+                cwd=work, timeout=60)
+            assert rejected.returncode == 2 and rejected.stdout == "" and "invalid-visibility" in rejected.stderr
+            assert "--access" in rejected.stderr and "credentials" not in rejected.stderr
+            assert "private-access-canary" not in rejected.stderr and "\x1b" not in rejected.stderr
         passed.append("cli-human-default-and-global-json-selection")
         # Flag wins over env: record lands in the flag cache only.
         rec = interrupt_upload(
