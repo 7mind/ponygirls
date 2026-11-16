@@ -33,7 +33,7 @@ class ToolchainRoutingTest(unittest.TestCase):
         self.home = self.root / 'graal'
         (self.home / 'bin').mkdir(parents=True)
         self.release = self.home / 'release'
-        self.release.write_text('GRAALVM_VERSION="25.5.5.0.3"\n')
+        self.release.write_text('GRAALVM_VERSION="25.4.4.1.1"\n')
         self.static = self.root / 'static'
         self.static.mkdir()
         (self.static / 'libmanure_posix.a').write_bytes(b'fixture archive')
@@ -94,12 +94,12 @@ class ToolchainRoutingTest(unittest.TestCase):
     def test_production_and_probe_guards_match_actual_pinned_release(self):
         # Inspect both real build entrypoints; compiler stand-ins alone cannot
         # catch a production-only pin drift. No assembly/native build is needed.
-        expected = 'GRAALVM_VERSION="25.5.5.0.3"'
+        expected = 'GRAALVM_VERSION="25.4.4.1.1"'
         for entrypoint in [script, native_recipe]:
             guards = re.findall(r"grep -q '([^']*GRAALVM_VERSION[^']*)'", entrypoint.read_text())
             self.assertEqual(guards, [expected], str(entrypoint))
         self.assertIn(expected, pinned_release.read_text().splitlines())
-        self.assertIn("Graal CE 25.5.5.0.3", feature.read_text())
+        self.assertIn("Graal CE 25.4.4.1.1", feature.read_text())
 
     def test_wrong_version_rejected_before_compilers(self):
         self.release.write_text('GRAALVM_VERSION="different"\n')

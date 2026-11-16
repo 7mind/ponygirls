@@ -6,7 +6,7 @@ import org.graalvm.nativeimage.ImageSingletons;
 import org.graalvm.nativeimage.hosted.Feature;
 import org.graalvm.nativeimage.hosted.RuntimeJNIAccess;
 
-/** Build-only adapter for the pinned Graal CE 25.5.5.0.3; never on the JVM application classpath.
+/** Build-only adapter for the pinned Linux Graal CE 25.4.4.1.1; never on the JVM application classpath.
  * The two SVM APIs are internal: upgrade only with actual static-musl probe acceptance.
  * See lib/svm/builder/svm.src.zip: JNINativeLinkage.isBuiltInFunction and
  * NativeLibraries.addStaticJniLibrary. Public JNI registration alone does not select

@@ -9,8 +9,8 @@ classpath=$1
 output=$2
 [[ $output = /* && -f $MANURE_POSIX_STATIC/libmanure_posix.a ]]
 # Fail closed on the private SVM ABI pin. No dependency download or runtime fallback.
-grep -q 'GRAALVM_VERSION="25.5.5.0.3"' "$JAVA_HOME/release" || {
-  echo 'POSIX hosted feature requires verified Graal CE 25.5.5.0.3' >&2; exit 1;
+grep -q 'GRAALVM_VERSION="25.4.4.1.1"' "$JAVA_HOME/release" || {
+  echo 'POSIX hosted feature requires verified Graal CE 25.4.4.1.1' >&2; exit 1;
 }
 feature=$(mktemp -d)
 trap 'rm -rf "$feature"' EXIT
