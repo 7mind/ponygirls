@@ -189,7 +189,7 @@
             # empty values trip the absolute-path assertion. Same narrow leaf
             # stubs as above; the standalone pi module never references yolo
             # options (only documents the explicit extraReadWritePaths binding).
-            evalPi = piExtra: historian: (nixpkgs.lib.evalModules {
+            evalPiWithModules = extraModules: piExtra: historian: (nixpkgs.lib.evalModules {
               specialArgs = { pkgs = import nixpkgs { inherit system; }; };
               modules = [
                 ./nix/hm/pi.nix
@@ -215,8 +215,9 @@
                   config.smind.hm.dev.llm.pi = piExtra;
                   config.programs.pi.historian = historian;
                 })
-              ];
+              ] ++ extraModules;
             }).config;
+            evalPi = evalPiWithModules [ ];
             evalWorktree = piExtra: evalPi piExtra { };
             historianDefaultModel = { provider = "openai-codex"; id = "gpt-6.1-sol"; thinking = "medium"; };
             historianOptions = { journalRoot = "/srv/pi-journals"; model = { provider = "fixture"; id = "custom"; thinking = "high"; }; };
@@ -250,6 +251,31 @@
             limitsCustom = evalWorktree { subagentsMaxRunnable = 8; subagentsMaxResidentWorkers = 12; };
             limitsMisordered = evalWorktree { subagentsMaxRunnable = 10; };
             failedLimitAssertion = assertions: builtins.any (a: !a.assertion && builtins.match ".*subagentsMaxRunnable.*" a.message != null) assertions;
+            piSharedAssets = ((import ./nix/hm/yolo.nix { inherit inputs; }) {
+              inherit pkgs;
+              lib = nixpkgs.lib;
+              config = { };
+            }).options.smind.hm.dev.llm.yolo.piSharedAssets.default;
+            managedPiConfigured = evalPiWithModules [ {
+              smind.hm.dev.llm.merged = {
+                skills.fixture = "fixture skill";
+                commands.fixture = "fixture prompt";
+                memoryText = "fixture instructions";
+              };
+              programs.pi.keybindings."tui.select.confirm" = [ "enter" ];
+              home.file."/home/alice/.pi/agent/models.json".text = "{}";
+            } ] { subagentsAllowAllModels = true; } historianOptions;
+            managedPiAssets = nixpkgs.lib.unique (nixpkgs.lib.concatMap (profile:
+              let
+                prefix = "${profile.programs.pi.configDir}/";
+                names = builtins.filter (name:
+                  nixpkgs.lib.hasPrefix prefix name || nixpkgs.lib.hasPrefix ".pi/agent/" name
+                ) (builtins.attrNames profile.home.file);
+              in map (name: builtins.head (nixpkgs.lib.splitString "/"
+                (nixpkgs.lib.removePrefix ".pi/agent/" (nixpkgs.lib.removePrefix prefix name))
+              )) names
+            ) [ managedPiConfigured historianChronicleConfigured ]);
+            missingPiAssets = builtins.filter (asset: !(builtins.elem asset piSharedAssets)) managedPiAssets;
           in
           assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "maxOpenAgents" "maxResidentWorkers" "maxRunnable" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
           assert listed == {
@@ -289,6 +315,9 @@
           assert presentDefault == [ "mcp__codegraph__codegraph_explore" ];
           assert disabledOverride == [ ];
           assert wildcardOverride == [ "mcp__codegraph__*" ];
+          assert builtins.all (asset: builtins.elem asset managedPiAssets) [ "AGENTS.md" "skills" "prompts" "models.json" "keybindings.json" ];
+          assert nixpkgs.lib.assertMsg (missingPiAssets == [ ]) "Pi Home Manager files missing from yolo shared assets: ${nixpkgs.lib.concatStringsSep ", " missingPiAssets}";
+          assert builtins.all (asset: !(builtins.elem asset piSharedAssets)) [ "auth.json" "sessions" "historian.json" "historian-chronicle.json" ];
           assert worktreeDefault == null;
           assert worktreeCustom == "/srv/nvme/subagents-worktrees";
           assert worktreeManagedDefault == false;

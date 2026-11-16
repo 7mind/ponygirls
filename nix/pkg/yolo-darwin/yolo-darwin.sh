@@ -683,7 +683,7 @@ ensure_codex_config() {
 
 # pi resolves all per-user state below PI_CODING_AGENT_DIR, including the
 # built-in MCP registry mcp.json, which is copied in as a shared asset.
-PI_SHARED_ASSETS=(settings.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
+PI_SHARED_ASSETS=(settings.json models.json keybindings.json subagents-policy.json historian-defaults.json historian-chronicle-defaults.json AGENTS.md APPEND_SYSTEM.md prompts skills extensions mcp.json)
 if [[ -n "${YOLO_PI_SHARED_ASSETS:-}" ]]; then
   PI_SHARED_ASSETS=()
   while IFS= read -r asset; do

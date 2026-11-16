@@ -33,6 +33,11 @@ printf 'x\n' > "$FAKE_HOME/.codex/prompts/cq:plan.md"
 printf 'x\n' > "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
 printf 'x\n' > "$FAKE_HOME/.pi/agent/integration-agents/reviewer.md"
 printf 'x\n' > "$FAKE_HOME/.pi/agent/prompts/cq:plan.md"
+PI_CONFIG_FIXTURES=(models.json keybindings.json subagents-policy.json historian-defaults.json historian-chronicle-defaults.json)
+for asset in "${PI_CONFIG_FIXTURES[@]}"; do
+  printf '{"fixture":"%s"}\n' "$asset" > "$FAKE_HOME/.pi/agent/$asset"
+done
+printf '{"allowedModels":null}\n' > "$FAKE_HOME/.pi/agent/subagents-policy.json"
 
 printf '%s\n' \
   "#!$_bash_path" \
@@ -114,6 +119,16 @@ assert_contains \
   "named profile re-shares Pi appended system prompt read-only" \
   "$OUT" \
   "$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md,$FAKE_HOME/.pi/agent/APPEND_SYSTEM.md"
+DEFAULT_PI_OUT="$(YOLO_PI_SHARED_ASSETS= run_profile_yolo "$GLOBAL_CONFIG_HOME")"
+assert_eq "default Pi shared-asset launch succeeds" "0" "$?"
+for asset in "${PI_CONFIG_FIXTURES[@]}"; do
+  assert_contains "default named Pi $asset is read-only" "$DEFAULT_PI_OUT" \
+    $'--ro-bind\n'"$FAKE_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
+done
+for asset in auth.json sessions historian.json historian-chronicle.json; do
+  assert_not_contains "default named Pi $asset stays profile-local" "$DEFAULT_PI_OUT" \
+    "$FAKE_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
+done
 PROFILE_CODEX_CONFIG="$FAKE_HOME/.config/yolo/foo/codex/home/config.toml"
 # By default the profile reads the main codex config read-only; trust comes
 # from a -c override on the codex command line instead of a rewritten file.
@@ -826,6 +841,14 @@ while IFS= read -r asset; do
   assert_not_contains "named Pi $asset never falls back to native source" "$OUT" \
     "$FAKE_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
 done <<< "$YOLO_PI_SHARED_ASSETS"
+DEFAULT_PI_OUT="$(YOLO_PI_SHARED_ASSETS= YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_yolo --profile managed cmd true)"
+assert_eq "default Pi managed-source launch succeeds" "0" "$?"
+for asset in "${PI_CONFIG_FIXTURES[@]}"; do
+  assert_contains "default named Pi $asset uses managed source read-only" "$DEFAULT_PI_OUT" \
+    $'--ro-bind\n'"$MANAGED_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
+  assert_not_contains "default named Pi $asset never uses native source" "$DEFAULT_PI_OUT" \
+    "$FAKE_HOME/.pi/agent/$asset,$FAKE_HOME/.pi/agent/$asset"
+done
 assert_contains "named credentials/state still use profile backing" "$OUT" \
   "$FAKE_HOME/.config/yolo/managed/claude/home,$FAKE_HOME/.claude"
 assert_not_contains "managed source is not a credential/state mount" "$OUT" \

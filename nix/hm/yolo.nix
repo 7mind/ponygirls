@@ -485,7 +485,11 @@ in
       type = lib.types.listOf lib.types.str;
       default = [
         "settings.json"
+        "models.json"
         "keybindings.json"
+        "subagents-policy.json"
+        "historian-defaults.json"
+        "historian-chronicle-defaults.json"
         "AGENTS.md"
         "APPEND_SYSTEM.md"
         "prompts"

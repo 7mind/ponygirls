@@ -681,6 +681,11 @@ printf 'model = "test"\n' > "$RESHARE_HOME/.codex/config.toml"
 echo x > "$RESHARE_HOME/.codex/prompts/cq:plan.md"
 echo x > "$RESHARE_HOME/.pi/agent/settings.json"
 echo x > "$RESHARE_HOME/.pi/agent/APPEND_SYSTEM.md"
+PI_CONFIG_FIXTURES=(models.json keybindings.json subagents-policy.json historian-defaults.json historian-chronicle-defaults.json)
+for asset in "${PI_CONFIG_FIXTURES[@]}"; do
+  printf '{"fixture":"%s"}\n' "$asset" > "$RESHARE_HOME/.pi/agent/$asset"
+done
+printf '{"allowedModels":null}\n' > "$RESHARE_HOME/.pi/agent/subagents-policy.json"
 echo x > "$RESHARE_HOME/.pi/agent/integration-agents/reviewer.md"
 echo x > "$RESHARE_HOME/.pi/agent/prompts/cq:plan.md"
 run_profile_sync() {
@@ -702,6 +707,19 @@ assert_zero "codex-config launch prepares every profile's assets" "$STATUS"
 RESHARE_PROF="$RESHARE_HOME/.config/yolo/foo"
 _is_real_file() { if [[ -f "$1" && ! -L "$1" ]]; then echo yes; else echo no; fi; }
 _is_real_dir()  { if [[ -d "$1" && ! -L "$1" ]]; then echo yes; else echo no; fi; }
+OUT="$(YOLO_PI_SHARED_ASSETS= run_profile_sync --enable=codex-config)"
+assert_zero "default shared-asset launch succeeds" "$?"
+for asset in "${PI_CONFIG_FIXTURES[@]}"; do
+  assert_eq "default Pi $asset is copied as a real file" yes "$(_is_real_file "$RESHARE_PROF/pi/$asset")"
+  cmp -s "$RESHARE_HOME/.pi/agent/$asset" "$RESHARE_PROF/pi/$asset"
+  assert_zero "default Pi $asset content matches its managed source" "$?"
+done
+printf '{"allowedModels":[]}\n' > "$RESHARE_HOME/.pi/agent/subagents-policy.json"
+OUT="$(YOLO_PI_SHARED_ASSETS= run_profile_sync --enable=codex-config)"
+assert_zero "changed policy relaunch succeeds" "$?"
+cmp -s "$RESHARE_HOME/.pi/agent/subagents-policy.json" "$RESHARE_PROF/pi/subagents-policy.json"
+assert_zero "changed policy is refreshed on relaunch" "$?"
+assert_contains "previous profile policy is backed up" "$(cat "$RESHARE_PROF/pi/subagents-policy.json.yolobak-1" 2>/dev/null)" '"allowedModels":null'
 assert_eq "reshare: claude settings.json copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/claude/settings.json")"
 assert_eq "reshare: claude CLAUDE.md copied as a real file" "yes" "$(_is_real_file "$RESHARE_PROF/claude/CLAUDE.md")"
 assert_eq "reshare: claude skills copied as a real dir" "yes" "$(_is_real_dir "$RESHARE_PROF/claude/skills")"
@@ -840,7 +858,9 @@ for asset in .claude/settings.json .claude/CLAUDE.md .claude/skills/review/SKILL
   .codex/AGENTS.md .codex/prompts/plan.md .codex/skills/review/SKILL.md \
   .pi/agent/settings.json .pi/agent/AGENTS.md .pi/agent/APPEND_SYSTEM.md \
   .pi/agent/integration-agents/reviewer.md .pi/agent/prompts/plan.md \
-  .pi/agent/skills/review/SKILL.md .pi/agent/extensions/plugin.js .pi/agent/mcp.json; do
+  .pi/agent/skills/review/SKILL.md .pi/agent/extensions/plugin.js .pi/agent/mcp.json \
+  .pi/agent/models.json .pi/agent/keybindings.json .pi/agent/subagents-policy.json \
+  .pi/agent/historian-defaults.json .pi/agent/historian-chronicle-defaults.json; do
   mkdir -p "$MANAGED_HOME/$(dirname "$asset")"
   printf 'managed:%s\n' "$asset" > "$MANAGED_HOME/$asset"
 done
@@ -855,6 +875,11 @@ for asset in claude/settings.json claude/CLAUDE.md claude/skills/review/SKILL.md
   pi/settings.json pi/AGENTS.md pi/APPEND_SYSTEM.md pi/integration-agents/reviewer.md \
   pi/prompts/plan.md pi/skills/review/SKILL.md pi/extensions/plugin.js pi/mcp.json; do
   assert_contains "managed named asset $asset" "$(cat "$RESHARE_PROF/$asset" 2>/dev/null)" 'managed:'
+done
+OUT="$(YOLO_PI_SHARED_ASSETS= YOLO_MANAGED_CONFIG_HOME="$MANAGED_HOME" run_profile_sync)"
+assert_zero "default managed shared-asset launch succeeds" "$?"
+for asset in "${PI_CONFIG_FIXTURES[@]}"; do
+  assert_contains "default Pi $asset uses managed source" "$(cat "$RESHARE_PROF/pi/$asset" 2>/dev/null)" 'managed:'
 done
 assert_eq "named Codex config uses managed source" 'model = "managed"' "$(cat "$RESHARE_PROF/codex/config.toml")"
 assert_eq "managed Pi credentials are not copied" no "$([[ -e "$RESHARE_PROF/pi/auth.json" ]] && echo yes || echo no)"
