@@ -21,7 +21,14 @@ let
     if [[ -z "''${CHRONICLE_URL:-}" ]]; then
       export CHRONICLE_URL=${lib.escapeShellArg baseUrl}
     fi
-    if [[ -z "''${CHRONICLE_TOKEN:-}" && -z "''${CHRONICLE_TOKEN_FILE:-}" ]]; then
+    configured_token_fallback=true
+    for argument in "$@"; do
+      case "$argument" in
+        --) break ;;
+        --token-file|--token-file=*) configured_token_fallback=false; break ;;
+      esac
+    done
+    if [[ "$configured_token_fallback" == true && -z "''${CHRONICLE_TOKEN:-}" && -z "''${CHRONICLE_TOKEN_FILE:-}" ]]; then
       export CHRONICLE_TOKEN_FILE=${lib.escapeShellArg (if cfg.tokenFile == null then "" else toString cfg.tokenFile)}
     fi
     exec ${cliPackage}/bin/chronicle "$@"
@@ -49,7 +56,7 @@ in
     tokenFile = lib.mkOption {
       type = lib.types.nullOr lib.types.path;
       default = null;
-      description = "Runtime MCP/agent bearer token file (Read scope), never token contents. Also the compatibility default for collector.tokenFile.";
+      description = "Runtime MCP/CLI agent bearer token file (Read scope), never token contents. CLI fallback yields to explicit --token-file or runtime CHRONICLE_TOKEN/CHRONICLE_TOKEN_FILE. Also the compatibility default for collector.tokenFile.";
     };
     collector = {
       enable = lib.mkEnableOption "the Chronicle user collector; opt in only after reviewing roots, exclusions and model destinations";

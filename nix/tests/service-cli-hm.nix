@@ -101,10 +101,20 @@ pkgs.runCommand "service-cli-hm-test" { nativeBuildInputs = [ pkgs.python3 ]; } 
       assert json.loads(run([], {'TOKEN': 'synthetic-literal', 'TOKEN_FILE': '/runtime/explicit.token'})) == {
           **default, 'TOKEN': 'synthetic-literal', 'TOKEN_FILE': '/runtime/explicit.token'}
       cases.append(service + ':ambiguous-runtime-pair-left-for-client-validation')
+      explicit_file = {**default, 'TOKEN_FILE': None} if service == 'chronicle' else default
+      assert json.loads(run(['whoami', '--token-file', '/runtime/cli.token'], {})) == explicit_file
+      cases.append(service + ':explicit-cli-file-overrides-configured-fallback')
+      assert json.loads(run(['whoami', '--token-file=/runtime/cli.token'], {})) == explicit_file
+      cases.append(service + ':equals-cli-file-overrides-configured-fallback')
+      assert json.loads(run(['whoami', '--token-file', '/runtime/cli.token'], {'TOKEN_FILE': '/runtime/env.token'})) == {
+          **default, 'TOKEN_FILE': '/runtime/env.token'}
+      cases.append(service + ':explicit-cli-file-keeps-runtime-conflict-for-client')
+      assert json.loads(run(['search', '--', '--token-file'], {})) == default
+      cases.append(service + ':literal-token-file-is-not-a-credential-option')
       assert json.loads(run([], {'URL': 'https://runtime.example.test'})) == {
           **default, 'URL': 'https://runtime.example.test'}
       cases.append(service + ':runtime-url-overrides-configured-default')
-  assert len(cases) == 12 and len(cases) == len(set(cases))
+  assert len(cases) == 20 and len(cases) == len(set(cases))
   Path(os.environ['RECEIPT']).write_text(json.dumps({
       'tests': cases, 'runtimeCases': len(cases), 'moduleCases': 4,
       'failures': 0, 'errors': 0, 'skips': 0,
