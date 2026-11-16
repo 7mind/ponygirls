@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import secrets
 import signal
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -28,6 +29,32 @@ assert DATABASE['jdbcUrl'].startswith('jdbc:postgresql://127.0.0.1:')
 
 def digest(path):
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def cli_identity():
+    node_path = shutil.which('node')
+    assert node_path is not None, 'pinned Node executable required'
+    node_reference = Path(node_path)
+    node = node_reference.resolve(strict=True)
+    selected = os.environ.get('CHRONICLE_CLI_EXECUTABLE')
+    def bindings(root):
+        files = [root / 'package.json'] + sorted(p for p in (root / 'dist').rglob('*') if p.suffix in ('.js', '.mjs', '.cjs'))
+        return {str(p.relative_to(root)): digest(p) for p in files}
+    source = bindings(CLI_ROOT)
+    assert len(source) > 1, 'freshly built CLI runtime required'
+    identity = dict(kind='source-built', runtimeFiles=source,
+                    node=dict(reference=str(node_reference), path=str(node), sha256=digest(node), version=subprocess.check_output([str(node), '--version'], text=True).strip()))
+    if selected is None:
+        return [str(node), str(CLI_ROOT / 'dist/cli/src/main.js')], identity
+    assert Path(selected).is_absolute(), 'installed CLI executable must be absolute'
+    executable = Path(selected).resolve(strict=True)
+    runtime_root = executable.parent.parent / 'lib/chronicle-cli'
+    actual = bindings(runtime_root)
+    assert source == actual, 'installed CLI runtime does not match the freshly built source/model codecs'
+    assert str(node_reference) in executable.read_text(), 'installed wrapper does not use the pinned test Node reference'
+    identity.update(kind='installed', executable=str(executable), executableSha256=digest(executable), runtimeFiles=actual,
+                    sourceRuntimeMatches=True)
+    return [str(executable)], identity
 
 
 def listening(process, port):
@@ -53,9 +80,10 @@ def main():
     report = CLI_ROOT / 'artifacts' / ('server-' + timestamp)
     report.mkdir(parents=True, exist_ok=False)
     cases = []
+    cli_command, cli_binding = cli_identity()
     with tempfile.TemporaryDirectory(prefix='chronicle-cli-server-') as temporary:
         root = Path(temporary)
-        env = {k: v for k, v in os.environ.items() if not k.startswith('CHRONICLE_')}
+        env = {k: v for k, v in os.environ.items() if not k.startswith('CHRONICLE_') and k not in ('NODE_OPTIONS', 'NODE_PATH')}
         env.update(HOME=str(root), CHRONICLE_STATE_DIR=str(root / 'alice-state'))
         password = 'synthetic-cli-acceptance'
         password_file = root / 'password'
@@ -120,7 +148,7 @@ def main():
         process = subprocess.Popen([str(SERVER), 'serve-standby', str(config_file)], cwd=REPO_ROOT,
                                    env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
         summary = dict(serverSha256=digest(SERVER), runtimeSource=os.environ.get('CHRONICLE_RUNTIME_SOURCE'),
-                       runnerSha256=digest(Path(__file__)), nodeVersion=subprocess.check_output(['node', '--version'], text=True).strip(),
+                       runnerSha256=digest(Path(__file__)), nodeVersion=cli_binding['node']['version'], cliExecution=cli_binding,
                        packageLockSha256=digest(CLI_ROOT / 'package-lock.json'),
                        generatedCodecSha256={str(p.relative_to(REPO_ROOT)): digest(p) for p in sorted((REPO_ROOT / 'chronicle/generated/typescript').rglob('*.ts'))},
                        cliSourceSha256={str(p.relative_to(CLI_ROOT)): digest(p) for p in sorted((CLI_ROOT / 'src').glob('*.ts'))},
@@ -139,7 +167,7 @@ def main():
                 assert process.poll() is None, 'owned native process exited'
                 selected = dict(env, CHRONICLE_STATE_DIR=str(root / (user + '-state')),
                                 CHRONICLE_TOKEN_FILE=str(token_files[user] if token_file is None else token_file))
-                result = subprocess.run(['node', str(CLI_ROOT / 'dist/cli/src/main.js'), '--url', origin,
+                result = subprocess.run([*cli_command, '--url', origin,
                                          '--allow-insecure-http', '--json', *args], env=selected,
                                         input=None if document is None else json.dumps(document), text=True,
                                         capture_output=True, timeout=35)
@@ -160,6 +188,8 @@ def main():
                 call('independent login ' + user, ['login', '--login', user, '--password-file', str(password_file)], user)
                 call('session identity ' + user, ['whoami'], user)
             call('account settings and configured token metadata', ['settings'])
+            call('account configured token rejection remains definitive', ['tokens', 'revoke', static_tokens[0]['id'], '--yes'], expected=3)
+            call('account unknown token rejection remains definitive', ['tokens', 'revoke', str(uuid.uuid4()), '--yes'], expected=4)
             call('bearer identity', ['whoami', '--auth', 'bearer'])
             messages = [dict(id=f'm{i}', parentId=None, role='user', text=('Needle synthetic PostgreSQL 🙂' if i == 2 else f'synthetic content {i}'), timestamp=None, recordIndex=i) for i in range(1, 4)]
             records = [dict(type='session', id='session', version=3)] + [dict(type='message', id=m['id'], message=dict(role='user', content=[dict(type='text', text=m['text'])])) for m in messages]
@@ -171,6 +201,8 @@ def main():
             receipt = call('explicit stdin ingestion', ['ingest', '--file', '-', '--yes'], document=request)
             replay = call('deliberate exact payload ingest receipt replay', ['ingest', '--file', '-', '--yes'], document=request)
             assert replay == receipt
+            conflict = dict(request, requestId=str(uuid.uuid4()))
+            call('generated ingest CAS conflict remains definitive', ['ingest', '--file', '-', '--yes'], expected=5, document=conflict)
             session_id, job_id = receipt['sessionId'], receipt['jobId']
             report_data = dict(collectorId='cli-owned-test', sequence='1', runId=str(uuid.uuid4()), phase='Idle', startedAt='2026-11-16T00:00:00Z',
                                counters={**{k: 0 for k in ['discovered', 'scanned', 'waiting', 'excluded', 'unchanged', 'enqueued', 'uploaded', 'uploadFailures', 'quarantined', 'pending', 'stopped', 'conflicts']}, 'scannedBytes': '0'}, totalUploadBytes='0', uploadedBytes='0', currentUploadTotalBytes=None, error=None)

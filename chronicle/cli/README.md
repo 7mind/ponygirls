@@ -193,7 +193,11 @@ nix develop .#chronicle --command bash -c 'cd chronicle/cli && npm ci && npm run
 ```
 
 The fast CLI suite includes specified blackbox codec/command/output contracts
-and actual CLI subprocesses against owned HTTP/WS fixtures. No live credential
+and actual CLI subprocesses against owned HTTP/WS fixtures. Nix packaging also
+runs the complete process suite against the final installed `bin/chronicle`,
+not just its imports or help. Set `CHRONICLE_CLI_EXECUTABLE` to an installed
+absolute binary path to run those process tests explicitly: `node --test
+dist/cli/test/cli.test.js` from `cli/` after a source build. No live credential
 or service is used. Regenerate the boundary schema only when the current model
 changes: `cd chronicle/cli && node scripts/schema.mjs`, then inspect/test it.
 A normal build checks that this generated boundary is current.
@@ -204,7 +208,13 @@ pinned shell, set `CHRONICLE_SERVER` to the verified native executable and invok
 `with-service-postgres bash chronicle/cli/scripts/test-server.sh` from repository
 root. The provider supplies `PONYGIRLS_OWNED_FIXTURE_ROOT` and the Chronicle DB
 manifest; arbitrary/live database options are deliberately unavailable. The
-runner uses `serve-standby`, synthetic content and an owned scripted model for
+runner accepts `CHRONICLE_CLI_EXECUTABLE=/nix/store/.../bin/chronicle` for actual
+installed-binary acceptance, or explicitly labels the default as source-built.
+An installed run verifies every installed runtime JS/package file against the
+fresh source build and binds its wrapper plus the pinned Node executable digest
+and version in the receipt. Set that variable outside the owned-PG wrapper; it
+does not select any live service or credential. The runner uses `serve-standby`,
+synthetic content and an owned scripted model for
 the actual MCP test/tool loop; no external models or semantic-quality claim. Each run
 creates a fresh ignored `cli/artifacts/server-*/receipt.json` with source hashes,
 case counts and errors/skips, plus sanitized owned server logs. It terminates

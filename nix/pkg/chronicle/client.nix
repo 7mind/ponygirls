@@ -55,6 +55,14 @@ buildNpmPackage {
     install -Dm644 cli/README.md "$out/share/doc/chronicle-cli/README.md"
     runHook postInstall
   '';
+  doInstallCheck = true;
+  installCheckPhase = ''
+    runHook preInstallCheck
+    cd cli
+    CHRONICLE_CLI_EXECUTABLE="$out/bin/chronicle" node --test dist/cli/test/cli.test.js
+    cd ..
+    runHook postInstallCheck
+  '';
   meta = {
     description = "Chronicle application CLI with independent human sessions and bearer ingestion/read tools";
     license = lib.licenses.mit;

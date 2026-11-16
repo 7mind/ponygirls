@@ -56,7 +56,8 @@ function state(f: Fixture): void {
 }
 async function cli(args: string[], f: Fixture | null, environment: Record<string, string>, stdin: string | null): Promise<{ code: number; stdout: string; stderr: string }> {
   const env: NodeJS.ProcessEnv = { PATH: process.env['PATH'], HOME: f === null ? '/nonexistent' : f.root, ...(f === null ? {} : { CHRONICLE_STATE_DIR: join(f.root, 'state') }), ...environment };
-  const child = spawn(process.execPath, [CLI, ...(f === null ? [] : ['--url', f.origin, '--allow-insecure-http']), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
+  const installed = process.env['CHRONICLE_CLI_EXECUTABLE'];
+  const child = spawn(installed === undefined ? process.execPath : installed, [...(installed === undefined ? [CLI] : []), ...(f === null ? [] : ['--url', f.origin, '--allow-insecure-http']), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = ''; let stderr = ''; child.stdout.on('data', data => { stdout += String(data); }); child.stderr.on('data', data => { stderr += String(data); }); child.stdin.on('error', () => {}); child.stdin.end(stdin === null ? undefined : stdin);
   const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
   try { const code = await new Promise<number>((resolve, reject) => { child.on('error', reject); child.on('exit', (code, signal) => signal === null ? resolve(code!) : reject(new Error(`CLI terminated ${signal}`))); }); return { code, stdout, stderr }; } finally { clearTimeout(timer); }
