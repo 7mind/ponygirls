@@ -1,4 +1,4 @@
-{ lib, buildNpmPackage, fetchNpmDeps, nodejs_24, makeWrapper }:
+{ lib, buildNpmPackage, fetchNpmDeps, nodejs_24, makeWrapper, python3 }:
 buildNpmPackage {
   pname = "haystack-cli";
   version = "0.1.0";
@@ -32,6 +32,7 @@ buildNpmPackage {
     runHook postBuild
   '';
   nativeBuildInputs = [ makeWrapper ];
+  nativeCheckInputs = [ python3 ];
   doCheck = true;
   checkPhase = ''
     runHook preCheck

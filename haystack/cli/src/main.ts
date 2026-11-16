@@ -2,15 +2,16 @@
 import {open} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {performance} from 'node:perf_hooks';
-import {Arguments,parse,validate,text,required,number,HELP} from './args.ts';
+import {Arguments,parse,validate,text,required,number,help,helpHint} from './args.ts';
 import {Client,settings,protectedFile,validateInput} from './client.ts';
 import {State,stateDirectory,readBounded} from './state.ts';
-import {CliError,fail,usage,key,integer,uuidv7,requestId,parseDocument,envelope,object,exact,safe,VERSION,INPUT_BYTES,DOCUMENT_BYTES} from './core.ts';
+import {CliError,fail,usage,key,integer,uuidv7,requestId,parseDocument,envelope,object,exact,VERSION,INPUT_BYTES,DOCUMENT_BYTES} from './core.ts';
 import {api,encode,routes,type Operation} from './protocol.ts';
 import * as writes from './writes.ts';
 import * as accounts from './account.ts';
 import {watch} from './watch.ts';
-import {human,humanWatch} from './human.ts';
+import {human,humanWatch,humanError} from './human.ts';
+import {Presentation} from './presentation.ts';
 import {LiveOutput} from './output.ts';
 async function output(stream:NodeJS.WritableStream,value:string):Promise<void>{return new Promise((resolve,reject)=>{stream.write(value,error=>{if(error!==undefined&&error!==null)reject(new CliError('output-failed','could not write command output',6,{}));else resolve();});});}
 async function source(file:string,limit:number,timeout:number,secret:boolean):Promise<string> {
@@ -25,15 +26,15 @@ async function source(file:string,limit:number,timeout:number,secret:boolean):Pr
 }
 function fileOption(args:Arguments):string {const file=text(args,'file');if(file!==undefined&&args.flags.has('stdin'))usage('choose --file or --stdin, not both');return args.flags.has('stdin')?'-':required(args,'file');}
 function wireItem(value:unknown):Record<string,unknown>{if(!object(value))return fail('invalid-response','invalid item response',6);return value;}
-async function run(args:Arguments,env:NodeJS.ProcessEnv):Promise<void> {
-  if(args.flags.has('version')){if(args.words.length)usage('--version does not take a command');await output(process.stdout,args.json?exact({ok:true,command:'version',result:{version:VERSION}},false)+'\n':`haystack ${VERSION}\n`);return;}
-  if(args.flags.has('help')||args.words.length===0){await output(process.stdout,args.json?exact({ok:true,command:'help',result:{text:HELP}},false)+'\n':HELP);return;}
+async function run(args:Arguments,env:NodeJS.ProcessEnv,presentation:Presentation):Promise<void> {
+  if(args.flags.has('version')){if(args.words.length)usage('--version does not take a command');await output(process.stdout,args.json?exact({ok:true,command:'version',result:{version:VERSION}},false)+'\n':presentation.heading(`haystack ${VERSION}`)+'\n');return;}
+  if(args.flags.has('help')||args.words.length===0||args.words[0]==='help'){const text=help(args);await output(process.stdout,args.json?exact({ok:true,command:'help',result:{text}},false)+'\n':presentation.help(text));return;}
   const command=validate(args);const session=['login','logout','status','account','token','watch'].includes(command);
   const config=settings(args,env,session,command==='health'||command==='versions'||command==='pending');const state=new State(stateDirectory(env,text(args,'state-dir')),config.origin);const client=new Client(config,state);
   const word=args.words[1];let result:unknown;let operationId:string|undefined;
   if(command==='watch'){
     const duration=number(args,'duration-ms',60_000,1,86_400_000);const max=number(args,'max-events',1000,1,1_000_000);const destination=new LiveOutput(process.stdout);
-    const emit=async(frame:unknown,signal:AbortSignal)=>destination.write(args.json?exact({ok:true,command:'watch',event:frame},false)+'\n':humanWatch(frame),signal);
+    const emit=async(frame:unknown,signal:AbortSignal)=>destination.write(args.json?exact({ok:true,command:'watch',event:frame},false)+'\n':humanWatch(frame,presentation),signal);
     try{await watch(client,duration,max,emit);}finally{destination.close();}return;
   }
   if(command==='health')result=await client.health();
@@ -103,12 +104,13 @@ async function run(args:Arguments,env:NodeJS.ProcessEnv):Promise<void> {
     else if(word==='issue'&&args.words.length===2){const name=required(args,'name');const file=required(args,'secret-file');if(name.length===0||name.length>128||name!==name.trim()||/[\p{Cc}]/u.test(name))usage('token name must be 1..128 characters without surrounding whitespace or control characters');result=await state.locked(()=>accounts.issue(client,name,file));}
     else usage('use token list, issue, revoke ID or acknowledge');
   } else usage('unimplemented command');
-  await output(process.stdout,args.json?exact({ok:true,command,...(operationId===undefined?{}:{requestId:operationId}),result},false)+'\n':human({command,arguments:args.words.slice(1),requestId:operationId},result));
+  await output(process.stdout,args.json?exact({ok:true,command,...(operationId===undefined?{}:{requestId:operationId}),result},false)+'\n':human({command,arguments:args.words.slice(1),requestId:operationId},result,presentation));
 }
 async function main(argv:string[],env:NodeJS.ProcessEnv):Promise<void> {
   process.stdout.on('error',()=>{process.exitCode=6;});process.stderr.on('error',()=>{process.exitCode=6;});
-  let json=argv.includes('--json');
-  try{const args=parse(argv);json=args.json;await run(args,env);}
-  catch(error){const fault=error instanceof CliError?error:new CliError('internal','internal client failure; no submitted data or credentials are included',6,{});process.exitCode=fault.exit;const payload={ok:false,error:{code:fault.code,message:fault.message,...fault.details}};await output(process.stderr,json?exact(payload,false)+'\n':`${safe(fault.code)}: ${safe(fault.message)}${typeof fault.details.requestId==='string'?'\nRequest ID: '+safe(fault.details.requestId):''}\n`).catch(()=>{process.exitCode=6;});}
+  let json=argv.includes('--json');let args:Arguments|undefined;const flags=new Map<string,string|boolean>();
+  const presentation=(terminal:boolean)=>new Presentation({color:flags.get('color'),json,terminal,noColor:env.NO_COLOR,term:env.TERM});
+  try{args=parse(argv,flags);json=args.json;await run(args,env,presentation(process.stdout.isTTY===true));}
+  catch(error){const fault=error instanceof CliError?error:new CliError('internal','internal client failure; no submitted data or credentials are included',6,{});process.exitCode=fault.exit;const payload={ok:false,error:{code:fault.code,message:fault.message,...fault.details}};await output(process.stderr,json?exact(payload,false)+'\n':humanError(fault,presentation(process.stderr.isTTY===true),helpHint(args))).catch(()=>{process.exitCode=6;});}
 }
 await main(process.argv.slice(2),process.env);

@@ -4,6 +4,18 @@ Standalone Node24 client, executable `haystack`. It does not embed the server,
 GraalVM, a browser, or an MCP proxy. Run `haystack --help` for examples. Human
 output is the default even when piped; `--json` is explicit and accepted before
 or after commands. Help/version need neither credentials, state nor network.
+Use `haystack COMMAND --help` or `haystack help COMMAND` for focused usage,
+examples and command-specific safeguards; token actions likewise support
+`haystack token issue --help` / `haystack help token issue`. Irrelevant token
+options and incorrect action arity are rejected before configuration or session
+lookup, rather than ignored.
+
+`--color auto|always|never` works before or after commands. The default `auto`
+styles human headings/help only on that output stream's TTY; redirected human
+output stays plain. A nonempty `NO_COLOR` or `TERM=dumb` suppresses automatic
+colour. Explicit `always`/`never` overrides those environment controls. Stderr
+uses its own TTY capability. `--json` always disables ANSI, including help,
+errors and watch NDJSON; stripping colour from human output preserves its text.
 
 ## Configuration and authentication
 
@@ -236,7 +248,9 @@ Writes additionally include top-level `requestId`. Errors go **only to stderr**;
 `--json` gives `{"ok":false,"error":{"code":"...","message":"..."}}`, with
 safe numeric status/currentRevision/span offsets/requestId/pending when relevant.
 Raw server messages, exception strings, submitted values, filesystem paths,
-headers and credentials never enter diagnostics. Human text escapes terminal
+headers and credentials never enter diagnostics. Human errors retain the same
+safe HTTP status, current revision, UTF16 span offsets and complete request ID
+when present; usage errors point to focused help. Human text escapes terminal
 controls (including ESC, C1, bidi/format controls); JSON preserves data and must
 not be printed unsafely to a terminal by a downstream consumer.
 
@@ -287,7 +301,8 @@ npm run test:real
 ```
 
 `npm test` runs specified behavioral blackbox process tests against a controlled
-loopback API and generated-codec boundary tests. `test:real` is a separate,
+loopback API, real PTY/pipe presentation checks (using test-only Python 3), and
+generated-codec boundary tests. `test:real` is a separate,
 fail-closed no-browser acceptance leg against an owned real Scala server and PG,
 not a substitute mock. See `tests/real.acceptance.mjs` and
 `tests/run-real.sh` for its explicit prerequisites. There are no live-service

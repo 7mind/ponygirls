@@ -9,6 +9,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {WebSocketServer} from 'ws';
+import {terminalProcess} from './pty.mjs';
 const cli=fileURLToPath(new URL('../dist/cli/src/main.js',import.meta.url));
 const token='AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const secret=Buffer.alloc(32,1).toString('base64url');
@@ -46,12 +47,12 @@ before(async()=>{
  const prev=replays.get(body.requestId);if(prev){if(prev.body!==JSON.stringify(body))return fail('replay-conflict',409);return send({...prev.result,replayed:true,...(mode==='wrong-replay-revision'?{revision:99}:{})});}
  const current=items.get(body.key);if((current?.revision??0)!==body.expectedRevision)return fail('conflict',409);
  const result={key:body.key,revision:body.expectedRevision+1,metadata,replayed:false};items.set(body.key,{key:body.key,revision:result.revision,document:body.document,metadata});replays.set(body.requestId,{body:JSON.stringify(body),result});putEffects.push(body);if(mode==='wrong-put-revision')return send({...result,revision:99});if(lose){lose=false;req.socket.destroy();return;}if(mode==='post-put-auth'){mode='normal';return fail('unauthorized',401);}if(badResponse){badResponse=false;return send({key:body.key});}return send(result);}
- if(req.url==='/api/v1/get'){const item=items.get(body.key);return item?send(item):fail('not-found',404);}
+ if(req.url==='/api/v1/get'){if(mode==='error-details')return send({code:'conflict',message:'CANARY-UNTRUSTED',currentRevision:17,spans:[]},409);const item=items.get(body.key);return item?send(item):fail('not-found',404);}
  if(req.url==='/api/v1/history')return send({revisions:mode==='empty-history'?[]:[{revision:1,modifiedAt:metadata.modifiedAt,modifiedBy:'bot',tokenId:'worker'}]});
  if(mode==='slow-pages'&&req.url==='/api/v1/search'){if(!body.cursor&&swapTokenFile!==undefined)await writeFile(swapTokenFile,secret+'\n',{mode:0o600});res.on('close',()=>slowPages.push({cursor:body.cursor,finished:res.writableEnded}));setTimeout(()=>send({items:[],cursor:body.cursor?null:'slow-cursor'}),400);return;}
  if(req.url==='/api/v1/search')return send({items:[...items.values()].map(v=>({key:v.key,project:'p',item:'i',revision:v.revision,title:'horse\u001b[31m',docType:'fact',status:'actual',importance:'low',humanAttention:'cleared',tags:[],modifiedAt:metadata.modifiedAt,modifiedBy:'bot'})),cursor:body.cursor?null:'opaque-cursor'});
  if(req.url==='/api/v1/retrieve')return send('{"sources":[],"mode":"Lexical","countScope":"ExactMatches","total":9223372036854775807,"rankingLimit":null}');
- if(req.url==='/api/v1/query/analyze')return send({valid:true,spans:[]});
+ if(req.url==='/api/v1/query/analyze'){if(mode==='error-spans')return send({code:'invalid-query',message:'CANARY-UNTRUSTED',currentRevision:null,spans:[{start:2,end:5,message:'CANARY-UNTRUSTED'}]},400);return send({valid:true,spans:[]});}
  if(req.url==='/api/v1/complete')return send({suggestions:mode==='empty-completions'?[]:['type:fact']});
  if(req.url==='/api/v1/values')return send({values:mode==='empty-values'?[]:['fact']});
  return fail('unavailable',503);
@@ -273,4 +274,69 @@ test('wrong but schema-valid put ACK revisions retain exact intent until correct
   mode='normal';const replay=ok(await run(['replay','--json','--allow-http']));assert.equal(replay.requestId,request);assert.equal(replay.result.revision,3);assert.equal(replay.result.replayed,true);assert.equal(putEffects.filter(effect=>effect.key===key).length,1);assert.deepEqual(await pendingFiles(),[]);
   const attempts=hits.filter(hit=>hit.url==='/api/v1/put'&&hit.body.key===key);assert.equal(attempts.length,3);for(const attempt of attempts)assert.deepEqual(attempt.body,operation);
  }finally{mode='normal';}
+});
+// Regression: help must be scoped and discoverable without configuration, state or credentials.
+test('command and token action help is scoped, discoverable and offline',async()=>{
+ const before=hits.length;const unavailable={HAYSTACK_URL:'',HAYSTACK_TOKEN_FILE:'/missing',HAYSTACK_STATE_DIR:'/missing/state'};
+ for(const args of [['get','--help'],['--help','get'],['help','get'],['get','p:i','--help']]){const view=human(await run(args,unavailable));assert.match(view,/Usage: haystack get PROJECT:ITEM/);assert.match(view,/--revision/);assert.match(view,/Examples:/);assert.ok(!view.includes('token issue --name'));}
+ for(const args of [['token','issue','--help'],['help','token','issue']]){const view=human(await run(args,unavailable));assert.match(view,/Usage: haystack token issue --name NAME --secret-file NEW-FILE/);assert.match(view,/once|one-time/);assert.match(view,/0600/);}
+ assert.match(human(await run(['help','token'],unavailable)),/token revoke TOKEN-ID/);
+ fault(await run(['help','unknown','--json'],unavailable),2,'usage');assert.equal(hits.length,before);
+});
+// Regression: unused token flags and action arity must fail before URL/session/state lookup.
+test('token action arity and irrelevant flags are rejected before configuration or effects',async()=>{
+ const before=hits.length;
+ for(const args of [['token','list','--name','ignored'],['token','revoke','issued:one','--secret-file','/missing'],['token','acknowledge','--name','ignored'],['token','list','extra'],['token','issue','extra'],['token','revoke'],['token','unknown']]){const result=await run([...args,'--json'],{HAYSTACK_URL:'',HAYSTACK_STATE_DIR:'/missing/state'});fault(result,2,'usage');assert.match(JSON.parse(result.stderr).error.message,/token/);}
+ const bad=await run(['token','list','--name','SENSITIVE-INPUT']);assert.equal(bad.code,2);assert.match(bad.stderr,/--name/);assert.match(bad.stderr,/haystack token list --help/);assert.ok(!bad.stderr.includes('SENSITIVE-INPUT'));assert.equal(hits.length,before);
+ const arity=await run(['get']);assert.equal(arity.code,2);assert.match(arity.stderr,/haystack get PROJECT:ITEM/);assert.match(arity.stderr,/haystack get --help/);
+});
+// Regression: sanitized machine diagnostics were discarded by the human error view.
+test('human errors preserve safe revision and UTF16 details without leaking remote messages',async()=>{
+ try{
+  mode='error-details';const conflict=await run(['get','p:diagnostic','--allow-http']);assert.equal(conflict.code,5);assert.equal(conflict.stdout,'');assert.match(conflict.stderr,/Current revision: 17/);assert.match(conflict.stderr,/HTTP status: 409/);assert.ok(!conflict.stderr.includes('CANARY'));
+  const json=await run(['get','p:diagnostic','--allow-http','--json']);assert.equal(json.stderr,'{"ok":false,"error":{"code":"conflict","message":"revision or account owner changed; re-read and deliberately edit","status":409,"currentRevision":17}}\n');
+  mode='error-spans';const query=await run(['analyze','bad','--allow-http']);assert.equal(query.code,2);assert.match(query.stderr,/UTF16 2\.\.5/);assert.ok(!query.stderr.includes('CANARY'));
+ }finally{mode='normal';}
+});
+const ansi=/\x1b\[[0-9;]*m/g;
+const plain=value=>value.replace(ansi,'');
+function tty(args,env,width,terminals){return terminalProcess([process.env.HAYSTACK_CLI_EXECUTABLE||process.execPath,...(process.env.HAYSTACK_CLI_EXECUTABLE?[]:[cli]),...args],{PATH:process.env.PATH,HOME:home,HAYSTACK_STATE_DIR:path.join(home,'state'),HAYSTACK_URL:base,HAYSTACK_TOKEN:token,TERM:'tmux-256color',...env},width,terminals);}
+test('colour controls preserve plain pipes and explicit modes override environment',async()=>{
+ const normal=human(await run(['whoami','--allow-http']));assert.ok(!normal.includes('\x1b'));
+ for(const args of [['--color','always','whoami','--allow-http'],['whoami','--color=always','--allow-http']]){const view=human(await run(args,{NO_COLOR:'1',TERM:'dumb'}));assert.ok(view.includes('\x1b['));assert.equal(plain(view),normal);}
+ for(const args of [['--color','never','whoami','--allow-http'],['whoami','--color','auto','--allow-http']])assert.equal(human(await run(args)),normal);
+ const help=human(await run(['--color','always','--help']));assert.ok(help.includes('\x1b['));assert.equal(plain(help),human(await run(['--help'])));
+ for(const args of [['--color','invalid','--help','--json'],['--color','--json'],['--color','always','--color','never','--json']])fault(await run(args),2,'usage');
+});
+test('real PTY auto colour honours nonempty NO_COLOR and TERM=dumb at 80 and 120 columns',async()=>{
+ for(const width of [80,120]){
+  const normal=human(await tty(['whoami','--allow-http'],{},width,'both'));assert.ok(normal.includes('\x1b['));assert.match(plain(normal),/^User: bot\nType: agent\n/);
+  for(const env of [{NO_COLOR:'1'},{TERM:'dumb'}])assert.ok(!human(await tty(['whoami','--allow-http'],env,width,'both')).includes('\x1b'));
+  assert.ok(human(await tty(['whoami','--allow-http'],{NO_COLOR:''},width,'both')).includes('\x1b['));
+  assert.ok(!human(await tty(['whoami','--color','never','--allow-http'],{},width,'both')).includes('\x1b'));
+  assert.ok(human(await tty(['whoami','--color','always','--allow-http'],{NO_COLOR:'1',TERM:'dumb'},width,'both')).includes('\x1b['));
+ }
+});
+test('help and stderr use their own terminal capability without styling redirected stdout',async()=>{
+ const help=await tty(['get','--help'],{},80,'stdout');assert.equal(help.code,0,help.stderr);assert.ok(help.stdout.includes('\x1b['));assert.match(plain(help.stdout),/Usage: haystack get PROJECT:ITEM/);
+ const error=await tty(['get'],{},120,'stderr');assert.equal(error.code,2);assert.equal(error.stdout,'');assert.ok(error.stderr.includes('\x1b['));assert.match(plain(error.stderr),/haystack get --help/);
+ const redirected=await tty(['whoami','--allow-http'],{},120,'stderr');assert.equal(redirected.code,0,redirected.stderr);assert.ok(!redirected.stdout.includes('\x1b'));
+ const errorPipe=await tty(['get'],{},80,'stdout');assert.equal(errorPipe.code,2);assert.ok(!errorPipe.stderr.includes('\x1b'));
+ const forced=await run(['--color','always','get'],{NO_COLOR:'1',TERM:'dumb'});assert.equal(forced.code,2);assert.ok(forced.stderr.includes('\x1b['));
+ for(const args of [['--unknown','--color','always'],['--url','--color','always']]){const lexical=await run(args,{NO_COLOR:'1',TERM:'dumb'});assert.equal(lexical.code,2);assert.ok(lexical.stderr.includes('\x1b['));}
+ const suppressed=await tty(['--unknown','--color','never'],{},80,'both');assert.equal(suppressed.code,2);assert.ok(!suppressed.stderr.includes('\x1b'));
+});
+test('JSON success help errors and watch ignore colour in pipes and terminals without payload changes',async()=>{
+ const expected='{"ok":true,"command":"whoami","result":{"userId":"bot","userType":"agent","tokenId":"worker","activityProjectId":"corporate-activity"}}\n';
+ for(const mode of ['auto','always','never']){
+  const args=['whoami','--json','--color',mode,'--allow-http'];const pipe=await run(args);assert.equal(pipe.stdout,expected);assert.equal(pipe.stderr,'');const terminal=await tty(args,{},80,'both');assert.equal(terminal.stdout,expected);assert.equal(terminal.stderr,'');
+  const help=ok(await run(['get','--help','--json','--color',mode]));assert.match(help.result.text,/Usage: haystack get/);assert.ok(!help.result.text.includes('\x1b'));
+  const error=await tty(['get','--json','--color',mode],{},120,'both');fault(error,2,'usage');assert.ok(!error.stderr.includes('\x1b'));
+ }
+ const pass=path.join(home,'colour-watch-password');await writeFile(pass,'protected-password\n',{mode:0o600});ok(await run(['login','alice','--password-file',pass,'--json','--allow-http']));
+ const watch=await run(['watch','--json','--color','always','--allow-http','--duration-ms','1000','--max-events','1']);assert.equal(ok(watch).event.kind,'changed');assert.ok(!watch.stdout.includes('\x1b'));
+});
+test('styled human data still escapes untrusted terminal controls and preserves complete content',async()=>{
+ const key='p:colour';ok(await run(['put',key,'--file','-','--expected-revision','0','--json','--allow-http'],{},doc));
+ const unstyled=human(await run(['get',key,'--allow-http']));const styled=human(await run(['get',key,'--color','always','--allow-http']));assert.ok(styled.includes('\x1b['));assert.equal(plain(styled),unstyled);assert.match(styled,/horse\\u\{1b\}\[31m/);assert.ok(!plain(styled).includes('\x1b'));for(const value of [key,'9007199254740993','0.10','1e2','-0'])assert.ok(styled.includes(value));
 });

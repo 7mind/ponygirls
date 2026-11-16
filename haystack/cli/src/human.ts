@@ -1,4 +1,5 @@
-import {exact,object,parseStoredDocument,safe} from './core.ts';
+import {CliError,exact,object,parseStoredDocument,safe} from './core.ts';
+import {type Presentation} from './presentation.ts';
 import {isLosslessNumber,type JsonValue} from '../../web/src/lossless-json.ts';
 
 export interface HumanContext {
@@ -123,6 +124,16 @@ function lines(context:HumanContext,result:unknown):string[] {
   if(command==='token'&&subject==='acknowledge'){const value=result as Acknowledged;return value.acknowledged?['Token issue guard: acknowledged',...(value.warning===undefined?[]:['Recovery: '+safe(value.warning)])]:['No uncertain token issue guard.'];}
   return ['Result:',...structured(result,'  ')];
 }
-export function human(context:HumanContext,result:unknown):string {return lines(context,result).join('\n')+'\n';}
+function highlighted(lines:readonly string[],presentation:Presentation):string {return lines.map((line,index)=>index===0?presentation.heading(line):line).join('\n')+'\n';}
+export function human(context:HumanContext,result:unknown,presentation:Presentation):string {return highlighted(lines(context,result),presentation);}
+export function humanError(fault:CliError,presentation:Presentation,help:string):string {
+  const lines=[presentation.error(safe(fault.code))+': '+safe(fault.message)];
+  if(typeof fault.details.status==='number')lines.push('HTTP status: '+fault.details.status);
+  if(typeof fault.details.currentRevision==='number')lines.push('Current revision: '+fault.details.currentRevision);
+  if(Array.isArray(fault.details.spans))for(const span of fault.details.spans)if(object(span)&&typeof span.start==='number'&&typeof span.end==='number')lines.push(`UTF16 ${span.start}..${span.end}`);
+  if(typeof fault.details.requestId==='string')lines.push('Request ID: '+safe(fault.details.requestId));
+  if(fault.code==='usage')lines.push(presentation.hint('Help: '+help));
+  return lines.join('\n')+'\n';
+}
 // Preserve the existing human stream frame representation independently of ordinary command views.
-export function humanWatch(frame:unknown):string {return exact(frame,true).split('\n').map(safe).join('\n')+'\n';}
+export function humanWatch(frame:unknown,presentation:Presentation):string {return highlighted(exact(frame,true).split('\n').map(safe),presentation);}
