@@ -169,6 +169,38 @@ remain migration invariants. See [Haystack's server/configuration guide](haystac
 use disposable fixtures; deployment and production-data migration are explicit
 operator actions.
 
+### Service command-line clients
+
+| Package | Commands and scope |
+|---|---|
+| `manure-clients` | `manure`: artifact upload/download, listing, metadata and password management; also includes the stdio MCP adapter. |
+| `chronicle-cli` | `chronicle`: archive/search/content, explicit ingestion, activity, accounts and application management; typed `rpc` covers the current operation catalog. |
+| `haystack-cli` | `haystack`: documents, search/retrieval, history, CAS writes and recovery, accounts/tokens and bounded live changes. |
+
+These packages are standalone clients, not server deployments; they do not need
+the server/Graal runtime. Output is human-readable by default, including pipes.
+Pass `--json` before or after the command for automation; diagnostics use stderr
+and nonzero exit codes. Haystack's bounded `watch --json` is an explicitly framed
+NDJSON stream rather than one JSON document.
+
+```bash
+nix run .#manure-clients -- --help
+nix run .#chronicle-cli -- --help
+nix run .#haystack-cli -- --help
+```
+
+The configured CLI wrappers installed by enabled Home Manager modules supply lazy
+URL/token-file defaults without reading credentials for help or overriding runtime sources. Human account cookies
+are separate from bearer credentials. Chronicle's bearer read/ingest commands use
+explicit `--auth bearer`; Haystack documents its `--auth token|session` selection.
+Private CLI state is not automatically exposed to agent sandboxes: use a separate
+explicitly bound persistent directory for agent recovery state, not a host human
+login directory. Builds/tests neither collect real histories nor deploy services.
+
+See the [Manure CLI guide](manure/README.md), [Chronicle CLI guide](chronicle/cli/README.md)
+and [Haystack CLI guide](haystack/cli/README.md) for command coverage, authentication,
+stream framing, and uncertain-operation recovery.
+
 ### Agent content
 
 | Package | What it is |

@@ -54,6 +54,21 @@ let
     exec ${runtimeToken} HAYSTACK_TOKEN ${lib.escapeShellArg (if tokenFile == null then "" else toString tokenFile)} "$@"
   '';
 
+  cliPackage = pkgs.callPackage ../pkg/haystack/client.nix { };
+  cli = pkgs.runCommand "haystack-cli-configured" { meta.mainProgram = "haystack"; } ''
+    mkdir -p "$out/bin"
+    cat > "$out/bin/haystack" <<'SCRIPT'
+    #!${pkgs.runtimeShell}
+    if [[ -z "''${HAYSTACK_URL:-}" ]]; then
+      export HAYSTACK_URL=${lib.escapeShellArg (if url == null then "" else url)}
+    fi
+    if [[ -z "''${HAYSTACK_TOKEN:-}" && -z "''${HAYSTACK_TOKEN_FILE:-}" ]]; then
+      export HAYSTACK_TOKEN_FILE=${lib.escapeShellArg (if tokenFile == null then "" else toString tokenFile)}
+    fi
+    exec ${cliPackage}/bin/haystack "$@"
+    SCRIPT
+    chmod +x "$out/bin/haystack"
+  '';
 in
 {
   options.smind.hm.dev.llm.haystack = {
@@ -61,7 +76,7 @@ in
       type = lib.types.bool;
       default = false;
       description = ''
-        Haystack memory client for agent harnesses. Defaults to enabled when
+        Haystack CLI and memory client for agent harnesses. Defaults to enabled when
         resolvable (explicit url/activityProjectId, or a
         NixOS clients mapping for this account); override to false to opt
         out on a memory host, or to true to fail loudly on partial config.
@@ -165,7 +180,7 @@ in
       HAYSTACK_TOKEN = if tokenFile == null then "" else toString tokenFile;
     };
 
-    home.packages = [ haystackRun ];
+    home.packages = [ haystackRun cli ];
 
     # Shared agent policy (Step 10): one bundle fanned out to Claude, Codex,
     # and Pi by the existing asset-bundle machinery. Active only with the

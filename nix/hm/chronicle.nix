@@ -13,6 +13,21 @@ let
     fi
     exec ${runtimeToken} CHRONICLE_TOKEN ${lib.escapeShellArg (if cfg.tokenFile == null then "" else toString cfg.tokenFile)} "$@"
   '';
+  cliPackage = pkgs.callPackage ../pkg/chronicle/client.nix { };
+  cli = pkgs.runCommand "chronicle-cli-configured" { meta.mainProgram = "chronicle"; } ''
+    mkdir -p "$out/bin"
+    cat > "$out/bin/chronicle" <<'SCRIPT'
+    #!${pkgs.runtimeShell}
+    if [[ -z "''${CHRONICLE_URL:-}" ]]; then
+      export CHRONICLE_URL=${lib.escapeShellArg baseUrl}
+    fi
+    if [[ -z "''${CHRONICLE_TOKEN:-}" && -z "''${CHRONICLE_TOKEN_FILE:-}" ]]; then
+      export CHRONICLE_TOKEN_FILE=${lib.escapeShellArg (if cfg.tokenFile == null then "" else toString cfg.tokenFile)}
+    fi
+    exec ${cliPackage}/bin/chronicle "$@"
+    SCRIPT
+    chmod +x "$out/bin/chronicle"
+  '';
   collectorConfig = pkgs.writeText "chronicle-collector.json" (builtins.toJSON ({
     enabled = true;
     endpoint = baseUrl;
@@ -24,7 +39,7 @@ let
 in
 {
   options.smind.hm.dev.llm.chronicle = {
-    enable = lib.mkEnableOption "Chronicle session-history MCP access (collection is a separate opt-in)";
+    enable = lib.mkEnableOption "Chronicle CLI and session-history MCP access (collection is a separate opt-in)";
     url = lib.mkOption {
       type = lib.types.nullOr lib.types.str;
       default = null;
@@ -123,7 +138,7 @@ in
         { assertion = lib.hasPrefix "/" cfg.collector.stateDirectory; message = "Chronicle: collector.stateDirectory must be absolute."; }
         { assertion = lib.all (r: lib.hasPrefix "/" r.path && r.id != "") cfg.collector.roots; message = "Chronicle: each root requires a stable nonempty id and absolute path."; }
       ];
-      home.packages = lib.optional cfg.enable runner ++ lib.optional cfg.collector.enable cfg.collector.package;
+      home.packages = lib.optionals cfg.enable [ runner cli ] ++ lib.optional cfg.collector.enable cfg.collector.package;
       xdg.configFile = lib.mkIf cfg.collector.enable {
         "chronicle/collector.json".source = collectorConfig;
       };

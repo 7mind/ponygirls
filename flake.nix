@@ -375,6 +375,8 @@
           tokemon = pkgs.callPackage ./nix/pkg/tokemon/package.nix { };
           tui-tmux = pkgs.callPackage ./nix/pkg/tui-tmux/default.nix { };
           haystack = self.lib.mkHaystackPackage { inherit pkgs; };
+          haystack-cli = self.lib.mkHaystackClientPackage { inherit pkgs; };
+          chronicle-cli = self.lib.mkChronicleClientPackage { inherit pkgs; };
           service-test-fixture-tools = pkgs.callPackage ./nix/pkg/services/test-fixture-tools.nix { };
           haystack-proxy-fixture = import ./nix/tests/haystack-proxy-fixture.nix { inherit pkgs nixpkgs; haystackModule = self.nixosModules.haystack; haystackPackage = self.packages.${system}.haystack; };
           service-postgres-tools = pkgs.callPackage ./nix/pkg/services/postgres-tools.nix { };
@@ -441,6 +443,11 @@
             manureModule = self.homeManagerModules.manure;
             yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
             podmanHmModule = import ./nix/hm/podman.nix;
+          };
+          service-cli-hm = import ./nix/tests/service-cli-hm.nix {
+            inherit pkgs;
+            chronicleModule = self.homeManagerModules.chronicle;
+            haystackModule = self.homeManagerModules.haystack;
           };
           manure-client = import ./nix/tests/manure-client.nix {
             inherit pkgs;
@@ -1346,6 +1353,8 @@
         # generic mkServiceImage builder (see nix/pkg/oci/default.nix).
         lib.oci = { pkgs }: pkgs.callPackage ./nix/pkg/oci/default.nix { };
         lib.mkHaystackPackage = { pkgs }: pkgs.callPackage ./nix/pkg/haystack/package.nix { squishLib = inputs.squish.lib; };
+        lib.mkHaystackClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/haystack/client.nix { };
+        lib.mkChronicleClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/client.nix { };
         lib.mkManureClientPackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/client.nix { };
         lib.mkManurePackage = { pkgs }: pkgs.callPackage ./nix/pkg/manure/package.nix { squishLib = inputs.squish.lib; };
         lib.mkChroniclePackage = { pkgs }: pkgs.callPackage ./nix/pkg/chronicle/server.nix { squishLib = inputs.squish.lib; };
