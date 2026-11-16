@@ -26,7 +26,15 @@ let
     '';
     meta.platforms = [ "x86_64-linux" ];
   };
+  # The static musl adapter is part of the audited native toolchain and is
+  # built with the same pinned snapshot as graal (toolchain.nix). Consumers'
+  # musl cross toolchains drift: older musl headers lack renameat2's
+  # declaration and -Werror then rejects the audited source (observed under
+  # a consumer nixpkgs override: posix_native.c:467 implicit declaration).
+  # The JVM shared variant stays on the consuming stdenv so it links against
+  # the host glibc ABI it runs under.
+  static = library tools.auditedPkgs.pkgsStatic.stdenv true;
 in {
   shared = library stdenv false;
-  static = library pkgsStatic.stdenv true;
+  inherit static;
 }
