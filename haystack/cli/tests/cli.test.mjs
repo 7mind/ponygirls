@@ -16,7 +16,7 @@ const actor=createHash('sha256').update('account-actor-v1:alice').digest('hex');
 const id='0193e8d5-6f5c-7a1b-8c2d-000000000001';
 const doc='{"title":"horse\\u001b[31m","description":"d","fields":{"n":9007199254740993,"d":0.10,"e":1e2,"z":-0,"__proto__":true},"type":"fact","status":"actual","importance":"low","human-attention":"cleared","links":[]}';
 const metadata={createdAt:'2026-11-16T00:00:00Z',createdBy:'bot',modifiedAt:'2026-11-16T00:00:00Z',modifiedBy:'bot'};
-let home,base,server,wss,hits=[],items=new Map(),replays=new Map(),lose=false,badResponse=false,mode='normal',slowPages=[],liveKey='p:i',swapTokenFile;
+let home,base,server,wss,hits=[],items=new Map(),replays=new Map(),lose=false,badResponse=false,mode='normal',slowPages=[],liveKey='p:i',swapTokenFile,putEffects=[];
 function run(args,env={},input='') {return new Promise((resolve,reject)=>{const child=spawn(process.env.HAYSTACK_CLI_EXECUTABLE||process.execPath,[...(process.env.HAYSTACK_CLI_EXECUTABLE?[]:[cli]),...args],{env:{PATH:process.env.PATH,HOME:home,HAYSTACK_STATE_DIR:path.join(home,'state'),HAYSTACK_URL:base,HAYSTACK_TOKEN:token,...env},stdio:['pipe','pipe','pipe']});let stdout='',stderr='';child.stdout.on('data',b=>stdout+=b);child.stderr.on('data',b=>stderr+=b);child.on('error',reject);child.on('close',(code,signal)=>resolve({code,signal,stdout,stderr}));child.stdin.end(input);});}
 function ok(result){assert.equal(result.code,0,result.stderr);return JSON.parse(result.stdout);}
 function fault(result,exit,code){assert.equal(result.code,exit,result.stderr);assert.equal(result.stdout,'');assert.equal(JSON.parse(result.stderr).error.code,code);}
@@ -43,9 +43,9 @@ before(async()=>{
  if(req.url.endsWith('/logout'))res.setHeader('set-cookie','haystack-dev=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0');return send({ok:true});}
  if(req.url==='/api/v1/whoami')return send({userId:'bot',userType:'agent',tokenId:'worker',activityProjectId:'corporate-activity'});
  if(req.url==='/api/v1/put'){
- const prev=replays.get(body.requestId);if(prev){if(prev.body!==JSON.stringify(body))return fail('replay-conflict',409);return send({...prev.result,replayed:true});}
+ const prev=replays.get(body.requestId);if(prev){if(prev.body!==JSON.stringify(body))return fail('replay-conflict',409);return send({...prev.result,replayed:true,...(mode==='wrong-replay-revision'?{revision:99}:{})});}
  const current=items.get(body.key);if((current?.revision??0)!==body.expectedRevision)return fail('conflict',409);
- const result={key:body.key,revision:body.expectedRevision+1,metadata,replayed:false};items.set(body.key,{key:body.key,revision:result.revision,document:body.document,metadata});replays.set(body.requestId,{body:JSON.stringify(body),result});if(lose){lose=false;req.socket.destroy();return;}if(mode==='post-put-auth'){mode='normal';return fail('unauthorized',401);}if(badResponse){badResponse=false;return send({key:body.key});}return send(result);}
+ const result={key:body.key,revision:body.expectedRevision+1,metadata,replayed:false};items.set(body.key,{key:body.key,revision:result.revision,document:body.document,metadata});replays.set(body.requestId,{body:JSON.stringify(body),result});putEffects.push(body);if(mode==='wrong-put-revision')return send({...result,revision:99});if(lose){lose=false;req.socket.destroy();return;}if(mode==='post-put-auth'){mode='normal';return fail('unauthorized',401);}if(badResponse){badResponse=false;return send({key:body.key});}return send(result);}
  if(req.url==='/api/v1/get'){const item=items.get(body.key);return item?send(item):fail('not-found',404);}
  if(req.url==='/api/v1/history')return send({revisions:mode==='empty-history'?[]:[{revision:1,modifiedAt:metadata.modifiedAt,modifiedBy:'bot',tokenId:'worker'}]});
  if(mode==='slow-pages'&&req.url==='/api/v1/search'){if(!body.cursor&&swapTokenFile!==undefined)await writeFile(swapTokenFile,secret+'\n',{mode:0o600});res.on('close',()=>slowPages.push({cursor:body.cursor,finished:res.writableEnded}));setTimeout(()=>send({items:[],cursor:body.cursor?null:'slow-cursor'}),400);return;}
@@ -253,4 +253,24 @@ test('watch duration and cancellation bound pending stdout delivery without repo
 test('watch still rejects malformed canonical IDs and frames beyond its bounded queue budget',async()=>{
  const pass=path.join(home,'hostile-watch-password');await writeFile(pass,'protected-password\n',{mode:0o600});ok(await run(['login','alice','--password-file',pass,'--json','--allow-http']));
  try{for(const [key,code] of [['a:b:c','invalid-response'],['x'.repeat(70*1024),'unavailable']]){liveKey=key;fault(await run(['watch','--json','--allow-http','--duration-ms','1000','--max-events','1']),6,code);}}finally{liveKey='p:i';}
+});
+test('put ACKs bind create, update and replay revisions to their frozen CAS input',async()=>{
+ const key='p:ack-positive';const create='0193e8d5-6f5c-7a1b-8c2d-000000000020';const update='0193e8d5-6f5c-7a1b-8c2d-000000000021';const advance='0193e8d5-6f5c-7a1b-8c2d-000000000022';
+ const send=(expected,request)=>run(['put',key,'--file','-','--expected-revision',String(expected),'--request-id',request,'--json','--allow-http'],{},doc);
+ assert.equal(ok(await send(0,create)).result.revision,1);assert.equal(ok(await send(1,update)).result.revision,2);assert.equal(ok(await send(2,advance)).result.revision,3);
+ const replay=ok(await send(1,update));assert.equal(replay.result.revision,2);assert.equal(replay.result.replayed,true);assert.equal(putEffects.filter(effect=>effect.key===key).length,3);
+});
+test('wrong but schema-valid put ACK revisions retain exact intent until correctly bound replay',async()=>{
+ const key='p:ack-negative';const request='0193e8d5-6f5c-7a1b-8c2d-000000000023';items.set(key,{key,revision:2,document:{json:doc},metadata});
+ const directory=path.join(home,'state');const pendingFiles=async()=>(await readdir(directory)).filter(file=>file.includes('.pending-'));
+ mode='wrong-put-revision';try{
+  const result=await run(['put',key,'--file','-','--expected-revision','2','--request-id',request,'--json','--allow-http'],{},doc);
+  assert.equal(items.get(key).revision,3);assert.equal(putEffects.filter(effect=>effect.key===key).length,1);
+  assert.equal(result.code,7,`schema-valid wrong ACK accepted: ${result.stdout}; pendingFiles=${JSON.stringify(await pendingFiles())}`);fault(result,7,'uncertain-write');assert.equal(JSON.parse(result.stderr).error.requestId,request);
+  const files=await pendingFiles();assert.equal(files.length,1);const retained=await readFile(path.join(directory,files[0]),'utf8');const operation=JSON.parse(retained).operation;
+  assert.deepEqual(operation,{key,document:{json:doc},expectedRevision:2,requestId:request});assert.deepEqual(operation,putEffects.find(effect=>effect.key===key));
+  mode='wrong-replay-revision';fault(await run(['replay','--json','--allow-http']),7,'uncertain-write');assert.equal(await readFile(path.join(directory,files[0]),'utf8'),retained);
+  mode='normal';const replay=ok(await run(['replay','--json','--allow-http']));assert.equal(replay.requestId,request);assert.equal(replay.result.revision,3);assert.equal(replay.result.replayed,true);assert.equal(putEffects.filter(effect=>effect.key===key).length,1);assert.deepEqual(await pendingFiles(),[]);
+  const attempts=hits.filter(hit=>hit.url==='/api/v1/put'&&hit.body.key===key);assert.equal(attempts.length,3);for(const attempt of attempts)assert.deepEqual(attempt.body,operation);
+ }finally{mode='normal';}
 });

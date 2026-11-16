@@ -3,7 +3,7 @@ import {test,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {spawn} from 'node:child_process';
-import {mkdtemp,writeFile,readFile,rm,stat} from 'node:fs/promises';
+import {mkdtemp,writeFile,readFile,readdir,rm,stat} from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {fileURLToPath} from 'node:url';
@@ -94,5 +94,22 @@ test('real committed write with deliberately discarded ACK replays original dura
  });await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
  try{const origin=`http://127.0.0.1:${proxy.address().port}`;fault(await run(['put','cli:lost','--file','-','--expected-revision','0'],{HAYSTACK_URL:origin},exactDoc),7,'uncertain-write');
   assert.ok(ok(await run(['pending'],{HAYSTACK_URL:origin})).result.operation.requestId);const replay=ok(await run(['replay'],{HAYSTACK_URL:origin}));assert.equal(replay.result.replayed,true);assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.equal(ok(await run(['history','cli:lost'])).result.revisions.length,1);
+ }finally{await new Promise(resolve=>proxy.close(resolve));}
+});
+test('real committed update with a schema-valid wrong ACK retains exact intent until bound replay',async()=>{
+ const key='cli:wrong-ack';assert.equal((await f.put(key)).status,200);assert.equal((await f.put(key,document(),1)).status,200);
+ const request=rid();const seen=[];let corrupt=true;
+ const proxy=http.createServer(async(req,res)=>{
+  const chunks=[];for await(const chunk of req)chunks.push(chunk);const bytes=Buffer.concat(chunks);if(req.url==='/api/v1/put')seen.push(bytes.toString());
+  const response=await fetch(f.base+req.url,{method:req.method,headers:{'Content-Type':'application/json','X-Haystack-Version':'1.0.0',Authorization:req.headers.authorization},...(req.method==='POST'?{body:bytes}:{}),redirect:'error',signal:AbortSignal.timeout(10000)});const body=await response.json();
+  if(corrupt&&req.url==='/api/v1/put'&&response.ok){assert.equal(body.revision,3);body.revision=99;corrupt=false;}
+  res.writeHead(response.status,{'Content-Type':'application/json'});res.end(JSON.stringify(body));
+ });await new Promise(resolve=>proxy.listen(0,'127.0.0.1',resolve));
+ try{
+  const origin=`http://127.0.0.1:${proxy.address().port}`;fault(await run(['put',key,'--file','-','--expected-revision','2','--request-id',request],{HAYSTACK_URL:origin},exactDoc),7,'uncertain-write');
+  assert.equal(ok(await run(['get',key])).result.revision,3);assert.equal(ok(await run(['history',key])).result.revisions.length,3);
+  const directory=path.join(home,'state');const pendingFiles=async()=>(await readdir(directory)).filter(file=>file.includes('.pending-'));const files=await pendingFiles();assert.equal(files.length,1);
+  const retained=JSON.parse(await readFile(path.join(directory,files[0]),'utf8'));assert.equal(retained.origin,origin);assert.deepEqual(retained.operation,{key,document:{json:exactDoc},expectedRevision:2,requestId:request});assert.deepEqual(retained.operation,JSON.parse(seen[0]));
+  const replay=ok(await run(['replay'],{HAYSTACK_URL:origin}));assert.equal(replay.requestId,request);assert.equal(replay.result.revision,3);assert.equal(replay.result.replayed,true);assert.equal(seen.length,2);assert.equal(seen[0],seen[1]);assert.deepEqual(await pendingFiles(),[]);assert.equal(ok(await run(['history',key])).result.revisions.length,3);
  }finally{await new Promise(resolve=>proxy.close(resolve));}
 });

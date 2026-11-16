@@ -26,7 +26,7 @@ import json,pathlib,sys,xml.etree.ElementTree as ET
 report=pathlib.Path(sys.argv[1]); cases=list(ET.parse(report/'acceptance.xml').iter('testcase'))
 receipt={'cases':len(cases),'failures':sum(len(c.findall('failure')) for c in cases),'errors':sum(len(c.findall('error')) for c in cases),'skips':sum(len(c.findall('skipped')) for c in cases)}
 (report/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
-assert receipt=={'cases':11,'failures':0,'errors':0,'skips':0},receipt
+assert receipt=={'cases':12,'failures':0,'errors':0,'skips':0},receipt
 PY
 printf 'exit=%s\n' "$status" >> "$report/source.txt"
 printf 'Real CLI acceptance report: %s\n' "$report"

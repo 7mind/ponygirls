@@ -103,7 +103,7 @@ export class Client {
       const decoded=decode(response,materialize(d.output,result.body));const out=encode(response,decoded);
       if(!object(out))throw new Error();
       if(operation==='get'){if(out.key!==(input as Record<string,unknown>).key||!object(out.document))throw new Error();parseStoredDocument(out.document.json as string);}
-      if(operation==='put'){if(out.key!==(input as Record<string,unknown>).key||typeof out.revision!=='number'||out.revision<1)throw new Error();}
+      if(operation==='put'){if(out.key!==(input as Record<string,unknown>).key||out.revision!==((input as Record<string,unknown>).expectedRevision as number)+1)throw new Error();}
       return out;
     } catch{return fail('invalid-response','server response violates the selected generated model',6);}
   }
