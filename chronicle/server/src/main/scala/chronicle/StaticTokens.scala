@@ -12,9 +12,9 @@ object StaticTokens {
     try {
       val path=Path.of(t.tokenFile).toRealPath()
       Check(!path.startsWith(Path.of("/nix/store")) && Files.isRegularFile(path),"config","static token requires runtime credential file")
-      val forbidden=Set(PosixFilePermission.GROUP_READ,PosixFilePermission.GROUP_WRITE,PosixFilePermission.GROUP_EXECUTE,PosixFilePermission.OTHERS_READ,PosixFilePermission.OTHERS_WRITE,PosixFilePermission.OTHERS_EXECUTE)
+      val forbidden=Set(PosixFilePermission.OTHERS_READ,PosixFilePermission.OTHERS_WRITE,PosixFilePermission.OTHERS_EXECUTE)
       import scala.jdk.CollectionConverters.*
-      Check(Files.getPosixFilePermissions(path).asScala.intersect(forbidden).isEmpty,"config","static token credential must be private")
+      Check(Files.getPosixFilePermissions(path).asScala.intersect(forbidden).isEmpty,"config","static token credential must not be world-accessible")
       val bytes=Using.resource(Files.newInputStream(path))(_.readNBytes(4097))
       Check(bytes.length<=4096,"config","invalid static token credential")
       val secret=new String(bytes,java.nio.charset.StandardCharsets.UTF_8).stripTrailing()
