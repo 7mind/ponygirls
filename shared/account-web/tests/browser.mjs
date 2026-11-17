@@ -1,256 +1,221 @@
-// Behavioral-Active / Blackbox-GoodCommunication; specified account v1 contracts.
-// Real Chromium, DOM, focus and cookies; controlled local HTTP/routes, no live accounts.
+// Lean behavioural checks of the shared account views on the controlled-route harness (dev/index.html):
+// real Chromium, DOM, focus and clipboard; the account HTTP plane is the in-page fake of dev/fake-server.js.
+// Run: nix develop .#chronicle --command node shared/account-web/tests/browser.mjs
 import assert from 'node:assert/strict';
-import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
+import { startDevServer } from '../dev/serve.mjs';
+import { FAKE_PASSWORD, FAKE_TOKEN_SECRET, FAKE_WRONG_CODE } from '../dev/fake-server.js';
+
 const require = createRequire(new URL('../../../chronicle/web/package.json', import.meta.url));
 const { chromium } = require('playwright-core');
-if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Use the pinned Chromium environment; no browser downloads.');
-const html = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="/account.css"><script type="module" src="/account.js"></script><title>Account fixture</title><body><button data-account-settings data-account-user-id="alice">Settings</button><form data-account-login method="post" action="/api/account/v1/login"><label>Login<input name="login" autocomplete="username" required></label><label>Password<input name="password" type="password" autocomplete="current-password" required></label><button>Sign in</button></form><button id="outside">Outside</button></body></html>`;
-const server = createServer(async (request, response) => {
-  if (request.url === '/' || request.url === '/fixture') { response.setHeader('Content-Type', 'text/html'); response.end(html); return; }
-  if (['/account.js', '/account.css'].includes(request.url)) {
-    try { response.setHeader('Content-Type', request.url.endsWith('.js') ? 'text/javascript' : 'text/css'); response.end(await readFile(new URL(`..${request.url}`, import.meta.url))); return; }
-    catch { response.statusCode = 404; response.end('Account asset not implemented'); return; }
-  }
-  response.statusCode = 404; response.end();
-});
-await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-const origin = `http://127.0.0.1:${server.address().port}`;
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Use the pinned Chromium environment (nix develop .#chronicle); no browser downloads.');
+
+const STEP_TIMEOUT_MS = 5000;
+const MASTHEAD_PX = 48, VIEWBAR_PX = 56;
+const server = await startDevServer({ port: 0 });
 const browser = await chromium.launch({ headless: true });
 let cases = 0;
-function fixture() {
-  const user = { id: 'alice', login: 'alice', displayName: 'Alice', actor: 'actor-alice' };
-  return { user, tokens: [{ id: 'configured-1', name: 'Configured collector', source: 'configured', createdAt: null, revoked: false, scopes: ['api'] }], scopes: ['api'], calls: [], issuedOwners: [], secret: 'synthetic-one-time-secret', mint: 'ok', get: 200, login: 401, held: null };
-}
+
+// Every case gets a fresh context; `calls` survives reloads through an exposed binding.
 async function run(name, body) {
-  const context = await browser.newContext({ permissions: ['clipboard-read', 'clipboard-write'] });
-  const page = await context.newPage(), state = fixture(), errors = [];
-  page.setDefaultTimeout(5000); page.on('pageerror', error => errors.push(error.message));
-  await page.route('**/api/account/v1{,/**}', async route => {
-    const request = route.request(), path = new URL(request.url()).pathname;
-    const call = { path, method: request.method(), body: request.postDataJSON(), owner: state.user.id, actor: request.headers()['x-account-actor'] }; state.calls.push(call);
-    const reply = (status, data, headers = {}) => route.fulfill({ status, contentType: 'application/json', headers: { 'Cache-Control': 'no-store', ...headers }, body: JSON.stringify(data) });
-    if (path.endsWith('/login')) return reply(state.login, state.login === 200 ? { user: state.user } : { error: { code: state.login === 401 ? 'unauthorized' : 'unavailable', message: 'sanitized' } }, state.login === 200 ? { 'Set-Cookie': 'test_session=opaque; HttpOnly; SameSite=Strict; Path=/; Max-Age=34560000' } : {});
-    if (request.method() === 'GET') {
-      const status = state.postMintGet === undefined || state.tokens.length < 2 ? state.get : state.postMintGet;
-      const account = JSON.parse(JSON.stringify({ user: state.user, tokens: state.tokens, scopes: state.scopes }));
-      if (state.switchAfterRead) { state.switchAfterRead = false; state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' }; }
-      if (state.holdPostMintRead && state.tokens.length > 1) { state.holdPostMintRead = false; await new Promise(resolve => { state.readHeld = resolve; }); }
-      return reply(status, status === 200 ? account : { error: { code: status === 401 ? 'unauthorized' : 'unavailable', message: 'sanitized' } });
-    }
-    if (call.actor !== undefined && call.actor !== state.user.actor) return reply(409, { error: { code: 'conflict', message: 'Account changed' } });
-    if (path.endsWith('/revoke')) { const token = state.tokens.find(token => token.id === path.split('/').at(-2)); assert.equal(token.source, 'issued'); token.revoked = true; return reply(200, { ok: true }); }
-    if (path.endsWith('/tokens')) {
-      const outcome = state.mint, failureStatus = state.postMintStatus;
-      const token = { id: `issued-${state.tokens.length}`, name: call.body.name, source: 'issued', createdAt: '2026-11-15T00:00:00Z', revoked: false, scopes: call.body.scopes };
-      state.tokens.push(token); state.issuedOwners.push(state.user.id);
-      if (outcome === 'committed-unauthorized') { state.get = 401; return reply(401, { error: { code: 'unauthorized', message: 'Session revoked after creation' } }); }
-      if (outcome === 'lost') return route.abort('failed');
-      if (outcome === 'malformed') return reply(200, { token });
-      if (outcome === 'held') await new Promise(resolve => { state.held = resolve; });
-      if (failureStatus !== undefined) return reply(failureStatus, { error: { code: 'unavailable', message: 'Failure after creation' } });
-      return reply(200, { token, secret: state.secret });
-    }
-    throw new Error(`Unexpected fixture request: ${request.method()} ${path}`);
-  });
-  try { await page.goto(origin); await body({ page, context, state }); assert.deepEqual(errors, []); cases++; console.log(`PASS account web: ${name}`); }
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['clipboard-read', 'clipboard-write'] });
+  const page = await context.newPage(), calls = [], errors = [];
+  page.setDefaultTimeout(STEP_TIMEOUT_MS);
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('dialog', native => { errors.push(`native ${native.type()} dialog: ${native.message()}`); void native.dismiss(); });
+  await page.exposeFunction('__accountCall', call => { calls.push(call); });
+  const open = async (scenario, extra = '') => {
+    await page.goto(`${server.origin}/?scenario=${scenario}&steps=0${extra}`);
+    await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
+  };
+  try { await body({ page, calls, open }); assert.deepEqual(errors, []); cases++; console.log(`PASS account views: ${name}`); }
   finally { await context.close(); }
 }
-const open = async page => { await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByRole('dialog', { name: 'Account settings', exact: true }).waitFor(); await page.getByText('Configured collector', { exact: true }).waitFor(); };
-const mint = async page => { await page.getByLabel('Token name', { exact: true }).fill('Laptop collector'); await page.getByRole('button', { name: 'Create access token', exact: true }).click(); };
-const mintCalls = state => state.calls.filter(call => call.path.endsWith('/tokens'));
+const storageText = page => page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }, document.cookie]));
+const callsTo = (calls, path) => calls.filter(call => call.path === path);
+const dialog = (page, name) => page.getByRole('dialog', { name, exact: true });
+const button = (page, name) => page.getByRole('button', { name, exact: true });
+async function mint(page, name) {
+  await button(page, 'New token').click();
+  await page.getByLabel('Name', { exact: true }).fill(name);
+  await button(page, 'Create token').click();
+}
+
 try {
-  await run('shared dialog shows read-only configured tokens, issues/copies/dismisses one-time secret and revokes', async ({ page, state }) => {
-    await open(page);
-    assert.match(await page.getByRole('dialog').innerText(), /server configuration.*read-only/i);
-    assert.match(await page.getByRole('dialog').innerText(), /Recovery warnings last only while this page stays loaded; reloading clears them and never retries creation/);
-    assert.equal(await page.getByRole('button', { name: 'Revoke Configured collector', exact: true }).count(), 0);
-    await mint(page); await page.getByLabel('One-time token secret', { exact: true }).waitFor();
-    assert.deepEqual(mintCalls(state).map(call => call.body), [{ name: 'Laptop collector', scopes: ['api'] }]);
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).inputValue(), state.secret);
-    await page.getByRole('button', { name: 'Copy secret', exact: true }).click();
-    await page.getByRole('status').filter({ hasText: 'Secret copied' }).waitFor();
-    assert.equal(await page.evaluate(() => navigator.clipboard.readText()), state.secret);
-    assert.equal(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]).includes('synthetic-one-time-secret')), false);
-    await page.getByRole('button', { name: 'Dismiss secret', exact: true }).click();
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-    page.once('dialog', dialog => dialog.accept());
-    await page.getByRole('button', { name: 'Revoke Laptop collector', exact: true }).click();
-    await page.getByText('Revoked', { exact: true }).waitFor();
-    await page.getByRole('button', { name: 'Close settings', exact: true }).click();
-    await page.getByRole('button', { name: 'Settings', exact: true }).waitFor();
-    assert.equal(await page.evaluate(() => document.activeElement.matches('[data-account-settings]')), true);
+  await run('login asks for the second factor and keeps the credentials in memory only', async ({ page, calls, open }) => {
+    await open('login-totp');
+    await page.getByLabel('Username', { exact: true }).fill('alice');
+    await page.getByLabel('Password', { exact: true }).fill(FAKE_PASSWORD);
+    await button(page, 'Sign in').click();
+    await page.getByText('Signing in as').waitFor();
+    assert.equal(await page.locator('form[data-account-login]').isHidden(), true);
+    assert.equal(await page.locator('form[data-account-login] input[name="password"]').inputValue(), '', 'the password field is cleared on submit');
+    await page.getByLabel('6-digit code', { exact: true }).fill(FAKE_WRONG_CODE);
+    await button(page, 'Verify and sign in').click();
+    await page.getByText('That code did not match').waitFor();
+    await page.getByLabel('6-digit code', { exact: true }).fill('123456');
+    const reloaded = page.waitForEvent('load');
+    await button(page, 'Verify and sign in').click();
+    await reloaded;
+    assert.deepEqual(callsTo(calls, '/login').map(call => call.body), [
+      { login: 'alice', password: FAKE_PASSWORD }, { login: 'alice', password: FAKE_PASSWORD, totp: FAKE_WRONG_CODE }, { login: 'alice', password: FAKE_PASSWORD, totp: '123456' }]);
+    assert.equal((await storageText(page)).includes(FAKE_PASSWORD), false);
   });
-  await run('Chronicle permissions preserve Raw requires Read', async ({ page, state }) => {
-    state.scopes = ['Ingest', 'Read', 'Raw']; await open(page);
-    await page.getByLabel('Raw', { exact: true }).check();
-    assert.equal(await page.getByLabel('Read', { exact: true }).isChecked(), true);
-    await page.getByLabel('Read', { exact: true }).uncheck();
-    assert.equal(await page.getByLabel('Raw', { exact: true }).isChecked(), false);
-    await page.getByLabel('Raw', { exact: true }).check(); await mint(page);
+
+  await run('signup shows QR and manual key and ends in pending approval without storing a secret', async ({ page, calls, open }) => {
+    await open('signup-default');
+    const qr = page.getByRole('img', { name: 'QR code with the authenticator set-up key' });
+    assert.ok(await qr.locator('i').count() > 21 * 21, 'the QR is rendered as DOM cells');
+    const key = (await page.getByLabel('Authenticator set-up key', { exact: true }).innerText()).replace(/\s/g, '');
+    assert.match(key, /^[A-Z2-7]{32}$/);
+    assert.equal(await page.getByRole('checkbox', { name: /Also require a code at every sign-in/ }).isChecked(), false, 'the switch is off by default');
+    await page.getByLabel('Username', { exact: true }).fill('bob');
+    await page.getByLabel('E-mail', { exact: true }).fill('bob@example.org');
+    await page.getByLabel('Password', { exact: true }).fill('hunter2hunter2');
+    await page.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill('731905');
+    await button(page, 'Create account').click();
+    await page.getByRole('heading', { name: 'Account created — waiting for approval' }).waitFor();
+    assert.deepEqual(callsTo(calls, '/signup').map(call => call.body), [{ username: 'bob', email: 'bob@example.org', password: 'hunter2hunter2', totpSecret: key, totpCode: '731905', requireTotp: false }]);
+    const stored = await storageText(page);
+    assert.equal(stored.includes(key) || stored.includes('hunter2hunter2'), false);
+  });
+
+  await run('enrollment code is consumed from the fragment and removed from the URL', async ({ page, calls }) => {
+    await page.goto(`${server.origin}/?scenario=signup-enroll&steps=0#account-enroll=Zk3vQ9hT2mXa7LrN5pWcB8sDyE1uG4jH6oKtVfIqRzM`);
+    await page.getByRole('heading', { name: 'Finish setting up your account' }).waitFor();
+    assert.equal(await page.evaluate(() => location.href.includes('account-enroll')), false);
+    assert.deepEqual(callsTo(calls, '/enrollments/inspect').map(call => call.body), [{ code: 'Zk3vQ9hT2mXa7LrN5pWcB8sDyE1uG4jH6oKtVfIqRzM' }]);
+    assert.equal(await page.getByLabel('Username', { exact: true }).inputValue(), 'carol');
+    assert.equal(await page.getByLabel('Username', { exact: true }).getAttribute('readonly'), '');
+  });
+
+  await run('token secret survives blur/focus, Escape, section change and Back until it is acknowledged', async ({ page, calls }) => {
+    await page.goto(`${server.origin}/?scenario=settings-tokens&steps=0#/archive`);
+    await page.getByRole('heading', { name: 'Host view' }).waitFor();
+    await page.locator('[data-account-settings]').click();
+    await page.getByRole('heading', { name: 'Profile' }).waitFor();
+    assert.equal(await page.getByRole('heading', { name: 'Host view' }).isHidden(), true, 'the account page covers the host main');
+    await page.getByRole('link', { name: /^Access tokens/ }).click();
+    await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
+    await button(page, 'New token').click();
+    const formTop = await page.locator('[data-account-token-form]').evaluate(node => node.getBoundingClientRect().top);
+    await page.getByLabel('Name', { exact: true }).fill('laptop-cli');
+    await button(page, 'Create token').click();
+    const secret = page.getByLabel('One-time token secret', { exact: true });
+    await secret.waitFor();
+    assert.equal(await page.locator('[data-account-secret]').evaluate(node => node.getBoundingClientRect().top), formTop, 'the secret panel takes the place of the form');
+    assert.equal(await secret.inputValue() === FAKE_TOKEN_SECRET, false, 'masked by default');
+    assert.equal(await button(page, 'I have saved it').isDisabled(), true);
+    await page.evaluate(() => { window.dispatchEvent(new Event('blur')); window.dispatchEvent(new Event('focus')); });
+    await page.keyboard.press('Escape');
+    await page.getByRole('link', { name: 'Profile' }).click();
+    await dialog(page, 'Hide the secret for good?').waitFor();
+    await button(page, 'Keep it visible').click();
+    await page.evaluate(() => history.back());
+    await dialog(page, 'Hide the secret for good?').waitFor();
+    await button(page, 'Keep it visible').click();
+    assert.equal(await page.evaluate(() => location.hash), '#account/tokens');
+    await button(page, 'Reveal').click();
+    assert.equal(await secret.inputValue(), FAKE_TOKEN_SECRET, 'the same secret is still there');
+    await button(page, 'I have saved it').click();
+    await button(page, 'Yes, I have saved it').click();
+    await page.locator('[data-account-secret]').waitFor({ state: 'detached' });
+    await page.evaluate(() => history.back());
+    await page.getByRole('heading', { name: 'Host view' }).waitFor();
+    assert.equal(callsTo(calls, '/tokens').length, 1);
+    assert.equal((await storageText(page)).includes(FAKE_TOKEN_SECRET), false);
+  });
+
+  await run('uncertain creation warns in the form position and locks creation until the list is refreshed', async ({ page, calls, open }) => {
+    await open('settings-tokens-uncertain');
+    await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
+    await button(page, 'New token').click();
+    const formTop = await page.locator('[data-account-token-form]').evaluate(node => node.getBoundingClientRect().top);
+    await page.getByLabel('Name', { exact: true }).fill('lost-reply-token');
+    await button(page, 'Create token').click();
+    const warning = page.locator('[data-account-uncertain]');
+    await warning.waitFor();
+    assert.equal(await warning.evaluate(node => node.getBoundingClientRect().top), formTop);
+    assert.equal(await button(page, 'New token').isDisabled(), true);
+    assert.equal(await button(page, 'Dismiss').isDisabled(), true);
+    await button(page, 'Refresh list and check').click();
+    await page.locator('tr[data-row-id]', { hasText: 'lost-reply-token' }).waitFor();
+    await button(page, 'Dismiss').click();
+    assert.equal(await button(page, 'New token').isDisabled(), false);
+    assert.equal(callsTo(calls, '/tokens').length, 1, 'nothing is retried automatically');
+  });
+
+  await run('revoke confirms in an in-app dialog with Cancel focused', async ({ page, calls, open }) => {
+    await open('settings-tokens');
+    await button(page, 'Revoke ci-collector-02').click();
+    const confirm = dialog(page, 'Revoke “ci-collector-02”?');
+    await confirm.waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Cancel');
+    await confirm.getByRole('button', { name: 'Revoke token' }).click();
+    await confirm.waitFor({ state: 'detached' });
+    await page.locator('tr[data-row-id="00000000-0000-4000-8000-000000300014"]').waitFor({ state: 'detached' });
+    assert.deepEqual(calls.filter(call => call.path.endsWith('/revoke')).map(call => [call.path, call.actor]), [['/tokens/00000000-0000-4000-8000-000000300014/revoke', 'actor-alice']]);
+  });
+
+  await run('admin approves a pending applicant', async ({ page, calls, open }) => {
+    await open('users-default');
+    await button(page, 'Approve bob…').click();
+    const application = dialog(page, 'Application of “bob”');
+    await application.getByText('(not verified)').waitFor();
+    await application.getByRole('button', { name: 'Approve' }).click();
+    await page.locator('tr[data-row-id="bob"]', { hasText: 'Active' }).waitFor();
+    assert.deepEqual(callsTo(calls, '/admin/users/bob/approve').map(call => [call.body, call.actor]), [[{}, 'actor-alice']]);
+  });
+
+  await run('admin flag change asks for the current password and keeps the prompt on rejection', async ({ page, calls, open }) => {
+    await open('users-default');
+    await button(page, 'Actions for erin').click();
+    await page.getByRole('menuitem', { name: 'Grant admin…' }).click();
+    const prompt = dialog(page, 'Make “erin” an administrator?');
+    await prompt.getByLabel('Your current password').fill('not the password');
+    await prompt.getByRole('button', { name: 'Grant admin' }).click();
+    await prompt.getByText('Your password was not accepted.').waitFor();
+    assert.equal(await prompt.getByLabel('Your current password').inputValue(), '', 'a proof password is used for one request only');
+    await prompt.getByLabel('Your current password').fill(FAKE_PASSWORD);
+    await prompt.getByRole('button', { name: 'Grant admin' }).click();
+    await prompt.waitFor({ state: 'detached' });
+    assert.deepEqual(callsTo(calls, '/admin/users/erin/admin').map(call => call.body), [{ admin: true, currentPassword: 'not the password' }, { admin: true, currentPassword: FAKE_PASSWORD }]);
+  });
+
+  await run('without the new endpoints only login and access tokens remain', async ({ page, calls, open }) => {
+    await open('login-legacy');
+    assert.equal(await page.getByRole('link', { name: 'Forgot password?' }).count(), 0);
+    assert.equal(await page.getByRole('link', { name: 'Create an account' }).count(), 0);
+    await page.getByLabel('Username', { exact: true }).fill('alice');
+    await page.getByLabel('Password', { exact: true }).fill(FAKE_PASSWORD);
+    const reloaded = page.waitForEvent('load');
+    await button(page, 'Sign in').click();
+    await reloaded;
+    assert.deepEqual(callsTo(calls, '/login').map(call => call.body), [{ login: 'alice', password: FAKE_PASSWORD }]);
+    await page.goto(`${server.origin}/?scenario=settings-legacy&steps=0#account/profile`);
+    await page.waitForFunction(() => location.hash === '#account/tokens');
+    assert.deepEqual(await page.getByRole('navigation', { name: 'Account sections' }).getByRole('link').evaluateAll(links => links.map(link => link.dataset.section)), ['tokens']);
+    await mint(page, 'legacy-cli');
     await page.getByLabel('One-time token secret', { exact: true }).waitFor();
-    assert.deepEqual(new Set(mintCalls(state)[0].body.scopes), new Set(['Ingest', 'Read', 'Raw']));
   });
-  await run('uncertain mint never retries and requires reconciliation plus acknowledgment before reminting', async ({ page, state }) => {
-    state.mint = 'lost'; await open(page); await mint(page);
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
-    await page.getByRole('button', { name: 'Close settings', exact: true }).click(); await open(page);
-    assert.equal(mintCalls(state).length, 1);
-    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
-    await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).click();
-    state.mint = 'ok'; await mint(page); await page.getByLabel('One-time token secret', { exact: true }).waitFor();
-    assert.equal(mintCalls(state).length, 2);
+
+  await run('long token list: the document is the only scroller and the list head sticks; markup is app-independent', async ({ page, open }) => {
+    await open('settings-tokens-long');
+    const scrollers = () => page.evaluate(() => [...document.querySelectorAll('body *')].filter(element => {
+      const style = getComputedStyle(element);
+      return /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 1 && element.getBoundingClientRect().height > 0;
+    }).length);
+    assert.equal(await scrollers(), 0);
+    assert.equal(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), true);
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    assert.equal(await page.locator('[data-view="tokens"] .account-list-head').evaluate(node => node.getBoundingClientRect().top), MASTHEAD_PX);
+    assert.equal(await page.locator('table[data-list="tokens"] th').first().evaluate(node => node.getBoundingClientRect().top), MASTHEAD_PX + VIEWBAR_PX);
+    const profileMarkup = async app => {
+      await open('settings-profile', `&app=${app}`);
+      return page.locator('[data-account-outlet]').evaluate(node => node.innerHTML.replace(/account-[a-z-]+-\d+/g, 'id'));
+    };
+    assert.equal(await profileMarkup('manure'), await profileMarkup('chronicle'));
   });
-  await run('failed reconciliation keeps uncertain mint blocked', async ({ page, state }) => {
-    state.mint = 'malformed'; await open(page); await mint(page);
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
-    state.get = 503; await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: 'unavailable' }).last().waitFor();
-    assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
-    assert.equal(mintCalls(state).length, 1);
-  });
-  for (const lateStatus of [401, 200]) await run(`late POST ${lateStatus} cannot alter a newer mint recovery intent`, async ({ page, state }) => {
-    // Deliberately ignore cancellation at the transport boundary: fencing must
-    // still hold if a completion arrives after its dialog lifecycle ended.
-    await page.addInitScript(() => {
-      const original = window.fetch.bind(window); window.__accountMintSettled = 0;
-      window.fetch = (resource, options) => {
-        if (String(resource).endsWith('/tokens')) {
-          const uncancelled = { ...options }; delete uncancelled.signal;
-          return original(resource, uncancelled).finally(() => { window.__accountMintSettled++; });
-        }
-        return original(resource, options);
-      };
-    });
-    await page.reload(); state.mint = 'held';
-    if (lateStatus !== 200) state.postMintStatus = lateStatus;
-    await open(page); await mint(page);
-    while (state.held === null) await new Promise(resolve => setTimeout(resolve, 5));
-    await page.getByRole('button', { name: 'Close settings', exact: true }).click(); await open(page);
-    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
-    await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).click();
-    state.mint = 'lost'; delete state.postMintStatus;
-    await page.getByLabel('Token name', { exact: true }).fill('Replacement collector');
-    await page.getByRole('button', { name: 'Create access token', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown for “Replacement collector”' }).waitFor();
-    state.held(); await page.waitForFunction(() => window.__accountMintSettled === 2);
-    await page.getByRole('button', { name: 'Close settings', exact: true }).click(); await open(page);
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true, 'an old response cannot erase the newer intent');
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown for “Replacement collector”' }).waitFor();
-    assert.equal(mintCalls(state).length, 2);
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-  });
-  await run('POST authorization failure after commit retains recovery across same-owner reauthentication', async ({ page, state }) => {
-    state.mint = 'committed-unauthorized'; await open(page); await mint(page);
-    await page.getByRole('alert').filter({ hasText: 'Sign in again' }).waitFor();
-    assert.equal(state.tokens.filter(token => token.source === 'issued' && !token.revoked).length, 1, 'POST committed before the session was rejected at the response boundary');
-    assert.deepEqual(state.issuedOwners, ['alice']);
-    assert.equal(state.calls.filter(call => call.method === 'GET').length, 2, 'the failure came from POST, not a follow-up GET');
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true, 'a POST 401 is not proof that no token was created');
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-    await page.getByRole('button', { name: 'Close settings', exact: true }).click();
-    state.get = 200; await open(page);
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
-    assert.equal(mintCalls(state).length, 1, 'restoring the same account must not repeat a non-idempotent POST');
-    await page.getByRole('button', { name: 'Refresh token list', exact: true }).click();
-    await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).click();
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), false);
-    assert.equal(mintCalls(state).length, 1);
-  });
-  for (const status of [400, 403, 409, 429, 500]) await run(`POST ${status} after commit requires reconciliation rather than proving no creation`, async ({ page, state }) => {
-    state.postMintStatus = status; await open(page); await mint(page);
-    await page.getByRole('alert').filter({ hasText: 'Creation outcome is unknown' }).waitFor();
-    assert.equal(state.tokens.filter(token => token.source === 'issued' && !token.revoked).length, 1);
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: 'I checked the list; allow another token', exact: true }).isDisabled(), true);
-    assert.equal(mintCalls(state).length, 1);
-  });
-  await run('follow-up GET authorization failure preserves known committed creation and recovery', async ({ page, state }) => {
-    await open(page); state.postMintGet = 401; await mint(page);
-    await page.getByRole('alert').filter({ hasText: 'Sign in again' }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
-    await page.getByRole('alert').filter({ hasText: 'Creation succeeded, but its one-time secret was cleared' }).waitFor();
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-    assert.equal(mintCalls(state).length, 1);
-  });
-  await run('refocusing during held post-mint validation cannot reveal the previous account secret', async ({ page, state }) => {
-    state.holdPostMintRead = true; await open(page); await mint(page);
-    while (state.readHeld === undefined) await new Promise(resolve => setTimeout(resolve, 5));
-    state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' }; state.tokens = [];
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    state.readHeld(); await page.getByRole('dialog').waitFor({ state: 'detached' });
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-  });
-  await run('logout fences a late mint response and clears all secret nodes', async ({ page, state }) => {
-    state.mint = 'held'; await open(page); await mint(page);
-    await page.waitForFunction(() => document.querySelector('[data-account-dialog]').getAttribute('aria-busy') === 'true');
-    while (state.held === null) await new Promise(resolve => setTimeout(resolve, 5));
-    await page.evaluate(() => { document.dispatchEvent(new Event('account:invalidate')); document.querySelector('[data-account-settings]').dataset.accountUserId = 'bob'; });
-    state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' }; state.tokens = [];
-    state.held(); await page.getByRole('dialog').waitFor({ state: 'detached' });
-    await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByText('Signed in as Bob', { exact: true }).waitFor();
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-    assert.equal(await page.getByText('Laptop collector', { exact: true }).count(), 0);
-  });
-  await run('refocus clears an unsaved secret with explicit lost-secret recovery', async ({ page, state }) => {
-    await open(page); await mint(page); await page.getByLabel('One-time token secret', { exact: true }).waitFor();
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await page.getByRole('alert').filter({ hasText: 'Creation succeeded, but its one-time secret was cleared' }).waitFor();
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).count(), 0);
-    assert.equal(await page.getByRole('button', { name: 'Create access token', exact: true }).isDisabled(), true);
-    assert.equal(mintCalls(state).length, 1);
-  });
-  await run('cookie switch between preflight and POST cannot issue for the wrong owner', async ({ page, state }) => {
-    await open(page); state.switchAfterRead = true;
-    const response = page.waitForResponse(response => new URL(response.url()).pathname.endsWith('/tokens'));
-    await mint(page); await response;
-    assert.deepEqual(state.issuedOwners, [], 'preflight account must bind mutation atomically; no token may be created for Bob');
-    assert.equal(mintCalls(state)[0].owner, 'bob', 'fixture switches cookie owner only after the preflight snapshot');
-  });
-  await run('account switch before mutation fails closed without issuing', async ({ page, state }) => {
-    await open(page); state.user = { id: 'bob', login: 'bob', displayName: 'Bob', actor: 'actor-bob' };
-    await mint(page); await page.getByRole('dialog').waitFor({ state: 'detached' });
-    assert.equal(mintCalls(state).length, 0);
-  });
-  await run('outages are not credential rejection and reads have an explicit retry', async ({ page, state }) => {
-    state.get = 503; await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: /unavailable.*not.*rejected/i }).waitFor();
-    state.get = 200; await page.getByRole('button', { name: 'Retry loading settings', exact: true }).click();
-    await page.getByText('Configured collector', { exact: true }).waitFor();
-  });
-  await run('invalid session is distinct from a service outage', async ({ page, state }) => {
-    state.get = 401; await page.getByRole('button', { name: 'Settings', exact: true }).click();
-    await page.getByRole('alert').filter({ hasText: /Sign in again/i }).waitFor();
-    assert.equal(await page.getByLabel('Token name', { exact: true }).count(), 0);
-  });
-  await run('native dialog traps focus, supports Escape and fits a small viewport', async ({ page }) => {
-    await page.setViewportSize({ width: 320, height: 480 }); await open(page);
-    assert.equal(await page.getByRole('dialog').evaluate(dialog => dialog.matches(':modal')), true);
-    for (let index = 0; index < 12; index++) { await page.keyboard.press('Tab'); assert.equal(await page.evaluate(() => document.querySelector('dialog').contains(document.activeElement)), true); }
-    assert.equal(await page.getByRole('dialog').evaluate(dialog => dialog.scrollWidth <= dialog.clientWidth), true);
-    assert.equal(await page.getByRole('dialog').evaluate(dialog => { const r = dialog.getBoundingClientRect(); return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight; }), true);
-    await page.keyboard.press('Escape'); await page.getByRole('dialog').waitFor({ state: 'detached' });
-    assert.equal(await page.evaluate(() => document.activeElement.matches('[data-account-settings]')), true);
-  });
-  await run('login clears password and separates invalid credentials from outages', async ({ page, state, context }) => {
-    const submit = async () => { await page.getByLabel('Login', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill('synthetic-password'); await page.getByRole('button', { name: 'Sign in', exact: true }).click(); };
-    await submit(); await page.getByRole('alert').filter({ hasText: 'Invalid login or password' }).waitFor();
-    assert.equal(await page.getByLabel('Password', { exact: true }).inputValue(), '');
-    state.login = 503; await submit(); await page.getByRole('alert').filter({ hasText: /unavailable.*not.*rejected/i }).waitFor();
-    state.login = 200; const navigation = page.waitForEvent('load'); await submit(); await navigation;
-    const cookie = (await context.cookies()).find(cookie => cookie.name === 'test_session');
-    assert.ok(cookie && cookie.httpOnly && cookie.expires > Date.now() / 1000 + 300 * 86400);
-    assert.equal(await page.evaluate(() => document.cookie.includes('test_session')), false);
-    assert.equal(await page.evaluate(() => JSON.stringify([localStorage, sessionStorage]).includes('synthetic-password')), false);
-    assert.deepEqual(state.calls.filter(call => call.path.endsWith('/login')).map(call => call.body), Array(3).fill({ login: 'alice', password: 'synthetic-password' }));
-  });
-  console.log(`PASS ${cases} shared account browser cases`);
-} finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
+
+  console.log(`PASS ${cases} account view browser cases`);
+} finally { await browser.close(); await server.close(); }
