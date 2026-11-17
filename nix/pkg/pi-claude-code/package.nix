@@ -13,6 +13,8 @@ stdenvNoCC.mkDerivation {
     hash = "sha256-86zfGr9YoM+I/PmWHDJb8AbcxhYC1m8aOeghJjvN414=";
   };
 
+  patches = [ ./native-delegation.patch ];
+
   postPatch = ''
     substituteInPlace tests/{billing,claude-cli,model-discovery,stream}.test.ts \
       --replace-fail '#!/usr/bin/env node' '#!${nodejs}/bin/node'

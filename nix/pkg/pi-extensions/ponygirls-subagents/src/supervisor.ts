@@ -21,7 +21,8 @@ import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors }
 import { err } from "./errors.ts";
 import { historyPath, nativeHistoryId, openRegisteredHistoryFile, publicHistorySource, readRegisteredHistoryPage, reconstructedHistoryPrefix, type HistoryFeed, type RegisteredHistorySource } from "./history.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
+import { NativeInferenceService } from "./native-service.ts";
+import { parseParentModel, parseProviderRequestAuth, type ParentModel, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
@@ -227,6 +228,7 @@ export interface WorkerPort {
   setPrepareRequestHandler?(h: (payload: ToolPrepareRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<ToolPrepareResponse>): void;
   setTicketReleaseHandler?(h: (payload: { tickets: string[] }, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => void): void;
   setProviderAdmissionRequestHandler?(h: (payload: ProviderAdmissionPayload, envelope: IpcEnvelope) => Promise<ProviderAdmissionResponse>): void;
+  setNativeRequestHandler?(h: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void;
   /** Abrupt process exit (crash, kill): the run it carried is lost. */
   setExitHandler(h: (info: { code: number | null; signal: string | null }) => void): void;
 }
@@ -267,7 +269,7 @@ interface ActiveRun {
 
 interface AgentRuntime {
   record: AgentRecord;
-  parentModel: Model<Api> | null;
+  parentModel: ParentModel | null;
   worker: WorkerPort | null;
   runnableLease: LeaseTicket | null;
   residentLease: LeaseTicket | null;
@@ -447,6 +449,9 @@ function escapeRegExp(text: string): string {
 }
 
 export class Supervisor implements GateHost {
+  private readonly nativeServices = new Map<WorkerPort, NativeInferenceService>();
+  private readonly nativeClosures = new Set<Promise<void>>();
+  private readonly nativeRuns = new Set<string>();
   readonly rootId: string;
   readonly rootDir: string;
   private store: RunStore;
@@ -1124,6 +1129,14 @@ export class Supervisor implements GateHost {
    * state is preserved; runs left active are reconciled by recover() on the
    * next attach, like any other lost run.
    */
+  refreshNativeAuthority(): void {
+    for (const service of this.nativeServices.values()) {
+      const closing = service.refreshAuthority();
+      this.nativeClosures.add(closing);
+      void closing.then(() => this.nativeClosures.delete(closing), (e: unknown) => this.reportFailure(e));
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.suspended = true;
     // Retire broker journal ownership up front: detached late paths from
@@ -1154,6 +1167,9 @@ export class Supervisor implements GateHost {
         // handle/lease available for a subsequent cleanup attempt.
         attempt(() => { if (rt.runnableLease) this.scheduler.release(rt.runnableLease); rt.runnableLease = null; });
         attempt(() => { if (rt.residentLease) this.scheduler.release(rt.residentLease); rt.residentLease = null; });
+      }
+      for (const closing of this.nativeClosures) {
+        try { await closing; } catch (e) { failures.push(e); }
       }
       if (!this.disposed) attempt(() => {
         // A failed close MUST retain ownership. Earlier cleanup failures
@@ -2474,6 +2490,30 @@ export class Supervisor implements GateHost {
     }
     const worker = this.makeWorker(rt.record.id);
     rt.worker = worker;
+    if (rt.parentModel !== null && rt.parentModel.transport === "parent-native") {
+      const descriptor = rt.parentModel;
+      const source = this.opts.parentModels;
+      if (source === undefined || source.nativeBinding === undefined || worker.setNativeRequestHandler === undefined) throw err("MODEL_UNAVAILABLE", "native service boundary unavailable");
+      const admitted = rt.record.model!;
+      const payload = { reason: "native", provider: admitted.provider, modelId: admitted.id, thinkingLevel: admitted.thinkingLevel ?? "off" };
+      const service = new NativeInferenceService({
+        cwd: this.workdirOf(rt), binding: () => source.nativeBinding!(descriptor),
+        assertOwner: (envelope) => {
+          const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
+          if (!admission.ok) throw err("POLICY_DENIED", admission.error!);
+        },
+        receipt: (envelope, receiptId, usage) => {
+          return this.commitLateReceipt(rt, { agentId: rt.record.id, taskRunId: envelope.taskRunId!, generation: envelope.executionGeneration!, receiptId, usage }, true);
+        },
+      });
+      this.nativeServices.set(worker, service);
+      worker.setNativeRequestHandler((frame, envelope) => service.handle(frame, envelope), () => {
+        this.nativeServices.delete(worker);
+        const closing = service.dispose();
+        this.nativeClosures.add(closing);
+        void closing.then(() => this.nativeClosures.delete(closing), (e: unknown) => this.reportFailure(e));
+      });
+    }
     rt.record.residency = "loaded";
     worker.setEventHandler((event) => {
       this.detached(() => {
@@ -2526,6 +2566,7 @@ export class Supervisor implements GateHost {
   }
 
   private initPayload(rt: AgentRuntime, taskText: string | null, workdir: string): Record<string, unknown> {
+    this.captureNativeMode(rt);
     const tools = this.childTools(rt);
     // Preserved parent schemas/descriptions for external proxies (no generic catchall).
     const externalDefs = this.externalDefinitions(
@@ -2881,7 +2922,7 @@ export class Supervisor implements GateHost {
    */
   private async onProviderAdmission(rt: AgentRuntime, worker: WorkerPort, payload: ProviderAdmissionPayload, envelope: IpcEnvelope): Promise<ProviderAdmissionResponse> {
     const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
-    if (!admission.ok || rt.parentModel === null || payload.reason !== "auth") return admission;
+    if (!admission.ok || rt.parentModel === null || rt.parentModel.transport === "parent-native" || payload.reason !== "auth") return admission;
     const source = this.opts.parentModels;
     if (source === undefined) return { ok: false, code: "MODEL_UNAVAILABLE", error: "parent model authentication source is unavailable" };
     try {
@@ -3213,7 +3254,7 @@ export class Supervisor implements GateHost {
       : run.interruptRequested
         ? "interrupted"
         : status === "succeeded" || status === "interrupted" ? status : "failed";
-    const accounted = this.accountUsage(rt, usage ?? { unknown: true });
+    const accounted = this.accountWorkerUsage(rt, run, usage ?? { unknown: true });
     this.publish("usage.reported", { agentId: record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
     this.store.append("generation.settled", {
       agentId: record.id,
@@ -3332,6 +3373,7 @@ export class Supervisor implements GateHost {
     if (typeof usage !== "object" || usage === null || typeof lateAgentId !== "string" || typeof lateTaskRunId !== "string" || typeof lateGeneration !== "number" || typeof receiptId !== "string" || receiptId.length === 0) {
       throw err("INVALID", `malformed late usage receipt: ${JSON.stringify(detail ?? null).slice(0, 160)}`);
     }
+    if (this.nativeRuns.has(`${lateAgentId}:${lateTaskRunId}:${lateGeneration}`)) return;
     this.commitLateReceipt(rt, { agentId: lateAgentId, taskRunId: lateTaskRunId, generation: lateGeneration, receiptId, usage: usage as UsageDetail }, true);
   }
 
@@ -3421,7 +3463,7 @@ export class Supervisor implements GateHost {
       this.reportFailure(e);
       return false;
     }
-    const body = { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, ...accounted, late: true };
+    const body = { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, ...accounted, late: true, ...(info.usage.sourceModel === undefined ? {} : { sourceModel: info.usage.sourceModel }) };
     try {
       this.store.append("usage.reported", body);
     } catch (e) {
@@ -3445,6 +3487,16 @@ export class Supervisor implements GateHost {
       }
     }
     return true;
+  }
+
+  private captureNativeMode(rt: AgentRuntime): void {
+    if (rt.parentModel !== null && rt.parentModel.transport === "parent-native") this.nativeRuns.add(`${rt.record.id}:${rt.record.currentTaskRunId}:${rt.record.executionGeneration}`);
+  }
+
+  private accountWorkerUsage(rt: AgentRuntime, run: ActiveRun, usage: UsageDetail): ReturnType<Supervisor["accountUsage"]> {
+    return this.nativeRuns.has(`${rt.record.id}:${run.taskRunId}:${run.generation}`)
+      ? this.normalizeLateUsage({ input: 0, output: 0, cost: null, unknown: false })
+      : this.accountUsage(rt, usage);
   }
 
   private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
@@ -3573,6 +3625,7 @@ export class Supervisor implements GateHost {
     record.detail = "task dispatched";
     const run: ActiveRun = { taskRunId: next.id, generation: record.executionGeneration, interruptRequested: false };
     rt.activeRun = run;
+    this.captureNativeMode(rt);
     const message = this.messages.get(next.messageId);
     if (message) message.generation = run.generation;
     record.lastEventSeq = this.publishGenerationStarted(rt, next.id, run.generation, {}).seq;
@@ -4277,6 +4330,7 @@ export class Supervisor implements GateHost {
   private async interruptSubtree(rt: AgentRuntime): Promise<void> {
     const record = rt.record;
     if (rt.activeRun) rt.activeRun.interruptRequested = true;
+    if (rt.worker !== null) this.nativeServices.get(rt.worker)?.cancel();
     this.publish("agent.interrupted", { agentId: record.id, taskRunId: rt.activeRun?.taskRunId ?? record.currentTaskRunId });
     this.cancelCallerWaits(record.id);
     rt.leaseWaitCancel?.();
@@ -4389,7 +4443,7 @@ export class Supervisor implements GateHost {
       const run = rt.activeRun;
       this.pendingSettle.set(run.taskRunId, { agentId: rt.record.id, outcome: "interrupted", error: "closed; the worker did not confirm its interrupt and was stopped" });
       rt.activeRun = null;
-      const accounted = this.accountUsage(rt, { ...(rt.usageSnapshot ?? {}), unknown: true });
+      const accounted = this.accountWorkerUsage(rt, run, { ...(rt.usageSnapshot ?? {}), unknown: true });
       rt.usageSnapshot = null;
       this.publish("usage.reported", { agentId: rt.record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
       this.publish("generation.settled", { agentId: rt.record.id, taskRunId: run.taskRunId, generation: run.generation, outcome: "interrupted", cause: "CLOSED" });
@@ -5178,7 +5232,7 @@ export class Supervisor implements GateHost {
     // A reviewer stopped right after its decision reported its usage with
     // that tool call; anything else unreported is unknown.
     const decided = this.gate.inspectFor(rt.record.id) === "decided";
-    const accounted = this.accountUsage(rt, usage ?? (rt.usageSnapshot && decided ? rt.usageSnapshot : { ...(rt.usageSnapshot ?? {}), unknown: true }));
+    const accounted = this.accountWorkerUsage(rt, run, usage ?? (rt.usageSnapshot && decided ? rt.usageSnapshot : { ...(rt.usageSnapshot ?? {}), unknown: true }));
     rt.usageSnapshot = null;
     this.publish("usage.reported", { agentId: rt.record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
     if (!decided && this.gate.inspectFor(rt.record.id) === "undecided") this.gate.executionFailed(rt.record.id, why);
@@ -5260,6 +5314,7 @@ export class Supervisor implements GateHost {
     rt.record.detail = `repair generation ${generation}`;
     const run: ActiveRun = { taskRunId, generation, interruptRequested: false };
     rt.activeRun = run;
+    this.captureNativeMode(rt);
     this.publishGenerationStarted(rt, taskRunId, generation, { repair: true, commandId: this.gate.inspect(taskRunId)?.repairCommandId ?? null });
     this.deliverRun(rt, run, { mode: "repair", text: criticism });
   }
@@ -5473,6 +5528,7 @@ function retainedFromRecord(body: Record<string, unknown>): RetainedText {
 
 /** Usage as a worker reports it, or as the journal recorded it; `input` includes the cache tokens. */
 interface UsageDetail {
+  sourceModel?: { provider: string; id: string; api: string };
   input?: number;
   output?: number;
   cacheRead?: number;

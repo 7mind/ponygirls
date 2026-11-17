@@ -39,6 +39,19 @@ import type { DeterministicEntryObserver, InvocationScope } from "./deterministi
 import { adaptStream, isFacadeLocalCompletion } from "./stream-facade.ts";
 import { parentModelProvider, parseParentModel, parseProviderRequestAuth, type ParentModelProvider } from "./parent-models.ts";
 
+import { nativeModelProxy } from "./native-proxy.ts";
+
+interface PendingNative { resolve(value: unknown): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout>; }
+
+function requestNativeFrame(frame: unknown, gen: GenerationState): Promise<unknown> {
+  return new Promise((resolve, reject) => {
+    const requestId = randomUUID();
+    const timer = setTimeout(() => { state.pendingNative.delete(requestId); reject(new Error("TIMEOUT: native provider transport")); }, TOOL_REQUEST_TIMEOUT_MS);
+    state.pendingNative.set(requestId, { resolve, reject, timer });
+    send({ type: "request", operation: "provider.native", requestId, taskRunId: gen.taskRunId, executionGeneration: gen.generation, payload: frame });
+  });
+}
+
 const PI_VERSION = "1.0.0";
 const CAPABILITIES = ["proxy-tools", "sequential", "checkpoint", "gate-decision", "control-tools"];
 const TOOL_REQUEST_TIMEOUT_MS = 15 * 60_000;
@@ -181,6 +194,7 @@ const state: {
   pendingTools: Map<string, PendingToolCall>;
   pendingPreps: Map<string, PendingPreparation>;
   pendingAdmission: Map<string, PendingAdmission>;
+  pendingNative: Map<string, PendingNative>;
   /** Single-flight preparation lease (the worker runs sequentially). */
   prepLease: PreparationLease | null;
   /** Prepared ticket of the in-flight call (sent with tool.execute). */
@@ -212,6 +226,7 @@ const state: {
   pendingTools: new Map(),
   pendingPreps: new Map(),
   pendingAdmission: new Map(),
+  pendingNative: new Map(),
   prepLease: null,
   openTicket: null,
   unreleasedTickets: [],
@@ -1542,8 +1557,11 @@ async function resolveModel(sdk: SdkModules, init: InitializePayload, agentDir: 
     const descriptor = parseParentModel(init.providerModel, init.model);
     const compat = await loadCompat();
     const api = compat.getApiProvider(descriptor.api);
-    if (api === undefined) throw new Error("MODEL_UNAVAILABLE: parent model uses an API unavailable in the worker");
-    parentProvider = parentModelProvider(descriptor, api, async (signal) => {
+    if (descriptor.transport !== "parent-native" && api === undefined) throw new Error("MODEL_UNAVAILABLE: parent model uses an API unavailable in the worker");
+    parentProvider = descriptor.transport === "parent-native" ? nativeModelProxy(descriptor, () => {
+      const gen = state.gen;
+      return (frame) => requestNativeFrame(frame, gen);
+    }) : parentModelProvider(descriptor, api!, async (signal) => {
       const admission = await requestProviderAdmission("auth", init.model.provider, init.model.id, init.model.thinkingLevel, signal);
       if (!admission.ok) throw new Error(`${admission.code ?? "MODEL_UNAVAILABLE"}: ${admission.error ?? "parent provider authentication denied"}`);
       if (admission.auth === undefined) throw new Error("MODEL_UNAVAILABLE: parent provider authentication was not supplied");
@@ -2101,6 +2119,18 @@ async function onMessage(raw: unknown): Promise<void> {
       if (pending) {
         pending.resolve({ ok: false, code: checked.code, error: `${checked.code}: ${checked.message}` });
       }
+    }
+    return;
+  }
+  if (asRecord["type"] === "response" && asRecord["operation"] === "provider.native") {
+    const checked = validateEnvelope(raw, state.binding, "to-worker");
+    const requestId = asRecord["requestId"];
+    const pending = typeof requestId === "string" ? state.pendingNative.get(requestId) : undefined;
+    if (pending !== undefined) {
+      state.pendingNative.delete(requestId as string);
+      clearTimeout(pending.timer);
+      if (checked.ok) pending.resolve(checked.envelope.payload);
+      else pending.reject(new Error(`${checked.code}: ${checked.message}`));
     }
     return;
   }

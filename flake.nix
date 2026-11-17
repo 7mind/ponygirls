@@ -875,6 +875,7 @@
             mkdir -p ponygirls-subagents/src
             cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/parent-models.ts} ponygirls-subagents/src/parent-models.ts
             cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/errors.ts} ponygirls-subagents/src/errors.ts
+            cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/native-contract.ts} ponygirls-subagents/src/native-contract.ts
             chmod -R u+w codex-limits
             cd codex-limits
             mkdir -p node_modules/@earendil-works
@@ -1283,6 +1284,8 @@
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
             PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
+            PI_SUBAGENTS_CLAUDE_PACKAGE = self.packages.${system}.pi-claude-code;
+            PI_SUBAGENTS_CLAUDE_FIXTURE = ./nix/pkg/pi-claude-code/fake-cli.mjs;
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''

@@ -1,0 +1,731 @@
+diff --git a/src/claude-cli.ts b/src/claude-cli.ts
+index b883a3f..abba731 100644
+--- a/src/claude-cli.ts
++++ b/src/claude-cli.ts
+@@ -1,6 +1,6 @@
+ import { createHash, randomUUID } from "node:crypto";
+ import { constants as fsConstants, existsSync } from "node:fs";
+-import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
++import { access, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+ import { tmpdir } from "node:os";
+ import { delimiter, dirname, extname, isAbsolute, join, resolve } from "node:path";
+ import { fileURLToPath } from "node:url";
+@@ -8,6 +8,7 @@ import { createInterface } from "node:readline";
+ import { spawn, type ChildProcess } from "node:child_process";
+ import { registerSessionResourceCleanup } from "@earendil-works/pi-ai";
+ import { TurnRelay } from "./turn-relay.ts";
++import type { DelegatedRequest } from "./native-delegation.ts";
+ import { usageCreditsAllowed, usageCreditsChargeError, type RateLimitInfo } from "./billing.ts";
+ import { envFlagEnabled } from "./env.ts";
+ import type { DiscoveredClaudeModel } from "./model-catalog.ts";
+@@ -21,6 +22,8 @@ import type {
+ } from "./native-types.ts";
+ import type { NativeSystemInjection, ToolManifestEntry } from "./transcript.ts";
+ 
++const CLAUDE_STATUS_TIMEOUT_MS = 20_000;
++
+ export const INSTALL_HINT =
+   "Claude Code is not installed. Install it with `npm install -g @anthropic-ai/claude-code` " +
+   "or set PI_CLAUDE_CODE_COMMAND to the executable.";
+@@ -45,6 +48,7 @@ export interface ClaudeStatus {
+ }
+ 
+ export interface RunClaudeInput {
++  delegation?: DelegatedRequest;
+   model: string;
+   /** Working directory exposed to Claude and used for Pi tool paths. */
+   cwd?: string;
+@@ -170,10 +174,11 @@ export async function captureProcess(
+   args: string[],
+   env: Record<string, string>,
+   signal?: AbortSignal,
+-  timeoutMs = 20_000,
++  timeoutMs = CLAUDE_STATUS_TIMEOUT_MS,
++  delegation?: DelegatedRequest,
+ ): Promise<{ code: number; stdout: string; stderr: string }> {
+   signal?.throwIfAborted();
+-  const child = spawnCommand(command, args, { env, stdio: ["ignore", "pipe", "pipe"] });
++  const child = spawnCommand(command, args, { env, detached: process.platform !== "win32", stdio: ["ignore", "pipe", "pipe"] });
+   let stdout = "";
+   let stderr = "";
+   child.stdout?.setEncoding("utf8");
+@@ -184,13 +189,23 @@ export async function captureProcess(
+   const abort = () => killProcessTree(child);
+   signal?.addEventListener("abort", abort, { once: true });
+   const timer = setTimeout(abort, timeoutMs);
++  let primary: unknown = null;
+   try {
+     const code = await childExit(child);
+     signal?.throwIfAborted();
+     return { code, stdout, stderr };
+-  } finally {
++  } catch (error) { primary = error; throw error; }
++  finally {
+     clearTimeout(timer);
+     signal?.removeEventListener("abort", abort);
++    try {
++      killProcessTree(child);
++      if (child.pid !== undefined) await waitForProcessGroup(child.pid);
++    } catch (error) {
++      if (delegation !== undefined) delegation.cleanupFailed(error);
++      if (primary !== null) throw new AggregateError([primary, error], "Claude Code acquisition and cleanup failed");
++      throw error;
++    }
+   }
+ }
+ 
+@@ -220,6 +235,7 @@ function statusPayload(stdout: string): Record<string, unknown> | undefined {
+ export async function getClaudeStatus(
+   envInput: Record<string, string | undefined> = process.env,
+   signal?: AbortSignal,
++  delegation?: DelegatedRequest,
+ ): Promise<ClaudeStatus> {
+   const env = claudeEnvironment(envInput);
+   const command = await resolveClaudeExecutable(env);
+@@ -227,7 +243,7 @@ export async function getClaudeStatus(
+ 
+   let result: { code: number; stdout: string; stderr: string };
+   try {
+-    result = await captureProcess(command, ["auth", "status"], env, signal);
++    result = await captureProcess(command, ["auth", "status"], env, signal, CLAUDE_STATUS_TIMEOUT_MS, delegation);
+   } catch (error) {
+     if (signal?.aborted) throw error;
+     const message = error instanceof Error ? error.message : String(error);
+@@ -281,6 +297,7 @@ const readyStatusCache = new Map<string, { command: string; expires: number }>()
+ async function readyClaudeCommand(
+   envInput: Record<string, string | undefined>,
+   signal?: AbortSignal,
++  delegation?: DelegatedRequest,
+ ): Promise<string> {
+   const env = claudeEnvironment(envInput);
+   const key = JSON.stringify([
+@@ -293,7 +310,7 @@ async function readyClaudeCommand(
+   const cached = readyStatusCache.get(key);
+   if (cached && cached.expires > Date.now()) return cached.command;
+ 
+-  const status = await getClaudeStatus(env, signal);
++  const status = await getClaudeStatus(env, signal, delegation);
+   if (!status.available || !status.command) throw new Error(INSTALL_HINT);
+   if (!status.loggedIn) {
+     readyStatusCache.delete(key);
+@@ -408,7 +425,8 @@ export async function discoverClaudeModels(
+   } finally {
+     clearTimeout(timer);
+     signal?.removeEventListener("abort", abort);
+-    if (child.exitCode === null) killProcessTree(child);
++    killProcessTree(child);
++    if (child.pid !== undefined) await waitForProcessGroup(child.pid);
+   }
+ }
+ 
+@@ -480,6 +498,8 @@ export function spawnCommand(
+ }
+ 
+ function childExit(child: ChildProcess): Promise<number> {
++  if (child.exitCode !== null) return Promise.resolve(child.exitCode);
++  if (child.signalCode !== null) return Promise.reject(new Error(`Claude Code exited from signal ${child.signalCode}`));
+   return new Promise((resolve, reject) => {
+     child.once("error", reject);
+     child.once("exit", (code, signal) => {
+@@ -490,8 +510,9 @@ function childExit(child: ChildProcess): Promise<number> {
+ }
+ 
+ export function killProcessTree(child: ChildProcess): void {
+-  if (child.exitCode !== null || child.pid === undefined) return;
++  if (child.pid === undefined) return;
+   if (process.platform === "win32") {
++    if (child.exitCode !== null || child.signalCode !== null) return;
+     const killer = spawn("taskkill", ["/F", "/T", "/PID", String(child.pid)], {
+       stdio: "ignore",
+       windowsHide: true,
+@@ -501,12 +522,32 @@ export function killProcessTree(child: ChildProcess): void {
+   }
+   try {
+     process.kill(-child.pid, "SIGKILL");
+-  } catch {
+-    try {
+-      child.kill("SIGKILL");
+-    } catch {
+-      // It exited between the checks.
++  } catch (error) {
++    if ((error as NodeJS.ErrnoException).code !== "ESRCH") throw error;
++    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
++  }
++}
++
++async function waitForProcessGroup(pid: number): Promise<void> {
++  if (process.platform === "win32") return;
++  const deadline = Date.now() + 5000;
++  for (;;) {
++    let alive = false;
++    if (process.platform === "linux") {
++      for (const name of await readdir("/proc")) {
++        if (!/^\d+$/.test(name)) continue;
++        try {
++          const fields = (await readFile(`/proc/${name}/stat`, "utf8")).split(") ").pop()!.split(" ");
++          if (Number(fields[2]) === pid && fields[0] !== "Z" && fields[0] !== "X") alive = true;
++        } catch (e) { if ((e as NodeJS.ErrnoException).code !== "ENOENT" && (e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
++      }
++    } else {
++      try { process.kill(-pid, 0); alive = true; }
++      catch (e) { if ((e as NodeJS.ErrnoException).code !== "ESRCH") throw e; }
+     }
++    if (!alive) return;
++    if (Date.now() >= deadline) throw new Error("Claude Code process group termination unconfirmed");
++    await new Promise((resolve) => setTimeout(resolve, 10));
+   }
+ }
+ 
+@@ -962,6 +1003,7 @@ class ClaudeProcess {
+     private readonly readTask: Promise<void>,
+     private readonly exitOutcome: Promise<{ code?: number; error?: Error }>,
+     private readonly timeoutMs: number,
++    private readonly delegation: DelegatedRequest | undefined,
+   ) {
+     child.stderr?.setEncoding("utf8");
+     child.stderr?.on("data", (chunk: string) => (this.stderr = (this.stderr + chunk).slice(-65_536)));
+@@ -969,7 +1011,7 @@ class ClaudeProcess {
+ 
+   static async create(input: RunClaudeInput, plan: ClaudeLaunchPlan): Promise<ClaudeProcess> {
+     input.signal?.throwIfAborted();
+-    const command = await readyClaudeCommand({ ...process.env, ...input.env }, input.signal);
++    const command = await readyClaudeCommand({ ...process.env, ...input.env }, input.signal, input.delegation);
+ 
+     const root = await mkdtemp(join(tmpdir(), "pi-claude-code-"));
+     const toolsPath = join(root, "tools.json");
+@@ -1025,6 +1067,8 @@ class ClaudeProcess {
+         JSON.stringify(mcp),
+       ];
+ 
++      input.signal?.throwIfAborted();
++      if (input.delegation !== undefined) input.delegation.beforeEntry();
+       child = spawnCommand(command, args, {
+         // Claude Code tells the model its process cwd. Keep transport files
+         // private while exposing Pi's real working directory to the model.
+@@ -1055,12 +1099,22 @@ class ClaudeProcess {
+         (code) => ({ code }),
+         (error: unknown) => ({ error: error instanceof Error ? error : new Error(String(error)) }),
+       );
+-      return new ClaudeProcess(plan.fingerprint, root, child, relay, queue, readTask, exitOutcome, plan.timeoutMs);
++      const worker = new ClaudeProcess(plan.fingerprint, root, child, relay, queue, readTask, exitOutcome, plan.timeoutMs, input.delegation);
++      if (input.delegation !== undefined) input.delegation.own(worker);
++      return worker;
+     } catch (error) {
+       relay?.abort();
+-      if (child && child.exitCode === null) killProcessTree(child);
+-      await relay?.close();
+-      await rm(root, { recursive: true, force: true });
++      const cleanup = await Promise.allSettled([
++        (async () => { if (child) { killProcessTree(child); if (child.pid !== undefined) await waitForProcessGroup(child.pid); } })(),
++        relay === undefined ? Promise.resolve() : relay.close(),
++        rm(root, { recursive: true, force: true }),
++      ]);
++      const failures = cleanup.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected").map((outcome) => outcome.reason as unknown);
++      if (failures.length > 0) {
++        const failure = new AggregateError([error, ...failures], "Claude Code creation and cleanup failed");
++        if (input.delegation !== undefined) input.delegation.cleanupFailed(failure);
++        throw failure;
++      }
+       throw error;
+     }
+   }
+@@ -1128,6 +1182,7 @@ class ClaudeProcess {
+       deliver,
+       (body) => rewriteInitialRequest(body, input.frames, input.initialSystemMessages, input.nativeSystemInjections),
+       input.betas,
++      input.delegation === undefined ? undefined : () => input.delegation!.beforeEntry(),
+     );
+ 
+     const abort = () => {
+@@ -1144,6 +1199,8 @@ class ClaudeProcess {
+     try {
+       const frames = continuation ? input.frames.slice(-1) : input.frames;
+       for (const frame of frames) {
++        input.signal?.throwIfAborted();
++        if (input.delegation !== undefined) input.delegation.beforeEntry();
+         const uuid = await writeFrame(this.child, frame);
+         if (frame.shouldQuery === false) {
+           for (;;) {
+@@ -1259,10 +1316,18 @@ class ClaudeProcess {
+     }
+   }
+ 
+-  async close(): Promise<void> {
++  private closing: Promise<void> | undefined;
++
++  close(): Promise<void> {
++    if (this.closing !== undefined) return this.closing;
+     this.closeNow();
+-    await Promise.allSettled([this.readTask, this.exitOutcome, this.relay.close()]);
+-    await rm(this.root, { recursive: true, force: true });
++    this.closing = (async () => {
++      await Promise.all([this.readTask, this.exitOutcome, this.relay.close()]);
++      if (this.child.pid !== undefined) await waitForProcessGroup(this.child.pid);
++      await rm(this.root, { recursive: true, force: true });
++      if (this.delegation !== undefined) this.delegation.release(this);
++    })();
++    return this.closing;
+   }
+ 
+   private closeNow(): void {
+@@ -1270,7 +1335,7 @@ class ClaudeProcess {
+     this.closed = true;
+     this.clearExpiryTimer();
+     this.relay.abort();
+-    if (this.child.exitCode === null) killProcessTree(this.child);
++    killProcessTree(this.child);
+   }
+ 
+   private async exitError(fallback: string): Promise<Error> {
+@@ -1325,6 +1390,8 @@ async function discardProcess(acquired: AcquiredProcess): Promise<void> {
+ 
+ async function acquireProcess(input: RunClaudeInput, plan: ClaudeLaunchPlan): Promise<AcquiredProcess> {
+   return withManagerLock(async () => {
++    input.signal?.throwIfAborted();
++    if (input.delegation !== undefined) input.delegation.beforeEntry();
+     const sessionId = input.sessionId;
+     const cached = sessionId ? processCache.get(sessionId) : undefined;
+     if (cached && !cached.busy) {
+diff --git a/src/native-delegation.ts b/src/native-delegation.ts
+new file mode 100644
+index 0000000..b50c99f
+--- /dev/null
++++ b/src/native-delegation.ts
+@@ -0,0 +1,101 @@
++import { isAbsolute } from "node:path";
++import type { AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
++
++export const NATIVE_NAMESPACE = "ponygirls.nativeDelegation.v1";
++export const NATIVE_SYMBOL = Symbol.for(NATIVE_NAMESPACE);
++
++interface OwnedProcess { close(): Promise<void>; }
++interface DelegationContext {
++  capability: NativeCapability;
++  cwd: string;
++  lifecycleSessionId: string;
++  beforeEntry(actual: NativeCapability): void;
++  captureOriginal(stream: AssistantMessageEventStream): AssistantMessageEventStream;
++}
++interface Session {
++  retired: boolean;
++  abort: AbortController;
++  pending: Set<Promise<unknown>>;
++  workers: Set<OwnedProcess>;
++  cleanupFailure: unknown;
++}
++export interface DelegatedRequest {
++  readonly cwd: string;
++  readonly signal: AbortSignal;
++  beforeEntry(): void;
++  captureOriginal(stream: AssistantMessageEventStream): AssistantMessageEventStream;
++  own(worker: OwnedProcess): void;
++  release(worker: OwnedProcess): void;
++  cleanupFailed(error: unknown): void;
++  track<T>(pending: Promise<T>): Promise<T>;
++}
++export interface NativeCapability {
++  version: 1;
++  apis: string[];
++  requestProfile: "canonical-simple-no-provider-hooks-v1";
++  disposeSession(id: string): Promise<void>;
++}
++
++export class NativeSessions {
++  private readonly sessions = new Map<string, Session>();
++  readonly capability: NativeCapability;
++
++  constructor(api: string) {
++    this.capability = { version: 1, apis: [api], requestProfile: "canonical-simple-no-provider-hooks-v1", disposeSession: (id) => this.dispose(id) };
++  }
++
++  enter(options: SimpleStreamOptions | undefined): DelegatedRequest | undefined {
++    const context = options?.metadata?.[NATIVE_NAMESPACE] as DelegationContext | undefined;
++    if (context === undefined) return undefined;
++    if (typeof context !== "object" || context === null || context.capability !== this.capability || typeof context.cwd !== "string" || !isAbsolute(context.cwd) || typeof context.lifecycleSessionId !== "string" || context.lifecycleSessionId.length === 0 || typeof context.beforeEntry !== "function" || typeof context.captureOriginal !== "function") throw new Error("Invalid native delegation context");
++    context.beforeEntry(this.capability);
++    let owner = this.sessions.get(context.lifecycleSessionId);
++    if (owner === undefined) {
++      owner = { retired: false, abort: new AbortController(), pending: new Set(), workers: new Set(), cleanupFailure: null };
++      this.sessions.set(context.lifecycleSessionId, owner);
++    }
++    const session = owner;
++    const signal = options?.signal === undefined ? session.abort.signal : AbortSignal.any([options.signal, session.abort.signal]);
++    const assert = (): void => {
++      if (session.retired) throw new Error("Native delegation session retired");
++      signal.throwIfAborted();
++      context.beforeEntry(this.capability);
++    };
++    assert();
++    return {
++      cwd: context.cwd, signal,
++      beforeEntry: assert,
++      captureOriginal: (stream) => context.captureOriginal(stream),
++      own: (worker) => { session.workers.add(worker); },
++      release: (worker) => { session.workers.delete(worker); },
++      cleanupFailed: (error) => { if (session.cleanupFailure === null) session.cleanupFailure = error; session.retired = true; session.abort.abort(); },
++      track: async (pending) => {
++        session.pending.add(pending);
++        try { return await pending; }
++        finally { session.pending.delete(pending); }
++      },
++    };
++  }
++
++  private async dispose(id: string): Promise<void> {
++    const session = this.sessions.get(id);
++    if (session === undefined) return;
++    session.retired = true;
++    session.abort.abort();
++    const failures: unknown[] = [];
++    const join = async (tasks: Promise<unknown>[]): Promise<void> => {
++      for (const outcome of await Promise.allSettled(tasks)) if (outcome.status === "rejected") failures.push(outcome.reason);
++    };
++    const attempted = new Set<OwnedProcess>();
++    const closeOwned = (): Promise<void> => join([...session.workers].filter((worker) => !attempted.has(worker)).map((worker) => {
++      attempted.add(worker);
++      return Promise.resolve().then(() => worker.close());
++    }));
++    await closeOwned();
++    await join([...session.pending]);
++    await closeOwned();
++    if (session.cleanupFailure !== null) failures.push(session.cleanupFailure);
++    if (failures.length > 0) throw new AggregateError(failures, "Native delegation cleanup failed");
++    this.sessions.delete(id);
++  }
++}
+diff --git a/src/provider.ts b/src/provider.ts
+index e15020d..b14d05b 100644
+--- a/src/provider.ts
++++ b/src/provider.ts
+@@ -2,6 +2,7 @@ import { createProvider, type AuthContext, type ProviderEnv } from "@earendil-wo
+ import { discoverClaudeModels, getClaudeStatus, LOGIN_HINT, POWERSHELL_ENV } from "./claude-cli.ts";
+ import { API_ID, CLAUDE_CODE_MODELS, modelFromDiscovery, PROVIDER_ID } from "./model-catalog.ts";
+ import { streamClaudeCode } from "./stream.ts";
++import { NativeSessions, NATIVE_SYMBOL } from "./native-delegation.ts";
+ 
+ const PROVIDER_ENV_NAMES = [
+   "PI_CLAUDE_CODE_COMMAND",
+@@ -32,6 +33,8 @@ export function claudeCodeEnv(): Record<string, string | undefined> {
+ }
+ 
+ export function createClaudeCodeProvider() {
++  const sessions = new NativeSessions(API_ID);
++  const delegatedStream = (...[model, context, options]: Parameters<typeof streamClaudeCode>) => streamClaudeCode(model, context, options, sessions.enter(options));
+   let discoveredIds: Set<string> | undefined;
+   const externalOAuthMarker = () => ({
+     type: "oauth" as const,
+@@ -39,7 +42,7 @@ export function createClaudeCodeProvider() {
+     refresh: "claude-code-external",
+     expires: Date.now() + 365 * 24 * 60 * 60 * 1_000,
+   });
+-  return createProvider({
++  const provider = createProvider({
+     id: PROVIDER_ID,
+     name: "Claude Code Subscription (Experimental)",
+     baseUrl: "process://claude-code",
+@@ -105,10 +108,12 @@ export function createClaudeCodeProvider() {
+       return ids ? models.filter((model) => ids.has(model.id)) : models;
+     },
+     api: {
+-      stream: streamClaudeCode,
+-      streamSimple: streamClaudeCode,
++      stream: delegatedStream,
++      streamSimple: delegatedStream,
+     },
+   });
++  Object.defineProperty(provider, NATIVE_SYMBOL, { value: sessions.capability });
++  return provider;
+ }
+ 
+ export { API_ID, PROVIDER_ID };
+diff --git a/src/stream.ts b/src/stream.ts
+index a80889e..2343c48 100644
+--- a/src/stream.ts
++++ b/src/stream.ts
+@@ -17,6 +17,7 @@ import {
+ } from "@earendil-works/pi-ai";
+ import { describeUsageCreditsRejection } from "./billing.ts";
+ import { runClaudeRequest } from "./claude-cli.ts";
++import type { DelegatedRequest } from "./native-delegation.ts";
+ import { nativeModel, supportsNativeToolChanges } from "./model-catalog.ts";
+ import type { AnthropicStreamEvent, NativeContentBlock, NativeMessage, NativeUsage } from "./native-types.ts";
+ import {
+@@ -331,7 +332,9 @@ export function streamClaudeCode(
+   model: Model<any>,
+   sourceContext: TranscriptContext,
+   options?: SimpleStreamOptions,
++  delegation?: DelegatedRequest,
+ ): AssistantMessageEventStream {
++  if (delegation !== undefined) options = { ...options, signal: delegation.signal };
+   const stream = createAssistantMessageEventStream();
+   const output: AssistantMessage = {
+     role: "assistant",
+@@ -344,7 +347,8 @@ export function streamClaudeCode(
+     timestamp: Date.now(),
+   };
+ 
+-  void (async () => {
++  const exposed = delegation === undefined ? stream : delegation.captureOriginal(stream);
++  const pending = (async () => {
+     try {
+       const context = { ...sourceContext, messages: prepareMessages(sourceContext.messages, model) };
+       const nativeTranscript = prepareNativeTranscript(
+@@ -372,7 +376,8 @@ export function streamClaudeCode(
+       stream.push({ type: "start", partial: output });
+       const response = await runClaudeRequest({
+         model: nativeModel(model.id),
+-        cwd: process.cwd(),
++        cwd: delegation === undefined ? process.cwd() : delegation.cwd,
++        delegation,
+         frames,
+         systemPrompt,
+         manifest: preparedTools.manifest,
+@@ -422,6 +427,8 @@ export function streamClaudeCode(
+       stream.end();
+     }
+   })();
++  if (delegation !== undefined) void delegation.track(pending);
++  else void pending;
+ 
+-  return stream;
++  return exposed;
+ }
+diff --git a/src/turn-relay.ts b/src/turn-relay.ts
+index 17d5e02..9420e17 100644
+--- a/src/turn-relay.ts
++++ b/src/turn-relay.ts
+@@ -150,6 +150,7 @@ export class TurnRelay {
+   private baseUrl?: string;
+   private transformRequest?: (body: Buffer) => Buffer;
+   private requestBetas: string[] = [];
++  private beforeEntry: (() => void) | undefined;
+ 
+   constructor(
+     upstream = "https://api.anthropic.com",
+@@ -183,7 +184,9 @@ export class TurnRelay {
+     onEvent?: (event: AnthropicStreamEvent) => void,
+     transformRequest?: (body: Buffer) => Buffer,
+     requestBetas: string[] = [],
++    beforeEntry?: () => void,
+   ): void {
++    this.beforeEntry = beforeEntry;
+     if (this.closed) throw new Error("Claude Code turn relay is closed");
+     if (this.active.size > 0) throw new Error("Claude Code turn relay still has an active request");
+     this.capture = new AnthropicCapture(onEvent);
+@@ -303,6 +306,8 @@ export class TurnRelay {
+ 
+       const pathPrefix = this.upstream.pathname.replace(/\/$/u, "");
+       const transport = this.upstream.protocol === "https:" ? https : http;
++      if (this.beforeEntry !== undefined) this.beforeEntry();
++      if (this.cancelled) return;
+       upstreamRequest = transport.request({
+         protocol: this.upstream.protocol,
+         hostname: this.upstream.hostname,
+diff --git a/tests/discovery-exit.test.ts b/tests/discovery-exit.test.ts
+new file mode 100644
+index 0000000..d3b2056
+--- /dev/null
++++ b/tests/discovery-exit.test.ts
+@@ -0,0 +1,17 @@
++import assert from "node:assert/strict";
++import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
++import { join } from "node:path";
++import { tmpdir } from "node:os";
++import test from "node:test";
++import { discoverClaudeModels } from "../src/claude-cli.ts";
++
++test("catalog discovery observes a leader exit before descendant stdout closure", { timeout: 3000 }, async () => {
++  const root = await mkdtemp(join(tmpdir(), "claude-discovery-exit-"));
++  const script = join(root, "fake-cli");
++  await writeFile(script, `#!${process.execPath}\nimport {spawn} from 'node:child_process';import {createInterface} from 'node:readline';for await(const line of createInterface({input:process.stdin})){const f=JSON.parse(line);if(f.type==='control_request'){console.log(JSON.stringify({type:'control_response',response:{subtype:'success',request_id:f.request_id,response:{models:[{value:'sonnet',displayName:'Sonnet',description:'fixture'}]}}}));const c=spawn(process.execPath,['-e','setTimeout(()=>{},200)'],{stdio:['ignore',process.stdout,'ignore']});c.unref();process.stdout.write('',()=>process.exit(0));}}`);
++  await chmod(script, 0o755);
++  try {
++    const models = await discoverClaudeModels({ ...process.env, PI_CLAUDE_CODE_COMMAND: script }, undefined, 1000);
++    assert.equal(models[0]!.value, "sonnet");
++  } finally { await rm(root, { recursive: true, force: true }); }
++});
+diff --git a/tests/native-entry.test.ts b/tests/native-entry.test.ts
+new file mode 100644
+index 0000000..7231cf8
+--- /dev/null
++++ b/tests/native-entry.test.ts
+@@ -0,0 +1,37 @@
++import assert from "node:assert/strict";
++import * as http from "node:http";
++import type { AddressInfo } from "node:net";
++import test from "node:test";
++import { TurnRelay } from "../src/turn-relay.ts";
++
++for (const revoked of [false, true]) {
++  test(`relay reasserts delegation authority after body preparation (revoked=${revoked})`, async () => {
++    let entries = 0;
++    const upstream = http.createServer(async (request, response) => { for await (const _chunk of request) {} entries++; response.writeHead(200, { "content-type": "text/event-stream" }); response.end(); });
++    await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
++    const relay = new TurnRelay(`http://127.0.0.1:${(upstream.address() as AddressInfo).port}`);
++    let allowed = true;
++    let assertions = 0;
++    relay.beginTurn(undefined, undefined, [], () => { assertions++; if (!allowed) throw new Error("delegation revoked before relay entry"); });
++    try {
++      const url = await relay.start();
++      let request!: http.ClientRequest;
++      const response = new Promise<number | undefined>((resolve, reject) => {
++        request = http.request(`${url}/v1/messages`, { method: "POST" }, async (reply) => { for await (const _chunk of reply) {} resolve(reply.statusCode); });
++        request.once("error", reject);
++      });
++      request.write('{"messages":');
++      await new Promise((resolve) => setImmediate(resolve));
++      if (revoked) allowed = false;
++      request.end("[]}");
++      assert.equal(await response, revoked ? 502 : 200);
++      await relay.settled();
++      assert.equal(assertions, 1);
++      assert.equal(entries, revoked ? 0 : 1);
++      if (revoked) assert.match(relay.failure!, /delegation revoked/);
++    } finally {
++      await relay.close();
++      await new Promise<void>((resolve) => upstream.close(() => resolve()));
++    }
++  });
++}
+diff --git a/tests/native-lifecycle.test.ts b/tests/native-lifecycle.test.ts
+new file mode 100644
+index 0000000..1de5274
+--- /dev/null
++++ b/tests/native-lifecycle.test.ts
+@@ -0,0 +1,40 @@
++import assert from "node:assert/strict";
++import { spawn } from "node:child_process";
++import { once } from "node:events";
++import { readFile } from "node:fs/promises";
++import test from "node:test";
++import { captureProcess, killProcessTree } from "../src/claude-cli.ts";
++
++async function running(pid: number): Promise<boolean> {
++  try { return (await readFile(`/proc/${pid}/stat`, "utf8")).split(") ")[1]!.charAt(0) !== "Z"; }
++  catch (e) { if ((e as NodeJS.ErrnoException).code === "ENOENT") return false; throw e; }
++}
++
++test("completed acquisition commands do not leave owned descendants running", { skip: process.platform !== "linux" }, async () => {
++  let pid = 0;
++  try {
++    const result = await captureProcess(process.execPath, ["-e", `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});c.once('spawn',()=>{console.log(String(c.pid));c.unref()})`], {}, undefined, 2000);
++    pid = Number(result.stdout.trim());
++    assert.ok(pid > 0, result.stderr);
++    assert.equal(await running(pid), false);
++  } finally { if (pid > 0) { try { process.kill(pid, "SIGKILL"); } catch {} } }
++});
++
++test("detached CLI descendants are stopped after the leader has exited", { skip: process.platform !== "linux" }, async () => {
++  const leader = spawn(process.execPath, ["-e", `const {spawn}=require('node:child_process');const c=spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:'ignore'});c.once('spawn',()=>{console.log(String(c.pid));c.unref()});c.once('error',e=>{console.error(e);process.exitCode=1})`], { detached: true, stdio: ["ignore", "pipe", "pipe"] });
++  let output = "";
++  let stderr = "";
++  leader.stderr!.on("data", (data: Buffer) => { stderr += data.toString(); });
++  leader.stdout!.on("data", (data: Buffer) => { output += data.toString(); });
++  await once(leader, "close");
++  const pid = Number(output.trim());
++  assert.equal(leader.exitCode, 0, stderr);
++  assert.ok(pid > 0, JSON.stringify({ output, stderr, executable: process.execPath }));
++  try {
++    assert.equal(await running(pid), true);
++    killProcessTree(leader);
++    const deadline = Date.now() + 2000;
++    while (await running(pid) && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
++    assert.equal(await running(pid), false);
++  } finally { try { process.kill(-leader.pid!, "SIGKILL"); } catch {} }
++});
+diff --git a/tests/native-owner.test.ts b/tests/native-owner.test.ts
+new file mode 100644
+index 0000000..da4dcef
+--- /dev/null
++++ b/tests/native-owner.test.ts
+@@ -0,0 +1,90 @@
++import assert from "node:assert/strict";
++import test from "node:test";
++import { NativeSessions, NATIVE_NAMESPACE } from "../src/native-delegation.ts";
++
++function delegation(sessions: NativeSessions, id: string) {
++  return sessions.enter({ metadata: { [NATIVE_NAMESPACE]: { capability: sessions.capability, cwd: process.cwd(), lifecycleSessionId: id, beforeEntry: () => {}, captureOriginal: (stream) => stream } } })!;
++}
++
++test("native lifecycle retires synchronously, closes every owned process and joins pending acquisition", async () => {
++  const sessions = new NativeSessions("fixture");
++  const worker = delegation(sessions, "worker");
++  const reviewer = delegation(sessions, "reviewer");
++  let release!: () => void;
++  const pending = worker.track(new Promise<void>((resolve) => { release = resolve; }));
++  const closed: number[] = [];
++  for (const id of [1, 2, 3]) {
++    const process = { close: async () => { closed.push(id); worker.release(process); } };
++    worker.own(process);
++  }
++  let disposed = false;
++  const disposal = sessions.capability.disposeSession("worker").then(() => { disposed = true; });
++  assert.equal(worker.signal.aborted, true);
++  assert.throws(() => worker.beforeEntry(), /retired/);
++  assert.equal(reviewer.signal.aborted, false);
++  await new Promise((resolve) => setImmediate(resolve));
++  assert.deepEqual(closed.sort(), [1, 2, 3]);
++  assert.equal(disposed, false);
++  release();
++  await pending;
++  await disposal;
++  assert.equal(disposed, true);
++  await sessions.capability.disposeSession("reviewer");
++});
++
++test("synchronous owned close failure does not skip other closes or pending acquisition joins", async () => {
++  const sessions = new NativeSessions("fixture");
++  const owner = delegation(sessions, "synchronous-failure");
++  const closed: string[] = [];
++  const failure = new Error("controlled synchronous EPERM");
++  owner.own({ close: () => { closed.push("first"); throw failure; } });
++  const second = { close: async () => { closed.push("second"); owner.release(second); } };
++  owner.own(second);
++  let release!: () => void;
++  const acquired = { close: async () => { closed.push("acquired"); owner.release(acquired); } };
++  const pending = owner.track(new Promise<void>((resolve) => { release = () => { owner.own(acquired); resolve(); }; }));
++  let settled = false;
++  const disposal = sessions.capability.disposeSession("synchronous-failure").then(() => { settled = true; return null; }, (error: unknown) => { settled = true; return error; });
++  try {
++    await new Promise((resolve) => setImmediate(resolve));
++    assert.deepEqual(closed, ["first", "second"]);
++    assert.equal(settled, false);
++    release();
++    await pending;
++    const outcome = await disposal;
++    assert.ok(outcome instanceof AggregateError);
++    assert.ok(outcome.errors.includes(failure));
++    assert.deepEqual(closed, ["first", "second", "acquired"]);
++  } finally { release(); await pending; await disposal; }
++});
++
++test("pending acquisition rejection is included in native cleanup failure", async () => {
++  const sessions = new NativeSessions("fixture");
++  const owner = delegation(sessions, "pending-failure");
++  let reject!: (error: Error) => void;
++  const failure = new Error("controlled pending cleanup failure");
++  const pending = owner.track(new Promise<void>((_resolve, fail) => { reject = fail; }));
++  void pending.catch(() => {});
++  const disposal = sessions.capability.disposeSession("pending-failure");
++  void disposal.catch(() => {});
++  await new Promise((resolve) => setImmediate(resolve));
++  reject(failure);
++  await assert.rejects(disposal, (error: unknown) => error instanceof AggregateError && error.errors.includes(failure));
++});
++
++test("native lifecycle cleanup failures propagate rather than establishing stopped state", async () => {
++  const sessions = new NativeSessions("fixture");
++  const request = delegation(sessions, "failed");
++  request.own({ close: async () => { throw new Error("termination not observed"); } });
++  await assert.rejects(sessions.capability.disposeSession("failed"), /Native delegation cleanup failed/);
++  assert.throws(() => request.beforeEntry(), /retired/);
++});
++
++test("native lifecycle retains acquisition cleanup faults after request completion", async () => {
++  const sessions = new NativeSessions("fixture");
++  const request = delegation(sessions, "acquisition");
++  request.cleanupFailed(new Error("acquisition descendant still running"));
++  assert.equal(request.signal.aborted, true);
++  assert.throws(() => request.beforeEntry(), /retired/);
++  await assert.rejects(sessions.capability.disposeSession("acquisition"), /Native delegation cleanup failed/);
++});

@@ -39,7 +39,8 @@ export type WorkerOperation =
   | "tool.execute"
   | "tool.prepare"
   | "tool.ticket-release"
-  | "provider.admission";
+  | "provider.admission"
+  | "provider.native";
 
 const SUPERVISOR_OPS: ReadonlySet<string> = new Set<SupervisorOperation>([
   "initialize",
@@ -57,6 +58,7 @@ const WORKER_OPS: ReadonlySet<string> = new Set<WorkerOperation>([
   "tool.prepare",
   "tool.ticket-release",
   "provider.admission",
+  "provider.native",
 ]);
 
 export interface IpcEnvelope {
@@ -153,7 +155,7 @@ export function validateEnvelope(
   // Supervisor answers to worker RPCs (tool execute/prepare, provider
   // admission) travel as responses; ticket-release is one-way and needs no
   // answer.
-  const isToolAnswer = direction === "to-worker" && e["type"] === "response" && (operation === "tool.execute" || operation === "tool.prepare" || operation === "provider.admission");
+  const isToolAnswer = direction === "to-worker" && e["type"] === "response" && (operation === "tool.execute" || operation === "tool.prepare" || operation === "provider.admission" || operation === "provider.native");
   if (typeof operation !== "string" || (!allowed.has(operation) && !isToolAnswer)) {
     return { ok: false, code: "UNKNOWN_OPERATION", message: `unknown operation ${String(e["operation"])}` };
   }

@@ -236,6 +236,7 @@ export default function (pi: ExtensionAPI): void {
     binding.handoffTimer = null;
     const finishHandoff = binding.finishHandoff;
     binding.finishHandoff = null;
+    binding.supervisor.refreshNativeAuthority();
     binding.modelRegistry = ctx.modelRegistry;
     binding.cwd = ctx.cwd;
     binding.ui = ctx.ui;
@@ -392,6 +393,7 @@ export default function (pi: ExtensionAPI): void {
   function governing(ctx: ExtensionContext): SessionBinding {
     const binding = bindingFor(ctx);
     binding.model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, thinkingLevel: pi.getThinkingLevel() } : null;
+    if (binding.modelRegistry !== ctx.modelRegistry) binding.supervisor.refreshNativeAuthority();
     binding.modelRegistry = ctx.modelRegistry;
     // Capture the live tool context for external delegation (prototype-
     // preserved scoped contexts keep getters/revocation; spawn return is NOT
