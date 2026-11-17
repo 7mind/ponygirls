@@ -549,12 +549,6 @@ directory** (resolved absolutely, first existing hit wins). Browser
   selects Firefox instead of Chromium; `MANURE_UX_ARTIFACTS` optionally writes
   screenshots to a scratch directory. A Firefox UX run does not replace the
   mandatory Chromium, TLS or NixOS/HM security gates.
-- The UX module also runs `browser/dashboard-layout.mjs` against the actual
-  dashboard modules and a controlled current-API boundary. Long unbroken names,
-  owners and paths are checked at 320, 390, 570, 571, 800, 801, 1024, 1350, 1351 and 1440px in light/dark mode:
-  no page/table/cell horizontal overflow, all metadata retained, nine keyboard
-  sorts and focusable actions. This is frontend layout evidence, not native
-  backend acceptance. `MANURE_UX_ARTIFACTS` saves catalogue/manifest screenshots.
 - Absolute scratch paths from a developer run are not gates either;
   release acceptance is the parent-run F/B/N matrix (`CONTRACT.md` §13).
   Linux covers service/storage acceptance; CLI portability beyond Linux
