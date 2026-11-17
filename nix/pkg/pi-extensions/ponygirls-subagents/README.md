@@ -47,6 +47,7 @@ genuine limitations.
 - `src/worker.ts` — SDK worker process (native child session, proxy tools)
 - `src/worker-launch.ts` — supervisor-side transport (fork, handshake, guard)
 - `src/parent-models.ts` — selected parent provider metadata and private request-auth bridge
+- `src/backend-contract.ts`, `src/backends.ts` — provider-neutral backend registration, revocable sessions, trusted worker adapters and usage ownership
 - `src/gate.ts` — optional validation gate controller + decision schema
 - `src/ui.ts` — border badge, headless projection, the `/agents` screen
   (tree inspector, transcript view with chat)
@@ -282,9 +283,22 @@ For a parent extension's legacy registration using a stock SDK API, only the
 selected model's public metadata is transferred. The parent resolves fresh
 request credentials and headers over private, generation-fenced IPC; workers
 use an empty in-memory credential store, not inherited environment variables.
-Native extension providers and custom streaming functions fail explicitly.
-Parent request hooks are not replayed, so their sampling/payload overrides
-are not inherited. No parent extensions or unrelated registrations are loaded.
+Native extension providers and legacy custom streaming functions cannot be
+transferred by the stock path. An independently loaded backend may claim a model
+through `src/backend-contract.ts`. No claimant preserves the stock behavior;
+exactly one claimant supplies an explicit trusted worker module and bounded JSON
+initialization; multiple claimants fail with a visible conflict. Binding failure
+never falls back. Workers do not discover parent or workspace extensions.
+
+The versioned request/offer handshake uses `pi.events`, not shared module state.
+Registration rejects duplicate identities and returns an owner-specific unregister
+handle. Core fences requests, binds receipt sinks to immutable dispatched identities,
+and captures usage ownership per generation. Stock worker accounting remains the
+default; authoritative backend receipts use the existing durable accounting and
+recovery holds. Backend request payloads remain opaque under the 256 KiB envelope
+limit. See the separately installed `pi-claude-code-subagents` package for the
+optional Claude Code backend; loading the original provider alone does not enable it.
+
 Workers import pi's built
 package tree from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
 sets to the exact pi derivation (`nix/hm/pi.nix`); without it spawning fails
@@ -292,9 +306,12 @@ explicitly.
 
 Pi `/reload` rebinds the new extension runtime to the existing process-local
 supervisor instead of terminating workers. Active child conversations and
-provider requests continue, completion notices emitted during reload are
-retained, and subsequent provider requests use the current `auth.json` or the
-current parent model registry. Thus switching the authenticated account for the
+portable provider requests continue, and completion notices emitted during
+reload are retained. Backend registrations are revoked synchronously, old sessions
+are joined, and retained workers use current registrations before new backend
+requests. Removing a backend makes retained requests visibly unavailable. Subsequent
+stock requests use the current `auth.json` or parent model registry; public
+metadata changes require a worker reload. Thus switching the authenticated account for the
 same provider does not replace the child identity or transcript. An account
 that cannot access the selected model fails on the next request; credentials
 and models are never silently substituted. An unattached reload handoff expires

@@ -12,7 +12,7 @@ runCommand "pi-claude-code-load" {
     chmod +x "bin/$command"
   done
   export PATH=$PWD/bin:$PATH
-  node ${./load-test.mjs} ${pi-coding-agent}/lib/node_modules/pi-monorepo ${pi-claude-code} 2> load.stderr || {
+  node ${./load-test.mjs} ${pi-coding-agent}/lib/node_modules/pi-monorepo ${pi-claude-code} ${./fake-cli.mjs} 2> load.stderr || {
     cat load.stderr >&2
     exit 1
   }

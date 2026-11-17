@@ -44,7 +44,7 @@ async function governingTools(): Promise<Map<string, Registered>> {
     registerMessageRenderer: () => {},
     on: () => {},
     enqueueMessage: () => {},
-    events: { on: () => () => {} },
+    events: { on: () => () => {}, emit: () => {} },
     getThinkingLevel: () => "low",
   };
   const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
