@@ -263,13 +263,21 @@ search with an academic query. Its readable results include paper titles, source
 URLs/identifiers, authors/dates when supplied, abstract or snippet, sources and
 ranking/lookup evidence; unqualified dates are not labelled publication dates.
 
-Both statistics profiles use comparative tables, with sources as rows and one
-header per tier group: active/nonempty-success/empty/failed/timeout/cancelled/last
-outcome, observed last/total results and latency, plus resolved default source
-deadlines/candidate caps/boosts. At narrower widths headers are abbreviated with
-legends; tables that cannot fit become metric rows without silently clipping
-scalar values. Current main and alwaysInclude sources (plus native web sources)
-are distinguished from historical observations in their original tiers. Paper
+Each statistics profile is one table with word headers and a TIER column
+(`main`, `always`, `native`), rows in tier order and then configured order:
+active/ok/empty/failed/timeout counters, the last outcome coloured by state,
+last / total results, the last latency in seconds, and the resolved default
+deadline and candidate cap; a boost other than 1 trails the cap (`20 ×1.5`). A
+CANCELLED column appears only while some source has cancelled operations. Zero
+and never-attempted cells are a dim `·`; LAST is `never` until an operation
+completes. The essentials (`N sources · mode, n=N`) sit on the right of the title
+while all five tabs still fit, otherwise on a line of their own. When the table is
+wider than the pane, whole columns are dropped in the order CAP, DEADLINE, LATENCY,
+RESULTS, CANCELLED, EMPTY, TIMEOUT and named on a `hidden at this width` line;
+SOURCE, TIER, ACTIVE, OK, FAILED and LAST always stay and no cell is clipped. Below
+the narrowest table each source becomes a wrapped record of those remaining facts.
+The Fetchers tab keeps its earlier abbreviated table and legend. Current sources
+are listed before historical observations, which keep their original tiers. Paper
 statistics do not suggest that native web models or web combine controls are
 paper-source capabilities. Never-attempted sources show unknown health, not
 invented successful/failed requests. Configuration is not proof of entitlement.
@@ -285,9 +293,10 @@ fusion; ranking failures cannot leave completed retrievals marked active.
 Session replacement/reload resets these in-memory observations. Queries,
 credentials, raw upstream errors and response bodies are not retained by monitors.
 
-Policy explanations retain main selection and candidate budgets, alwaysInclude
-limits, the shared pool, source/overall budgets, web discovery/native grace and
-configured fusion/reranking. Default caps are not the last caller's count.
+`?` on a statistics tab opens its policy-and-legend view; `?` or Escape returns
+to the table. Its policy explanations retain main selection and candidate budgets,
+alwaysInclude limits, the shared pool, source/overall budgets, web discovery/native
+grace and configured fusion/reranking. Default caps are not the last caller's count.
 Configured preference is not presented as the next random/round-robin/scored
 selection. Viewing metadata sends no search/read probes or nested inference,
 resolves no paper credentials and acquires no arXiv lock; web registry discovery
@@ -299,12 +308,13 @@ an independent editor, query, result, scroll position and cancellation owner;
 switching profiles preserves them and both may run concurrently through the
 shared pool. Enter submits the active profile using the same service as its
 corresponding tool. Background completions cannot overwrite the other result.
-Arrow keys and Ctrl+PageUp/PageDown scroll. Ctrl+C cancels **all pane-owned tests**
-from any tab; Escape/dispose closes the pane and cancels its tests, not unrelated
-tool calls. Bare PageUp/PageDown work in regular mode; fullscreen reserves them
-for transcript scrolling. Unsubscribed monitors and generation checks prevent
-late completions from repainting disposed views. Output is bounded and terminal
-control sequences are removed before display.
+Arrow keys, PageUp/PageDown and Ctrl+PageUp/PageDown scroll. Ctrl+C cancels **all
+pane-owned tests** from any tab; Escape/dispose closes the pane and cancels its
+tests, not unrelated tool calls. The pane claims Pi's viewport keys while it is
+focused (`capturesViewportInput`), so that bare PageUp/PageDown page the pane
+rather than the fullscreen transcript. Unsubscribed monitors and generation
+checks prevent late completions from repainting disposed views. Output is bounded
+and terminal control sequences are removed before display.
 
 In non-TUI modes, `/websearch` returns separate `web` and `papers` snapshots with
 safe engines, policy and statistics. These are observations, not provider probes.
