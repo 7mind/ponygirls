@@ -107,14 +107,14 @@ for (const adapter of ['memory', 'sqlite']) {
     const home = mkdtempSync(join(tmpdir(), 'chronicle-admission-')); const spool = store(home);
     try {
       const entry = pending('source', 'policy'); const origin: CollectionOrigin = { kind: 'named-yolo', name: 'Foo' };
-      spool.enqueue(entry, origin); assert.deepEqual(spool.pendingOrigin(entry.requestId), origin);
-      assert.throws(() => spool.enqueue({ ...entry, requestId: randomUUID() }, origin), /source-already-pending/);
-      assert.throws(() => spool.enqueue({ ...entry, sourceKey: 'other' }, origin), /request-already-pending/);
+      spool.enqueue(entry, origin, null); assert.deepEqual(spool.pendingOrigin(entry.requestId), origin);
+      assert.throws(() => spool.enqueue({ ...entry, requestId: randomUUID() }, origin, null), /source-already-pending/);
+      assert.throws(() => spool.enqueue({ ...entry, sourceKey: 'other' }, origin, null), /request-already-pending/);
       assert.deepEqual(spool.queue(), [entry]);
       const invalid = pending('invalid', 'policy');
-      assert.throws(() => spool.enqueue(invalid, { kind: 'named-yolo', name: '..' }), /invalid-pending-origin/);
+      assert.throws(() => spool.enqueue(invalid, { kind: 'named-yolo', name: '..' }, null), /invalid-pending-origin/);
       assert.throws(() => spool.pendingOrigin(invalid.requestId), /request-not-found/);
-      spool.enqueue(invalid, { kind: 'explicit' }); spool.drop(invalid.requestId, 'operator-drop');
+      spool.enqueue(invalid, { kind: 'explicit' }, null); spool.drop(invalid.requestId, 'operator-drop');
       spool.fail(entry.requestId, 'network-failed', 99, false, 8); spool.retry(entry.requestId);
       assert.deepEqual(spool.pendingOrigin(entry.requestId), origin);
       assert.throws(() => spool.ack(entry.requestId, 2), /receipt-revision-mismatch/);
@@ -128,7 +128,7 @@ for (const adapter of ['memory', 'sqlite']) {
     try {
       const base = config(home, { discoverNative: false, discoverYolo: false }); const digest = policyDigest(base, resolveRuntimePrivacy(base, syntheticSecrets).identity);
       const entries = ['backoff', 'stopped', 'conflict'].map(key => pending(key, digest));
-      for (const entry of entries) spool.enqueue(entry, { kind: 'native' });
+      for (const entry of entries) spool.enqueue(entry, { kind: 'native' }, null);
       spool.fail(entries[0]!.requestId, 'network-failed', 9999, false, 8);
       spool.fail(entries[1]!.requestId, 'unauthorized', 0, false, 1);
       spool.fail(entries[2]!.requestId, 'cas-conflict', 0, true, 8);
@@ -143,7 +143,7 @@ for (const adapter of ['memory', 'sqlite']) {
       assert.equal(sink.bodies.length, 0); assert.equal(collector.status().diagnostics.filter(d => holdReason(d) !== null).length, 3);
       assert.match(formatCollectorStatus(collector.status()), /Profile admission: 3 queued requests held/);
       assert.equal(engine(base, spool, sink).status().diagnostics.filter(d => holdReason(d) !== null).length, 0);
-      for (const entry of before) assert.throws(() => spool.enqueue({ ...entry, requestId: randomUUID() }, { kind: 'native' }), /source-already-pending/);
+      for (const entry of before) assert.throws(() => spool.enqueue({ ...entry, requestId: randomUUID() }, { kind: 'native' }, null), /source-already-pending/);
       spool.retry(entries[1]!.requestId); const retried = spool.queue(); await collector.runOnce(2); assert.deepEqual(spool.queue(), retried); assert.equal(sink.bodies.length, 0);
       for (const entry of spool.queue()) spool.drop(entry.requestId, 'operator-drop');
       assert.equal(collector.status().diagnostics.filter(d => holdReason(d) !== null).length, 0);
@@ -215,7 +215,7 @@ test('GoodCommunication SQLite legacy missing origins stay unknown across redisc
 test('GoodCommunication SQLite present malformed/stale origin bindings are corruption, never permissive legacy cache misses', () => {
   const home = mkdtempSync(join(tmpdir(), 'chronicle-admission-')); const spool = new SqliteSpool(join(home, 'state')); const db = dbFor(home);
   try {
-    const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'named-yolo', name: 'Allowed' });
+    const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'named-yolo', name: 'Allowed' }, null);
     const original = { requestId: entry.requestId, payloadDigest: entry.payloadDigest, sourceKey: entry.sourceKey, origin: { kind: 'named-yolo', name: 'Allowed' } };
     for (const value of ['{', JSON.stringify({ ...original, requestId: randomUUID() }), JSON.stringify({ ...original, payloadDigest: hash('different') }), JSON.stringify({ ...original, sourceKey: 'other' }), JSON.stringify({ ...original, origin: { kind: 'named-yolo', name: '..' } }), JSON.stringify({ ...original, origin: { kind: 'named-yolo', name: 'Allowed', extra: true } })]) {
       db.prepare("UPDATE kv SET value=? WHERE bucket='pending-origin' AND key=?").run(value, entry.requestId);
@@ -224,9 +224,9 @@ test('GoodCommunication SQLite present malformed/stale origin bindings are corru
     db.prepare("UPDATE kv SET value=? WHERE bucket='pending-origin' AND key=?").run(JSON.stringify(original), entry.requestId);
     spool.ack(entry.requestId, 1); assert.equal(db.prepare("SELECT count(*) AS n FROM kv WHERE bucket='pending-origin'").get()!['n'], 0);
     const orphan = pending('new', 'policy'); db.prepare('INSERT INTO kv VALUES(?,?,?)').run('pending-origin', orphan.requestId, JSON.stringify({ ...original, requestId: orphan.requestId }));
-    assert.throws(() => spool.enqueue(orphan, { kind: 'native' }), /orphaned-pending-origin/); assert.deepEqual(spool.queue(), []);
+    assert.throws(() => spool.enqueue(orphan, { kind: 'native' }, null), /orphaned-pending-origin/); assert.deepEqual(spool.queue(), []);
     db.prepare("UPDATE kv SET value='{' WHERE bucket='pending-origin'").run();
-    assert.throws(() => spool.enqueue(orphan, { kind: 'native' }), /invalid-pending-origin/); assert.deepEqual(spool.queue(), []);
+    assert.throws(() => spool.enqueue(orphan, { kind: 'native' }, null), /invalid-pending-origin/); assert.deepEqual(spool.queue(), []);
   } finally { db.close(); spool.close(); rmSync(home, { recursive: true }); }
 });
 
@@ -235,13 +235,13 @@ test('GoodCommunication SQLite origin write abort rolls back pending/reservation
   try {
     const entry = pending('source', 'policy');
     db.exec("CREATE TRIGGER abort_origin BEFORE INSERT ON kv WHEN NEW.bucket='pending-origin' BEGIN SELECT RAISE(ABORT,'synthetic-abort'); END");
-    assert.throws(() => spool.enqueue(entry, { kind: 'native' }), /synthetic-abort/); assert.deepEqual(spool.queue(), []);
+    assert.throws(() => spool.enqueue(entry, { kind: 'native' }, null), /synthetic-abort/); assert.deepEqual(spool.queue(), []);
     assert.equal(db.prepare("SELECT count(*) AS n FROM kv WHERE bucket IN ('pending','source-pending','pending-origin')").get()!['n'], 0);
-    db.exec('DROP TRIGGER abort_origin'); spool.enqueue(entry, { kind: 'native' });
+    db.exec('DROP TRIGGER abort_origin'); spool.enqueue(entry, { kind: 'native' }, null);
     db.exec('BEGIN IMMEDIATE'); db.prepare("DELETE FROM kv WHERE bucket='pending-origin'").run();
     assert.deepEqual(spool.queueWithOrigins(), [{ entry, origin: { kind: 'native' } }]);
     db.prepare("DELETE FROM kv WHERE bucket IN ('pending','source-pending')").run(); db.exec('COMMIT'); assert.deepEqual(spool.queueWithOrigins(), []);
-    const next = pending('second', 'policy'); spool.enqueue(next, { kind: 'explicit' }); spool.drop(next.requestId, 'operator-drop');
+    const next = pending('second', 'policy'); spool.enqueue(next, { kind: 'explicit' }, null); spool.drop(next.requestId, 'operator-drop');
     assert.equal(db.prepare("SELECT count(*) AS n FROM kv WHERE bucket='pending-origin'").get()!['n'], 0);
   } finally { db.close(); spool.close(); rmSync(home, { recursive: true }); }
 });
@@ -249,7 +249,7 @@ test('GoodCommunication SQLite origin write abort rolls back pending/reservation
 test('GoodCommunication restrictive status is collection-read-only and keeps human/JSON shape while removing stale holds', () => {
   const home = mkdtempSync(join(tmpdir(), 'chronicle-admission-')); const spool = new SqliteSpool(join(home, 'state'));
   try {
-    const base = config(home, {}); const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'unknown' });
+    const base = config(home, {}); const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'unknown' }, null);
     const path = join(home, 'config.json'); put(path, JSON.stringify({ ...base, roots: [], excludeDefaultProfile: true, tokenFile: join(home, 'does-not-exist') }));
     const before = spool.queue(); const output = execFileSync(process.execPath, [new URL('../src/cli.js', import.meta.url).pathname, '--config', path, '--status', '--json'], { encoding: 'utf8' });
     const status = JSON.parse(output) as { diagnostics: { code: string }[]; queue: unknown[] };
@@ -285,7 +285,7 @@ test('GoodCommunication HTTP admission sends zero snapshot POSTs while held, the
 // This adapter-level control proves a read transaction spans both queries in DELETE journal mode.
 test('GoodCommunication SQLite spanning read snapshot prevents a competing ACK commit between pending and origin reads', async () => {
   const home = mkdtempSync(join(tmpdir(), 'chronicle-admission-')); const spool = new SqliteSpool(join(home, 'state')); const storage = new SqliteStorage(join(home, 'state'));
-  const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'native' }); const shared = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT); const control = new Int32Array(shared);
+  const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'native' }, null); const shared = new SharedArrayBuffer(3 * Int32Array.BYTES_PER_ELEMENT); const control = new Int32Array(shared);
   const worker = new Worker(`
     const {parentPort,workerData}=require('node:worker_threads');
     (async()=>{
@@ -317,7 +317,7 @@ test('GoodCommunication corrupt origins prevent ingestion even without restricti
   const home = mkdtempSync(join(tmpdir(), 'chronicle-admission-')); const spool = new SqliteSpool(join(home, 'state')); const db = dbFor(home); const sink = new Sink();
   try {
     const c = config(home, { discoverNative: false, discoverYolo: false }); const entry = pending('source', policyDigest(c, resolveRuntimePrivacy(c, syntheticSecrets).identity));
-    spool.enqueue(entry, { kind: 'named-yolo', name: 'Allowed' });
+    spool.enqueue(entry, { kind: 'named-yolo', name: 'Allowed' }, null);
     db.prepare("UPDATE kv SET value='{' WHERE bucket='pending-origin'").run();
     await assert.rejects(() => engine(c, spool, sink).runOnce(1), /invalid-pending-origin/); assert.equal(sink.bodies.length, 0); assert.deepEqual(spool.queue(), [entry]);
     db.prepare("UPDATE kv SET value=? WHERE bucket='pending-origin'").run(JSON.stringify({ requestId: entry.requestId, payloadDigest: entry.payloadDigest, sourceKey: entry.sourceKey, origin: { kind: 'native' } }));
@@ -339,7 +339,7 @@ test('BG status replaces every reserved historical hold code, retaining unrelate
 test('GoodCommunication present bound-origin fields require strings even when corrupted pending fields compare equal', () => {
   const home = mkdtempSync(join(tmpdir(), 'chronicle-admission-')); const spool = new SqliteSpool(join(home, 'state')); const db = dbFor(home);
   try {
-    const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'native' });
+    const entry = pending('source', 'policy'); spool.enqueue(entry, { kind: 'native' }, null);
     for (const field of ['requestId', 'payloadDigest', 'sourceKey']) {
       const corrupt = { ...entry, [field]: 7 };
       const origin = { requestId: corrupt.requestId, payloadDigest: corrupt.payloadDigest, sourceKey: corrupt.sourceKey, origin: { kind: 'native' } };

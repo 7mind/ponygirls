@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { formatCollectorStatus, type CollectorStatus } from '../src/status.ts';
 
 function status(): CollectorStatus {
-  return { namespace: 'synthetic-namespace', lastRun: null, queue: [], diagnostics: [], dropped: [],
+  return { controls: { paused: false, exclusions: [] }, heldRequests: [], namespace: 'synthetic-namespace', lastRun: null, queue: [], diagnostics: [], dropped: [],
     reporting: { sequence: '0', acceptedSequence: null, acceptedAt: null, error: null } };
 }
 

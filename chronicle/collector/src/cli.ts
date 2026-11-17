@@ -13,8 +13,8 @@ import { LocalGitMetadata } from './git.ts';
 import { DaemonLock, SqliteSpool } from './spool.ts';
 import { formatCollectorStatus } from './status.ts';
 
-interface Arguments { configPath: string; operation: 'daemon' | 'once' | 'status' | 'retry' | 'drop'; requestId: string | null; json: boolean }
-const USAGE = 'usage: [--config ABSOLUTE_PATH] [--once|--status [--json]|--retry REQUEST_ID|--drop REQUEST_ID]';
+interface Arguments { configPath: string; operation: 'daemon' | 'once' | 'status' | 'retry' | 'drop' | 'pause' | 'resume' | 'exclude' | 'unexclude' | 'exclusions'; requestId: string | null; json: boolean }
+const USAGE = 'usage: [--config ABSOLUTE_PATH] [--once|--status [--json]|--retry REQUEST_ID|--drop REQUEST_ID|--pause|--resume|--exclude PATH|--unexclude PATH|--exclusions]';
 function args(argv: string[], defaultConfigPath: string): Arguments {
   let configPath: string | null = null; let operation: Arguments['operation'] = 'daemon'; let requestId: string | null = null; let json = false;
   for (let i = 0; i < argv.length; i++) {
@@ -25,13 +25,14 @@ function args(argv: string[], defaultConfigPath: string): Arguments {
       configPath = explicitConfig; continue;
     }
     if (argument === '--json' && !json) { json = true; continue; }
-    if (['--once', '--status', '--retry', '--drop'].includes(argument ?? '') && operation === 'daemon') {
+    if (['--once', '--status', '--retry', '--drop', '--pause', '--resume', '--exclude', '--unexclude', '--exclusions'].includes(argument ?? '') && operation === 'daemon') {
       operation = argument!.slice(2) as Arguments['operation'];
-      if (operation === 'retry' || operation === 'drop') requestId = argv[++i] ?? null;
+      if (['retry', 'drop', 'exclude', 'unexclude'].includes(operation)) requestId = argv[++i] ?? null;
       continue;
     }
     throw new CollectorError(USAGE);
   }
+  if (['exclude', 'unexclude'].includes(operation) && (requestId === null || requestId.length === 0)) throw new CollectorError('invalid-arguments');
   if (json && operation !== 'status') throw new CollectorError(USAGE);
   if (configPath === null) configPath = defaultConfigPath;
   if (!isAbsolute(configPath) || ((operation === 'retry' || operation === 'drop') && (requestId === null || !/^[0-9a-f-]{36}$/i.test(requestId)))) throw new CollectorError('invalid-arguments');
@@ -49,15 +50,24 @@ async function main(): Promise<void> {
     input = JSON.parse(readFileSync(arguments_.configPath, 'utf8')) as unknown;
   } catch { throw new CollectorError('config-read-failed'); }
   const config = loadConfig(input);
+  const controlMutation = ['pause', 'resume', 'exclude', 'unexclude'].includes(arguments_.operation);
   if (!config.enabled) {
+    if (controlMutation) throw new CollectorError('collector-disabled');
     if (arguments_.operation === 'status' && !arguments_.json) process.stdout.write('Chronicle collector: disabled\n');
     else print({ enabled: false });
     return;
   }
-  const lock = arguments_.operation === 'status' ? null : new DaemonLock(config.stateDir);
+  const lock = ['status', 'pause', 'resume', 'exclude', 'unexclude', 'exclusions'].includes(arguments_.operation) ? null : new DaemonLock(config.stateDir);
   let spool: SqliteSpool | null = null;
   try {
     spool = new SqliteSpool(config.stateDir);
+    if (controlMutation || arguments_.operation === 'exclusions') {
+      if (arguments_.operation === 'pause') spool.setPaused(true);
+      if (arguments_.operation === 'resume') spool.setPaused(false);
+      if (arguments_.operation === 'exclude') spool.exclude(arguments_.requestId!);
+      if (arguments_.operation === 'unexclude') spool.unexclude(arguments_.requestId!);
+      print(spool.controls()); return;
+    }
     const collector = new Collector(config, spool, new HttpIngester(config), Math.random, new LocalGitMetadata('git', 1000, 65536), new HttpProgressReporter(config), new FileSecretReader());
     if (arguments_.operation === 'status') {
       const status = collector.status();

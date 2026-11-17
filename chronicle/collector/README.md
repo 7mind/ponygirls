@@ -91,9 +91,77 @@ New enqueues atomically retain a separate local `pending-origin` KV record bound
 
 Held requests retain their exact request ID, body/digests, expected revision, retry attempts/schedule/error, transport status, source reservation and head. They make **zero snapshot `/api/ingest` POSTs** while held; progress-report POSTs still occur. Removing restrictions resumes the same eligible request/body, respecting its existing due time and stopped/conflict state. Admission never calls drop, creates a tombstone, clears the queue or deletes an existing server archive. The new controls are absent from the existing privacy-policy digest. **Existing privacy/destination/discovery/exclusion policy invalidation remains destructive as documented below**, including while a request is held; admission is not an exemption from that policy.
 
-Pending/stopped/conflict counters remain literal durable-state counts, including held requests. Local `--status` adds a current-policy held count/reason using existing diagnostic fields; `--status --json` retains its existing shape. Current hold diagnostics are recomputed rather than leaving stale holds after re-admission/ACK/drop; saved scan counters remain historical evidence. This status overlay does not scan transcripts, read credentials, upload or mutate queue/provenance. The existing spool constructor can still initialize an absent state directory; this is not a new strictly filesystem-read-only mode.
+Pending/stopped/conflict counters remain literal durable-state counts, including held requests. Local `--status` adds a current-policy held count/reason using existing diagnostic fields; `--status --json` retains the existing queue fields and adds control/held-request fields. Current hold diagnostics are recomputed rather than leaving stale holds after re-admission/ACK/drop; saved scan counters remain historical evidence. This status overlay does not scan transcripts, read credentials, upload or mutate queue/provenance. The existing spool constructor can still initialize an absent state directory; this is not a new strictly filesystem-read-only mode.
 
 A held-only pass reports `Idle` with no collector error: no admitted work is active, but the queue is **not drained**. Held stopped/conflict rows retain their counts/errors without manufacturing a current admitted failure. Actual admitted/scan/privacy/report failures still report `Failed`. The frozen remote progress protocol cannot distinguish admission holds from pending backoff; inspect local status for reasons. `--once` keeps its existing exit-1 contract for any undrained pending/stopped/conflict queue, including intentional holds; that does not increment failure counters or turn an intentional hold into a Failed progress report.
+
+## Durable live controls
+
+```bash
+chronicle-collector --pause
+chronicle-collector --resume
+chronicle-collector --exclude .           # invoking shell's cwd, recursively
+chronicle-collector --exclusions          # editable durable list (JSON)
+chronicle-collector --unexclude /absolute/project
+chronicle-collector --status              # controls + historical scan + held count
+```
+
+These operations share the configured private spool; they survive CLI/daemon restarts
+and do not require restarting a running daemon. Control mutations and status bypass
+the daemon lock; retry/drop still require it. Concurrent mutations use SQLite
+transactions, not a read/overwrite file. Disabled configuration rejects mutations
+with `collector-disabled`; existing disabled once/status behavior is unchanged.
+`--json` remains status-only; control commands already emit JSON.
+
+Pause is an admission hold, not process termination or a liveness assertion. A
+paused cycle does not read credentials, discover/read transcripts, query git or
+send network reports/uploads, and preserves the historical saved report and queue.
+Controls are checked at cycle start, after awaited reporting before further reads
+or git work, after awaited git work, and immediately before every upload (after
+its awaited progress report). An already-started scan/read/git operation or upload
+can finish; an upload can already have committed remotely. Resume does not start a
+stopped daemon, bypass backoff or retry stopped/conflict requests. Existing `--once`
+exit-1 behavior for an undrained queue remains.
+
+A dynamic exclusion recursively matches **source paths and every producer-recorded
+cwd** from the same pre-redaction snapshot, not just its final displayed workdir.
+It does not match prose references, tool command strings, original launch profiles
+or arbitrary files linked from a transcript. Relative operator paths are resolved
+against the invoking CLI cwd. Lexical paths and existing symlink aliases (including
+an existing ancestor of a deleted path) are retained; `--unexclude` can remove a
+nonexistent original path. Removing a deleted alias removes that owned entry,
+not an independently added canonical-path exclusion. Removing an existing canonical
+path can select all entries observing that alias. Removing an ancestor entry does
+not remove separately added descendant entries. Source-side symlink rejection is unchanged. Path aliases
+are observations, not stable inode/mount identities: later symlink retargets,
+hardlinks, bind mounts or copies can move data outside an exclusion. Re-add an
+entry after changing its alias mapping.
+
+New requests atomically save a private local `pending-evidence` sidecar bound to
+request ID, payload digest and source key. It retains original absolute paths/cwds
+separately from redacted payloads and source identity, aggregating equivalent
+copies of a source observed in that scan. This is intentionally sensitive local
+admission evidence (state directory 0700/database 0600), never sent to the server
+or exposed in status/diagnostics/progress. Status lists operator exclusions only.
+Queue, origin and evidence status reads share one SQLite read snapshot, so a
+concurrent daemon ACK cannot remove a row between those reads.
+ACK/drop removes evidence; retry/failure preserves it. Missing legacy evidence is
+not reconstructed from redacted payloads or upgraded by rescanning. Relative
+recorded cwd or unavailable canonical alias resolution marks evidence uncertain;
+it does not quarantine otherwise valid unrestricted collection. Unknown/uncertain
+evidence is conservatively held whenever any dynamic exclusion is active, and
+becomes eligible after all are removed. Malformed/mismatched present evidence or
+controls fail closed, never silently falling back to unrestricted admission.
+
+Controls preserve exact queued bytes/IDs, attempts, schedules, heads, tombstones
+and existing server archives. They never drop requests or enter `policyDigest`.
+Configuration exclusions/profile restrictions remain an immutable lower bound;
+`--unexclude` cannot relax them. **Existing configuration/privacy/destination
+changes can still destructively invalidate pending requests under the existing
+policy** (once resumed); dynamic controls do not exempt them. There is no remote
+archive deletion, historical content erasure, new remote pause protocol or daemon
+health signal. Local JSON status adds `controls` and `heldRequests`; saved scan
+counters remain historical, while held IDs are recomputed from current controls.
 
 ## Fidelity, privacy and metadata
 

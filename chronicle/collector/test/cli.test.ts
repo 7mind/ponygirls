@@ -201,3 +201,46 @@ test('GoodCommunication JSON selection is status-only and duplicate flags fail b
     }
   } finally { rmSync(dir, { recursive: true }); }
 });
+
+test('Behavioral GoodCommunication CLI controls and status bypass held daemon lock, retries/drops do not', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-control-cli-'));
+  let lock: DaemonLock | null = null;
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'collector.json');
+    writeFileSync(config, JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), redactions: { secretFiles: [join(dir, 'missing-secret')] }, stateDir: state, discoverNative: false, discoverYolo: false }));
+    lock = new DaemonLock(state);
+    const call = (...args: string[]) => invoke(dir, undefined, ['--config', config, ...args], dir);
+    for (const args of [['--pause'], ['--exclude', '.'], ['--exclusions'], ['--status', '--json']]) {
+      const result = call(...args); assert.equal(result.status, 0, result.stderr);
+      const value = JSON.parse(result.stdout) as { paused?: boolean; controls?: { paused: boolean; exclusions: string[] } };
+      assert.equal(value.controls?.paused ?? value.paused, true);
+    }
+    const store = new SqliteSpool(state);
+    try { assert.deepEqual(store.controls(), { paused: true, exclusions: [dir] }); } finally { store.close(); }
+    for (const op of ['--retry', '--drop']) { const result = call(op, '00000000-0000-4000-8000-000000000001'); assert.equal(result.status, 1); assert.match(result.stderr, /collector-already-running/); }
+    assert.equal(call('--unexclude', '.').status, 0); assert.equal(call('--resume').status, 0);
+    writeFileSync(config, JSON.stringify({ enabled: false, stateDir: state }));
+    for (const args of [['--pause'], ['--resume'], ['--exclude', '.'], ['--unexclude', '.']]) { const result = call(...args); assert.equal(result.status, 1); assert.match(result.stderr, /collector-disabled/); assert.equal(result.stdout, ''); }
+    assert.equal(call('--once').status, 0); assert.equal(call('--status').status, 0);
+  } finally { lock?.close(); rmSync(dir, { recursive: true }); }
+});
+
+test('Behavioral GoodCommunication simultaneous CLI mutations do not lose exclusions or pause updates', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-control-concurrency-'));
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'collector.json');
+    writeFileSync(config, JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), stateDir: state, discoverNative: false, discoverYolo: false }));
+    const paths = Array.from({ length: 12 }, (_, i) => join(dir, `project-${i}`));
+    const mutate = async (args: string[]) => {
+      const child = spawn(process.execPath, [cli, '--config', config, ...args], { cwd: dir, stdio: ['ignore', 'pipe', 'pipe'] });
+      let error = ''; child.stderr.on('data', (data: Buffer) => { error += data.toString(); });
+      const [code] = await once(child, 'exit'); assert.equal(code, 0, error);
+    };
+    await Promise.all([...paths.map(path => mutate(['--exclude', path])), mutate(['--pause'])]);
+    let store = new SqliteSpool(state);
+    try { assert.equal(store.controls().paused, true); assert.deepEqual(store.controls().exclusions, [...paths].sort()); } finally { store.close(); }
+    await Promise.all([...paths.filter((_, i) => i % 2 === 0).map(path => mutate(['--unexclude', path])), mutate(['--resume'])]);
+    store = new SqliteSpool(state);
+    try { assert.equal(store.controls().paused, false); assert.deepEqual(store.controls().exclusions, paths.filter((_, i) => i % 2 === 1).sort()); } finally { store.close(); }
+  } finally { rmSync(dir, { recursive: true }); }
+});

@@ -19,6 +19,9 @@ function rootLabel(rootId: string, pathId: string): string { return `${literal(r
 
 export function formatCollectorStatus(status: CollectorStatus): string {
   const lines = ['Chronicle collector: enabled (configuration)', `Namespace: ${literal(status.namespace)}`];
+  lines.push(`Collection control: ${status.controls.paused ? 'paused' : 'resumed'} (durable; not daemon liveness)`, `Dynamic exclusions: ${count(status.controls.exclusions.length)}`);
+  for (const path of status.controls.exclusions) lines.push(`  ${literal(path)}`);
+  if (status.heldRequests.length > 0) lines.push(`Durable admission: ${count(status.heldRequests.length)} queued requests held (exact payloads retained)`);
   const report = status.lastRun;
   if (report === null) lines.push('No saved scan recorded.');
   else {

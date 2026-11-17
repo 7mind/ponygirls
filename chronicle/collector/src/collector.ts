@@ -1,3 +1,4 @@
+import { evidenceFor, heldByControls, pathAliases, type AdmissionEvidence, type Controls } from './controls.ts';
 import { randomUUID } from 'node:crypto';
 import { admissionReason, holdDiagnostic, isQueueHoldDiagnostic, ROOT_DENIED } from './admission.ts';
 import { CollectorError, hash, object, string, type CollectorReport, type Counters, type Diagnostic, type ParsedTranscript, type RootCoverage } from './domain.ts';
@@ -14,7 +15,7 @@ import type { GitMetadata, GitObservation } from './git.ts';
 import type { Dropped, Spool, Pending } from './spool.ts';
 
 export type { Counters } from './domain.ts';
-interface Candidate { file: SourceFile; transcript: ParsedTranscript; key: string; digest: string }
+interface Candidate { file: SourceFile; transcript: ParsedTranscript; key: string; digest: string; evidence: AdmissionEvidence }
 export function policyDigest(config: Config, runtimePrivacyIdentity: string): string {
   return hash(JSON.stringify({ endpoint: config.endpoint, roots: config.roots, homeDir: config.homeDir, yoloDir: config.yoloDir, discoverNative: config.discoverNative, discoverYolo: config.discoverYolo, exclusions: config.exclusions, redactions: config.redactions, runtimePrivacyIdentity }));
 }
@@ -42,6 +43,14 @@ export class Collector {
   async runOnce(now: number): Promise<Counters> {
     const counters = empty(this.config.enabled);
     if (!this.config.enabled) return counters;
+    const initiallyPaused = this.spool.controls().paused;
+    if (initiallyPaused) {
+      const queue = this.spool.queue();
+      counters.pending = queue.filter(e => e.status === 'pending').length;
+      counters.stopped = queue.filter(e => e.status === 'stopped').length;
+      counters.conflicts = queue.filter(e => e.status === 'conflict').length;
+      return counters;
+    }
     this.spool.clearDiagnostics();
     // Keep only queue metadata for reporting; reloading all encoded payloads at
     // every progress checkpoint would multiply memory/IO for large backlogs.
@@ -74,6 +83,9 @@ export class Collector {
     let scan; const coverage: RootCoverage[] = [];
     const finish = async (): Promise<Counters> => {
       queueCounters();
+      heldSources.clear();
+      const controls = this.spool.controls();
+      for (const { entry, origin, evidence } of this.spool.queueWithAdmission()) if (admissionReason(origin, this.config) !== null || heldByControls(controls, evidence)) heldSources.add(entry.sourceKey);
       const admittedFailure = [...queueState.values()].some(entry => !heldSources.has(entry.sourceKey) && (entry.status === 'stopped' || entry.status === 'conflict'));
       const failed = counters.quarantined + counters.uploadFailures > 0 || admittedFailure || reportFailure;
       await publish(failed ? CollectorPhase.Failed : CollectorPhase.Idle, undefined, failed ? 'collection-incomplete' : undefined, true);
@@ -94,11 +106,13 @@ export class Collector {
         counters.quarantined++;
       }
     }
-    for (const { entry, origin } of this.spool.queueWithOrigins()) {
+    for (const { entry, origin, evidence } of this.spool.queueWithAdmission()) {
       const reason = admissionReason(origin, this.config);
+      if (heldByControls(this.spool.controls(), evidence)) heldSources.add(entry.sourceKey);
       if (reason !== null) { heldSources.add(entry.sourceKey); this.spool.diagnostic(holdDiagnostic(entry.sourceKey, reason)); }
     }
     await publish(CollectorPhase.Discovering, undefined, undefined, true);
+    if (this.spool.controls().paused) return finish();
     try {
       const roots = discoverRoots(this.config, process.platform).filter(root => {
         if (admissionReason(root.origin, this.config) === null) return true;
@@ -129,6 +143,15 @@ export class Collector {
     const policy = runtimePrivacy.policy;
     for (const file of scan.files) {
       await publish(CollectorPhase.Scanning, undefined, undefined, false);
+      const controls = this.spool.controls();
+      if (controls.paused) return finish();
+      // A source can disappear or change while an awaited report yields. Keep
+      // alias resolution failures inside the per-source quarantine boundary;
+      // durable control-state validation above must still fail closed globally.
+      let aliases: string[];
+      try { aliases = pathAliases(file.path); }
+      catch (error) { diagnose(file, error instanceof CollectorError ? error.code : 'source-path-unavailable'); continue; }
+      if (heldByControls(controls, { paths: aliases })) { counters.excluded++; rootCoverage(file).excluded++; continue; }
       const piParts = file.relativePath.split('/');
       if (file.root.layout === 'pi-subagents' && [piParts[0], piParts[2]].some(id => id !== undefined && this.config.exclusions.sessions.includes(id))) {
         counters.excluded++; rootCoverage(file).excluded++; continue;
@@ -137,11 +160,12 @@ export class Collector {
       try {
         const remaining = this.config.maxScanBytes - counters.scannedBytes;
         const snapshot = readSnapshot(file, Math.min(this.config.maxFileBytes, remaining));
+        const evidence = evidenceFor(snapshot.bytes, file.path);
         counters.scanned++; counters.scannedBytes += snapshot.bytes.length;
         rootCoverage(file).scanned++; rootCoverage(file).bytes += snapshot.bytes.length;
         const pathId = hash(file.path);
         const since = this.spool.observe(pathId, `${snapshot.digest}:${snapshot.mtimeMs}`, now);
-        if (excludedTranscript(snapshot.bytes, this.config)) { counters.excluded++; rootCoverage(file).excluded++; continue; }
+        if (heldByControls(this.spool.controls(), evidence) || excludedTranscript(snapshot.bytes, this.config)) { counters.excluded++; rootCoverage(file).excluded++; continue; }
         if (!snapshot.bytes.subarray(-1).equals(Buffer.from('\n'))) {
           if (now - since >= this.config.partialLineQuarantineMs) diagnose(file, 'partial-line-expired');
           else { counters.waiting++; rootCoverage(file).waiting++; }
@@ -152,7 +176,7 @@ export class Collector {
         if (transcript.messages.length > this.config.maxMessages) { diagnose(file, 'message-limit'); continue; }
         if (now - since < this.config.quietMs) { counters.waiting++; rootCoverage(file).waiting++; continue; }
         const key = sourceKey(sourceIdentity(this.spool.namespace, file.root.id, file.root.format, transcript, file.path));
-        const candidate = { file, transcript, key, digest: hash(transcript.raw) };
+        const candidate = { file, transcript, key, digest: hash(transcript.raw), evidence };
         const existing = candidates.get(key) ?? []; existing.push(candidate); candidates.set(key, existing);
       } catch (error) { diagnose(file, error instanceof CollectorError ? error.code : 'parse-failed'); }
     }
@@ -162,6 +186,9 @@ export class Collector {
       await publish(CollectorPhase.Scanning, undefined, undefined, false);
       if (new Set(copies.map(copy => copy.digest)).size !== 1) { for (const copy of copies) diagnose(copy.file, 'source-identity-collision'); continue; }
       const candidate = copies[0]; if (candidate === undefined) throw new CollectorError('empty-candidate-group');
+      const evidence: AdmissionEvidence = { paths: [...new Set(copies.flatMap(copy => copy.evidence.paths))], ...(copies.some(copy => copy.evidence.uncertain) ? { uncertain: true as const } : {}) };
+      if (this.spool.controls().paused) return finish();
+      if (heldByControls(this.spool.controls(), evidence)) { counters.excluded++; continue; }
       const head = this.spool.head(key);
       if (head.tombstone) { counters.excluded++; continue; }
       if (head.digest === candidate.digest) { counters.unchanged++; continue; }
@@ -179,11 +206,13 @@ export class Collector {
           candidate.transcript.redacted ||= cleaned.changed;
         }
       }
+      if (this.spool.controls().paused) return finish();
+      if (heldByControls(this.spool.controls(), evidence)) { counters.excluded++; continue; }
       const source = sourceIdentity(this.spool.namespace, candidate.file.root.id, candidate.file.root.format, candidate.transcript, candidate.file.path);
       const requestId = randomUUID();
       const payload = encodeSnapshot(requestId, source, head.revision, candidate.transcript, candidate.file.relativePath);
       if (Buffer.byteLength(payload) > this.config.maxPayloadBytes) { diagnose(candidate.file, 'payload-too-large'); continue; }
-      this.spool.enqueue({ requestId, sourceKey: key, sourceDigest: candidate.digest, payload, payloadDigest: hash(payload), expectedRevision: head.revision, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null }, candidate.file.root.origin);
+      this.spool.enqueue({ requestId, sourceKey: key, sourceDigest: candidate.digest, payload, payloadDigest: hash(payload), expectedRevision: head.revision, policyDigest: digest, attempts: 0, nextAt: 0, status: 'pending', error: null }, candidate.file.root.origin, evidence);
       queueState.set(requestId, { sourceKey: key, status: 'pending' }); counters.enqueued++;
     }
     const uploads = this.spool.queueWithOrigins().filter(({ entry, origin }) => entry.status === 'pending' && entry.nextAt <= now && admissionReason(origin, this.config) === null).map(({ entry }) => entry);
@@ -192,6 +221,9 @@ export class Collector {
     for (const entry of uploads) {
       const bytes = BigInt(Buffer.byteLength(entry.payload));
       await publish(CollectorPhase.Uploading, bytes, undefined, true);
+      const controls = this.spool.controls();
+      if (controls.paused) return finish();
+      if (heldByControls(controls, this.spool.pendingEvidence(entry.requestId))) { heldSources.add(entry.sourceKey); continue; }
       const reason = admissionReason(this.spool.pendingOrigin(entry.requestId), this.config);
       if (reason !== null) { heldSources.add(entry.sourceKey); this.spool.diagnostic(holdDiagnostic(entry.sourceKey, reason)); continue; }
       try {
@@ -211,14 +243,16 @@ export class Collector {
     }
     return finish();
   }
-  status(): { namespace: string; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null }[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null; reporting: ReturnType<Spool['reporting']> } {
-    const queued = this.spool.queueWithOrigins();
+  status(): { namespace: string; queue: { requestId: string; sourceKey: string; attempts: number; nextAt: number; status: string; error: string | null }[]; diagnostics: Diagnostic[]; dropped: Dropped[]; lastRun: CollectorReport | null; reporting: ReturnType<Spool['reporting']>; controls: Controls; heldRequests: string[] } {
+    const queued = this.spool.queueWithAdmission();
     const restricted = this.config.excludeDefaultProfile || this.config.excludedYoloProfiles.length > 0;
     const diagnostics = this.spool.diagnostics().filter(value => !isQueueHoldDiagnostic(value) && (value.code !== ROOT_DENIED || restricted));
     for (const { entry, origin } of queued) {
       const reason = admissionReason(origin, this.config);
       if (reason !== null) diagnostics.push(holdDiagnostic(entry.sourceKey, reason));
     }
-    return { namespace: this.spool.namespace, queue: queued.map(({ entry: { requestId, sourceKey, attempts, nextAt, status, error } }) => ({ requestId, sourceKey, attempts, nextAt, status, error })), diagnostics, dropped: this.spool.dropped(), lastRun: this.spool.report(), reporting: this.spool.reporting() };
+    const controls = this.spool.controls();
+    const heldRequests = queued.filter(({ origin, evidence }) => admissionReason(origin, this.config) !== null || heldByControls(controls, evidence)).map(({ entry }) => entry.requestId);
+    return { controls, heldRequests, namespace: this.spool.namespace, queue: queued.map(({ entry: { requestId, sourceKey, attempts, nextAt, status, error } }) => ({ requestId, sourceKey, attempts, nextAt, status, error })), diagnostics, dropped: this.spool.dropped(), lastRun: this.spool.report(), reporting: this.spool.reporting() };
   }
 }

@@ -1,3 +1,4 @@
+import { decodeControls, decodeEvidence, pathAliases, type Controls, type AdmissionEvidence } from './controls.ts';
 import { DatabaseSync } from 'node:sqlite';
 import { chmodSync, closeSync, constants, mkdirSync, openSync } from 'node:fs';
 import { join } from 'node:path';
@@ -13,6 +14,7 @@ export interface Pending {
   status: 'pending' | 'stopped' | 'conflict'; error: string | null;
 }
 export interface QueuedOrigin { entry: Pending; origin: CollectionOrigin }
+export interface QueuedAdmission extends QueuedOrigin { evidence: AdmissionEvidence | null }
 interface BoundOrigin { requestId: string; payloadDigest: string; sourceKey: string; origin: CollectionOrigin }
 export interface Head { revision: number; digest: string | null; tombstone: boolean }
 export interface Dropped { requestId: string; sourceKey: string; reason: string }
@@ -21,8 +23,10 @@ export interface Spool {
   readonly namespace: string;
   head(sourceKey: string): Head;
   observe(pathId: string, signature: string, now: number): number;
-  enqueue(entry: Pending, origin: CollectionOrigin): void; queue(): Pending[];
-  pendingOrigin(requestId: string): CollectionOrigin; queueWithOrigins(): QueuedOrigin[];
+  controls(): Controls; setPaused(paused: boolean): void; exclude(path: string): void; unexclude(path: string): void;
+  pendingEvidence(requestId: string): AdmissionEvidence | null;
+  enqueue(entry: Pending, origin: CollectionOrigin, evidence: AdmissionEvidence | null): void; queue(): Pending[];
+  pendingOrigin(requestId: string): CollectionOrigin; queueWithOrigins(): QueuedOrigin[]; queueWithAdmission(): QueuedAdmission[];
   ack(requestId: string, revision: number): void;
   fail(requestId: string, error: string, nextAt: number, conflict: boolean, maxAttempts: number): Pending['status'];
   retry(requestId: string): void; drop(requestId: string, reason: string): void;
@@ -69,7 +73,7 @@ export class SqliteStorage implements Storage {
     secureDirectory(directory);
     const path = join(directory, 'spool.sqlite');
     secureFile(path); this.db = new DatabaseSync(path);
-    this.db.exec('PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; PRAGMA busy_timeout=1000; CREATE TABLE IF NOT EXISTS kv (bucket TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(bucket,key));');
+    this.db.exec('PRAGMA busy_timeout=1000; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON; CREATE TABLE IF NOT EXISTS kv (bucket TEXT NOT NULL, key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY(bucket,key));');
   }
   get<T>(bucket: string, key: string): T | undefined {
     const row = this.db.prepare('SELECT value FROM kv WHERE bucket=? AND key=?').get(bucket, key);
@@ -100,16 +104,83 @@ class DurableSpool implements Spool {
     if (previous !== undefined && previous.signature === signature && previous.since <= now) return previous.since;
     this.storage.set('observation', pathId, { signature, since: now }); return now;
   }
-  enqueue(entry: Pending, origin: CollectionOrigin): void {
+  private readControls(): Controls {
+    try {
+      const value = this.storage.get<unknown>('meta', 'controls');
+      const controls = decodeControls(value === undefined ? { paused: false, exclusions: [] } : value);
+      const groups = this.storage.list<unknown>('control-exclusion').map(group => {
+        const evidence = decodeEvidence(group);
+        if (evidence.uncertain !== undefined) throw new CollectorError('invalid-collector-controls');
+        return evidence;
+      });
+      const expected = [...new Set(groups.flatMap(group => group.paths))].sort();
+      if (JSON.stringify(expected) !== JSON.stringify(controls.exclusions)) throw new CollectorError('invalid-collector-controls');
+      return controls;
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof CollectorError) throw new CollectorError('invalid-collector-controls');
+      throw error;
+    }
+  }
+  controls(): Controls { return this.storage.readTransaction(() => this.readControls()); }
+  setPaused(paused: boolean): void { this.storage.transaction(() => { const controls = this.readControls(); controls.paused = paused; this.storage.set('meta', 'controls', controls); }); }
+  exclude(path: string): void {
+    const aliases = pathAliases(path);
+    this.storage.transaction(() => {
+      const controls = this.readControls();
+      const groups = this.storage.list<{ paths: string[] }>('control-exclusion');
+      // Validate groups before modifying, failing closed on damaged state.
+      for (const group of groups) decodeEvidence(group);
+      this.storage.set('control-exclusion', aliases[0]!, { paths: aliases });
+      controls.exclusions = [...new Set([...groups.filter(group => group.paths[0] !== aliases[0]).flatMap(group => group.paths), ...aliases])].sort();
+      this.storage.set('meta', 'controls', controls);
+    });
+  }
+  unexclude(path: string): void {
+    const aliases = pathAliases(path);
+    this.storage.transaction(() => {
+      const controls = this.readControls();
+      const groups = this.storage.list<{ paths: string[] }>('control-exclusion').map(decodeEvidence);
+      // Match ownership groups against only the operator's observed aliases.
+      // Expanding this set while iterating would conflate independently added
+      // exclusions and make removal depend on storage iteration order.
+      const selectedAliases = new Set(aliases);
+      const selected = groups.filter(group => group.paths.some(p => selectedAliases.has(p)));
+      for (const group of selected) this.storage.remove('control-exclusion', group.paths[0]!);
+      const retained = groups.filter(group => !selected.includes(group));
+      controls.exclusions = [...new Set(retained.flatMap(group => group.paths))].sort();
+      this.storage.set('meta', 'controls', controls);
+    });
+  }
+  private evidence(entry: Pending): AdmissionEvidence | null {
+    if (typeof entry.requestId !== 'string' || typeof entry.payloadDigest !== 'string' || typeof entry.sourceKey !== 'string') throw new CollectorError('invalid-admission-evidence');
+    let value: unknown;
+    try { value = this.storage.get<unknown>('pending-evidence', entry.requestId); }
+    catch (error) { if (error instanceof SyntaxError) throw new CollectorError('invalid-admission-evidence'); throw error; }
+    if (value === undefined) return null;
+    if (!object(value) || Object.keys(value).length !== 4 || value['requestId'] !== entry.requestId || value['payloadDigest'] !== entry.payloadDigest || value['sourceKey'] !== entry.sourceKey) throw new CollectorError('invalid-admission-evidence');
+    return decodeEvidence(value['evidence']);
+  }
+  pendingEvidence(requestId: string): AdmissionEvidence | null {
+    return this.storage.readTransaction(() => {
+      const entry = this.required(requestId);
+      if (entry.requestId !== requestId) throw new CollectorError('invalid-admission-evidence');
+      return this.evidence(entry);
+    });
+  }
+  queueWithAdmission(): QueuedAdmission[] { return this.storage.readTransaction(() => this.queue().map(entry => ({ entry, origin: this.origin(entry), evidence: this.evidence(entry) }))); }
+  enqueue(entry: Pending, origin: CollectionOrigin, evidence: AdmissionEvidence | null): void {
     this.storage.transaction(() => {
       if (hash(entry.payload) !== entry.payloadDigest) throw new CollectorError('payload-digest-mismatch');
       if (this.storage.get<string>('source-pending', entry.sourceKey) !== undefined) throw new CollectorError('source-already-pending');
       if (this.storage.get<Pending>('pending', entry.requestId) !== undefined) throw new CollectorError('request-already-pending');
       if (this.storedOrigin(entry.requestId) !== undefined) throw new CollectorError('orphaned-pending-origin');
+      if (this.storage.get<unknown>('pending-evidence', entry.requestId) !== undefined) throw new CollectorError('invalid-admission-evidence');
       const validatedOrigin = decodeOrigin(origin);
+      const validatedEvidence = evidence === null ? null : decodeEvidence(evidence);
       const head = this.head(entry.sourceKey);
       if (head.tombstone || head.revision !== entry.expectedRevision) throw new CollectorError('source-head-mismatch');
       this.storage.set('pending', entry.requestId, entry);
+      if (validatedEvidence !== null) this.storage.set('pending-evidence', entry.requestId, { requestId: entry.requestId, sourceKey: entry.sourceKey, payloadDigest: entry.payloadDigest, evidence: validatedEvidence });
       this.storage.set('source-pending', entry.sourceKey, entry.requestId);
       this.storage.set<BoundOrigin>('pending-origin', entry.requestId, { requestId: entry.requestId, payloadDigest: entry.payloadDigest, sourceKey: entry.sourceKey, origin: validatedOrigin });
     });
@@ -135,7 +206,7 @@ class DurableSpool implements Spool {
       if (revision !== pending.expectedRevision + 1) throw new CollectorError('receipt-revision-mismatch');
       if (this.head(pending.sourceKey).revision !== pending.expectedRevision) throw new CollectorError('source-head-mismatch');
       this.storage.set<Head>('head', pending.sourceKey, { revision, digest: pending.sourceDigest, tombstone: false });
-      this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId);
+      this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId); this.storage.remove('pending-evidence', requestId);
       this.storage.remove('source-pending', pending.sourceKey);
     });
   }
@@ -151,7 +222,7 @@ class DurableSpool implements Spool {
   drop(requestId: string, reason: string): void {
     this.storage.transaction(() => {
       const entry = this.required(requestId); const head = this.head(entry.sourceKey); head.tombstone = true;
-      this.storage.set('head', entry.sourceKey, head); this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId);
+      this.storage.set('head', entry.sourceKey, head); this.storage.remove('pending', requestId); this.storage.remove('pending-origin', requestId); this.storage.remove('pending-evidence', requestId);
       this.storage.remove('source-pending', entry.sourceKey);
       this.storage.set('audit', requestId, { requestId, sourceKey: entry.sourceKey, reason });
     });
