@@ -32,13 +32,13 @@ class StaticAssetsHttpTest extends ContractSuite {
       _<-check(http.routes(ws).orNotFound,root)
     } yield ()
   }
-  Vector("account.js","account.css").foreach { name=>
+  Vector("account.js","account.css","ui/tokens.css").foreach { name=>
     test(s"fixed $name serves replacement bytes despite equal size and Nix timestamp") { directory { dir=>run(withApp(dir) { (app,root)=>
       val file=root.resolve(name)
       val original="/* account version 1 */\n"
       val replacement="/* account version 2 */\n"
       for {
-        _<-IO.blocking { Files.writeString(file,original);Files.setLastModifiedTime(file,NixTimestamp) }
+        _<-IO.blocking { Files.createDirectories(file.getParent);Files.writeString(file,original);Files.setLastModifiedTime(file,NixTimestamp) }
         first<-app(request(name))
         firstBody<-first.as[String]
         _=assertEquals(first.status,Status.Ok)

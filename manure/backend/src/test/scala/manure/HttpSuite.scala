@@ -230,7 +230,7 @@ final class HttpSuite extends FunSuite:
     configured <- h.app.run(command(wire.Command.Whoami(),Some(f.token)))
     _ <- IO { assertEquals(logout.status.code,303); assertEquals(replay.status.code,401); assert(denied.isLeft); assertEquals(configured.status.code,200) }
   yield () }}
-  test("dashboard favicon is public, same-origin SVG without exposing other files") { run { (f,_) =>
+  test("dashboard favicon and shared ui assets are public, same-origin, without exposing other files") { run { (f,_) =>
     val directory = f.rootPath.resolve("dashboard-assets")
     val svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\"><path d=\"M0 0h32v32H0z\"/></svg>"
     for
@@ -240,6 +240,10 @@ final class HttpSuite extends FunSuite:
         java.nio.file.Files.writeString(directory.resolve("private.txt"),"not a dashboard asset")
         java.nio.file.Files.writeString(directory.resolve("account.js"),"export {};")
         java.nio.file.Files.writeString(directory.resolve("account.css"),"dialog { display: block; }")
+        java.nio.file.Files.createDirectories(directory.resolve("ui/fonts"))
+        java.nio.file.Files.writeString(directory.resolve("ui/tokens.css"),":root { --text: #000; }")
+        java.nio.file.Files.write(directory.resolve("ui/fonts/InterVariable.woff2"),Array[Byte](119,79,70,50))
+        java.nio.file.Files.writeString(directory.resolve("ui/README.md"),"not a dashboard asset")
       }
       h = app(f,_.copy(dashboardDir=Some(directory)))
       response <- h.app.run(request(Method.GET,"/favicon.svg"))
@@ -250,8 +254,13 @@ final class HttpSuite extends FunSuite:
         assertEquals(response.headers.headers.find(_.name == CIString("Content-Type")).map(_.value),Some("image/svg+xml"))
       }
       _ <- Vector("/account.js","/account.css").traverse_(path => h.app.run(request(Method.GET,path)).flatMap(r => IO(assertEquals(r.status.code,200))))
-      privateFile <- h.app.run(request(Method.GET,"/private.txt"))
-      _ <- IO(assertEquals(privateFile.status.code,404))
+      _ <- Vector("/ui/tokens.css" -> "text/css; charset=utf-8","/ui/fonts/InterVariable.woff2" -> "font/woff2").traverse_ { (path,contentType) =>
+        h.app.run(request(Method.GET,path)).flatMap(r => IO {
+          assertEquals(r.status.code,200)
+          assertEquals(r.headers.headers.find(_.name == CIString("Content-Type")).map(_.value),Some(contentType))
+        })
+      }
+      _ <- Vector("/private.txt","/ui/README.md").traverse_(path => h.app.run(request(Method.GET,path)).flatMap(r => IO(assertEquals(r.status.code,404))))
     yield ()
   }}
   test("password retrieval is explicit, live-authenticated and strict cookie-Origin guarded") { run { (f,h) => for

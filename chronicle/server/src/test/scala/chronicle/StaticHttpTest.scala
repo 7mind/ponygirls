@@ -87,8 +87,8 @@ class StaticHttpTest extends munit.FunSuite {
       } yield () }
     }
   }
-  for(path <- List("/account.js","/account.css"); condition <- List("If-None-Match","If-Modified-Since","both")) {
-    test(s"Blackbox-GoodCommunication: $path ignores stale $condition after equal-metadata account asset replacement") {
+  for(path <- List("/account.js","/account.css","/ui/tokens.css"); condition <- List("If-None-Match","If-Modified-Since","both")) {
+    test(s"Blackbox-GoodCommunication: $path ignores stale $condition after equal-metadata shared asset replacement") {
       withRoutes { (app,dir) =>
         val oldAsset=if(path.endsWith(".js")) "document.body.dataset.account='old';" else ".account{color:#aaa}"
         val newAsset=if(path.endsWith(".js")) "document.body.dataset.account='new';" else ".account{color:#bbb}"
@@ -96,6 +96,7 @@ class StaticHttpTest extends munit.FunSuite {
         for {
           _ <- IO.blocking {
             assertEquals(oldAsset.length,newAsset.length)
+            Files.createDirectories(file.getParent)
             Files.writeString(file,oldAsset)
             Files.writeString(dir.resolve(asset.stripPrefix("/")),oldAsset)
             Files.setLastModifiedTime(file,FileTime.fromMillis(1000))
@@ -114,7 +115,7 @@ class StaticHttpTest extends munit.FunSuite {
           response <- get(app,path,if(condition=="both") validators else validators.filter(_._1==condition))
           body <- response.as[String]
           _ <- IO {
-            assertEquals(response.status,Status.Ok,s"changed account asset must not produce a stale 304 for $condition")
+            assertEquals(response.status,Status.Ok,s"changed shared asset must not produce a stale 304 for $condition")
             assertEquals(body,newAsset)
             assertEquals(header(response,"Cache-Control"),Some("no-store"))
             assertEquals(header(response,"ETag"),None)

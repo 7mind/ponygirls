@@ -1,30 +1,49 @@
 import { defineConfig, type Plugin } from "vite";
 import react from "@vitejs/plugin-react";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { join } from "node:path";
 
-function accountAssets(): Plugin {
-  const root = process.env.ACCOUNT_WEB_ROOT === undefined ? fileURLToPath(new URL("../../shared/account-web/", import.meta.url)) : process.env.ACCOUNT_WEB_ROOT;
-  const assets = ["account.js", "account.css"];
+interface SharedAsset { readonly name: string; readonly contentType: string; read(): Promise<string | Uint8Array> }
+interface IconModule { iconSprite(): string }
+
+function sharedRoot(variable: string, fallback: string): string {
+  const value = process.env[variable];
+  return value === undefined ? fileURLToPath(new URL(fallback, import.meta.url)) : value;
+}
+
+function sharedAssets(): Plugin {
+  const account = sharedRoot("ACCOUNT_WEB_ROOT", "../../shared/account-web/");
+  const ui = sharedRoot("UI_WEB_ROOT", "../../shared/ui-web/");
+  const file = (root: string, path: string, name: string, contentType: string): SharedAsset => ({ name, contentType, read: async () => readFileSync(join(root, path)) });
+  const assets: readonly SharedAsset[] = [
+    file(account, "account.js", "account.js", "text/javascript"),
+    file(account, "account.css", "account.css", "text/css"),
+    file(ui, "tokens.css", "ui/tokens.css", "text/css"),
+    file(ui, "components.css", "ui/components.css", "text/css"),
+    file(ui, "theme-init.js", "ui/theme-init.js", "text/javascript"),
+    file(ui, "fonts/InterVariable.woff2", "ui/fonts/InterVariable.woff2", "font/woff2"),
+    file(ui, "fonts/LICENSE.txt", "ui/fonts/LICENSE.txt", "text/plain"),
+    { name: "ui/icons.svg", contentType: "image/svg+xml", read: async () => (await import(pathToFileURL(join(ui, "icons.js")).href) as IconModule).iconSprite() },
+  ];
   return {
-    name: "shared-account-assets",
+    name: "shared-assets",
     configureServer(server) {
       server.middlewares.use((request, response, next) => {
         const name = new URL(request.url!, "http://localhost").pathname.slice(1);
-        if (!assets.includes(name)) { next(); return; }
-        response.setHeader("Content-Type", name.endsWith(".js") ? "text/javascript" : "text/css");
-        response.end(readFileSync(join(root, name)));
+        const asset = assets.find(candidate => candidate.name === name);
+        if (asset === undefined) { next(); return; }
+        asset.read().then(source => { response.setHeader("Content-Type", asset.contentType); response.end(source); }, next);
       });
     },
-    generateBundle() {
-      for (const name of assets) this.emitFile({ type: "asset", fileName: name, source: readFileSync(join(root, name)) });
+    async generateBundle() {
+      for (const asset of assets) this.emitFile({ type: "asset", fileName: asset.name, source: await asset.read() });
     },
   };
 }
 
 export default defineConfig({
-  plugins: [react(), accountAssets()],
+  plugins: [react(), sharedAssets()],
   build: {
     outDir: "dist",
     emptyOutDir: true,
