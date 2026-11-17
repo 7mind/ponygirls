@@ -4,6 +4,7 @@ export { MARKER_WIDTH, columnCells, columnHeader, fit, fitRight, listRow, reopen
 export { GRID_SEPARATOR, countCell, gridRule, gridSeparator, zebra, type RuleJunction } from "./table.ts";
 export { ATTENTION_FRACTION, compactChip, fractionState, usageBar } from "./meter.ts";
 export { BORDER_ORDER } from "./border.ts";
+export { borderBadge, borderBadgeCompact, type BorderBadge } from "./badge.ts";
 export { HINT, KEY, ctrlKey } from "./keys.ts";
 export { formatCompact, formatCount } from "./format.ts";
 export { CustomViewToggle, type CustomViewFactory, type CustomViewUI } from "./custom-view.ts";
