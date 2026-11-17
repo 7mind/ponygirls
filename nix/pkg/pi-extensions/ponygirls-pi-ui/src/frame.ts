@@ -61,7 +61,7 @@ export function frameTitle(theme: UiTheme, width: number, title: FrameTitle, cor
     const { labels, active } = title.tabs;
     parts.push("  ");
     plainWidth += TAB_LEAD;
-    const shown = tabWindow(labels, active, leftBudget - plainWidth - 1);
+    const shown = tabWindow(labels, active, leftBudget - plainWidth);
     if (shown.from > 0) {
       parts.push(theme.fg("dim", MORE_BEFORE));
       plainWidth += visibleWidth(MORE_BEFORE);

@@ -98,3 +98,14 @@ test("frameTitle keeps the active tab when the tabs do not all fit, marking the 
   assert.equal(wide.tabSpans.length, labels.length);
   assert.doesNotMatch(wide.line, /[‹›]/);
 });
+
+test("frameTitle shows every tab when they fill the title exactly", () => {
+  // Regression: the tab window kept one column in reserve and hid a tab that fitted.
+  const labels = ["Web stats", "Paper stats", "Fetchers", "Test web", "Test papers"];
+  const rendered = frameTitle(PLAIN_THEME, 80, { title: "Web search", tabs: { labels, active: 0 } }, "none");
+  assert.equal(rendered.line, `── Web search   Web stats   Paper stats   Fetchers   Test web   Test papers  ───`);
+  assert.equal(rendered.tabSpans.length, labels.length);
+  const narrower = frameTitle(PLAIN_THEME, 79, { title: "Web search", tabs: { labels, active: 0 } }, "none");
+  assert.equal(visibleWidth(narrower.line), 79);
+  assert.match(narrower.line, /Test web  ›/);
+});
