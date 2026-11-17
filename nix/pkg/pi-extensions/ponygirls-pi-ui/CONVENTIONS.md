@@ -21,9 +21,9 @@ implements the pane parts; use it instead of formatting by hand.
 - **Numbers**: counts `formatCount` (`115,173`); token and other large amounts
   `formatCompact` (`12.3k`, `8.7M`, `1.24B`); money with thousands separators
   (`$12,840`); durations `3s`, `2m14s`, `1h05m`; past times relative
-  (`2 min ago`) with the absolute time in the detail; sizes in KiB/MiB; paths
-  relative to home (`~/…`); long ids shortened to 8 characters unless the
-  user has to copy them.
+  (`formatAgo`: `2m ago`, `3h 5m ago`) with the absolute time in the detail;
+  sizes `formatBytes` (`307 MiB`); paths `homeRelative` (`~/…`); long ids
+  `shortId` (8 characters) unless the user has to copy them.
 - **No standing disclaimers.** Explain a limitation where it applies (an
   untrusted project, a failed write), not on every render.
 - **Empty state**: one sentence that says how to get content

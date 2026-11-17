@@ -6,7 +6,7 @@ export { ATTENTION_FRACTION, compactChip, fractionState, usageBar } from "./mete
 export { BORDER_ORDER } from "./border.ts";
 export { borderBadge, borderBadgeCompact, type BorderBadge } from "./badge.ts";
 export { HINT, KEY, ctrlKey } from "./keys.ts";
-export { formatCompact, formatCount } from "./format.ts";
+export { formatAgo, formatBytes, formatCompact, formatCount, homeRelative, shortId } from "./format.ts";
 export { CustomViewToggle, type CustomViewFactory, type CustomViewUI } from "./custom-view.ts";
 export { completeArgument, type ArgumentChoice, type CompletionItem } from "./complete.ts";
 

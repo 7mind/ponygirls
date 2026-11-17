@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
-import { BORDER_ORDER, HINT, KEY, PLAIN_THEME, borderBadge, borderBadgeCompact, ctrlKey, formatCompact, formatCount, keyHints, type UiTheme } from "../src/index.ts";
+import { BORDER_ORDER, HINT, KEY, PLAIN_THEME, borderBadge, borderBadgeCompact, ctrlKey, formatAgo, formatBytes, formatCompact, formatCount, frameTitle, homeRelative, keyHints, shortId, type UiTheme } from "../src/index.ts";
 
 test("formatCount groups thousands independently of the process locale", () => {
   assert.equal(formatCount(0), "0");
@@ -44,4 +44,57 @@ test("border badges: glyph alone when quiet, label coloured by state, compact fo
   const clipped = borderBadge(PLAIN_THEME, asking, 3);
   assert.ok(clipped.startsWith(" 📥"));
   assert.equal(visibleWidth(clipped), 3);
+});
+
+test("formatBytes uses binary units with one decimal below ten", () => {
+  const cases: ReadonlyArray<readonly [number, string]> = [
+    [0, "0 B"], [9, "9 B"], [1023, "1023 B"], [1024, "1 KiB"], [1536, "1.5 KiB"], [10 * 1024, "10 KiB"],
+    [321822720, "307 MiB"], [5 * 1024 ** 3 + 1, "5 GiB"], [3 * 1024 ** 4, "3 TiB"], [5000 * 1024 ** 4, "5000 TiB"],
+  ];
+  for (const [bytes, expected] of cases) assert.equal(formatBytes(bytes), expected, String(bytes));
+});
+
+test("formatAgo shows at most two units and marks future instants", () => {
+  const now = Date.UTC(2026, 0, 2, 12, 0, 0);
+  const minute = 60_000;
+  assert.equal(formatAgo(now - 59_000, now), "just now");
+  assert.equal(formatAgo(now - 2 * minute, now), "2m ago");
+  assert.equal(formatAgo(now - 185 * minute, now), "3h 5m ago");
+  assert.equal(formatAgo(now - 3 * 60 * minute, now), "3h ago");
+  assert.equal(formatAgo(now - (2 * 24 * 60 + 4 * 60 + 30) * minute, now), "2d 4h ago");
+  assert.equal(formatAgo(now + 2 * minute, now), "in 2m");
+  assert.throws(() => formatAgo(Number.NaN, now), RangeError);
+});
+
+test("homeRelative shortens only paths under the home directory; shortId marks what it cut", () => {
+  assert.equal(homeRelative("/home/u/.pi/agent/cuckoo.json", "/home/u"), "~/.pi/agent/cuckoo.json");
+  assert.equal(homeRelative("/home/u", "/home/u/"), "~");
+  assert.equal(homeRelative("/home/user2/x", "/home/u"), "/home/user2/x");
+  assert.equal(homeRelative("/etc/x", ""), "/etc/x");
+  assert.equal(shortId("7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24"), "7c1d4e9a…");
+  assert.equal(shortId("dbd0"), "dbd0");
+});
+
+test("frameTitle keeps the active tab when the tabs do not all fit, marking the hidden side", () => {
+  const labels = ["Today", "This Week", "Last Week", "Last 30 Days", "All Time"];
+  const title = (active: number, width: number) =>
+    frameTitle(PLAIN_THEME, width, { title: "Usage", tabs: { labels, active }, right: "lines 1–9 of 20 ↓" }, "none");
+  // Regression: at 80 columns the last tab, the active one, was cut away.
+  const last = title(4, 80);
+  assert.equal(visibleWidth(last.line), 80);
+  assert.match(last.line, /‹ .* All Time /);
+  assert.doesNotMatch(last.line, /Today/);
+  const first = title(0, 80);
+  assert.match(first.line, / Today .* ›/);
+  assert.doesNotMatch(first.line, /All Time/);
+  // Spans keep their tab index and point at their own label.
+  for (const rendered of [last, first, title(2, 70)]) {
+    assert.ok(rendered.tabSpans.length > 0);
+    for (const span of rendered.tabSpans) assert.equal(rendered.line.slice(span.start, span.end), ` ${labels[span.index]} `);
+  }
+  assert.ok(title(2, 70).tabSpans.some(span => span.index === 2));
+  // Everything fits: unchanged, no markers.
+  const wide = title(4, 120);
+  assert.equal(wide.tabSpans.length, labels.length);
+  assert.doesNotMatch(wide.line, /[‹›]/);
 });

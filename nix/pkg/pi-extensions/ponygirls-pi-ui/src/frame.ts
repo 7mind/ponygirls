@@ -35,13 +35,20 @@ const DASH = "─";
 export type TitleCorners = "none" | "box";
 
 /**
- * Title rule exactly `width` columns wide. The left part truncates before the
- * right part disappears; tabs keep their spans only while fully visible.
+ * Title rule exactly `width` columns wide. Tabs that do not all fit are
+ * reduced to the active one and its neighbours, with `‹`/`›` marking the
+ * hidden side. Past that, the left part truncates before the right part
+ * disappears; tabs keep their spans only while fully visible.
  */
 export function frameTitle(theme: UiTheme, width: number, title: FrameTitle, corners: TitleCorners): RenderedTitle {
   const w = Math.max(1, Math.floor(width));
   const lead = corners === "box" ? "┌─ " : "── ";
   const tail = corners === "box" ? "┐" : "──";
+  const right = title.right ? ` ${title.right} ` : "";
+  const rightWidth = visibleWidth(right);
+  const tailWidth = visibleWidth(tail);
+  const leftBudget = Math.max(0, w - tailWidth - rightWidth - 2);
+
   const parts: string[] = [theme.bold(theme.fg("text", title.title))];
   let plainWidth = visibleWidth(lead) + visibleWidth(title.title);
   if (title.meta) {
@@ -51,24 +58,30 @@ export function frameTitle(theme: UiTheme, width: number, title: FrameTitle, cor
   }
   const tabSpans: Span[] = [];
   if (title.tabs) {
+    const { labels, active } = title.tabs;
     parts.push("  ");
-    plainWidth += 2;
-    title.tabs.labels.forEach((label, index) => {
-      if (index > 0) {
+    plainWidth += TAB_LEAD;
+    const shown = tabWindow(labels, active, leftBudget - plainWidth - 1);
+    if (shown.from > 0) {
+      parts.push(theme.fg("dim", MORE_BEFORE));
+      plainWidth += visibleWidth(MORE_BEFORE);
+    }
+    for (let index = shown.from; index <= shown.to; index++) {
+      if (index > shown.from) {
         parts.push(" ");
         plainWidth += 1;
       }
-      const cell = ` ${label} `;
+      const cell = ` ${labels[index]} `;
       const start = plainWidth;
-      parts.push(index === title.tabs!.active ? theme.bg("selectedBg", theme.fg("text", cell)) : theme.fg("muted", cell));
+      parts.push(index === active ? theme.bg("selectedBg", theme.fg("text", cell)) : theme.fg("muted", cell));
       plainWidth += visibleWidth(cell);
       tabSpans.push({ start, end: plainWidth, index });
-    });
+    }
+    if (shown.to < labels.length - 1) {
+      parts.push(theme.fg("dim", MORE_AFTER));
+      plainWidth += visibleWidth(MORE_AFTER);
+    }
   }
-  const right = title.right ? ` ${title.right} ` : "";
-  const rightWidth = visibleWidth(right);
-  const tailWidth = visibleWidth(tail);
-  const leftBudget = Math.max(0, w - tailWidth - rightWidth - 2);
   let left = theme.fg("border", lead) + parts.join("");
   if (plainWidth + 1 > leftBudget) {
     left = truncateToWidth(left, leftBudget, "…");
@@ -78,6 +91,36 @@ export function frameTitle(theme: UiTheme, width: number, title: FrameTitle, cor
   const fill = Math.max(2, w - leftWidth - rightWidth - tailWidth);
   const line = `${left}${theme.fg("border", ` ${DASH.repeat(fill - 1)}`)}${right}${theme.fg("border", tail)}`;
   return { line: truncateToWidth(line, w, ""), tabSpans: visibleSpans };
+}
+
+/** Columns between the title (and meta) and the first tab. */
+const TAB_LEAD = 2;
+/** Marks tabs that do not fit, on the side they are on. */
+const MORE_BEFORE = "‹ ";
+const MORE_AFTER = " ›";
+
+/**
+ * The run of tabs to show in `budget` columns: all of them when they fit,
+ * otherwise the active tab and as many neighbours as fit, later tabs first.
+ * The active tab alone is shown even when it does not fit; the caller truncates.
+ */
+function tabWindow(labels: readonly string[], active: number, budget: number): { from: number; to: number } {
+  const cell = (index: number): number => visibleWidth(labels[index] ?? "") + 2;
+  const used = (from: number, to: number): number => {
+    let total = (from > 0 ? visibleWidth(MORE_BEFORE) : 0) + (to < labels.length - 1 ? visibleWidth(MORE_AFTER) : 0);
+    for (let index = from; index <= to; index++) total += cell(index) + (index > from ? 1 : 0);
+    return total;
+  };
+  const last = labels.length - 1;
+  if (last < 0 || used(0, last) <= budget) return { from: 0, to: last };
+  const start = Math.max(0, Math.min(active, last));
+  let from = start;
+  let to = start;
+  for (;;) {
+    if (to < last && used(from, to + 1) <= budget) to += 1;
+    else if (from > 0 && used(from - 1, to) <= budget) from -= 1;
+    else return { from, to };
+  }
 }
 
 /** A plain rule, `width` columns wide. */
