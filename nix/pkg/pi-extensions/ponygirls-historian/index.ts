@@ -1,7 +1,6 @@
 import { join } from 'node:path';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
-import { truncateToWidth } from '@earendil-works/pi-tui';
-import { BORDER_ORDER, CustomViewToggle, StatusView, confirmOperatorAction } from '@ponygirls/pi-ui';
+import { BORDER_ORDER, CustomViewToggle, StatusView, borderBadge, borderBadgeCompact, confirmOperatorAction, type BorderBadge } from '@ponygirls/pi-ui';
 import { parseToggleCommand } from '@ponygirls/pi-settings';
 import { HistorianController } from './src/controller.ts';
 import { completeHistorianArguments } from './src/complete.ts';
@@ -9,6 +8,14 @@ import { styleHistorianJournal, styleHistorianStatus } from './src/presentation.
 import { createHistorianDisclosureConfirmation, createHistorianSettingsController, newHistorianSettingsView } from './src/settings-view.ts';
 import { PreferenceStore, parseModel } from './src/preferences.ts';
 import type { ProjectChange } from './src/project-config.ts';
+
+const HISTORIAN_GLYPH = '📜';
+/** Glyph alone while enabled and idle; a label only when it works or needs the user. */
+const HISTORIAN_BADGE: Readonly<Record<'idle' | 'working' | 'attention', BorderBadge>> = {
+  idle: { glyph: HISTORIAN_GLYPH, state: 'settled', label: '', compact: '' },
+  working: { glyph: HISTORIAN_GLYPH, state: 'running', label: 'writing', compact: '…' },
+  attention: { glyph: HISTORIAN_GLYPH, state: 'attention', label: '!', compact: '!' },
+};
 
 export default function (pi: ExtensionAPI): void {
   const preferences = new PreferenceStore(join(getAgentDir(), 'historian.json'));
@@ -31,12 +38,13 @@ export default function (pi: ExtensionAPI): void {
   };
   const publish = () => {
     if (context === null || controller === null) return;
-    const label = controller.badge();
-    if (label === null) { context.ui.setWidget('historian', undefined); return; }
+    const state = controller.badge();
+    if (state === null) { context.ui.setWidget('historian', undefined); return; }
     const ctx = context;
+    const badge = HISTORIAN_BADGE[state];
     ctx.ui.setWidget('historian', (_tui, theme) => ({
-      render: width => [truncateToWidth(theme.fg(label.includes('!') ? 'warning' : 'accent', ` ${label} `), width)],
-      renderCompact: width => truncateToWidth(' H ', width), invalidate() {},
+      render: width => [borderBadge(theme, badge, width)],
+      renderCompact: width => borderBadgeCompact(theme, badge, width), invalidate() {},
       handleMouse: event => {
         if (event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui') return undefined;
         void show(ctx, false); return { handled: true };

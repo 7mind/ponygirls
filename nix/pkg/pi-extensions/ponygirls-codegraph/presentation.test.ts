@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { UiTheme } from "@ponygirls/pi-ui";
-import { renderCompactBadge, stateNotice } from "./presentation.ts";
+import { borderBadge, borderBadgeCompact, type UiTheme } from "@ponygirls/pi-ui";
+import { codegraphBadge, stateNotice } from "./presentation.ts";
 import type { State } from "./runtime.ts";
 
 const theme: UiTheme = {
@@ -24,17 +24,21 @@ test("state notices: empty is info, errors are one line without Error: prefixes 
   }
 });
 
-test("compact badge: glyph and colour follow state; querying counts as running", () => {
-  const chip = (glyph: string, color: string) => `[toolPendingBg] <${color}>🕸️</${color}><text>${glyph}</text> [/toolPendingBg]`;
-  const cases: [State["phase"], boolean, string][] = [
-    ["ready", false, chip("◇", "success")],
-    ["working", false, chip("⚙", "accent")],
-    ["ready", true, chip("⚙", "accent")],
-    ["error", false, chip("✖", "error")],
-    ["empty", false, chip("◇", "muted")],
-    ["idle", false, chip("◇", "muted")],
-    ["skipped", false, chip("◇", "muted")],
-    ["cancelled", false, chip("◇", "muted")],
+test("badge: quiet when the index needs nothing; a word for work, chosen states and failure; querying outranks the phase", () => {
+  const cases: [State["phase"], number, string, string][] = [
+    ["ready", 0, " 🕸️ ", "🕸️"],
+    ["idle", 0, " 🕸️ ", "🕸️"],
+    ["working", 0, " 🕸️ <accent>indexing</accent> ", "🕸️<accent>▸</accent>"],
+    ["ready", 1, " 🕸️ <accent>querying</accent> ", "🕸️<accent>▸</accent>"],
+    ["skipped", 2, " 🕸️ <accent>querying 2</accent> ", "🕸️<accent>▸</accent>"],
+    ["error", 0, " 🕸️ <error>error</error> ", "🕸️<error>✖</error>"],
+    ["cancelled", 0, " 🕸️ <warning>cancelled</warning> ", "🕸️<warning>!</warning>"],
+    ["empty", 0, " 🕸️ <muted>empty</muted> ", "🕸️"],
+    ["skipped", 0, " 🕸️ <muted>off</muted> ", "🕸️"],
   ];
-  for (const [phase, querying, expected] of cases) assert.equal(renderCompactBadge(theme, phase, querying), expected, `${phase}/${querying}`);
+  for (const [phase, queries, full, compact] of cases) {
+    const badge = codegraphBadge(phase, queries);
+    assert.equal(borderBadge(theme, badge, 80), full, `${phase}/${queries}`);
+    assert.equal(borderBadgeCompact(theme, badge, 80), compact, `${phase}/${queries} compact`);
+  }
 });

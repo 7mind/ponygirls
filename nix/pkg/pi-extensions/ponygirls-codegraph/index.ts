@@ -1,14 +1,14 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { BORDER_ORDER, CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, StatusView, borderBadge, borderBadgeCompact } from "@ponygirls/pi-ui";
 import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
 import { localCatalog } from "./projects.ts";
 import { CodegraphWorkspace } from "./workspace.ts";
 import { CG_HELP, completeCommand, parseCommand, type DirectoryLister } from "./commands.ts";
 import type { CgCommand } from "./commands.ts";
-import { BADGE_GLYPH, renderCompactBadge, stateNotice } from "./presentation.ts";
+import { codegraphBadge, stateNotice } from "./presentation.ts";
 
 const WIDGET = "ponygirls-codegraph";
 /**
@@ -48,14 +48,12 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
   const render = (state: State) => {
     const ctx = currentContext;
     if (ctx === undefined || ctx.mode !== "tui") return;
-    const label = toolCalls.size > 0 ? `querying (${toolCalls.size}) / ${state.phase}` : state.phase;
-    const detail = state.phase === "working" ? ` ${state.detail.split(":")[0]}` : "";
-    const querying = toolCalls.size > 0;
+    const badge = codegraphBadge(state.phase, toolCalls.size);
     const controller = statusView;
     const runtime = workspace;
     ctx.ui.setWidget(WIDGET, (_tui, theme) => ({
-      render: () => [theme.bg("selectedBg", ` ${BADGE_GLYPH} ${label}${detail} `)],
-      renderCompact: () => renderCompactBadge(theme, state.phase, querying),
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left" || runtime === undefined || !ctx.hasUI) return undefined;

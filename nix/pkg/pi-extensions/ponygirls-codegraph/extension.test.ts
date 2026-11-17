@@ -43,10 +43,10 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   await assert.rejects(readFile(marker), { code: "ENOENT" });
   const widgets: { text: string[] | undefined; placement: string | undefined }[] = [];
   const notices: string[] = [];
-  const badgeBackgrounds: string[] = [];
+  const badgeColours: string[] = [];
   const badgeComponents: { render(width: number): string[]; invalidate(): void }[] = [];
   const theme = {
-    bg(color: string, text: string) { badgeBackgrounds.push(color); return text; },
+    fg(color: string, text: string) { badgeColours.push(color); return text; },
   };
   const ctx = { cwd: root, mode: "tui", hasUI: true, ui: {
     theme,
@@ -70,13 +70,13 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   const start = emit("session_start", { type: "session_start", reason: "startup" });
   assert.equal(start, undefined, "startup hook must not return the owned background promise");
   assert.equal(widgets.at(-1)!.placement, "borderBottomLeft");
-  assert.match(widgets.at(-1)!.text![0], /^ 🕸️ working\b/);
-  assert.equal(badgeBackgrounds.at(-1), "selectedBg");
+  assert.equal(widgets.at(-1)!.text![0], " 🕸️ indexing ");
+  assert.equal(badgeColours.at(-1), "accent");
   const firstBadge = badgeComponents.at(-1)!;
-  theme.bg = (color, text) => { badgeBackgrounds.push(color); return `new-theme:${text}`; };
+  theme.fg = (color, text) => { badgeColours.push(color); return `new-theme:${text}`; };
   firstBadge.invalidate();
-  assert.match(firstBadge.render(120)[0], /^new-theme: 🕸️ /);
-  theme.bg = (color, text) => { badgeBackgrounds.push(color); return text; };
+  assert.equal(firstBadge.render(120)[0], " 🕸️ new-theme:indexing ");
+  theme.fg = (color, text) => { badgeColours.push(color); return text; };
   for (let n = 0; n < 100; n++) {
     try { await readFile(marker); break; }
     catch { await new Promise((done) => setTimeout(done, 10)); }
@@ -99,15 +99,15 @@ test("Pi loader: factory is inert, session startup returns before CLI, commands 
   emit("session_start", { type: "session_start", reason: "reload" });
   await new Promise((done) => setTimeout(done, 30));
   await assert.rejects(readFile(marker), { code: "ENOENT" });
-  assert.match(widgets.at(-1)!.text![0], /skipped/);
+  assert.match(widgets.at(-1)!.text![0], /🕸️ off/);
   emit("tool_execution_start", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   emit("tool_execution_start", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "two" });
-  assert.equal(widgets.at(-1)!.text![0], " 🕸️ querying (2) / skipped ");
+  assert.equal(widgets.at(-1)!.text![0], " 🕸️ querying 2 ");
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "one" });
-  assert.match(widgets.at(-1)!.text![0], /querying \(1\)/);
+  assert.equal(widgets.at(-1)!.text![0], " 🕸️ querying ");
   emit("tool_execution_end", { toolName: "mcp__codegraph__codegraph_explore", toolCallId: "two" });
-  assert.match(widgets.at(-1)!.text![0], /skipped/);
+  assert.match(widgets.at(-1)!.text![0], /🕸️ off/);
   assert.doesNotMatch(widgets.at(-1)!.text![0], /querying/);
   await cg.handler("sync", ctx as never);
   for (let n = 0; n < 100; n++) {
@@ -197,11 +197,11 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
     for (let n = 0; n < 200 && !done(); n++) await new Promise((wait) => setTimeout(wait, 10));
   };
   emit("session_start", { type: "session_start", reason: "startup" });
-  assert.equal(badge!.renderCompact(20), "[toolPendingBg] <accent>🕸️</accent><text>⚙</text> [/toolPendingBg]");
+  assert.equal(badge!.renderCompact(20), "🕸️<accent>▸</accent>");
   await settle(() => notices.length > 0);
   assert.deepEqual(notices, [{ text: "Codegraph: nothing indexed in this checkout yet · /cg status for details", level: "info" }]);
-  assert.equal(badge!.render(120)[0], "[selectedBg] 🕸️ empty [/selectedBg]");
-  assert.equal(badge!.renderCompact(20), "[toolPendingBg] <muted>🕸️</muted><text>◇</text> [/toolPendingBg]");
+  assert.equal(badge!.render(120)[0], " 🕸️ <muted>empty</muted> ");
+  assert.equal(badge!.renderCompact(20), "🕸️");
   await emit("session_shutdown", { type: "session_shutdown", reason: "reload" });
 
   await writeFile(binary, `#!${process.execPath}\nprocess.stderr.write("database is locked\\nsecond line");process.exit(3);\n`);
@@ -212,7 +212,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
   assert.equal(notices[0]!.level, "error");
   assert.doesNotMatch(notices[0]!.text, /\n|Error:|\{/, "one line, no duplicated Error: prefix, no JSON");
   assert.match(notices[0]!.text, /^Codegraph: codegraph \w+ exited 3: database is locked · \/cg status for details$/);
-  assert.equal(badge!.renderCompact(20), "[toolPendingBg] <error>🕸️</error><text>✖</text> [/toolPendingBg]");
+  assert.equal(badge!.renderCompact(20), "🕸️<error>✖</error>");
   const status = notices.length;
   await extension.commands.get("cg")!.handler("status", ctx as never);
   assert.match(notices.slice(status).map((n) => n.text).join("\n"), /second line/, "full detail stays available via /cg status");

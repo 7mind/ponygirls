@@ -1,6 +1,6 @@
 import type { ExtensionContext, SessionEntry } from '@earendil-works/pi-coding-agent';
 import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
-import { BORDER_ORDER, CustomViewToggle, HINT, KEY, fit, fitRight, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
+import { BORDER_ORDER, CustomViewToggle, HINT, KEY, borderBadge, borderBadgeCompact, fit, fitRight, frameTitle, keyHints, PanelLayout, type BorderBadge, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
 import type { Checkpoint } from './report.ts';
 import { checkpoints as collectCheckpoints, REPORT_TYPE } from './report.ts';
 import { checkpointDetail, reportContent, historyContent, terminalText } from './presentation.ts';
@@ -317,12 +317,19 @@ export class CuckooView {
     if (!enabled && reports.length === 0 && fault === null) { ctx.ui.setWidget('cuckoo', undefined); return; }
     const latest = reports.at(-1);
     const valid = reports.findLast(value => value.report !== null);
-    const count = valid === undefined || valid.report === null ? '?' : String(valid.report.objectives.length);
+    // The objective count of the last valid report; nothing before the first one.
+    const count = valid === undefined || valid.report === null ? '' : String(valid.report.objectives.length);
     const warning = fault !== null || (latest !== undefined && latest.report === null);
-    const label = `${BADGE_GLYPH} ${count}${warning ? ' !' : ''}${enabled ? '' : ' off'}`;
+    const compact = `${count}${warning ? '!' : ''}`;
+    const badge: BorderBadge = {
+      glyph: BADGE_GLYPH,
+      state: warning ? 'attention' : 'settled',
+      label: [count, warning ? '!' : '', enabled ? '' : 'off'].filter(part => part !== '').join(' '),
+      compact,
+    };
     ctx.ui.setWidget('cuckoo', (_tui, theme) => ({
-      render: width => [truncateToWidth(theme.fg(warning ? 'warning' : 'accent', ` ${label} `), width)],
-      renderCompact: width => truncateToWidth(theme.fg(warning ? 'warning' : 'accent', ` ${BADGE_GLYPH} ${count}${warning ? '!' : ''} `), width),
+      render: width => [borderBadge(theme, badge, width)],
+      renderCompact: width => borderBadgeCompact(theme, badge, width),
       invalidate() {},
       handleMouse: event => {
         if (!this.active || event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui' || !ctx.hasUI) return undefined;

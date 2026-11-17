@@ -417,10 +417,11 @@ export class HistorianController {
       `Error: ${this.error ?? 'none'}\nMarkdown projection error: ${this.projectionError ?? 'none'}\nCoverage: ${state === null ? 'not capturing' : state.gaps.join('; ') || 'native transcript (not tool internals)'}\n` +
       'Configured provider receives this session family’s eligible evidence and shared published project episodes. Journals are historical, not current-state verification.';
   }
-  badge(): string | null {
-    if (this.error !== null || this.projectionError !== null || this.uploadError !== null) return 'HIST !';
-    try { const config = this.effective(); if (!config.enabled) return null; if (!config.disclosureApproved) return 'HIST !'; } catch { return 'HIST !'; }
-    return this.working === null ? 'HIST' : 'HIST …';
+  /** Border badge state: null while Historian is off and healthy. */
+  badge(): 'idle' | 'working' | 'attention' | null {
+    if (this.error !== null || this.projectionError !== null || this.uploadError !== null) return 'attention';
+    try { const config = this.effective(); if (!config.enabled) return null; if (!config.disclosureApproved) return 'attention'; } catch { return 'attention'; }
+    return this.working === null ? 'idle' : 'working';
   }
   journal(): string { return this.open().render(); }
   async dispose(): Promise<void> {

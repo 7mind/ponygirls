@@ -1,10 +1,9 @@
 import { completeArchiveArguments } from "./src/complete.ts";
 import { join } from "node:path";
 import { parseScopedToggleCommand, parseToggleCommand, resolveScopedSetting, sessionEnabledData } from "@ponygirls/pi-settings";
-import { BORDER_ORDER, CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, StatusView, borderBadge, borderBadgeCompact, type BorderBadge } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
 import { ARCHIVE_TYPE, DEFAULT_POLICY, MAX_LIST_ITEMS, MAX_READ_CHARS, RECALL_TOOL, planArchive, recallArchive, restoreArchive, restoreRequest } from "./src/archive.ts";
 import { FileArchiveProjectStore, FilePreferenceStore, validateThresholds, type ArchiveDefaults, type PreferenceStore } from "./src/preferences.ts";
 import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE } from "./src/session-settings.ts";
@@ -63,9 +62,10 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
     }
     const fault = mode.kind === "fault";
     const controller = statusView;
+    const badge: BorderBadge = { glyph: BADGE_GLYPH, state: fault ? "attention" : "settled", label: fault ? "!" : "", compact: fault ? "!" : "" };
     ctx.ui.setWidget(BADGE_KEY, (_tui, theme) => ({
-      render: (width) => [truncateToWidth(theme.fg(fault ? "warning" : "accent", ` ${BADGE_GLYPH}${fault ? " !" : ""} `), width)],
-      renderCompact: (width) => truncateToWidth(theme.fg(fault ? "warning" : "accent", ` ${BADGE_GLYPH}${fault ? " !" : ""} `), width),
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate() {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left" || ctx.mode !== "tui" || !ctx.hasUI) return undefined;

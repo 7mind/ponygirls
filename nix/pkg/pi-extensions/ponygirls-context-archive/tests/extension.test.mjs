@@ -73,7 +73,7 @@ for (const backend of ["memory", "filesystem"]) {
     assert.equal(key, BADGE_KEY); assert.equal(placement.placement, "borderBottomLeft");
     const component = factory(null, { fg: (_token, text) => text });
     assert.equal(component.render(80)[0], " 🗃️ ");
-    assert.equal(component.renderCompact(80), " 🗃️ ");
+    assert.equal(component.renderCompact(80), "🗃️");
     for (const width of [0, 1, 2, 3, 4, 12]) {
       assert.ok(visibleWidth(component.render(width)[0]) <= width);
       assert.ok(visibleWidth(component.renderCompact(width)) <= width);
@@ -362,7 +362,7 @@ test("invalid session settings stop selection visibly and a later explicit overr
   assert.match(f.notifications.at(-1).message, /session setting/);
   const badge = f.widgets.at(-1)[1](null, { fg: (_token, text) => text });
   assert.equal(badge.render(80)[0], " 🗃️ ! ");
-  assert.equal(badge.renderCompact(80), " 🗃️ ! ");
+  assert.equal(badge.renderCompact(80), "🗃️!");
   await f.command("status");
   assert.match(f.notifications.at(-1).message, /Threshold status unavailable due to settings error/);
   await f.command("on");

@@ -80,7 +80,7 @@ transaction, then rereads/revalidates under the lock. Exhaustion reports the
 settings scope and timeout; it does not claim the setting changed. Actual session
 ownership remains fail-fast and exclusive.
 
-`HIST` shows enablement, `HIST …` active work, `HIST !` a fault or requested ON awaiting approval. Click the badge or
+The `📜` badge shows enablement, `📜 writing` active work, `📜 !` a fault or requested ON awaiting approval. Click the badge or
 use `status` to distinguish requested enablement, backlog, provider drain,
 projection errors and coverage. After three failed attempts, use `on` in that
 root to retry; no silent provider fallback occurs.
