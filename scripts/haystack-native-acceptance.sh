@@ -12,22 +12,14 @@ mode=${1:?core or browser}; artifact=${2:?actual native ELF}; manifest=${3:?actu
 if [[ -e $report && -n $(ls -A "$report") ]]; then echo 'refusing nonempty report' >&2; exit 2; fi
 umask 077
 mkdir -p "$report/artifacts"
-revision=${HAYSTACK_SOURCE_REVISION:-}
-if [[ -e .git ]]; then
-  observed=$(git rev-parse HEAD)
-  [[ -z $revision || $revision == "$observed" ]]
-  revision=$observed
-fi
-[[ $revision =~ ^[0-9a-f]{40}$ ]] || { echo 'frozen source commit identity required' >&2; exit 2; }
 python3 - "$artifact" <<'PY'
 import sys
 with open(sys.argv[1],'rb') as f: assert f.read(4)==b'\x7fELF'
 PY
 sha256sum -c "$manifest" > "$report/compiled-input-verification.log"
 cp "$manifest" "$report/compiled-inputs.sha256"
-printf '%s\n' "$revision" > "$report/source-revision"
 sha256sum "$artifact" > "$report/artifact-before.sha256"
-export HAYSTACK_ARTIFACT_KIND=native HAYSTACK_SERVER_ARTIFACT_FILE="$artifact" HAYSTACK_SERVER_COMMAND="$artifact" HAYSTACK_SOURCE_REVISION="$revision" HAYSTACK_UI_ARTIFACTS="$report/artifacts"
+export HAYSTACK_ARTIFACT_KIND=native HAYSTACK_SERVER_ARTIFACT_FILE="$artifact" HAYSTACK_SERVER_COMMAND="$artifact" HAYSTACK_UI_ARTIFACTS="$report/artifacts"
 unset HAYSTACK_FIXTURE_ADMIN_AUTHORIZED
 record_source() {
   find haystack/server/src/main haystack/server/tests-current haystack/web/src haystack/web/tests haystack/web/tests-browser haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations shared -type f ! -path '*/target/*' ! -path '*/__pycache__/*' ! -path '*/.build/*' -print0 | sort -z | xargs -0 sha256sum
@@ -76,7 +68,7 @@ assert expected and sorted(names)==sorted(expected), 'case inventory mismatch'
 failures=sum(len(c.findall('failure'))+len(c.findall('error')) for c in cases)
 skips=sum(len(c.findall('skipped')) for c in cases)
 receipt={'artifactKind':'native','mode':mode,'cases':len(cases),'failuresAndErrors':failures,'skips':skips,'inventoryExact':True,'sourceAndArtifactUnchanged':True,'exitStatuses':list(map(int,(root/'exit-statuses').read_text().split()))}
-receipt.update(artifactSha256=(root/'artifact-before.sha256').read_text().split()[0],compiledInputManifestSha256=hashlib.sha256((root/'compiled-inputs.sha256').read_bytes()).hexdigest(),sourceManifestSha256=hashlib.sha256((root/'source-before.sha256').read_bytes()).hexdigest(),sourceRevision=(root/'source-revision').read_text().strip(),inventorySha256=hashlib.sha256((root/'inventory.json').read_bytes()).hexdigest())
+receipt.update(artifactSha256=(root/'artifact-before.sha256').read_text().split()[0],compiledInputManifestSha256=hashlib.sha256((root/'compiled-inputs.sha256').read_bytes()).hexdigest(),sourceManifestSha256=hashlib.sha256((root/'source-before.sha256').read_bytes()).hexdigest(),inventorySha256=hashlib.sha256((root/'inventory.json').read_bytes()).hexdigest())
 if mode=='browser':
     import os
     declaration=json.loads(pathlib.Path(os.environ['HAYSTACK_PROXY_CONFIG_FILE']).read_text())

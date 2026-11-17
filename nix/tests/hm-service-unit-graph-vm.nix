@@ -1,6 +1,6 @@
 # ACTUAL HM/user-manager graph, separate owned VM, no system provider or native
 # HTTP/model acceptance. All Unix services intentionally share alice's UID.
-{ pkgs, chronicleHmModule, agenticHmModule, sourceRevision }:
+{ pkgs, chronicleHmModule, agenticHmModule }:
 let
   lib=pkgs.lib;
   postgres=pkgs.postgresql_18.withPackages (p:[p.pgvector]);
@@ -102,7 +102,7 @@ in pkgs.testers.runNixOSTest {
     fixture=load_module("hm_graph_fixture","${./hm-service-unit-graph-vm.py}")
     controller=load_module("hm_graph_controller","${./service-unit-graph-controller.py}")
     fixture.run_hm_graph(home,controller,
-        fixture.Source("${sourceRevision}",pathlib.Path("${sourceManifest}")),
+        fixture.Source(pathlib.Path("${sourceManifest}")),
         pathlib.Path(os.environ["out"]),start_all)
   '';
 }

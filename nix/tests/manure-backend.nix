@@ -3,7 +3,7 @@
 { pkgs, squishLib }:
 let
   sources=pkgs.callPackage ../pkg/chronicle/source.nix {};
-  source=sources.manureTargetTests;
+  source=sources.manureJvmTests;
   environment=pkgs.callPackage ../pkg/chronicle/sbt-environment.nix {inherit squishLib;};
   bridge=pkgs.callPackage ../pkg/manure/posix.nix {};
   postgres=pkgs.postgresql_18.withPackages (p:[p.pgvector]);

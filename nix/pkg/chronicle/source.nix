@@ -25,9 +25,26 @@ let
     "shared/retrieval-core/src/main" "shared/retrieval-postgres/src/main" ];
   manure = [ "manure/server/src" "manure/server/native-image" ];
   manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
-  manureInventory = builtins.fromJSON (builtins.readFile (root + "/manure/tests/current-test-inventory.json"));
-  manureWitnesses = lib.unique (lib.concatMap (group: map (ref: ref.path) (group.sourceRefs ++ group.targetRefs)) manureInventory.invariantGroups);
+  # Inputs of manure/scripts/artifact-source.py: the target suite compares that
+  # manifest with the native artifact's compiled-input manifest.
+  manureCompiledInputs = [ "manure/generated/scala" "manure/migration/schema.sql" "manure/backend/src/main"
+    "manure/server/src/main" "manure/server/native-image" ];
+  # Files named by the invariantGroups of manure/tests/current-test-inventory.json
+  # outside the directories above; target-suite.py fails when one is missing.
+  manureInventoryWitnesses = [ "manure/CONTRACT.md" "manure/docs/current-api.md"
+    "manure/backend/src/test/scala/manure/AcquisitionFailureSuite.scala" "manure/backend/src/test/scala/manure/ArtifactsContract.scala"
+    "manure/backend/src/test/scala/manure/CatalogueContract.scala" "manure/backend/src/test/scala/manure/DomainSuite.scala"
+    "manure/backend/src/test/scala/manure/HttpSuite.scala" "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala"
+    "manure/backend/src/test/scala/manure/RootMigrationSuite.scala" "manure/backend/src/test/scala/manure/RuntimeSuite.scala"
+    "manure/backend/src/test/scala/manure/SecretBoundarySuite.scala" "manure/backend/src/test/scala/manure/WideAudienceAuditSuite.scala"
+    "manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala"
+    "shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala"
+    "shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala" ];
+  # Web assets the JVM HTTP suites serve from MANURE_SOURCE_ROOT.
+  manureServedAssets = [ "manure/web/dashboard/index.html" "manure/web/dashboard/favicon.svg" "manure/web/dashboard/current"
+    "manure/web/unlock" "manure/web/viewer/index.html" "manure/web/viewer/styles.css" ];
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
+  webEntries = [ "package.json" "web" "generated/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" ];
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json" "chronicle/scripts" ];
   sharedTests = [ "shared/lossless-json/src/test" "shared/baboon-runtime/src/test"
     "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
@@ -56,9 +73,13 @@ in {
   ritesTests = backendSource "rites-tests-source" (common ++ shared ++ [ "rites/generated/scala" "rites/server/src" "rites/migrations" "rites/models" "rites/tests" "rites/scripts" "rites/config.example.json" ]);
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
-  haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/server/src" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
+  haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
   haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" ]);
-  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [ "manure" "shared/account-web" ] ++ manureWitnesses);
+  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ manureCompiledInputs ++ manureInventoryWitnesses ++ [
+    "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/migration" "manure/generated/typescript"
+    "manure/pyproject.toml" "shared/account-web" ]);
+  manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureServedAssets ++ [
+    "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);
   manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
   manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"
@@ -80,7 +101,17 @@ in {
     "rites/generated/scala" "rites/server/src" "rites/migrations" "rites/models" "rites/config.example.json"
   ]);
   protocol = source "chronicle-protocol-source" [ "package.json" "generated/typescript" "models" "server/src/test/fixtures" "scripts/codec-fixtures.mjs" "web/package.json" "web/package-lock.json" ];
-  web = source "chronicle-web-source" [ "package.json" "web" "generated/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" "server/src/main/scala/chronicle/Http.scala" ];
+  # The dashboard typecheck covers the browser harness components (tsconfig
+  # includes tests-browser/*.tsx); the browser scenarios are not package inputs.
+  web = lib.cleanSourceWith {
+    name = "chronicle-web-source";
+    src = source "chronicle-web-source-entries" webEntries;
+    filter = path: type:
+      let relative = lib.removePrefix "${toString chronicle}/" (toString path);
+      in type == "directory" || !(lib.hasPrefix "web/tests-browser/" relative) || lib.hasSuffix ".tsx" relative;
+  };
+  # theme-retry.mjs compares the dashboard CSP with the server's Http.scala.
+  webBrowserTests = source "chronicle-web-browser-tests-source" (webEntries ++ [ "server/src/main/scala/chronicle/Http.scala" ]);
   collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" ];
   documentation = source "chronicle-documentation-source" [ "README.md" "models" "migrations" ];
   development = lib.cleanSourceWith { name = "chronicle-development-source"; src = chronicle; filter = clean; };

@@ -2,7 +2,7 @@
 # ACTUAL exported module unit graphs/configs/credentials and real PG; explicitly
 # synthetic app CLI adapters only, never native runtime/protocol acceptance.
 # No host activation, store/dir/socket sharing, network bridge/TAP or live data.
-{ pkgs, nixpkgs, chronicleModule, haystackModule, manureModule, sourceRevision }:
+{ pkgs, nixpkgs, chronicleModule, haystackModule, manureModule }:
 let
   lib=nixpkgs.lib;
   postgres=pkgs.postgresql_18.withPackages (p:[p.pgvector]);
@@ -98,7 +98,6 @@ in pkgs.testers.runNixOSTest {
     };
   };
   testScript=''
-    SOURCE_REVISION = "${sourceRevision}"
     SOURCE_MANIFEST = "${sourceManifest}"
     CONTROLLER_SOURCE_PATH = "${./service-unit-graph-controller.py}"
     exec(compile(open("${./service-unit-graph-vm.py}").read(), "service-unit-graph-vm.py", "exec"))

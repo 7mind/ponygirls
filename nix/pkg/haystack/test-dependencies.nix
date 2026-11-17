@@ -1,9 +1,13 @@
-{ buildNpmPackage, callPackage }:
-let web = callPackage ./web.nix { };
-in buildNpmPackage {
+{ lib, buildNpmPackage }:
+buildNpmPackage {
   pname = "haystack-locked-test-dependencies";
   version = "0.1.0";
-  inherit (web) src;
+  # Keyed on the npm manifests only: web or server source edits do not change node_modules.
+  src = lib.fileset.toSource {
+    root = ../../../haystack;
+    fileset = lib.fileset.unions [ ../../../haystack/package.json ../../../haystack/package-lock.json
+      ../../../haystack/web/package.json ../../../haystack/server/package.json ];
+  };
   npmDepsHash = "sha256-WlhsXvvdzXnucSg0stQCCbL3u4ZqBauo3h4LMMBjPKE=";
   dontNpmBuild = true;
   installPhase = ''

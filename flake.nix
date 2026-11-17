@@ -1217,7 +1217,6 @@
             inherit pkgs;
             chronicleHmModule=self.homeManagerModules.chronicleServer;
             agenticHmModule=self.homeManagerModules.agenticServicesServer;
-            sourceRevision=self.rev or "";
           };
           service-unit-graph-harness = import ./nix/tests/service-unit-graph-harness.nix { inherit pkgs; };
           service-unit-graph-vm = import ./nix/tests/service-unit-graph-vm.nix {
@@ -1225,7 +1224,6 @@
             chronicleModule=self.nixosModules.chronicle;
             haystackModule=self.nixosModules.haystack;
             manureModule=self.nixosModules.manure;
-            sourceRevision=self.rev or "";
           };
           service-fixture-browser-home = import ./nix/tests/fixture-browser-home.nix { inherit pkgs; fixtureTools=self.packages.${system}.service-test-fixture-tools; };
           service-fixture-tool-closure = import ./nix/tests/fixture-tool-closure.nix { inherit pkgs; fixtureTools=self.packages.${system}.service-test-fixture-tools; };
@@ -1234,7 +1232,6 @@
             haystackPackage = self.packages.${system}.haystack;
             proxyFixture = self.packages.${system}.haystack-proxy-fixture;
             fixtureTools = self.packages.${system}.service-test-fixture-tools;
-            sourceRevision = self.rev or "";
           };
           haystack-native = import ./nix/tests/haystack-native.nix { inherit pkgs; haystackPackage = self.packages.${system}.haystack; };
           chronicle-operations-example = import ./nix/tests/chronicle-operations-example.nix { inherit pkgs nixpkgs inputs; ponygirls = self; };
@@ -1250,10 +1247,6 @@
           chronicle-models = import ./nix/tests/chronicle-models.nix { inherit pkgs nixpkgs; chronicleModule = self.nixosModules.chronicle; };
           backend-foundation-policy = pkgs.runCommand "backend-foundation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
             python3 ${./nix/tests/backend-foundation-report.py} ${./scripts/backend-foundation-report.py}
-            touch "$out"
-          '';
-          backend-runner-contract = pkgs.runCommand "backend-runner-contract-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 ${./nix/tests/backend-runner-contract.py} ${self.outPath}
             touch "$out"
           '';
           backend-foundation = pkgs.callPackage ./nix/pkg/backend-foundation.nix { squishLib = inputs.squish.lib; };

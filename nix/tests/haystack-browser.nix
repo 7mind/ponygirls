@@ -1,13 +1,12 @@
 # One complete current browser leg, actual packaged assets/actual NixOS proxy,
 # real selected native ELF and true non-superuser shared-provider fixtures.
-{ pkgs, haystackPackage, proxyFixture, fixtureTools, sourceRevision }:
+{ pkgs, haystackPackage, proxyFixture, fixtureTools }:
 let
   sources=pkgs.callPackage ../pkg/chronicle/source.nix {};
   dependencies=pkgs.callPackage ../pkg/haystack/test-dependencies.nix {};
   native=haystackPackage.nativeArtifact;
 in pkgs.runCommand "haystack-native-complete-browser" {
   nativeBuildInputs=[pkgs.coreutils];
-  HAYSTACK_SOURCE_REVISION=sourceRevision;
 } ''
   cp -r ${sources.haystackBrowserTests} source
   chmod -R u+w source

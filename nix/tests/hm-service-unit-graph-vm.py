@@ -59,7 +59,6 @@ class Controller(Protocol):
 
 @dataclass(frozen=True)
 class Source:
-    revision: str
     manifest: pathlib.Path
 
 class HmLifecycle:
@@ -134,7 +133,6 @@ class HmLifecycle:
         receipt = {
             'scope': 'actual HM modules/systemd USER manager/real PG with explicit synthetic CLI adapters; NOT native app/HTTP/model acceptance',
             'trustBoundary': 'all HM services share alice UID1000; role ACLs do not isolate credentials from same-UID processes',
-            'sourceRevision': self.source.revision,
             'manualStopStartPolicy': 'intentional stop leaves consumers down; provider start alone does not resurrect; selected app start restores own chain',
             'cases': self.results, 'mandatoryCases': len(self.results),
             'faultsExecuted': sum(bool(c.get('faultEntered')) for c in self.results),

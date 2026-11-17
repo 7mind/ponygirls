@@ -72,7 +72,7 @@ class HmFixtureContract(unittest.TestCase):
         manifest.write_text('controlled source identity\n')
         out = root / 'out'
         return fixture.HmLifecycle(ManualGuest(leaked_unit), UnusedController(),
-                                   fixture.Source('controlled-revision', manifest), out,
+                                   fixture.Source(manifest), out,
                                    lambda: self.fail('controlled contract cannot launch a VM'))
 
     def test_constructor_dependencies_and_selection_have_no_defaults(self):
