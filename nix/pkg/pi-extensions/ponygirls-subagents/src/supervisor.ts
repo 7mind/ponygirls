@@ -74,6 +74,7 @@ export interface SpawnParams {
   /** Omitted: DEFAULT_ISOLATION. */
   isolation?: Isolation;
   repoId?: string | null;
+  repoPath?: string | null;
   baseCommit?: string | null;
   /**
    * A directory the caller prepared and owns (the top level of a git work
@@ -1472,6 +1473,12 @@ export class Supervisor implements GateHost {
       if (!ISOLATION_LEVELS.includes(isolation)) throw err("INVALID", "isolation must be none/worktree/sandbox");
       if (params.baseCommit && (isolation === "none" || params.profile === "reader")) throw err("INVALID", "base_commit applies to worktree and sandbox writers");
       const workspacePath = params.workspacePath ?? null;
+      const repoPath = params.repoPath ?? null;
+      if (repoPath !== null) {
+        if (parentRt) throw err("FORBIDDEN", "only the governing session selects a source repository with repo_path");
+        if (params.profile !== "writer" || isolation !== "worktree") throw err("INVALID", "repo_path requires a managed worktree writer");
+        if (params.repoId != null || workspacePath !== null) throw err("INVALID", "repo_path cannot be combined with repo_id or workspace_path");
+      }
       if (workspacePath !== null) {
         if (parentRt) throw err("FORBIDDEN", "only the governing session assigns a prepared workspace");
         if (isolation !== "worktree") throw err("INVALID", "workspace_path needs isolation worktree: the prepared directory is the child's worktree, not the owner's directory or a sandbox view");
@@ -1505,10 +1512,11 @@ export class Supervisor implements GateHost {
       const reg = params.repoId ? this.policy.repos.find((r) => r.repoId === params.repoId) : undefined;
       if (params.repoId && !reg) throw err("POLICY_DENIED", `repository ${params.repoId} not registered`);
       const instructions = selectInstructions(parentRt ? parentRt.record.instructions : governor!.instructions, params.skills ?? null, params.contextFiles ?? null);
-      // Host-isolated children start from their owner's working directory.
       const ownerWorkdir = parentRt ? parentRt.record.allocation.workdir : governor!.cwd;
       const prepared = workspacePath !== null ? this.prepareWorkspace(workspacePath, ownerWorkdir) : null;
-      const checkout = prepared === null && isolation !== "sandbox" && params.profile === "writer" ? this.workspace.describeCheckout(ownerWorkdir) : null;
+      const selectedCheckout = repoPath !== null ? this.selectSourceRepository(repoPath, ownerWorkdir) : null;
+      const sourceWorkdir = selectedCheckout !== null ? selectedCheckout.workTree : ownerWorkdir;
+      const checkout = selectedCheckout ?? (prepared === null && isolation !== "sandbox" && params.profile === "writer" ? this.workspace.describeCheckout(ownerWorkdir) : null);
       if (prepared === null && isolation === "worktree" && params.profile === "writer" && !checkout) {
         throw err("WORKSPACE_UNAVAILABLE", `worktree isolation needs a git checkout with a commit at ${ownerWorkdir}`);
       }
@@ -1541,7 +1549,7 @@ export class Supervisor implements GateHost {
         }
         // Bind the concrete workspace after grant intersection. A nested
         // writer gets its own worktree; parent mounts are never an allowlist.
-        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
+        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, sourceWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
         this.paths.reserve(path);
         const taskRunId = randomUUID();
         const record: AgentRecord = {
@@ -1635,6 +1643,24 @@ export class Supervisor implements GateHost {
     return dir;
   }
 
+  private selectSourceRepository(path: string, ownerWorkdir: string): CheckoutInfo {
+    if (!isAbsolute(path) || path.includes("\0")) throw err("INVALID", "repo_path must be an absolute path without NUL characters");
+    const resolved = realDirectory(path);
+    if (resolved === null) throw err("WORKSPACE_UNAVAILABLE", `repo_path ${path} is not an existing directory`);
+    const owner = realDirectory(ownerWorkdir);
+    if (owner === null) throw err("WORKSPACE_UNAVAILABLE", `governing directory ${ownerWorkdir} is not an existing directory`);
+    if (!pathWithin(resolved, owner)) throw err("POLICY_DENIED", `repo_path ${resolved} is outside the governing directory ${owner}`);
+    const storageRoots = [this.rootDir, ...(this.opts.hostAgentDir ? [this.opts.hostAgentDir] : []), ...this.pooledHideRoots()];
+    for (const root of storageRoots) {
+      const storage = realDirectory(root);
+      if (storage !== null && (pathWithin(resolved, storage) || pathWithin(storage, resolved))) throw err("POLICY_DENIED", `repo_path ${resolved} overlaps the supervisor's storage`);
+    }
+    const checkout = this.workspace.describeCheckout(resolved);
+    if (checkout === null) throw err("WORKSPACE_UNAVAILABLE", `repo_path ${resolved} is not a git work tree with a commit`);
+    if (realDirectory(checkout.workTree) !== resolved) throw err("WORKSPACE_UNAVAILABLE", `repo_path ${resolved} is not the top-level directory of its git work tree (${checkout.workTree})`);
+    return { ...checkout, workTree: resolved };
+  }
+
   /**
    * Verify a caller-prepared workspace before anything is charged or
    * created. Denied unless the policy lists a root containing its resolved
@@ -1678,8 +1704,6 @@ export class Supervisor implements GateHost {
    * - a prepared workspace: the caller's directory as verified, edited in
    *   place by writers; nothing is allocated;
    * - none: the owner's working directory, edited in place by writers;
-   * - worktree: a writer gets its own worktree of the owner's checkout (the
-   *   project-relative directory is kept); readers read in place;
    * - sandbox: the registered repository's read roots, plus a worktree for
    *   writers; selected skills' directories are readable in the view.
    */
@@ -1687,7 +1711,7 @@ export class Supervisor implements GateHost {
     agentId: AgentId,
     profile: "reader" | "writer",
     isolation: Isolation,
-    from: { ownerWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet },
+    from: { ownerWorkdir: string; sourceWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet },
   ): WorkspaceAllocation {
     const tmpDir = this.agentTmp(agentId);
     // The pool namespace new worktree allocations land under, carried from
@@ -1716,10 +1740,10 @@ export class Supervisor implements GateHost {
     }
     const checkout = from.checkout!;
     const wt = this.allocateWorktree(basename(checkout.workTree), checkout.workTree, from.baseCommit, ", or use isolation none to edit the checkout in place");
-    const workdir = join(wt.worktreePath, relative(checkout.workTree, from.ownerWorkdir));
+    const workdir = join(wt.worktreePath, relative(checkout.workTree, from.sourceWorkdir));
     if (!existsSync(workdir)) {
       this.workspace.releaseAllocation(wt, { prune: true });
-      throw err("CONFLICT", `working directory ${relative(checkout.workTree, from.ownerWorkdir)} does not exist at the worktree's base commit`);
+      throw err("CONFLICT", `working directory ${relative(checkout.workTree, from.sourceWorkdir)} does not exist at the worktree's base commit`);
     }
     return { kind: "writer", workdir, readRoots: [], writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: null, tmpDir, external: false, ...birthPool(wt) };
   }
@@ -3106,6 +3130,7 @@ export class Supervisor implements GateHost {
       case "spawn_agent":
         // Not offered to children; an argument sent anyway is refused, not dropped.
         if (args["workspace_path"] !== undefined) throw err("FORBIDDEN", "only the governing session assigns a prepared workspace");
+        if (args["repo_path"] !== undefined) throw err("FORBIDDEN", "only the governing session selects a source repository with repo_path");
         if (args["gate"] !== undefined || args["review"] !== undefined) throw err("FORBIDDEN", "only the governing session configures reviews");
         return this.spawn(caller, {
           taskName: str("task_name"),
