@@ -1,8 +1,9 @@
 /**
  * Collapsed transcript forms for goal instructions, commit metadata, and
- * lifecycle notices. These only shorten what is drawn while pi's global
- * expand toggle is off; persisted and model-facing content is unchanged, and
- * the expanded form is the full text.
+ * lifecycle notices: one line per goal event, nothing for bookkeeping. These
+ * only change what is drawn while pi's global expand toggle is off; persisted
+ * and model-facing content is unchanged, and the expanded form is the full
+ * text.
  */
 import type { Component } from "@earendil-works/pi-tui";
 import { fit, stateColor, type UiFg } from "@ponygirls/pi-ui";
@@ -104,9 +105,17 @@ export function isCommitMeta(data: unknown): data is CommitMetaData {
   return candidate !== null && typeof candidate === "object" && typeof candidate.revision === "number";
 }
 
-/** `  · goal rev 2 committed` (dim), noting a clearing tombstone. */
-export function commitSummary(theme: TranscriptTheme, data: CommitMetaData): string {
-  return theme.fg("dim", `  · goal rev ${data.revision} committed${data.tombstone === true ? " · cleared" : ""}`);
+/** Text of the notice `/goal clear` appends right after its tombstone commit. */
+export const CLEARED_NOTICE_TEXT = "Goal cleared. Transcript entries retained.";
+
+/** The notice that repeats a clear already drawn for the tombstone commit before it. */
+export function isClearedNotice(data: NoticeData): boolean {
+  return data.text === CLEARED_NOTICE_TEXT;
+}
+
+/** `🎯 goal cleared`: the one line for a clear, drawn for its tombstone commit. */
+export function clearedSummary(theme: TranscriptTheme): string {
+  return theme.fg(stateColor("settled"), "🎯 goal cleared");
 }
 
 /** One line on the custom-message background, inset by pi's output padding. */

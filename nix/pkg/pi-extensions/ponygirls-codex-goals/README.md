@@ -26,7 +26,7 @@ One command, `goal`:
 
 | Invocation | Behavior |
 |---|---|
-| `/goal` | Show current state and usage (no model call). |
+| `/goal` | Open the goal pane (TUI); other modes are notified of the state and usage. No model call. |
 | `/goal <objective>` | Create an active goal. Replacing an unfinished goal asks for confirmation in the TUI; headless use must `/goal clear` first. |
 | `/goal --tokens 40000 -- <objective>` | Create with a token spending cap. |
 | `/goal edit` | Edit the objective in an editor dialog (TUI). Preserves goal ID, status, budget, usage. |
@@ -96,27 +96,49 @@ deleted on clear/replace/resume/compaction; Pi's normal compaction
 manages context size.
 
 In the TUI transcript these are drawn collapsed while Pi's global expand
-toggle (`ctrl+o` by default) is off: an instruction is one line
-(`◎ goal · kickoff · active · “objective” · 24 lines ▸ ctrl+o`), a commit
-entry is a dim `· goal rev N committed`, and a pause is one
-`◉ goal paused · rev N · 6s · /goal resume` line (in the TUI the notice
-entry replaces the separate "Goal paused." status line; other modes still
-get the notification). Expanded, each shows exactly the full text it
-always had; collapsing changes only drawing, never the persisted or sent
-content.
+toggle (`ctrl+o` by default) is off, one line per goal event:
 
-While an unfinished goal exists the editor's bottom-left border shows `🎯
-<status>` (active, paused, blocked, budget_limited, usage_limited) as a
-magenta badge, next to the background-tasks and subagents badges when they
-are present; when the border is too narrow it shows `🎯` active,
-`🎯◉` paused, or `🎯✖` blocked/limited, retaining non-color state distinctions. The badge clears when the
-goal completes or is cleared. Clicking the badge opens the `/goal` pane —
-the same pane `/goal` with no arguments opens: status and revision in the
-title, objective, token budget (bar against the cap, or `no cap`), active
-time, and created/updated as local time with relative age. Its keys run
-the matching subcommands: `p` pause (active), `r` resume (paused, blocked,
-usage-limited; a budget-limited goal needs `/goal resume --tokens N`), `e`
-edit objective, `c` clear (after a confirmation), `esc` close.
+- an instruction: `◎ goal · kickoff · active · “objective” · 24 lines ▸ ctrl+o`;
+- a goal tool call with its outcome: `get_goal → active · 1.2k/500k tokens · 6s`
+  (`get_goal → no goal`), `create_goal → set · “objective…”` (with
+  `· cap 40k` when the call sets a budget), `update_goal complete`. A
+  rejected call keeps its call line and the whole error text;
+- a pause: `◉ goal paused · rev N · 6s · /goal resume` (in the TUI the
+  notice entry replaces the separate "Goal paused." status line; other
+  modes still get the notification);
+- a clear: `🎯 goal cleared`, drawn for the tombstone commit; the
+  `Goal cleared. Transcript entries retained.` notice after it is not
+  drawn a second time.
+
+Expanded, each shows exactly the full text it always had; collapsing
+changes only drawing, never the persisted or sent content.
+
+Commit metadata (`codex-goal-commit`, one entry per sidecar revision) is
+persisted in the session file but is bookkeeping, so it is not drawn in the
+collapsed transcript: no line and no blank row. Pi leaves an entry that
+draws nothing out of the transcript it is building, so pressing `ctrl+o`
+afterwards does not show these entries either. They are drawn, as
+`[codex-goal-commit] {…}`, only when the transcript is built while
+expanded: entries appended while it is expanded, or a transcript rebuilt in
+that state (for example by `/reload`). The same holds for the notice text
+of a clear. The `/goal` pane shows the current revision.
+
+While an unfinished goal exists the editor's bottom-left border shows the
+goal badge, next to the background-tasks and subagents badges when they are
+present. A goal at work is the glyph alone, `🎯`, or with a token budget
+the used share, `🎯 41%` (attention colour from 90 %, error from 100 %); a goal
+that stopped names why: `🎯 paused`, `🎯 blocked`, or `🎯 limit` for
+usage_limited and budget_limited. When the border is too narrow the badge
+keeps the percentage (`🎯41%`) or a non-colour marker: `🎯◉` paused, `🎯✖`
+blocked or limited. The badge clears when the goal completes or is
+cleared. Clicking the badge opens the `/goal` pane — the same pane `/goal`
+with no arguments opens, without adding anything to the transcript: status
+in the title, objective, token budget (bar against the cap, or `no cap`),
+active time, created/updated as local time with relative age, and the
+sidecar revision last. Its keys run the matching subcommands: `p` pause
+(active), `r` resume (paused, blocked, usage-limited; a budget-limited goal
+needs `/goal resume --tokens N`), `e` edit objective, `c` clear (after a
+confirmation), `esc` close.
 
 ## Persistence
 
@@ -187,7 +209,8 @@ node --test tests/*.test.ts
 ```
 
 Real-host tests use the pinned Pi SDK, a deterministic local provider, temporary
-saved sessions, JSONL/HTML export, and actual interactive message components:
+saved sessions, JSONL/HTML export, actual interactive message components, and
+Pi's own transcript-building code for the collapsed and expanded transcript:
 
 ```bash
 PI_OFFLINE=1 PI_GOALS_SDK_ROOT=/path/to/pi-monorepo node --test tests/host.test.mjs
