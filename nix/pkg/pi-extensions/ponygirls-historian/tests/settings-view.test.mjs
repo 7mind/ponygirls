@@ -238,7 +238,8 @@ test('managed model/root are truthful read-only UI metadata', async t => {
     row(controller, 'enabled').description.includes(f.journalRoot),
   );
   assert.match(row(controller, 'enabled').description, /read-only/);
-  assert.match(row(controller, 'enabled').inactive, /OFF/);
+  assert.equal(row(controller, 'enabled').checked, false);
+  assert.equal(row(controller, 'enabled').inactive, '', 'a switched-off row needs no note');
   assertUntouched(f);
 
   controller.selectScope('global');
@@ -349,6 +350,19 @@ for (const scope of ['global', 'session', 'project']) {
     });
   }
 }
+
+test('the row note says what capture still needs, on the switch only', async t => {
+  const f = adapterFixture(t);
+  const controller = await stageOn(f, 'session');
+
+  assert.equal(row(controller, 'enabled').checked, true);
+  assert.match(
+    row(controller, 'enabled').inactive,
+    /^not running yet \(runtime off by (global|project|session) setting\)$/,
+  );
+  assert.equal(row(controller, 'model').inactive, '');
+  assert.equal(row(controller, 'focus').inactive, '');
+});
 
 test('cancelled owner editors preserve existing drafts, not inheritance', async t => {
   const f = adapterFixture(t);

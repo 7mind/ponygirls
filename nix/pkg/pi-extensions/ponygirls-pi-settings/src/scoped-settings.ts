@@ -225,11 +225,17 @@ export interface ScopedSettingsRow {
   readonly effectiveText: string;
   readonly origin: ScopedSettingsOrigin;
   readonly inactive: string;
+
+  /** An unsaved change for this field is staged in the selected scope. */
+  readonly staged: boolean;
 }
 
 export interface ScopedSettingsScopeState {
   readonly scope: ScopedSettingsScope;
   readonly dirty: boolean;
+
+  /** Unsaved changes staged in this scope. */
+  readonly changes: number;
   readonly editable: boolean;
   readonly reason: string;
   readonly target: string;
@@ -619,8 +625,7 @@ export class ScopedSettingsController<V extends object>
   private selectedScope: ScopedSettingsScope = 'session';
   private generation = 0;
   private operation: ControllerOperation | null = null;
-  private message =
-    'Unsaved changes are discarded when this dialog closes.';
+  private message = '';
 
   constructor(options: ScopedSettingsControllerOptions<V>) {
     this.options = options;
@@ -822,6 +827,7 @@ export class ScopedSettingsController<V extends object>
         effectiveText: plainText(field.format(actual.value)),
         origin: actual.origin,
         inactive: plainText(this.options.inactive(key, effective)),
+        staged: this.drafts[this.selectedScope].has(key),
       });
     });
 
@@ -831,6 +837,7 @@ export class ScopedSettingsController<V extends object>
         return Object.freeze({
           scope,
           dirty: this.dirty(scope),
+          changes: this.drafts[scope].size,
           editable: reason === '' && !this.busy,
           reason: plainText(reason),
           target: plainText(this.snapshot.targets[scope]),
@@ -925,8 +932,9 @@ export class ScopedSettingsController<V extends object>
       ? this.snapshot.targets[scope]
       : null;
 
-    this.message =
-      `Draft changed in ${scope}; Apply saves only this scope.`;
+    // The state reports staged rows and per-scope change counts; a
+    // successful edit only clears an earlier message.
+    this.message = '';
   }
 
   toggleSelected(): void {

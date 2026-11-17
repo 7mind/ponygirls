@@ -21,19 +21,23 @@ import {
 } from './custom-view.ts';
 
 import {
+  frameRule,
   frameTitle,
   hintAt,
   keyHints,
+  type KeyHint,
   type Span,
 } from './frame.ts';
+
+import { HINT, KEY, ctrlKey } from './keys.ts';
 
 import {
   PanelLayout,
   type PanelParts,
 } from './panel-layout.ts';
 
-import { fit } from './rows.ts';
-import type { UiTheme } from './theme.ts';
+import { MARKER_WIDTH, fit, listRow } from './rows.ts';
+import type { UiFg, UiTheme } from './theme.ts';
 
 function plainText(value: string): string {
   return value
@@ -61,6 +65,15 @@ export interface ScopedSettingsPanelOptions {
   readonly runAction: (action: ScopedSettingsAction) => void;
 }
 
+/** What a footer hint does when clicked; the same action as its key. */
+type HintAction =
+  | 'select'
+  | 'scope'
+  | 'activate'
+  | 'inherit'
+  | 'apply'
+  | 'cancel';
+
 type PointerAction =
   | {
       readonly kind: 'scope';
@@ -72,16 +85,35 @@ type PointerAction =
     }
   | {
       readonly kind: 'hint';
-      readonly index: number;
+      readonly action: HintAction;
     };
 
 interface SettingsFrame {
   readonly width: number;
   readonly headerRows: number;
   readonly footerRows: number;
+
+  /** Footer rows above the hint lines (the notice, when there is one). */
+  readonly noticeRows: number;
   readonly rowCount: number;
   readonly tabs: readonly Span[];
   readonly hints: readonly (readonly Span[])[];
+  readonly hintActions: readonly HintAction[];
+}
+
+/** Marker cell before a row's label: a checkbox, or a pencil for a value. */
+const BOX_WIDTH = 3;
+const COLUMN_GAP = 2;
+const LABEL_MIN = 12;
+const LABEL_MAX = 34;
+const LOCAL_MIN = 7;
+const LOCAL_MAX = 16;
+const EFFECTIVE_MIN = 12;
+const INHERIT = 'inherit';
+const STAGED_MARK = ' •';
+
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? '' : 's'}`;
 }
 
 export class ScopedSettingsPanel extends PanelLayout {
@@ -180,120 +212,141 @@ export class ScopedSettingsPanel extends PanelLayout {
       'none',
     );
 
-    const header = [
-      title.line,
-      ...wrapTextWithAnsi(
-        theme.fg(
-          'muted',
-          'Checkboxes show configuration intent, not permission or consent.',
-        ),
-        w,
-      ),
-      ...wrapTextWithAnsi(
-        theme.fg(
-          'dim',
-          "Preview includes this tab's draft, not other tabs' unsaved edits.",
-        ),
-        w,
-      ),
-    ];
-
-    const labelWidth = Math.max(4, Math.min(28, w - 42));
-
-    const body = state.rows.map((row, index) => {
-      const selected = index === state.selectedIndex;
-      const marker = row.checked === null
-        ? '[>]'
-        : row.checked ? '[x]' : '[ ]';
-
-      const local = row.localSet
-        ? plainText(row.localText)
-        : 'inherit';
-
-      const status = plainText(row.inactive);
-      let text: string;
-
-      if (row.kind === 'value') {
-        text =
-          `${selected ? '>' : ' '} ${marker} ` +
-          `${plainText(row.label)}: ${plainText(row.throughText)}` +
-          ` · local ${local}` +
-          ` · effective ${plainText(row.effectiveText)} (${row.origin})`;
-
-        if (status !== '') text += ` · ${status}`;
-      } else {
-        text =
-          `${selected ? '>' : ' '} ${marker} ` +
-          `${fit(plainText(row.label), labelWidth)} ` +
-          `${fit(local, 7)} ` +
-          `${fit(
-            `${plainText(row.effectiveText)}@${row.origin}`,
-            18,
-          )}`;
-
-        if (status !== '') text += ` ${status}`;
-      }
-
-      const clipped = truncateToWidth(text, w, '…');
-      return selected
-        ? theme.bg('selectedBg', theme.fg('text', clipped))
-        : theme.fg('text', clipped);
-    });
-
     const selectedRow = state.rows[state.selectedIndex];
     const selectedScope = state.scopes.find(
       item => item.scope === state.scope,
     );
 
-    const details: string[] = [];
+    // Column widths follow the content; Effective takes what is left.
+    const localCell = (row: ScopedSettingsState['rows'][number]): string =>
+      (row.localSet ? plainText(row.localText) : INHERIT) +
+      (row.staged ? STAGED_MARK : '');
+    const widest = (texts: readonly string[]): number =>
+      texts.reduce((max, text) => Math.max(max, visibleWidth(text)), 0);
+    const fixed = MARKER_WIDTH + BOX_WIDTH + 1 + 2 * COLUMN_GAP;
+    const localWidth = Math.max(
+      LOCAL_MIN,
+      Math.min(LOCAL_MAX, widest(state.rows.map(localCell))),
+    );
+    const labelWidth = Math.max(
+      LABEL_MIN,
+      Math.min(
+        LABEL_MAX,
+        widest(state.rows.map(row => plainText(row.label))),
+        w - fixed - localWidth - EFFECTIVE_MIN,
+      ),
+    );
+    const gap = ' '.repeat(COLUMN_GAP);
 
-    if (selectedRow !== undefined) {
-      details.push(
-        plainText(selectedRow.description),
-        `Local ${state.scope}: ${
-          selectedRow.localSet
-            ? plainText(selectedRow.localText)
-            : 'inherit'
-        }; through this scope: ${plainText(selectedRow.throughText)}.`,
-        `Effective: ${plainText(selectedRow.effectiveText)} ` +
-          `(${selectedRow.origin}).`,
-      );
+    const header = [
+      title.line,
+      truncateToWidth(
+        theme.fg(
+          'dim',
+          `${' '.repeat(MARKER_WIDTH + BOX_WIDTH + 1)}` +
+            `${fit('SETTING', labelWidth)}${gap}` +
+            `${fit('HERE', localWidth)}${gap}EFFECTIVE`,
+        ),
+        w,
+        '',
+      ),
+    ];
 
-      if (selectedRow.inactive !== '') {
-        details.push(plainText(selectedRow.inactive));
+    const body = state.rows.map((row, index) => {
+      const selected = index === state.selectedIndex;
+      const on = row.checked === true;
+      const note = plainText(row.inactive);
+      // A switched-off setting with an unmet prerequisite recedes; `dim`
+      // is unreadable on the selection band, so the selected row uses muted.
+      const receded: UiFg = selected ? 'muted' : 'dim';
+      const quiet = row.checked === false && note !== '';
+      const box = row.kind === 'value'
+        ? ' ✎ '
+        : on ? '[x]' : '[ ]';
+      const overridden = row.throughText !== row.effectiveText;
+
+      const local = row.localSet
+        ? theme.fg('text', plainText(row.localText))
+        : theme.fg(quiet ? receded : 'muted', INHERIT);
+      const localText =
+        local + (row.staged ? theme.fg('warning', STAGED_MARK) : '');
+      const effective =
+        `${plainText(row.effectiveText)} · ${row.origin}`;
+
+      let content =
+        `${theme.fg(quiet ? receded : 'text', `${box} ${fit(plainText(row.label), labelWidth)}`)}` +
+        `${gap}${fit(localText, localWidth)}${gap}` +
+        theme.fg(overridden ? 'warning' : quiet ? receded : 'muted', effective);
+
+      if (note !== '') {
+        content += gap + theme.fg(on ? 'warning' : receded, note);
       }
 
-      details.push(
-        selectedRow.kind === 'value'
-          ? 'Enter or e edits the complete value; Apply saves it.'
-          : 'Space or Enter changes configuration intent; Apply saves it.',
-        'Inherit removes only this scope’s override. ' +
-          'Global inheritance falls back to managed or builtin defaults.',
-      );
+      return listRow(theme, w, content, selected);
+    });
+
+    const details: { text: string; color: UiFg }[] = [];
+
+    if (selectedRow !== undefined) {
+      details.push({
+        text: plainText(selectedRow.description),
+        color: 'muted',
+      });
+
+      if (selectedRow.kind === 'value') {
+        details.push({
+          text:
+            `Now: ${plainText(selectedRow.effectiveText)} ` +
+            `(${selectedRow.origin})`,
+          color: 'text',
+        });
+      }
+
+      if (selectedRow.throughText !== selectedRow.effectiveText) {
+        details.push({
+          text:
+            `A ${selectedRow.origin} setting overrides this scope ` +
+            `(${plainText(selectedRow.throughText)} here).`,
+          color: 'warning',
+        });
+      }
+
+      if (selectedRow.inactive !== '') {
+        details.push({
+          text: plainText(selectedRow.inactive),
+          color: selectedRow.checked === true ? 'warning' : 'muted',
+        });
+      }
     }
 
     if (selectedScope !== undefined) {
-      details.push(
-        `Scope target: ${plainText(selectedScope.target)}`,
-      );
+      details.push({
+        text: selectedScope.scope === 'session'
+          ? 'Applies to this session only.'
+          : `Saved to ${plainText(selectedScope.target)}`,
+        color: 'dim',
+      });
+
       if (selectedScope.reason !== '') {
-        details.push(plainText(selectedScope.reason));
+        details.push({
+          text: plainText(selectedScope.reason),
+          color: 'warning',
+        });
       }
     }
 
     if (!state.projectTrusted) {
-      details.push(
-        'Project settings are ignored because the project is not trusted.',
-      );
+      details.push({
+        text:
+          'Project settings are ignored because the project is not trusted.',
+        color: 'warning',
+      });
     }
 
-    body.push('');
+    body.push(frameRule(theme, w));
     for (const detail of details) {
       body.push(
-        ...wrapTextWithAnsi(
-          theme.fg('muted', plainText(detail)),
-          w,
-        ),
+        ...wrapTextWithAnsi(theme.fg(detail.color, detail.text), w),
       );
     }
 
@@ -307,20 +360,66 @@ export class ScopedSettingsPanel extends PanelLayout {
       );
     }
 
-    const hints = keyHints(theme, w, [
-      { key: '↑↓', action: 'select' },
-      { key: 'Tab', action: 'scope' },
-      { key: 'Space', action: 'activate' },
-      { key: 'r', action: 'inherit' },
-      { key: 'e', action: 'edit value' },
-      { key: 'Ctrl-S', action: 'apply scope' },
-      { key: 'PgUp/Dn', action: 'scroll' },
-      { key: 'l', action: 'reload' },
-      { key: 'Esc', action: 'cancel drafts' },
-    ]);
+    const unsaved = state.scopes.filter(scope => scope.changes > 0);
+    const anyUnsaved = unsaved.length > 0;
+    const currentUnsaved = selectedScope !== undefined &&
+      selectedScope.changes > 0;
+
+    const hintList: { hint: KeyHint; action: HintAction }[] = [
+      { hint: HINT.select, action: 'select' },
+      { hint: { key: KEY.tab, action: 'scope' }, action: 'scope' },
+    ];
+    if (selectedRow !== undefined) {
+      hintList.push({
+        hint: selectedRow.kind === 'value'
+          ? { key: KEY.enter, action: 'edit' }
+          : { key: KEY.space, action: 'toggle' },
+        action: 'activate',
+      });
+      if (selectedRow.localSet) {
+        hintList.push({
+          hint: { key: 'r', action: INHERIT },
+          action: 'inherit',
+        });
+      }
+    }
+    if (currentUnsaved) {
+      hintList.push({
+        hint: { key: ctrlKey('s'), action: 'save' },
+        action: 'apply',
+      });
+    }
+    hintList.push({
+      hint: anyUnsaved
+        ? { key: KEY.esc, action: 'discard and close' }
+        : HINT.close,
+      action: 'cancel',
+    });
+
+    const hints = keyHints(theme, w, hintList.map(item => item.hint));
+
+    // A controller message outranks the unsaved summary; with neither, the
+    // footer is the hint line alone.
+    const noticeLine = notice !== ''
+      ? truncateToWidth(theme.fg('muted', notice), w, '…')
+      : anyUnsaved
+        ? truncateToWidth(
+            theme.fg(
+              'warning',
+              unsaved
+                .map((scope, index) =>
+                  index === 0
+                    ? `${plural(scope.changes, 'unsaved change')} in ${scope.scope}`
+                    : `${scope.changes} in ${scope.scope}`)
+                .join(', '),
+            ),
+            w,
+            '…',
+          )
+        : null;
 
     const footer = [
-      truncateToWidth(theme.fg('muted', notice), w, '…'),
+      ...(noticeLine === null ? [] : [noticeLine]),
       ...hints.lines,
     ];
 
@@ -358,9 +457,11 @@ export class ScopedSettingsPanel extends PanelLayout {
         width: w,
         headerRows: header.length,
         footerRows: footer.length,
+        noticeRows: noticeLine === null ? 0 : 1,
         rowCount: state.rows.length,
         tabs: title.tabSpans,
         hints: hints.spans,
+        hintActions: hintList.map(item => item.action),
       };
     }
 
@@ -430,39 +531,25 @@ export class ScopedSettingsPanel extends PanelLayout {
     this.changed(true);
   }
 
-  private runHint(index: number): void {
+  private runHint(action: HintAction): void {
     if (!this.usable()) return;
 
     const controller = this.options.controller;
-    const state = controller.state();
 
-    if (index === 0) {
-      controller.select(state.selectedIndex + 1);
-    } else if (index === 1) {
+    if (action === 'select') {
+      controller.select(controller.state().selectedIndex + 1);
+    } else if (action === 'scope') {
       controller.cycleScope(1);
-    } else if (index === 2) {
+    } else if (action === 'activate') {
       this.activateSelected();
       return;
-    } else if (index === 3) {
+    } else if (action === 'inherit') {
       controller.inheritSelected();
-    } else if (index === 4) {
-      this.requestEdit();
-      return;
-    } else if (index === 5) {
+    } else if (action === 'apply') {
       this.requestApply();
       return;
-    } else if (index === 6) {
-      this.bodyScroll.scrollBy(
-        Math.max(1, this.bodyScroll.viewportHeight - 1),
-      );
-      this.changed(false);
-      return;
-    } else if (index === 7) {
-      controller.reload();
-    } else if (index === 8) {
-      this.options.cancel();
-      return;
     } else {
+      this.options.cancel();
       return;
     }
 
@@ -502,19 +589,19 @@ export class ScopedSettingsPanel extends PanelLayout {
     if (footerTop < bodyTop) return null;
 
     if (event.y >= footerTop) {
-      const footerRow = event.y - footerTop;
-      if (footerRow <= 0 || footerRow >= frame.footerRows) {
+      const hintRow = event.y - footerTop - frame.noticeRows;
+      if (hintRow < 0 || hintRow >= frame.hints.length) {
         return null;
       }
 
-      const index = hintAt(
-        frame.hints[footerRow - 1],
-        event.x,
-      );
+      const index = hintAt(frame.hints[hintRow], event.x);
+      const action = index === undefined
+        ? undefined
+        : frame.hintActions[index];
 
-      return index === undefined
+      return action === undefined
         ? null
-        : { kind: 'hint', index };
+        : { kind: 'hint', action };
     }
 
     if (event.y < bodyTop) return null;
@@ -574,7 +661,7 @@ export class ScopedSettingsPanel extends PanelLayout {
       this.options.controller.selectScope(action.scope);
       this.changed(true);
     } else if (action.kind === 'hint') {
-      this.runHint(action.index);
+      this.runHint(action.action);
     } else {
       this.options.controller.select(action.index);
       this.activateSelected();
