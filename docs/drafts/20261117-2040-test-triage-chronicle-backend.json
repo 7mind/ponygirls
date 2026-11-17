@@ -1,0 +1,1730 @@
+[
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/AccountAuthorityTest.scala",
+  "suite": [
+   "AccountAuthorityTest"
+  ],
+  "cases": 8,
+  "loc": 129,
+  "seconds": 4.33,
+  "secondsShimRun": 3.91,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Login/logout/credential-reconciliation races (stale logout, reassigned session); real security contract."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/AccountHttpTest.scala",
+  "suite": [
+   "AccountHttpTest"
+  ],
+  "cases": 6,
+  "loc": 247,
+  "seconds": 7.13,
+  "secondsShimRun": 7.67,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Account HTTP routes: Origin/Host checks, ambiguous credentials, revalidation after mutation lock; real security contract."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ActivityExpressionTest.scala",
+  "suite": [
+   "ActivityExpressionTest"
+  ],
+  "cases": 12,
+  "loc": 208,
+  "seconds": 0.02,
+  "secondsShimRun": 0.03,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Pure Activity expression parser bounds/semantics; cheap (0.03 s)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ActivityTest.scala",
+  "suite": [
+   "ActivityDummyTest",
+   "ActivityPostgresTest"
+  ],
+  "cases": 40,
+  "loc": 699,
+  "seconds": 18.22,
+  "secondsShimRun": 20.18,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BG / B-Good (dual: ActivityDummyTest + ActivityPostgresTest)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Proper dual-test contract for Activity paging/sorting/ACL; promote ActivityDummyTest to the fast set. Case ActivityTest.scala:504 duplicates CursorWebSocketTest.scala:21 (delete that case)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/AgentKindTest.scala",
+  "suite": [
+   "AgentKindTest"
+  ],
+  "cases": 2,
+  "loc": 27,
+  "seconds": 0.0,
+  "secondsShimRun": 0.0,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Pure classifier; cheap."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/AnnotationAttemptsTest.scala",
+  "suite": [
+   "DummyAnnotationAttemptsTest",
+   "PostgresAnnotationAttemptsTest"
+  ],
+  "cases": 13,
+  "loc": 140,
+  "seconds": 3.88,
+  "secondsShimRun": 4.6,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Annotation retry-budget durability across reclaim/crash; dual contract; promote DummyAnnotationAttemptsTest to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ApiVersionCompatibilityTest.scala",
+  "suite": [
+   "ApiVersionCompatibilityTest"
+  ],
+  "cases": 3,
+  "loc": 29,
+  "seconds": 0.01,
+  "secondsShimRun": 0.01,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Sole-API acceptance and removed/future version rejection; merge target for ProtocolEvolutionTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveApplicationTest.scala",
+  "suite": [
+   "ArchiveApplicationTest"
+  ],
+  "cases": 3,
+  "loc": 67,
+  "seconds": 0.85,
+  "secondsShimRun": 1.01,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Application dispatch never calls models for lexical/metadata reads; fails explicitly on model failure."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveContentBoundaryTest.scala",
+  "suite": [
+   "ArchiveContentBoundaryTest"
+  ],
+  "cases": 3,
+  "loc": 60,
+  "seconds": 3.9,
+  "secondsShimRun": 4.26,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Regressions for sigma folding and >100000-position paging ceilings."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveContract.scala",
+  "suite": [
+   "ArchiveDummyTest",
+   "ArchivePostgresTest"
+  ],
+  "cases": 18,
+  "loc": 453,
+  "seconds": 4.39,
+  "secondsShimRun": 4.86,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BA / B-Good (dual: ArchiveDummyTest + ArchivePostgresTest); hosts DummyArchive",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Core ingest/NUL/CAS/stale-publish contract in dual form; the in-memory DummyArchive is the fast-path enabler; promote ArchiveDummyTest to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveExpressionTest.scala",
+  "suite": [
+   "ArchiveExpressionTest"
+  ],
+  "cases": 31,
+  "loc": 308,
+  "seconds": 0.08,
+  "secondsShimRun": 0.06,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "FILE (tests/archive-expression-cases.json, shared with web)",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Pure parser + cross-language fixture shared with chronicle/web; cheap."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveHeadCandidateTest.scala",
+  "suite": [
+   "ArchiveHeadCandidateTest"
+  ],
+  "cases": 8,
+  "loc": 266,
+  "seconds": 3.43,
+  "secondsShimRun": 3.09,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "HEAD-advance atomicity, RR snapshots and concurrent backfill/prune regressions; real durability/concurrency."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveIndexTest.scala",
+  "suite": [
+   "ArchiveIndexTest"
+  ],
+  "cases": 18,
+  "loc": 315,
+  "seconds": 15.31,
+  "secondsShimRun": 15.45,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good (one Perf case)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Archive browse/sort/cursor/ACL contract. Case :268 (5.8 s) is the plan-shape check that should absorb ArchiveLiteralPlanTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveLexicalIndexTest.scala",
+  "suite": [
+   "ArchiveLexicalIndexTest"
+  ],
+  "cases": 4,
+  "loc": 110,
+  "seconds": 2.37,
+  "secondsShimRun": 2.62,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "E-Good (PG characterization)",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Case :18 tests PostgreSQL trigram/ILIKE behaviour on temp tables with no Chronicle code (DELETE); case :78 keeps an 'old lower predicate' migration oracle (drop it); cases :38/:64 check pinned-PG Unicode assumptions behind ArchiveProjection.overlapScalars (keep)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveLiteralPlanTest.scala",
+  "suite": [
+   "ArchiveLiteralPlanTest"
+  ],
+  "cases": 1,
+  "loc": 18,
+  "seconds": 0.15,
+  "secondsShimRun": 0.16,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none (constructs Database without PG)",
+  "tags": "WA",
+  "verdict": "DELETE",
+  "mergeTarget": null,
+  "rationale": "Asserts SQL text contains the CTE name 'g0 AS MATERIALIZED' (ArchiveLiteralPlanTest.scala:13) — implementation trivia; keep the performance intent only as a plan/behaviour check in ArchiveIndexTest (:268) before deleting."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveProjectionTest.scala",
+  "suite": [
+   "ArchiveProjectionTest"
+  ],
+  "cases": 16,
+  "loc": 333,
+  "seconds": 5.17,
+  "secondsShimRun": 6.75,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BA + E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Fragment projection, migration/backfill ordering, rollback and non-superuser trigram install; real durability/migration contract."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchivePublishedFormatTest.scala",
+  "suite": [
+   "ArchivePublishedFormatTest"
+  ],
+  "cases": 2,
+  "loc": 64,
+  "seconds": 1.19,
+  "secondsShimRun": 1.28,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Published-format provenance independent of job state; 2 cases."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveRelevanceTest.scala",
+  "suite": [
+   "ArchiveRelevanceTest"
+  ],
+  "cases": 10,
+  "loc": 213,
+  "seconds": 6.24,
+  "secondsShimRun": 5.96,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Relevance ordering/cursors per mode; product search contract."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ArchiveSearchTest.scala",
+  "suite": [
+   "ArchiveSearchTest"
+  ],
+  "cases": 14,
+  "loc": 282,
+  "seconds": 66.77,
+  "secondsShimRun": 68.92,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP",
+  "tags": "B-Good",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Cases :215 (6 s lock hold) and :231 (waits the full 30 s) test the statement deadline using the *fixture's* 30 s JdbcLimits (Fixtures.scala:31; JdbcLimits has no product default, Core.scala:112-120) — use a 1 s configured deadline; case :103 (22 s) ingests a 2 MiB message — shrink to the smallest size that crosses the relevant bound. Remaining 11 cases KEEP."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/BrowserWebSocketTest.scala",
+  "suite": [
+   "BrowserWebSocketTest"
+  ],
+  "cases": 21,
+  "loc": 780,
+  "seconds": 44.78,
+  "secondsShimRun": 40.56,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP,WS,SLEEP",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Browser WS authority/cancellation/flooding contract. Case :197 (13 s) waits 1.2 s + 4 s real time for heartbeat behaviour — becomes cheap once WS liveness timings are injectable (see HttpTest)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/CheckpointSnapshotBudgetTest.scala",
+  "suite": [
+   "CheckpointSnapshotBudgetTest"
+  ],
+  "cases": 5,
+  "loc": 107,
+  "seconds": 1.96,
+  "secondsShimRun": 1.47,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Immutable snapshot binding and constant validation traffic per claim."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ChronicleJdbcRuntimeTest.scala",
+  "suite": [
+   "ChronicleJdbcRuntimeTest"
+  ],
+  "cases": 6,
+  "loc": 96,
+  "seconds": 0.97,
+  "secondsShimRun": 1.01,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,FILE (config.example.json)",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Mandatory JDBC policy fields, deadlines, migrate CLI; validates the shipped example config."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/CodecFixtureTest.scala",
+  "suite": [
+   "CodecFixtureTest"
+  ],
+  "cases": 13,
+  "loc": 114,
+  "seconds": 0.06,
+  "secondsShimRun": 0.07,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "FILE (server/src/test/fixtures/*.json shared with scripts/codec-fixtures.mjs)",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Cross-language golden bytes shared with the TypeScript codec check; cheap. 'API1.x' names are shape-introduction labels decoded by the sole 1.9.0 codec, not retained protocol versions."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/CollectorProgressHttpTest.scala",
+  "suite": [
+   "CollectorProgressHttpTest"
+  ],
+  "cases": 1,
+  "loc": 68,
+  "seconds": 0.89,
+  "secondsShimRun": 0.82,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Production route auth/size cap for collector progress; 1 case."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/CollectorProgressTest.scala",
+  "suite": [
+   "CollectorProgressDummyTest",
+   "CollectorProgressPostgresTest"
+  ],
+  "cases": 5,
+  "loc": 73,
+  "seconds": 3.73,
+  "secondsShimRun": 3.46,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BA / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Owner-scoped durable sequences; dual; promote CollectorProgressDummyTest to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ContextCoverageTest.scala",
+  "suite": [
+   "ContextCoverageTest"
+  ],
+  "cases": 6,
+  "loc": 60,
+  "seconds": 0.01,
+  "secondsShimRun": 0.01,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Pure context-coverage kernel."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ContextWorkerRecoveryTest.scala",
+  "suite": [
+   "DummyContextWorkerRecoveryTest",
+   "PostgresContextWorkerRecoveryTest"
+  ],
+  "cases": 24,
+  "loc": 281,
+  "seconds": 43.13,
+  "secondsShimRun": 43.24,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half),SLEEP (product back-off)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Valuable worker recovery contract, but 16 of 24 cases pay Worker.process's fixed 2 s post-failure IO.sleep (Models.scala:219): Dummy half 18.3 s for 12 cases. Inject the back-off (or run under cats-effect TestControl) and promote the dummy half to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/CoreTest.scala",
+  "suite": [
+   "CoreTest"
+  ],
+  "cases": 7,
+  "loc": 54,
+  "seconds": 0.98,
+  "secondsShimRun": 0.91,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "FILE (config.example.json)",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Config/HTTP policy/profile identity basics; merge target for IngestionBoundsTest and RelocatedModelIdentityTest:25."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/CursorWebSocketTest.scala",
+  "suite": [
+   "CursorWebSocketTest"
+  ],
+  "cases": 1,
+  "loc": 106,
+  "seconds": 1.72,
+  "secondsShimRun": 1.69,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP,WS",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Strongest of three long-title continuation tests (real frame guard); merge target for the cursor cases misfiled in RetryFailedActionsTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/DashboardOperationsTest.scala",
+  "suite": [
+   "DashboardOperationsTest"
+  ],
+  "cases": 3,
+  "loc": 73,
+  "seconds": 1.48,
+  "secondsShimRun": 1.96,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Dashboard dispatch without provider calls; rename 'retained 1.4' wording (sole API is 1.9.0)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ExpressionHintContextTest.scala",
+  "suite": [
+   "ExpressionHintContextTest"
+  ],
+  "cases": 16,
+  "loc": 213,
+  "seconds": 0.06,
+  "secondsShimRun": 0.07,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA (labelled BG)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Pure hint-context editing semantics."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ExpressionHintsTest.scala",
+  "suite": [
+   "ExpressionHintsDummyTest",
+   "ExpressionHintsPostgresTest"
+  ],
+  "cases": 21,
+  "loc": 384,
+  "seconds": 5.24,
+  "secondsShimRun": 6.08,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BA / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Hint corpus/ACL contract; dual; promote ExpressionHintsDummyTest to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ExtractionBaseline.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 375,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "—",
+  "tags": "helper (frozen production copy)",
+  "verdict": "DELETE",
+  "mergeTarget": null,
+  "rationale": "35 KB test-only copy of pre-extraction production SQL ('Keep while extraction is validated', ExtractionBaseline.scala:3-4); extraction landed in d3de9f96 (2026-11-03). Only user is SharedExtractionDifferentialTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/Fixtures.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 62,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "PG",
+  "tags": "helper",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Remove the alias extensions legacyOnly/passages that silently map to current (Fixtures.scala:4-8) — they make transition tests degenerate and double fixture work; Fixtures.config() hashes a password per call (~0.15 s, measured indirectly) — hash once per JVM."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/HistorianFixtures.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 16,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "FILE",
+  "tags": "helper",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Historian ingest fixture."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/HttpTest.scala",
+  "suite": [
+   "HttpTest"
+  ],
+  "cases": 3,
+  "loc": 192,
+  "seconds": 72.82,
+  "secondsShimRun": 68.95,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP,WS,SLEEP",
+  "tags": "BG-Good",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Cases :19 (17 s model delay + waits past the 20 s ping) and :72 (waits the 10 s hello and 20+10 s pong deadlines) use the hard-coded liveness constants in Http.scala:249-254; make them injectable and test with sub-second values (~67 s saved). Case :114 KEEP."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/IndexCheckpointsTest.scala",
+  "suite": [
+   "DummyIndexCheckpointsTest",
+   "PostgresIndexCheckpointsTest"
+  ],
+  "cases": 10,
+  "loc": 104,
+  "seconds": 2.87,
+  "secondsShimRun": 2.87,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Checkpoint immutability across retry/reclaim; promote dummy to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/IndexProfilesTest.scala",
+  "suite": [
+   "IndexProfilesTest"
+  ],
+  "cases": 5,
+  "loc": 73,
+  "seconds": 1.26,
+  "secondsShimRun": 1.49,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (2 cases)",
+  "tags": "BA + E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Profile/embedding identity and migration seeding."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/IndexProgressTest.scala",
+  "suite": [
+   "IndexProgressTest"
+  ],
+  "cases": 5,
+  "loc": 121,
+  "seconds": 4.59,
+  "secondsShimRun": 5.13,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Fenced monotonic progress; one case pays the 2 s worker back-off."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/IndexedSearchSnapshotTest.scala",
+  "suite": [
+   "IndexedSearchSnapshotTest"
+  ],
+  "cases": 1,
+  "loc": 96,
+  "seconds": 23.14,
+  "secondsShimRun": 29.78,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,large corpus (30k rows)",
+  "tags": "E-Good / W-Good (counts ANN statements via JDBC proxy)",
+  "verdict": "MERGE",
+  "mergeTarget": "IndexedSearchTest",
+  "rationale": "Seeds its own 24k+6k-row HNSW corpus (23-30 s) to prove one ANN traversal serves count+page; share IndexedSearchTest's corpus and move with it to the slow tier."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/IndexedSearchTest.scala",
+  "suite": [
+   "IndexedSearchTest"
+  ],
+  "cases": 4,
+  "loc": 212,
+  "seconds": 111.41,
+  "secondsShimRun": 132.65,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,large corpus (12k rows ×32d, 2048×2048d)",
+  "tags": "Perf-E-Good (planner index choice, ANN recall)",
+  "verdict": "DEMOTE",
+  "mergeTarget": null,
+  "rationale": "Performance-purpose assertions (EXPLAIN uses HNSW/GIN, recall ≥0.95) cost 111-133 s; move to a scheduled/explicit slow tier outside the mandatory agent full run. Case :166 (projection/purge) is functional — move it to ArchiveProjectionTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/IngestionBoundsTest.scala",
+  "suite": [
+   "IngestionBoundsTest"
+  ],
+  "cases": 1,
+  "loc": 9,
+  "seconds": 0.14,
+  "secondsShimRun": 0.16,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "MERGE",
+  "mergeTarget": "CoreTest",
+  "rationale": "One config-bound assertion (9 LOC); belongs with the other Config.validate cases."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/JsonUtf8SizeTest.scala",
+  "suite": [
+   "JsonUtf8SizeTest"
+  ],
+  "cases": 3,
+  "loc": 34,
+  "seconds": 0.01,
+  "secondsShimRun": 0.01,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Exact UTF-8 accounting vs Circe printer; promote to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/LiveMcpGraphTest.scala",
+  "suite": [
+   "LiveMcpGraphTest"
+  ],
+  "cases": 2,
+  "loc": 155,
+  "seconds": 1.31,
+  "secondsShimRun": 1.6,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Production MCP graph wiring and cancellation of in-flight model request."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpMessageContextTest.scala",
+  "suite": [
+   "McpMessageContextTest"
+  ],
+  "cases": 3,
+  "loc": 46,
+  "seconds": 0.95,
+  "secondsShimRun": 1.1,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (via ReadSourceFixture)",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "MCP context tool parser/budgets over a real archive; NOT promotable (measured: fails without PostgreSQL, ReadSourceFixture.scala:110)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpSearchGuidanceTest.scala",
+  "suite": [
+   "McpSearchGuidanceTest"
+  ],
+  "cases": 6,
+  "loc": 151,
+  "seconds": 2.68,
+  "secondsShimRun": 2.67,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "MCP discovery/search syntax guidance against real websearch semantics."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpSourceAdmissionTest.scala",
+  "suite": [
+   "McpSourceAdmissionTest"
+  ],
+  "cases": 15,
+  "loc": 145,
+  "seconds": 4.63,
+  "secondsShimRun": 4.95,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "W-Good (JDBC proxy via ReadSourceFixture) + BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Admission-before-payload is a real resource-safety contract, but 9 of 12 cases are whitebox (observe JDBC column reads); accept as deliberate, do not extend."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpSourceBoundaryTest.scala",
+  "suite": [
+   "McpSourceBoundaryTest"
+  ],
+  "cases": 14,
+  "loc": 190,
+  "seconds": 16.22,
+  "secondsShimRun": 16.44,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP (5 s product deadline)",
+  "tags": "BG-Good / W-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Revocation/logout races and SELECT-only role; case :143 waits a product 5 s constant."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTagSearchTest.scala",
+  "suite": [
+   "McpTagSearchTest"
+  ],
+  "cases": 9,
+  "loc": 160,
+  "seconds": 3.21,
+  "secondsShimRun": 3.21,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "MERGE",
+  "mergeTarget": "TagSearchTest",
+  "rationale": "Cases :81, :88, :97 repeat TagSearchTest :61, :92, :69 (empty tag position, long legacy tags, Unicode-lower substring) through the MCP layer; keep only MCP-specific cases (:37 discovery, :105 strict args, :122 scopes, :134 admission, :147 logout)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTestFixtures.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 125,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "none",
+  "tags": "helper",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Manual clock/model fixtures for MCP test runs."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTestLimitsTest.scala",
+  "suite": [
+   "McpTestLimitsTest"
+  ],
+  "cases": 11,
+  "loc": 249,
+  "seconds": 3.1,
+  "secondsShimRun": 2.73,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "MCP test-run limits (product feature 'MCP test runs', not test machinery); pure; promote to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTestModelTest.scala",
+  "suite": [
+   "McpTestModelTest"
+  ],
+  "cases": 9,
+  "loc": 208,
+  "seconds": 4.8,
+  "secondsShimRun": 5.52,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "HTTP",
+  "tags": "BG + B-Good (loopback)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "MCP tester model adapter contract."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTestRunsTest.scala",
+  "suite": [
+   "McpTestRunsTest"
+  ],
+  "cases": 23,
+  "loc": 618,
+  "seconds": 1.75,
+  "secondsShimRun": 1.78,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Run lifecycle/cancellation/authorization races with a manual clock — a good cheap vehicle; promote to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTestWireTest.scala",
+  "suite": [
+   "McpTestWireTest"
+  ],
+  "cases": 4,
+  "loc": 79,
+  "seconds": 0.01,
+  "secondsShimRun": 0.01,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Tester wire encoding/caps; promote to fast."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/McpTextPresentationTest.scala",
+  "suite": [
+   "McpTextPresentationTest"
+  ],
+  "cases": 12,
+  "loc": 320,
+  "seconds": 2.4,
+  "secondsShimRun": 2.56,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (ReadSourceFixture cases)",
+  "tags": "BG / B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Opt-in text presentation contract."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/MessageContextBoundaryTest.scala",
+  "suite": [
+   "MessageContextBoundaryTest"
+  ],
+  "cases": 10,
+  "loc": 120,
+  "seconds": 8.26,
+  "secondsShimRun": 8.5,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP (5 s product deadline)",
+  "tags": "B-Good / W-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Context read bounds, SELECT-only role, lock deadline; case :104 waits MessageContext.statementDeadlineMillis=5000 (MessageContext.scala:19) — make injectable if the slow tier is not adopted."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/MessageContextFailureTest.scala",
+  "suite": [
+   "MessageContextFailureTest"
+  ],
+  "cases": 2,
+  "loc": 38,
+  "seconds": 0.01,
+  "secondsShimRun": 0.02,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Failure attribution in one-shot runs; pure; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/MessageContextHttpTest.scala",
+  "suite": [
+   "MessageContextHttpTest"
+  ],
+  "cases": 8,
+  "loc": 139,
+  "seconds": 6.28,
+  "secondsShimRun": 6.58,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Public HTTP context authority/framing."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/MessageContextTest.scala",
+  "suite": [
+   "MessageContextDummyTest",
+   "MessageContextPostgresTest"
+  ],
+  "cases": 28,
+  "loc": 220,
+  "seconds": 8.72,
+  "secondsShimRun": 9.11,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Context excerpt contract; promote MessageContextDummyTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelAccountingHttpTest.scala",
+  "suite": [
+   "InProcessModelAccountingTest",
+   "LoopbackModelAccountingTest"
+  ],
+  "cases": 14,
+  "loc": 261,
+  "seconds": 8.59,
+  "secondsShimRun": 8.16,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "HTTP (loopback half)",
+  "tags": "BG / B-Good (InProcess vs Loopback)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Usage accounting/cancellation; promote InProcessModelAccountingTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelAdmissionTest.scala",
+  "suite": [
+   "ModelAdmissionTest"
+  ],
+  "cases": 3,
+  "loc": 40,
+  "seconds": 0.18,
+  "secondsShimRun": 0.16,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "FILE (config.example.json)",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Capacity defaults/validation; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelFixtures.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 25,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "none",
+  "tags": "helper",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Model graph fixtures."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelGraphTest.scala",
+  "suite": [
+   "ModelGraphTest"
+  ],
+  "cases": 1,
+  "loc": 42,
+  "seconds": 0.22,
+  "secondsShimRun": 0.18,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Production graph shares telemetry; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelHttpTest.scala",
+  "suite": [
+   "ModelHttpTest"
+  ],
+  "cases": 6,
+  "loc": 95,
+  "seconds": 10.24,
+  "secondsShimRun": 12.52,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "HTTP",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Provider request/response validation."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelIdentityMigrationTest.scala",
+  "suite": [
+   "ModelIdentityMigrationTest"
+  ],
+  "cases": 9,
+  "loc": 268,
+  "seconds": 6.12,
+  "secondsShimRun": 6.16,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Retained-data model identity migration; KEEP only while deployed databases may still hold pre-migration rows (open question)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelRejectionTest.scala",
+  "suite": [
+   "ModelRejectionTest"
+  ],
+  "cases": 66,
+  "loc": 197,
+  "seconds": 0.03,
+  "secondsShimRun": 0.03,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "66 cheap table-driven typed rejection cases (0.03 s); promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelTelemetryTest.scala",
+  "suite": [
+   "ModelTelemetryTest"
+  ],
+  "cases": 19,
+  "loc": 404,
+  "seconds": 0.42,
+  "secondsShimRun": 0.53,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Manual-clock telemetry; promote. Case :316 asserts the verbatim ch_users DDL line from 001.sql (ModelTelemetryTest.scala:322-326) — delete that source-text assertion."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelTransportTest.scala",
+  "suite": [
+   "ModelTransportTest"
+  ],
+  "cases": 4,
+  "loc": 51,
+  "seconds": 142.22,
+  "secondsShimRun": 141.35,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "HTTP,SLEEP (65 s ×2)",
+  "tags": "B-Good",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Two 65 s regressions (:23 headers, :28 body gap) both prove that the client idle timeout derives from Models.transportTimeout (Models.scala:35) instead of Ember's 60 s default: keep one in the slow tier and add a BA check on the derived client setting; :34/:42 KEEP."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ModelUsageViewTest.scala",
+  "suite": [
+   "ModelUsageViewTest"
+  ],
+  "cases": 4,
+  "loc": 98,
+  "seconds": 0.03,
+  "secondsShimRun": 0.04,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Usage API semantics; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/NativeResourcesTest.scala",
+  "suite": [
+   "NativeResourcesTest"
+  ],
+  "cases": 3,
+  "loc": 29,
+  "seconds": 0.01,
+  "secondsShimRun": 0.0,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "FILE (migrations/, native-image.properties)",
+  "tags": "BA (packaging)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Case :14 guards native-image resource selectors vs migrations (real packaging regression); cases :8/:11 are subsumed by it and by every PG suite that loads migrations from the classpath — delete them; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/NulIngestionTest.scala",
+  "suite": [
+   "NulIngestionTest"
+  ],
+  "cases": 1,
+  "loc": 80,
+  "seconds": 2.15,
+  "secondsShimRun": 2.28,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Regression for NUL survival through HTTP ingestion."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/OwnerDisabledTest.scala",
+  "suite": [
+   "OwnerDisabledTest"
+  ],
+  "cases": 7,
+  "loc": 72,
+  "seconds": 2.79,
+  "secondsShimRun": 2.95,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good / E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Disabled-owner claim semantics incl. lock-wait race."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/OwnerLeaseBoundaryTest.scala",
+  "suite": [
+   "OwnerLeaseBoundaryTest"
+  ],
+  "cases": 8,
+  "loc": 43,
+  "seconds": 12.25,
+  "secondsShimRun": 12.55,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP (1.2 s lease expiry)",
+  "tags": "E-Good (8 generated)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Real lease-expiry-during-lock-wait regressions; leases use the DB clock with 1 s minimum, so real time is the honest vehicle; parallelism removes its wall cost."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/OwnerProfilesTest.scala",
+  "suite": [
+   "OwnerProfilesDummyTest",
+   "OwnerProfilesPostgresTest",
+   "OwnerProfilePostgresTest"
+  ],
+  "cases": 17,
+  "loc": 210,
+  "seconds": 6.14,
+  "secondsShimRun": 6.83,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BA / B-Good (dual) + E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Owner reindex contract; fix OwnerProfilePostgres.withDatabase, which initializes twice per test because both catalogs alias current (OwnerProfilesTest.scala:96-103)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/OwnerReindexActionsTest.scala",
+  "suite": [
+   "OwnerReindexActionsTest"
+  ],
+  "cases": 16,
+  "loc": 279,
+  "seconds": 11.62,
+  "secondsShimRun": 12.2,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good / E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Receipt/savepoint/rollback contract of owner reindex actions."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/OwnerTargetConcurrencyTest.scala",
+  "suite": [
+   "OwnerTargetConcurrencyTest"
+  ],
+  "cases": 4,
+  "loc": 100,
+  "seconds": 4.08,
+  "secondsShimRun": 4.26,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP",
+  "tags": "E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Lock-order/lease concurrency regressions with pg_sleep trigger; real concurrency value."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/OwnerTargetRegressionTest.scala",
+  "suite": [
+   "OwnerTargetRegressionTest"
+  ],
+  "cases": 2,
+  "loc": 39,
+  "seconds": 0.69,
+  "secondsShimRun": 0.67,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "MERGE",
+  "mergeTarget": "OwnerProfilesTest",
+  "rationale": "Case :18 ('another owner's pending legacy claim') duplicates OwnerProfilesTest.scala:13 and is degenerate since passages() aliases current (Fixtures.scala:7) — delete; move case :30 into OwnerProfilesTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/PassagePersistenceTest.scala",
+  "suite": [
+   "PassagePersistenceDummyTest",
+   "PassagePersistencePostgresTest"
+  ],
+  "cases": 22,
+  "loc": 224,
+  "seconds": 7.08,
+  "secondsShimRun": 7.35,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Passage persistence/ACL/pin contract; promote dummy."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/PassagePostgresBoundaryTest.scala",
+  "suite": [
+   "PassagePostgresBoundaryTest"
+  ],
+  "cases": 8,
+  "loc": 137,
+  "seconds": 7.24,
+  "secondsShimRun": 8.08,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP (lease expiry)",
+  "tags": "E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Atomic rollback on lease expiry/SQL failure; real durability."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/PassageWorkerTest.scala",
+  "suite": [
+   "DummyPassageWorkerTest",
+   "PostgresPassageWorkerTest"
+  ],
+  "cases": 20,
+  "loc": 279,
+  "seconds": 30.97,
+  "secondsShimRun": 33.51,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half),SLEEP (product back-off)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "REWRITE-CHEAPER",
+  "mergeTarget": null,
+  "rationale": "Valuable worker contract; ~10 of 20 cases pay the 2 s Worker failure back-off (Models.scala:219). Inject it; promote DummyPassageWorkerTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/PersistentBrowserSessionTest.scala",
+  "suite": [
+   "PersistentBrowserSessionTest"
+  ],
+  "cases": 12,
+  "loc": 290,
+  "seconds": 23.39,
+  "secondsShimRun": 23.78,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP,SLEEP",
+  "tags": "BG-Good / E-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Session persistence/renewal/expiry races; sleeps of 1.2 s and seconds+0.1 track DB-clock expiry (:55, :183, :210) — acceptable."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/PostgresBehaviorTest.scala",
+  "suite": [
+   "PostgresBehaviorTest"
+  ],
+  "cases": 22,
+  "loc": 334,
+  "seconds": 11.25,
+  "secondsShimRun": 12.79,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "22 PostgreSQL adapter regressions; grab-bag but each guards distinct behaviour."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ProblemPassageHttpTest.scala",
+  "suite": [
+   "ProblemPassageHttpTest"
+  ],
+  "cases": 17,
+  "loc": 188,
+  "seconds": 4.02,
+  "secondsShimRun": 3.83,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "HTTP",
+  "tags": "BG + loopback half of ProblemPassageContract",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Re-runs the ProblemPassage contract against the HTTP adapter plus adapter-specific cases."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ProblemPassagesTest.scala",
+  "suite": [
+   "ProblemPassagesTest"
+  ],
+  "cases": 23,
+  "loc": 336,
+  "seconds": 0.74,
+  "secondsShimRun": 0.91,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA/BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Core passage kernel; fast set."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ProblemsPublicationTest.scala",
+  "suite": [
+   "ProblemsPublicationTest"
+  ],
+  "cases": 3,
+  "loc": 76,
+  "seconds": 0.05,
+  "secondsShimRun": 0.07,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BG",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Publication builder invariants; fast set."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ProtocolEvolutionTest.scala",
+  "suite": [
+   "ProtocolEvolutionTest"
+  ],
+  "cases": 2,
+  "loc": 17,
+  "seconds": 0.0,
+  "secondsShimRun": 0.0,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "MERGE",
+  "mergeTarget": "ApiVersionCompatibilityTest",
+  "rationale": "Removed/future version rejection (ProtocolEvolutionTest.scala:12-16) duplicates ApiVersionCompatibilityTest.scala:18-23; merge the version-info assertion (:6-10) there."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ProvenanceTest.scala",
+  "suite": [
+   "ProvenanceTest"
+  ],
+  "cases": 3,
+  "loc": 13,
+  "seconds": 0.48,
+  "secondsShimRun": 0.44,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Snapshot parent/record-index validation; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ProviderUsageTest.scala",
+  "suite": [
+   "ProviderUsageTest"
+  ],
+  "cases": 10,
+  "loc": 86,
+  "seconds": 0.03,
+  "secondsShimRun": 0.01,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Provider usage parsing; fast set."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ReadSourceFixture.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 121,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "PG",
+  "tags": "helper (whitebox JDBC proxy)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Shared proxy driver for admission tests; keep but treat as a whitebox smell."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ReadSourcesTest.scala",
+  "suite": [
+   "ReadSourcesTest"
+  ],
+  "cases": 2,
+  "loc": 16,
+  "seconds": 0.0,
+  "secondsShimRun": 0.0,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Read budget arithmetic; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RebuildRetirementTest.scala",
+  "suite": [
+   "DummyRebuildRetirementTest",
+   "PostgresRebuildRetirementTest"
+  ],
+  "cases": 2,
+  "loc": 43,
+  "seconds": 0.61,
+  "secondsShimRun": 0.63,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Retirement of superseded views; promote dummy."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RecordedYoloProfileTest.scala",
+  "suite": [
+   "RecordedYoloProfileTest"
+  ],
+  "cases": 1,
+  "loc": 16,
+  "seconds": 0.0,
+  "secondsShimRun": 0.0,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "FILE (tests/recorded-yolo-profile-cases.json, shared with web)",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Cross-language fixture; promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/ReindexCohortTest.scala",
+  "suite": [
+   "ReindexCohortTest"
+  ],
+  "cases": 9,
+  "loc": 180,
+  "seconds": 4.37,
+  "secondsShimRun": 3.95,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Reindex cohort status/replay; also hosts CurrentIndexDatabase helper (discovered: it is a FunSuite, run normally)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RelocatedModelIdentityTest.scala",
+  "suite": [
+   "RelocatedModelIdentityTest"
+  ],
+  "cases": 3,
+  "loc": 40,
+  "seconds": 0.16,
+  "secondsShimRun": 0.18,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "none",
+  "tags": "BA / WA",
+  "verdict": "MERGE",
+  "mergeTarget": "ModelIdentityMigrationTest (case :4), CoreTest (case :25)",
+  "rationale": "Case :31 duplicates CoreTest.scala:30-37 and IndexProfilesTest.scala:25 (relocation preserves identity) — delete; other two cases move to their owners."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RetryFailedActionsTest.scala",
+  "suite": [
+   "RetryFailedActionsTest"
+  ],
+  "cases": 19,
+  "loc": 375,
+  "seconds": 11.31,
+  "secondsShimRun": 11.84,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Retry preview/apply receipts and rollback. Cursor cases :303-:360 are misfiled; :319 duplicates CursorWebSocketTest.scala:21 (delete), move :303/:335/:360 to CursorWebSocketTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RetryFailedJobsTest.scala",
+  "suite": [
+   "RetryFailedJobsTest"
+  ],
+  "cases": 18,
+  "loc": 464,
+  "seconds": 7.37,
+  "secondsShimRun": 7.29,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "E-Good / W-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Retry selection/lock order/TEMP privilege; real concurrency."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RevisionSortAnchorTest.scala",
+  "suite": [
+   "RevisionSortAnchorTest"
+  ],
+  "cases": 4,
+  "loc": 43,
+  "seconds": 0.01,
+  "secondsShimRun": 0.01,
+  "runsIn": "routine: fast subset (checks.chronicle-backend; package chronicle via validationEvidence) + full",
+  "needs": "none",
+  "tags": "BA",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Pure; fast set."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/RunAuthorizationTest.scala",
+  "suite": [
+   "DummyRunAuthorizationTest",
+   "PostgresRunAuthorizationTest"
+  ],
+  "cases": 25,
+  "loc": 237,
+  "seconds": 11.94,
+  "secondsShimRun": 12.59,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half),SLEEP (:214 600 ms)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Captured-authority revalidation; promote DummyRunAuthorizationTest."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/SessionMessageSearchBoundaryTest.scala",
+  "suite": [
+   "SessionMessageSearchBoundaryTest"
+  ],
+  "cases": 5,
+  "loc": 60,
+  "seconds": 6.54,
+  "secondsShimRun": 7.18,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,SLEEP (5 s product deadline)",
+  "tags": "B-Good",
+  "verdict": "MERGE",
+  "mergeTarget": "SessionMessageSearchTest (Postgres half)",
+  "rationale": "Five more cases of the same feature with its own fixture; case :29 waits SessionMessageSearch.statementDeadlineMillis=5000 (SessionMessageSearch.scala:24)."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/SessionMessageSearchTest.scala",
+  "suite": [
+   "SessionMessageSearchDummyTest",
+   "SessionMessageSearchPostgresTest"
+  ],
+  "cases": 28,
+  "loc": 200,
+  "seconds": 7.61,
+  "secondsShimRun": 7.81,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (Postgres half)",
+  "tags": "BG / B-Good (dual)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Find-in-session contract; promote dummy."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/SharedExtractionDifferentialTest.scala",
+  "suite": [
+   "SharedExtractionDifferentialTest"
+  ],
+  "cases": 2,
+  "loc": 66,
+  "seconds": 7.41,
+  "secondsShimRun": 7.54,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good (differential vs frozen copy)",
+  "verdict": "DELETE",
+  "mergeTarget": null,
+  "rationale": "Characterization scaffolding for the finished retrieval extraction: compares production against ExtractionBaseline incl. SQL text equality (SharedExtractionDifferentialTest.scala:40,:58); 7.4 s."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/StaticHttpTest.scala",
+  "suite": [
+   "StaticHttpTest"
+  ],
+  "cases": 14,
+  "loc": 170,
+  "seconds": 2.54,
+  "secondsShimRun": 2.77,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "HTTP",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Static asset caching/traversal/security headers (regression #34); no PG — promote."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/StaticTokenTest.scala",
+  "suite": [
+   "StaticTokenTest"
+  ],
+  "cases": 3,
+  "loc": 67,
+  "seconds": 1.19,
+  "secondsShimRun": 1.25,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG (1 case),FILE",
+  "tags": "BA + BG-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Static token config/reconciliation."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/StoredPublicationFixtures.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 29,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "PG",
+  "tags": "helper",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Historical payload importer; lifetime tied to the retained-data question."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/TagSearchTest.scala",
+  "suite": [
+   "TagSearchTest"
+  ],
+  "cases": 15,
+  "loc": 233,
+  "seconds": 4.48,
+  "secondsShimRun": 4.94,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "BG-Good / W-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Tag catalog contract; merge target for McpTagSearchTest duplicates."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/TestPublications.scala",
+  "suite": [],
+  "cases": 0,
+  "loc": 39,
+  "seconds": 0,
+  "secondsShimRun": 0,
+  "runsIn": "helper (compiled into every test run)",
+  "needs": "none",
+  "tags": "helper",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Synthetic publication builder."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/TokenVisibilityTest.scala",
+  "suite": [
+   "TokenVisibilityTest"
+  ],
+  "cases": 3,
+  "loc": 54,
+  "seconds": 2.64,
+  "secondsShimRun": 2.8,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG",
+  "tags": "B-Good",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Revoked-history must not hide active tokens; 100-token cap."
+ },
+ {
+  "path": "chronicle/server/src/test/scala/chronicle/VersionedSearchTest.scala",
+  "suite": [
+   "VersionedSearchTest"
+  ],
+  "cases": 1,
+  "loc": 156,
+  "seconds": 9.28,
+  "secondsShimRun": 10.08,
+  "runsIn": "full only (scripts/test-postgres.sh, agent-run)",
+  "needs": "PG,HTTP,WS",
+  "tags": "BG-Good (E2E smoke)",
+  "verdict": "KEEP",
+  "mergeTarget": null,
+  "rationale": "Single end-to-end WS workflow over a 1205-row corpus; rename (no other versions exist)."
+ }
+]
