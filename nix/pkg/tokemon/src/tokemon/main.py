@@ -104,8 +104,8 @@ def main(argv: list[str] | None = None) -> int:
         except KeyboardInterrupt:
             return SIGINT_EXIT_STATUS
         now = datetime.now(timezone.utc)
-        width = console.width if console.is_terminal else None
-        console.print(build_table(results, now, "one shot", args.show_invalid, args.mask_logins, args.mask_profiles, width))
+        # Piped output fits COLUMNS (80 without it), by the same rules as a terminal's width.
+        console.print(build_table(results, now, None, args.show_invalid, args.mask_logins, args.mask_profiles, console.width))
         return 0
 
     from tokemon.tui import run_tui

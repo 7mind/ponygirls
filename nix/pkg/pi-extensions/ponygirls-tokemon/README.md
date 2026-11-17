@@ -118,11 +118,13 @@ not the current time.
 ## Command
 
 `/tokemon` opens a bottom panel replacing the editor (like `/usage` and
-`/perf`) with tokemon's table: one row group per
-account, its windows stacked inside the cells, sorted by provider and login.
+`/perf`) with tokemon's table: a header line, then one line per quota window,
+accounts sorted by provider and login; an account's further windows leave its
+first cells blank.
 The panel takes only the rows its table needs, so the transcript stays visible
 above it. It refreshes every five minutes; the title rule shows the last
-update and the countdown, and the key hints sit below a rule. Usage bars are
+update and the countdown (`updated 21:01 · refresh in 4:11`), and the key
+hints sit below a rule. Usage bars are
 coloured by the window's Status (ok `success`, low at 90 %+ `warning`, EXHAUSTED `error`;
 the empty part dim). Provider names keep their brand hue, with OKLCH lightness
 adjusted to at least 4.5:1 contrast against a reference background for the
@@ -136,11 +138,25 @@ theme's appearance (dark `#2E3440`, light `#FBF1C7`).
 | `↑` `↓` / `j` `k`, `PgUp` `PgDn`, `Home` `End` / `g` `G`, mouse wheel | scroll |
 | `esc` / `q` | close |
 
-On a narrow terminal the provider locations are hidden first. Next, Status
-wraps between words, and each window's other cells stay level with its
-status. Then Plan, Provider, and Status are hidden, in that order. The
-caption names what was hidden. Outside the TUI (print/json modes) the
-command emits the table once as a notification.
+Status is one line per row: the state (`ok`, `low`, `EXHAUSTED`, `unlimited`,
+`rate limited`) with the used percentage when used and limit are known
+(`low 98%`), then at most one qualifier that fits: the retry
+time (`retry 55m`) or the stale marker, for which a column is hidden if need
+be, else a provider's note where spare width allows. A qualifier that does
+not fit is dropped, never wrapped; a dropped stale marker is counted under
+the table (`⚠ 1 stale quota row(s)`). Where the row is wide enough the full
+text is shown (`rate limited (429) · retry in 55m 28s`).
+
+On a narrow terminal the provider locations are hidden first, then Status
+shortens, then columns are hidden in this order: Src, Plan, Login, Resets,
+Usage. Provider, Window, Used / limit and Status are never hidden. When even
+they do not fit, cells are cut with `…`: Window and Used / limit first, then
+names and states. A line under the table names the hidden columns
+(`hidden at this width: Src, Login, Plan`); notes that do not fit on one line
+go one per line. With `i`, columns are hidden as far as needed to show every
+status whole; an error still too long for its cell is cut. The `tokemon` CLI
+(`nix/pkg/tokemon`) lays its table out by the same rules. Outside the TUI
+(print/json modes) the command emits the table once as a notification.
 
 ## Quota widget
 

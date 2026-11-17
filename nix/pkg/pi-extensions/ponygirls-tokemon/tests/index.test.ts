@@ -27,13 +27,15 @@ test("the tool lists configured providers and, on request, their models; /tokemo
     process.env["PI_CODING_AGENT_DIR"] = agentDir;
     const tools = new Map<string, Execute>();
     const commands = new Map<string, Handler>();
+    const descriptions = new Map<string, string>();
     const pi = {
       registerTool: (t: { name: string; execute: Execute }) => tools.set(t.name, t.execute),
-      registerCommand: (name: string, c: { handler: Handler }) => commands.set(name, c.handler),
+      registerCommand: (name: string, c: { description: string; handler: Handler }) => { commands.set(name, c.handler); descriptions.set(name, c.description); },
       on: (_event: string, _handler: unknown) => {},
     };
     const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
     mod.default(pi);
+    assert.equal(descriptions.get("tokemon"), "Provider quotas and limits");
     const notices: string[] = [];
     const ctx = {
       mode: "print",

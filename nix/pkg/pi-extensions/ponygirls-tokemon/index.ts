@@ -261,7 +261,7 @@ export default function (pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("tokemon", {
-    description: "Provider quotas: a scrollable, auto-refreshing table",
+    description: "Provider quotas and limits",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui" || !ctx.hasUI) {
         try {
