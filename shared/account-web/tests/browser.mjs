@@ -129,39 +129,65 @@ try {
   });
 
   // Section ownership (README "Section ownership"): for every flow that shows a one-time value or asks for a
-  // proof, (a) leaving with the prompt open discards it, (b) leaving while its request is in flight is held,
-  // (c) so is a fragment change plus a DOM mutation in one task; the result then appears in the active view.
+  // proof, (a) leaving with the prompt open discards it, (b) leaving while its request is in flight is held and every
+  // control that would re-open, re-submit or discard it is disabled, (c) so is a fragment change plus a DOM mutation
+  // in one task; the result then appears in the active view, after exactly one request per attempt.
   const link = async page => { await button(page, 'Copy link').click(); await button(page, 'I have sent it').click(); await button(page, 'Yes, I have sent it').click(); };
+  const post = path => call => call.method === 'POST' && call.path === path;
+  const named = (page, name) => page.getByRole('button', { name, exact: true });
   const FLOWS = [
-    { flow: 'token mint', view: 'tokens', scenario: 'settings-tokens', hash: '#account/tokens', away: '#account/profile', hold: '/tokens', ready: 'table[data-list="tokens"] tr[data-row-id]', prompt: '[data-account-token-form]',
+    { flow: 'token mint', view: 'tokens', scenario: 'settings-tokens', hash: '#account/tokens', away: '#account/profile', hold: 'POST /tokens', isSubmit: post('/tokens'), ready: 'table[data-list="tokens"] tr[data-row-id]', prompt: '[data-account-token-form]', keeps: false,
       open: async page => { await button(page, 'New token').click(); await page.getByLabel('Name', { exact: true }).fill('laptop-cli'); },
-      submit: 'Create token', result: page => page.locator('[data-account-secret]'),
+      submit: 'Create token', blocked: ['New token', 'Create token', 'Cancel'], result: page => page.locator('[data-account-secret]'),
       acknowledge: async page => { await button(page, 'Reveal').click(); await button(page, 'I have saved it').click(); await button(page, 'Yes, I have saved it').click(); } },
-    { flow: 'invitation', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: '/admin/enrollments', ready: 'tr[data-row-id="erin"]', prompt: '[data-account-enroll-form]',
+    { flow: 'invitation', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: 'POST /admin/enrollments', isSubmit: post('/admin/enrollments'), ready: 'tr[data-row-id="erin"]', prompt: '[data-account-enroll-form]', keeps: false,
       open: async page => { await button(page, 'Enroll user').click(); await page.getByLabel('Username', { exact: true }).fill('zoe'); },
-      submit: 'Create invitation link', result: page => page.locator('[data-account-link]'), acknowledge: link },
-    { flow: 'credential reset', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: '/admin/users/erin/reset', ready: 'tr[data-row-id="erin"]', prompt: 'dialog[open]',
+      submit: 'Create invitation link', blocked: ['Enroll user', 'Create invitation link', 'Cancel', 'Actions for erin'], result: page => page.locator('[data-account-link]'), acknowledge: link },
+    { flow: 'credential reset', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: 'POST /admin/users/erin/reset', isSubmit: post('/admin/users/erin/reset'), ready: 'tr[data-row-id="erin"]', prompt: 'dialog[open]', keeps: false,
       open: async page => { await button(page, 'Actions for erin').click(); await page.getByRole('menuitem', { name: 'Reset credentials…' }).click(); await page.getByLabel('Your current password').fill(FAKE_PASSWORD); },
-      submit: 'Create reset link', result: page => page.locator('[data-account-link]'), acknowledge: link },
-    { flow: 'admin flag with password proof', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: '/admin/users/erin/admin', ready: 'tr[data-row-id="erin"]', prompt: 'dialog[open]',
+      submit: 'Create reset link', blocked: ['Create reset link', 'Cancel', 'Actions for erin', 'Enroll user'], result: page => page.locator('[data-account-link]'), acknowledge: link },
+    { flow: 'admin flag with password proof', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: 'POST /admin/users/erin/admin', isSubmit: post('/admin/users/erin/admin'), ready: 'tr[data-row-id="erin"]', prompt: 'dialog[open]', keeps: false,
       open: async page => { await button(page, 'Actions for erin').click(); await page.getByRole('menuitem', { name: 'Grant admin…' }).click(); await page.getByLabel('Your current password').fill(FAKE_PASSWORD); },
-      submit: 'Grant admin', result: page => page.getByText('erin is now an administrator'), acknowledge: null },
-    { flow: 'authenticator replacement', view: 'two-factor', scenario: 'settings-totp', hash: '#account/two-factor', away: '#account/tokens', hold: '/profile/totp', ready: '[data-view="two-factor"]', prompt: '[data-account-totp-replace]',
+      submit: 'Grant admin', blocked: ['Grant admin', 'Cancel', 'Actions for mallory'], result: page => page.getByText('erin is now an administrator'), acknowledge: null },
+    // Same-section repeated replacement: re-opening the card or toggling while the replacement is pending is impossible.
+    { flow: 'authenticator replacement', view: 'two-factor', scenario: 'settings-totp', hash: '#account/two-factor', away: '#account/tokens', hold: 'POST /profile/totp', isSubmit: post('/profile/totp'), ready: '[data-view="two-factor"]', prompt: '[data-account-totp-replace]', keeps: false,
       open: async page => { await button(page, 'Replace authenticator…').click(); await page.getByLabel('Current password', { exact: true }).fill(FAKE_PASSWORD); await page.getByLabel('Code from the new entry', { exact: true }).fill('123456'); },
-      submit: 'Replace authenticator', result: page => page.getByText('Authenticator replaced'), acknowledge: null },
-    { flow: 'signup with generated secret', view: 'signup-pending', scenario: 'signup-default', hash: '#account/signup', away: '', hold: '/signup', ready: '[data-view="signup"]', prompt: '[data-view="signup"]',
+      submit: 'Replace authenticator', blocked: ['Replace authenticator…', 'Replace authenticator', 'Cancel', 'Require a code at every sign-in'], result: page => page.getByText('Authenticator replaced'), acknowledge: null },
+    { flow: 'signup with generated secret', view: 'signup-pending', scenario: 'signup-default', hash: '#account/signup', away: '', hold: 'POST /signup', isSubmit: post('/signup'), ready: '[data-view="signup"]', prompt: '[data-view="signup"]', keeps: false,
       open: async page => { await page.getByLabel('Username', { exact: true }).fill('bob'); await page.getByLabel('E-mail', { exact: true }).fill('bob@example.org'); await page.getByLabel('Password', { exact: true }).fill('hunter2hunter2'); await page.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill('731905'); },
-      submit: 'Create account', result: page => page.getByRole('heading', { name: 'Account created — waiting for approval' }), acknowledge: null },
-    { flow: 'recovery', view: 'recover', scenario: 'recover-rejected', hash: '#account/recover', away: '', hold: '/recover', ready: '[data-view="recover"]', prompt: '[data-view="recover"]',
+      submit: 'Create account', blocked: ['Create account'], result: page => page.getByRole('heading', { name: 'Account created — waiting for approval' }), acknowledge: null },
+    // The landing keeps its single-use code until "Go to sign-in", so leaving with the form open keeps the form.
+    { flow: 'enrollment redemption', view: 'enrollment', scenario: 'signup-enroll', hash: '', away: '#account/signup', hold: 'POST /enrollments/redeem', isSubmit: post('/enrollments/redeem'), ready: '[data-view="enrollment"]', prompt: '[data-view="enrollment"]', keeps: true,
+      open: async page => { await page.getByLabel('E-mail', { exact: true }).fill('carol@example.org'); await page.getByLabel('Password', { exact: true }).fill('hunter2hunter2'); await page.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill(FAKE_WRONG_CODE); },
+      submit: 'Create account and sign in', blocked: ['Create account and sign in'], result: page => page.getByText('That code does not match this key'), acknowledge: null },
+    { flow: 'recovery', view: 'recover', scenario: 'recover-rejected', hash: '#account/recover', away: '', hold: 'POST /recover', isSubmit: post('/recover'), ready: '[data-view="recover"]', prompt: '[data-view="recover"]', keeps: false,
       open: async page => { await page.getByLabel('Username', { exact: true }).fill('alice'); await page.getByLabel('Authenticator code', { exact: true }).fill('204817'); await page.getByLabel('New password', { exact: true }).fill('a-new-long-password'); },
-      submit: 'Set new password and sign in', result: page => page.getByText('Recovery was not accepted'), acknowledge: null }
+      submit: 'Set new password and sign in', blocked: ['Set new password and sign in'], result: page => page.getByText('Recovery was not accepted'), acknowledge: null },
+    { flow: 'login second step', view: 'login-totp', scenario: 'login-totp', hash: '', away: '#account/signup', hold: 'POST /login', isSubmit: call => call.method === 'POST' && call.path === '/login' && call.body.totp !== undefined, ready: 'form[data-account-login]', prompt: '[data-account-login-totp]', keeps: false,
+      open: async page => { await page.getByLabel('Username', { exact: true }).fill('alice'); await page.getByLabel('Password', { exact: true }).fill(FAKE_PASSWORD); await button(page, 'Sign in').click(); await page.getByLabel('6-digit code', { exact: true }).fill(FAKE_WRONG_CODE); },
+      submit: 'Verify and sign in', blocked: ['Verify and sign in', 'Use a different account'], result: page => page.getByText('That code did not match'), acknowledge: null }
   ];
+  const submits = (calls, row) => calls.filter(row.isSubmit).length;
   const leaveTo = (page, target, mutate) => page.evaluate(([hash, withMutation]) => { location.hash = hash; if (withMutation) document.body.append(document.createElement('span')); }, [target, mutate]);
-  async function submitHeld(page, row) {
+  async function load(page, row) {
+    await page.goto(`${server.origin}/?scenario=${row.scenario}&steps=0`);
+    await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
+    await page.locator(row.ready).first().waitFor();
+  }
+  async function submitHeld(page, row, calls) {
     await row.open(page);
-    await page.evaluate(path => { window.__accountFake.state.hold = path; }, row.hold);
+    await page.evaluate(hold => { window.__accountFake.state.hold = hold; }, row.hold);
+    const before = submits(calls, row);
     await button(page, row.submit).click();
     await page.waitForFunction(() => window.__accountFake.state.release !== null);
+    const prompts = await page.locator(row.prompt).count();
+    for (const name of row.blocked) {
+      const control = named(page, name).or(page.getByRole('checkbox', { name: new RegExp(`^${name}`) })).first();
+      assert.equal(await control.isDisabled(), true, `${row.flow}: “${name}” is disabled while the request is pending`);
+      await control.evaluate(node => node.click());
+    }
+    assert.equal(await page.locator(row.prompt).count(), prompts, `${row.flow}: the submitted prompt is neither replaced nor discarded`);
+    assert.equal(submits(calls, row), before + 1, `${row.flow}: exactly one request`);
   }
   async function heldThenShown(page, row, mutate) {
     const toasts = await page.getByText(HOLD_PREFIX).count();
@@ -174,34 +200,93 @@ try {
     assert.equal(await page.locator(`[data-view="${row.view}"]`).isVisible(), true, `${row.flow}: its view is the visible one`);
     if (row.acknowledge !== null) await row.acknowledge(page);
   }
-  await run('section ownership: prompts are discarded on leaving, requests hold navigation, results land in the active view', async ({ page, calls }) => {
+  await run('section ownership: prompts are discarded on leaving, pending requests hold navigation and block re-entry, results land in the active view', async ({ page, calls }) => {
     for (const row of FLOWS) {
-      await page.goto(`${server.origin}/?scenario=${row.scenario}&steps=0`);
-      await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
-      await page.locator(row.ready).first().waitFor();
+      await load(page, row);
       await row.open(page);
       await leaveTo(page, row.away, false);
-      await page.locator(row.prompt).first().waitFor({ state: 'detached' });
+      if (!row.keeps) await page.locator(row.prompt).first().waitFor({ state: 'detached' });
       await leaveTo(page, row.hash, false);
       await page.locator(row.ready).first().waitFor();
       assert.equal(await page.locator(row.prompt).count(), row.prompt.startsWith('[data-view') ? 1 : 0, `${row.flow}: (a) the prompt was discarded`);
-      assert.equal(posts(calls, row.hold), 0, `${row.flow}: (a) nothing was submitted`);
-      await submitHeld(page, row);
+      assert.equal(submits(calls, row), 0, `${row.flow}: (a) nothing was submitted`);
+      if (row.keeps) await load(page, row);
+      await submitHeld(page, row, calls);
       await heldThenShown(page, row, false);
-      await page.goto(`${server.origin}/?scenario=${row.scenario}&steps=0`);
-      await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
-      await page.locator(row.ready).first().waitFor();
-      await submitHeld(page, row);
+      await load(page, row);
+      await submitHeld(page, row, calls);
       await heldThenShown(page, row, true);
-      assert.equal(posts(calls, row.hold), 2, `${row.flow}: one request per attempt`);
+      assert.equal(submits(calls, row), 2, `${row.flow}: one request per attempt`);
       calls.length = 0;
     }
   });
 
-  await run('a one-time value arriving for an inactive section is reported and shown in its own section', async ({ page, errors }) => {
+  // A frame-bounded settle for work that follows an already-delivered fake response (no fixed time).
+  const settle = page => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  await run('account:invalidate re-reads authority: same owner keeps the secret, a lost owner tears down with a notice', async ({ page, calls }) => {
+    await load(page, FLOWS[0]);
+    await FLOWS[0].open(page); await button(page, 'Create token').click();
+    await page.locator('[data-account-secret]').waitFor();
+    const reads = () => calls.filter(call => call.method === 'GET' && call.path === '').length;
+    const before = reads();
+    await page.evaluate(() => { window.__accountFake.state.hold = 'GET '; document.dispatchEvent(new Event('account:invalidate')); });
+    await page.waitForFunction(() => window.__accountFake.state.release !== null);
+    assert.equal(reads(), before + 1, 'authority is re-read before anything else happens');
+    assert.equal(await page.locator('[data-account-secret]').isVisible(), true, 'nothing is torn down while the read is in flight');
+    await page.evaluate(() => window.__accountFake.state.release());
+    await settle(page);
+    assert.equal(await page.locator('[data-account-secret]').isVisible(), true, 'the same owner keeps the secret');
+    await page.evaluate(() => { window.__accountFake.state.user = { id: 'bob', login: 'bob', displayName: 'bob', actor: 'actor-bob' }; document.dispatchEvent(new Event('account:invalidate')); });
+    await page.getByText('The secret of token “laptop-cli” is no longer available').waitFor();
+    assert.equal(await page.locator('[data-account-secret]').count(), 0);
+    await load(page, FLOWS[1]);
+    await FLOWS[1].open(page); await button(page, 'Create invitation link').click();
+    await page.locator('[data-account-link]').waitFor();
+    await page.evaluate(() => { window.__accountFake.state.signedIn = false; document.dispatchEvent(new Event('account:invalidate')); });
+    await page.getByText('The invitation link for “zoe” is no longer available').waitFor();
+    await page.getByText('You were signed out').waitFor();
+  });
+
+  await run('sign-out passes the guard; row-menu listeners are released by section teardown', async ({ page, calls }) => {
+    await page.addInitScript(() => {
+      const live = new Set(), add = EventTarget.prototype.addEventListener, remove = EventTarget.prototype.removeEventListener;
+      const tracked = (target, type, options) => target === document && type === 'click' && (options === true || (typeof options === 'object' && options !== null && options.capture === true));
+      EventTarget.prototype.addEventListener = function (type, listener, options) { if (tracked(this, type, options)) live.add(listener); return add.call(this, type, listener, options); };
+      EventTarget.prototype.removeEventListener = function (type, listener, options) { if (tracked(this, type, options)) live.delete(listener); return remove.call(this, type, listener, options); };
+      window.__captureClicks = () => live.size;
+    });
+    const captures = () => page.evaluate(() => window.__captureClicks());
+    await load(page, FLOWS[1]);
+    await button(page, 'Actions for erin').click();
+    assert.equal(await captures(), 1);
+    await leaveTo(page, '#account/profile', true);
+    await page.getByRole('heading', { name: 'Profile' }).waitFor();
+    assert.equal(await captures(), 0, 'leaving the section closes the open menu');
+    await leaveTo(page, '#account/users', false);
+    await button(page, 'Actions for erin').click();
+    await page.evaluate(() => { window.__accountFake.state.user = { id: 'bob', login: 'bob', displayName: 'bob', actor: 'actor-bob' }; document.dispatchEvent(new Event('account:invalidate')); });
+    await page.getByText('The signed-in account changed').waitFor();
+    assert.equal(await captures(), 0, 'a forced teardown closes the open menu');
+    await page.mouse.click(5, 5);
+    await load(page, FLOWS[0]);
+    await FLOWS[0].open(page); await button(page, 'Create token').click();
+    await page.locator('[data-account-secret]').waitFor();
+    await page.evaluate(() => document.addEventListener('account:changed', () => { window.__changed = true; }));
+    await button(page, 'Sign out').click();
+    await dialog(page, 'Hide the secret for good?').waitFor();
+    await button(page, 'Keep it visible').click();
+    assert.equal(calls.filter(post('/logout')).length, 0);
+    await button(page, 'Sign out').click();
+    await button(page, 'Yes, I have saved it').click();
+    await page.getByText('Sign in again to continue.').waitFor();
+    assert.deepEqual(calls.filter(post('/logout')).map(call => call.actor), ['actor-alice']);
+    assert.equal(await page.evaluate(() => window.__changed), true);
+  });
+
+  await run('a one-time value arriving for an inactive section is reported and shown in its own section', async ({ page, errors, calls }) => {
     await page.goto(`${server.origin}/?scenario=settings-tokens&steps=0`);
     await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
-    await submitHeld(page, FLOWS[0]);
+    await submitHeld(page, FLOWS[0], calls);
     // Fault injection: blind the guard so that the section changes under the in-flight request.
     await page.evaluate(() => { Object.defineProperty(document.querySelector('[data-account-outlet]'), 'isConnected', { configurable: true, get: () => false }); location.hash = '#account/profile'; });
     await page.getByRole('heading', { name: 'Profile' }).waitFor();

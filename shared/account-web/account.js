@@ -100,6 +100,8 @@ export function installAccountUI({ document, window, fetch }) {
   const enrollmentCode = { value: captureEnrollmentFragment({ location: window.location, history: window.history }) };
   // Token creation intents per owner survive area teardown while the page stays loaded (README: token creation recovery).
   const uncertainMints = new Map();
+  // Shown-once links lost to a forced teardown, per owner, until the owner dismisses the notice.
+  const lostLinks = new Map();
   const loginForms = new WeakMap();
   let ids = 0;
   let auth = null;
@@ -139,6 +141,11 @@ export function installAccountUI({ document, window, fetch }) {
   const appName = () => APP_NAMES[document.documentElement.dataset.app] ?? null;
   function notice(kind, iconName, title, ...body) {
     return h('div', { class: `notice notice-${kind}` }, icon(iconName), h('div', { class: 'grow' }, title === null ? null : h('div', { class: 'notice-title' }, title), ...body));
+  }
+  function lostText(value) {
+    const what = { token: `The secret of token “${value.name}”`, invite: `The invitation link for “${value.name}”`, reset: `The credential reset link for “${value.name}”` }[value.kind];
+    const fix = value.kind === 'token' ? 'revoke the token and create a new one' : 'revoke it in Users and issue a new one';
+    return value.uncertain ? `${what} may have been created but was never shown — ${fix}.` : `${what} is no longer available — ${fix}.`;
   }
   function field({ label, input, hint, id }) {
     input.id = id;
@@ -300,7 +307,7 @@ export function installAccountUI({ document, window, fetch }) {
     const status = h('p', { class: 'small muted', role: 'status', hidden: true });
     const error = h('div', { role: 'alert', hidden: true });
     const name = appName();
-    const step = h('form', { class: 'auth-card', 'data-account-login-totp': true, novalidate: true },
+    const step = h('form', { class: 'auth-card', 'data-account-login-totp': true, 'data-view': 'login-totp', novalidate: true },
       h('div', {}, h('h1', { class: 'auth-title' }, 'Enter your authenticator code'),
         h('p', { class: 'auth-sub' }, 'Signing in as ', h('strong', {}, credentials.login), `. Open your authenticator app and enter the 6-digit code${name === null ? '' : ` for ${name}`}.`)),
       error, code.node, h('button', { class: 'btn btn-primary btn-lg btn-block', type: 'submit' }, 'Verify and sign in'), status,
@@ -597,6 +604,16 @@ export function installAccountUI({ document, window, fetch }) {
     };
   }
 
+  // Existing endpoints (GET /, POST /tokens, POST /tokens/{id}/revoke, POST /logout): same request rules as account-client.js.
+  async function existingEndpoint(method, path, body, actor, signal) {
+    const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: window.AbortSignal.any([window.AbortSignal.timeout(ACCOUNT_REQUEST_TIMEOUT_MS), signal]), headers: { Accept: 'application/json' } };
+    if (body !== null) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
+    if (actor !== null) options.headers[ACTOR_HEADER] = actor;
+    const response = await fetch(ACCOUNT_API_PATH + path, options);
+    if (!response.ok) throw new AccountApiError(response.status, null, null);
+    try { return await response.json(); } catch { throw new AccountResponseError(); }
+  }
+
   // ------------------------------------------------------------------------------------------
   // Signed-in account area rendered into [data-account-outlet]: section navigation + one section per route.
 
@@ -607,13 +624,13 @@ export function installAccountUI({ document, window, fetch }) {
     const nav = h('nav', { class: 'account-nav', 'aria-label': 'Account sections' });
     const holder = h('div', { class: 'account-main' });
     root.append(nav, holder);
-    const dialogs = new Set();
+    const dialogs = new Set(), menus = new Set(); // overlays owned by the current section, closed by leave()/dispose()
     const self = {
       alive: true, section: null, hash: null,
       account: { phase: 'loading' }, profile: { phase: 'loading' }, policy: { phase: 'loading' }, admin: { phase: 'idle' },
       tokenView: { mode: 'idle', busy: false, formUi: null, secret: null, secretUi: null, highlight: null, showRevoked: false, filter: '', notice: null },
       usersView: { filter: 'all', query: '', mode: 'idle', formUi: null, link: null, linkUi: null, notice: null },
-      tokensUi: null, usersUi: null,
+      tokensUi: null, usersUi: null, pendingLink: null,
       inFlight: 0 // section-owned write requests (act, mint, revoke); leaving the section waits for them
     };
     const stale = { outlet, owner };
@@ -623,15 +640,7 @@ export function installAccountUI({ document, window, fetch }) {
     const accountData = () => (self.account.phase === 'ready' ? self.account.data : null);
     const alive = () => self.alive;
 
-    // Existing endpoints (GET /, POST /tokens, POST /tokens/{id}/revoke): same request rules as account-client.js.
-    async function legacyRequest(method, path, body, actor) {
-      const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: window.AbortSignal.any([window.AbortSignal.timeout(ACCOUNT_REQUEST_TIMEOUT_MS), controller.signal]), headers: { Accept: 'application/json' } };
-      if (body !== null) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
-      if (actor !== null) options.headers[ACTOR_HEADER] = actor;
-      const response = await fetch(ACCOUNT_API_PATH + path, options);
-      if (!response.ok) throw new AccountApiError(response.status, null, null);
-      try { return await response.json(); } catch { throw new AccountResponseError(); }
-    }
+    const legacyRequest = (method, path, body, actor) => existingEndpoint(method, path, body, actor, controller.signal);
     async function readAccount() {
       const account = await legacyRequest('GET', '', null, null);
       if (!validAccount(account)) throw new AccountResponseError();
@@ -669,7 +678,7 @@ export function installAccountUI({ document, window, fetch }) {
     // while they are shown or a request that may produce them is in flight.
     function leave() {
       if (self.section === null) return;
-      for (const opened of [...dialogs]) opened.close();
+      closeOverlays();
       for (const view of [self.tokenView, self.usersView]) {
         if (view.mode === 'form') Object.assign(view, { mode: 'idle', formUi: null });
         view.notice = null;
@@ -683,12 +692,52 @@ export function installAccountUI({ document, window, fetch }) {
       window.reportError(new Error(`Account: a one-time value for section '${section}' arrived while '${self.section}' is shown`));
       reveal(ROUTE_PREFIX + section);
     }
+    // Busy rule: while the section has a write in flight, every control that would start another write or
+    // discard the submitted form is disabled. Such controls are created through entry(); one counter drives them.
+    function entry(node, ownDisabled) {
+      node.dataset.accountEntry = ownDisabled ? 'disabled' : 'enabled';
+      node.disabled = ownDisabled || self.inFlight > 0;
+      return node;
+    }
+    function applyBusy() {
+      holder.setAttribute('aria-busy', String(self.inFlight > 0));
+      for (const node of holder.querySelectorAll('[data-account-entry]')) node.disabled = node.dataset.accountEntry === 'disabled' || self.inFlight > 0;
+    }
     async function held(work) {
-      self.inFlight++;
-      if (self.usersUi !== null) self.usersUi.renderAll();
+      self.inFlight++; applyBusy();
       try { return await work(); } finally {
         self.inFlight--;
-        if (self.alive && self.usersUi !== null) self.usersUi.renderAll();
+        if (self.alive) applyBusy();
+      }
+    }
+    function closeOverlays() {
+      for (const close of [...menus]) close();
+      for (const opened of [...dialogs]) opened.close();
+    }
+    // Shown-once values (and requests that may have produced one) that a teardown would lose.
+    function lostValues() {
+      const lost = [];
+      const intent = uncertainMints.get(owner);
+      if (self.tokenView.secret !== null) lost.push({ kind: 'token', name: self.tokenView.secret.token.name, uncertain: false });
+      else if (intent !== undefined && self.tokenView.busy) lost.push({ kind: 'token', name: intent.name, uncertain: true });
+      if (self.usersView.link !== null) lost.push({ kind: self.usersView.link.kind, name: self.usersView.link.name, uncertain: false });
+      else if (self.pendingLink !== null) lost.push({ ...self.pendingLink, uncertain: true });
+      return lost;
+    }
+    // account:invalidate: re-read authority before anything is torn down. 'same' keeps every panel, dialog and
+    // request; 'changed' and 'signed-out' are a forced teardown; 'unknown' (service unreachable) keeps everything.
+    async function verify() {
+      try {
+        const account = await readAccount();
+        if (!self.alive) return 'same';
+        self.account = { phase: 'ready', data: account };
+        renderNav();
+        if (self.tokensUi !== null) self.tokensUi.renderRows();
+        return 'same';
+      } catch (cause) {
+        if (cause instanceof AccountOwnerChangedError) return 'changed';
+        if (cause instanceof AccountApiError && cause.status === 401) return 'signed-out';
+        return 'unknown';
       }
     }
     function renderSection() {
@@ -845,9 +894,9 @@ export function installAccountUI({ document, window, fetch }) {
       const required = profile.totp.required;
       const [chipClass, chipText] = { ok: ['chip chip-ok', 'Set up'], unavailable: ['chip chip-warn', 'Unavailable'], none: ['chip', 'Not set up'] }[profile.totp.state];
       const replaceSlot = h('div', { hidden: true });
-      const replaceButton = h('button', { class: 'btn', type: 'button', 'aria-expanded': 'false', onclick: () => openReplace() }, 'Replace authenticator…');
+      const replaceButton = entry(h('button', { class: 'btn', type: 'button', 'aria-expanded': 'false', onclick: () => openReplace() }, 'Replace authenticator…'), false);
       const hintId = nextId('totp-toggle');
-      const toggle = h('input', { type: 'checkbox', checked: required, 'aria-describedby': hintId });
+      const toggle = entry(h('input', { type: 'checkbox', checked: required, 'aria-describedby': hintId }), false);
       toggle.addEventListener('click', event => { event.preventDefault(); confirmToggle(!required); });
       function closeReplace() { replaceSlot.replaceChildren(); replaceSlot.hidden = true; replaceButton.setAttribute('aria-expanded', 'false'); }
       function openReplace() {
@@ -947,7 +996,7 @@ export function installAccountUI({ document, window, fetch }) {
           h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { loadAccount(); renderAll(); } }, 'Retry'))));
         if (view.notice !== null) nodes.push(view.notice);
         slot.replaceChildren(...nodes); slot.hidden = nodes.length === 0;
-        create.disabled = !canCreate(); emptyCreate.disabled = !canCreate();
+        entry(create, !canCreate()); entry(emptyCreate, !canCreate());
       }
       function uncertainNotice(intent) {
         const dismiss = h('button', { class: 'btn btn-sm', type: 'button', disabled: !intent.refreshed || view.busy, title: intent.refreshed ? null : 'Available after the list has been refreshed',
@@ -990,7 +1039,7 @@ export function installAccountUI({ document, window, fetch }) {
           h('td', {}, recentDate(token.createdAt)),
           h('td', {}, h('span', { class: 'token-id-cell' }, h('span', { class: 'token-id', title: token.id }, token.id.length > TOKEN_ID_TAIL ? `…${token.id.slice(-TOKEN_ID_TAIL)}` : token.id), h('span', { class: 'row-actions' }, copyId))),
           h('td', { class: 'col-actions' }, token.revoked ? h('span', { class: 'chip' }, 'Revoked') : configured ? h('span', { class: 'xs muted' }, 'read-only')
-            : h('button', { class: 'btn btn-sm btn-danger-quiet', type: 'button', 'aria-label': `Revoke ${token.name}`, onclick: () => confirmRevoke(token) }, 'Revoke')));
+            : entry(h('button', { class: 'btn btn-sm btn-danger-quiet', type: 'button', 'aria-label': `Revoke ${token.name}`, onclick: () => confirmRevoke(token) }, 'Revoke'), false)));
       }
       function renderAll() { renderSlot(); renderRows(); }
 
@@ -1166,8 +1215,8 @@ export function installAccountUI({ document, window, fetch }) {
       const users = () => (self.admin.phase === 'ready' ? self.admin.data.users : []);
       const enrollments = () => (self.admin.phase === 'ready' ? self.admin.data.enrollments : []);
       const nameOf = user => user.login ?? user.id;
-      // A shown-once link must be acknowledged before another one can replace it.
-      const linkActionsAllowed = () => view.mode === 'idle' && self.inFlight === 0;
+      // A shown-once link must be acknowledged before another one can replace it (in-flight writes: entry()).
+      const linkActionsBlocked = () => view.mode !== 'idle';
       const matches = { all: () => true, pending: user => user.status === 'pending', disabled: user => user.status === 'disabled', admins: user => user.admin };
       function renderSegmented() {
         const count = key => (key === 'all' ? rows().length : users().filter(matches[key]).length);
@@ -1186,10 +1235,13 @@ export function installAccountUI({ document, window, fetch }) {
         }
         if (view.mode === 'form') nodes.push(view.formUi.node);
         if (view.mode === 'link') nodes.push(view.linkUi.node);
+        const lost = lostLinks.get(owner);
+        if (lost !== undefined) nodes.push(h('div', { class: 'notice notice-warn', role: 'alert', 'data-account-lost': true }, icon('alert'), h('div', { class: 'grow' }, lostText(lost),
+          h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { lostLinks.delete(owner); renderSlot(); } }, 'Dismiss')))));
         if (!['ready', 'loading', 'idle'].includes(self.admin.phase)) nodes.push(notice('danger', 'alert', 'Users could not be loaded', self.admin.phase === 'unauthorized' ? SESSION_TEXT : UNAVAILABLE_TEXT,
           h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { self.admin = { phase: 'idle' }; renderAll(); void loadAdmin(); } }, 'Retry'))));
         slot.replaceChildren(...nodes); slot.hidden = nodes.length === 0;
-        if (enroll !== null) enroll.disabled = !linkActionsAllowed();
+        if (enroll !== null) entry(enroll, linkActionsBlocked());
       }
       function rows() {
         const list = users().map(user => ({ kind: 'user', id: user.id, name: nameOf(user), user }));
@@ -1208,6 +1260,7 @@ export function installAccountUI({ document, window, fetch }) {
         const searchable = row => (row.kind === 'invite' ? [row.name] : [row.name, row.user.email ?? '', row.user.displayName]);
         const visible = all.filter(row => (row.kind === 'invite' ? view.filter === 'all' : matches[view.filter](row.user)))
           .filter(row => text === '' || searchable(row).some(value => value.toLowerCase().includes(text)));
+        for (const close of [...menus]) close();
         tbody.replaceChildren(...visible.map(row => (row.kind === 'invite' ? inviteRow(row.enrollment) : userRow(row.user))));
         const configured = users().filter(user => user.source === 'declarative').length;
         const label = USER_FILTERS.find(([key]) => key === view.filter)[1].toLowerCase();
@@ -1242,15 +1295,15 @@ export function installAccountUI({ document, window, fetch }) {
           h('td', {}, h('span', { class: 'cell-title' }, enrollment.username), h('span', { class: 'cell-sub' }, 'no account yet')),
           h('td', {}, h('div', { class: 'row row-wrap' }, chip('info', 'Invitation sent'), h('span', { class: 'xs muted' }, `expires ${expiryText(enrollment.expiresAt)}`))),
           h('td', {}, `Invited by ${enrollment.createdBy}`), h('td', {}, '—'), h('td', { class: 'hide-md' }, recentDate(enrollment.createdAt)),
-          h('td', { class: 'col-actions' }, h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Revoke the invitation for ${enrollment.username}`, onclick: () => confirmRevokeInvite(enrollment) }, 'Revoke link')));
+          h('td', { class: 'col-actions' }, entry(h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Revoke the invitation for ${enrollment.username}`, onclick: () => confirmRevokeInvite(enrollment) }, 'Revoke link'), false)));
       }
       function userActions(user) {
-        if (user.status === 'pending') return h('button', { class: 'btn btn-sm btn-primary', type: 'button', 'aria-label': `Approve ${nameOf(user)}…`, onclick: () => openApplication(user) }, 'Approve…');
+        if (user.status === 'pending') return entry(h('button', { class: 'btn btn-sm btn-primary', type: 'button', 'aria-label': `Approve ${nameOf(user)}…`, onclick: () => openApplication(user) }, 'Approve…'), false);
         if (user.id === owner) return h('span', { class: 'xs muted' }, 'you');
         if (user.source === 'declarative') return h('span', { class: 'xs muted', title: 'Managed in server configuration' }, 'read-only');
-        if (user.status === 'disabled') return h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Enable ${nameOf(user)}`, onclick: () => confirmEnabled(user, true) }, 'Enable');
+        if (user.status === 'disabled') return entry(h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Enable ${nameOf(user)}`, onclick: () => confirmEnabled(user, true) }, 'Enable'), false);
         const items = [];
-        if (profile.manage.reset) items.push(['key', 'Reset credentials…', () => confirmReset(user), false, !linkActionsAllowed()]);
+        if (profile.manage.reset) items.push(['key', 'Reset credentials…', () => confirmReset(user), false, linkActionsBlocked()]);
         // Pending resets can be revoked whenever the account plane is on (AM1), also without invitations.
         const reset = user.pendingEnrollment === 'reset' ? enrollmentFor(user.id, 'reset') : null;
         if (reset !== null) items.push(['link', 'Revoke reset link…', () => confirmRevokeReset(user, reset), false, false]);
@@ -1258,20 +1311,21 @@ export function installAccountUI({ document, window, fetch }) {
         items.push(['x-circle', 'Disable account…', () => confirmEnabled(user, false), true, false]);
         return rowMenu(`Actions for ${nameOf(user)}`, items);
       }
+      // An open menu is a section-owned overlay: leave(), dispose() and a row re-render close it (menus set).
       function rowMenu(label, items) {
-        const button = h('button', { class: 'btn btn-ghost btn-icon btn-sm', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': label }, icon('more'));
+        const button = entry(h('button', { class: 'btn btn-ghost btn-icon btn-sm', type: 'button', 'aria-haspopup': 'menu', 'aria-expanded': 'false', 'aria-label': label }, icon('more')), false);
         const menu = h('div', { class: 'menu', role: 'menu', hidden: true });
         const outside = event => { if (!menu.contains(event.target) && !button.contains(event.target)) close(); };
         const keys = event => { if (event.key === 'Escape') { event.stopPropagation(); close(); button.focus(); } };
-        function close() { menu.hidden = true; button.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside, true); menu.removeEventListener('keydown', keys); }
+        function close() { menu.hidden = true; button.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside, true); menu.removeEventListener('keydown', keys); menus.delete(close); }
         items.forEach(([iconName, text, run, danger, disabled], index) => {
           if (danger && index > 0) menu.append(h('div', { class: 'menu-sep', role: 'separator' }));
-          menu.append(h('button', { class: danger ? 'menu-item is-danger' : 'menu-item', role: 'menuitem', type: 'button', disabled, title: disabled ? 'Confirm the link shown above first' : null, onclick: () => { close(); run(); } }, icon(iconName), text));
+          menu.append(entry(h('button', { class: danger ? 'menu-item is-danger' : 'menu-item', role: 'menuitem', type: 'button', title: disabled ? 'Confirm the link shown above first' : null, onclick: () => { close(); run(); } }, icon(iconName), text), disabled));
         });
         button.addEventListener('click', () => {
           if (!menu.hidden) { close(); return; }
           menu.hidden = false; button.setAttribute('aria-expanded', 'true');
-          document.addEventListener('click', outside, true); menu.addEventListener('keydown', keys);
+          document.addEventListener('click', outside, true); menu.addEventListener('keydown', keys); menus.add(close);
           menu.querySelector('button:not(:disabled)').focus();
         });
         return h('div', { class: 'anchor' }, button, menu);
@@ -1321,11 +1375,12 @@ export function installAccountUI({ document, window, fetch }) {
           body: [h('p', {}, `You get a one-time link that lets ${name} choose a new password and set up a new authenticator. The current credentials keep working until the link is used. API tokens, e-mail and role are kept.`)],
           run: async values => {
             // The link is delivered inside the counted request, so no navigation can slip in before it is shown.
+            self.pendingLink = { kind: 'reset', name };
             const outcome = await held(async () => {
               const result = await act('reset-user', user.id, { currentPassword: values.currentPassword }, PROOF_REJECTED_TEXT);
               if (result.ok && self.alive) showLink('reset', name, result.result);
               return result;
-            });
+            }).finally(() => { self.pendingLink = null; });
             if (!outcome.ok) return outcome.text;
             void loadAdmin();
             return null;
@@ -1357,11 +1412,12 @@ export function installAccountUI({ document, window, fetch }) {
           const value = username.input.value.trim();
           if (value.length === 0) { username.setError('Enter the username for the new account.'); return; }
           setBusy(form, true); status.replaceChildren(); username.setError(null);
+          self.pendingLink = { kind: 'invite', name: value };
           const outcome = await held(async () => {
             const result = await act('issue-invitation', null, { username: value }, null);
             if (result.ok && self.alive) showLink('invite', value, result.result);
             return result;
-          });
+          }).finally(() => { self.pendingLink = null; });
           if (!alive()) return;
           setBusy(form, false);
           if (outcome.ok) { void loadAdmin(); return; }
@@ -1438,12 +1494,14 @@ export function installAccountUI({ document, window, fetch }) {
     loadAccount(); loadProfile(); loadPolicy();
     return {
       outlet, owner, open, leave, guarded, askLeave, revalidate,
-      holding: () => self.inFlight > 0,
+      holding: () => self.inFlight > 0, verify, lostValues,
       dispose() {
         self.alive = false; controller.abort();
-        for (const opened of [...dialogs]) opened.close();
-        const secret = self.tokenView.secret;
-        if (secret !== null && !uncertainMints.has(owner)) uncertainMints.set(owner, { name: secret.token.name, known: true, refreshed: false });
+        closeOverlays();
+        for (const value of lostValues()) {
+          if (value.kind === 'token' && !uncertainMints.has(owner)) uncertainMints.set(owner, { name: value.name, known: true, refreshed: false });
+          if (value.kind !== 'token') lostLinks.set(owner, value);
+        }
         root.remove();
       }
     };
@@ -1455,13 +1513,20 @@ export function installAccountUI({ document, window, fetch }) {
   let blocked = null; // { outlet, owner } after an owner mismatch, until the host updates the outlet
   let display = null; // { outlet, mains, scrollY } while an account route covers the host main
 
-  function ownerChanged(stale) {
+  // Forced teardown after authority was lost ('changed': another account, 'signed-out': no session) or given up
+  // ('logged-out', after the guard). Lost shown-once values are listed in the outlet and kept per owner.
+  function forceTeardown(stale, reason) {
     if (area === null || area.owner !== stale.owner || area.outlet !== stale.outlet) return;
+    const lost = area.lostValues();
     teardownArea();
     blocked = stale;
-    stale.outlet.replaceChildren(h('div', { class: 'account' }, notice('warn', 'alert', 'The signed-in account changed', 'Reload the page to continue with the current account.')));
+    const title = { changed: 'The signed-in account changed', 'signed-out': 'You were signed out', 'logged-out': 'Signed out' }[reason];
+    stale.outlet.replaceChildren(h('div', { class: 'account', 'data-view': 'account-ended' }, notice(reason === 'logged-out' ? 'neutral' : 'warn', 'alert', title,
+      reason === 'logged-out' ? 'Sign in again to continue.' : 'Reload the page to continue with the current account.',
+      lost.length === 0 ? null : h('ul', { class: 'stack-sm' }, ...lost.map(value => h('li', { 'data-account-lost': true }, lostText(value)))))));
     document.dispatchEvent(new window.Event('account:changed'));
   }
+  const ownerChanged = stale => forceTeardown(stale, 'changed');
   function teardownArea() { if (area !== null) { area.dispose(); area = null; } }
   function showOutlet(outlet) {
     if (display !== null && display.outlet === outlet) return;
@@ -1531,6 +1596,8 @@ export function installAccountUI({ document, window, fetch }) {
     // In-app links ask before they navigate, so that keeping the panel leaves no extra history entry.
     const link = event.target.closest('a[href^="#"]');
     if (link !== null && !mayLeave(link.getAttribute('href') === '#' ? '' : link.getAttribute('href'))) { event.preventDefault(); return; }
+    const logout = event.target.closest('[data-account-logout]');
+    if (logout !== null && !logout.disabled) { event.preventDefault(); requestLogout(); return; }
     const trigger = event.target.closest('[data-account-settings]');
     if (trigger === null || trigger.disabled) return;
     event.preventDefault();
@@ -1542,7 +1609,33 @@ export function installAccountUI({ document, window, fetch }) {
     if (!(event.target instanceof window.HTMLFormElement) || !event.target.matches('[data-account-login]')) return;
     event.preventDefault(); void submitCredentials(event.target);
   }
-  function onInvalidate() { teardownArea(); route(); }
+  // account:invalidate can be a routine reconnect: authority is re-read first and nothing is torn down meanwhile.
+  async function onInvalidate() {
+    const current = area;
+    if (current === null) { route(); return; }
+    const verdict = await current.verify();
+    if (area !== current || verdict === 'same' || verdict === 'unknown') return;
+    forceTeardown({ outlet: current.outlet, owner: current.owner }, verdict);
+  }
+  // [data-account-logout]: voluntary sign-out passes the same guard as navigation, then POST /logout.
+  function requestLogout() {
+    if (area !== null && area.holding()) { toast(HOLD_TEXT); return; }
+    if (area !== null && area.guarded()) { area.askLeave(() => void signOut()); return; }
+    void signOut();
+  }
+  async function signOut() {
+    const signal = new window.AbortController().signal;
+    try {
+      const account = await existingEndpoint('GET', '', null, null, signal);
+      if (!validAccount(account)) throw new AccountResponseError();
+      const result = await existingEndpoint('POST', '/logout', {}, account.user.actor, signal);
+      if (result === null || result.ok !== true) throw new AccountResponseError();
+    } catch (cause) {
+      if (!(cause instanceof AccountApiError && cause.status === 401)) { toast(`Sign-out failed. ${legacyMessage(cause)}`); return; }
+    }
+    if (area !== null) forceTeardown({ outlet: area.outlet, owner: area.owner }, 'logged-out');
+    else document.dispatchEvent(new window.Event('account:changed'));
+  }
   function onFocus() { if (area !== null && display !== null) void area.revalidate(); }
   function onBeforeUnload(event) { if (area !== null && (area.guarded() || area.holding())) { event.preventDefault(); event.returnValue = ''; } }
   const observer = new window.MutationObserver(() => route());

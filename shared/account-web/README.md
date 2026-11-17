@@ -26,12 +26,24 @@ its own. Both files and `account-client.js` are served next to each other
 - **Triggers.** Any `[data-account-settings]` element opens `#account/profile`;
   `data-account-settings="tokens"` (or another section name) opens that section.
   Plain links to `#account/<section>` work as well.
-- **Events.** In: `account:invalidate` ends the account lifecycle (in-flight
-  requests are abandoned, an unacknowledged secret is cleared and recorded as
-  lost). Out: `account:changed` after a response belongs to another account than
-  `data-account-user-id` (the host revalidates its identity and updates the
-  attribute), `account:route` with `detail.section` (`null` when the account page
-  closes) so that the host can clear its navigation highlight.
+- **Sign-out.** Mark the sign-out control `[data-account-logout]`. The module
+  runs the leave guard (a pending request holds, an unacknowledged secret or
+  link asks first), then `POST /api/account/v1/logout` with the actor from a fresh
+  read, tears the account page down and dispatches `account:changed`; the host
+  then revalidates its identity and shows its login view. A failed sign-out
+  leaves everything in place and says so in a toast.
+- **Events.** In: `account:invalidate` means "authority may have changed" (a
+  reconnect is enough). The module re-reads the account first and tears nothing
+  down meanwhile: the same owner keeps every panel, dialog and request; another
+  owner or no session forces a teardown whose notice lists every one-time value
+  that was lost ("revoke and re-issue"); an unreachable service keeps
+  everything. A host that signs out by itself and then dispatches the event gets
+  the forced path with that notice. Out: `account:changed` after a response
+  belongs to another account than `data-account-user-id`, after a forced
+  teardown and after sign-out (the host revalidates its identity and updates the
+  attribute or shows its login view); `account:route` with `detail.section`
+  (`null` when the account page closes) so that the host can clear its
+  navigation highlight.
 - **Capabilities.** Every new surface is driven by `GET /policy` and
   `GET /profile`. When they answer 404 (accounts switched off, or a server
   without the accounts feature) the module degrades to the login form and the
@@ -59,8 +71,14 @@ DOM observer or `pageshow` — passes through one function, `mayLeave()`:
   put back and a toast explains;
 - a shown-once secret or link is unacknowledged → "Hide the secret for good?" asks
   first (closing the tab: `beforeunload`);
-- otherwise the view's dialogs and prompts are closed and their input discarded
-  before the next view renders.
+- otherwise the view's dialogs, prompts and open menus are closed (their
+  document listeners removed) and their input discarded before the next view
+  renders; a forced teardown and `dispose()` do the same.
+
+Busy rule: while a view has a write in flight, every control of that view that
+would start another write or discard the submitted form (New token, Enroll user,
+Replace authenticator…, the require-code switch, row actions and menus, the
+form's own buttons) is disabled; one counter drives all of them.
 
 A shown-once value is delivered only into its owning section. If it ever arrives
 while another section is shown (impossible through the routes above), the
@@ -79,9 +97,13 @@ the value instead of rendering into detached DOM.
 | Profile e-mail, password | inline forms | input discarded | held | inline result |
 | Token revoke | confirmation dialog | dialog closed | held | list refreshed |
 | Sign-up | form with a secret generated in the browser | form and secret discarded | held | pending screen (or reload when active) |
-| Enrollment landing | form with a generated secret | other fragments do not replace the landing until “Go to sign-in” (the code is in memory only) | held | reload into the new session |
+| Enrollment landing | form with a generated secret | other fragments do not replace the landing until “Go to sign-in” (the code is in memory only) | held | reload into the new session, or the field error in place |
 | Recovery | form | input discarded | held | reload, or the rejection in place |
-| Login (second factor) | code step holding login and password in memory | step and credentials discarded with the card | held | reload |
+| Login (second factor) | code step holding login and password in memory | step and credentials discarded with the card | held | reload, or the code error in place |
+| Same-section repeated replacement (authenticator, link, token) | a second card/form/link while one is pending | — | re-opening controls disabled; exactly one request | the first result only |
+| `account:invalidate`, same owner | any | — | nothing torn down while the account is re-read | panels, dialogs and requests kept |
+| `account:invalidate`, other owner or signed out | any | forced teardown | forced teardown after the read | outlet notice lists every lost secret or link: revoke and re-issue |
+| Sign-out via `[data-account-logout]` | — | allowed | held | guard asks for an unacknowledged secret or link first |
 
 ## Token creation recovery
 

@@ -32,7 +32,8 @@ function masthead(signedIn) {
     header.append(element('nav', { class: 'nav', 'aria-label': 'Main navigation' }, ...nav.map(label => element('a', { href: `#/${label.toLowerCase().replace(/\s+/g, '-')}` }, label))));
   }
   const end = element('div', { class: 'masthead-end' }, element('button', { class: 'btn btn-ghost btn-icon', type: 'button', 'aria-label': 'Theme' }, '◐'));
-  if (signedIn) end.append(element('button', { class: 'user-button', type: 'button', 'data-account-settings': '' }, element('span', { class: 'avatar' }, 'a'), 'alice'));
+  if (signedIn) end.append(element('button', { class: 'user-button', type: 'button', 'data-account-settings': '' }, element('span', { class: 'avatar' }, 'a'), 'alice'),
+    element('button', { class: 'btn btn-ghost', type: 'button', 'data-account-logout': '' }, 'Sign out'));
   header.append(end);
   return header;
 }
