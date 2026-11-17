@@ -15,9 +15,9 @@ import { ProjectSettings, type ConfirmDisclosure, type ProjectApplyResult } from
 import { ConfigurationFence, type ConfigurationObservation } from './configuration-fence.ts';
 import { acquireSessionLock, JournalStore } from './store.ts';
 import { HistorianWorker, OBJECTIVE_VERSION } from './worker.ts';
-import { WorkerFailure, type AttemptFinish } from './attempt.ts';
+import { WorkerFailure, type AttemptFinish, type AttemptSummary } from './attempt.ts';
 import { ChroniclePreferences, type ChroniclePreferencesValue } from './chronicle-preferences.ts';
-import { chronicleTarget } from './chronicle-model.ts';
+import { chronicleTarget, type ChronicleStatus } from './chronicle-model.ts';
 import { approvedChronicleBinding, configuredChronicleBinding, resolveChronicleBinding, deliverChronicle, HttpChronicleTransport, CHRONICLE_TIMEOUT_MS } from './chronicle-upload.ts';
 
 export const RECONCILE_INTERVAL_MS = 10000;
@@ -26,6 +26,24 @@ const PAGE_RECORDS = 128;
 const RECENT_EPISODES = 12;
 const MAX_RETRIES = 3;
 const RETRY_BASE_MS = 10000;
+
+/** Summary uploads as the status pane shows them; `queue` is null while no journal is open. */
+export type HistorianChronicleStatus =
+  | { kind: 'unavailable' }
+  | { kind: 'ready'; enabled: boolean; endpoint: string; uploading: boolean; queue: Omit<ChronicleStatus, 'error'> | null; error: string | null };
+/** The values behind `status()`, for a structured view; `status()` stays the complete text. */
+export type HistorianStatus =
+  | { kind: 'fault'; message: string }
+  | {
+    kind: 'ready';
+    enabled: boolean; enabledSource: ScopedConfiguration['enabledSource']; disclosureApproved: boolean; model: ScopedConfiguration['model'];
+    project: string; journal: string; projectDigest: string;
+    capturing: boolean; coverageNotices: number;
+    activity: 'idle' | 'journaling' | 'draining'; pendingEvents: number; lastCommit: string | null;
+    failures: number; maxFailures: number;
+    chronicle: HistorianChronicleStatus; attempts: AttemptSummary | null;
+    error: string | null; projectionError: string | null;
+  };
 
 export class HistorianController {
   private readonly pi: ExtensionAPI;
@@ -416,6 +434,31 @@ export class HistorianController {
       this.chronicleStatus() + this.attemptStatus() +
       `Error: ${this.error ?? 'none'}\nMarkdown projection error: ${this.projectionError ?? 'none'}\nCoverage: ${state === null ? 'not capturing' : state.gaps.join('; ') || 'native transcript (not tool internals)'}\n` +
       'Configured provider receives this session family’s eligible evidence and shared published project episodes. Journals are historical, not current-state verification.';
+  }
+  private chronicleSnapshot(): HistorianChronicleStatus {
+    try {
+      const settings = this.chroniclePreferences.read();
+      const status = this.store === null ? null : this.store.chronicleStatus(configuredChronicleBinding(settings));
+      return { kind: 'ready', enabled: settings.enabled, endpoint: settings.endpoint, uploading: this.uploading !== null,
+        queue: status === null ? null : { pending: status.pending, stopped: status.stopped, acknowledged: status.acknowledged, otherDestinations: status.otherDestinations },
+        error: this.uploadError ?? (status === null ? null : status.error) };
+    } catch { return { kind: 'unavailable' }; }
+  }
+  /** The same reads as `status()`, as values. */
+  statusSnapshot(): HistorianStatus {
+    let config: ScopedConfiguration;
+    try { config = this.effective(); } catch (error) { return { kind: 'fault', message: error instanceof Error ? error.message : String(error) }; }
+    const state = this.store === null ? null : this.store.state(this.owner);
+    return {
+      kind: 'ready', enabled: config.enabled, enabledSource: config.enabledSource, disclosureApproved: config.disclosureApproved, model: config.model,
+      project: this.project, journal: join(this.directory, 'journal.md'), projectDigest: digest(this.project),
+      capturing: config.enabled && state !== null && state.enabled, coverageNotices: state === null ? 0 : state.gaps.length,
+      activity: this.working !== null ? 'journaling' : this.worker.busy ? 'draining' : 'idle',
+      pendingEvents: this.store === null ? 0 : this.store.pending(this.owner), lastCommit: this.lastCommit,
+      failures: this.failures, maxFailures: MAX_RETRIES,
+      chronicle: this.chronicleSnapshot(), attempts: this.store === null ? null : this.store.attemptSummary(this.owner),
+      error: this.error, projectionError: this.projectionError,
+    };
   }
   /** Border badge state: null while Historian is off and healthy. */
   badge(): 'idle' | 'working' | 'attention' | null {

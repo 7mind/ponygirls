@@ -11,6 +11,7 @@ export { CustomViewToggle, type CustomViewFactory, type CustomViewUI } from "./c
 export { completeArgument, type ArgumentChoice, type CompletionItem } from "./complete.ts";
 
 export { StatusView, type StatusViewOptions } from "./status-view.ts";
+export { FactsView, type Fact, type FactGroup, type FactSegment, type FactsState, type FactsViewOptions } from "./facts-view.ts";
 export { PanelLayout, type PanelParts } from "./panel-layout.ts";
 export { confirmOperatorAction, operatorDisplay, previewOperatorText, requireOperatorUI, type OperatorTextContext } from "./operator-text.ts";
 export { ScopedSettingsPanel, ScopedSettingsView, type ScopedSettingsPanelOptions, type ScopedSettingsViewContext, type ScopedSettingsViewOptions } from "./scoped-settings.ts";

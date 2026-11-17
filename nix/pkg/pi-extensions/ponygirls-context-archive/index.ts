@@ -1,11 +1,12 @@
 import { completeArchiveArguments } from "./src/complete.ts";
-import { join } from "node:path";
-import { parseScopedToggleCommand, parseToggleCommand, resolveScopedSetting, sessionEnabledData } from "@ponygirls/pi-settings";
-import { BORDER_ORDER, CustomViewToggle, StatusView, borderBadge, borderBadgeCompact, type BorderBadge } from "@ponygirls/pi-ui";
+import { homedir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
+import { parseScopedToggleCommand, parseToggleCommand, resolveScopedSetting, sessionEnabledData, type ScopedSettingsOrigin } from "@ponygirls/pi-settings";
+import { BORDER_ORDER, CustomViewToggle, FactsView, borderBadge, borderBadgeCompact, formatCompact, formatCount, homeRelative, type BorderBadge, type FactGroup, type FactSegment, type FactsState, type FactsViewOptions } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { ARCHIVE_TYPE, DEFAULT_POLICY, MAX_LIST_ITEMS, MAX_READ_CHARS, RECALL_TOOL, planArchive, recallArchive, restoreArchive, restoreRequest } from "./src/archive.ts";
-import { FileArchiveProjectStore, FilePreferenceStore, validateThresholds, type ArchiveDefaults, type PreferenceStore } from "./src/preferences.ts";
+import { FileArchiveProjectStore, FilePreferenceStore, validateThresholds, type ArchiveDefaults, type ArchiveThresholds, type PreferenceStore } from "./src/preferences.ts";
 import { SESSION_SETTING_TYPE, SESSION_THRESHOLDS_TYPE } from "./src/session-settings.ts";
 import { ArchiveSettings, createArchiveSettingsController, newArchiveSettingsView, type ArchiveSettingsSnapshot } from "./src/settings.ts";
 
@@ -22,6 +23,61 @@ type Mode = { kind: "ready"; effective: ArchiveDefaults; defaults: ArchiveDefaul
 function formatPercent(value: number): string {
   // Round display noise only; selection uses the unrounded policy values.
   return `${Number((value * 100).toPrecision(PERCENT_DISPLAY_DIGITS))}%`;
+}
+
+/** The values behind the status text, for the status pane. `contextWindow` is null when the model's capacity is unknown. */
+export type ArchiveStatus =
+  | { kind: "fault"; message: string; globalPath: string }
+  | {
+    kind: "ready";
+    enabled: boolean; enabledSource: ScopedSettingsOrigin; thresholds: ArchiveThresholds; thresholdsSource: ScopedSettingsOrigin;
+    archived: number; tokens: number | null; contextWindow: number | null;
+    globalPath: string; cwd: string; projectPath: string; projectTrusted: boolean;
+  };
+
+/** Session and project scopes override; everything below them is the global default. */
+function scopeLabel(origin: ScopedSettingsOrigin, inherited: string): string {
+  return origin === "project" ? "project override" : origin === "session" ? "session override" : inherited;
+}
+
+/** State first, then where it comes from; the complete text stays behind the pane's details key. */
+export function archiveStatusFacts(status: ArchiveStatus, home: string): { state: FactsState; groups: FactGroup[] } {
+  const globalSettings: FactSegment = { text: homeRelative(status.globalPath, home) };
+  if (status.kind === "fault") {
+    return { state: { text: "attention", state: "attention" }, groups: [[
+      { label: "State", value: [{ text: "archival stopped", state: "attention" }, { text: status.message, state: "attention" }] },
+      { label: "Settings", value: [globalSettings] },
+    ]] };
+  }
+  const { contextWindow, thresholds } = status;
+  const enabled = status.enabled ? "on" : "off";
+  const enabledState = status.enabled ? "ok" : "settled";
+  const source = scopeLabel(status.enabledSource, "global default");
+  const archived = status.archived === 0 ? `nothing archived on this branch${status.enabled ? " yet" : ""}`
+    : `${formatCount(status.archived)} archived ${status.archived === 1 ? "entry" : "entries"} on this branch`;
+  const amount = (watermark: number): string => contextWindow === null ? "" : ` (${formatCompact(Math.ceil(contextWindow * watermark))})`;
+  const inProject = relative(status.cwd, status.projectPath);
+  const projectSettings = inProject.startsWith("..") || isAbsolute(inProject) ? homeRelative(status.projectPath, home) : inProject;
+  return { state: { text: `${enabled} · ${source}`, state: enabledState }, groups: [[
+    { label: "State", value: [{ text: `${enabled} (${source})`, state: enabledState }, { text: archived }] },
+    { label: "Context", value: [{ text: contextWindow === null ? "model context capacity unknown"
+      : `${status.tokens === null ? "unknown" : formatCompact(status.tokens)} / ${formatCompact(contextWindow)} tokens` }] },
+    { label: "Thresholds", value: [
+      { text: `archive at ${formatPercent(thresholds.highWatermark)}${amount(thresholds.highWatermark)} → release to ${formatPercent(thresholds.lowWatermark)}${amount(thresholds.lowWatermark)}` },
+      { text: scopeLabel(status.thresholdsSource, "defaults") },
+    ] },
+    { label: "Settings", value: [globalSettings, { text: `project ${projectSettings}${status.projectTrusted ? "" : " (ignored: untrusted)"}` }] },
+  ]] };
+}
+
+/** What the status pane shows: the structured status and the complete text it summarises. */
+export interface ArchiveStatusContent { status: ArchiveStatus; text: string; home: string }
+export type ArchiveStatusHost = Pick<FactsViewOptions, "theme" | "keys" | "rows" | "requestRender" | "close">;
+
+/** The one status pane: facts first, the complete status text behind `d`. */
+export function archiveStatusView(content: ArchiveStatusContent, host: ArchiveStatusHost): FactsView {
+  const facts = archiveStatusFacts(content.status, content.home);
+  return new FactsView({ ...host, title: "Context archive", state: facts.state, facts: () => facts.groups, details: () => content.text });
 }
 
 export function registerContextArchive(pi: ExtensionAPI, preferences: PreferenceStore): void {
@@ -69,10 +125,7 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
       invalidate() {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left" || ctx.mode !== "tui" || !ctx.hasUI) return undefined;
-        void controller.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({
-          title: "Context archive status", text: statusText(ctx), theme, keys,
-          rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done,
-        })).catch((error: unknown) => warn(ctx, String(error)));
+        void showStatus(ctx, controller).catch((error: unknown) => warn(ctx, String(error)));
         return { handled: true };
       },
     }), { placement: "borderBottomLeft", order: BORDER_ORDER.archive });
@@ -143,19 +196,38 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
     }
   }
 
-  function statusText(ctx: ExtensionContext): string {
-    const enabled = mode.kind === "ready" && mode.effective.enabled;
+  /** What both status presentations read from the session: branch archive count and Pi's context usage. */
+  function observe(ctx: ExtensionContext): { archived: number; tokens: number | null; contextWindow: number } {
     const catalog = recallArchive(ctx.sessionManager.getBranch(), { action: "list", offset: 0, limit: 1 });
     if (!("total" in catalog)) throw new Error("Archive catalog invariant violated");
     const usage = ctx.getContextUsage();
     const contextWindow = usage === undefined ? ctx.model === undefined ? 0 : ctx.model.contextWindow : usage.contextWindow;
+    return { archived: catalog.total, tokens: usage === undefined ? null : usage.tokens, contextWindow };
+  }
+  function status(ctx: ExtensionContext): ArchiveStatus {
+    if (mode.kind === "fault") return { kind: "fault", message: mode.message, globalPath: preferences.path };
+    const { archived, tokens, contextWindow } = observe(ctx);
+    const { snapshot } = mode;
+    return { kind: "ready", enabled: mode.effective.enabled, enabledSource: snapshot.sources.enabled,
+      thresholds: { highWatermark: mode.effective.highWatermark, lowWatermark: mode.effective.lowWatermark }, thresholdsSource: snapshot.sources.thresholds,
+      archived, tokens, contextWindow: Number.isFinite(contextWindow) && contextWindow > 0 ? contextWindow : null,
+      globalPath: preferences.path, cwd: ctx.cwd, projectPath: snapshot.targets.project, projectTrusted: snapshot.projectTrusted };
+  }
+  /** Command and badge open the same pane; its content is read when it opens, not when it closes. */
+  function showStatus(ctx: ExtensionContext, view: CustomViewToggle): Promise<void> {
+    return view.toggle(ctx.ui, (tui, theme, keys, done) => archiveStatusView({ status: status(ctx), text: statusText(ctx), home: homedir() },
+      { theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
+  }
+  function statusText(ctx: ExtensionContext): string {
+    const enabled = mode.kind === "ready" && mode.effective.enabled;
+    const { archived, tokens, contextWindow } = observe(ctx);
     const pressure = mode.kind === "fault" ? "Threshold status unavailable due to settings error.\n" : Number.isFinite(contextWindow) && contextWindow > 0
-      ? `Pi context usage: ${usage === undefined || usage.tokens === null ? "unknown" : usage.tokens} / ${contextWindow} tokens; archive trigger ${Math.ceil(contextWindow * mode.effective.highWatermark)} (${formatPercent(mode.effective.highWatermark)}), release toward ${Math.ceil(contextWindow * mode.effective.lowWatermark)} (${formatPercent(mode.effective.lowWatermark)}).\n`
+      ? `Pi context usage: ${tokens === null ? "unknown" : tokens} / ${contextWindow} tokens; archive trigger ${Math.ceil(contextWindow * mode.effective.highWatermark)} (${formatPercent(mode.effective.highWatermark)}), release toward ${Math.ceil(contextWindow * mode.effective.lowWatermark)} (${formatPercent(mode.effective.lowWatermark)}).\n`
       : `Effective thresholds: trigger ${formatPercent(mode.effective.highWatermark)}, release toward ${formatPercent(mode.effective.lowWatermark)}; model context capacity unknown.\n`;
     const source = mode.kind === "fault" ? "settings error" : mode.snapshot.sources.enabled === 'project' ? 'project override' : mode.snapshot.sources.enabled !== 'session' ? "inherited global default" : `session override; global default ${mode.defaults.enabled ? "ON" : "OFF"}`;
     const thresholdSource = mode.kind === "fault" ? "" : `Threshold source: ${mode.snapshot.sources.thresholds === 'project' ? 'project override' : mode.snapshot.sources.thresholds !== 'session' ? "inherited global defaults" : "session override"}; global defaults ${formatPercent(mode.defaults.highWatermark)} / ${formatPercent(mode.defaults.lowWatermark)}.\n`;
     return `Context archive: ${mode.kind === "fault" ? "ERROR" : enabled ? "ON" : "OFF"} (${source})\n` +
-      `${catalog.total} archived entries on this branch. Last boundary: ${lastReason}.\n` + pressure + thresholdSource +
+      `${archived} archived entries on this branch. Last boundary: ${lastReason}.\n` + pressure + thresholdSource +
       (enabled ? "Automatic selection begins at a completed-turn boundary; no summarizer calls.\n" : "No new archival. Retained originals reach future requests; native restoration waits for the next completed boundary. Independent Pi compaction is not undone.\n") +
       `Global defaults: ${preferences.path}` + (mode.kind === 'ready' ? `\nEffective sources: enabled=${mode.snapshot.sources.enabled}; thresholds=${mode.snapshot.sources.thresholds}.\nProject settings: ${mode.snapshot.targets.project}${mode.snapshot.projectTrusted ? '' : ' (ignored: untrusted)'}` : '');
   }
@@ -209,7 +281,8 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
         }
         if (inheritThresholdAction) pi.appendEntry(SESSION_THRESHOLDS_TYPE, { version: 1, sessionId: ctx.sessionManager.getSessionId(), thresholds: null });
         refresh(ctx, !statusAction);
-        ctx.ui.notify(statusText(ctx), "info");
+        if (statusAction && ctx.mode === "tui" && ctx.hasUI) await showStatus(ctx, statusView);
+        else ctx.ui.notify(statusText(ctx), "info");
       } catch (error) { warn(ctx, String(error)); }
     },
   });

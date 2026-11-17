@@ -65,10 +65,38 @@ verification, and other extensions' permissions.
 
 Command arguments autocomplete subcommands, defaults, available providers/models,
 and thinking levels. Focus remains free text (with session `inherit` completion).
-Status panels group configuration, activity, diagnostics and coverage with semantic
-theme colors; journal headings, evidence metadata and coverage notices are visually
-distinct. Use arrows/Page Up/Page Down/Home/End to scroll and Escape or `q` to close.
-Stored Markdown and non-TUI output remain unstyled.
+In the TUI, `/historian`, `/historian status` and a badge click open the same
+state-first pane:
+
+```text
+── Historian ──────────────────────────────────────────── off · global ──
+  State      off (global setting) · not capturing this session
+  Model      openai-codex/gpt-6.1-sol · medium · disclosure approved
+  Project    ~/work/flakes/ponygirls
+  Journal    ~/.pi/agent/historian/projects/4be1c0a9…/journal.md
+
+  Activity   idle · nothing pending · no commits this run
+  Chronicle  upload on → chronicle.example · idle · nothing pending
+  Attempts   none this session
+─────────────────────────────────────────────────────────────────────────
+↑↓ scroll  d details  esc close
+```
+
+The title's right side reads `on`/`off` and the scope that decides it, or
+`attention` when there is an error or an enabled Historian still lacks disclosure
+approval. Zero counters read as words; a non-zero counter carries its number
+(`2 pending`, `1 failed of 3 attempts`). An error is its own row, first in its
+group, and absent otherwise. Paths are home-relative, the project hash is
+shortened, a repository is named by its directory rather than its `.git`
+directory, and the Chronicle destination is shown as its host. `d` switches to
+the complete status text (full paths and identifiers, setting origins, every
+counter, the latest attempt receipts, coverage notices and the standing
+explanations) and back. Outside the TUI (print/RPC) `status` prints that
+complete text.
+
+Journal headings, evidence metadata and coverage notices are visually distinct
+in the journal pane. Use arrows/Page Up/Page Down/Home/End to scroll and Escape
+or `q` to close. Stored Markdown and non-TUI output remain unstyled.
 
 A global ON requires a configured global model and approves that model. Session
 consent is independent of enablement inheritance. A fork gets a new session
@@ -82,7 +110,7 @@ ownership remains fail-fast and exclusive.
 
 The `📜` badge shows enablement, `📜 writing` active work, `📜 !` a fault or requested ON awaiting approval. Click the badge or
 use `status` to distinguish requested enablement, backlog, provider drain,
-projection errors and coverage. After three failed attempts, use `on` in that
+projection errors and coverage; `d` in that pane lists the coverage notices. After three failed attempts, use `on` in that
 root to retry; no silent provider fallback occurs.
 
 ## Chronicle summary uploads
@@ -274,8 +302,9 @@ coverage limitation, not implicit permission to disclose reconstructed history.
 
 ## Attempts and output validation
 
-`status` separates the current three-attempt retry streak from durable per-session
-admission totals in the selected journal and the latest ten attempt receipts. Receipts retain attempt/batch
+`status` separates the current three-attempt retry streak (`Activity`) from durable
+per-session admission totals in the selected journal (`Attempts`); its details list
+the latest ten attempt receipts. Receipts retain attempt/batch
 identity, a context digest, provider/model/effort, objective version, audit times,
 monotonic duration, safe outcome/category, and available numeric response/usage
 metrics. They do not retain arbitrary rejected response/error bodies or duplicate

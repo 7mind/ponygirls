@@ -1,10 +1,11 @@
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { BORDER_ORDER, CustomViewToggle, StatusView, borderBadge, borderBadgeCompact, confirmOperatorAction, type BorderBadge } from '@ponygirls/pi-ui';
 import { parseToggleCommand } from '@ponygirls/pi-settings';
 import { HistorianController } from './src/controller.ts';
 import { completeHistorianArguments } from './src/complete.ts';
-import { styleHistorianJournal, styleHistorianStatus } from './src/presentation.ts';
+import { historianStatusView, styleHistorianJournal } from './src/presentation.ts';
 import { createHistorianDisclosureConfirmation, createHistorianSettingsController, newHistorianSettingsView } from './src/settings-view.ts';
 import { PreferenceStore, parseModel } from './src/preferences.ts';
 import type { ProjectChange } from './src/project-config.ts';
@@ -56,8 +57,14 @@ export default function (pi: ExtensionAPI): void {
     settingsView.dispose(); settingsView = newHistorianSettingsView(); cancelDirectApproval();
     const value = journal ? controller.journal() : controller.status();
     if (ctx.mode !== 'tui' || !ctx.hasUI) { ctx.ui.notify(value, 'info'); return; }
-    await pane.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({ title: journal ? 'Historian project journal' : 'Historian status',
-      text: () => journal ? styleHistorianJournal(value, theme) : styleHistorianStatus(value, theme), theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
+    if (journal) {
+      await pane.toggle(ctx.ui, (tui, theme, keys, done) => new StatusView({ title: 'Historian project journal',
+        text: () => styleHistorianJournal(value, theme), theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
+      return;
+    }
+    const content = { status: controller.statusSnapshot(), text: value, home: homedir(), nowMs: Date.now() };
+    await pane.toggle(ctx.ui, (tui, theme, keys, done) => historianStatusView(content,
+      { theme, keys, rows: () => tui.terminal.rows, requestRender: () => tui.requestRender(), close: done }));
   }
   async function showSettings(ctx: ExtensionContext): Promise<void> {
     const selected = controller;

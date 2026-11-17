@@ -414,6 +414,9 @@ test("badge toggles a read-only status view, supports keyboard close, and closes
   await new Promise(setImmediate);
   assert.equal(views.length, 1);
   assert.equal(views[0].options.retainEditorBorders, true);
+  assert.match(views[0].component.render(100)[0], /^── Context archive ─+ on · session override ──$/);
+  assert.match(views[0].component.render(100).join("\n"), /State {7}on \(session override\) · nothing archived on this branch yet/);
+  views[0].component.handleInput("d");
   assert.match(views[0].component.render(100).join("\n"), /Context archive: ON/);
   assert.match(views[0].component.render(100).join("\n"), /archived entries on this branch/);
   assert.equal(badge().handleMouse(click).handled, true);
