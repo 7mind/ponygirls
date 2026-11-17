@@ -1,0 +1,14 @@
+import { registerArchive } from './scenes-archive.mjs';
+import { registerSession } from './scenes-session.mjs';
+import { registerSearch } from './scenes-search.mjs';
+import { registerActivity } from './scenes-activity.mjs';
+import { registerAccount } from './scenes-account.mjs';
+import { registerOther } from './scenes-other.mjs';
+export const scenarios = [];
+const scenario = (name, run) => scenarios.push({ name, run });
+registerArchive(scenario);
+registerSession(scenario);
+registerSearch(scenario);
+registerActivity(scenario);
+registerAccount(scenario);
+registerOther(scenario);

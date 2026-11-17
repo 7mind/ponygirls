@@ -1,0 +1,81 @@
+import { PRIMARY, VARIANTS, withScene, gotoTab, settle, inspect, sleep } from './lib.mjs';
+import { seededFixture } from './seed.mjs';
+
+export function registerOther(scenario) {
+  // ---- login
+  for (const [key, variant] of Object.entries(VARIANTS)) {
+    scenario(`login-${key}`, async ctx => {
+      await withScene(ctx, variant, { fixture: seededFixture(f => { f.signedIn = false; }), waitSignedIn: false }, async ({ page, shot }) => {
+        await page.locator('.login-card').waitFor(); await settle(page, 500);
+        await shot('login', 'first-render', 'Login page: story column with "Archive" heading, sign-in card; masthead without navigation', 'open / while signed out');
+        await inspect(page, ctx.recorder, `login-${key}`);
+        if (!variant.deep) return;
+        await page.getByLabel('Login').fill('alice'); await page.getByLabel('Password').fill('wrong-password'); await settle(page, 200);
+        await shot('login', 'filled', 'Login form filled', 'type credentials');
+        await page.getByRole('button', { name: /Sign in/ }).click(); await page.locator('[data-account-login-error]:not([hidden])').waitFor(); await settle(page, 300);
+        await shot('login', 'error', 'Login error: "Invalid login or password. Try again." under the form', 'submit wrong password');
+      });
+    });
+  }
+  // ---- access, mcp
+  for (const [key, variant] of Object.entries(VARIANTS)) {
+    scenario(`access-${key}`, async ctx => {
+      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, shot }) => {
+        await gotoTab(page, 'access'); await page.getByText('Sharing groups').waitFor(); await page.locator('.group-card').first().waitFor(); await settle(page, 500);
+        await shot('access', 'first-render', 'Access tab: access-token pointer (left) and sharing groups with warning, create form, invitations and group cards (right)', 'click nav "access"');
+        await shot('access', 'first-render', 'Access, whole document (full-page capture)', 'same, full-page', { full: true });
+        await inspect(page, ctx.recorder, `access-${key}`);
+        if (!variant.deep) return;
+        await page.getByLabel('New group name').fill('Design review guild'); await page.getByRole('button', { name: 'Create group' }).click(); await page.getByRole('region', { name: 'Notifications' }).waitFor(); await settle(page, 300);
+        await shot('access', 'group-created-toast', 'Toast after creating a group (bottom of the viewport, auto-dismisses after 6 s)', 'create group form submit');
+      });
+    });
+    scenario(`mcp-${key}`, async ctx => {
+      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, shot }) => {
+        await gotoTab(page, 'mcp'); await page.getByLabel('Fresh prompt').waitFor(); await page.getByText(/maximum output tokens/).waitFor(); await settle(page, 500);
+        await shot('mcp', 'first-render', 'MCP tester: catalog line, tool-schema disclosure, prompt box and run button', 'click nav "mcp"');
+        await inspect(page, ctx.recorder, `mcp-${key}`);
+        if (!variant.deep) return;
+        await page.getByText(/Tool schemas/).click(); await settle(page, 500);
+        await shot('mcp', 'tool-schemas-open', 'Tool schemas disclosure expanded', 'click "Tool schemas"');
+        await page.getByLabel('Fresh prompt').fill('Search the archive for sessions about the lock_timeout migration fix and summarise the three most relevant ones.');
+        await page.getByRole('button', { name: 'Run fresh prompt' }).click(); await page.locator('.mcp-trace article').first().waitFor({ timeout: 30000 }); await page.waitForTimeout(3500); await settle(page, 500);
+        await shot('mcp', 'run-complete', 'Completed run: run controls, state, and the trace of tool call / result / response items', 'type a prompt + Run fresh prompt');
+        await shot('mcp', 'run-complete', 'Completed run, whole document (full-page capture)', 'same, full-page', { full: true });
+      });
+    });
+  }
+  // ---- masthead / chrome / global states
+  scenario('chrome', async ctx => {
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {
+      await gotoTab(page, 'archive'); await page.locator('.archive-row').first().waitFor();
+      await page.getByRole('button', { name: 'Theme settings' }).click(); await page.waitForTimeout(300);
+      await shot('chrome', 'theme-menu', 'Theme menu popover (System / Light / Dark select)', 'masthead > Theme');
+      await page.keyboard.press('Escape');
+      await page.locator('.connection-widget > button').click(); await page.waitForTimeout(400);
+      await shot('chrome', 'connection-health-panel', 'Connection health popover opened from the floating "live" pill (bottom right)', 'click the connection pill');
+      await page.keyboard.press('Escape');
+      await page.keyboard.press('Tab'); await settle(page, 200);
+      await shot('chrome', 'skip-link-focus', 'First Tab press: skip-to-content link appears at the top left', 'press Tab once on a fresh page');
+    });
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {
+      await gotoTab(page, 'archive'); await page.locator('.archive-row').first().waitFor();
+      await page.getByRole('button', { name: 'Theme settings' }).click(); await page.getByLabel('Color theme').selectOption('dark'); await settle(page, 500);
+      await page.keyboard.press('Escape');
+      await shot('chrome', 'forced-dark-archive', 'Archive after choosing Dark in the theme menu (class/data-theme path, as opposed to the OS colour-scheme path in the -dark captures)', 'Theme menu > Dark');
+    });
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.mode = 'version'; }), waitSignedIn: false }, async ({ page, shot }) => {
+      await page.getByRole('heading', { name: 'Dashboard update required' }).waitFor(); await settle(page, 400);
+      await shot('chrome', 'update-required', 'Terminal state "Dashboard update required"', 'server answers version-mismatch');
+    });
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.whoamiFailure = 'Identity service temporarily unavailable.'; }), waitSignedIn: false }, async ({ page, shot }) => {
+      await page.getByRole('heading', { name: 'Session unavailable' }).waitFor(); await settle(page, 500);
+      await shot('chrome', 'session-unavailable', 'State "Session unavailable": whoami failed, retry button, no navigation', 'whoami returns an error');
+    });
+    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
+      await gotoTab(page, 'archive'); await page.locator('.archive-row').first().waitFor();
+      fixture.blackholeActive(); await page.waitForFunction(() => /stale|retrying|connecting|offline/.test(document.querySelector('.connection-widget')?.getAttribute('data-state') ?? ''), null, { timeout: 40000 }).catch(() => null); await settle(page, 500);
+      await shot('chrome', 'connection-lost', 'Connection pill after the active socket stops answering (state shown in the pill; content stays on screen)', 'server stops answering pings');
+    });
+  });
+}
