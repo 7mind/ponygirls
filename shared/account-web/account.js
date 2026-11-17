@@ -1231,6 +1231,9 @@ export function installAccountUI({ document, window, fetch }) {
         if (user.status === 'disabled') return h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Enable ${nameOf(user)}`, onclick: () => confirmEnabled(user, true) }, 'Enable');
         const items = [];
         if (profile.manage.reset) items.push(['key', 'Reset credentials…', () => confirmReset(user), false, !linkActionsAllowed()]);
+        // Pending resets can be revoked whenever the account plane is on (AM1), also without invitations.
+        const reset = user.pendingEnrollment === 'reset' ? enrollmentFor(user.id, 'reset') : null;
+        if (reset !== null) items.push(['link', 'Revoke reset link…', () => confirmRevokeReset(user, reset), false, false]);
         items.push(['shield', user.admin ? 'Revoke admin…' : 'Grant admin…', () => confirmAdmin(user), false, false]);
         items.push(['x-circle', 'Disable account…', () => confirmEnabled(user, false), true, false]);
         return rowMenu(`Actions for ${nameOf(user)}`, items);
@@ -1307,6 +1310,12 @@ export function installAccountUI({ document, window, fetch }) {
         dialog({ title: `Revoke the invitation for “${enrollment.username}”?`, confirm: 'Revoke link', danger: true, cancel: 'Cancel', fields: [], extra: [],
           body: [h('p', {}, 'The link stops working immediately and the username becomes available again. You can create a new invitation later.')],
           run: async () => afterAction(await act('revoke-enrollment', enrollment.id, null, null), `Invitation for ${enrollment.username} revoked`) });
+      }
+      function confirmRevokeReset(user, enrollment) {
+        const name = nameOf(user);
+        dialog({ title: `Revoke the reset link for “${name}”?`, confirm: 'Revoke link', danger: true, cancel: 'Cancel', fields: [], extra: [],
+          body: [h('p', {}, `The link stops working immediately. ${name}'s current password and authenticator keep working; nothing else changes. You can create a new reset link later.`)],
+          run: async () => afterAction(await act('revoke-enrollment', enrollment.id, null, null), `Reset link for ${name} revoked`) });
       }
       function openEnroll() {
         if (view.mode !== 'idle') return;

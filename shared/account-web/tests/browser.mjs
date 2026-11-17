@@ -234,6 +234,20 @@ try {
     assert.equal(callsTo(calls, '/admin/users/erin/reset').length + callsTo(calls, '/admin/users/mallory/reset').length, 1);
   });
 
+  await run('a pending reset link can be revoked in-app, also with invitations disabled', async ({ page, calls, open }) => {
+    await open('users-signup-only');
+    await page.locator('tr[data-row-id="ivan"]', { hasText: 'Reset link sent' }).waitFor();
+    assert.equal(await button(page, 'Enroll user').count(), 0);
+    await button(page, 'Actions for ivan').click();
+    await page.getByRole('menuitem', { name: 'Revoke reset link…' }).click();
+    const confirm = dialog(page, 'Revoke the reset link for “ivan”?');
+    assert.equal(await page.evaluate(() => document.activeElement.textContent), 'Cancel');
+    await confirm.getByRole('button', { name: 'Revoke link' }).click();
+    await confirm.waitFor({ state: 'detached' });
+    await page.locator('tr[data-row-id="ivan"]', { hasText: 'Reset link sent' }).waitFor({ state: 'detached' });
+    assert.deepEqual(calls.filter(call => call.path.endsWith('/revoke')).map(call => [call.path, call.body, call.actor]), [['/admin/enrollments/enrollment-0002/revoke', {}, 'actor-alice']]);
+  });
+
   await run('without the new endpoints only login and access tokens remain', async ({ page, calls, open }) => {
     await open('login-legacy');
     assert.equal(await page.getByRole('link', { name: 'Forgot password?' }).count(), 0);

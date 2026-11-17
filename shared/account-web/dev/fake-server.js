@@ -139,7 +139,13 @@ export function createFakeAccountServer(fixture, onCall) {
     if (path === '/profile/totp-required') { if (body.totp === FAKE_WRONG_CODE) return failure(403, 'proof-rejected', {}); state.profile.totp.required = body.required; return ok(); }
     if (path === '/admin/enrollments') return body.username === FAKE_TAKEN_USERNAME ? failure(409, 'username-unavailable', {}) : issued('invite', body.username);
     const enrollmentRevoke = /^\/admin\/enrollments\/([^/]+)\/revoke$/.exec(path);
-    if (enrollmentRevoke !== null) { state.enrollments = state.enrollments.filter(entry => entry.id !== decodeURIComponent(enrollmentRevoke[1])); return ok(); }
+    if (enrollmentRevoke !== null) {
+      const revoked = state.enrollments.find(entry => entry.id === decodeURIComponent(enrollmentRevoke[1]));
+      if (revoked === undefined) return failure(404, 'not-found', {});
+      state.enrollments = state.enrollments.filter(entry => entry !== revoked);
+      if (revoked.kind === 'reset') state.users.find(user => user.id === revoked.username).pendingEnrollment = null;
+      return ok();
+    }
     const admin = /^\/admin\/users\/([^/]+)\/([a-z]+)$/.exec(path);
     if (admin !== null) {
       const id = decodeURIComponent(admin[1]), target = state.users.find(user => user.id === id);
