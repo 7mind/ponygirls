@@ -67,6 +67,7 @@ const DATE_TIME_FORMAT = new Intl.DateTimeFormat('en', { month: 'short', day: 'n
 // Error texts shared by the views; `code` values come from describeFailure / the client's state machines.
 const UNAVAILABLE_TEXT = 'The account service is unavailable or returned an invalid response. Your credentials have not been rejected. Retry when the service is available.';
 const SESSION_TEXT = 'Your browser session is no longer authorized. Sign in again.';
+const HOLD_TEXT = 'A one-time secret or link is being created. Stay on this page until it is shown.';
 
 function waitText(retryAfter) {
   if (retryAfter === null) return 'later';
@@ -610,7 +611,8 @@ export function installAccountUI({ document, window, fetch }) {
       account: { phase: 'loading' }, profile: { phase: 'loading' }, policy: { phase: 'loading' }, admin: { phase: 'idle' },
       tokenView: { mode: 'idle', busy: false, formUi: null, secret: null, secretUi: null, highlight: null, showRevoked: false, filter: '', notice: null },
       usersView: { filter: 'all', query: '', mode: 'idle', formUi: null, link: null, linkUi: null, notice: null },
-      tokensUi: null, usersUi: null
+      tokensUi: null, usersUi: null,
+      producing: 0 // requests in flight whose answer is a shown-once secret or link; navigation waits for them
     };
     const stale = { outlet, owner };
     const dialog = spec => { const opened = openDialog(spec); dialogs.add(opened); opened.element.addEventListener('close', () => dialogs.delete(opened)); return opened; };
@@ -742,6 +744,15 @@ export function installAccountUI({ document, window, fetch }) {
       return { ok: false, text, error };
     }
     const reloadProfile = () => { self.profile = { phase: 'loading' }; loadProfile(); };
+    // Holds navigation while `work` may produce a shown-once value, so that the value lands in the visible section.
+    async function producing(work) {
+      self.producing++;
+      if (self.usersUi !== null) self.usersUi.renderAll();
+      try { return await work(); } finally {
+        self.producing--;
+        if (self.alive && self.usersUi !== null) self.usersUi.renderAll();
+      }
+    }
     const errorCode = outcome => (outcome.error === null ? null : outcome.error.code);
 
     // ── Profile ──────────────────────────────────────────────────────────────────────────────
@@ -1006,7 +1017,8 @@ export function installAccountUI({ document, window, fetch }) {
           showError(text) { error.replaceChildren(); error.hidden = text === null; if (text !== null) error.append(notice('danger', 'alert', null, text)); }
         };
       }
-      async function mint(name, scopes) {
+      function mint(name, scopes) { return producing(() => mintHeld(name, scopes)); }
+      async function mintHeld(name, scopes) {
         const form = view.formUi;
         view.busy = true; setBusy(form.node, true); form.showError(null);
         const intent = { name, known: false, refreshed: false };
@@ -1134,6 +1146,8 @@ export function installAccountUI({ document, window, fetch }) {
       const users = () => (self.admin.phase === 'ready' ? self.admin.data.users : []);
       const enrollments = () => (self.admin.phase === 'ready' ? self.admin.data.enrollments : []);
       const nameOf = user => user.login ?? user.id;
+      // A shown-once link must be acknowledged before another one can replace it.
+      const linkActionsAllowed = () => view.mode === 'idle' && self.producing === 0;
       const matches = { all: () => true, pending: user => user.status === 'pending', disabled: user => user.status === 'disabled', admins: user => user.admin };
       function renderSegmented() {
         const count = key => (key === 'all' ? rows().length : users().filter(matches[key]).length);
@@ -1155,7 +1169,7 @@ export function installAccountUI({ document, window, fetch }) {
         if (!['ready', 'loading', 'idle'].includes(self.admin.phase)) nodes.push(notice('danger', 'alert', 'Users could not be loaded', self.admin.phase === 'unauthorized' ? SESSION_TEXT : UNAVAILABLE_TEXT,
           h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { self.admin = { phase: 'idle' }; renderAll(); void loadAdmin(); } }, 'Retry'))));
         slot.replaceChildren(...nodes); slot.hidden = nodes.length === 0;
-        if (enroll !== null) enroll.disabled = view.mode !== 'idle';
+        if (enroll !== null) enroll.disabled = !linkActionsAllowed();
       }
       function rows() {
         const list = users().map(user => ({ kind: 'user', id: user.id, name: nameOf(user), user }));
@@ -1216,9 +1230,9 @@ export function installAccountUI({ document, window, fetch }) {
         if (user.source === 'declarative') return h('span', { class: 'xs muted', title: 'Managed in server configuration' }, 'read-only');
         if (user.status === 'disabled') return h('button', { class: 'btn btn-sm', type: 'button', 'aria-label': `Enable ${nameOf(user)}`, onclick: () => confirmEnabled(user, true) }, 'Enable');
         const items = [];
-        if (profile.manage.reset) items.push(['key', 'Reset credentials…', () => confirmReset(user), false]);
-        items.push(['shield', user.admin ? 'Revoke admin…' : 'Grant admin…', () => confirmAdmin(user), false]);
-        items.push(['x-circle', 'Disable account…', () => confirmEnabled(user, false), true]);
+        if (profile.manage.reset) items.push(['key', 'Reset credentials…', () => confirmReset(user), false, !linkActionsAllowed()]);
+        items.push(['shield', user.admin ? 'Revoke admin…' : 'Grant admin…', () => confirmAdmin(user), false, false]);
+        items.push(['x-circle', 'Disable account…', () => confirmEnabled(user, false), true, false]);
         return rowMenu(`Actions for ${nameOf(user)}`, items);
       }
       function rowMenu(label, items) {
@@ -1227,15 +1241,15 @@ export function installAccountUI({ document, window, fetch }) {
         const outside = event => { if (!menu.contains(event.target) && !button.contains(event.target)) close(); };
         const keys = event => { if (event.key === 'Escape') { event.stopPropagation(); close(); button.focus(); } };
         function close() { menu.hidden = true; button.setAttribute('aria-expanded', 'false'); document.removeEventListener('click', outside, true); menu.removeEventListener('keydown', keys); }
-        items.forEach(([iconName, text, run, danger], index) => {
+        items.forEach(([iconName, text, run, danger, disabled], index) => {
           if (danger && index > 0) menu.append(h('div', { class: 'menu-sep', role: 'separator' }));
-          menu.append(h('button', { class: danger ? 'menu-item is-danger' : 'menu-item', role: 'menuitem', type: 'button', onclick: () => { close(); run(); } }, icon(iconName), text));
+          menu.append(h('button', { class: danger ? 'menu-item is-danger' : 'menu-item', role: 'menuitem', type: 'button', disabled, title: disabled ? 'Confirm the link shown above first' : null, onclick: () => { close(); run(); } }, icon(iconName), text));
         });
         button.addEventListener('click', () => {
           if (!menu.hidden) { close(); return; }
           menu.hidden = false; button.setAttribute('aria-expanded', 'true');
           document.addEventListener('click', outside, true); menu.addEventListener('keydown', keys);
-          menu.querySelector('button').focus();
+          menu.querySelector('button:not(:disabled)').focus();
         });
         return h('div', { class: 'anchor' }, button, menu);
       }
@@ -1283,7 +1297,7 @@ export function installAccountUI({ document, window, fetch }) {
         dialog({ title: `Reset credentials of “${name}”?`, confirm: 'Create reset link', danger: false, cancel: 'Cancel', fields: [PROOF_FIELD], extra: [],
           body: [h('p', {}, `You get a one-time link that lets ${name} choose a new password and set up a new authenticator. The current credentials keep working until the link is used. API tokens, e-mail and role are kept.`)],
           run: async values => {
-            const outcome = await act('reset-user', user.id, { currentPassword: values.currentPassword }, PROOF_REJECTED_TEXT);
+            const outcome = await producing(() => act('reset-user', user.id, { currentPassword: values.currentPassword }, PROOF_REJECTED_TEXT));
             if (!outcome.ok) return outcome.text;
             showLink('reset', name, outcome.result); void loadAdmin();
             return null;
@@ -1303,13 +1317,13 @@ export function installAccountUI({ document, window, fetch }) {
           h('div', { class: 'card-head' }, h('h2', { id: headId }, 'Enroll a user'), h('span', { class: 'xs muted' }, 'creates a one-time invitation link')),
           h('div', { class: 'card-body account-form' }, username.node, status,
             h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create invitation link'),
-              h('button', { class: 'btn', type: 'button', onclick: () => { view.mode = 'idle'; view.formUi = null; renderSlot(); } }, 'Cancel'))));
+              h('button', { class: 'btn', type: 'button', onclick: () => { view.mode = 'idle'; view.formUi = null; renderAll(); } }, 'Cancel'))));
         form.addEventListener('submit', async event => {
           event.preventDefault();
           const value = username.input.value.trim();
           if (value.length === 0) { username.setError('Enter the username for the new account.'); return; }
           setBusy(form, true); status.replaceChildren(); username.setError(null);
-          const outcome = await act('issue-invitation', null, { username: value }, null);
+          const outcome = await producing(() => act('issue-invitation', null, { username: value }, null));
           if (!alive()) return;
           setBusy(form, false);
           if (outcome.ok) { showLink('invite', value, outcome.result); void loadAdmin(); return; }
@@ -1318,9 +1332,10 @@ export function installAccountUI({ document, window, fetch }) {
           else if (code === 'invalid') username.setError('Use 3–32 lowercase letters, digits, “-” or “_”, starting with a letter.');
           else if (outcome.text !== null) status.append(notice('danger', 'alert', null, outcome.text));
         });
-        view.mode = 'form'; view.formUi = { node: form }; renderSlot(); username.input.focus();
+        view.mode = 'form'; view.formUi = { node: form }; renderAll(); username.input.focus();
       }
       function showLink(kind, name, result) {
+        if (view.mode === 'link') throw new Error('A shown-once link would replace an unacknowledged one');
         const link = { kind, name, url: enrollmentLink(window.location.origin, result.code), expiresAt: result.enrollment.expiresAt };
         view.mode = 'link'; view.formUi = null; view.link = link; view.linkUi = linkPanel(link);
         if (self.usersUi !== null) self.usersUi.renderAll();
@@ -1386,6 +1401,7 @@ export function installAccountUI({ document, window, fetch }) {
     loadAccount(); loadProfile(); loadPolicy();
     return {
       outlet, owner, open, guarded, askLeave, revalidate,
+      holding: () => self.producing > 0,
       hash: () => self.hash,
       dispose() {
         self.alive = false; controller.abort();
@@ -1450,24 +1466,24 @@ export function installAccountUI({ document, window, fetch }) {
     if (area === null) area = createArea(outlet, owner);
     area.open(SECTIONS.includes(name) ? name : DEFAULT_SECTION);
   }
+  // Leaving the account section while a shown-once value is pending waits; while one is shown, asks.
+  function heldBack(target) {
+    if (area === null || display === null || target === area.hash()) return false;
+    if (area.holding()) { toast(HOLD_TEXT); return true; }
+    if (area.guarded()) { area.askLeave(() => navigate(target)); return true; }
+    return false;
+  }
   function onHashChange() {
-    if (area !== null && display !== null && area.guarded() && window.location.hash !== area.hash()) {
-      const target = window.location.hash;
-      window.history.replaceState(null, '', area.hash());
-      area.askLeave(() => navigate(target));
-      return;
-    }
+    const target = window.location.hash;
+    if (area !== null && display !== null && target !== area.hash() && (area.holding() || area.guarded())) window.history.replaceState(null, '', area.hash());
+    if (heldBack(target)) return;
     route();
   }
   function onClick(event) {
     if (!(event.target instanceof window.Element)) return;
     // In-app links ask before they navigate, so that keeping the panel leaves no extra history entry.
     const link = event.target.closest('a[href^="#"]');
-    if (link !== null && area !== null && display !== null && area.guarded() && link.getAttribute('href') !== area.hash()) {
-      event.preventDefault();
-      area.askLeave(() => navigate(link.getAttribute('href')));
-      return;
-    }
+    if (link !== null && heldBack(link.getAttribute('href'))) { event.preventDefault(); return; }
     const trigger = event.target.closest('[data-account-settings]');
     if (trigger === null || trigger.disabled) return;
     event.preventDefault();
@@ -1481,7 +1497,7 @@ export function installAccountUI({ document, window, fetch }) {
   }
   function onInvalidate() { teardownArea(); route(); }
   function onFocus() { if (area !== null && display !== null) void area.revalidate(); }
-  function onBeforeUnload(event) { if (area !== null && area.guarded()) { event.preventDefault(); event.returnValue = ''; } }
+  function onBeforeUnload(event) { if (area !== null && (area.guarded() || area.holding())) { event.preventDefault(); event.returnValue = ''; } }
   const observer = new window.MutationObserver(() => route());
   observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-account-user-id'] });
   document.addEventListener('click', onClick); document.addEventListener('submit', onSubmit); document.addEventListener('account:invalidate', onInvalidate);

@@ -44,7 +44,11 @@ its own. Both files and `account-client.js` are served next to each other
 A token secret, an invitation link and a reset link are shown once in a panel
 that is not dismissed by Escape, window focus changes, section changes or Back:
 in-app navigation asks first ("Hide the secret for good?"), closing the tab uses
-`beforeunload`. "I have saved it" is enabled after Copy or Reveal. Window focus
+`beforeunload`. "I have saved it" is enabled after Copy or Reveal. While a
+request that produces such a value is in flight, leaving the section is held back
+(a toast explains), so the value always appears in the visible section; while a
+link is shown, further link-producing actions (Enroll user, Reset credentials)
+are disabled until it is acknowledged. Window focus
 re-reads the account silently and updates only the token rows.
 
 ## Token creation recovery

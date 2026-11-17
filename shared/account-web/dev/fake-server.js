@@ -53,7 +53,7 @@ export function baseFixture(app) {
       { id: 'enrollment-0002', username: 'ivan', kind: 'reset', createdBy: 'alice', createdAt: iso(-19 * HOUR_MS), expiresAt: iso(5 * HOUR_MS) }
     ],
     // Behaviour switches used by scenarios: login 'ok' | 'totp' | 'pending' | 'rejected' | 'rate-limited';
-    // recover 'ok' | 'rejected' | 'weak' | 'rate-limited'; account 'ok' | 'loading' | 'error'; mint 'ok' | 'lost'.
+    // recover 'ok' | 'rejected' | 'weak' | 'rate-limited'; account 'ok' | 'loading' | 'error'; mint 'ok' | 'lost' | 'held'.
     login: 'ok', recover: 'ok', account: 'ok', mint: 'ok',
     enrollment: { code: FAKE_ENROLLMENT_CODE, username: 'carol', kind: 'invite', expiresAt: iso(23 * HOUR_MS) },
     nextToken: 31
@@ -124,6 +124,8 @@ export function createFakeAccountServer(fixture, onCall) {
     if (method !== 'POST') return failure(404, 'not-found', {});
     if (!actorOk(call)) return failure(409, 'conflict', {});
     if (path === '/tokens') {
+      // 'held': the reply waits until the test calls window.__accountFake.state.release().
+      if (state.mint === 'held') return new Promise(resolve => { state.release = () => { state.mint = 'ok'; resolve(handle(call)); }; });
       if (state.mint === 'lost') { state.tokens.push({ id: tokenId(state.nextToken++), name: body.name, source: 'issued', createdAt: iso(0), revoked: false, scopes: body.scopes }); throw new TypeError('Failed to fetch'); }
       const token = { id: tokenId(state.nextToken++), name: body.name, source: 'issued', createdAt: iso(0), revoked: false, scopes: body.scopes };
       state.tokens.push(token);

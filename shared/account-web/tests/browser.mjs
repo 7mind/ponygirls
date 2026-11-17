@@ -126,6 +126,23 @@ try {
     assert.equal((await storageText(page)).includes(FAKE_TOKEN_SECRET), false);
   });
 
+  await run('navigation waits while a secret is being created, so the secret lands in the visible section', async ({ page, calls }) => {
+    await page.goto(`${server.origin}/?scenario=settings-tokens-held&steps=0#/archive`);
+    await page.locator('[data-account-settings]').click();
+    await page.getByRole('link', { name: /^Access tokens/ }).click();
+    await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
+    await mint(page, 'laptop-cli');
+    await page.waitForFunction(() => window.__accountFake.calls.some(call => call.path === '/tokens'));
+    await page.getByRole('link', { name: 'Profile' }).click();
+    await page.getByText('A one-time secret or link is being created').first().waitFor();
+    await page.evaluate(() => history.back());
+    assert.equal(await page.evaluate(() => location.hash), '#account/tokens');
+    await page.evaluate(() => window.__accountFake.state.release());
+    await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'visible' });
+    assert.equal(await page.getByRole('heading', { name: 'Access tokens' }).isVisible(), true);
+    assert.equal(callsTo(calls, '/tokens').length, 1);
+  });
+
   await run('uncertain creation warns in the form position and locks creation until the list is refreshed', async ({ page, calls, open }) => {
     await open('settings-tokens-uncertain');
     await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
@@ -180,6 +197,23 @@ try {
     await prompt.getByRole('button', { name: 'Grant admin' }).click();
     await prompt.waitFor({ state: 'detached' });
     assert.deepEqual(callsTo(calls, '/admin/users/erin/admin').map(call => call.body), [{ admin: true, currentPassword: 'not the password' }, { admin: true, currentPassword: FAKE_PASSWORD }]);
+  });
+
+  await run('an unacknowledged reset link blocks further link-producing actions', async ({ page, calls, open }) => {
+    await open('users-default');
+    await button(page, 'Actions for erin').click();
+    await page.getByRole('menuitem', { name: 'Reset credentials…' }).click();
+    const prompt = dialog(page, 'Reset credentials of “erin”?');
+    await prompt.getByLabel('Your current password').fill(FAKE_PASSWORD);
+    await prompt.getByRole('button', { name: 'Create reset link' }).click();
+    const panel = page.locator('[data-account-link]');
+    await panel.getByText('Credential reset link for “erin”').waitFor();
+    assert.equal(await button(page, 'Enroll user').isDisabled(), true);
+    await button(page, 'Actions for mallory').click();
+    assert.equal(await page.getByRole('menuitem', { name: 'Reset credentials…' }).isDisabled(), true);
+    await page.keyboard.press('Escape');
+    await panel.getByText('Credential reset link for “erin”').waitFor();
+    assert.equal(callsTo(calls, '/admin/users/erin/reset').length + callsTo(calls, '/admin/users/mallory/reset').length, 1);
   });
 
   await run('without the new endpoints only login and access tokens remain', async ({ page, calls, open }) => {
