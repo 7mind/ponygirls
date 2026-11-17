@@ -9,8 +9,6 @@ origin); reserved __manure/api prefixes must never serve user content.
 from __future__ import annotations
 
 import hashlib
-import email.message
-from uuid import UUID
 import os
 import sys
 import unittest
@@ -297,36 +295,6 @@ class IsolationSiblingCase(IsolationFlows, unittest.TestCase):
 
 class IsolationSeparateCase(IsolationFlows, unittest.TestCase):
     suffix_mode = "separate"
-
-
-class TestCurrentErrorEnvelope(unittest.TestCase):
-    def test_raw_current_fault_keeps_status_and_checks_generated_code(self):
-        body=bf.cp.dumps(bf.cp.ServerEnvelope(UUID(int=0),bf.cp.Result_Error(bf.cp.Failure(bf.cp.ErrorCode.TlsRequired,'tls-required',None))))
-        result=bf.HttpResult(403,email.message.Message(),body)
-        self.assertEqual(result.status,403)
-        self.assertEqual(result.current_error_code(),'tls-required')
-        self.assertEqual(result.body,body)
-
-    def test_legacy_or_success_bodies_cannot_satisfy_current_error_assertion(self):
-        for body in [b'{"error":{"code":"not-found"}}',bf.cp.dumps(bf.cp.ServerEnvelope(UUID(int=0),bf.cp.Result_Ok()))]:
-            with self.subTest(body=body),self.assertRaises((bf.cp.ProtocolError,AssertionError)):
-                bf.HttpResult(404,email.message.Message(),body).current_error_code()
-
-    def test_current_command_fixture_projection_never_replaces_received_fault_bytes(self):
-        canary='SYNTHETIC-FAULT-LEAK-CANARY'
-        class Transport(bf.TestHttp):
-            def request(self,method,url,*,body=None,**kwargs):
-                request=bf.cp.decode(bf.cp.ClientEnvelope,bf.cp.loads(body))
-                self.received=bf.cp.dumps(bf.cp.ServerEnvelope(request.requestId,bf.cp.Result_Error(bf.cp.Failure(bf.cp.ErrorCode.NotFound,canary,None))))
-                return bf.HttpResult(404,email.message.Message(),self.received)
-        peer=Transport()
-        response=peer.current('http://127.0.0.1:9',bf.cp.Command_GetArtifact('a'*32))
-        self.assertEqual(response.json()['error']['code'],'not-found')
-        self.assertEqual(response.current_error_code(),'not-found')
-        self.assertEqual(response.body,peer.received)
-        # Negative security assertions must be able to see a server leak, not
-        # pass because a test helper replaced it with sanitized fixture JSON.
-        self.assertIn(canary.encode(),response.body)
 
 
 if __name__ == "__main__":

@@ -1,2 +1,0 @@
-SKIP owned device node: mknod privilege unavailable
-PASS NativeSelfTest assertions=1257
