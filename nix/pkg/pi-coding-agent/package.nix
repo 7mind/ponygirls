@@ -87,6 +87,11 @@ buildNpmPackage (finalAttrs: {
     # excluding its unrelated endpoint-affinity changes. Drop when released upstream.
     ./patches/compaction-transport-setting.patch
     ./patches/compaction-codex-sse-recovery.patch
+    # Widgets of one placement were shown in registration order, so border
+    # badges changed places whenever one was republished and started in the
+    # order their extensions happened to initialise. setWidget takes `order`;
+    # equal orders keep first-set order across replacement.
+    ./patches/widget-order.patch
   ];
 
   npmDepsHash = "sha256-uHehffbEB2uU9U9uSpfWojzxvQyqeicbh/esCwk4neQ=";
