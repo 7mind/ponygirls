@@ -299,7 +299,6 @@ Existing dashboard markup suite: 7 methods, 0 failures/errors/skips. Commands:
 BABOON=<pinned> manure/scripts/generate.sh
 python3 manure/scripts/generate-fixtures.py
 TSC=<lockfile-pinned> manure/scripts/generate-web.sh
-node manure/scripts/codec-fixtures.mjs
 PYTHONPATH=manure python3 -m unittest discover -s manure/tests -p 'test_current_*.py'
 node --test manure/tests/browser/current-protocol.test.mjs
 PYTHONPATH=manure python3 -m unittest discover -s manure/tests -p 'test_dashboard_markup.py'

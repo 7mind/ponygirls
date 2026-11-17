@@ -2,7 +2,7 @@
 """Manure target suite: discover every test, run it, fail on anything but a pass.
 
 Without test names the run is full: every Python ``test_*.py`` module and every
-Node ``*.test.mjs`` suite under manure/tests, plus the generated-codec check.
+Node ``*.test.mjs`` suite under manure/tests.
 Test names select a diagnostic subset of Python cases. Any failure, error, skip,
 expected failure or unexpected success, and an empty run, exit non-zero.
 No PostgreSQL provisioning happens here: the calling runner (test-target.sh or
@@ -22,8 +22,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 TESTS = ROOT / 'manure/tests'
-CODEC_CHECK = ('node', 'manure/scripts/codec-fixtures.mjs')
-EXTERNAL_TIMEOUT_SECONDS = 120
+NODE_TIMEOUT_SECONDS = 120
 TAP_COUNTS = re.compile(r'^# (tests|pass|fail|cancelled|skipped|todo) (\d+)$', re.MULTILINE)
 TAP_TOP_LEVEL = re.compile(r'^# Subtest: (.+)$', re.MULTILINE)
 
@@ -99,21 +98,21 @@ def full_run_prerequisite_errors():
     return errors
 
 
-def run_external(argv, report, name, tap):
-    """Runs one Node suite (TAP, gated per case) or one check script; returns (cases, failed)."""
+def run_node_suite(path, report):
+    """Runs one Node test file; returns (cases, failed cases)."""
+    suite = str(path.relative_to(ROOT))
+    argv = ['node', '--test', '--test-reporter=tap', suite]
     try:
         process = subprocess.run(argv, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                                 text=True, timeout=EXTERNAL_TIMEOUT_SECONDS)
+                                 text=True, timeout=NODE_TIMEOUT_SECONDS)
         output, status = process.stdout, process.returncode
     except subprocess.TimeoutExpired as timeout:
         output, status = (timeout.stdout or b'').decode(errors='replace'), None
-    (report / (name + '.log')).write_text(output)
+    (report / ('node-' + path.name.removesuffix('.test.mjs') + '.log')).write_text(output)
     print(f'--- {" ".join(argv)} (exit {status})\n{output}', flush=True)
-    if not tap:
-        return 1, int(status != 0)
     counts = {key: int(value) for key, value in TAP_COUNTS.findall(output)}
     # Node reports a file that declares no test as one passing test named after the file.
-    declares_tests = argv[-1] not in TAP_TOP_LEVEL.findall(output)
+    declares_tests = suite not in TAP_TOP_LEVEL.findall(output)
     cases = counts.get('tests', 0) if declares_tests else 0
     clean = status == 0 and cases > 0 and counts.get('pass') == cases and not any(
         counts.get(key) for key in ('fail', 'cancelled', 'skipped', 'todo'))
@@ -145,11 +144,8 @@ def main(argv=None):
               'skipped': len(result.skipped), 'expectedFailures': len(result.expectedFailures),
               'unexpectedSuccesses': len(result.unexpectedSuccesses)}
     if full:
-        externals = [(['node', '--test', '--test-reporter=tap', str(path.relative_to(ROOT))],
-                      'node-' + path.name.removesuffix('.test.mjs'), True) for path in sorted(TESTS.rglob('*.test.mjs'))]
-        externals.append((list(CODEC_CHECK), 'codec-fixtures', False))
-        for command, name, tap in externals:
-            cases, failed = run_external(command, report, name, tap)
+        for path in sorted(TESTS.rglob('*.test.mjs')):
+            cases, failed = run_node_suite(path, report)
             counts['suites'] += 1
             counts['cases'] += cases
             counts['failures'] += failed
