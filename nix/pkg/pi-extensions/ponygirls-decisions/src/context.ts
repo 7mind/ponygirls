@@ -1,6 +1,6 @@
 /**
- * The per-turn `decisions-context` message, collapsed to one line in the
- * transcript (ctrl+o shows pi's default full rendering). Only the displayed
+ * Historical title-summary `decisions-context` messages, collapsed to one line
+ * in the transcript (ctrl+o shows pi's default full rendering). Only the displayed
  * form changes; the message content sent to the model is untouched.
  */
 

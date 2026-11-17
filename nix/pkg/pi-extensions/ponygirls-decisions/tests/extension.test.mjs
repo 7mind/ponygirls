@@ -68,9 +68,104 @@ function fixture(t) {
     setActive: (value) => { active = value; },
     active: () => active, tool: () => tool, completions: (prefix) => commands.get("decisions").getArgumentCompletions(prefix),
     setUnavailable: (value) => { unavailable = value; }, failProject: () => { projectFailure = true; },
-    call: (params, id) => tool.execute(id, params, undefined, () => {}, ctx),
+    call: async (params, id) => {
+      const result = await tool.execute(id, params, undefined, () => {}, ctx);
+      entries.push({ type: "message", message: { role: "toolResult", toolName: "decisions", content: result.content, details: result.details, isError: result.isError } });
+      return result;
+    },
     command: (text) => commands.get("decisions").handler(text, ctx), handlers };
 }
+
+test("index insertion is durable, bounded, title-free and unchanged revisions do not repeat", async (t) => {
+  const f = fixture(t); f.start();
+  for (let i = 0; i < 7; i++) await f.call({ action: "ask", question: `PRIVATE TITLE ${i}` }, `index-${i}`);
+  const first = f.handlers.get("before_agent_start")({}, f.ctx).message;
+  assert.doesNotMatch(first.content, /PRIVATE TITLE|\[this session\]/);
+  assert.match(first.content, /Q1, Q2, Q3, Q4, Q5 \(\+2 more\)/);
+  f.entries.push({ type: "custom_message", ...first });
+  const next = f.handlers.get("before_agent_start")({}, f.ctx).message;
+  assert.match(next.content, /Q6/); assert.match(next.content, /Q7/);
+  assert.doesNotMatch(next.content, /Q1\b/);
+  f.entries.push({ type: "custom_message", ...next });
+  assert.equal(f.handlers.get("before_agent_start")({}, f.ctx), undefined);
+  f.ctx.sessionManager.getBranch = () => [];
+  f.start();
+  assert.equal(f.handlers.get("before_agent_start")({}, f.ctx), undefined, "all-session receipts survive branch navigation and reload");
+});
+
+test("full-notice receipts outside the active branch suppress re-notification", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "ask");
+  await f.command("answer Q1 approved");
+  f.entries.push({ type: "custom_message", ...f.messages[0].message });
+  f.ctx.sessionManager.getBranch = () => [];
+  f.start(); f.tick();
+  assert.equal(f.messages.length, 1);
+});
+
+test("persisted full get suppresses notifications but list does not consume an answer receipt", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "[this session] is literal question text" }, "ask");
+  const external = new SqliteDecisionStore(f.path); t.after(() => external.close());
+  external.resolve("project-a", "Q1", 1, "answered", "EXACT answer");
+  await f.call({ action: "list", status: "all" }, "list");
+  const read = await f.call({ action: "get", id: "Q1" }, "get");
+  assert.equal(read.details.question, "[this session] is literal question text", "stored question text is never silently stripped");
+  f.tick(); f.start(); f.tick();
+  assert.equal(f.messages.length, 0);
+  external.resolve("project-a", "Q1", 2, "answered", "REVISED answer");
+  await f.call({ action: "list", status: "all" }, "list-new"); f.tick();
+  assert.equal(f.messages.length, 1, "list summaries are not full delivery receipts");
+  assert.match(f.messages[0].message.content, /REVISED answer/);
+});
+
+test("inherited notices identify their origin separately and foreign IDs cannot suppress a current notice", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "ask");
+  await f.command("answer Q1 current project answer");
+  const original = { role: "custom", ...f.messages[0].message };
+  f.ctx.sessionManager.getSessionId = () => "fork"; f.start();
+  const inherited = f.handlers.get("context")({ messages: [original] }, f.ctx).messages;
+  const foreign = { ...original, details: { ...original.details, project: "another-project" } };
+  const projected = f.handlers.get("context")({ messages: [original, foreign] }, f.ctx).messages;
+  assert.deepEqual({ originCorrect: inherited[0].content.includes("Origin: other session"), answers: projected.filter(m => m.content.includes("current project answer")).length }, { originCorrect: true, answers: 1 });
+  assert.ok(projected.some(m => m.content.includes("verification is unavailable")));
+});
+
+test("null notification/index metadata fails closed instead of throwing and forwarding historical approval", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "ask");
+  await f.command("answer Q1 HISTORICAL_APPROVAL");
+  const original = { role: "custom", ...f.messages[0].message };
+  const malformed = { ...original, details: null };
+  const index = { role: "custom", customType: "decisions-context", details: null, content: "HISTORICAL_APPROVAL" };
+  f.setUnavailable(true);
+  const projected = f.handlers.get("context")({ messages: [original, malformed, index] }, f.ctx).messages;
+  assert.ok(projected.every(m => !m.content.includes("HISTORICAL_APPROVAL")));
+  assert.ok(projected.some(m => m.content.includes("verification is unavailable")));
+});
+
+test("automatic index projection is scoped to the project and recipient session", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Current" }, "ask");
+  const current = { role: "custom", ...f.handlers.get("before_agent_start")({}, f.ctx).message };
+  const foreign = { ...current, details: { ...current.details, project: "foreign-project" } };
+  const parent = { ...current, details: { ...current.details, recipientSessionId: "parent-session" } };
+  const input = [foreign, parent, current];
+  assert.deepEqual(f.handlers.get("context")({ messages: input }, f.ctx).messages, [current]);
+  assert.equal(input.length, 3, "raw inherited transcript is not mutated");
+});
+
+test("historical answer revisions do not replay identical current answers", async (t) => {
+  const f = fixture(t); f.start();
+  await f.call({ action: "ask", question: "Proceed?" }, "ask");
+  await f.command("answer Q1 OLD");
+  await f.command("answer Q1 NEW");
+  const messages = f.messages.map(({ message }) => ({ role: "custom", ...message }));
+  const projected = f.handlers.get("context")({ messages }, f.ctx).messages;
+  assert.equal(projected.filter((m) => m.content.includes("NEW")).length, 1);
+  assert.ok(projected.every((m) => !m.content.includes("OLD")));
+});
 
 test('trusted project and session controls preserve the manual inbox and inherited global preference', async t => {
   const f = fixture(t); f.ctx.isProjectTrusted = () => true; f.start();
@@ -188,9 +283,8 @@ test("agents can record chat answers and dismissals at the observed revision", a
   assert.equal(dismissed.details.revision, 2);
   assert.equal((await f.call({ action: "list" }, "pending")).details.total, 0);
   assert.equal(f.widgets.at(-1)[1], undefined);
-  assert.equal(f.messages.length, 2);
-  assert.match(f.messages[1].message.content, /not approval/i);
-  f.tick(); assert.equal(f.messages.length, 2);
+  assert.equal(f.messages.length, 0, "full tool responses are already the delivery");
+  f.tick(); assert.equal(f.messages.length, 0);
   f.start();
   assert.equal((await f.call({ action: "get", id: "Q1" }, "saved")).details.answer, answer);
 });
@@ -249,7 +343,8 @@ test("agent guidance requires explicit chat evidence and revision-checked record
   assert.match(guidance, /answer.*dismiss/);
   assert.match(guidance, /revision/);
   assert.match(guidance, /ambiguous/);
-  assert.match(f.handlers.get("before_agent_start")({}, f.ctx).message.content, /chat.*answer.*dismiss/);
+  assert.match(f.handlers.get("before_agent_start")({}, f.ctx).message.content, /Use decisions get/);
+  assert.match(tool.parameters.properties.question.description, /no question IDs, status, or session-origin labels/);
 });
 
 test("origin session is persisted and current-session markers follow session switches and resume", async (t) => {
@@ -263,15 +358,20 @@ test("origin session is persisted and current-session markers follow session swi
     const listed = (await f.call({ action: "list", status: "all" }, "list")).details.questions;
     assert.equal(listed[0].sessionId, "origin");
     assert.equal(listed[0].isCurrentSession, expected);
+    const beforeGet = f.handlers.get("before_agent_start")({}, f.ctx);
+    if (expected) assert.equal(beforeGet, undefined);
+    else {
+      assert.match(beforeGet.message.content, /Answered in other sessions: Q1/);
+      assert.doesNotMatch(beforeGet.message.content, /Origin question|\[this session\]/);
+    }
     const result = await f.call({ action: "get", id: "Q1" }, "get");
     assert.equal(result.details.sessionId, "origin");
     assert.equal(result.details.isCurrentSession, expected);
     assert.equal(JSON.parse(result.content[0].text).isCurrentSession, expected);
-    const content = f.handlers.get("before_agent_start")({}, f.ctx).message.content;
-    assert.match(content, expected ? /Q1 \[answered\] \[this session\] Origin question/ : /Q1 \[answered\] Origin question/);
-    if (!expected) assert.doesNotMatch(content, /\[this session\]/);
+    assert.equal(f.handlers.get("before_agent_start")({}, f.ctx), undefined, "the full get result now communicates this revision");
     await f.command("");
-    assert.match(f.notifications.at(-1).message, expected ? /Q1 \[answered\] \[this session\]/ : /Q1 \[answered\] Origin question/);
+    assert.match(f.notifications.at(-1).message, expected ? /Origin: current session/ : /Origin: other session/);
+    assert.doesNotMatch(f.notifications.at(-1).message, /\[this session\]/);
   };
   await assertSession("origin", true);
   await assertSession("other", false);

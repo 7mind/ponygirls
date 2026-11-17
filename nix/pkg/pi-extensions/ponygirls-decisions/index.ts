@@ -9,9 +9,9 @@ import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore
 import { DecisionsPane } from "./src/pane.ts";
 import { CONTEXT_TYPE, contextLine, summarizeContext } from "./src/context.ts";
 import { completeDecisionArguments } from "./src/complete.ts";
+import { decisionVersion, deliveryHistory, fullToolVersion, indexMessage, NOTICE_LIMIT, NOTICE_TYPE, receipt, versionKey } from "./src/delivery.ts";
 
 const POLL_MS = 1000;
-const NOTICE_TYPE = "decisions-answer";
 const STATUS_KEY = "decisions";
 const BADGE_GLYPH = "📥";
 const PAGE_SIZE = 10;
@@ -27,20 +27,34 @@ function plain(text: string): string {
   return text.replace(/[\x00-\x08\x0b-\x1f\x7f-\x9f]/g, "");
 }
 
+interface MessageMetadata {
+  project?: unknown;
+  recipientSessionId?: unknown;
+  id?: unknown;
+  revision?: unknown;
+  version?: unknown;
+  kind?: unknown;
+  records?: unknown;
+}
+
+function messageMetadata(value: unknown): MessageMetadata | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value) ? value as MessageMetadata : null;
+}
+
 function questionId(text: string): string {
   if (!/^q[1-9]\d*$/i.test(text)) throw new Error("Expected a question ID such as Q1");
   return text.toUpperCase();
 }
 
 function summary(q: Decision, sessionId: string): string {
-  return `${q.id} [${q.status}]${q.sessionId === sessionId ? " [this session]" : ""} ${q.question}`;
+  return `${q.id} [${q.status}] ${q.question}\nOrigin: ${q.sessionId === sessionId ? "current session" : "other session"}`;
 }
 
-function notice(q: Decision): string {
+function notice(q: Decision, sessionId: string): string {
   return [
-    `Decision ${q.id} in ${q.project} (revision ${q.revision}, ${q.status})`,
-    `Question: ${q.question}`,
-    q.status === "answered" ? `User answer: ${q.answer}` : q.status === "dismissed"
+    `Decision update\nProject: ${q.project}\nID: ${q.id}\nRevision: ${q.revision}\nStatus: ${q.status}\nOrigin: ${q.sessionId === sessionId ? "current session" : "other session"}`,
+    `Question:\n${q.question}`,
+    q.status === "answered" ? `User answer:\n${q.answer}` : q.status === "dismissed"
       ? "This question was dismissed without an answer. This is not approval."
       : "The user reopened this question. Any previous answer has been withdrawn; it is pending again.",
     "Apply this only to the question's scope. Do not treat an answer as broader authorization.",
@@ -144,7 +158,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     b.failure = message;
   };
 
-  const refresh = (b: Binding): void => {
+  const refreshState = (b: Binding, notifyAnswers: boolean): void => {
     if (binding !== b) return;
     try {
       if (!refreshSettings(b.ctx, false)) { b.repaint?.(); return; }
@@ -189,16 +203,19 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           b.badge = badge;
         }
       }
+      const history = deliveryHistory(b.ctx.sessionManager.getEntries(), b.project, b.sessionId);
+      for (const key of history.full) b.delivered.add(key);
+      let admitted = 0;
       for (const q of questions) {
-        if (q.sessionId !== b.sessionId || q.revision === 1) continue;
-        const key = `${q.id}:${q.revision}`;
+        if (!notifyAnswers || admitted >= NOTICE_LIMIT || q.sessionId !== b.sessionId || q.revision === 1) continue;
+        const key = versionKey(q);
         if (b.delivered.has(key)) continue;
         pi.enqueueMessage({
-          customType: NOTICE_TYPE, content: notice(q), display: true,
-          details: { project: b.project, id: q.id, revision: q.revision },
+          customType: NOTICE_TYPE, content: notice(q, b.sessionId), display: true,
+          details: { ...receipt(b.project, b.sessionId, "full", [q]), id: q.id, revision: q.revision, status: q.status },
         }, { triggerTurn: true, deliverAs: "steer" });
-        // Admission is remembered in memory; persisted messages are the receipt on reload.
         b.delivered.add(key);
+        admitted++;
       }
       b.repaint?.();
       if (b.failure !== null) b.ctx.ui.notify("Decisions storage is available again.", "info");
@@ -207,6 +224,8 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       report(b, error);
     }
   };
+
+  const refresh = (b: Binding): void => refreshState(b, true);
 
   const current = (ctx: ExtensionContext): Binding | null =>
     binding !== null && binding.sessionId === ctx.sessionManager.getSessionId() && binding.ctx.cwd === ctx.cwd ? binding : null;
@@ -243,14 +262,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     refreshSettings(ctx, true);
     try {
       const project = deps.projectFor(ctx.cwd);
-      const delivered = new Set<string>();
-      for (const entry of ctx.sessionManager.getBranch()) {
-        if (entry.type !== "custom_message" || entry.customType !== NOTICE_TYPE) continue;
-        const data = entry.details as { project?: unknown; id?: unknown; revision?: unknown } | undefined;
-        if (data && data.project === project && typeof data.id === "string" && typeof data.revision === "number") {
-          delivered.add(`${data.id}:${data.revision}`);
-        }
-      }
+      const delivered = deliveryHistory(ctx.sessionManager.getEntries(), project, ctx.sessionManager.getSessionId()).full;
       const b: Binding = { ctx, project, sessionId: ctx.sessionManager.getSessionId(), store: null, delivered,
         stop: () => {}, repaint: null, pane: new CustomViewToggle(), badge: null, failure: null };
       binding = b;
@@ -284,14 +296,36 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     const b = current(ctx);
     const messages = enabled ? event.messages : event.messages.filter((message) =>
       message.role !== "custom" || (message.customType !== NOTICE_TYPE && message.customType !== CONTEXT_TYPE));
-    return { messages: messages.map((message) => {
-      if (message.role !== "custom" || message.customType !== NOTICE_TYPE) return message;
-      const data = message.details as { project?: unknown; id?: unknown } | undefined;
+    const lastNotice = new Map<string, number>();
+    const readVersions = new Set<string>();
+    for (const [index, message] of messages.entries()) {
+      if (message.role === "custom" && message.customType === NOTICE_TYPE) {
+        const data = messageMetadata(message.details);
+        if (b !== null && data !== null && data.project === b.project && typeof data.id === "string") lastNotice.set(data.id, index);
+      }
+      if (b !== null && message.role === "toolResult") {
+        const read = fullToolVersion(message, b.project);
+        if (read !== null) readVersions.add(versionKey(read));
+      }
+    }
+    return { messages: messages.flatMap((message, index) => {
+      if (message.role === "custom" && message.customType === CONTEXT_TYPE) {
+        const data = messageMetadata(message.details);
+        if (b === null || data === null || data.version !== 1 || data.project !== b.project || data.recipientSessionId !== b.sessionId ||
+            (data.kind !== "snapshot" && data.kind !== "changes") || !Array.isArray(data.records) || data.records.some(record => decisionVersion(record) === null)) return [];
+      }
+      if (message.role !== "custom" || message.customType !== NOTICE_TYPE) return [message];
+      const data = messageMetadata(message.details);
       try {
-        if (b === null || !data || data.project !== b.project || typeof data.id !== "string") throw new Error("Unbound decision notification");
-        return { ...message, content: notice(storeFor(b).get(b.project, data.id)) };
+        if (b === null || data === null || data.project !== b.project || typeof data.id !== "string") throw new Error("Unbound decision notification");
+        if (lastNotice.get(data.id) !== index) return [];
+        const q = storeFor(b).get(b.project, data.id);
+        if (readVersions.has(versionKey(q))) return [];
+        const content = data.revision === q.revision ? notice(q, b.sessionId) :
+          `Decision ${q.id}: historical revision ${String(data.revision)} is superseded. Current status: ${q.status} (revision ${q.revision}). ${q.status === "pending" ? "Any previous answer has been withdrawn; it is pending again." : "Do not act on the historical answer."} Use decisions get for current details.`;
+        return [{ ...message, content }];
       } catch {
-        return { ...message, content: "Decision verification is unavailable. Historical answers in this notification are not current evidence. Do not act on them until decisions get succeeds." };
+        return [{ ...message, content: "Decision verification is unavailable. Historical answers in this notification are not current evidence. Do not act on them until decisions get succeeds." }];
       }
     }) };
   });
@@ -301,13 +335,12 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     const b = active(ctx);
     const questions = storeFor(b).list(b.project);
     if (questions.length === 0) return;
-    const pending = questions.filter((q) => q.status === "pending");
-    const recent = questions.filter((q) => q.status !== "pending").slice(-PAGE_SIZE);
+    const history = deliveryHistory(ctx.sessionManager.getEntries(), b.project, b.sessionId);
+    const update = indexMessage(questions, b.sessionId, history);
+    if (update === null) return;
     return { message: {
-      customType: CONTEXT_TYPE, display: true,
-      content: `Project decisions: ${pending.length} unanswered. Pending questions are not permission to proceed on their dependent work. Continue independent work; never poll in a loop waiting for the user. Use decisions list/get to read current answers before acting. If the user responds in chat, record their explicit answer or dismissal with decisions answer/dismiss using the current revision; clarify ambiguous replies rather than guessing.\n` +
-        [...pending.slice(0, PAGE_SIZE), ...recent].map((q) => summary({ ...q, question: q.question.slice(0, 160) }, b.sessionId)).join("\n"),
-      details: { project: b.project },
+      customType: CONTEXT_TYPE, display: true, content: update.content,
+      details: receipt(b.project, b.sessionId, update.kind, update.records),
     } };
   });
 
@@ -321,7 +354,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     annotations: { readOnlyHint: false, destructiveHint: true, openWorldHint: false },
     parameters: Type.Object({
       action: Type.Union([Type.Literal("ask"), Type.Literal("list"), Type.Literal("get"), Type.Literal("answer"), Type.Literal("dismiss")]),
-      question: Type.Optional(Type.String({ maxLength: 2000, description: "Focused question (ask)" })),
+      question: Type.Optional(Type.String({ maxLength: 2000, description: "Question text only (ask): no question IDs, status, or session-origin labels; the inbox assigns metadata separately" })),
       context: Type.Optional(Type.String({ maxLength: 12000, description: "Background, constraints and tradeoffs; Markdown supported" })),
       options: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 2000 }), { maxItems: 9, description: "Potential answers/solutions" })),
       recommendation: Type.Optional(Type.String({ maxLength: 4000, description: "Recommended solution and rationale" })),
@@ -342,14 +375,14 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           question: params.question, context: params.context ?? "", options: params.options ?? [],
           recommendation: params.recommendation ?? "", sessionId: b.sessionId, toolCallId,
         });
-        refresh(b);
+        refreshState(b, false);
         return { content: [{ type: "text", text: `${q.id} created (${q.status}). The user can answer via /decisions or chat; record explicit chat responses with answer/dismiss. Continue independent work; this is not an answer or approval.` }], details: q };
       }
       if (params.action === "get") {
         if (params.id === undefined) throw new Error("id is required for get");
         const decision = storeFor(b).get(b.project, questionId(params.id));
         const q = { ...decision, isCurrentSession: decision.sessionId === b.sessionId };
-        return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: q };
+        return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: { ...q, delivery: receipt(b.project, b.sessionId, "full", [q]) } };
       }
       if (params.action === "answer" || params.action === "dismiss") {
         if (params.id === undefined) throw new Error(`id is required for ${params.action}`);
@@ -358,9 +391,9 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
         if (params.action === "dismiss" && params.answer !== undefined) throw new Error("answer is only allowed for answer; dismissal records no answer");
         const decision = storeFor(b).resolve(b.project, questionId(params.id), params.revision,
           params.action === "answer" ? "answered" : "dismissed", params.answer === undefined ? null : params.answer);
-        refresh(b);
+        refreshState(b, false);
         const q = { ...decision, isCurrentSession: decision.sessionId === b.sessionId };
-        return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: q };
+        return { content: [{ type: "text", text: JSON.stringify(q, null, 2) }], details: { ...q, delivery: receipt(b.project, b.sessionId, "full", [q]) } };
       }
       const status = params.status ?? "pending";
       const offset = params.offset ?? 0;
@@ -384,7 +417,10 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
   pi.registerMessageRenderer(NOTICE_TYPE, (message) => new Text(plain(String(message.content)), 0, 0));
   pi.registerMessageRenderer(CONTEXT_TYPE, (message, options, theme) => {
     if (options.expanded || typeof message.content !== "string") return undefined;
-    const line = contextLine(summarizeContext(message.content));
+    const data = messageMetadata(message.details);
+    const line = data !== null && data.version === 1 && Array.isArray(data.records)
+      ? { lead: `? decisions · ${data.kind === "snapshot" ? "index" : "changes"}`, detail: ` · ${data.records.length} entries ▸ ctrl+o` }
+      : contextLine(summarizeContext(message.content));
     const box = new Box(options.outputPad, 0, (text) => theme.bg("customMessageBg", text));
     box.addChild(new Text(theme.fg("warning", line.lead) + theme.fg("muted", plain(line.detail)), 0, 0));
     return box;

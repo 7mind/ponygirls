@@ -20,10 +20,10 @@ const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2
 const hold = { type: "toolCall", id: "hold-1", name: "hold", arguments: {} };
 
 // `hold` blocks until released; `inputDelayMs` models an asynchronous input handler of another extension.
-async function fixture(t, replies, { dir = mkdtempSync(join(tmpdir(), "decisions-host-")), sessionFile, inputDelayMs = 0 } = {}) {
+async function fixture(t, replies, { dir = mkdtempSync(join(tmpdir(), "decisions-host-")), sessionFile, inputDelayMs = 0, compaction } = {}) {
   const previous = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = dir;
-  const settingsManager = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
+  const settingsManager = sdk.SettingsManager.inMemory({ compaction: compaction === undefined ? { enabled: false } : compaction, retry: { enabled: false } });
   const holds = [];
   const loader = new sdk.DefaultResourceLoader({ cwd: dir, agentDir: dir, settingsManager, additionalExtensionPaths: [extensionPath],
     noSkills: true, noThemes: true, noContextFiles: true, noPromptTemplates: true,
@@ -114,6 +114,48 @@ async function eventually(check, message) {
   assert.fail(message);
 }
 
+test("real Pi: index receipts survive unchanged prompts, abandoned branches, reload and compaction", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, ["one", "two", "branch", "summary", "after"], { compaction: { enabled: false, keepRecentTokens: 50 } });
+  const store = new SqliteDecisionStore(join(f.dir, "decisions", "questions.sqlite"));
+  store.ask(f.dir, { question: "PRIVATE OTHER TITLE", context: "", options: [], recommendation: "", sessionId: "other", toolCallId: "other" });
+  store.close();
+  const indexes = () => f.manager.getEntries().filter(e => e.type === "custom_message" && e.customType === "decisions-context");
+  await f.session.prompt("First " + "padding text ".repeat(1500));
+  assert.equal(indexes().length, 1);
+  assert.match(indexes()[0].content, /Unanswered in other sessions: Q1/);
+  assert.doesNotMatch(indexes()[0].content, /PRIVATE OTHER TITLE|\[this session\]/);
+  await f.session.prompt("Second " + "padding text ".repeat(1500));
+  assert.equal(indexes().length, 1);
+  const navigation = await f.session.navigateTree(indexes()[0].id, { summarize: false });
+  assert.equal(navigation.cancelled, false);
+  assert.equal(f.manager.getBranch().some(e => e.customType === "decisions-context"), false);
+  await f.session.reload();
+  await f.session.prompt("Branched " + "padding text ".repeat(1500));
+  assert.equal(indexes().length, 1, "an abandoned-branch receipt still belongs to the session");
+  await f.session.compact();
+  await f.session.reload();
+  await f.session.prompt("After compaction");
+  assert.equal(f.calls(), 5);
+  assert.equal(indexes().length, 1);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: changed external answers produce revision-only bounded deltas", { timeout: 15000 }, async (t) => {
+  const f = await fixture(t, ["initial", "changed", "unchanged"]);
+  const store = new SqliteDecisionStore(join(f.dir, "decisions", "questions.sqlite"));
+  const q = store.ask(f.dir, { question: "SECRET TITLE", context: "", options: [], recommendation: "", sessionId: "other", toolCallId: "q" });
+  await f.session.prompt("Initial inventory");
+  store.resolve(f.dir, q.id, 1, "answered", "SECRET ANSWER");
+  await f.session.prompt("Changed inventory");
+  await f.session.prompt("Unchanged inventory");
+  store.close();
+  const entries = f.manager.getEntries().filter(e => e.type === "custom_message" && e.customType === "decisions-context");
+  assert.equal(entries.length, 2);
+  assert.match(entries[1].content, /Q1: unanswered → answered \(revision 2/);
+  assert.doesNotMatch(entries.map(e => e.content).join("\n"), /SECRET/);
+  assert.deepEqual(f.errors, []);
+});
+
 test("real Pi: async ask returns, answer wakes idle agent, receipt survives reload", { timeout: 15000 }, async (t) => {
   const f = await fixture(t, [[ask], "Continuing independent work", "Answer received", "Resumed summary checked"]);
   await f.session.prompt("Ask which storage, then continue independent work");
@@ -138,7 +180,8 @@ test("real Pi: async ask returns, answer wakes idle agent, receipt survives relo
   assert.equal(f.calls(), 3, "reload must not re-wake for a persisted answer receipt");
   assert.equal(receipts().length, 1);
   await f.session.prompt("Check the resumed decisions summary");
-  assert.match(f.contexts[3], /Q1 \[answered\] \[this session\] Which storage\?/);
+  assert.doesNotMatch(f.contexts[3], /\[this session\]/);
+  assert.equal(receipts().length, 1, "a later prompt does not reinsert a delivered answer");
   assert.deepEqual(f.errors, []);
 });
 
@@ -165,10 +208,10 @@ test("real Pi: agent records chat answers and dismissals through the declared sc
     .flatMap((m) => m.toolsAdded ?? []).find((tool) => tool.name === "decisions"));
   assert.match(schema, /revision/);
   assert.match(schema, /dismiss/);
-  assert.match(f.contexts[3], /User answer: Use SQLite with transactions/);
+  assert.match(f.contexts[3], /Use SQLite with transactions/);
   assert.match(f.contexts[3], /not approval/i);
   const receipts = f.manager.getEntries().filter((e) => e.type === "custom_message" && e.customType === "decisions-answer");
-  assert.equal(receipts.length, 2);
+  assert.equal(receipts.length, 0, "persisted full tool results suppress redundant automatic notices");
   await new Promise((r) => setTimeout(r, 1200));
   assert.equal(f.calls(), 4, "recording must not cause repeated wake-ups");
   assert.deepEqual(f.errors, []);
@@ -232,8 +275,28 @@ test("real Pi: queued answer is revalidated when another session withdraws it be
   await running;
   await f.session.waitForIdle();
   assert.ok(f.contexts[3]);
-  assert.doesNotMatch(f.contexts[3], /User answer: OLD APPROVAL/, "withdrawn queued snapshot must not reach the provider as a current answer");
+  assert.doesNotMatch(f.contexts[3], /OLD APPROVAL/, "withdrawn queued snapshot must not reach the provider as a current answer");
   assert.match(f.contexts[3], /previous answer has been withdrawn/);
+  assert.deepEqual(f.errors, []);
+});
+
+test("real Pi: a pre-admitted notice does not repeat a later full get in provider context", { timeout: 15000 }, async (t) => {
+  const get = { type: "toolCall", id: "get-current", name: "decisions", arguments: { action: "get", id: "Q1" } };
+  const f = await fixture(t, [[ask], "Independent work", { waitForRelease: true, content: [hold, get] }, "Read the current answer once"]);
+  await f.session.prompt("Ask the storage question");
+  const running = f.session.prompt("Start held work");
+  await eventually(() => f.calls() === 3, "provider request must be held before get executes");
+  await f.session.prompt("/decisions answer Q1 PRE_ADMITTED_ANSWER");
+  f.release();
+  await eventually(() => f.holds.length === 1, "held tool must start");
+  f.holds[0].resolve();
+  await running; await f.session.waitForIdle();
+  assert.equal(f.calls(), 4);
+  const notices = f.manager.getEntries().filter(e => e.type === "custom_message" && e.customType === "decisions-answer");
+  assert.equal(notices.length, 1, "SDK-owned admission cannot be retracted from the journal");
+  const visible = JSON.parse(f.contexts[3]).messages.filter(m => JSON.stringify(m).includes("PRE_ADMITTED_ANSWER"));
+  assert.equal(visible.length, 1, "only the full get result exposes the answer body");
+  assert.equal(visible[0].role, "toolResult");
   assert.deepEqual(f.errors, []);
 });
 
@@ -311,7 +374,8 @@ test("real Pi: resuming with an undelivered answer folds it into an immediate fi
   await resumed.session.waitForIdle();
   assert.equal(resumed.calls(), 1);
   assert.match(resumed.contexts[0], /Answered while the session was closed/);
-  assert.match(resumed.contexts[0], /Q1 \[answered\] \[this session\] Which storage\?/);
+  assert.doesNotMatch(resumed.contexts[0], /\[this session\]/);
+  assert.match(resumed.contexts[0], /Origin: current session/);
   assert.match(resumed.contexts[0], /Initial request/);
   assert.deepEqual(resumed.errors, []);
 });

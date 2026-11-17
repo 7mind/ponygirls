@@ -141,8 +141,10 @@ idempotent. Resolutions use compare-and-swap, not replay deduplication: reusing 
 saved revision fails even when the answer text is unchanged. Separate questions
 receive separate IDs even if their text matches.
 List summaries and full `get` results include the originating `sessionId` and an
-`isCurrentSession` flag computed for the active session. The per-run project
-summary also marks matching questions with `[this session]`.
+`isCurrentSession` flag computed for the active session. Origin metadata is kept
+separate from question text in model-facing messages; the human inbox retains its
+visual `[this session]` badge. The `question` argument is plain question text,
+without IDs/status/origin prefixes. Stored question text is never silently stripped.
 
 An open requesting session receives a visible answer message automatically,
 including the exact question and answer. A busy session receives it at the next
@@ -156,21 +158,55 @@ retains the admitted answer in context; dequeuing user input for editing
 (`clearQueue`) is not cancellation and keeps the wake. This uses this repository's retained-message API patch, as
 well as its editor-border badge patch. Another open session can answer using the same inbox. Other
 sessions' questions do not automatically wake the current agent. Resuming the
-requesting session reconciles resolved questions against persisted notification
-receipts; a crash before queued delivery is persisted may cause redelivery.
-Question state is authoritative; notifications are at-least-once, not an
-exactly-once delivery service. Other sessions can always use `list`/`get`.
+requesting session reconstructs delivery history from the entire raw session
+journal, including abandoned branches and compacted entries. Reload, resume,
+compaction and tree navigation do not reset receipts. New/forked session IDs have
+independent index receipts. A receipt records durable session content, not proof
+that a model understood it.
 
-A compact visible project summary is supplied before a run to make unresolved
-questions and recent resolutions discoverable. It is not a substitute for reading
-the full, current answer before acting. Notification snapshots are revalidated
-against storage for every model request, including low-level follow-ups: a queued
-answer withdrawn elsewhere is replaced with the current pending state. The
-transcript preserves the original event. If verification fails, including when
-the extension could not bind at session start, the request sees an explicit
-unavailable state instead of the historical answer. This is a
-request-time snapshot, not revocation of an already-running action. Answers never
-expand the authorization of the original question.
+Successful persisted full JSON results from `get`/`answer`/`dismiss` also count as
+full delivery. List summaries and details-only `ask` results do not. The latter
+matters for an idempotent ask replay whose stored record may already be answered.
+Nested tool execution without its own persisted result cannot supply a receipt.
+Full origin notifications are admitted in batches of at most five; omitted
+revisions remain eligible. Question state is authoritative; crash-before-persistence
+can cause redelivery. The SDK cannot retract an already-admitted notice: a
+concurrent full tool read can suppress its duplicate provider-facing body, but
+not its stored event or wake intent. Exactly-once delivery is not claimed.
+
+### Compact context
+
+The first automatic index is ID/status only, with no question titles or answers:
+
+```text
+Decision inbox — same project, index only
+Unanswered in current session: Q8
+Unanswered in other sessions: Q1, Q3 (+6 more)
+Answered in other sessions: Q2, Q4 (+12 more)
+Dismissed in other sessions: Q6
+```
+
+Empty rows are omitted. Each row shows at most five IDs, with exact overflow;
+unanswered questions are oldest-first and resolutions use latest modification
+rather than question number. Subsequent insertions contain only uncommunicated
+revisions, at most five per message. Answer edits, dismissals and reopenings are
+explicit; reopening withdraws the previous answer. Omitted records are never
+marked delivered, so later runs can drain overflow. Unchanged state adds no new
+message—not even “No changes.” The live badge continues updating independently.
+An index receipt is not a full-answer receipt; use `get` for current scoped details.
+Only indices matching the active project and recipient session reach the provider;
+inherited indices remain in raw history without mislabelling their origin.
+
+Notification snapshots are checked against storage on every model request.
+Only one historical notice per question is projected; stale notices become an
+explicit superseded/withdrawn warning, not another copy of the latest answer.
+A full current tool result suppresses redundant notification bodies. Legacy
+title-summary messages are omitted from future provider requests, without
+rewriting the transcript. If verification fails, including failed session
+binding, the request sees an unavailable warning rather than historical approval.
+This does not revoke an already-running action. Answers never expand the
+original question's authorization. Explicit reads may repeat data and ordinary
+conversation history still replays; deduplication prevents new automatic insertions.
 
 ## Persistence and isolation
 
