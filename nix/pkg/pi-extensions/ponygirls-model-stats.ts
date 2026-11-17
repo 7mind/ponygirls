@@ -16,17 +16,23 @@
  * PRUNE_EVERY appends the file is also rewritten without records older than a
  * week (the longest window); a racing concurrent session can lose the records
  * it appended during the rewrite — accepted for stats. /perf replaces the
- * editor with mean/p50/p90/p99 tables (tok/s also shows the slow tail, p10/p1)
- * per model for the last hour, 24 hours, and week — the same in-place custom
- * view as /usage, not an overlay. `e` toggles the effort breakdown: one row
- * per model and Pi thinking level (`AssistantMessage.thinkingLevel`, stored
- * on each record as `effort`); records written before effort was stored show
- * as `?`. All three sections share one column layout,
- * so columns stay aligned across windows. The view is scrollable (up/down,
- * j/k, pgup/pgdn, home/end, wheel) with an adjustable viewport (+/-):
- * `Component.render(width)` never sees the allocated height, so the line
- * budget is view state, not an estimate of the dock. Untouched, the budget
- * is half the terminal height; the first manual resize makes it sticky.
+ * editor with one per-model table at a time — the same in-place custom view
+ * as /usage, not an overlay — under period tabs in the title: last hour, 24
+ * hours, week (tab, left/right, or a click on a tab). The compact column set
+ * shows n, one `fail` cell and p50/p90/p99 per metric (tok/s: p50/p90 and
+ * the slow tail, p10); the full set shows a column per failure kind and
+ * mean/p50/p90/p99 (tok/s also p10/p1). Until `a` toggles it, the set
+ * follows the width: full when that table fits, compact otherwise. The
+ * model column keeps its width first: see `layoutWindow` for what gives way
+ * in a narrow pane. `s` picks the sort among the columns of the set shown,
+ * `r` reverses it. `e` toggles the effort breakdown: one row per model and
+ * Pi thinking level (`AssistantMessage.thinkingLevel`, stored on each record
+ * as `effort`); records written before effort was stored show as `?`. The
+ * view is scrollable (up/down, j/k, pgup/pgdn, home/end, wheel) with an
+ * adjustable viewport (+/-): `Component.render(width)` never sees the
+ * allocated height, so the line budget is view state, not an estimate of
+ * the dock. Untouched, the budget is half the terminal height; the first
+ * manual resize makes it sticky.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
@@ -49,46 +55,35 @@ import {
 	type TuiMouseEventResult,
 } from "@earendil-works/pi-tui";
 
-import { frameRule, frameTitle, keyHints, zebra, type KeyHint } from "@ponygirls/pi-ui";
+import { frameTitle, hintAt, KEY, keyHints, type KeyHint, type Span } from "@ponygirls/pi-ui";
 
 import {
+	type BreakdownSummaries,
 	clampStatsBudget,
 	clampStatsScrollTop,
+	type ColumnSet,
+	DEFAULT_SORT,
 	defaultStatsBudget,
-	measureWindows,
-	renderWindow,
-	SORT_KEYS,
+	renderStatsScreen,
+	shownColumns,
+	shownSort,
+	type SortOrder,
+	sortKeys,
 	type StatsBreakdown,
-	sortModels,
 	STATS_BUDGET_STEP,
 	STATS_DEFAULT_BUDGET,
 	STATS_WHEEL_STEP,
-	statsVisibleRange,
 	summarize,
-	windowTitle,
-	type WindowSummary,
+	WINDOWS,
 } from "./ponygirls-model-stats-state.ts";
-import { scrollPosition } from "./scroll-state.ts";
 
-const STATS_TITLE = "Model performance";
-const STATS_HINTS: readonly KeyHint[] = [
-	{ key: "↑↓/j/k", action: "scroll" },
-	{ key: "PgUp/PgDn", action: "page" },
-	{ key: "+-", action: "size" },
-	{ key: "s", action: "sort" },
-	{ key: "r", action: "reverse" },
-	{ key: "q", action: "close" },
-];
-/** The `e` hint names the breakdown it switches to; it goes before the close hint. */
-const BREAKDOWN_HINTS: Readonly<Record<StatsBreakdown, KeyHint>> = {
-	model: { key: "e", action: "by effort" },
-	effort: { key: "e", action: "by model" },
-};
 const SORT_PICKER_TITLE = "Sort by";
 const SORT_PICKER_HINTS: readonly KeyHint[] = [
-	{ key: "⏎", action: "select" },
-	{ key: "esc", action: "cancel" },
+	{ key: KEY.enter, action: "select" },
+	{ key: KEY.esc, action: "cancel" },
 ];
+/** Sort keys visible at once in the picker; the rest scroll. */
+const SORT_PICKER_ROWS = 12;
 /** Box sides plus one space of padding on each side. */
 const BOX_SIDE_WIDTH = 2;
 
@@ -123,24 +118,26 @@ class SortPicker implements Component {
 	}
 }
 
-/** Both breakdowns of the same records, fixed for the view lifetime. */
-type BreakdownSummaries = Readonly<Record<StatsBreakdown, readonly WindowSummary[]>>;
-
 class StatsView implements Component {
 	private readonly theme: Theme;
 	private readonly tui: TUI;
+	/** Fixed for the view lifetime. */
 	private readonly summaries: BreakdownSummaries;
 	private readonly onClose: () => void;
 	private readonly requestRender: () => void;
+	private period = 0;
 	private breakdown: StatsBreakdown = "model";
-	private sortIndex = 0;
-	private reversed = false;
+	/** Set by `a`; until then the column set follows the width. */
+	private columnChoice: ColumnSet | undefined;
+	private sort: SortOrder = DEFAULT_SORT;
 	private picker: OverlayHandle | undefined;
 	private scrollTop = 0;
 	private budget = STATS_DEFAULT_BUDGET;
 	private budgetTouched = false;
-	/** Content lines from the last render; summaries are fixed for the view lifetime. */
+	/** From the last render: the pane width, the content lines and the title's tab spans. */
+	private width = 0;
 	private lineCount = 0;
+	private tabSpans: Span[] = [];
 
 	constructor(theme: Theme, tui: TUI, summaries: BreakdownSummaries, onClose: () => void, requestRender: () => void) {
 		this.theme = theme;
@@ -150,51 +147,46 @@ class StatsView implements Component {
 		this.requestRender = requestRender;
 	}
 
-	private sortDirection(): { id: (typeof SORT_KEYS)[number]["id"]; label: string; descending: boolean } {
-		const key = SORT_KEYS[this.sortIndex]!;
-		return { id: key.id, label: key.label, descending: this.reversed ? !key.descending : key.descending };
-	}
-
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const content: string[] = [];
-		const sort = this.sortDirection();
-		const summaries = this.summaries[this.breakdown];
-		// One layout for all windows: columns keep the same width in every section.
-		const layout = measureWindows(summaries);
-		for (const windowSummary of summaries) {
-			if (content.length > 0) content.push("");
-			content.push(fitLine(windowTitle(this.theme, windowSummary), width));
-			const table = renderWindow(
-				{ ...windowSummary, models: sortModels(windowSummary.models, sort.id, sort.descending) },
-				this.theme,
-				sort,
-				{ layout, width },
-			);
-			content.push(...table.header.map((line) => fitLine(line, width)));
-			table.rows.forEach((row, index) => content.push(zebra(this.theme, fitLine(row, width), index, width)));
-		}
-		this.lineCount = content.length;
-		const budget = this.effectiveBudget();
-		this.scrollTop = clampStatsScrollTop(this.scrollTop, this.lineCount, budget);
-		const { start, end } = statsVisibleRange(this.lineCount, this.scrollTop, budget);
-		const arrow = sort.descending ? "↓" : "↑";
-		const right = this.lineCount > budget ? this.theme.fg("dim", scrollPosition(this.lineCount, start, end)) : undefined;
-		const meta = `sort: ${sort.label} ${arrow} · by ${this.breakdown}`;
-		const title = frameTitle(this.theme, width, { title: STATS_TITLE, meta, right }, "none");
-		return [
-			title.line,
-			...content.slice(start, end),
-			frameRule(this.theme, width),
-			...keyHints(this.theme, width, [...STATS_HINTS.slice(0, -1), BREAKDOWN_HINTS[this.breakdown], ...STATS_HINTS.slice(-1)]).lines,
-		];
+		const screen = renderStatsScreen(this.theme, width, this.summaries, {
+			period: this.period,
+			breakdown: this.breakdown,
+			columnChoice: this.columnChoice,
+			sort: this.sort,
+			scrollTop: this.scrollTop,
+			budget: this.effectiveBudget(),
+		});
+		this.width = width;
+		this.lineCount = screen.lineCount;
+		this.tabSpans = screen.tabSpans;
+		this.scrollTop = screen.scrollTop;
+		return screen.lines;
+	}
+
+	/** The column set on screen: it follows the pane width until `a` chooses one. */
+	private shownColumns(): ColumnSet {
+		return shownColumns(this.columnChoice, this.summaries[this.breakdown], this.width);
+	}
+
+	/** The sort on screen: the default while the chosen column is not in the column set. */
+	private shownSort(): SortOrder {
+		return shownSort(this.sort, this.shownColumns());
 	}
 
 	handleInput(data: string): void {
 		if (this.picker) return;
 		if (matchesKey(data, "escape") || matchesKey(data, "q") || parseKey(data) === "q") {
 			this.onClose();
+			return;
+		}
+		if (matchesKey(data, "tab") || matchesKey(data, "right")) {
+			this.selectPeriod((this.period + 1) % WINDOWS.length);
+			return;
+		}
+		if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) {
+			this.selectPeriod((this.period + WINDOWS.length - 1) % WINDOWS.length);
 			return;
 		}
 		if (matchesKey(data, "s")) {
@@ -207,8 +199,14 @@ class StatsView implements Component {
 			this.requestRender();
 			return;
 		}
+		if (matchesKey(data, "a")) {
+			this.columnChoice = this.shownColumns() === "compact" ? "full" : "compact";
+			this.requestRender();
+			return;
+		}
 		if (matchesKey(data, "r")) {
-			this.reversed = !this.reversed;
+			const shown = this.shownSort();
+			this.sort = { id: shown.id, descending: !shown.descending };
 			this.scrollTop = 0;
 			this.requestRender();
 			return;
@@ -243,7 +241,22 @@ class StatsView implements Component {
 			this.scrollBy(event.wheelDelta < 0 ? -STATS_WHEEL_STEP : STATS_WHEEL_STEP);
 			return { handled: true };
 		}
+		// The title is the first line. The dispatcher sends the click only to a component that took the press.
+		if (event.y === 0 && event.button === "left" && (event.type === "press" || event.type === "click")) {
+			const tab = hintAt(this.tabSpans, event.x);
+			if (tab === undefined) return undefined;
+			if (event.type === "press") return { handled: true, render: false };
+			this.selectPeriod(tab);
+			return { handled: true };
+		}
 		return undefined;
+	}
+
+	private selectPeriod(period: number): void {
+		if (period === this.period) return;
+		this.period = period;
+		this.scrollTop = 0;
+		this.requestRender();
 	}
 
 	private scrollBy(delta: number): void {
@@ -273,16 +286,17 @@ class StatsView implements Component {
 
 	private openSortPicker(): void {
 		if (this.picker) return;
-		const current = this.sortDirection();
-		const items = SORT_KEYS.flatMap((key) => {
-			const natural = key.descending;
-			return [natural, !natural].map((descending) => ({
-				value: `${key.id}:${descending ? "desc" : "asc"}`,
+		const current = this.shownSort();
+		// Each column of the set shown, in its natural direction, then reversed.
+		const choices = sortKeys(this.shownColumns()).flatMap((key) =>
+			[key.descending, !key.descending].map((descending): { order: SortOrder; label: string } => ({
+				order: { id: key.id, descending },
 				label: `${key.label} ${descending ? "↓" : "↑"}`,
-			}));
-		});
-		const list = new SelectList(items, items.length, getSelectListTheme());
-		const selected = items.findIndex((item) => item.value === `${current.id}:${current.descending ? "desc" : "asc"}`);
+			})),
+		);
+		const items = choices.map((choice, index) => ({ value: String(index), label: choice.label }));
+		const list = new SelectList(items, SORT_PICKER_ROWS, getSelectListTheme());
+		const selected = choices.findIndex((choice) => choice.order.id === current.id && choice.order.descending === current.descending);
 		if (selected >= 0) list.setSelectedIndex(selected);
 		const close = () => {
 			this.picker?.hide();
@@ -291,12 +305,9 @@ class StatsView implements Component {
 			this.requestRender();
 		};
 		list.onSelect = (item) => {
-			const [id, direction] = item.value.split(":");
-			const index = SORT_KEYS.findIndex((key) => key.id === id);
-			if (index >= 0) {
-				const key = SORT_KEYS[index]!;
-				this.sortIndex = index;
-				this.reversed = (direction === "desc") !== key.descending;
+			const choice = choices[Number(item.value)];
+			if (choice !== undefined) {
+				this.sort = choice.order;
 				this.scrollTop = 0;
 			}
 			close();
@@ -321,7 +332,7 @@ export default function (pi: ExtensionAPI): void {
 	registerStatsCollector(pi, process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"));
 
 	pi.registerCommand("perf", {
-		description: "Per-model response-time distributions (last hour / 24h / week), optionally per effort",
+		description: "Per-model response time and throughput",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/perf needs the interactive UI", "warning");
