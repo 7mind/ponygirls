@@ -171,8 +171,10 @@ Pinned Node 24.22.2, TypeScript 7.0.2, Pi 1.5.2 (the check's inputs).
   message visible in the transcript; restart with `--continue` shows the
   question and the saved comments and delivers nothing twice; `i` writes
   comment, delivery, state, inquiry in that order and the reply is a valid
-  version-5 report. Pi exited with status 0 each time. Captures, action log
-  and the session file: main checkout `.local/cuckoo-comments-questions-pty/`.
+  version-5 report. Pi exited with status 0 each time. Captures and the
+  session file: main checkout `.local/cuckoo-comments-questions-pty/`. The
+  action log of this first run was overwritten by mistake when the second
+  run's log was copied there; only `actions-run2.log` remains.
   A second short run after the review corrections: with the question file
   made unreadable the panel opened with the error line above the saved report;
   `Tab` and `c` sent in one write opened the editor; the comment was saved and
@@ -211,6 +213,15 @@ during compaction with the real SDK; the fake host sets the flag directly.
 
 The skill-analysis subagent `0c036058-8c51-47c2-ba4d-38c59ae4beff` found the
 self-comparing prompt assertion noted above.
+
+## Interface review
+
+The rule to show UI mockups through Manure and wait for confirmation landed on
+main (`abdd30f4`) while this task was in progress, so the interface was built
+without one. The as-built screens are published as Manure artifact
+`aab0cc269195bceaebd637c677fea77b` (public, expires 2027-01-16) and decision Q90 asks for acceptance or changes.
+The published page shows the final wording of the delivery message; the
+terminal captures were taken before its first paragraph was revised.
 
 Workflow tests and the scripted provider show mechanism, not that a live model
 answers standing questions well or acts on comments.
