@@ -257,15 +257,15 @@ export function editObjective(
 export function pauseRecord(
   existing: GoalRecord | null,
   clocks: { nowIso: () => string },
-  _authority: GoalAuthority,
+  authority: GoalAuthority,
 ): TransitionResult<GoalRecord> {
   if (!existing) return fail("no_goal", "No goal to pause.");
+  if (authority !== "user") {
+    return fail("forbidden_for_authority", "Only the user can pause a goal. Use /goal pause or Escape.");
+  }
   if (existing.status !== "active") {
     return fail("not_active", `Only an active goal can pause (current: ${existing.status}).`);
   }
-  // Authority note: model-initiated pause is allowed by code only when the
-  // tool schema permits it; the "explicit user request" rule is a model
-  // instruction carried in the tool description, not a host-enforced fact.
   return { ok: true, value: { ...existing, status: "paused", updatedAt: clocks.nowIso() } };
 }
 

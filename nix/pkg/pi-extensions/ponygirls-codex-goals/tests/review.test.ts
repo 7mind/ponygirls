@@ -33,6 +33,19 @@ for (const adapter of ["memory", "file"] as const) {
     return { store, controller: new GoalController(store, clock, sender) };
   }
 
+  test(`${adapter}: model pause is rejected without changing the goal or pending dispatch`, (t) => {
+    const { store, controller } = setup(t);
+    const admitted = controller.admitDispatch(load(store), view([]));
+    assert.ok(admitted.ok);
+    const before = load(store);
+    const result = handleUpdateGoal(store, before, { status: "paused" }, clock);
+    assert.equal(result.isError, true, result.content);
+    assert.match(result.content, /user|\/goal pause/);
+    assert.equal(result.state!.status, "active");
+    assert.equal(result.revision, before.revision);
+    assert.deepEqual(load(store), before);
+  });
+
   test(`${adapter}: accounting excludes entries before the creation baseline`, (t) => {
     const { store, controller } = setup(t);
     const committed = store.commit(load(store).revision, (e) => ({ ...e, baselineEntryCount: 1 }));

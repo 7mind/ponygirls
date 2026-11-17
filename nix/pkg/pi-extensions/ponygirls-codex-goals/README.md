@@ -1,6 +1,6 @@
 # ponygirls-codex-goals
 
-Codex-style goals for Pi (`v1.0.0` verified), with one deliberate change:
+Codex-style goals for Pi (`v1.0.0` verified), with deliberate changes:
 **every model-facing goal instruction is a visible, persisted message in the
 same Pi session** (`customType: codex-goal-context`, `display: true`, full
 text in `content`). Continuations and ordinary assistant answers stay in that
@@ -46,16 +46,19 @@ no second turn is queued there.
 
 ## Model tools
 
-Exactly three, with Codex-compatible authority boundaries:
+Exactly three, with the following authority boundaries:
 
 - `create_goal({ objective, token_budget? })` — only after an explicit
   request; replaces only a `complete` goal, refuses every unfinished state.
 - `get_goal({})` — state observation; cannot declare completion.
-- `update_goal({ status: complete | blocked | paused })` — complete only
+- `update_goal({ status: complete | blocked })` — complete only
   when fully achieved and verified; block only after the same genuine
-  blocker recurs across three consecutive executions; pause only at the
-  user's explicit request. Resume/clear/edits/budget transitions are not
-  in the model schema.
+  blocker recurs across three consecutive executions. Pause, resume,
+  clear, edits, and budget transitions are not in the model schema.
+
+Pausing is user-only via `/goal pause`, the goal pane, or Escape. Model
+pause attempts are rejected without changing goal state, even at the
+user's explicit request; the lifecycle transition also rejects model authority.
 
 Mutating tools run sequentially. Completion never returns `terminate:
 true`: the normal assistant follow-up reports the result and final usage.

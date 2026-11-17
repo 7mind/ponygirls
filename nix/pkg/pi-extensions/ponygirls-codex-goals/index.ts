@@ -79,10 +79,10 @@ const GET_DESCRIPTION =
   "Read the current session goal state. State observations cannot declare completion without a successful lifecycle mutation. Call before acting on a goal instruction to verify session, goal id, revision, and active status.";
 
 const UPDATE_DESCRIPTION = [
-  "Update the current goal status. Allowed statuses: complete, blocked, paused.",
+  "Update the current goal status. Allowed statuses: complete, blocked.",
   "Complete only when the actual objective is fully achieved and no required work remains, verified against observable evidence.",
   "Block only after the same genuine blocker recurs across at least three consecutive goal executions; the first and second occurrences are continued audit, not a blocked state.",
-  "Pause only at the user's explicit request; never choose to pause autonomously.",
+  "Pausing is user-only through /goal pause or Escape; the model cannot pause goals, even at the user's request.",
   "Resume, clear, objective edits, and budget or system-limit transitions are outside this tool.",
 ].join(" ");
 
@@ -536,7 +536,7 @@ export default function (pi: ExtensionAPI): void {
       label: "Update goal",
       description: UPDATE_DESCRIPTION,
       parameters: Type.Object({
-        status: Type.Union([Type.Literal("complete"), Type.Literal("blocked"), Type.Literal("paused")]),
+        status: Type.Union([Type.Literal("complete"), Type.Literal("blocked")]),
       }),
       executionMode: "sequential",
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {

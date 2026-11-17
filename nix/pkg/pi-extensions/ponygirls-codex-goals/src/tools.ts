@@ -2,7 +2,6 @@
 import {
   completeFromBudgetLimited,
   blockRecord,
-  pauseRecord,
   modelCreate,
   validateObjective,
   validateTokenBudget,
@@ -149,12 +148,12 @@ export function handleUpdateGoal(
   clocks: { nowIso(): string },
 ): ToolOutcome {
   const params = (args ?? {}) as { status?: unknown };
-  if (params.status !== "complete" && params.status !== "blocked" && params.status !== "paused") {
+  if (params.status !== "complete" && params.status !== "blocked") {
     return {
       state: envelope.goal,
       revision: envelope.revision,
       remainingTokens: remainingTokens(envelope.goal),
-      content: "update_goal rejected: status must be one of complete, blocked, paused. Resume, clear, objective edits, and budget transitions are outside the model tool schema.",
+      content: "update_goal rejected: status must be one of complete, blocked. Pausing is user-only via /goal pause or Escape. Resume, clear, objective edits, and budget transitions are outside the model tool schema.",
       structuredContent: { ...statePayload(envelope.goal, envelope.revision), error: "invalid status" },
       isError: true,
     };
@@ -174,9 +173,7 @@ export function handleUpdateGoal(
   const next =
     params.status === "complete"
       ? completeFromBudgetLimited(goal, now)
-      : params.status === "blocked"
-        ? blockRecord(goal, now)
-        : pauseRecord(goal, now, "model");
+      : blockRecord(goal, now);
   if (!next.ok) {
     return {
       state: goal,
@@ -211,9 +208,7 @@ export function handleUpdateGoal(
   const guidance =
     params.status === "complete"
       ? " Report the successful result and final usage in your visible follow-up reply; it remains in the transcript."
-      : params.status === "blocked"
-        ? " Autonomous continuation stops. State the blocking cause and evidence in your visible reply."
-        : " Paused at the recorded request. Autonomous continuation stops.";
+      : " Autonomous continuation stops. State the blocking cause and evidence in your visible reply.";
   return {
     state: record,
     revision: committed.value.revision,

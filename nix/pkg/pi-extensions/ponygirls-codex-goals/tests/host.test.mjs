@@ -62,6 +62,27 @@ async function fixture(t, replies, options = {}) {
 
 const complete = [{ type: "toolCall", id: "complete", name: "update_goal", arguments: { status: "complete" } }];
 
+test("host: the model goal tool advertises only completion and blocking", async (t) => {
+  const f = await fixture(t, []);
+  const update = f.loader.getExtensions().extensions[0].tools.get("update_goal").definition;
+  assert.deepEqual(update.parameters.properties.status.anyOf.map((status) => status.const), ["complete", "blocked"]);
+  assert.match(update.description, /[Pp]aus.*user-only/);
+});
+
+test("host: even an explicit user request cannot authorize model-tool pause", async (t) => {
+  const pause = [{ type: "toolCall", id: "pause", name: "update_goal", arguments: { status: "paused" } }];
+  const f = await fixture(t, [pause, complete, "final report"]);
+  await f.session.prompt("/goal generic objective");
+  await f.session.prompt("Please pause the recorded goal");
+  const rejected = f.manager.getEntries().find((e) =>
+    e.type === "message" && e.message.role === "toolResult" && e.message.toolCallId === "pause");
+  assert.ok(rejected);
+  assert.equal(rejected.message.isError, true);
+  assert.equal(f.envelope().goal.status, "complete");
+  assert.equal(f.calls(), 3);
+  assert.deepEqual(f.errors, []);
+});
+
 test("host: slash kickoff and three executions keep full instructions and answers in JSONL/HTML/TUI", async (t) => {
   const f = await fixture(t, ["first progress", "second progress", complete, "final report"]);
   await f.session.prompt("/goal generic host objective");
@@ -124,6 +145,8 @@ test("host: lifecycle notices render their actual text", async (t) => {
   const f = await fixture(t, []);
   await f.session.prompt("/goal generic objective");
   await f.session.prompt("/goal pause");
+  assert.equal(f.envelope().goal.status, "paused");
+  assert.equal(f.calls(), 0);
   const notice = f.manager.getEntries().find((e) => e.type === "custom" && e.customType === "codex-goal-notice" && e.data.text.includes("paused"));
   assert.ok(notice);
   initTheme("dark");
@@ -235,12 +258,17 @@ test("host: a provider's aborted stop reason alone is not a user pause", async (
   assert.equal(f.envelope().goal.status, "blocked");
 });
 
-test("host: a fresh extension runtime inherits the fork parent's settled sidecar", async (t) => {
-  const pause = [{ type: "toolCall", id: "pause", name: "update_goal", arguments: { status: "paused" } }];
-  const parent = await fixture(t, [pause, "paused report"]);
+test("host: a fresh extension runtime inherits the fork parent's settled sidecar", { timeout: 5_000 }, async (t) => {
+  const parent = await fixture(t, [{ content: [], stopReason: "aborted", waitForAbort: true }]);
   await parent.session.prompt("/goal generic objective");
-  await parent.session.prompt("Start the goal, then pause it as explicitly requested");
+  const run = parent.session.prompt("Start the goal");
+  while (parent.calls() === 0) await new Promise((resolve) => setImmediate(resolve));
+  await parent.session.prompt("/goal pause");
+  await run;
+  assert.equal(parent.envelope().goal.status, "paused");
+  assert.equal(parent.calls(), 1);
   const original = parent.envelope();
+  assert.equal(original.goal.tokensUsed, 3);
   const child = await fixture(t, [], { parent: parent.manager.getSessionFile() });
   assert.notEqual(child.manager.getSessionId(), parent.manager.getSessionId());
   assert.deepEqual({ ...child.envelope().goal, updatedAt: original.goal.updatedAt }, original.goal);

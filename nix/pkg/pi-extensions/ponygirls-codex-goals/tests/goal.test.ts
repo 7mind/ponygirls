@@ -99,6 +99,19 @@ test("edit preserves identity, status, budget, usage", () => {
   assert.equal(v.objective, "revised objective");
 });
 
+test("only user authority can pause an active goal", () => {
+  const goal = fresh({ tokenBudget: 100, tokensUsed: 42, timeUsedSeconds: 7 });
+  const before = { ...goal };
+  const denied = pauseRecord(goal, clocks, "model");
+  assert.equal(denied.ok, false);
+  if (!denied.ok) assert.equal(denied.error.code, "forbidden_for_authority");
+  assert.deepEqual(goal, before);
+
+  const paused = pauseRecord(goal, clocks, "user");
+  assert.ok(paused.ok);
+  assert.deepEqual(paused.value, { ...before, status: "paused", updatedAt: clocks.nowIso() });
+});
+
 test("pause/resume/complete/block lifecycle with budget precedence", () => {
   const g = fresh();
   assert.equal(isActiveRecord(g), true);
