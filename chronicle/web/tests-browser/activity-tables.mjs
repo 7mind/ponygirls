@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { showAllTableColumns } from './table-controls.mjs';
 import { ChronicleFixture, api } from './fixture.mjs';
+import { fileURLToPath } from 'node:url';
+import { createServer } from 'vite';
+import { chromium } from 'playwright-core';
 
 async function until(predicate, message) { for (let attempt = 0; attempt < 150; attempt++) { if (await predicate()) return; await new Promise(resolve => setTimeout(resolve, 50)); } throw new Error(message); }
 function largeFixture(fixture) {
@@ -42,7 +45,7 @@ async function filter(page, name, expression) {
   await editor.getByRole('combobox', { name: `Search ${name.toLowerCase()} metadata`, exact: true }).fill(expression); await editor.getByRole('button', { name: 'Filter', exact: true }).click();
 }
 async function rowIds(page, selector) { return page.locator(selector).evaluateAll(rows => rows.map(row => row.getAttribute('data-scroll-anchor'))); }
-export async function runActivityTableCases({ browser, origin, run, errors }) {
+async function runActivityTableCases({ browser, origin, run, errors }) {
   async function scene(configure) {
     const context = await browser.newContext({ viewport: { width: 1440, height: 900 } }), page = await context.newPage(), fixture = new ChronicleFixture();
     page.on('pageerror', error => errors.push(error.message)); if (configure !== null) await configure(fixture, page);
@@ -330,3 +333,15 @@ export async function runActivityTableCases({ browser, origin, run, errors }) {
     await context.close();
   });
 }
+if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH; tests never download browsers.');
+const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' });
+await server.listen();
+const address = server.httpServer.address();
+if (address === null || typeof address === 'string') throw new Error('No fixture HTTP address');
+const browser = await chromium.launch({ headless: true });
+const errors = [];
+async function run(name, body) { if (process.env.CHRONICLE_BROWSER_CASE !== undefined && !name.includes(process.env.CHRONICLE_BROWSER_CASE)) return; await body(); console.log(`PASS browser UX: ${name}`); }
+try {
+  await runActivityTableCases({ browser, origin: `http://127.0.0.1:${address.port}`, run, errors });
+  assert.deepEqual(errors, [], 'no uncaught browser application errors');
+} finally { await browser.close(); await server.close(); }
