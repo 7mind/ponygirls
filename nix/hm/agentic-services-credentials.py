@@ -8,6 +8,7 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import tempfile
 
 
 PBKDF2_ITERATIONS = 600000
@@ -59,17 +60,30 @@ def random_urlsafe(size: int) -> str:
     return base64.urlsafe_b64encode(secrets.token_bytes(size)).rstrip(b"=").decode()
 
 
+def publish(directory: Path, name: str, value: str) -> None:
+    # Complete the private file first, then link it into place: readers never see
+    # a partial credential, and an existing (concurrently published) one is kept.
+    fd, temporary = tempfile.mkstemp(prefix=f".{name}.", suffix=".tmp", dir=directory)
+    try:
+        with os.fdopen(fd, "w") as output:
+            output.write(value + "\n")
+            output.flush()
+            os.fsync(output.fileno())
+        try:
+            os.link(temporary, directory / name)
+        except FileExistsError:
+            pass
+    finally:
+        os.unlink(temporary)
+
+
 def ensure(directory: Path, name: str, pattern: str, generate: Callable[[], str]) -> str:
     path = directory / name
-    try:
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    except FileExistsError:
-        metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
-            raise RuntimeError(f"invalid credential file: {name}")
-    else:
-        with os.fdopen(fd, "w") as output:
-            output.write(generate() + "\n")
+    if not os.path.lexists(path):
+        publish(directory, name, generate())
+    metadata = path.lstat()
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
+        raise RuntimeError(f"invalid credential file: {name}")
     try:
         with path.open("rb") as source:
             raw = source.read(MAX_CREDENTIAL_FILE_BYTES + 1).decode("ascii")

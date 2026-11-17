@@ -138,12 +138,20 @@ let
           package = pkgs.hello;
           stateDirectory = "/fixture/chronicle";
           database.passwordFile = "/run/secrets/chronicle-database";
-          settings = { listenHost = "127.0.0.1"; listenPort = 47330; maxBodyBytes = 8388608; } // settings;
+          settings = {
+            listenHost = "127.0.0.1";
+            listenPort = 47330;
+            maxBodyBytes = 8388608;
+            allowedOrigin = "https://chronicle.example.test";
+            users = [ chronicleAlice ];
+          } // settings;
         };
       }
     ];
   }).config;
-  chronicleHmOn = chronicleHm { accounts.enabled = true; };
+  chronicleAlice = { id = "alice"; login = "alice"; enabled = true; passwordHashFile = "/fixture/chronicle/credentials/alice.pbkdf2"; };
+  chronicleHmAccounts = settings: chronicleHm ({ accounts.enabled = true; users = [ (chronicleAlice // { admin = true; }) ]; } // settings);
+  chronicleHmOn = chronicleHmAccounts { };
   chronicleHmSetup = config: config.systemd.user.services.chronicle-setup.Service.ExecStart;
   checks = {
     nixos-positive = lib.all (name: valid (system name { })) services;
@@ -236,6 +244,12 @@ let
     hm-accounts-rules = rejects "enabled declarative admin" (hmAccounts { smind.hm.services.agentic.manure.operator.admin = false; })
       && rejects "never derived" (hm { smind.hm.services.agentic.haystack.accounts.enrollment.enable = true; })
       && rejects "admin = true" (hm { smind.hm.services.agentic.haystack.users.bot = { type = "agent"; admin = true; tokens.default.tokenHashFile = "/run/secrets/bot-sha256"; }; });
+    hm-chronicle-accounts-rules = valid chronicleHmOn
+      && rejects "accounts.keyFile" (chronicleHmAccounts { accounts = { enabled = true; keyFile = "/nix/store/key"; }; })
+      && rejects "never derived" (chronicleHm { accounts = { enabled = false; signup.enabled = true; }; })
+      && rejects "enabled declarative admin" (chronicleHmAccounts { users = [ chronicleAlice ]; })
+      && rejects "admin = true" (chronicleHmAccounts { users = [ (builtins.removeAttrs chronicleAlice [ "passwordHashFile" ] // { admin = true; }) ]; })
+      && rejects "public origin" (chronicleHmAccounts { allowedOrigin = null; });
     hm-chronicle-accounts-key = chronicleHmOn.lib.ponygirls.chronicleServer.serverConfig.value.accounts == { enabled = true; keyFile = "/fixture/chronicle/credentials/accounts.key"; }
       && lib.hasInfix "accounts.key" (chronicleHmSetup chronicleHmOn).text
       && !((chronicleHm { }).lib.ponygirls.chronicleServer.serverConfig.value ? accounts)
@@ -257,6 +271,7 @@ pkgs.runCommandLocal "service-accounts-declarations" {
   configsOn = builtins.toJSON (lib.genAttrs accountServices (name: generatedConfig name (serviceSystem name (accountsOn name))));
   masterOff = ./fixtures/service-accounts-master-off.json;
   chronicleSetup = chronicleHmSetup chronicleHmOn;
+  linkCommand = "${pkgs.coreutils}/bin/ln -T";
   manureLauncher = m.systemd.services.manure.serviceConfig.ExecStart;
   receipt = builtins.toJSON { checks = checked; cases = builtins.length checked + 1; failures = 0; errors = 0; skips = 0; };
 } ''
@@ -332,5 +347,11 @@ pkgs.runCommandLocal "service-accounts-declarations" {
   first="$(stat -c %i "$key"):$(cat "$key")"
   bash chronicle-setup
   test "$(stat -c %i "$key"):$(cat "$key")" = "$first"
+  # Another setup publishes its key between this one's absence check and its link.
+  substitute "$chronicleSetup" racing-setup --replace-fail /fixture "$TMPDIR/race" --replace-fail "$linkCommand" "bash $TMPDIR/concurrent-winner"
+  printf '%s\n' 'printf "%s\n" "$WINNER" > "$2"' "exec $linkCommand \"\$1\" \"\$2\"" > "$TMPDIR/concurrent-winner"
+  WINNER="$(printf 'w%.0s' {1..42})A" bash racing-setup
+  test "$(cat "$TMPDIR/race/chronicle/credentials/accounts.key")" = "$(printf 'w%.0s' {1..42})A"
+  test "$(ls -A "$TMPDIR/race/chronicle/credentials")" = accounts.key
   printf '%s\n' "$receipt" > "$out/receipt.json"
 ''

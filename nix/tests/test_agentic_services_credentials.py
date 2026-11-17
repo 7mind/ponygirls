@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 
 MODULE_PATH = Path(os.environ.get("AGENTIC_CREDENTIALS_HELPER", Path(__file__).parents[1] / "hm/agentic-services-credentials.py"))
 spec = importlib.util.spec_from_file_location("agentic_services_credentials", MODULE_PATH)
@@ -336,6 +337,35 @@ class CredentialsTest(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("invalid credential encoding: haystack-accounts.key", result.stderr)
             self.assertEqual(key.read_text(), "A" * 42 + "B\n")
+
+    def test_interrupted_accounts_key_creation_publishes_nothing(self):
+        for step, target in (("generation", "random_urlsafe"), ("write", "fsync")):
+            with self.subTest(step=step), tempfile.TemporaryDirectory() as root:
+                directory = Path(root) / "credentials"
+                directory.mkdir(mode=0o700)
+                owner = credentials if target == "random_urlsafe" else credentials.os
+                with mock.patch.object(owner, target, side_effect=OSError("interrupted")):
+                    with self.assertRaises(OSError):
+                        credentials.provision_accounts_key(directory, "haystack")
+                self.assertEqual(list(directory.iterdir()), [])
+                credentials.provision_accounts_key(directory, "haystack")
+                self.assertRegex((directory / "haystack-accounts.key").read_text(), credentials.ACCOUNTS_KEY_PATTERN + "\n")
+
+    def test_accounts_key_publication_race_keeps_the_winner(self):
+        winner = "w" * 42 + "A\n"
+        link = os.link
+
+        def concurrent_winner(source, destination):
+            Path(destination).write_text(winner)
+            link(source, destination)
+
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "credentials"
+            directory.mkdir(mode=0o700)
+            with mock.patch.object(credentials.os, "link", side_effect=concurrent_winner):
+                credentials.provision_accounts_key(directory, "manure")
+            self.assertEqual([p.name for p in directory.iterdir()], ["manure-accounts.key"])
+            self.assertEqual((directory / "manure-accounts.key").read_text(), winner)
 
     def test_directory_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as root:

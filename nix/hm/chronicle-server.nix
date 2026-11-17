@@ -7,11 +7,20 @@ let
   credentials = "${state}/credentials";
   unit = suffix: "${cfg.unitPrefix}${suffix}.service";
   restartOn = units: map (name: config.xdg.configFile."systemd/user/${name}".source) (builtins.filter (name: builtins.hasAttr "systemd/user/${name}" config.xdg.configFile) units);
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
   accountsKeyFile = "${credentials}/accounts.key";
+  # Typed view of the free-form accounts settings for the shared assertions.
+  accountSettings = if builtins.isAttrs (cfg.settings.accounts or null) then cfg.settings.accounts else { };
+  flag = value: value == true;
+  accountsView = {
+    enable = flag (accountSettings.enabled or false);
+    signup.enable = flag (accountSettings.signup.enabled or false);
+    enrollment.enable = flag (accountSettings.enrollment.enabled or false);
+  };
+  settingsUsers = if builtins.isList (cfg.settings.users or null) then cfg.settings.users else [ ];
+  stringValue = value: if builtins.isString value then value else null;
   # Master switch on without an explicit key file: setup provisions one.
-  provisionAccountsKey = builtins.isAttrs (cfg.settings.accounts or null)
-    && (cfg.settings.accounts.enabled or false) == true
-    && !(cfg.settings.accounts ? keyFile);
+  provisionAccountsKey = accountsView.enable && !(accountSettings ? keyFile);
   settings = cfg.settings // {
     jdbcUrl = "jdbc:postgresql://127.0.0.1:${toString cfg.database.port}/${cfg.database.name}";
     databaseUser = cfg.database.user;
@@ -77,10 +86,16 @@ let
       # Created once (32 random bytes, unpadded base64url), then only verified.
       key=${lib.escapeShellArg accountsKeyFile}
       if [ ! -e "$key" ] && [ ! -L "$key" ]; then
-        ${pkgs.coreutils}/bin/head -c 32 /dev/urandom | ${pkgs.coreutils}/bin/basenc --base64url -w 0 | ${pkgs.coreutils}/bin/tr -d = > "$key.tmp"
-        printf '\n' >> "$key.tmp"
-        ${pkgs.coreutils}/bin/ln -T "$key.tmp" "$key"
-        ${pkgs.coreutils}/bin/rm -f "$key.tmp"
+        # Private per-invocation file, published by a no-replace hard link; a
+        # concurrently published key wins and is validated below.
+        tmp="$(${pkgs.coreutils}/bin/mktemp "$key.XXXXXXXX")"
+        trap '${pkgs.coreutils}/bin/rm -f "$tmp"' EXIT
+        ${pkgs.coreutils}/bin/head -c 32 /dev/urandom | ${pkgs.coreutils}/bin/basenc --base64url -w 0 | ${pkgs.coreutils}/bin/tr -d = > "$tmp"
+        printf '\n' >> "$tmp"
+        ${pkgs.coreutils}/bin/sync "$tmp"
+        ${pkgs.coreutils}/bin/ln -T "$tmp" "$key" 2>/dev/null || [ -e "$key" ] || [ -L "$key" ]
+        ${pkgs.coreutils}/bin/rm -f "$tmp"
+        trap - EXIT
       fi
       if [ -L "$key" ] || [ ! -f "$key" ] || [ ! -O "$key" ] || [[ ! "$(<"$key")" =~ ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$ ]]; then
         echo "chronicle setup: invalid accounts key file: $key" >&2
@@ -136,7 +151,14 @@ in {
       { assertion = runtimePath state && runtimePath cfg.database.passwordFile; message = "Chronicle state and database credentials require absolute runtime paths outside the store."; }
       { assertion = lib.all (name: builtins.match "[a-zA-Z0-9_-]+" name != null && runtimePath cfg.passwords.${name}.passwordFile && lib.hasPrefix "/" cfg.passwords.${name}.revisionFile) (builtins.attrNames cfg.passwords); message = "Chronicle password names must be safe path components, password files must be runtime paths and revision files must be absolute."; }
       { assertion = !(cfg.settings ? jdbcUrl || cfg.settings ? databaseUser || cfg.settings ? databasePasswordFile || cfg.settings ? databaseLimits); message = "Chronicle database settings are supplied by the database options, not settings."; }
-    ];
+      { assertion = lib.all (u: !(flag (u.admin or false)) || (builtins.isString (u.login or null) && builtins.isString (u.passwordHashFile or null))) settingsUsers; message = "smind.hm.services.chronicle.settings.users: admin = true requires a browser login and passwordHashFile."; }
+    ] ++ accounts.accountsAssertions {
+      context = "smind.hm.services.chronicle.settings";
+      settings = accountsView;
+      users = lib.listToAttrs (lib.imap0 (index: u: lib.nameValuePair (toString index) { enabled = flag (u.enabled or false); admin = flag (u.admin or false); }) settingsUsers);
+      keyFile = if provisionAccountsKey then accountsKeyFile else stringValue (accountSettings.keyFile or null);
+      origin = stringValue (cfg.settings.allowedOrigin or null);
+    };
     lib.ponygirls.chronicleServer = {
       inherit serverConfig proxyLocations;
       proxyHttpConfig = "limit_req_zone $binary_remote_addr zone=chronicle_login:1m rate=5r/m;";
