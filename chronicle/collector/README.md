@@ -63,6 +63,51 @@ Additional keys, with defaults:
 
 Unknown keys, invalid types/bounds, duplicate explicit root `(id,format)` pairs, relative paths and empty redaction patterns fail configuration validation. `quietMs:0` is an explicit immediate-snapshot policy. Other duration/size bounds must be positive integers. Configure sufficient file/scan limits for the desired coverage: hitting a limit is visible quarantine and may leave later entries unscanned until the bound is raised. There is no silent truncation or promise of complete coverage after a limited scan.
 
+## Command line
+
+`chronicle-collector --help` (or `-h`, anywhere on the command line) prints this to stdout and exits 0 without reading the configuration or opening state:
+
+```text
+chronicle-collector — uploads local Claude, Codex and Pi session histories to Chronicle
+
+Usage: chronicle-collector [--config PATH] [COMMAND] [--json]
+
+Commands:
+  (none)              run as a daemon, scanning every poll interval
+  --once              scan and upload once, then exit (1 on failure or leftovers)
+  --status            show the last scan, the queue and diagnostics
+  --pause             stop collecting; queued uploads are kept
+  --resume            continue collecting
+  --exclude PATH      stop collecting from a directory
+  --unexclude PATH    collect from it again
+  --exclusions        list excluded directories
+  --retry REQUEST_ID  retry a stopped upload on the next scan
+  --drop REQUEST_ID   discard a queued upload; its source is not collected again
+
+--once, --retry and --drop need the daemon stopped.
+
+Options:
+  --config PATH       absolute path of the configuration
+                      (default: $XDG_CONFIG_HOME/chronicle/collector.json)
+  --json              machine-readable output instead of text (not for --once
+                      or the daemon, which always print JSON)
+  -h, --help          show this help
+```
+
+Output and exit status:
+
+- The daemon and `--once` print one JSON result line per scan; the journal consumes them. They do not take `--json`.
+- Every other command answers in text. `--json` selects the machine-readable form instead: the status snapshot for `--status`, `--retry` and `--drop`, and the control state `{"paused":…,"exclusions":[…]}` for `--pause`, `--resume`, `--exclude`, `--unexclude` and `--exclusions`.
+- With a disabled configuration `--status`, `--exclusions`, `--retry` and `--drop` print `Chronicle collector: disabled`, or `{"enabled":false}` with `--json`; the daemon and `--once` always print `{"enabled":false}`; `--pause`, `--resume`, `--exclude` and `--unexclude` fail with `collector-disabled`.
+- A usage error (unknown argument, missing or malformed value, relative `--config`, two commands, `--json` with the daemon or `--once`) exits 2 before the configuration is read. Stderr names the argument, then points at the help:
+
+  ```text
+  chronicle-collector: --retry needs a request id as --status prints it, got 'nonsense'
+  Try 'chronicle-collector --help'.
+  ```
+
+- A runtime failure exits 1 with `{"code":"…"}` on stderr, for example `{"code":"config-read-failed"}` or `{"code":"collector-already-running"}`.
+
 ## Discovery and identity
 
 Every cycle discovers newly created named yolo profiles and hashes source contents, not just mtimes. Native roots are:
@@ -98,11 +143,11 @@ A held-only pass reports `Idle` with no collector error: no admitted work is act
 ## Durable live controls
 
 ```bash
-chronicle-collector --pause
-chronicle-collector --resume
-chronicle-collector --exclude .           # invoking shell's cwd, recursively
-chronicle-collector --exclusions          # editable durable list (JSON)
-chronicle-collector --unexclude /absolute/project
+chronicle-collector --pause               # Collection paused. Queued uploads are kept; --resume continues.
+chronicle-collector --resume              # Collection resumed.
+chronicle-collector --exclude .           # invoking shell's cwd, recursively: Excluded /absolute/project.
+chronicle-collector --exclusions          # durable list, one path per line, or: No excluded directories.
+chronicle-collector --unexclude /absolute/project   # No longer excluded: /absolute/project.
 chronicle-collector --status              # controls + historical scan + held count
 ```
 
@@ -111,7 +156,10 @@ and do not require restarting a running daemon. Control mutations and status byp
 the daemon lock; retry/drop still require it. Concurrent mutations use SQLite
 transactions, not a read/overwrite file. Disabled configuration rejects mutations
 with `collector-disabled`; existing disabled once/status behavior is unchanged.
-`--json` remains status-only; control commands already emit JSON.
+Each control command answers with one sentence naming the stored, normalised
+path; `--json` prints the control state `{"paused":…,"exclusions":[…]}` instead.
+`--unexclude` answers `Still excluded: PATH is under OTHER.` when a remaining
+exclusion above the path, or above what it links to, still covers it.
 
 Pause is an admission hold, not process termination or a liveness assertion. A
 paused cycle does not read credentials, discover/read transcripts, query git or
@@ -203,7 +251,7 @@ node dist/collector/src/cli.js --config /absolute/collector.json --retry REQUEST
 node dist/collector/src/cli.js --config /absolute/collector.json --drop REQUEST_UUID
 ```
 
-Retry resets the finite attempt budget but retains the payload, request ID and expected revision. It does not resolve an actual CAS conflict. Drop deletes local pending bytes and creates a persistent **local source tombstone**, preventing automatic requeue; it does not delete the server's archive. A changed privacy/discovery/destination policy conservatively discards all older pending payloads and tombstones those sources, because an earlier upload may already have committed despite a lost acknowledgement. These tombstones and their reason are visible in status. There is no automatic tombstone removal, remote purge, stale-head merge or receipt reconstruction after discarding bytes; resolve those cases explicitly with the server operator rather than editing a CAS expectation blindly. `secure_delete` is enabled, but this is not a forensic-erasure guarantee for filesystem backups or old storage blocks.
+Both print the resulting status, as `--status` does: text by default, the snapshot with `--json`. Both take the daemon lock, so stop the daemon first; otherwise they fail with `collector-already-running`. Retry resets the finite attempt budget but retains the payload, request ID and expected revision. It does not resolve an actual CAS conflict. Drop deletes local pending bytes and creates a persistent **local source tombstone**, preventing automatic requeue; it does not delete the server's archive. A changed privacy/discovery/destination policy conservatively discards all older pending payloads and tombstones those sources, because an earlier upload may already have committed despite a lost acknowledgement. These tombstones and their reason are visible in status. There is no automatic tombstone removal, remote purge, stale-head merge or receipt reconstruction after discarding bytes; resolve those cases explicitly with the server operator rather than editing a CAS expectation blindly. `secure_delete` is enabled, but this is not a forensic-erasure guarantee for filesystem backups or old storage blocks.
 
 `--once` reconciles and attempts due queue entries, emits JSON counters, and exits nonzero for upload/quarantine/pending/stopped/conflict or progress-reporting failures. Waiting for first observed quiet evidence is not an error. Daemon mode prints the same counters each cycle. `--status` defaults to a human-readable summary of the saved scan, byte totals, per-root coverage, queue, diagnostics, dropped requests and reporting acknowledgements. It does not infer that the daemon is running or server indexing is complete. `--status --json` retains the machine-readable `{namespace,queue,diagnostics,dropped,lastRun,reporting}` snapshot; `lastRun` includes its scan-start timestamp, counters and hashed per-root coverage. Counters describe the last local scan, not a claim that every possible session was discovered or server annotation finished. Missing native roots are informational. Diagnostic status and pending/stopped queues survive restart. Successful raw ingestion does not mean annotation/search publication completed.
 

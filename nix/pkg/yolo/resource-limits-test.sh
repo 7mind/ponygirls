@@ -166,22 +166,22 @@ assert_eq "--disable=mem-limit beats --mem-limit" \
 # Invalid specs fail fast at argument parsing.
 OUT="$(run_limits_yolo --mem-limit=0)"
 STATUS=$?
-assert_eq "--mem-limit=0 is rejected" "1" "$STATUS"
+assert_eq "--mem-limit=0 is rejected" "2" "$STATUS"
 assert_contains "--mem-limit=0 points at 'none'" "$OUT" "use 'none'"
 
 OUT="$(run_limits_yolo --mem-limit=12X)"
 STATUS=$?
-assert_eq "--mem-limit rejects unknown units" "1" "$STATUS"
+assert_eq "--mem-limit rejects unknown units" "2" "$STATUS"
 assert_contains "--mem-limit=12X shows the expected form" "$OUT" "--mem-limit expects SIZE"
 
 OUT="$(run_limits_yolo --cpu-limit=zero)"
 STATUS=$?
-assert_eq "--cpu-limit rejects non-numbers" "1" "$STATUS"
+assert_eq "--cpu-limit rejects non-numbers" "2" "$STATUS"
 assert_contains "--cpu-limit=zero shows the expected form" "$OUT" "--cpu-limit expects a positive"
 
 OUT="$(run_limits_yolo --cpu-limit=0)"
 STATUS=$?
-assert_eq "--cpu-limit=0 is rejected" "1" "$STATUS"
+assert_eq "--cpu-limit=0 is rejected" "2" "$STATUS"
 
 echo "resource-limits-test: $TESTS_RUN tests, $FAILURES failures"
 [[ $FAILURES -eq 0 ]] || exit 1

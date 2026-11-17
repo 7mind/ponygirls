@@ -6,7 +6,7 @@ const BYTE_BASE = 1024;
 const BYTE_UNITS = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'] as const;
 const PATH_ID_DISPLAY_LENGTH = 12;
 
-function literal(value: string): string {
+export function literal(value: string): string {
   return value.replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, character => `\\u${character.codePointAt(0)!.toString(16).padStart(4, '0')}`);
 }
 function count(value: number): string { return value.toLocaleString('en-US'); }
