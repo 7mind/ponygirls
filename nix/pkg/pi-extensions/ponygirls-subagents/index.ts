@@ -410,12 +410,15 @@ export default function (pi: ExtensionAPI): void {
       name: "spawn_agent",
       label: "Spawn subagent",
       description:
-        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
+        "Start a subagent on a task and return immediately with its agent id, path, task-run id, generation, and workdir (it does not wait for completion; use wait_agent). By default (isolation worktree) a writer edits its own git worktree of your checkout; its changes stay in workdir until you bring them over (e.g. git -C <workdir> diff). repo_path selects a committed Git top-level at or below your working directory as the source for a managed worktree writer; it never edits that source in place. workspace_path instead puts the child in a git work tree you prepared and keep (policy workspaceRoots must contain it). isolation none edits your working directory in place. The child sees only its task text plus the skills and context files you pass. It inherits your model unless `model` names an allowlisted one. The default 32-agent cap counts open identities, including nested agents and reviewers; close_agent frees their slots without deleting history. Optional gate requires unanimous reviewer validation (single model or panel), with deterministic checks for writers. Alternatively review runs one-shot advisory reviewers without gating or automatic repairs. Both return all feedback through read_agent view=reviews.",
       promptGuidelines: [...DELEGATION_GUIDELINES.spawn_agent],
       parameters: spawnParameters<TSchema>(Type, {
         model: Type.Optional(Type.Object({ provider: Type.String(), id: Type.String(), thinkingLevel: Type.Optional(Type.String()) })),
         gate: Type.Optional(gateParameters<TSchema>(Type)),
         review: Type.Optional(reviewParameters<TSchema>(Type)),
+        repo_path: Type.Optional(Type.String({
+          description: "Absolute path of a committed Git top-level equal to or beneath your working directory, compared after resolving symlinks. Governing session and worktree writers only: selects the source of a fresh managed worktree, not an in-place workspace. Cannot combine with repo_id or workspace_path",
+        })),
         workspace_path: Type.Optional(Type.String({
           description: "Absolute path of a git work tree you prepared for this child (its top-level directory, with a commit), used instead of a worktree made for it; isolation worktree only, without base_commit. Accepted only inside a policy workspaceRoots entry. It stays yours: nothing creates, resets, or removes it",
         })),
@@ -425,13 +428,14 @@ export default function (pi: ExtensionAPI): void {
       renderResult: (result, options, theme, context) => renderSpawnResult(result, options, theme, context),
       async execute(toolCallId, params, _signal, _onUpdate, ctx) {
         try {
-          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput; review?: ReviewSpecInput };
+          const p = params as { task_name: string; message: string; profile: "reader" | "writer"; isolation?: Isolation; repo_id?: string; repo_path?: string; base_commit?: string; workspace_path?: string; result_limit?: number; model?: { provider: string; id: string; thinkingLevel?: string }; gate?: GateSpecInput; review?: ReviewSpecInput };
           return ok(await governing(ctx).supervisor.spawn(caller, {
             taskName: p.task_name,
             message: p.message,
             profile: p.profile,
             isolation: p.isolation,
             repoId: p.repo_id ?? null,
+            repoPath: p.repo_path ?? null,
             baseCommit: p.base_commit ?? null,
             workspacePath: p.workspace_path ?? null,
             resultLimit: p.result_limit ?? null,

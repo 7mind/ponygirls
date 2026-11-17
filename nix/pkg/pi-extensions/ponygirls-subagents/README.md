@@ -64,7 +64,7 @@ stricter.
 
 | `isolation` | Tool jobs | Workspace | Policy file |
 |---|---|---|---|
-| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base); readers read in place; or the Git work tree named by `workspace_path` | not needed (`workspace_path`: `workspaceRoots`) |
+| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base), or of the source selected by `repo_path`; readers read in place; or the Git work tree named by `workspace_path` | not needed (`workspace_path`: `workspaceRoots`) |
 | `none` | host | the owner's working directory; writers edit it in place | not needed |
 | `sandbox` | bubblewrap view, no network | a registered repository (`repo_id`); writers get their own worktree | required |
 
@@ -82,6 +82,29 @@ yourself (`git -C <workdir> diff`). A dirty checkout needs `base_commit`
 "none"`. Under host isolation, `reader` is a tool list, not a boundary: its
 `read` reaches anything the user can. Two `none` writers in one directory
 are not locked against each other.
+
+### A repository below your working directory
+
+A governing session started in a non-Git directory can select a descendant
+repository as the source of a fresh managed writer worktree:
+
+```text
+spawn_agent(task_name="impl", profile="writer", repo_path="/home/user/projects/myrepo", message="...")
+```
+
+`repo_path` must be an absolute path to the top-level directory of a Git
+work tree with a commit. After resolving symlinks, it must equal or lie
+beneath the governing session's working directory and must not overlap the
+supervisor's storage or managed worktree pools. It selects the source, not
+an in-place workspace: the child, gate checks, and reviewers use the newly
+allocated worktree. A dirty source still requires `base_commit`, resolved
+in that source repository; uncommitted source changes are not copied.
+
+Only the governing session may select it, only for `worktree` writers.
+Readers, `none`, `sandbox`, and combinations with `repo_id` or
+`workspace_path` are refused. No repository registration or `workspaceRoots`
+grant is needed. Omitting `repo_path` preserves the usual owner-directory
+selection, including refusal of a worktree writer from a non-Git directory.
 
 ### A workspace you prepared
 
