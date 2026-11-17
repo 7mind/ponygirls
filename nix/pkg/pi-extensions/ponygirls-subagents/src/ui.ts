@@ -13,9 +13,10 @@
  */
 
 import { readFileSync, statSync } from "node:fs";
-import { VStack, Input, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import { PanelLayout, type PanelParts, columnCells, columnHeader, compactChip, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiState, type UiTheme } from "@ponygirls/pi-ui";
-import { AGENT_GLYPH, OUTCOME_GLYPH, PLAIN_STYLE, outcomeTone, sanitizeDisplay, type UiStyle } from "./display.ts";
+import { homedir } from "node:os";
+import { VStack, Input, Key, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
+import { HINT, KEY, MARKER_WIDTH, PLAIN_THEME, PanelLayout, type PanelParts, columnCells, columnHeader, compactChip, formatCompact, formatCount, frameRule, frameTitle, keyHints, listRow, stateColor, type Column, type KeyHint, type UiFg, type UiState, type UiTheme } from "@ponygirls/pi-ui";
+import { AGENT_GLYPH, OUTCOME_GLYPH, PHASE_GLYPH, PLAIN_STYLE, homeRelative, outcomeTone, sanitizeDisplay, type AgentPhase, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
 import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
 
@@ -122,10 +123,6 @@ function kindText(v: AgentView): string {
   return v.managedGateFor ? "gate reviewer" : `${v.profile} · ${v.isolation}`;
 }
 
-function shortTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
-}
-
 /** Selected agent's result and open question for the detail panel. */
 export interface AgentDetails {
   result: string | null;
@@ -140,57 +137,182 @@ export interface InspectorDeps {
   /** Terminal height, for sizing the list. */
   rows(): number;
   theme: UiTheme;
+  /** Home directory, for showing paths as `~/…`. */
+  home: string;
 }
 
 const DETAIL_RESULT_LINES = 6;
+/** Columns between a detail key and its value. */
+const DETAIL_GAP = 2;
 /** Lines the inspector needs besides the list: title, column header, rules, detail panel, status, hints. */
 const INSPECTOR_CHROME = 20;
 /** First list row in the inspector's rendered lines (after the title and the column header). */
 const LIST_TOP = 2;
 const COLUMN_GAP = 2;
 const PATH_WIDTH = { min: 8, max: 40 };
-const KIND_WIDTH_MAX = 18;
-const STATE_WIDTH_MAX = 26;
-const OUTCOME_WIDTH_MAX = 24;
+/** Longest state text a list cell shows (after its glyph). */
+const STATE_TEXT_MAX = 24;
 const MAX_INDENT = 4;
-const NO_OUTCOME = "—";
+const INDENT_STEP = 2;
+const ELLIPSIS = "…";
+const TITLE = "Subagents";
+/** A table cell without a value (conventions: zeros stay quiet). */
+const NO_VALUE = "·";
 
-const INSPECTOR_HINTS: readonly KeyHint[] = [
-  { key: "↑↓", action: "select" },
-  { key: "⏎", action: "transcript" },
-  { key: "m", action: "note" },
-  { key: "t", action: "task" },
-  { key: "i", action: "interrupt" },
-  { key: "c", action: "close" },
-  { key: "a", action: "answer" },
-  { key: "g", action: "gate" },
-  { key: "r", action: "refresh" },
-  { key: "esc", action: "close" },
+/** Order of the title's counts. */
+const PHASES: readonly AgentPhase[] = ["running", "queued", "asking", "settled"];
+const PHASE_TONE: Readonly<Record<AgentPhase, UiFg>> = { running: stateColor("running"), queued: "muted", asking: stateColor("attention"), settled: stateColor("settled") };
+/** The state text an outcome stands in for. */
+const SETTLED = "settled";
+
+/** A question waiting on someone wins over running; an agent that neither runs nor waits is settled. */
+export function phaseOf(v: AgentView): AgentPhase {
+  if (v.openQuestion !== null || v.observed === "awaiting_parent") return "asking";
+  if (v.observed === "running" || v.observed === "starting") return "running";
+  if (v.observed === "queued") return "queued";
+  return "settled";
+}
+
+/** A settled agent's state is its outcome. */
+function showsOutcome(v: AgentView): boolean {
+  return phaseOf(v) === "settled" && Boolean(v.taskOutcome);
+}
+
+/** Open agents other than gate reviewers take notes and tasks (the rule of the transcript's chat line). */
+function acceptsMessages(v: AgentView): boolean {
+  return v.desiredLifecycle !== "closed" && v.managedGateFor === null;
+}
+
+/**
+ * The state as a list cell words it: the whole text when short, else its
+ * leading clause, else the observed state. The details spell out the rest.
+ */
+function briefState(v: AgentView): string {
+  const full = sanitizeDisplay(stateText(v));
+  if (visibleWidth(full) <= STATE_TEXT_MAX) return full;
+  const clause = full.split(/[:;]/, 1)[0]!.trim();
+  return clause !== "" && visibleWidth(clause) <= STATE_TEXT_MAX ? clause : v.observed;
+}
+
+/** The one STATE cell: the outcome of a settled agent, else a glyph and the state in the phase's colour. */
+function stateCell(theme: UiTheme, v: AgentView): string {
+  if (showsOutcome(v)) return outcomeLabel(theme, v.taskOutcome!);
+  const phase = phaseOf(v);
+  return theme.fg(PHASE_TONE[phase], `${PHASE_GLYPH[phase]} ${briefState(v)}`);
+}
+
+/** `8.8k in · 5 out`; null while the agent has reported no tokens. */
+function tokensText(v: AgentView): string | null {
+  const { inputTokens, outputTokens } = v.usage;
+  return inputTokens === 0 && outputTokens === 0 ? null : `${formatCompact(inputTokens)} in · ${formatCompact(outputTokens)} out`;
+}
+
+/** Secondary text is muted; a missing value is dim except on the selection (dim lacks contrast on selectedBg). */
+function tokensCell(theme: UiTheme, v: AgentView, selected: boolean): string {
+  const tokens = tokensText(v);
+  return tokens === null ? theme.fg(selected ? "muted" : "dim", NO_VALUE) : theme.fg("muted", tokens);
+}
+
+/** `text` cut to `width` columns by replacing its middle with `…`; head and tail stay. */
+function shortenMiddle(text: string, width: number): string {
+  const total = visibleWidth(text);
+  if (total <= width) return text;
+  if (width <= 0) return "";
+  const kept = width - visibleWidth(ELLIPSIS);
+  const tail = Math.floor(kept / 2);
+  return `${sliceByColumn(text, 0, kept - tail, true)}${ELLIPSIS}${sliceByColumn(text, total - tail, tail, true)}`;
+}
+
+type ColumnId = "agent" | "kind" | "state" | "model" | "tokens";
+
+/** A list column: its header and how it renders an agent into `width` columns. */
+interface ColumnSpec {
+  id: ColumnId;
+  header: string;
+  cell(theme: UiTheme, v: AgentView, width: number, selected: boolean): string;
+}
+
+function indentOf(v: AgentView): number {
+  return Math.min(MAX_INDENT, v.depth - 1) * INDENT_STEP;
+}
+
+/** The path under its nesting indent; a column too narrow for both gives up the indent, then the path's middle. */
+function agentCell(v: AgentView, width: number): string {
+  const path = sanitizeDisplay(v.path);
+  const indent = Math.min(indentOf(v), Math.max(0, width - visibleWidth(path)));
+  return `${" ".repeat(indent)}${shortenMiddle(path, width)}`;
+}
+
+/** Rows keep their state colour when selected; secondary text is muted on every row. */
+const COLUMNS: readonly ColumnSpec[] = [
+  { id: "agent", header: "AGENT", cell: (_theme, v, width) => agentCell(v, width) },
+  { id: "kind", header: "KIND", cell: (theme, v) => theme.fg("muted", kindText(v)) },
+  { id: "state", header: "STATE", cell: (theme, v) => stateCell(theme, v) },
+  { id: "model", header: "MODEL", cell: (theme, v) => theme.fg("muted", sanitizeDisplay(v.model)) },
+  { id: "tokens", header: "TOKENS", cell: (theme, v, _width, selected) => tokensCell(theme, v, selected) },
 ];
+/** Secondary columns in the order narrowing drops them; AGENT and STATE always stay. */
+const DROP_ORDER: readonly ColumnId[] = ["tokens", "model", "kind"];
 
-function indentedPath(v: AgentView): string {
-  return `${"  ".repeat(Math.min(MAX_INDENT, v.depth - 1))}${sanitizeDisplay(v.path)}`;
+interface ListColumn extends Column {
+  spec: ColumnSpec;
 }
 
-function columnWidth(header: string, cells: string[], max: number): number {
-  return Math.min(max, Math.max(header.length, ...cells.map((c) => visibleWidth(c))));
+interface ListLayout {
+  columns: ListColumn[];
+  /** Columns dropped at this width, in display order. */
+  hidden: ListColumn[];
 }
 
-/** Aligned columns sized to the current rows; the model takes what is left. */
-function inspectorColumns(views: AgentView[]): Column[] {
-  const outcomes = views.map((v) => (v.taskOutcome ? `${OUTCOME_GLYPH[outcomeTone(v.taskOutcome)]} ${sanitizeDisplay(v.taskOutcome)}` : NO_OUTCOME));
-  return [
-    { header: "AGENT", width: Math.max(PATH_WIDTH.min, columnWidth("AGENT", views.map(indentedPath), PATH_WIDTH.max)), align: "left" },
-    { header: "KIND", width: columnWidth("KIND", views.map(kindText), KIND_WIDTH_MAX), align: "left" },
-    { header: "STATE", width: columnWidth("STATE", views.map((v) => sanitizeDisplay(stateText(v))), STATE_WIDTH_MAX), align: "left" },
-    { header: "OUTCOME", width: columnWidth("OUTCOME", outcomes, OUTCOME_WIDTH_MAX), align: "left" },
-    { header: "MODEL", width: columnWidth("MODEL", views.map((v) => sanitizeDisplay(v.model)), Number.MAX_SAFE_INTEGER), align: "left" },
-  ];
+function rowWidth(columns: readonly Column[]): number {
+  return MARKER_WIDTH + columns.reduce((sum, column) => sum + column.width, 0) + COLUMN_GAP * Math.max(0, columns.length - 1);
+}
+
+/**
+ * Columns sized to their widest cell, so no cell is clipped. AGENT claims up
+ * to PATH_WIDTH.max; a width too narrow for all columns drops TOKENS, then
+ * MODEL, then KIND. AGENT then takes the room that is left: more of a long
+ * path where there is spare room, less (paths shortened in the middle) where
+ * even AGENT and STATE do not fit.
+ */
+function listLayout(theme: UiTheme, views: AgentView[], width: number): ListLayout {
+  const widest = (spec: ColumnSpec): number => Math.max(visibleWidth(spec.header), ...views.map((v) => visibleWidth(spec.cell(theme, v, Number.MAX_SAFE_INTEGER, false))));
+  const all = COLUMNS.map((spec): ListColumn => ({ spec, header: spec.header, width: spec.id === "agent" ? Math.min(PATH_WIDTH.max, Math.max(PATH_WIDTH.min, widest(spec))) : widest(spec), align: "left" }));
+  let columns = all;
+  for (const id of DROP_ORDER) {
+    if (rowWidth(columns) <= width) break;
+    columns = columns.filter((column) => column.spec.id !== id);
+  }
+  const spare = width - rowWidth(columns);
+  columns = columns.map((column) => (column.spec.id === "agent" ? { ...column, width: Math.max(PATH_WIDTH.min, Math.min(widest(column.spec), column.width + spare)) } : column));
+  return { columns, hidden: all.filter((column) => !columns.some((shown) => shown.spec.id === column.spec.id)) };
+}
+
+/** One line of the detail area: a key and its wrapped value. */
+interface DetailField {
+  key: string;
+  keyTone: UiFg;
+  /** Sanitized plain text; newlines separate paragraphs. */
+  text: string;
+  /** Colour of the value; null leaves the terminal's text colour. */
+  tone: UiFg | null;
+  /** Wrapped lines shown before the rest is counted; null shows all. */
+  maxLines: number | null;
+}
+
+/** A field in the plain style: muted key, uncoloured value, shown whole. */
+function detail(key: string, text: string): DetailField {
+  return { key, keyTone: "muted", text, tone: null, maxLines: null };
+}
+
+/** Display text for a wrapped value: no terminal sequences, tabs as spaces, no carriage returns. */
+function valueText(text: string): string {
+  return sanitizeDisplay(text).replace(/\t/g, "  ").replace(/\r/g, "");
 }
 
 /**
  * The agent tree: canonical path (nested agents indented), kind, state,
- * outcome, and model per row, with the selected agent's details below.
+ * model, and tokens per row, with the selected agent's details below.
  */
 export class AgentInspector extends PanelLayout {
   private views: AgentView[];
@@ -252,24 +374,69 @@ export class AgentInspector extends PanelLayout {
     const height = this.listHeight();
     if (!this.isMeasuring) this.clampScroll(height);
     const shownEnd = Math.min(this.views.length, this.scrollTop + height);
-    const position = this.views.length > height ? t.fg("dim", `${this.scrollTop + 1}–${shownEnd} of ${this.views.length}`) : undefined;
-    lines.push(frameTitle(t, w, { title: "Subagents", meta: widgetLine(this.views), right: position }, "none").line);
-    if (this.views.length === 0) lines.push(t.fg("muted", this.allViews.length > 0 && !this.showClosed ? "  No active subagents. f shows all." : "  No subagents yet."));
-    else {
-      const columns = inspectorColumns(this.views);
-      lines.push(fit(columnHeader(t, columns, COLUMN_GAP), w));
-      for (let i = this.scrollTop; i < shownEnd; i++) lines.push(this.rowLine(this.views[i]!, i === this.selected, columns, w));
+    const total = formatCount(this.views.length);
+    // An overflowing list names the rows it shows in place of the bare total.
+    lines.push(this.titleLine(w, this.views.length > height ? `${this.scrollTop + 1}–${shownEnd} of ${total}` : total));
+    const layout = listLayout(t, this.views, w);
+    const gutter = " ".repeat(MARKER_WIDTH);
+    if (this.views.length === 0) {
+      // Agents exist but none is listed only while the closed ones are hidden.
+      const empty = this.allViews.length > 0 ? "No active subagents. f shows the closed ones." : "No subagents yet. The model starts them with spawn_agent.";
+      lines.push(...wrapTextWithAnsi(empty, w - MARKER_WIDTH).map((l) => t.fg("muted", `${gutter}${l}`)));
+    } else {
+      lines.push(fit(columnHeader(t, layout.columns, COLUMN_GAP), w));
+      for (let i = this.scrollTop; i < shownEnd; i++) lines.push(this.rowLine(this.views[i]!, i === this.selected, layout.columns, w));
+      if (layout.hidden.length > 0) {
+        const hidden = `hidden at this width: ${layout.hidden.map((column) => column.header).join(", ")}`;
+        lines.push(...wrapTextWithAnsi(hidden, w - MARKER_WIDTH).map((l) => t.fg("dim", `${gutter}${l}`)));
+      }
     }
     const current = this.views[this.selected];
     if (current) {
       lines.push(frameRule(t, w));
-      lines.push(...this.detailLines(current, w));
+      lines.push(...this.detailLines(current, layout, w));
     }
     // Fixed chrome stays outside the allocated scrolling body.
-    const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, [{ key: "f", action: this.showClosed ? "hide closed" : "show all" }, ...INSPECTOR_HINTS]).lines];
+    const footer = [fit(this.statusLine ? t.fg("warning", this.statusLine) : "", w), frameRule(t, w), ...keyHints(t, w, this.hints(current)).lines];
     const rows = this.height(this.deps.rows());
     while (lines.length + footer.length < rows) lines.push("");
     return { header: lines.slice(0, 1), body: lines.slice(1, Math.max(1, rows - footer.length)), footer };
+  }
+
+  /**
+   * `Subagents · N` and, on the right, the non-zero counts by phase, each in
+   * its phase's colour: `2 running · 1 asking · 3 settled`. The name and the
+   * total outrank the counts: frameTitle truncates the left side first, so at
+   * a width too narrow for all of them the last counts are left off instead.
+   */
+  private titleLine(width: number, meta: string): string {
+    const counts = PHASES.map((phase) => ({ phase, count: this.views.filter((v) => phaseOf(v) === phase).length })).filter(({ count }) => count > 0);
+    const title = (theme: UiTheme, shown: number): string => {
+      const right = counts.slice(0, shown).map(({ phase, count }) => theme.fg(PHASE_TONE[phase], `${formatCount(count)} ${phase}`)).join(theme.fg("dim", " · "));
+      return frameTitle(theme, width, shown > 0 ? { title: TITLE, meta, right } : { title: TITLE, meta }, "none").line;
+    };
+    let shown = counts.length;
+    // Measured on the unstyled line: the left side is whole while it still ends with the total.
+    while (shown > 0 && !title(PLAIN_THEME, shown).includes(`${TITLE} · ${meta} `)) shown--;
+    return title(this.deps.theme, shown);
+  }
+
+  /**
+   * Only the keys that act on the selected agent in its state. The keys left
+   * out stay bound; so does `r` (refresh), which the caller's poll makes redundant.
+   */
+  private hints(current: AgentView | undefined): KeyHint[] {
+    const toggle: KeyHint = { key: "f", action: this.showClosed ? "hide closed" : "show closed" };
+    if (!current) return this.allViews.length > 0 ? [toggle, HINT.close] : [HINT.close];
+    const open = current.desiredLifecycle !== "closed";
+    const hints: KeyHint[] = [HINT.select, { key: KEY.enter, action: "transcript" }];
+    if (current.openQuestion !== null) hints.push({ key: "a", action: "answer" });
+    if (open && phaseOf(current) !== "settled") hints.push({ key: "i", action: "interrupt" });
+    if (acceptsMessages(current)) hints.push({ key: "t", action: "new task" }, { key: "m", action: "note" });
+    if (current.managedGateFor !== null || current.gateTaskRunId !== null) hints.push({ key: "g", action: "gate" });
+    if (open) hints.push({ key: "c", action: "close agent" });
+    hints.push(toggle, HINT.close);
+    return hints;
   }
 
   handleInput(data: string): void {
@@ -310,38 +477,62 @@ export class AgentInspector extends PanelLayout {
     if (this.selected >= this.scrollTop + height) this.scrollTop = this.selected - height + 1;
   }
 
-  /** Selected rows keep state and outcome colours; secondary text is muted there (dim lacks contrast on selectedBg). */
-  private rowLine(v: AgentView, selected: boolean, columns: Column[], width: number): string {
+  private rowLine(v: AgentView, selected: boolean, columns: ListColumn[], width: number): string {
     const t = this.deps.theme;
-    const cells = [
-      indentedPath(v),
-      t.fg("muted", kindText(v)),
-      stateLabel(t, v),
-      v.taskOutcome ? outcomeLabel(t, v.taskOutcome) : t.fg(selected ? "muted" : "dim", NO_OUTCOME),
-      t.fg("muted", sanitizeDisplay(v.model)),
-    ];
+    const cells = columns.map((column) => column.spec.cell(t, v, column.width, selected));
     return listRow(t, width, columnCells(columns, cells, COLUMN_GAP), selected);
   }
 
-  private detailLines(v: AgentView, width: number): string[] {
-    const t = this.deps.theme;
-    const label = (text: string): string => t.fg("muted", text);
+  /**
+   * What the selected row does not show: identity and place first, then
+   * whatever its cells abbreviate, replace, or lost to a dropped column,
+   * then the question and the result.
+   */
+  private detailFields(v: AgentView, layout: ListLayout): DetailField[] {
     const details = this.deps.describe(v.id);
-    const cost = v.usage.cost !== null ? ` $${v.usage.cost.toFixed(4)}` : v.usage.unknown ? " cost unknown" : "";
-    const outcome = v.taskOutcome ? outcomeLabel(t, v.taskOutcome) : t.fg("muted", "no outcome yet");
-    const lines = [
-      fit(`${t.bold(sanitizeDisplay(v.path))}  ${t.fg("dim", v.id)}`, width),
-      fit(`${label("kind")} ${kindText(v)}  ${label("model")} ${sanitizeDisplay(v.model)}  ${label("state")} ${stateLabel(t, v)}  ${label("outcome")} ${outcome}  ${label("gen")} ${v.generation}  ${label("usage")} in ${shortTokens(v.usage.inputTokens)} out ${shortTokens(v.usage.outputTokens)}${cost}`, width),
-      fit(`${label("workdir")} ${sanitizeDisplay(v.workdir)}`, width),
-    ];
-    if (v.managedGateFor) lines.push(fit(`${label("reviews gated task")} ${v.managedGateFor}`, width));
-    if (v.gateTaskRunId) lines.push(fit(`${label("gated task")} ${v.gateTaskRunId}`, width));
-    if (details.question) lines.push(fit(`${t.fg("warning", "question:")} ${sanitizeDisplay(details.question, 300)}`, width));
-    if (details.result) {
-      const wrapped = sanitizeDisplay(details.result).split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, width - 2)));
-      lines.push(label("result:"));
-      for (const l of wrapped.slice(0, DETAIL_RESULT_LINES)) lines.push(fit(`  ${l}`, width));
-      if (wrapped.length > DETAIL_RESULT_LINES) lines.push(fit(label(`  … ${wrapped.length - DETAIL_RESULT_LINES} more lines (⏎ transcript)`), width));
+    const fields: DetailField[] = [];
+    const hidden = (id: ColumnId): boolean => layout.hidden.some((column) => column.spec.id === id);
+    const path = sanitizeDisplay(v.path);
+    if (visibleWidth(path) > layout.columns.find((column) => column.spec.id === "agent")!.width) fields.push(detail("path", path));
+    fields.push(detail("id", `${v.id} · generation ${v.generation}`));
+    fields.push(detail("workdir", homeRelative(sanitizeDisplay(v.workdir), this.deps.home)));
+    const phase = phaseOf(v);
+    const state = sanitizeDisplay(stateText(v));
+    // The cell holds the state unless it abbreviates it or shows the outcome instead; a bare "settled" adds nothing to an outcome.
+    if (showsOutcome(v) ? state !== SETTLED : state !== briefState(v)) fields.push({ ...detail("state", state), tone: phase === "settled" ? null : PHASE_TONE[phase] });
+    if (v.taskOutcome && !showsOutcome(v)) fields.push({ ...detail("outcome", `${OUTCOME_GLYPH[outcomeTone(v.taskOutcome)]} ${sanitizeDisplay(v.taskOutcome)}`), tone: outcomeTone(v.taskOutcome) });
+    if (hidden("kind")) fields.push(detail("kind", kindText(v)));
+    if (hidden("model")) fields.push(detail("model", sanitizeDisplay(v.model)));
+    const tokens = tokensText(v);
+    if (hidden("tokens") && tokens !== null) fields.push(detail("tokens", tokens));
+    if (v.usage.cost !== null) fields.push(detail("cost", `$${v.usage.cost.toFixed(4)}`));
+    else if (v.usage.unknown) fields.push(detail("cost", "unknown"));
+    if (v.managedGateFor) fields.push(detail("gate", `reviews task ${v.managedGateFor}`));
+    if (v.gateTaskRunId) fields.push(detail("gate", `task ${v.gateTaskRunId}`));
+    if (details.question) fields.push({ ...detail("question", valueText(details.question)), keyTone: "warning" });
+    if (details.result) fields.push({ ...detail("result", valueText(details.result)), maxLines: DETAIL_RESULT_LINES });
+    return fields;
+  }
+
+  /** Aligned key/value lines; values wrap to the width instead of being cut. */
+  private detailLines(v: AgentView, layout: ListLayout, width: number): string[] {
+    const t = this.deps.theme;
+    const fields = this.detailFields(v, layout);
+    const keyWidth = Math.max(...fields.map((field) => visibleWidth(field.key)));
+    const valueWidth = Math.max(1, width - MARKER_WIDTH - keyWidth - DETAIL_GAP);
+    const gutter = " ".repeat(MARKER_WIDTH);
+    const continuation = " ".repeat(MARKER_WIDTH + keyWidth + DETAIL_GAP);
+    const wrap = (text: string): string[] => text.split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, valueWidth)));
+    const lines: string[] = [];
+    for (const field of fields) {
+      const wrapped = wrap(field.text);
+      const shown = field.maxLines !== null && wrapped.length > field.maxLines ? wrapped.slice(0, field.maxLines) : wrapped;
+      const more = wrapped.length - shown.length;
+      const values = [...shown.map((l) => (field.tone ? t.fg(field.tone, l) : l)), ...(more > 0 ? wrap(`… ${more} more lines (⏎ transcript)`).map((l) => t.fg("muted", l)) : [])];
+      values.forEach((value, i) => {
+        const lead = i === 0 ? `${gutter}${t.fg(field.keyTone, field.key.padEnd(keyWidth))}${" ".repeat(DETAIL_GAP)}` : continuation;
+        lines.push(`${lead}${value}`.trimEnd());
+      });
     }
     return lines;
   }
@@ -369,13 +560,13 @@ export function chatModeFor(view: AgentView, question: { messageId: string } | n
 function chatHint(mode: ChatMode): KeyHint {
   switch (mode.kind) {
     case "answer":
-      return { key: "⏎", action: "answer its question" };
+      return { key: KEY.enter, action: "answer its question" };
     case "steer":
-      return { key: "⏎", action: "steer the running task" };
+      return { key: KEY.enter, action: "steer the running task" };
     case "task":
-      return { key: "⏎", action: "send a new task" };
+      return { key: KEY.enter, action: "send task" };
     case "unavailable":
-      return { key: "⏎", action: `unavailable: ${mode.reason}` };
+      return { key: KEY.enter, action: `unavailable: ${mode.reason}` };
   }
 }
 
@@ -413,10 +604,17 @@ export interface TranscriptDeps {
   theme: UiTheme;
 }
 
-const TRANSCRIPT_HINTS: readonly KeyHint[] = [
-  { key: "↑↓ PgUp PgDn", action: "scroll" },
-  { key: "esc", action: "back to the list" },
-];
+/** What the screen hosting a transcript knows and the transcript's own data source does not. */
+export interface TranscriptHost {
+  /** Home directory, for showing paths as `~/…`. */
+  home: string;
+  /** Rows of the pane the transcript opens in, until its own first layout. */
+  paneRows(): number;
+}
+
+const TRANSCRIPT_HINTS: readonly KeyHint[] = [HINT.scroll, HINT.page, HINT.back];
+/** Body of a live agent's transcript whose session file is named but not written yet. */
+const TRANSCRIPT_LOADING = "loading transcript…";
 
 /** Lines the transcript view needs besides its viewport and hints: title, workdir, rules, notice, input. */
 const TRANSCRIPT_CHROME = 6;
@@ -427,6 +625,7 @@ const TRANSCRIPT_CHROME = 6;
  */
 export class TranscriptView extends PanelLayout implements Component, Focusable {
   private deps: TranscriptDeps;
+  private host: TranscriptHost;
   private input: Input;
   private items: TranscriptItem[] = [];
   private version: string | null = null;
@@ -443,9 +642,10 @@ export class TranscriptView extends PanelLayout implements Component, Focusable 
   private sending = false;
   private _focused = false;
 
-  constructor(deps: TranscriptDeps) {
+  constructor(deps: TranscriptDeps, host: TranscriptHost) {
     super((width) => this.renderParts(width));
     this.deps = deps;
+    this.host = host;
     this.input = new Input({ prompt: "› " });
     this.input.onSubmit = (value) => this.submit(value);
     this.source = deps.source();
@@ -547,8 +747,19 @@ export class TranscriptView extends PanelLayout implements Component, Focusable 
     this.deps.requestRender();
   }
 
+  /**
+   * Rows the body is sized from while the layout has not allocated them. The
+   * terminal's rows are the natural height once laid out (the pane may grow
+   * back to them). Before the first layout they over-estimate the pane: a
+   * body that tall is cut at the pane's bottom, and with it a short
+   * conversation, which is anchored there. The host knows the pane's height.
+   */
+  private fallbackRows(): number {
+    return this.hasAllocatedHeight ? this.deps.rows() : this.host.paneRows();
+  }
+
   private viewportHeight(): number {
-    return Math.max(1, this.bodyHeight(this.deps.rows() - TRANSCRIPT_CHROME - this.hintLines));
+    return Math.max(1, this.bodyHeight(this.fallbackRows() - TRANSCRIPT_CHROME - this.hintLines));
   }
 
   private bodyLines(width: number): string[] {
@@ -571,6 +782,9 @@ export class TranscriptView extends PanelLayout implements Component, Focusable 
     } else if (streaming) {
       lines.push("", ...sanitizeDisplay(streaming).split("\n").flatMap((l) => (l === "" ? [""] : wrapTextWithAnsi(l, width))));
       lines[lines.length - 1] = `${lines[lines.length - 1]}${s.accent("▍")}`;
+    } else if (view && this.version === null && phaseOf(view) !== "settled") {
+      // A worker names its session file before its first write: the conversation is still to come.
+      lines.push(s.muted(TRANSCRIPT_LOADING));
     } else if (view && (view.observed === "running" || view.observed === "starting")) {
       lines.push(s.accent(`… ${sanitizeDisplay(view.pendingIntent)}`));
     }
@@ -590,12 +804,12 @@ export class TranscriptView extends PanelLayout implements Component, Focusable 
     if (view) {
       const outcome = view.taskOutcome ? ` · ${outcomeLabel(t, view.taskOutcome)}` : "";
       out.push(frameTitle(t, w, { title: sanitizeDisplay(view.path), meta: `${kindText(view)} · ${sanitizeDisplay(view.model)}`, right: `${stateLabel(t, view)}${outcome}` }, "none").line);
-      out.push(fit(`${t.fg("muted", "workdir")} ${sanitizeDisplay(view.workdir)}`, w));
+      out.push(fit(`${t.fg("muted", "workdir")} ${homeRelative(sanitizeDisplay(view.workdir), this.host.home)}`, w));
     } else {
       out.push(frameTitle(t, w, { title: "Subagent", right: t.fg("error", "agent no longer exists") }, "none").line, "");
     }
     const body = this.bodyLines(w).map((l) => fit(l, w));
-    const height = Math.max(1, this.bodyHeight(this.deps.rows() - TRANSCRIPT_CHROME - hints.length));
+    const height = Math.max(1, this.bodyHeight(this.fallbackRows() - TRANSCRIPT_CHROME - hints.length));
     const maxScroll = Math.max(0, body.length - height);
     const scrollFromBottom = Math.min(this.scrollFromBottom, maxScroll);
     if (!this.isMeasuring) this.scrollFromBottom = scrollFromBottom;
@@ -634,6 +848,8 @@ export class AgentsScreen extends VStack implements Component, Focusable {
   readonly inspector: AgentInspector;
   private transcriptView: TranscriptView | null = null;
   private _focused = false;
+  /** Read once where the views are composed; they take it as a dependency. */
+  private readonly home = homedir();
 
   constructor(deps: AgentsScreenDeps) {
     super();
@@ -643,6 +859,7 @@ export class AgentsScreen extends VStack implements Component, Focusable {
       describe: deps.describe,
       rows: deps.rows,
       theme: deps.theme,
+      home: this.home,
       onClose: deps.onClose,
       onAction: (action) => (action.kind === "transcript" ? this.openTranscript(action.agentId) : deps.onAction(action)),
     });
@@ -663,7 +880,8 @@ export class AgentsScreen extends VStack implements Component, Focusable {
   }
 
   openTranscript(agentId: string): void {
-    this.transcriptView = new TranscriptView(this.deps.transcript(agentId, () => this.closeTranscript()));
+    // The transcript takes the list's place: the height the list was laid out with is the pane's.
+    this.transcriptView = new TranscriptView(this.deps.transcript(agentId, () => this.closeTranscript()), { home: this.home, paneRows: () => this.inspector.height(this.deps.rows()) });
     this.transcriptView.focused = this._focused;
     this.clear();
     this.addChild(this.transcriptView, { grow: 1, minSize: 0 });

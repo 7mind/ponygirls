@@ -18,12 +18,13 @@ type Handler = (event: unknown, ctx: unknown) => Promise<void>;
 
 type Schema = { properties?: Record<string, Schema>; items?: Schema; anyOf?: Schema[] };
 
-async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; descriptions: Map<string, string>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown; events: EventEmitter }> {
+async function loadExtension(agentDir: string): Promise<{ tools: Map<string, ToolExecute>; schemas: Map<string, Schema>; descriptions: Map<string, string>; commands: Map<string, string>; handlers: Map<string, Handler>; sent: Submission[]; ctx: unknown; events: EventEmitter }> {
   process.env["PI_CODING_AGENT_DIR"] = agentDir;
   process.env["PI_SUBAGENTS_SDK_ROOT"] = process.env["PI_SUBAGENTS_SDK_ROOT"] ?? "/nonexistent-sdk";
   const tools = new Map<string, ToolExecute>();
   const schemas = new Map<string, Schema>();
   const descriptions = new Map<string, string>();
+  const commands = new Map<string, string>();
   const handlers = new Map<string, Handler>();
   const sent: Submission[] = [];
   const events = new EventEmitter();
@@ -34,7 +35,7 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
       schemas.set(t.name, t.parameters);
       descriptions.set(t.name, t.description);
     },
-    registerCommand: () => {},
+    registerCommand: (name: string, command: { description: string }) => { commands.set(name, command.description); },
     registerMessageRenderer: () => {},
     on: (event: string, h: Handler) => handlers.set(event, h),
     sendMessage: () => { throw new Error("legacy ingress must not be used"); },
@@ -53,8 +54,17 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
     },
     ui: { notify: () => {}, setWidget: () => {}, theme: { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text } },
   };
-  return { tools, schemas, descriptions, handlers, sent, ctx, events };
+  return { tools, schemas, descriptions, commands, handlers, sent, ctx, events };
 }
+
+test("the /agents command says what it is for, in at most 60 characters and without syntax", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-command-"));
+  try {
+    const { commands } = await loadExtension(agentDir);
+    assert.deepEqual([...commands], [["agents", "Subagents: tree, transcripts, messages, controls"]]);
+    assert.ok(commands.get("agents")!.length <= 60);
+  } finally { rmSync(agentDir, { recursive: true, force: true }); }
+});
 
 test("capacity tool descriptions explain descendant authority and reclaimable open slots", async () => {
   const agentDir = mkdtempSync(join(tmpdir(), "subagents-capacity-tools-"));

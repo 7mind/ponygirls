@@ -21,6 +21,12 @@ const WARNING_OUTCOMES: ReadonlySet<string> = new Set(["interrupted", "uncertain
 /** Glyph per outcome class, shown before the outcome wherever it is coloured. */
 export const OUTCOME_GLYPH: Readonly<Record<OutcomeTone, string>> = { success: "✓", warning: "⚠", error: "✖" };
 
+/** What an agent is doing, as the agent list tells them apart. */
+export type AgentPhase = "running" | "queued" | "asking" | "settled";
+
+/** Glyph per phase, shown before the state; a settled agent with an outcome shows the outcome's glyph instead. */
+export const PHASE_GLYPH: Readonly<Record<AgentPhase, string>> = { running: "●", queued: "○", asking: "?", settled: "—" };
+
 /** The subagents glyph (border badge, transcript notices). */
 export const AGENT_GLYPH = "◈";
 
@@ -29,6 +35,14 @@ export function outcomeTone(outcome: string): OutcomeTone {
   if (SUCCESS_OUTCOMES.has(outcome)) return "success";
   if (WARNING_OUTCOMES.has(outcome)) return "warning";
   return "error";
+}
+
+/** A path at or under `home` as `~` or `~/…`; any other path unchanged. */
+export function homeRelative(path: string, home: string): string {
+  const root = home.replace(/\/+$/, "");
+  if (root === "") return path;
+  if (path === root) return "~";
+  return path.startsWith(`${root}/`) ? `~${path.slice(root.length)}` : path;
 }
 
 /** Semantic styles the views apply; each wraps already-sanitized text. */

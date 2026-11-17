@@ -759,7 +759,7 @@ export default function (pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("agents", {
-    description: "Subagents: tree, details, transcripts with chat, and controls",
+    description: "Subagents: tree, transcripts, messages, controls",
     handler: (args, ctx) => openAgents(args, ctx, "open"),
   });
 
