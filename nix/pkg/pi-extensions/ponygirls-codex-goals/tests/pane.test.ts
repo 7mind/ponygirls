@@ -68,7 +68,7 @@ test("the pane frames the status, then shows objective, budget, timing, and the 
   assert.match(lines[0]!, /^── Goal ─+ {2}◎ active {2}──$/);
   assert.equal(lines[1], "  ship it");
   assert.equal(lines[2], "");
-  assert.match(lines[3]!, /^ {2}tokens {3}125\.0k \/ 500\.0k {2}███░░░░░░░ 25%$/);
+  assert.match(lines[3]!, /^ {2}tokens {3}125k \/ 500k {2}███░░░░░░░ 25%$/);
   assert.equal(lines[4], "  time     1h02m");
   assert.equal(lines[5], "  created  today 20:46  (2h ago)");
   assert.equal(lines[6], "  updated  today 22:42  (4 min ago)");
@@ -83,7 +83,7 @@ test("the pane frames the status, then shows objective, budget, timing, and the 
 test("an uncapped goal shows usage with no cap; resumable statuses offer resume instead of pause", () => {
   for (const status of ["paused", "blocked", "usage_limited"] as const) {
     const text = harness(PLAIN_THEME, at({ ...goal, status, tokenBudget: null }, 3)).pane.render(80).join("\n");
-    assert.match(text, /tokens {3}125\.0k · no cap/);
+    assert.match(text, /tokens {3}125k · no cap/);
     assert.match(text, /\nr resume {2}e edit objective {2}c clear {2}esc close$/);
     assert.doesNotMatch(text, /p pause/);
   }
@@ -104,7 +104,7 @@ test("labels are muted, values text, and the status chip and bar carry the state
   assert.match(chip("budget_limited"), /<error>✖ budget_limited<\/error>/);
   assert.match(chip("complete"), /<muted>◈ complete<\/muted>/);
   const lines = harness(TAGS, at(goal, 1)).pane.render(200);
-  assert.match(lines[3]!, /<muted>tokens +<\/muted><text>125\.0k \/ 500\.0k<\/text> {2}<success>███<\/success><dim>░{7}<\/dim> <muted>25%<\/muted>/);
+  assert.match(lines[3]!, /<muted>tokens +<\/muted><text>125k \/ 500k<\/text> {2}<success>███<\/success><dim>░{7}<\/dim> <muted>25%<\/muted>/);
   assert.match(lines[4]!, /<muted>time +<\/muted><text>1h02m<\/text>/);
   assert.match(lines[5]!, /<text>today 20:46<\/text> {2}<muted>\(2h ago\)<\/muted>/);
   const near = harness(TAGS, at({ ...goal, tokensUsed: 460_000 }, 1)).pane.render(200)[3]!;

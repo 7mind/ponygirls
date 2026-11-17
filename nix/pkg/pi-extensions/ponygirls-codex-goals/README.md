@@ -103,7 +103,7 @@ toggle (`ctrl+o` by default) is off, one line per goal event:
   (`get_goal → no goal`), `create_goal → set · “objective…”` (with
   `· cap 40k` when the call sets a budget), `update_goal complete`. A
   rejected call keeps its call line and the whole error text;
-- a pause: `◉ goal paused · rev N · 6s · /goal resume` (in the TUI the
+- a pause: `◉ goal paused · 6s · /goal resume` (in the TUI the
   notice entry replaces the separate "Goal paused." status line; other
   modes still get the notification);
 - a clear: `🎯 goal cleared`, drawn for the tombstone commit; the

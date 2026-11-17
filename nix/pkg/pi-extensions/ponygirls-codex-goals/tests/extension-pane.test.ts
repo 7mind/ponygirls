@@ -196,7 +196,7 @@ test("commit entries draw nothing collapsed, a clear is one line, pause notices 
   const notice = f.entryRenderers.get("codex-goal-notice")!;
   const pause = { text: "Goal paused (g).", at: "2026-10-30T20:46:55.412Z", event: "paused", goalId: "g", revision: 474, timeUsedSeconds: 6 };
   const collapsed = notice({ type: "custom", customType: "codex-goal-notice", data: pause }, { expanded: false }, plainTheme)!.render(120);
-  assert.deepEqual(collapsed.map((line) => line.trimEnd()), [" ◉ goal paused · rev 474 · 6s · /goal resume"]);
+  assert.deepEqual(collapsed.map((line) => line.trimEnd()), [" ◉ goal paused · 6s · /goal resume"]);
   assert.equal(notice({ type: "custom", customType: "codex-goal-notice", data: pause }, { expanded: true }, plainTheme)!.render(120)[0]!.trimEnd(), "Goal paused (g).");
   const legacy = { text: "Goal paused (g).", at: "2026-10-30T20:46:55.412Z" };
   assert.equal(notice({ type: "custom", customType: "codex-goal-notice", data: legacy }, { expanded: false }, plainTheme)!.render(120)[0]!.trimEnd(), "Goal paused (g).");

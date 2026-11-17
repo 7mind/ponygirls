@@ -91,12 +91,12 @@ export function isPauseNotice(data: NoticeData): data is PauseNoticeData {
   return candidate.event === "paused" && typeof candidate.revision === "number" && typeof candidate.timeUsedSeconds === "number";
 }
 
-/** `◉ goal paused · rev 474 · 6s · /goal resume` */
+/** `◉ goal paused · 6s · /goal resume` */
 export function pauseNoticeSummary(theme: TranscriptTheme, data: PauseNoticeData): string {
   const look = GOAL_STATUS_LOOK.paused;
   return (
     theme.fg(stateColor(look.state), `${look.glyph} goal paused`) +
-    theme.fg("customMessageText", ` · rev ${data.revision} · ${formatDuration(data.timeUsedSeconds)} · /goal resume`)
+    theme.fg("customMessageText", ` · ${formatDuration(data.timeUsedSeconds)} · /goal resume`)
   );
 }
 

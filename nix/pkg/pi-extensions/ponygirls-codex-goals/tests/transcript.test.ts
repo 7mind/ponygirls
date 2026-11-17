@@ -95,7 +95,7 @@ test("pause notices and a clear have one-line forms; other data does not qualify
   assert.ok(!isPauseNotice({ text: "Goal paused (g).", at: "t" }));
   assert.equal(
     pauseNoticeSummary(TAGS, pause),
-    "<warning>◉ goal paused</warning><customMessageText> · rev 474 · 6s · /goal resume</customMessageText>",
+    "<warning>◉ goal paused</warning><customMessageText> · 6s · /goal resume</customMessageText>",
   );
   assert.ok(isCommitMeta({ sessionId: "s", goalId: "g", revision: 2 }));
   assert.ok(!isCommitMeta({ sessionId: "s" }));

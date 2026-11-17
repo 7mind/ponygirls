@@ -4,6 +4,7 @@ import {
   PanelLayout,
   type PanelParts,
   fit,
+  formatCompact,
   fractionState,
   frameRule,
   frameTitle,
@@ -14,7 +15,7 @@ import {
   usageBar,
 } from "@ponygirls/pi-ui";
 import type { GoalRecord, GoalStatus } from "./goal.ts";
-import { formatDuration, formatTokens, GOAL_STATUS_LOOK } from "./presentation.ts";
+import { formatDuration, GOAL_STATUS_LOOK } from "./presentation.ts";
 
 /** A /goal subcommand the pane can run. */
 export type GoalPaneAction = "pause" | "resume" | "edit" | "clear";
@@ -173,11 +174,11 @@ export class GoalPane extends PanelLayout implements Component {
 
   private budget(goal: GoalRecord): string {
     const s = this.theme;
-    if (goal.tokenBudget === null) return `${s.fg("text", formatTokens(goal.tokensUsed))}${s.fg("muted", " · no cap")}`;
+    if (goal.tokenBudget === null) return `${s.fg("text", formatCompact(goal.tokensUsed))}${s.fg("muted", " · no cap")}`;
     const fraction = goal.tokensUsed / goal.tokenBudget;
     const bar = usageBar(s, fraction, BUDGET_BAR_WIDTH, fractionState(fraction));
     const percent = Math.round(fraction * PERCENT);
-    return `${s.fg("text", `${formatTokens(goal.tokensUsed)} / ${formatTokens(goal.tokenBudget)}`)}  ${bar} ${s.fg("muted", `${percent}%`)}`;
+    return `${s.fg("text", `${formatCompact(goal.tokensUsed)} / ${formatCompact(goal.tokenBudget)}`)}  ${bar} ${s.fg("muted", `${percent}%`)}`;
   }
 
   private when(iso: string, nowMs: number): string {

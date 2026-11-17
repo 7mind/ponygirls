@@ -285,7 +285,7 @@ test("host: lifecycle notices render their actual text", async (t) => {
   initTheme("dark");
   const renderer = f.loader.getExtensions().extensions[0].entryRenderers.get("codex-goal-notice");
   const component = new CustomEntryComponent(notice, renderer);
-  assert.match(plain(component.render(100).join("\n")), new RegExp(`◉ goal paused · rev ${notice.data.revision} · .* · /goal resume`));
+  assert.match(plain(component.render(100).join("\n")), new RegExp(`◉ goal paused · .* · /goal resume`));
   component.setExpanded(true);
   assert.match(component.render(100).join("\n"), new RegExp(`Goal paused \\(${notice.data.goalId}\\)\\.`));
 });
