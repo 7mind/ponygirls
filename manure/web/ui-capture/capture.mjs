@@ -1,0 +1,739 @@
+// Manure UI capture driver. Reads the JSON payload produced by capture.py on stdin
+// (contains throwaway credentials of the isolated instance; never written to the output).
+// Scenes are plain async functions in SCENES; add a capture by adding a shot() call.
+import fs from "node:fs";
+import path from "node:path";
+import { createRequire } from "node:module";
+
+let raw = "";
+for await (const chunk of process.stdin) raw += chunk;
+const input = JSON.parse(raw);
+const { chromium } = createRequire(path.join(input.core, "package.json"))("playwright-core");
+
+const OUT = input.out;
+const DOM_DIR = path.join(OUT, "dom");
+fs.mkdirSync(DOM_DIR, { recursive: true });
+const BASE = input.base;
+const ROLES = input.roles;
+const VP = {
+  d: { width: 1440, height: 900, tag: "1440x900" },
+  s: { width: 1024, height: 700, tag: "1024x700" },
+  m: { width: 390, height: 844, tag: "390x844" },
+  tall: { width: 1440, height: 2600, tag: "1440x2600" },
+};
+const FAULT_SETTLE_MS = 400;
+const index = [];
+const metrics = { notes: [] };
+const dialogs = [];
+let counter = 0;
+let currentScene = "";
+
+process.on("unhandledRejection", (e) => { metrics.notes.push(`unhandled rejection in ${currentScene}: ${String(e && e.message).split("\n")[0]}`); });
+const log = (m) => console.log(`[capture ${new Date().toISOString().slice(11, 19)}] ${m}`);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// ---------------------------------------------------------------- helpers
+const browser = await chromium.launch({
+  executablePath: input.chromium,
+  args: ["--no-sandbox", "--no-proxy-server", `--host-resolver-rules=${input.resolver}`],
+});
+
+async function newPage({ vp = VP.d, scheme = "light", storageState = undefined, clipboard = false } = {}) {
+  const context = await browser.newContext({
+    viewport: { width: vp.width, height: vp.height }, colorScheme: scheme, storageState, deviceScaleFactor: 1,
+    acceptDownloads: true,
+  });
+  if (clipboard) await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  const page = await context.newPage();
+  page.__vp = vp; page.__scheme = scheme; page.__dialogMode = "dismiss"; page.__listCalls = [];
+  page.on("dialog", async (dialog) => {
+    dialogs.push({ scene: currentScene, type: dialog.type(), message: dialog.message(), handled: page.__dialogMode });
+    if (page.__dialogMode === "accept") await dialog.accept(); else await dialog.dismiss();
+  });
+  page.on("pageerror", (e) => metrics.notes.push(`pageerror in ${currentScene}: ${e.message}`));
+  page.on("response", async (res) => {
+    if (res.url().endsWith("/api/current") && res.request().method() === "POST") {
+      const body = res.request().postData() || "";
+      if (body.includes('"ListArtifacts"')) page.__listCalls.push({ t: Date.now(), status: res.status() });
+    }
+  });
+  return page;
+}
+
+let statsPage = null;
+// Self-check: decode the PNG in a scratch page and measure how much of it is non-background.
+async function pixelStats(buffer) {
+  if (statsPage === null) statsPage = await (await browser.newContext()).newPage();
+  return statsPage.evaluate(async (b64) => {
+    const blob = await (await fetch("data:image/png;base64," + b64)).blob();
+    const bitmap = await createImageBitmap(blob);
+    const w = 160, h = Math.max(1, Math.round(bitmap.height * 160 / bitmap.width));
+    const canvas = new OffscreenCanvas(w, h); const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const data = ctx.getImageData(0, 0, w, h).data;
+    const counts = new Map();
+    for (let i = 0; i < data.length; i += 4) { const k = (data[i] << 16) | (data[i + 1] << 8) | data[i + 2]; counts.set(k, (counts.get(k) || 0) + 1); }
+    const top = Math.max(...counts.values());
+    return { width: bitmap.width, height: bitmap.height, distinctColors: counts.size, dominantColorShare: +(top / (w * h)).toFixed(3) };
+  }, buffer.toString("base64"));
+}
+const STATUS_SELECTORS = ["#list-status", "#detail-status", "#upload-status", "#access-status", ".account-status", ".account-error", "#query-diagnostic", "#draft-status", "#unlock-error", "#status", "#files-status", "#list-error", "#session-status"];
+// Evidence for the self-check: visible headings/status lines and the text actually inside the viewport.
+const pageText = (page, selectors) => page.evaluate((sels) => {
+  const visible = (e) => e.getClientRects().length > 0 && getComputedStyle(e).visibility !== "hidden";
+  const status = sels.flatMap((s) => [...document.querySelectorAll(s)].filter(visible).map((e) => `${s}: ${e.textContent.trim().replace(/\s+/g, " ").slice(0, 140)}`)).filter((t) => !/: $/.test(t));
+  const h = [...document.querySelectorAll("h1")].find(visible);
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+  const words = [];
+  for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+    const el = n.parentElement; if (!el || !visible(el) || !n.textContent.trim()) continue;
+    const r = document.createRange(); r.selectNodeContents(n); const b = r.getBoundingClientRect();
+    if (b.width > 0 && b.bottom > 0 && b.top < innerHeight && b.right > 0 && b.left < innerWidth) words.push(n.textContent.trim().replace(/\s+/g, " "));
+  }
+  return { heading: h ? h.textContent.trim().slice(0, 100) : null, status, dialogOpen: !!document.querySelector("dialog[open]"), dialogText: (document.querySelector("dialog[open]") || { innerText: "" }).innerText.replace(/\s+/g, " ").slice(0, 400), viewportText: words.join(" | ").slice(0, 700), scroll: { page: Math.round(scrollY), panel: Math.round((document.getElementById("results-panel") || { scrollTop: 0 }).scrollTop) } };
+}, selectors);
+const evidence = [];
+
+async function shot(page, name, what, how, { full = false, probe = false, clip = undefined } = {}) {
+  await sleep(150);
+  counter += 1;
+  const theme = page.__scheme === "dark" ? "-dark" : "";
+  const file = `${String(counter).padStart(2, "0")}-${name}${full ? "-fullpage" : ""}-${page.__vp.tag}${theme}.png`;
+  const buffer = await page.screenshot({ path: path.join(OUT, file), fullPage: full, clip });
+  index.push({ n: counter, file, what, how, scene: currentScene });
+  evidence.push({ file, pixels: await pixelStats(buffer), ...(await pageText(page, STATUS_SELECTORS)) });
+  if (probe) fs.writeFileSync(path.join(DOM_DIR, file.replace(/\.png$/, ".json")), JSON.stringify(await domProbe(page), null, 2));
+  log(`shot ${file}`);
+  return file;
+}
+
+async function domProbe(page) {
+  return page.evaluate(() => {
+    const cssPath = (el) => {
+      const parts = [];
+      while (el && el.nodeType === 1 && el !== document.documentElement) {
+        let part = el.localName;
+        if (el.id) { parts.unshift(part + "#" + el.id); break; }
+        if (el.classList.length) part += "." + [...el.classList].join(".");
+        parts.unshift(part); el = el.parentElement;
+      }
+      return parts.join(" > ");
+    };
+    const rect = (el) => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y + scrollY), w: Math.round(r.width), h: Math.round(r.height) }; };
+    const scrollers = [], sticky = [];
+    for (const el of document.querySelectorAll("*")) {
+      const cs = getComputedStyle(el);
+      if (el.getClientRects().length === 0) continue;
+      const oy = ["auto", "scroll"].includes(cs.overflowY), ox = ["auto", "scroll"].includes(cs.overflowX);
+      if (oy || ox) scrollers.push({
+        selector: cssPath(el), overflowX: cs.overflowX, overflowY: cs.overflowY, height: cs.height, maxHeight: cs.maxHeight,
+        clientHeight: el.clientHeight, scrollHeight: el.scrollHeight, clientWidth: el.clientWidth, scrollWidth: el.scrollWidth,
+        scrollsY: el.scrollHeight > el.clientHeight + 1, scrollsX: el.scrollWidth > el.clientWidth + 1, scrollTop: Math.round(el.scrollTop),
+      });
+      if (["sticky", "fixed"].includes(cs.position)) sticky.push({ selector: cssPath(el), position: cs.position, top: cs.top, zIndex: cs.zIndex, rect: rect(el) });
+    }
+    const de = document.documentElement;
+    const table = document.querySelector("#catalogue-table");
+    const headers = table && table.getClientRects().length ? [...table.querySelectorAll("th")].map((th) => ({ text: th.textContent.trim(), w: Math.round(th.getBoundingClientRect().width) })) : null;
+    const firstRow = document.querySelector("#artifact-list tr");
+    const style = (sel, props) => { const el = document.querySelector(sel); if (!el || !el.getClientRects().length) return null; const cs = getComputedStyle(el); return Object.fromEntries(props.map((p) => [p, cs[p]])); };
+    return {
+      url: location.pathname + location.hash, viewport: { w: innerWidth, h: innerHeight }, scroll: { x: Math.round(scrollX), y: Math.round(scrollY) },
+      document: { scrollHeight: de.scrollHeight, clientHeight: de.clientHeight, scrollWidth: de.scrollWidth },
+      scrollers, stickyOrFixed: sticky, tableColumns: headers, firstRowRect: firstRow ? rect(firstRow) : null,
+      rows: document.querySelectorAll("#artifact-list tr").length,
+      regions: Object.fromEntries(["#results-panel", ".manifest-panel", "#quick-upload", "#list-form", ".topbar", ".workspace-footer"].map((s) => { const e = document.querySelector(s); return [s, e && e.getClientRects().length ? rect(e) : null]; })),
+      computed: {
+        body: style("body", ["fontFamily", "fontSize", "lineHeight", "color", "backgroundColor"]),
+        th: style("#catalogue-table th", ["fontSize", "padding", "color", "backgroundColor"]),
+        td: style("#catalogue-table td", ["fontSize", "padding", "borderBottom"]),
+        button: style("button", ["fontSize", "padding", "border", "borderRadius"]),
+        input: style("input[type=text]", ["fontSize", "padding", "border", "borderRadius"]),
+        h1: style("h1:not([hidden])", ["fontSize", "fontWeight", "letterSpacing"]),
+        accountDialog: style(".account-dialog", ["fontSize", "padding", "borderRadius", "backgroundColor", "maxHeight", "width", "overflowY"]),
+      },
+    };
+  });
+}
+
+const isList = (route) => (route.request().postData() || "").includes('"ListArtifacts"');
+const errorBody = (route, code) => JSON.stringify({ requestId: route.request().postDataJSON().requestId, result: { Error: { failure: { code, message: "controlled fixture", retryAfterSeconds: null } } } });
+
+async function waitList(page) {
+  await page.waitForFunction(() => { const t = document.getElementById("list-status").textContent; return /artifacts shown|failed|Invalid URL|Press Search|hits shown|unavailable/.test(t); }, null, { timeout: 30000 });
+  await sleep(200);
+}
+async function login(page, user = input.alice) {
+  await page.goto(BASE + "/", { waitUntil: "load" });
+  await page.fill("#login-input", user.login);
+  await page.fill("#password-input", user.password);
+  await page.click("#login-form button[type=submit]");
+  await page.waitForSelector("#workspace-shell:not([hidden])", { timeout: 20000 });
+  await waitList(page);
+}
+async function authState() {
+  const page = await newPage();
+  await login(page);
+  const state = await page.context().storageState();
+  await page.context().close();
+  return state;
+}
+async function loadAll(page, maxSteps = 80) {
+  let steps = 0;
+  for (; steps < maxSteps; steps++) {
+    if (await page.evaluate(() => /all matching artifacts loaded/.test(document.getElementById("list-status").textContent))) break;
+    await page.evaluate(() => { const p = document.getElementById("results-panel"); p.scrollTop = p.scrollHeight; });
+    await sleep(300);
+  }
+  return steps;
+}
+async function openDetail(page, id) {
+  await page.evaluate((i) => { window.location.hash = "#/artifact/" + i; }, id);
+  await page.waitForSelector("#detail-section:not([hidden])", { timeout: 20000 });
+  await page.waitForFunction(() => document.getElementById("detail-name").textContent !== "Loading artifact…" && !/Loading file manifest|Waiting for/.test(document.getElementById("files-status").textContent), null, { timeout: 20000 }).catch(() => {});
+  await sleep(300);
+}
+async function applySearch(page, text) {
+  await page.fill("#filter-text", text);
+  await page.click("#search-submit");
+  await page.waitForFunction(() => /Draft matches/.test(document.getElementById("draft-status").textContent) && !/Loading|Searching/.test(document.getElementById("list-status").textContent), null, { timeout: 30000 });
+  await sleep(500);
+}
+async function backToList(page) {
+  await page.evaluate(() => { window.location.hash = "#/artifacts"; });
+  await page.waitForSelector("#dashboard-section:not([hidden])");
+  await waitList(page);
+}
+async function scrollPanelIntoView(page) {
+  await page.evaluate(() => { const r = document.getElementById("results-panel").getBoundingClientRect(); window.scrollTo(0, scrollY + r.top - 12); });
+  await sleep(200);
+}
+async function waitViewer(page) {
+  await page.waitForFunction(() => { const c = document.querySelector("#content"); const s = document.getElementById("status"); return c && (c.children.length > 0) && (!s || !/Loading/.test(s.textContent)); }, null, { timeout: 25000 }).catch(() => {});
+  await page.waitForFunction(() => { const pending = document.querySelectorAll(".diagram, pre > code[class*=language-mermaid], pre > code[class*=language-dot]"); return [...pending].every((d) => !d.matches(".diagram") || d.querySelector("svg, .error")); }, null, { timeout: 15000 }).catch(() => {});
+  await sleep(1500);
+}
+async function gotoContent(page, role, suffix = "") {
+  const res = await page.goto(ROLES[role].content_url.replace(/\/$/, "") + "/" + suffix, { waitUntil: "load", timeout: 30000 }).catch((e) => ({ error: e.message }));
+  return res;
+}
+const hold = async (page, match, ms, then) => {
+  await page.route(match, async (route) => { await sleep(ms); await route.continue().catch(() => {}); });
+};
+
+// ---------------------------------------------------------------- scenes
+let AUTH = null;
+const SCENES = {};
+
+SCENES.auth = async () => { AUTH = await authState(); };
+
+SCENES.login = async () => {
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.d, "dark"]]) {
+    const primary = vp === VP.d && scheme === "light";
+    // session check in flight
+    if (primary) {
+      const page = await newPage({ vp, scheme });
+      await page.route("**/api/current", async (route) => { if ((route.request().postData() || "").includes('"Whoami"')) await sleep(4000); await route.continue().catch(() => {}); });
+      await page.goto(BASE + "/", { waitUntil: "domcontentloaded" });
+      await sleep(900);
+      await shot(page, "login-session-checking", "Initial 'Checking session…' card while Whoami is pending (delayed 4 s by the harness)", "goto / with Whoami response held", {});
+      await page.context().close();
+      const down = await newPage({ vp, scheme });
+      await down.route("**/api/current", async (route) => { if ((route.request().postData() || "").includes('"Whoami"')) await route.abort("connectionrefused").catch(() => {}); else await route.continue().catch(() => {}); });
+      await down.goto(BASE + "/", { waitUntil: "load" });
+      await down.waitForSelector("#session-retry-button:not([hidden])");
+      await shot(down, "login-service-unavailable", "Session check failed: 'service is unavailable' card with Retry connection", "goto / with Whoami aborted", {});
+      await down.context().close();
+    }
+    const page = await newPage({ vp, scheme });
+    await page.goto(BASE + "/", { waitUntil: "load" });
+    await page.waitForSelector("#login-section:not([hidden])");
+    await shot(page, "login-empty", "Login card, empty form", "goto / without a session cookie", { probe: primary });
+    await page.fill("#login-input", "alice"); await page.fill("#password-input", "not-the-password");
+    await shot(page, "login-filled", "Login form filled (password masked)", "type login + password", {});
+    await page.click("#login-form button[type=submit]");
+    await page.waitForSelector("[data-account-login-error]:not([hidden])", { timeout: 10000 });
+    await sleep(200);
+    await shot(page, "login-error", "Login rejected: inline account-error under the form", "submit wrong password", {});
+    await page.context().close();
+  }
+};
+
+SCENES.catalogue = async () => {
+  // --- initial loading state
+  {
+    const page = await newPage({ storageState: AUTH });
+    await page.route("**/api/current", async (route) => { if (isList(route)) await sleep(4000); await route.continue().catch(() => {}); });
+    await page.goto(BASE + "/", { waitUntil: "load" });
+    await page.waitForSelector("#workspace-shell:not([hidden])");
+    await sleep(600);
+    await shot(page, "catalogue-initial-loading", "Workspace while the first ListArtifacts page is pending: empty results panel, footer status 'Loading artifacts…'", "logged-in goto / with ListArtifacts held 4 s", { probe: true });
+    await page.context().close();
+  }
+  const page = await newPage({ storageState: AUTH, clipboard: false });
+  const t0 = Date.now();
+  await page.goto(BASE + "/", { waitUntil: "load" });
+  await page.waitForSelector("#workspace-shell:not([hidden])");
+  await waitList(page);
+  metrics.firstListMs = Date.now() - t0;
+  await shot(page, "catalogue-first-render", "Catalogue as first rendered at 1440x900: top bar, quick upload, heading, search panel; results table starts near/below the fold", "log in, wait for first page (25 rows)", { probe: true });
+  await shot(page, "catalogue-first-render", "Full-page capture of the first-rendered catalogue (page scrolls; results panel is its own 70vh scroller)", "same state, fullPage screenshot", { full: true });
+  metrics.rowsFirstPage = await page.evaluate(() => document.querySelectorAll("#artifact-list tr").length);
+
+  // --- nested scroll states
+  await scrollPanelIntoView(page);
+  await shot(page, "catalogue-page-scrolled-panel-top", "Page scrolled so the results panel fills the viewport; panel itself still at scrollTop 0", "window.scrollTo(panel top)", { probe: true });
+  await page.evaluate(() => { const p = document.getElementById("results-panel"); p.scrollTop = Math.round(p.scrollHeight / 2); });
+  await sleep(500);
+  await shot(page, "catalogue-both-scrolled", "NESTED SCROLL: page scrolled AND inner results panel scrolled (two scrollbars, two scroll positions)", "scroll page to panel, then panel to ~50% of loaded rows", { probe: true });
+  // more rows load on demand; capture in-flight state
+  const slow = page;
+  await slow.route("**/api/current", async (route) => { if (isList(route) && slow.__slow) await sleep(2500); await route.continue().catch(() => {}); });
+  slow.__slow = true;
+  await page.evaluate(() => { const p = document.getElementById("results-panel"); p.scrollTop = p.scrollHeight; });
+  await sleep(700);
+  await shot(page, "catalogue-loading-more", "Infinite load in flight: panel at bottom, status 'Loading more artifacts…' (next page held 2.5 s)", "scroll panel to bottom with next ListArtifacts held", { probe: true });
+  slow.__slow = false;
+  const steps = await loadAll(page);
+  metrics.loadAllSteps = steps;
+  metrics.rowsAllLoaded = await page.evaluate(() => document.querySelectorAll("#artifact-list tr").length);
+  metrics.listCallsToLoadAll = page.__listCalls.length;
+  await sleep(300);
+  await shot(page, "catalogue-all-loaded-panel-bottom", "All matching artifacts loaded: panel scrolled to its end, status 'all matching artifacts loaded', page still scrolled", "keep scrolling panel until cursor exhausted", { probe: true });
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await sleep(300);
+  await shot(page, "catalogue-all-loaded-page-bottom", "Page scrolled to the very bottom: results footer and workspace footer text", "window.scrollTo(bottom) after all rows loaded", { probe: true });
+  await page.evaluate(() => { window.scrollTo(0, 0); document.getElementById("results-panel").scrollTop = 0; });
+  await shot(page, "catalogue-all-loaded-full", "Full-page capture after loading every row (document height unchanged: all rows live inside the inner scroller)", "fullPage screenshot after all rows loaded", { full: true, probe: true });
+
+  // --- back-navigation scroll/state retention measurement
+  await scrollPanelIntoView(page);
+  await page.evaluate(() => { document.getElementById("results-panel").scrollTop = 3000; });
+  await sleep(300);
+  const before = await page.evaluate(() => ({ rows: document.querySelectorAll("#artifact-list tr").length, top: document.getElementById("results-panel").scrollTop, page: scrollY }));
+  const target = await page.evaluate(() => { const rows = [...document.querySelectorAll("#artifact-list tr")]; const panel = document.getElementById("results-panel").getBoundingClientRect(); const row = rows.find((r) => r.getBoundingClientRect().top > panel.top + 40); return row.dataset.artifactId; });
+  await page.click(`#artifact-list tr[data-artifact-id="${target}"] button[data-action=details]`);
+  await page.waitForSelector("#detail-section:not([hidden])");
+  await sleep(500);
+  await shot(page, "detail-reached-from-row", "Detail view reached by clicking a row deep in the list (page scroll position after navigation shown as-is)", "click row name button at panel scrollTop 3000", {});
+  await page.click("#detail-back-button");
+  await page.waitForSelector("#dashboard-section:not([hidden])"); await waitList(page);
+  const after = await page.evaluate(() => ({ rows: document.querySelectorAll("#artifact-list tr").length, top: document.getElementById("results-panel").scrollTop, page: scrollY }));
+  metrics.backNavigation = { before, after, note: "Back to artifacts: loaded rows/scroll positions before opening a detail vs after clicking 'Back to artifacts'" };
+  await shot(page, "catalogue-after-back-from-detail", "Catalogue after 'Back to artifacts': list was reset (first page only, scroll positions lost)", "click Back to artifacts from a deep row's detail", { probe: true });
+
+  // --- sort
+  await page.click('[data-sort="total_bytes"]'); await waitList(page); await sleep(400);
+  await scrollPanelIntoView(page);
+  await shot(page, "catalogue-sorted-size", "Sorted by Size (click on column header; sort indicator arrow, sort summary)", "click 'Size' header button", {});
+  await page.click('[data-sort="created_by_user"]'); await waitList(page); await sleep(400);
+  await shot(page, "catalogue-sorted-owner", "Sorted by Owner", "click 'Owner' header button", {});
+  await page.evaluate(() => window.scrollTo(0, 0));
+
+  // --- presets / search / expression editor
+  await page.click('[data-visibility-preset="public"]'); await sleep(500);
+  await shot(page, "catalogue-preset-clicked", "After clicking the 'Public' access preset (draft/applied status line, pressed state)", "click Public preset", {});
+  await page.click('[data-visibility-preset=""]'); await sleep(300);
+  await page.fill("#filter-text", "access:public tag:release");
+  await shot(page, "catalogue-draft-changed", "Typed an expression but did not press Search: 'Draft changed · press Search to apply. Sort is disabled.'", "type 'access:public tag:release'", {});
+  await applySearch(page, "access:public tag:release");
+  await shot(page, "catalogue-search-applied", "Applied query access:public tag:release (results + count badge)", "press Search", { probe: true });
+  await page.fill("#filter-text", "");
+  await page.click("#filter-text"); await page.keyboard.type("ow"); await sleep(300);
+  await shot(page, "catalogue-suggestions-popover", "Expression suggestions popover (listbox) under the search input", "focus input, type 'ow'", { probe: true });
+  await page.keyboard.press("Escape");
+  await page.fill("#filter-text", "access:bogus");
+  await sleep(200);
+  await shot(page, "catalogue-query-diagnostic", "Invalid expression diagnostic line (red) under the search form", "type 'access:bogus'", {});
+  await applySearch(page, "zzz-no-such-artifact");
+  await shot(page, "catalogue-empty-state", "Empty state: 'No matching artifacts'", "search for a text with no match", {});
+  await applySearch(page, "expired:true");
+  metrics.expiredBadgesInExpiredListing = await page.evaluate(() => document.querySelectorAll("#artifact-list .status-badge.expired").length);
+  await shot(page, "catalogue-expired-listing", "expired:true listing (observed: 25 rows on the first page, none carrying the 'Expired' badge; expired rows sort by created_at among the rest)", "search expired:true", {});
+  for (const mode of ["lexical", "semantic"]) {
+    await applySearch(page, `mode:${mode} capacity`);
+    await shot(page, `catalogue-mode-${mode}`, `Retrieval mode '${mode}' (state depends on server capabilities; the isolated server has no embedding provider)`, `search 'mode:${mode} capacity'`, {});
+  }
+  await applySearch(page, "");
+  await page.click("#query-syntax summary"); await sleep(200);
+  await page.click(".upload-guide summary");
+  await sleep(200);
+  await shot(page, "catalogue-help-open", "'Query syntax' and 'Upload with the CLI' disclosures open (long help text inside the search panel)", "open both <details>", { full: true });
+  await page.click("#query-syntax summary"); await page.click(".upload-guide summary");
+
+  // --- row-level controls
+  await scrollPanelIntoView(page);
+  const firstDetails = page.locator('#artifact-list tr:first-child button[data-action="details"]');
+  await firstDetails.focus();
+  await page.keyboard.press("Tab");
+  await sleep(150);
+  await shot(page, "catalogue-row-keyboard-focus", "Keyboard focus ring on the row's copy-link button (focus-visible styling in a dense row)", "focus first row's name button, Tab", {});
+  await page.locator("#artifact-list tr:nth-child(3)").hover();
+  await shot(page, "catalogue-row-hover", "Row hover background", "mouse over row 3", {});
+  await page.locator("#artifact-list tr:nth-child(2) button.record-copy").click();
+  await sleep(400);
+  await shot(page, "catalogue-copy-link-fallback", "Copy-link without clipboard permission: inline status + manual-copy input + Dismiss link inside the table cell", "click copy-link icon (clipboard permission not granted)", {});
+  page.__dialogMode = "dismiss";
+  await page.locator('#artifact-list tr:nth-child(4) button[data-action="delete"]').click();
+  await sleep(300);
+  metrics.notes.push("Row 'Delete' and detail Delete use window.confirm(): native dialog is not capturable by page screenshots; message text recorded in dialogs.json.");
+
+  // --- list failure
+  const bad = await newPage({ storageState: AUTH });
+  await bad.route("**/api/current", async (route) => { if (isList(route)) await route.fulfill({ status: 503, contentType: "application/json", body: errorBody(route, "Unavailable") }).catch(() => {}); else await route.continue().catch(() => {}); });
+  await bad.goto(BASE + "/", { waitUntil: "load" });
+  await bad.waitForSelector("#retry-list-button:not([hidden])", { timeout: 20000 });
+  await shot(bad, "catalogue-list-error", "List failure: red alert banner + footer status + 'Retry loading' (503 injected)", "ListArtifacts answered 503 by the harness", { probe: true });
+  await bad.context().close();
+
+  // --- narrow viewports
+  for (const vp of [VP.s, VP.m]) {
+    const p = await newPage({ vp, storageState: AUTH });
+    await p.goto(BASE + "/", { waitUntil: "load" }); await p.waitForSelector("#workspace-shell:not([hidden])"); await waitList(p);
+    await shot(p, "catalogue-first-render", `Catalogue at ${vp.tag}: table collapses to stacked card rows below 1350px`, "log in, first page", { probe: true });
+    await shot(p, "catalogue-first-render", `Full page at ${vp.tag}`, "fullPage", { full: true });
+    await scrollPanelIntoView(p);
+    await p.evaluate(() => { const el = document.getElementById("results-panel"); el.scrollTop = 900; });
+    await sleep(400);
+    await shot(p, "catalogue-both-scrolled", `Nested scroll at ${vp.tag}: page + results panel scrolled`, "scroll page to panel then panel 900px", { probe: true });
+    await p.context().close();
+  }
+  await page.context().close();
+};
+
+SCENES.upload = async () => {
+  const page = await newPage({ storageState: AUTH, clipboard: true });
+  await page.goto(BASE + "/", { waitUntil: "load" }); await page.waitForSelector("#workspace-shell:not([hidden])"); await waitList(page);
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==", "base64");
+  await shot(page, "upload-idle", "Quick upload panel idle (file input, access segmented control, disabled Upload, Dismiss)", "log in; panel above the catalogue heading", { clip: { x: 0, y: 40, width: 1440, height: 130 } });
+  await page.setInputFiles("#upload-files", [
+    { name: "screenshot 2026-11-17 at 10.41.22.png", mimeType: "image/png", buffer: png },
+    { name: "notes.md", mimeType: "text/markdown", buffer: Buffer.from("# Notes\n\nhello\n") },
+    { name: "a-very-long-file-name-that-keeps-going-and-going-for-the-purpose-of-layout-testing-0123456789.log", mimeType: "text/plain", buffer: Buffer.alloc(300000, 97) },
+  ]);
+  await sleep(300);
+  await shot(page, "upload-staged", "Three files staged (list of staged uploads inside the quick-upload panel, which pushes the catalogue down)", "choose 3 files in the file input", { probe: true });
+  await page.check("#upload-external"); await sleep(200);
+  await shot(page, "upload-staged-external", "External access selected: help text about passwords appears", "select 'External' radio", {});
+  await page.route("**/api/current/artifacts/*/chunks*", async (route) => { await sleep(2500); await route.continue().catch(() => {}); });
+  await page.click("#upload-submit");
+  await sleep(1200);
+  await shot(page, "upload-in-progress", "Upload in flight (chunk requests held 2.5 s): per-file phase/progress text", "click Upload with chunk PUTs delayed", {});
+  await page.unroute("**/api/current/artifacts/*/chunks*");
+  await page.waitForFunction(() => /Finished this upload attempt/.test(document.getElementById("upload-status").textContent), null, { timeout: 60000 });
+  await sleep(500);
+  await shot(page, "upload-finished-external", "Upload finished: ready links + one-time External passwords shown inline per file", "wait for 'Finished this upload attempt'", { probe: true, full: true });
+  await page.click("#upload-clear"); await sleep(200);
+  // failure
+  await page.setInputFiles("#upload-files", [{ name: "will-fail.txt", mimeType: "text/plain", buffer: Buffer.alloc(5000, 98) }]);
+  await page.check("#upload-internal");
+  await page.route("**/api/current/artifacts/*/chunks*", (route) => route.abort("connectionreset").catch(() => {}));
+  await page.click("#upload-submit");
+  await page.waitForFunction(() => /Upload failed/.test(document.getElementById("upload-list").textContent), null, { timeout: 30000 });
+  await shot(page, "upload-failed", "Upload failure: error paragraph in staged list (chunk request reset by the harness)", "click Upload with chunk PUTs aborted", {});
+  await page.context().close();
+};
+
+SCENES.detail = async () => {
+  const page = await newPage({ storageState: AUTH, clipboard: true });
+  await page.goto(BASE + "/", { waitUntil: "load" }); await page.waitForSelector("#workspace-shell:not([hidden])"); await waitList(page);
+  // loading state
+  const held = await newPage({ storageState: AUTH });
+  await held.route("**/api/current", async (route) => { if ((route.request().postData() || "").includes('"GetArtifact"')) await sleep(4000); await route.continue().catch(() => {}); });
+  await held.goto(BASE + "/#/artifact/" + ROLES.md_report.artifact_id, { waitUntil: "load" });
+  await sleep(1200);
+  await shot(held, "detail-loading", "While GetArtifact is pending the detail view is NOT shown: the catalogue stays on screen with only the footer status 'Loading artifact details…' (no skeleton)", "deep link to #/artifact/<id> with GetArtifact held 4 s", {});
+  await held.context().close();
+
+  const cases = [
+    ["md_report", "detail-public-file", "Detail of a public single-file artifact (tags, hostname, project path, content URL; 3-panel right column)"],
+    ["internal_png", "detail-internal-file", "Detail of an internal artifact"],
+    ["external_site", "detail-external-dir", "Detail of an external-password directory artifact (Copy current password / Rotate buttons visible)"],
+    ["big_dir", "detail-big-manifest", "Directory artifact with 160 files + empty dir: manifest table in its own 50vh scroller"],
+    ["long_name", "detail-long-name", "Very long name/tags/hostname/project path: wrapping behaviour of heading and metadata"],
+    ["hostile", "detail-hostile-name", "Name containing HTML/markup: rendered as text"],
+    ["uploading", "detail-uploading-state", "Artifact still in 'uploading' state: access controls disabled, manifest of partial upload"],
+    ["ttl_week", "detail-with-expiry", "Artifact with an expiry timestamp"],
+  ];
+  for (const [role, name, what] of cases) {
+    await openDetail(page, ROLES[role].artifact_id);
+    await shot(page, name, what, `deep link #/artifact/<id> (${role})`, { probe: role === "md_report" || role === "big_dir" });
+    if (role === "big_dir") {
+      await page.evaluate(() => { const m = document.querySelector(".manifest-panel"); m.scrollIntoView({ block: "start" }); m.scrollTop = 600; });
+      await sleep(300);
+      await shot(page, "detail-big-manifest-nested-scroll", "NESTED SCROLL on the detail page: page scrolled + manifest panel scrolled independently", "scroll page to the manifest, manifest to 600px", { probe: true });
+      await shot(page, "detail-big-manifest", "Full-page capture: manifest scroller does not extend the page", "fullPage", { full: true });
+    }
+  }
+  // external password flows
+  await openDetail(page, ROLES.external_site.artifact_id);
+  await page.click("#get-password-button"); await sleep(900);
+  await shot(page, "detail-external-password-revealed", "'Copy current password' reveals the password panel (warning-coloured) above the detail layout", "click Copy current password", {});
+  await page.click("#rotate-dismiss-button"); await sleep(200);
+  await page.click("#rotate-button"); await sleep(1200);
+  await shot(page, "detail-external-rotated", "After 'Rotate external password': new password revealed, status text updated", "click Rotate external password", {});
+  await page.click("#rotate-dismiss-button");
+  // access mode change
+  await openDetail(page, ROLES.mutable.artifact_id);
+  await page.selectOption("#access-mode", "public"); await sleep(200);
+  await shot(page, "detail-access-mode-changed", "Access mode select changed to Public (Save enabled, description updates)", "select Public in the Access & sharing panel", {});
+  page.__dialogMode = "accept";
+  await page.click("#access-save-button"); await sleep(1500);
+  page.__dialogMode = "dismiss";
+  await shot(page, "detail-access-saved-public", "After confirming the native 'Make artifact … public?' dialog and saving", "click Save access mode, accept window.confirm", {});
+  await page.selectOption("#access-mode", "external"); await page.click("#access-save-button"); await sleep(1800);
+  await shot(page, "detail-access-saved-external", "Switched to External: generated password revealed", "select External, Save", {});
+  // errors
+  await page.evaluate(() => { window.location.hash = "#/artifact/00000000000000000000000000000000"; });
+  await sleep(1500);
+  await shot(page, "detail-not-found", "Detail of a non-existent artifact: bounced to the catalogue with an error banner", "deep link to unknown id", { probe: true });
+  await backToList(page);
+  await openDetail(page, ROLES.expired_0.artifact_id).catch(() => {});
+  await sleep(500);
+  await shot(page, "detail-expired-artifact", "Deep link to an expired artifact: bounced to the catalogue with 'Detail failed (expired)' banner", "deep link to expired id", {});
+  await backToList(page);
+  // delete confirm text
+  await openDetail(page, ROLES.deletable.artifact_id);
+  await page.click("#delete-button"); await sleep(300);
+  // opening content from detail (internal -> single-use grant handoff)
+  await openDetail(page, ROLES.internal_md.artifact_id);
+  await Promise.all([page.waitForURL(/artifacts\.localhost/, { timeout: 20000 }).catch(() => {}), page.click("#open-button")]);
+  await waitViewer(page);
+  await shot(page, "viewer-internal-via-grant", "Internal artifact opened from the dashboard 'Open artifact' button: grant handoff, viewer on the content origin", "detail > Open artifact (POST grant form, redirect)", {});
+  await page.context().close();
+  // secondary viewports
+  for (const vp of [VP.s, VP.m]) {
+    const p = await newPage({ vp, storageState: AUTH });
+    await p.goto(BASE + "/", { waitUntil: "load" }); await p.waitForSelector("#workspace-shell:not([hidden])"); await waitList(p);
+    await openDetail(p, ROLES.external_site.artifact_id);
+    await shot(p, "detail-external-dir", `Detail view at ${vp.tag}`, "deep link", { probe: true });
+    await shot(p, "detail-external-dir", `Full page at ${vp.tag}`, "fullPage", { full: true });
+    await p.context().close();
+  }
+};
+
+SCENES.account = async () => {
+  const open = async (page) => { await page.click("#account-settings"); await page.waitForSelector(".account-dialog[open]"); };
+  const loaded = async (page) => { await page.waitForSelector(".account-token", { timeout: 15000 }); await sleep(250); };
+  const variants = [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"]];
+  for (const [vp, scheme] of variants) {
+    const primary = vp === VP.d && scheme === "light";
+    const page = await newPage({ vp, scheme, storageState: AUTH, clipboard: true });
+    await page.goto(BASE + "/", { waitUntil: "load" }); await page.waitForSelector("#workspace-shell:not([hidden])"); await waitList(page);
+    if (primary) {
+      const slow = await newPage({ vp, scheme, storageState: AUTH });
+      await slow.goto(BASE + "/", { waitUntil: "load" }); await slow.waitForSelector("#workspace-shell:not([hidden])"); await waitList(slow);
+      await slow.route("**/api/account/v1", async (route) => { await sleep(3500); await route.continue().catch(() => {}); });
+      await slow.click("#account-settings"); await sleep(700);
+      await shot(slow, "account-dialog-loading", "Account dialog while GET /api/account/v1 is pending ('Loading account settings…')", "click Settings with the account read held 3.5 s", { probe: true });
+      await slow.context().close();
+    }
+    await open(page); await loaded(page);
+    await shot(page, "account-dialog-token-list", "Token-settings dialog opened: intro text, create form, token list (configured + issued + revoked)", "click Settings in the top bar", { probe: true });
+    await page.evaluate(() => { const d = document.querySelector(".account-dialog"); d.scrollTop = d.scrollHeight / 2; });
+    await sleep(200);
+    await shot(page, "account-dialog-scrolled-mid", "Same dialog scrolled to the middle (dialog is its own scroller over a modal backdrop)", "scroll the dialog", { probe: primary });
+    await page.evaluate(() => { const d = document.querySelector(".account-dialog"); d.scrollTop = d.scrollHeight; });
+    await sleep(200);
+    await shot(page, "account-dialog-scrolled-end", "Dialog scrolled to the end of the long token list (revoked tokens, last rows)", "scroll the dialog to the bottom", {});
+    await page.evaluate(() => { document.querySelector(".account-dialog").scrollTop = 0; });
+    if (primary) {
+      // issue form + secret
+      await page.fill(".account-token-form input[name=name]", "capture-harness token");
+      await shot(page, "account-dialog-issue-form-filled", "Create form with a token name typed", "type a name", {});
+      await page.click(".account-token-form button[type=submit]");
+      await page.waitForSelector(".account-secret", { timeout: 15000 }); await sleep(300);
+      await shot(page, "account-dialog-secret-shown", "One-time secret panel ('Save your token now') inserted above the list, secret pre-selected", "submit Create access token", { probe: true });
+      await page.click(".account-secret button:has-text('Copy secret')"); await sleep(400);
+      await shot(page, "account-dialog-secret-copied", "After 'Copy secret': status line under the secret panel", "click Copy secret (clipboard permitted)", {});
+      await page.click(".account-secret button:has-text('Dismiss secret')"); await sleep(200);
+      // revoke
+      page.__dialogMode = "dismiss";
+      await page.locator(".account-token button:has-text('Revoke')").first().click(); await sleep(300);
+      page.__dialogMode = "accept";
+      await page.locator(".account-token button:has-text('Revoke')").first().click();
+      await page.waitForFunction(() => /revoked/i.test(document.querySelector(".account-status").textContent), null, { timeout: 15000 }); await sleep(300);
+      page.__dialogMode = "dismiss";
+      await shot(page, "account-dialog-after-revoke", "After revoking one token (native confirm accepted): status line + Revoked badge", "click Revoke, accept window.confirm", {});
+      metrics.notes.push("Token revoke uses window.confirm(): native dialog is not capturable; message text recorded in dialogs.json.");
+      // refresh
+      await page.click("button:has-text('Refresh token list')"); await sleep(300);
+      await shot(page, "account-dialog-refreshed", "After 'Refresh token list' (status sentence about checking issued tokens)", "click Refresh token list", {});
+      await page.keyboard.press("Tab");
+      await shot(page, "account-dialog-keyboard-focus", "Keyboard focus state inside the dialog", "press Tab", {});
+      // full-length reference
+      const tall = await newPage({ vp: VP.tall, storageState: AUTH });
+      await tall.goto(BASE + "/", { waitUntil: "load" }); await tall.waitForSelector("#workspace-shell:not([hidden])"); await waitList(tall);
+      await open(tall); await loaded(tall);
+      await shot(tall, "account-dialog-full-length", "Reference: dialog at a 2600px-tall viewport so the whole content is visible at once", "tall viewport", { probe: true });
+      await tall.context().close();
+      // errors
+      const faults = [
+        ["account-error-unauthorized", "Read returns 401: 'Your browser session is no longer authorized'", (r) => r.request().method() === "GET" && /\/api\/account\/v1$/.test(r.request().url()), 401],
+        ["account-error-unavailable", "Read returns 500: 'account service is unavailable' + 'Retry loading settings'", (r) => r.request().method() === "GET" && /\/api\/account\/v1$/.test(r.request().url()), 500],
+      ];
+      for (const [name, what, match, status] of faults) {
+        const p = await newPage({ vp, scheme, storageState: AUTH });
+        await p.goto(BASE + "/", { waitUntil: "load" }); await p.waitForSelector("#workspace-shell:not([hidden])"); await waitList(p);
+        await p.route("**/api/account/v1", async (route) => { if (match(route)) await route.fulfill({ status, contentType: "application/json", body: "{}" }).catch(() => {}); else await route.continue().catch(() => {}); });
+        await open(p); await sleep(900);
+        await shot(p, name, what, `open dialog with GET /api/account/v1 answered ${status}`, {});
+        await p.context().close();
+      }
+      for (const [name, status, what] of [["account-error-mint-500", 500, "Token creation fails (500) AFTER being sent: error + 'creation outcome unknown' recovery block"], ["account-error-mint-403", 403, "Token creation 403: same unknown-outcome recovery block plus permission error"]]) {
+        const p = await newPage({ vp, scheme, storageState: AUTH });
+        await p.goto(BASE + "/", { waitUntil: "load" }); await p.waitForSelector("#workspace-shell:not([hidden])"); await waitList(p);
+        await p.route("**/api/account/v1/tokens", async (route) => { await route.fulfill({ status, contentType: "application/json", body: "{}" }).catch(() => {}); });
+        await open(p); await loaded(p);
+        await p.fill(".account-token-form input[name=name]", "will fail");
+        await p.click(".account-token-form button[type=submit]"); await sleep(900);
+        await shot(p, name, what, `submit create form with POST /tokens answered ${status}`, {});
+        await p.click("button:has-text('Refresh token list')"); await sleep(800);
+        await shot(p, name + "-reconcile", "Recovery block after refreshing the list: 'I checked the list; allow another token' enabled", "click Refresh token list", {});
+        await p.context().close();
+      }
+      {
+        const p = await newPage({ vp, scheme, storageState: AUTH });
+        await p.goto(BASE + "/", { waitUntil: "load" }); await p.waitForSelector("#workspace-shell:not([hidden])"); await waitList(p);
+        await p.route("**/api/account/v1/tokens/*/revoke", async (route) => route.fulfill({ status: 500, contentType: "application/json", body: "{}" }));
+        p.__dialogMode = "accept";
+        await open(p); await loaded(p);
+        await p.locator(".account-token button:has-text('Revoke')").first().click(); await sleep(900);
+        await shot(p, "account-error-revoke", "Revocation fails (500): error plus 'Revocation could not be confirmed' status", "click Revoke with POST revoke answered 500", {});
+        await p.context().close();
+      }
+      {
+        const p = await newPage({ vp, scheme, storageState: AUTH });
+        await p.goto(BASE + "/", { waitUntil: "load" }); await p.waitForSelector("#workspace-shell:not([hidden])"); await waitList(p);
+        await open(p); await loaded(p);
+        await p.fill(".account-token-form input[name=name]", "   ");
+        await p.click(".account-token-form button[type=submit]"); await sleep(400);
+        await shot(p, "account-dialog-empty-name-submit", "Submitting a whitespace-only token name: no visible message (silent focus only)", "type spaces, press Create", {});
+        await p.context().close();
+      }
+    }
+    await page.context().close();
+  }
+};
+
+SCENES.unlock = async () => {
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.d, "dark"]]) {
+    const primary = vp === VP.d && scheme === "light";
+    const page = await newPage({ vp, scheme });
+    await gotoContent(page, "external_md");
+    await page.waitForSelector("#unlock-form", { timeout: 15000 });
+    await shot(page, "unlock-empty", "External-artifact password page on the content origin", "anonymous goto <content-url> of an external artifact", { probe: primary });
+    await page.fill("#password-input", "definitely-wrong");
+    await page.click("#unlock-form button[type=submit]");
+    await page.waitForSelector("#unlock-error:not([hidden])", { timeout: 10000 }); await sleep(200);
+    await shot(page, "unlock-error", "Wrong password: 'Unlock failed' error alert", "submit wrong password", {});
+    if (primary) {
+      await page.fill("#password-input", ROLES.external_md.external_password);
+      await page.click("#unlock-form button[type=submit]");
+      await page.waitForURL(/artifacts\.localhost/); await waitViewer(page);
+      await shot(page, "viewer-external-after-unlock", "Artifact content (Markdown viewer) after a correct password", "submit correct password", {});
+    }
+    await page.context().close();
+  }
+};
+
+SCENES.viewer = async () => {
+  const entries = [
+    ["md_report", "viewer-markdown", "Markdown viewer: GFM table, task list, Mermaid diagram rendered, code, headings with anchors, Preview/Show raw tabs", true],
+    ["mermaid", "viewer-mermaid-file", "Standalone .mmd file rendered as a diagram"],
+    ["dot", "viewer-graphviz-file", "Standalone .dot file rendered as a diagram"],
+    ["svg", "viewer-svg", "SVG artifact shown as an image with fit/zoom tools"],
+    ["png", "viewer-png", "Large PNG with fit/zoom toolbar"],
+    ["pdf", "viewer-pdf", "PDF viewer (canvas, Previous/Next)"],
+    ["bad_dot", "viewer-render-error", "Malformed Graphviz source: viewer error state"],
+    ["code_py", "viewer-code-file", "Python file: no viewer, browser shows the raw response"],
+    ["html_file", "viewer-html-file", "Standalone HTML artifact served as-is"],
+    ["site_dir", "viewer-static-site", "Directory artifact with index.html served as a static site"],
+    ["browse_dir", "viewer-directory-listing", "Directory without index: server-generated listing (unstyled) + README rendered by the viewer below"],
+  ];
+  for (const [role, name, what, probe] of entries) {
+    const page = await newPage({});
+    const res = await gotoContent(page, role);
+    if (res && res.error) { metrics.notes.push(`viewer ${role}: ${res.error}`); await page.context().close(); continue; }
+    if (!["code_py", "html_file", "site_dir", "browse_dir"].includes(role)) await waitViewer(page); else await sleep(800);
+    await shot(page, name, what, `anonymous goto <content-url> (${role})`, { probe: !!probe });
+    if (["md_report", "browse_dir"].includes(role)) await shot(page, name, `Full-page capture: ${what}`, "fullPage", { full: true });
+    if (role === "md_report") {
+      await page.click("#markdown-tab-1"); await sleep(300);
+      await shot(page, "viewer-markdown-raw", "Markdown viewer, 'Show raw' tab (source with light highlighting)", "click Show raw", {});
+    }
+    if (role === "browse_dir") {
+      await page.goto(ROLES.browse_dir.content_url.replace(/\/$/, "") + "/samples/", { waitUntil: "load" }); await sleep(600);
+      await shot(page, "viewer-directory-listing-subdir", "Nested directory listing with 'Parent directory' link (no README)", "goto <content-url>/samples/", {});
+    }
+    await page.context().close();
+  }
+  for (const [vp, scheme] of [[VP.s, "light"], [VP.m, "light"], [VP.d, "dark"]]) {
+    const page = await newPage({ vp, scheme });
+    await gotoContent(page, "md_report"); await waitViewer(page);
+    await shot(page, "viewer-markdown", `Markdown viewer at ${vp.tag}${scheme === "dark" ? " dark" : ""}`, "anonymous goto <content-url>", {});
+    await page.context().close();
+  }
+  // viewer zoom controls and pdf page 2
+  {
+    const page = await newPage({});
+    await gotoContent(page, "pdf"); await waitViewer(page);
+    await page.click("button:has-text('Next')"); await sleep(1200);
+    await shot(page, "viewer-pdf-page-2", "PDF viewer after Next", "click Next →", {});
+    await page.context().close();
+  }
+};
+
+SCENES.keyboard = async () => {
+  const page = await newPage({ storageState: AUTH });
+  await page.goto(BASE + "/", { waitUntil: "load" }); await page.waitForSelector("#workspace-shell:not([hidden])"); await waitList(page);
+  const stops = [];
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  for (let i = 0; i < 40; i++) {
+    await page.keyboard.press("Tab");
+    stops.push(await page.evaluate(() => { const e = document.activeElement; const r = e.getBoundingClientRect(); return { tag: e.localName, id: e.id, text: (e.getAttribute("aria-label") || e.textContent || e.value || "").trim().slice(0, 40), y: Math.round(r.y), visible: r.width > 0 }; }));
+  }
+  metrics.tabOrderFirst40 = stops;
+  await page.context().close();
+};
+
+SCENES.dark = async () => {
+  const page = await newPage({ scheme: "dark", storageState: AUTH, clipboard: true });
+  await page.goto(BASE + "/", { waitUntil: "load" }); await page.waitForSelector("#workspace-shell:not([hidden])"); await waitList(page);
+  await shot(page, "catalogue-first-render", "Catalogue, dark scheme (prefers-color-scheme: dark; there is no theme switch)", "log in with colorScheme=dark", { probe: true });
+  await scrollPanelIntoView(page);
+  await page.evaluate(() => { document.getElementById("results-panel").scrollTop = 500; }); await sleep(400);
+  await shot(page, "catalogue-both-scrolled", "Dark catalogue with page + panel scrolled (status badges, access badges)", "scroll", {});
+  await openDetail(page, ROLES.external_site.artifact_id);
+  await shot(page, "detail-external-dir", "Detail view, dark", "deep link", { probe: true });
+  await page.click("#get-password-button"); await sleep(900);
+  await shot(page, "detail-external-password-revealed", "Password reveal panel, dark", "click Copy current password", {});
+  await page.context().close();
+};
+
+// ---------------------------------------------------------------- main
+const ORDER = ["auth", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
+const only = input.scenes && input.scenes.length ? new Set(["auth", ...input.scenes]) : null;
+for (const name of ORDER) {
+  if (only && !only.has(name)) continue;
+  currentScene = name;
+  log(`scene ${name}`);
+  try { await SCENES[name](); } catch (error) {
+    metrics.notes.push(`scene ${name} FAILED: ${error.message.split("\n")[0]}`);
+    log(`scene ${name} FAILED: ${error.stack}`);
+  }
+}
+await browser.close();
+
+// ---------------------------------------------------------------- outputs
+fs.writeFileSync(path.join(OUT, "metrics.json"), JSON.stringify(metrics, null, 2));
+fs.writeFileSync(path.join(OUT, "evidence.json"), JSON.stringify(evidence, null, 1));
+fs.writeFileSync(path.join(OUT, "dialogs.json"), JSON.stringify(dialogs, null, 2));
+const rows = index.map((e) => `| ${e.n} | \`${e.file}\` | ${e.what} | ${e.how} |`);
+fs.writeFileSync(path.join(OUT, "index.md"), [
+  "# Manure UI capture index", "",
+  `Generated ${new Date().toISOString()} by manure/web/ui-capture (Chromium via playwright-core, DPR 1, fonts: DejaVu only — Inter is not installed in the pinned font set).`,
+  `Primary viewport 1440x900; secondary 1024x700 (and 390x844 for a few responsive checks); default scheme light, dark via prefers-color-scheme.`, "",
+  "| # | File | What it shows | How it was reached |", "|---|---|---|---|", ...rows, "",
+].join("\n"));
+log(`done: ${index.length} screenshots`);
