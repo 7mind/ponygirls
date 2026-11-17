@@ -204,6 +204,43 @@ lazy val root = project.in(file(".")).aggregate(ontologyContracts, ontologyServe
     output
   }
 )
+// Suites that get a group (and database) of their own: slow ones bound the grouped wall time; order-dependent ones need a fresh database.
+lazy val chronicleIsolatedSuites = Seq(
+  IsolatedSuite("chronicle.IndexedSearchTest", "seeds and plans over an indexed corpus; 111-130 s"),
+  IsolatedSuite("chronicle.ModelTransportTest", "real 65 s server delay before headers, beyond the Ember idle default"),
+  IsolatedSuite("chronicle.ModelTransportBodyGapTest", "real 65 s gap inside the body, beyond the Ember idle default"),
+  IsolatedSuite("chronicle.HttpTest", "real WebSocket hello/ping/pong intervals; 73 s"),
+  IsolatedSuite("chronicle.ArchiveSearchTest", "real 30 s statement deadline and a 2 MiB literal; 67 s"),
+  IsolatedSuite("chronicle.BrowserWebSocketTest", "real WebSocket liveness intervals; 45 s"),
+  IsolatedSuite("chronicle.IndexedSearchSnapshotTest", "seeds a search corpus; 23 s"),
+  IsolatedSuite("chronicle.PostgresContextWorkerRecoveryTest", "real 2 s worker back-off per failure case; 27 s"),
+  IsolatedSuite("chronicle.PostgresPassageWorkerTest", "real 2 s worker back-off per failure case; 22 s"),
+  IsolatedSuite("chronicle.ArchivePostgresTest", "order-dependent: its fixture keeps ch_groups/ch_members, so two cases fail after ArchivePublishedFormatTest")
+)
+// Set by chronicle/scripts/test-postgres.sh. Unset (plain sbt test/testOnly): sbt's single forked group against CHRONICLE_TEST_JDBC.
+lazy val chronicleTestGrouping: Option[TestGrouping] = sys.env.get("CHRONICLE_TEST_GROUPS").map { groups =>
+  TestGrouping(groups.toInt, sys.env.get("CHRONICLE_TEST_GROUP_SEED").fold(0L)(_.toLong),
+    sys.env.getOrElse("CHRONICLE_TEST_GROUP_JDBC_PREFIX", sys.error("CHRONICLE_TEST_GROUPS requires CHRONICLE_TEST_GROUP_JDBC_PREFIX")))
+}
+lazy val chronicleTestGroupingSettings: Seq[Setting[?]] = chronicleTestGrouping.toSeq.flatMap { grouping =>
+  Seq(
+    Test / testGrouping := Def.uncached {
+      val tests = (Test / definedTests).value
+      val fork = (Test / forkOptions).value
+      val log = streams.value.log
+      TestGroups.assign(tests, chronicleIsolatedSuites, grouping.groups, grouping.seed).zipWithIndex.map { case (group, i) =>
+        val name = "chronicle-g" + i
+        log.info(name + ": " + group.map(_.name).mkString(" "))
+        Tests.Group(name, group, Tests.SubProcess(fork.withEnvVars(fork.envVars.updated("CHRONICLE_TEST_JDBC", grouping.jdbcPrefix + i))))
+      }
+    },
+    // Groups run concurrently; suites inside one forked group stay serial (one suite at a time per database).
+    Test / parallelExecution := true,
+    Test / testForkedParallel := false,
+    // sbt 2.0.12 defaultRestrictions with the forked-test-group limit (default 1) raised to the group count.
+    Global / concurrentRestrictions := Seq(Tags.limitAll(EvaluateTask.SystemProcessors), Tags.limit(Tags.ForkedTestGroup, grouping.groups), Tags.exclusiveGroup(Tags.Clean))
+  )
+}
 lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, serviceRuntime, serviceAuth, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "chronicle-server",
   // PostgreSQL suites truncate shared tables and mutate profile state.
@@ -228,4 +265,4 @@ lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, se
   assembly / mainClass := Some("chronicle.Main"),
   assembly / assemblyJarName := "chronicle-server.jar",
   assembly / assemblyMergeStrategy := { case PathList("META-INF", "services", _*) => MergeStrategy.concat; case PathList("META-INF", "native-image", _*) => MergeStrategy.first; case PathList("META-INF", _*) => MergeStrategy.discard; case path if path.startsWith("baboon/runtime/") => MergeStrategy.deduplicate; case _ => MergeStrategy.first }
-)
+).settings(chronicleTestGroupingSettings)
