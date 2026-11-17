@@ -8,16 +8,16 @@ import ponygirls.retrieval.postgres.{PostgresRetrieval,IndexingWorker,RetrievalT
 import manure.{api => wire}
 import io.circe.Json
 
-/** Private retrieval identity policy: exact public IDs remain authoritative
-  * bytea/DTO/filter values. Only the internal ACL key is a bounded, namespaced
-  * SHA256 digest, preventing accepted wide manager IDs from exceeding PG index
-  * tuple limits. Both publication/backfill and delivery queries use this type.
+/** Private retrieval audience policy. Every authenticated manager may search
+  * every artifact (visibility is a filter attribute, not an ACL), and
+  * authentication is verified live by `Search.query` before any retrieval call.
+  * Publication and delivery queries therefore share one constant, namespaced
+  * audience principal that does not depend on the configured user list.
   */
 private[manure] final class ManagementSearchPrincipal private (val value: String)
 private[manure] object ManagementSearchPrincipal:
-  private val namespace = Exact.utf8("manure-management-search-principal-v1\u0000")
-  def fromUser(userId: String): ManagementSearchPrincipal =
-    new ManagementSearchPrincipal(SecretCodec.sha256(namespace ++ Exact.utf8(userId)))
+  val all: ManagementSearchPrincipal =
+    new ManagementSearchPrincipal(SecretCodec.sha256(Exact.utf8("manure-management-search-principal-v2\u0000all")))
 
 /** Management-only, explicitly metadata+manifest paths. No binary extraction,
   * dereferencing, HTML execution, passwords, token/grant/hash or secret fields.
@@ -46,7 +46,7 @@ final class SearchProjection(config: Config, engine: PostgresRetrieval):
       val source = SourceProjection(a.id,revision,chunks,
         Vector(attribute("visibility",a.visibility.wire),attribute("kind",a.kind.wire),attribute("createdByUser",a.createdByUser)) ++
           a.tags.map(tag => attribute(tagKey(tag),tag)) ++ a.hostname.map(attribute("hostname",_)) ++ a.projectPath.map(attribute("projectPath",_)),
-        config.users.map(u => ManagementSearchPrincipal.fromUser(u.id).value).toSet,true,false,a.expiresAtSeconds.map(EpochSeconds.fromDouble))
+        Set(ManagementSearchPrincipal.all.value),true,false,a.expiresAtSeconds.map(EpochSeconds.fromDouble))
       engine.put(c,source)
       Jdbc.exec(c,"INSERT INTO manure.search_versions(artifact_id,version,metadata) VALUES(?,?,?) ON CONFLICT DO NOTHING",
         Exact.utf8(a.id),Exact.utf8(revision),Exact.utf8(CurrentWire.encode(wire.Artifact.codecJson,snapshot(a)).noSpaces))
@@ -95,7 +95,7 @@ final class Search(database: JdbcTransactions, root: manure.storage.RootLease, c
     val vector = if mode == RetrievalMode.Lexical then IO.pure(None) else embedding.get.query(q.query).map(Some(_))
     vector.flatMap { values => database.transaction { c => root.run {
       Require(auth.live(new PostgresAuthTxn(c),identity), "unauthorized")
-      val query = RetrievalQuery(ManagementSearchPrincipal.fromUser(identity.userId).value,q.query,mode,filters,false,0,q.limit,EpochSeconds.fromDouble(clock.now))
+      val query = RetrievalQuery(ManagementSearchPrincipal.all.value,q.query,mode,filters,false,0,q.limit,EpochSeconds.fromDouble(clock.now))
       val page = engine.search(c,query,values)
       val hits = page.hits.flatMap { hit =>
         // Fresh source authorization/expiry before returning any pinned metadata.

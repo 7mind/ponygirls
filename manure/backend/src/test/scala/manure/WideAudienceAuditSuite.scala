@@ -137,6 +137,8 @@ final class WideAudienceAuditSuite extends FunSuite:
           // manager's query. No publication/mutation may repair ACLs for it.
           _ <- visible(s,config,wideIdentity,saved._1)
           _ <- visible(s,config,identity,saved._1)
+          audience <- s.database.transaction(c => Jdbc.rows(c,"SELECT principal FROM pony_retrieval_audience WHERE namespace=? AND source_id=?",encoded("manure"),encoded(saved._1.id))(_.getString(1)))
+          _ <- IO(assertEquals(audience,Vector(encoded(ManagementSearchPrincipal.all.value)))) // Backfill replaced the per-user legacy rows with the constant audience.
           after <- snapshot(s)
           _ <- IO(assert(after==saved._2,"startup ACL backfill changed source version/generation or pinned metadata bytes"))
           _ <- checkedRuntime(s,config)

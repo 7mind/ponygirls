@@ -17,6 +17,8 @@ final class MetadataSearchSuite extends FunSuite:
       val profile=RetrievalProfile(EmbeddingSpace("controlled-metadata","immutable-v1",3,false,"","","cosine"),"manure-metadata-paths-v2")
       val engine=new PostgresRetrieval("manure",Some(profile))
       val projection=new SearchProjection(f.config,engine)
+      // Published while "other" is not yet configured; it must still find the artifacts after live authentication.
+      val publishedBeforeOther=new SearchProjection(f.config.copy(users=f.config.users.filter(_.id==f.identity.userId)),engine)
       val embedding=new EmbeddingClient:
         def documents(values: List[String]): IO[List[List[Double]]] = IO.pure(values.map(_ => List(1.0,0.0,0.0)))
         def query(value: String): IO[List[Double]] = IO.pure(List(1.0,0.0,0.0))
@@ -35,7 +37,7 @@ final class MetadataSearchSuite extends FunSuite:
         ready <- f.artifacts.finish(f.identity,a.artifact.id)
         b <- f.artifacts.init(f.identity,input.copy(tags=Vector("needle tag\u0000馬")))
         excluded <- f.artifacts.finish(f.identity,b.artifact.id)
-        _ <- f.database.get.transaction { c => engine.initialize(c); projection.put(c,ready);projection.put(c,excluded) }
+        _ <- f.database.get.transaction { c => engine.initialize(c); publishedBeforeOther.put(c,ready);publishedBeforeOther.put(c,excluded) }
         _ <- publish
         _ <- wire.SearchMode.all.traverse_ { mode =>
           val filter=wire.SearchFilter(Some(wire.Visibility.Internal),Some(wire.ArtifactKind.Directory),Some(f.identity.userId),input.tags.toList,input.hostname,input.projectPath)
