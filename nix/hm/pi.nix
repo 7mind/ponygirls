@@ -950,9 +950,9 @@ in
             "${piExtensions}/ponygirls-model-picker.ts"
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
             "${piExtensions}/ponygirls-model-stats.ts"
-            # /usage table: period tabs with flat per-provider/per-model rows,
-            # scrollable, plus a global input-size distribution view (ascii
-            # chart/table, [v]/[c]). Data collection is vendored in ponygirls-usage-data.ts
+            # /usage table: period tabs, providers with their models indented
+            # underneath, scrollable, plus a global input-size distribution
+            # view (ascii chart/table, [v]/[c]). Data collection is vendored in ponygirls-usage-data.ts
             # (same cache file, plus a marked local inputSizes extension);
             # insights, graphs, and export are out of scope.
             "${piExtensions}/ponygirls-usage.ts"
