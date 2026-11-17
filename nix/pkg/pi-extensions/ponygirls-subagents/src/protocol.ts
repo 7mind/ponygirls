@@ -1,3 +1,4 @@
+import { parseBackendWorker, type BackendWorkerDescriptor } from "./backend-contract.ts";
 /**
  * ponygirls-subagents — private supervisor/worker IPC protocol.
  *
@@ -40,7 +41,7 @@ export type WorkerOperation =
   | "tool.prepare"
   | "tool.ticket-release"
   | "provider.admission"
-  | "provider.native";
+  | "provider.backend";
 
 const SUPERVISOR_OPS: ReadonlySet<string> = new Set<SupervisorOperation>([
   "initialize",
@@ -58,7 +59,7 @@ const WORKER_OPS: ReadonlySet<string> = new Set<WorkerOperation>([
   "tool.prepare",
   "tool.ticket-release",
   "provider.admission",
-  "provider.native",
+  "provider.backend",
 ]);
 
 export interface IpcEnvelope {
@@ -155,7 +156,7 @@ export function validateEnvelope(
   // Supervisor answers to worker RPCs (tool execute/prepare, provider
   // admission) travel as responses; ticket-release is one-way and needs no
   // answer.
-  const isToolAnswer = direction === "to-worker" && e["type"] === "response" && (operation === "tool.execute" || operation === "tool.prepare" || operation === "provider.admission" || operation === "provider.native");
+  const isToolAnswer = direction === "to-worker" && e["type"] === "response" && (operation === "tool.execute" || operation === "tool.prepare" || operation === "provider.admission" || operation === "provider.backend");
   if (typeof operation !== "string" || (!allowed.has(operation) && !isToolAnswer)) {
     return { ok: false, code: "UNKNOWN_OPERATION", message: `unknown operation ${String(e["operation"])}` };
   }
@@ -250,6 +251,7 @@ export interface InitializePayload {
   model: { provider: string; id: string; thinkingLevel: string };
   /** Public selected model metadata from the parent registry, without headers/credentials. */
   providerModel?: Model<Api>;
+  providerBackend?: BackendWorkerDescriptor;
   taskRunId: string;
   executionGeneration: number;
   workdir: string;
@@ -330,6 +332,11 @@ export function validateInitializePayload(raw: unknown): { ok: true; value: Init
   const model = p["model"] as Record<string, unknown> | undefined;
   if (!model || !isNonEmptyString(model["provider"]) || !isNonEmptyString(model["id"])) {
     return { ok: false, error: err("INVALID", "initialize.model must carry provider/id") };
+  }
+  if (p["providerBackend"] !== undefined) {
+    try { parseBackendWorker(p["providerBackend"]); }
+    catch (error) { return { ok: false, error: err("INVALID", (error as Error).message) }; }
+    if (p["providerModel"] !== undefined) return { ok: false, error: err("INVALID", "backend and stock model descriptors are mutually exclusive") };
   }
   if (p["providerModel"] !== undefined) {
     try {

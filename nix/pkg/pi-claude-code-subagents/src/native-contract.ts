@@ -1,8 +1,7 @@
 import type { Api, AssistantMessageEventStream, Model, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
+import type { RunClaudeInput, RunClaudeOutput } from "../executor/claude-cli.ts";
 
-import { err } from "./errors.ts";
-
-export const NATIVE_DELEGATION = "ponygirls.nativeDelegation.v1";
+export const NATIVE_DELEGATION = "pi-claude-code.execution.v1";
 export const NATIVE_CAPABILITY = Symbol.for(NATIVE_DELEGATION);
 export const NATIVE_PROFILE = "canonical-simple-no-provider-hooks-v1";
 
@@ -10,15 +9,20 @@ export interface NativeDelegationV1 {
   readonly version: 1;
   readonly apis: readonly string[];
   readonly requestProfile: typeof NATIVE_PROFILE;
-  disposeSession(lifecycleSessionId: string): Promise<void>;
+}
+
+export interface NativeExecution {
+  readonly cwd: string;
+  readonly signal: AbortSignal;
+  beforeEntry(): void;
+  run(input: RunClaudeInput): Promise<RunClaudeOutput>;
+  captureOriginal(stream: AssistantMessageEventStream): AssistantMessageEventStream;
+  track<T>(pending: Promise<T>): Promise<T>;
 }
 
 export interface NativeRequestContext {
   readonly capability: NativeDelegationV1;
-  readonly cwd: string;
-  readonly lifecycleSessionId: string;
-  beforeEntry(actualCapability: NativeDelegationV1): void;
-  captureOriginal(stream: AssistantMessageEventStream): AssistantMessageEventStream;
+  readonly execution: NativeExecution;
 }
 
 export interface NativeBinding {
@@ -30,8 +34,8 @@ export interface NativeBinding {
 
 export function nativeCapability(provider: unknown, api: string): NativeDelegationV1 {
   const value: unknown = typeof provider === "object" && provider !== null ? Reflect.get(provider, NATIVE_CAPABILITY) : undefined;
-  if (typeof value !== "object" || value === null) throw err("MODEL_UNAVAILABLE", "native provider has not opted into delegation");
+  if (typeof value !== "object" || value === null) throw new Error("MODEL_UNAVAILABLE: Claude Code provider has no execution capability");
   const cap = value as NativeDelegationV1;
-  if (cap.version !== 1 || cap.requestProfile !== NATIVE_PROFILE || !Array.isArray(cap.apis) || !cap.apis.includes(api) || typeof cap.disposeSession !== "function") throw err("MODEL_UNAVAILABLE", "incompatible native delegation capability");
+  if (cap.version !== 1 || cap.requestProfile !== NATIVE_PROFILE || !Array.isArray(cap.apis) || !cap.apis.includes(api)) throw new Error("MODEL_UNAVAILABLE: incompatible Claude Code execution capability");
   return cap;
 }

@@ -17,19 +17,24 @@ import {
   type TextContent,
   type ToolCall,
 } from "@earendil-works/pi-ai";
-import { SIM_MODEL, SIM_PROVIDER } from "../src/deterministic.ts";
-import { EMPTY_INSTRUCTIONS } from "../src/instructions.ts";
-import { GoverningModels } from "../src/parent-models.ts";
+import { SIM_MODEL, SIM_PROVIDER } from "ponygirls-subagents/src/deterministic.ts";
+import { EMPTY_INSTRUCTIONS } from "ponygirls-subagents/src/instructions.ts";
+import { NativeModels } from "../src/models.ts";
+import { GoverningModels } from "ponygirls-subagents/src/parent-models.ts";
+import { BackendRegistry } from "ponygirls-subagents/src/backends.ts";
+import type { BackendJson } from "ponygirls-subagents/src/backend-contract.ts";
+import { ClaudeExecutor } from "../executor/claude-cli.ts";
+import { NativeInferenceService } from "../src/native-service.ts";
 import { NATIVE_DELEGATION, NATIVE_CAPABILITY, type NativeDelegationV1, type NativeRequestContext } from "../src/native-contract.ts";
-import { defaultSupervisorPolicy } from "../src/policy.ts";
-import { bindChannel } from "../src/protocol.ts";
-import { DummyToolExecutor, HostToolExecutor } from "../src/sandbox.ts";
-import { InMemoryRunStore } from "../src/store.ts";
-import { Supervisor, type SpawnResult } from "../src/supervisor.ts";
-import { WorkerHandle } from "../src/worker-launch.ts";
-import { DummyWorkspaceManager } from "../src/workspace.ts";
+import { defaultSupervisorPolicy } from "ponygirls-subagents/src/policy.ts";
+import { bindChannel } from "ponygirls-subagents/src/protocol.ts";
+import { DummyToolExecutor, HostToolExecutor } from "ponygirls-subagents/src/sandbox.ts";
+import { InMemoryRunStore } from "ponygirls-subagents/src/store.ts";
+import { Supervisor, type SpawnResult } from "ponygirls-subagents/src/supervisor.ts";
+import { WorkerHandle } from "ponygirls-subagents/src/worker-launch.ts";
+import { DummyWorkspaceManager } from "ponygirls-subagents/src/workspace.ts";
 import { portableControl } from "./native-portable-fixture.ts";
-import { until } from "./fake-worker.ts";
+import { until } from "ponygirls-subagents/tests/fake-worker.ts";
 
 const PROVIDER = "parent-native-fixture";
 const API = "parent-native-fixture-stream";
@@ -139,14 +144,13 @@ async function nativeRegistry() {
     stream: (model, context) => provider.streamSimple(model, context),
     streamSimple: (model, context, options) => {
       const delegation = options?.metadata?.[NATIVE_DELEGATION] as NativeRequestContext | undefined;
-      if (delegation !== undefined) delegation.beforeEntry(Reflect.get(provider, NATIVE_CAPABILITY) as NativeDelegationV1);
+      if (delegation !== undefined) delegation.execution.beforeEntry();
       const raw = stream(model, context, options);
-      return delegation === undefined ? raw : delegation.captureOriginal(raw);
+      return delegation === undefined ? raw : delegation.execution.captureOriginal(raw);
     },
   };
-  Object.defineProperty(provider, Symbol.for("ponygirls.nativeDelegation.v1"), { value: {
+  Object.defineProperty(provider, NATIVE_CAPABILITY, { value: {
     version: 1, apis: [API], requestProfile: "canonical-simple-no-provider-hooks-v1",
-    disposeSession: async (_sessionId: string) => {},
   } });
   registry.registerProvider(provider);
   assert.equal(registry.getRegisteredNativeProvider(PROVIDER), provider);
@@ -157,7 +161,7 @@ async function nativeRegistry() {
     assert.equal(model.api, API);
     assert.equal(model.baseUrl, BASE_URL);
   }
-  return { registry, requests, source: new GoverningModels(() => registry),
+  return { registry, requests, source: new NativeModels(() => registry),
     setUsage: (resolve: (index: number) => AssistantMessage["usage"]) => { usageForRequest = resolve; },
     failRequest: (index: number) => { failureAt = index; },
   };
@@ -176,10 +180,25 @@ async function runtimeFixture(t: TestContext, native: Pick<Awaited<ReturnType<ty
   policy.allowedModels = null;
   const rootDir = join(root, "supervisor");
   const workers = new Map<string, WorkerHandle>();
+  const executor = new ClaudeExecutor();
+  const backends = new BackendRegistry();
+  backends.register({
+    version: 1, id: "native-fixture", usageOwnership: "parent",
+    claims: (selected) => {
+      const model = native.registry.find(selected.provider, selected.id);
+      return model !== undefined && (model.api === API || model.api === "claude-code-stream-json");
+    },
+    worker: (selected) => ({ version: 1, backendId: "native-fixture", moduleUrl: new URL("../src/worker.ts", import.meta.url).href, initialization: native.source.describe(selected) as unknown as BackendJson }),
+    createSession: (context) => {
+      const admitted = native.source.describe(context.model);
+      return new NativeInferenceService({ ...context, binding: () => native.source.nativeBinding(admitted), run: (input) => executor.runClaudeRequest(input) });
+    },
+  });
   const supervisor: Supervisor = new Supervisor({
     rootId: "native-parent-fixture", rootDir, policy,
     store: new InMemoryRunStore("native-parent-fixture"),
-    parentModels: native.source,
+    backends: () => backends,
+    parentModels: new GoverningModels(() => native.registry),
     governor: () => ({ model: { ...governorModel, thinkingLevel: "off" }, cwd: workdir, instructions: EMPTY_INSTRUCTIONS }),
     executors: { host: new HostToolExecutor(), sandbox: new DummyToolExecutor() },
     workspace: new DummyWorkspaceManager(),
@@ -190,7 +209,7 @@ async function runtimeFixture(t: TestContext, native: Pick<Awaited<ReturnType<ty
       mkdirSync(agentDir, { recursive: true });
       if (settings !== null) writeFileSync(join(agentDir, "settings.json"), JSON.stringify(settings));
       const worker = new WorkerHandle({
-        workerPath: fileURLToPath(new URL("../src/worker.ts", import.meta.url)),
+        workerPath: fileURLToPath(new URL(import.meta.resolve("ponygirls-subagents/src/worker.ts"))),
         rootEpoch: options.rootEpoch, agentId: options.agentId, sdkRoot,
         deterministic: agent.model === `${SIM_PROVIDER}/${SIM_MODEL}`,
         agentDir,
@@ -202,7 +221,7 @@ async function runtimeFixture(t: TestContext, native: Pick<Awaited<ReturnType<ty
     },
   });
   t.after(async () => {
-    try { await supervisor.shutdown(); }
+    try { await supervisor.shutdown(); await executor.closeClaudeProcesses(); }
     finally { rmSync(root, { recursive: true, force: true }); }
   });
   return { ...native, supervisor, workers };
@@ -263,7 +282,7 @@ test("BG fixture control: the registered custom native API streams through the p
 
 test("BG regression: an existing native parent model is selectable for a child", async () => {
   const f = await nativeRegistry();
-  assert.doesNotThrow(() => f.source.describe({ provider: PROVIDER, id: MAIN_MODEL, thinkingLevel: "off" }));
+  assert.doesNotThrow(() => f.source.describe({ provider: PROVIDER, id: MAIN_MODEL }));
 });
 
 test("GoodCommunication regression: a native parent model completes a real worker tool continuation", { timeout: TEST_TIMEOUT_MS }, async (t) => {
@@ -383,7 +402,7 @@ test("GoodCommunication pinned Claude package: actual SDK loader, native 5.5 wor
   assert.equal(registry.find(opus.provider, opus.id)!.api, "claude-code-stream-json");
   assert.ok(registry.find(sonnet.provider, sonnet.id));
   const portable = await portableControl(registry, ANSWER);
-  const f = await runtimeFixture(t, { registry, requests: [], source: new GoverningModels(() => registry) }, sonnet, null);
+  const f = await runtimeFixture(t, { registry, requests: [], source: new NativeModels(() => registry) }, sonnet, null);
   t.after(() => portable.close());
   t.after(() => {
     if (savedCommand === undefined) delete process.env["PI_CLAUDE_CODE_COMMAND"]; else process.env["PI_CLAUDE_CODE_COMMAND"] = savedCommand;
@@ -392,11 +411,12 @@ test("GoodCommunication pinned Claude package: actual SDK loader, native 5.5 wor
   });
   const nativeGate = { model: sonnet, thinkingLevel: "off", prompt: "Approve only when the candidate contains the literal substring Opus.", maxRounds: 1 };
   const explicit = await f.supervisor.spawn("governor", { taskName: "actual-opus", message: "Read probe.txt, then answer.", profile: "reader", isolation: "none", model: opus, gate: nativeGate }, "actual-opus");
-  assert.equal((await terminal(f.supervisor, explicit)).outcome, "passed");
+  const explicitResult = await terminal(f.supervisor, explicit);
+  assert.equal(explicitResult.outcome, "passed", JSON.stringify(explicitResult));
   const inherited = await f.supervisor.spawn("governor", { taskName: "actual-inherited", message: "Read probe.txt, then answer.", profile: "reader", isolation: "none" }, "actual-inherited");
   assert.equal((await terminal(f.supervisor, inherited)).outcome, "succeeded");
   assert.equal(f.supervisor.list("governor").find((agent) => agent.id === inherited.agentId)!.model, "claude-code/claude-sonnet-5-5");
-  f.supervisor.refreshNativeAuthority();
+  f.supervisor.refreshBackendAuthority();
   const next = await f.supervisor.sendMessage("governor", inherited.agentId, "task", "Continue with the retained conversation.", {}, "actual-continue");
   assert.ok(next.taskRunId);
   assert.equal((await terminal(f.supervisor, { ...inherited, taskRunId: next.taskRunId })).outcome, "succeeded");

@@ -20,6 +20,7 @@ import type { GateSpecInput, ReviewSpecInput } from "./src/gate.ts";
 import { instructionsFromPromptOptions, parseSelection } from "./src/instructions.ts";
 import { defaultSupervisorPolicy, validateAllowedTools, validateSchedulerLimits, validateWorktreeRoot, type SupervisorPolicy } from "./src/policy.ts";
 import { DEFAULT_LIMITS, type SchedulerLimits } from "./src/scheduler.ts";
+import { BackendRegistry, registerBackendHost } from "./src/backends.ts";
 import { GoverningModels } from "./src/parent-models.ts";
 import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/governing-runtime.ts";
 import { prepareThroughEventBus } from "./src/delegated-call.ts";
@@ -127,6 +128,7 @@ interface SessionBinding {
   /** The governing session's model at its latest tool call (what children inherit). */
   model: ResolvedModel | null;
   modelRegistry: ExtensionContext["modelRegistry"];
+  backends: BackendRegistry;
   /** The governing session's working directory (host-isolated children start here). */
   cwd: string;
   /** Skills and context files pi loaded for the current run (what children can receive). */
@@ -194,6 +196,8 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
 
 export default function (pi: ExtensionAPI): void {
   if (typeof pi.enqueueMessage !== "function") throw new Error("UNSUPPORTED_SDK: subagent notices require this flake's retained-ingress Pi patch");
+  const backends = new BackendRegistry();
+  const stopBackendHost = registerBackendHost(pi.events, backends);
   const bindings = new Map<string, SessionBinding>();
   const durableBindings = processRuntime().bindings;
   let currentBinding: SessionBinding | null = null;
@@ -236,7 +240,8 @@ export default function (pi: ExtensionAPI): void {
     binding.handoffTimer = null;
     const finishHandoff = binding.finishHandoff;
     binding.finishHandoff = null;
-    binding.supervisor.refreshNativeAuthority();
+    binding.supervisor.refreshBackendAuthority();
+    binding.backends = backends;
     binding.modelRegistry = ctx.modelRegistry;
     binding.cwd = ctx.cwd;
     binding.ui = ctx.ui;
@@ -317,7 +322,7 @@ export default function (pi: ExtensionAPI): void {
     if (!sdkRoot) throw new Error("SANDBOX_UNAVAILABLE: PI_SUBAGENTS_SDK_ROOT is not set; workers cannot load the pi SDK");
     const store = new FileRunStore(rootDir, sessionId);
     const binding: SessionBinding = {
-      sessionId, rootDir, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, cwd: ctx.cwd, instructions: null,
+      sessionId, rootDir, supervisor: null as unknown as Supervisor, model: null, modelRegistry: ctx.modelRegistry, backends, cwd: ctx.cwd, instructions: null,
       ui: ctx.ui, statusTimer: null, currentCtx: ctx, pane: new CustomViewToggle(), governingBaseCtx: null, governingActive: true, providerActive: true,
       prepareDelegatedCall: (call) => prepareThroughEventBus(pi.events, call),
       onSupervisorChange: () => {}, handoffTimer: null, finishHandoff: null,
@@ -338,6 +343,7 @@ export default function (pi: ExtensionAPI): void {
       policy,
       schedulerLimits,
       governor: () => ({ model: binding.model, cwd: binding.cwd, instructions: binding.instructions }),
+      backends: () => binding.backends,
       parentModels: new GoverningModels(() => {
         if (!binding.providerActive) throw new Error("STALE_GENERATION: governing model registry is no longer active");
         return binding.modelRegistry;
@@ -393,7 +399,8 @@ export default function (pi: ExtensionAPI): void {
   function governing(ctx: ExtensionContext): SessionBinding {
     const binding = bindingFor(ctx);
     binding.model = ctx.model ? { provider: ctx.model.provider, id: ctx.model.id, thinkingLevel: pi.getThinkingLevel() } : null;
-    if (binding.modelRegistry !== ctx.modelRegistry) binding.supervisor.refreshNativeAuthority();
+    if (binding.modelRegistry !== ctx.modelRegistry) binding.supervisor.refreshBackendAuthority();
+    binding.backends = backends;
     binding.modelRegistry = ctx.modelRegistry;
     // Capture the live tool context for external delegation (prototype-
     // preserved scoped contexts keep getters/revocation; spawn return is NOT
@@ -796,6 +803,7 @@ export default function (pi: ExtensionAPI): void {
   });
 
   pi.on("session_shutdown", async (event, ctx) => {
+    stopBackendHost();
     const sessionId = ctx.sessionManager.getSessionId();
     const binding = bindings.get(sessionId);
     if (!binding) return;

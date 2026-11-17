@@ -1,7 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type { AssistantMessage, AssistantMessageEvent, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
-import { NATIVE_DELEGATION, type NativeBinding, type NativeDelegationV1, type NativeRequestContext } from "./native-contract.ts";
-import type { IpcEnvelope } from "./protocol.ts";
+import { NATIVE_DELEGATION, type NativeBinding, type NativeRequestContext } from "./native-contract.ts";
+import type { IpcEnvelope } from "ponygirls-subagents/src/protocol.ts";
+import type { RunClaudeInput, RunClaudeOutput } from "../executor/claude-cli.ts";
+import { NativeSessions, type DelegatedRequest } from "./execution-lifecycle.ts";
 import { NativeFrameServer } from "./native-framing.ts";
 import { NativeEventQueue, observeNativeOriginal } from "./native-stream.ts";
 
@@ -56,7 +58,7 @@ export function nativeOptions(value: unknown): Pick<SimpleStreamOptions, "reason
 export class NativeInferenceService {
   readonly lifecycleSessionId = randomUUID();
   private readonly invocations = new Map<string, Invocation>();
-  private readonly capabilities = new Set<NativeDelegationV1>();
+  private readonly sessions = new NativeSessions();
   private readonly frames: NativeFrameServer<IpcEnvelope>;
   private retired = false;
   private disposal: Promise<void> | null = null;
@@ -65,6 +67,7 @@ export class NativeInferenceService {
   private readonly options: {
     binding(): NativeBinding;
     cwd: string;
+    run(input: RunClaudeInput): Promise<RunClaudeOutput>;
     assertOwner(envelope: IpcEnvelope): void;
     receipt(envelope: IpcEnvelope, receiptId: string, usage: NativeUsage): boolean;
   };
@@ -84,10 +87,8 @@ export class NativeInferenceService {
   refreshAuthority(): Promise<void> {
     this.cancel();
     const previous = this.authorityBarrier;
-    const capabilities = [...this.capabilities];
     this.authorityBarrier = previous.then(async () => {
-      await Promise.all(capabilities.map((cap) => cap.disposeSession(this.lifecycleSessionId)));
-      for (const cap of capabilities) this.capabilities.delete(cap);
+      await this.sessions.dispose(this.lifecycleSessionId);
     });
     return this.authorityBarrier;
   }
@@ -101,7 +102,7 @@ export class NativeInferenceService {
     this.retired = true;
     this.frames.retire();
     this.cancel();
-    this.disposal = this.authorityBarrier.then(() => Promise.all([...this.capabilities].map((cap) => cap.disposeSession(this.lifecycleSessionId)))).then(() => { this.invocations.clear(); });
+    this.disposal = this.authorityBarrier.then(() => this.sessions.dispose(this.lifecycleSessionId)).then(() => { this.invocations.clear(); });
     return this.disposal;
   }
 
@@ -120,7 +121,6 @@ export class NativeInferenceService {
       const options = nativeOptions(request.options);
       const binding = this.options.binding();
       binding.assertCurrent();
-      this.capabilities.add(binding.capability);
       const abort = new AbortController();
       const id = randomUUID();
       const sourceModel = { provider: binding.model.provider, id: binding.model.id, api: binding.model.api };
@@ -135,14 +135,14 @@ export class NativeInferenceService {
         unknownReported = true;
         if (!this.options.receipt(envelope, `${id}:unknown`, { ...nativeUsage(undefined), sourceModel })) receiptFailed = true;
       };
-      const metadata: NativeRequestContext = {
+      const owner = {
         capability: binding.capability, cwd: this.options.cwd, lifecycleSessionId: this.lifecycleSessionId,
-        beforeEntry: (actual) => {
+        beforeEntry: (actual: NativeBinding["capability"]) => {
           if (actual !== binding.capability || this.retired || abort.signal.aborted) throw new Error("NOT_RUNNING: native invocation revoked");
           this.options.assertOwner(envelope);
           binding.assertCurrent();
         },
-        captureOriginal: (stream) => {
+        captureOriginal: (stream: import("@earendil-works/pi-ai").AssistantMessageEventStream) => {
           if (captured) throw new Error("INVALID: native invocation captured twice");
           captured = true;
           let original: Promise<AssistantMessage>;
@@ -154,6 +154,11 @@ export class NativeInferenceService {
           );
           return observeNativeOriginal(stream, original, (error) => { originalFailure = error; });
         },
+      };
+      const execution: DelegatedRequest = this.sessions.enter(owner, { ...options, signal: abort.signal });
+      const metadata: NativeRequestContext = {
+        capability: binding.capability,
+        execution: { ...execution, run: (input) => this.options.run({ ...input, delegation: execution }) },
       };
       const stream = binding.stream(request.context, {
         ...options, sessionId: options.sessionId === undefined || options.sessionId.length === 0 ? undefined : `${this.lifecycleSessionId}:${options.sessionId}`, signal: abort.signal,

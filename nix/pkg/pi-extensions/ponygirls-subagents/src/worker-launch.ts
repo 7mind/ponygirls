@@ -101,8 +101,8 @@ export class WorkerHandle {
   private onPrepareRequest: ToolPrepareHandler | null = null;
   private onTicketRelease: ToolTicketReleaseHandler | null = null;
   private onProviderAdmissionRequest: ProviderAdmissionHandler | null = null;
-  private onNativeRequest: ((payload: unknown, envelope: IpcEnvelope) => Promise<unknown>) | null = null;
-  private onNativeDispose: (() => void) | null = null;
+  private onBackendRequest: ((payload: unknown, envelope: IpcEnvelope) => Promise<unknown>) | null = null;
+  private onBackendDispose: (() => void) | null = null;
   private onExit: WorkerExitHandler | null = null;
   private stdoutTail = Buffer.alloc(0);
   private stderrTail = Buffer.alloc(0);
@@ -156,14 +156,14 @@ export class WorkerHandle {
     this.onProviderAdmissionRequest = handler;
   }
 
-  setNativeRequestHandler(handler: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void {
-    this.onNativeRequest = handler;
-    this.onNativeDispose = dispose;
+  setBackendRequestHandler(handler: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void {
+    this.onBackendRequest = handler;
+    this.onBackendDispose = dispose;
   }
 
-  private retireNative(): void {
-    const dispose = this.onNativeDispose;
-    this.onNativeDispose = null;
+  private retireBackend(): void {
+    const dispose = this.onBackendDispose;
+    this.onBackendDispose = null;
     if (dispose !== null) dispose();
   }
 
@@ -220,9 +220,9 @@ export class WorkerHandle {
         reject(new Error(`worker exited during handshake (code ${code}, signal ${signal}): ${this.stderrTail.toString("utf8").slice(-2000)}`));
       });
     });
-    proc.on("disconnect", () => this.retireNative());
+    proc.on("disconnect", () => this.retireBackend());
     proc.on("exit", (code, signal) => {
-      this.retireNative();
+      this.retireBackend();
       this.exited = { code, signal };
       for (const [id, p] of this.pending) {
         clearTimeout(p.timer);
@@ -277,7 +277,7 @@ export class WorkerHandle {
   }
 
   kill(): void {
-    this.retireNative();
+    this.retireBackend();
     this.disposed = true;
     for (const [, p] of this.pending) {
       clearTimeout(p.timer);
@@ -309,7 +309,7 @@ export class WorkerHandle {
       // A request is answered even when rejected, so its caller never waits
       // for a timer; anything else malformed is dropped.
       const r = raw as Record<string, unknown> | null;
-      if (r?.["type"] === "request" && (r["operation"] === "tool.execute" || r["operation"] === "tool.prepare" || r["operation"] === "provider.admission" || r["operation"] === "provider.native") && typeof r["requestId"] === "string") {
+      if (r?.["type"] === "request" && (r["operation"] === "tool.execute" || r["operation"] === "tool.prepare" || r["operation"] === "provider.admission" || r["operation"] === "provider.backend") && typeof r["requestId"] === "string") {
         const hint = checked.code === "PAYLOAD_TOO_LARGE" ? "; split the content into smaller pieces" : "";
         this.send({
           protocolVersion: PROTOCOL_VERSION,
@@ -332,12 +332,12 @@ export class WorkerHandle {
       return;
     }
     const env = checked.envelope;
-    if (env.operation === "provider.native" && env.type === "request") {
+    if (env.operation === "provider.backend" && env.type === "request") {
       let payload: unknown;
       try {
-        if (this.onNativeRequest === null) throw new Error("UNSUPPORTED: native provider service unavailable");
-        payload = await this.onNativeRequest(env.payload, env);
-      } catch (e) { payload = { ok: false, error: e instanceof Error ? e.message : "native service failed" }; }
+        if (this.onBackendRequest === null) throw new Error("UNSUPPORTED: backend service unavailable");
+        payload = await this.onBackendRequest(env.payload, env);
+      } catch (e) { payload = { ok: false, error: e instanceof Error ? e.message : "backend service failed" }; }
       this.send({ ...env, type: "response", seq: null, payload });
       return;
     }

@@ -21,8 +21,8 @@ import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors }
 import { err } from "./errors.ts";
 import { historyPath, nativeHistoryId, openRegisteredHistoryFile, publicHistorySource, readRegisteredHistoryPage, reconstructedHistoryPrefix, type HistoryFeed, type RegisteredHistorySource } from "./history.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
-import { NativeInferenceService } from "./native-service.ts";
-import { parseParentModel, parseProviderRequestAuth, type ParentModel, type ParentModels } from "./parent-models.ts";
+import { BackendSlot, type BackendRegistry } from "./backends.ts";
+import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
 import { ISOLATION_LEVELS } from "./types.ts";
@@ -228,7 +228,7 @@ export interface WorkerPort {
   setPrepareRequestHandler?(h: (payload: ToolPrepareRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<ToolPrepareResponse>): void;
   setTicketReleaseHandler?(h: (payload: { tickets: string[] }, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => void): void;
   setProviderAdmissionRequestHandler?(h: (payload: ProviderAdmissionPayload, envelope: IpcEnvelope) => Promise<ProviderAdmissionResponse>): void;
-  setNativeRequestHandler?(h: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void;
+  setBackendRequestHandler?(h: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void;
   /** Abrupt process exit (crash, kill): the run it carried is lost. */
   setExitHandler(h: (info: { code: number | null; signal: string | null }) => void): void;
 }
@@ -269,7 +269,8 @@ interface ActiveRun {
 
 interface AgentRuntime {
   record: AgentRecord;
-  parentModel: ParentModel | null;
+  parentModel: Model<Api> | null;
+  backend: BackendSlot | null;
   worker: WorkerPort | null;
   runnableLease: LeaseTicket | null;
   residentLease: LeaseTicket | null;
@@ -350,6 +351,7 @@ export interface SupervisorOptions {
   /** The governing session at the current call: what top-level children start from. */
   governor: () => GovernorContext;
   parentModels?: ParentModels;
+  backends?: () => BackendRegistry;
   /** Admission capacity (index.ts passes the policy file's validated limits); depth comes from policy.maxDepth only. */
   schedulerLimits?: Partial<SchedulerLimits>;
   executors?: ToolExecutors;
@@ -406,6 +408,7 @@ function newRuntime(record: AgentRecord): AgentRuntime {
   return {
     record,
     parentModel: null,
+    backend: null,
     worker: null,
     runnableLease: null,
     residentLease: null,
@@ -449,9 +452,9 @@ function escapeRegExp(text: string): string {
 }
 
 export class Supervisor implements GateHost {
-  private readonly nativeServices = new Map<WorkerPort, NativeInferenceService>();
-  private readonly nativeClosures = new Set<Promise<void>>();
-  private readonly nativeRuns = new Set<string>();
+  private readonly backendSessions = new Map<WorkerPort, BackendSlot>();
+  private readonly backendClosures = new Set<Promise<void>>();
+  private readonly parentUsageRuns = new Set<string>();
   readonly rootId: string;
   readonly rootDir: string;
   private store: RunStore;
@@ -1129,11 +1132,11 @@ export class Supervisor implements GateHost {
    * state is preserved; runs left active are reconciled by recover() on the
    * next attach, like any other lost run.
    */
-  refreshNativeAuthority(): void {
-    for (const service of this.nativeServices.values()) {
+  refreshBackendAuthority(): void {
+    for (const service of this.backendSessions.values()) {
       const closing = service.refreshAuthority();
-      this.nativeClosures.add(closing);
-      void closing.then(() => this.nativeClosures.delete(closing), (e: unknown) => this.reportFailure(e));
+      this.backendClosures.add(closing);
+      void closing.then(() => this.backendClosures.delete(closing), (e: unknown) => this.reportFailure(e));
     }
   }
 
@@ -1168,7 +1171,7 @@ export class Supervisor implements GateHost {
         attempt(() => { if (rt.runnableLease) this.scheduler.release(rt.runnableLease); rt.runnableLease = null; });
         attempt(() => { if (rt.residentLease) this.scheduler.release(rt.residentLease); rt.residentLease = null; });
       }
-      for (const closing of this.nativeClosures) {
+      for (const closing of this.backendClosures) {
         try { await closing; } catch (e) { failures.push(e); }
       }
       if (!this.disposed) attempt(() => {
@@ -1513,7 +1516,7 @@ export class Supervisor implements GateHost {
         throw err("CONFLICT", "owner workspace is locked for review; writers excluded until review ends");
       }
       const model = this.resolveChildModel(parentRt, params.model ?? null);
-      if (this.opts.parentModels !== undefined) this.opts.parentModels.describe(model);
+      if (this.opts.parentModels !== undefined) { if (this.opts.backends === undefined || this.opts.backends().select(model) === null) this.opts.parentModels.describe(model); }
       const gateSpec = params.gate ? this.gate.validateSpec(params.gate) : params.review ? this.gate.validateSpec(params.review, "review") : null;
       if (gateSpec) assertGateFits(gateSpec, params.profile === "writer");
       const path = PathRegistry.childPath(parentRt ? parentRt.record.path : "/root", params.taskName);
@@ -2484,20 +2487,21 @@ export class Supervisor implements GateHost {
   private async launchWorker(rt: AgentRuntime): Promise<WorkerPort> {
     const model = rt.record.model;
     rt.parentModel = null;
-    if (this.opts.parentModels !== undefined && model !== null) {
+    rt.backend = null;
+    const backend = model !== null && this.opts.backends !== undefined ? this.opts.backends().select(model) : null;
+    if (backend === null && this.opts.parentModels !== undefined && model !== null) {
       const descriptor = this.opts.parentModels.describe(model);
       if (descriptor !== null) rt.parentModel = parseParentModel(descriptor, model);
     }
     const worker = this.makeWorker(rt.record.id);
     rt.worker = worker;
-    if (rt.parentModel !== null && rt.parentModel.transport === "parent-native") {
-      const descriptor = rt.parentModel;
-      const source = this.opts.parentModels;
-      if (source === undefined || source.nativeBinding === undefined || worker.setNativeRequestHandler === undefined) throw err("MODEL_UNAVAILABLE", "native service boundary unavailable");
-      const admitted = rt.record.model!;
-      const payload = { reason: "native", provider: admitted.provider, modelId: admitted.id, thinkingLevel: admitted.thinkingLevel ?? "off" };
-      const service = new NativeInferenceService({
-        cwd: this.workdirOf(rt), binding: () => source.nativeBinding!(descriptor),
+    if (backend !== null) {
+      if (model === null || this.opts.backends === undefined || worker.setBackendRequestHandler === undefined) throw err("MODEL_UNAVAILABLE", "backend service boundary unavailable");
+      const admitted = model;
+      const payload = { reason: "backend", provider: admitted.provider, modelId: admitted.id, thinkingLevel: admitted.thinkingLevel ?? "off" };
+      const service = new BackendSlot(backend, this.opts.backends, {
+        model: admitted, cwd: this.workdirOf(rt),
+        reportFailure: (error) => this.reportFailure(error),
         assertOwner: (envelope) => {
           const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
           if (!admission.ok) throw err("POLICY_DENIED", admission.error!);
@@ -2506,12 +2510,13 @@ export class Supervisor implements GateHost {
           return this.commitLateReceipt(rt, { agentId: rt.record.id, taskRunId: envelope.taskRunId!, generation: envelope.executionGeneration!, receiptId, usage }, true);
         },
       });
-      this.nativeServices.set(worker, service);
-      worker.setNativeRequestHandler((frame, envelope) => service.handle(frame, envelope), () => {
-        this.nativeServices.delete(worker);
+      rt.backend = service;
+      this.backendSessions.set(worker, service);
+      worker.setBackendRequestHandler((frame, envelope) => service.handle(frame, envelope), () => {
+        this.backendSessions.delete(worker);
         const closing = service.dispose();
-        this.nativeClosures.add(closing);
-        void closing.then(() => this.nativeClosures.delete(closing), (e: unknown) => this.reportFailure(e));
+        this.backendClosures.add(closing);
+        void closing.then(() => this.backendClosures.delete(closing), (e: unknown) => this.reportFailure(e));
       });
     }
     rt.record.residency = "loaded";
@@ -2566,7 +2571,7 @@ export class Supervisor implements GateHost {
   }
 
   private initPayload(rt: AgentRuntime, taskText: string | null, workdir: string): Record<string, unknown> {
-    this.captureNativeMode(rt);
+    this.captureUsageOwnership(rt);
     const tools = this.childTools(rt);
     // Preserved parent schemas/descriptions for external proxies (no generic catchall).
     const externalDefs = this.externalDefinitions(
@@ -2579,6 +2584,7 @@ export class Supervisor implements GateHost {
       instructions: rt.record.instructions,
       model: rt.record.model,
       ...(rt.parentModel !== null ? { providerModel: rt.parentModel } : {}),
+      ...(rt.backend !== null ? { providerBackend: rt.backend.worker } : {}),
       taskRunId: rt.record.currentTaskRunId,
       executionGeneration: rt.record.executionGeneration,
       workdir,
@@ -2922,7 +2928,7 @@ export class Supervisor implements GateHost {
    */
   private async onProviderAdmission(rt: AgentRuntime, worker: WorkerPort, payload: ProviderAdmissionPayload, envelope: IpcEnvelope): Promise<ProviderAdmissionResponse> {
     const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
-    if (!admission.ok || rt.parentModel === null || rt.parentModel.transport === "parent-native" || payload.reason !== "auth") return admission;
+    if (!admission.ok || rt.parentModel === null || rt.backend !== null || payload.reason !== "auth") return admission;
     const source = this.opts.parentModels;
     if (source === undefined) return { ok: false, code: "MODEL_UNAVAILABLE", error: "parent model authentication source is unavailable" };
     try {
@@ -3373,7 +3379,7 @@ export class Supervisor implements GateHost {
     if (typeof usage !== "object" || usage === null || typeof lateAgentId !== "string" || typeof lateTaskRunId !== "string" || typeof lateGeneration !== "number" || typeof receiptId !== "string" || receiptId.length === 0) {
       throw err("INVALID", `malformed late usage receipt: ${JSON.stringify(detail ?? null).slice(0, 160)}`);
     }
-    if (this.nativeRuns.has(`${lateAgentId}:${lateTaskRunId}:${lateGeneration}`)) return;
+    if (this.parentUsageRuns.has(`${lateAgentId}:${lateTaskRunId}:${lateGeneration}`)) return;
     this.commitLateReceipt(rt, { agentId: lateAgentId, taskRunId: lateTaskRunId, generation: lateGeneration, receiptId, usage: usage as UsageDetail }, true);
   }
 
@@ -3489,12 +3495,12 @@ export class Supervisor implements GateHost {
     return true;
   }
 
-  private captureNativeMode(rt: AgentRuntime): void {
-    if (rt.parentModel !== null && rt.parentModel.transport === "parent-native") this.nativeRuns.add(`${rt.record.id}:${rt.record.currentTaskRunId}:${rt.record.executionGeneration}`);
+  private captureUsageOwnership(rt: AgentRuntime): void {
+    if (rt.backend !== null && rt.backend.usageOwnership === "parent") this.parentUsageRuns.add(`${rt.record.id}:${rt.record.currentTaskRunId}:${rt.record.executionGeneration}`);
   }
 
   private accountWorkerUsage(rt: AgentRuntime, run: ActiveRun, usage: UsageDetail): ReturnType<Supervisor["accountUsage"]> {
-    return this.nativeRuns.has(`${rt.record.id}:${run.taskRunId}:${run.generation}`)
+    return this.parentUsageRuns.has(`${rt.record.id}:${run.taskRunId}:${run.generation}`)
       ? this.normalizeLateUsage({ input: 0, output: 0, cost: null, unknown: false })
       : this.accountUsage(rt, usage);
   }
@@ -3625,7 +3631,7 @@ export class Supervisor implements GateHost {
     record.detail = "task dispatched";
     const run: ActiveRun = { taskRunId: next.id, generation: record.executionGeneration, interruptRequested: false };
     rt.activeRun = run;
-    this.captureNativeMode(rt);
+    this.captureUsageOwnership(rt);
     const message = this.messages.get(next.messageId);
     if (message) message.generation = run.generation;
     record.lastEventSeq = this.publishGenerationStarted(rt, next.id, run.generation, {}).seq;
@@ -4330,7 +4336,7 @@ export class Supervisor implements GateHost {
   private async interruptSubtree(rt: AgentRuntime): Promise<void> {
     const record = rt.record;
     if (rt.activeRun) rt.activeRun.interruptRequested = true;
-    if (rt.worker !== null) this.nativeServices.get(rt.worker)?.cancel();
+    if (rt.worker !== null) this.backendSessions.get(rt.worker)?.cancel();
     this.publish("agent.interrupted", { agentId: record.id, taskRunId: rt.activeRun?.taskRunId ?? record.currentTaskRunId });
     this.cancelCallerWaits(record.id);
     rt.leaseWaitCancel?.();
@@ -5314,7 +5320,7 @@ export class Supervisor implements GateHost {
     rt.record.detail = `repair generation ${generation}`;
     const run: ActiveRun = { taskRunId, generation, interruptRequested: false };
     rt.activeRun = run;
-    this.captureNativeMode(rt);
+    this.captureUsageOwnership(rt);
     this.publishGenerationStarted(rt, taskRunId, generation, { repair: true, commandId: this.gate.inspect(taskRunId)?.repairCommandId ?? null });
     this.deliverRun(rt, run, { mode: "repair", text: criticism });
   }

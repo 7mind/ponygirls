@@ -1,5 +1,5 @@
 import type { AssistantMessage, AssistantMessageEvent, AssistantMessageEventStream, Model, Api, SimpleStreamOptions } from "@earendil-works/pi-ai";
-import type { ParentModelProvider } from "./parent-models.ts";
+import type { ParentModelProvider } from "ponygirls-subagents/src/parent-models.ts";
 import { NativeRpcClient, type NativeRoundTrip } from "./native-framing.ts";
 
 export function nativeModelProxy(model: Model<Api>, createRoundTrip: () => NativeRoundTrip): ParentModelProvider {

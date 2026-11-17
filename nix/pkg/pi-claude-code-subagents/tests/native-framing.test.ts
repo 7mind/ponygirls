@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createHash } from "node:crypto";
 import { NativeFrameServer, NativeRpcClient, NATIVE_CHUNK_BYTES, NATIVE_LOGICAL_BYTES } from "../src/native-framing.ts";
-import { MAX_PAYLOAD_BYTES } from "../src/protocol.ts";
+import { MAX_PAYLOAD_BYTES } from "ponygirls-subagents/src/protocol.ts";
 
 for (const text of ["hello", "🦄漢字".repeat(80_000), "data:image/png;base64," + "A".repeat(1024 * 1024)]) {
   test(`BA native canonical round trip preserves ${Buffer.byteLength(text)} UTF-8 bytes within envelope limits`, async () => {

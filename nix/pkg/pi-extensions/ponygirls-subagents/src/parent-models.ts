@@ -2,13 +2,10 @@ import type { ModelRegistry } from "@earendil-works/pi-coding-agent";
 import type { Api, Model, Provider, ProviderStreams, SimpleStreamOptions } from "@earendil-works/pi-ai";
 import { err } from "./errors.ts";
 import type { ResolvedModel } from "./types.ts";
-import { nativeCapability, type NativeBinding } from "./native-contract.ts";
-
-export type ParentModel = Model<Api> & ({ transport: "parent-native" } | { transport?: "http" });
 
 const MODEL_MAX_BYTES = 64 * 1024;
 const AUTH_MAX_BYTES = 32 * 1024;
-const MODEL_FIELDS = ["type", "id", "name", "api", "provider", "baseUrl", "input", "inputLimits", "cost", "reasoning", "thinkingLevelMap", "promptCache", "contextWindow", "maxTokens", "samplingParams", "samplingParamsByThinkingLevel", "compat", "transport"] as const;
+const MODEL_FIELDS = ["type", "id", "name", "api", "provider", "baseUrl", "input", "inputLimits", "cost", "reasoning", "thinkingLevelMap", "promptCache", "contextWindow", "maxTokens", "samplingParams", "samplingParamsByThinkingLevel", "compat"] as const;
 
 export interface ProviderRequestAuth {
   apiKey?: string;
@@ -21,12 +18,11 @@ export interface ProviderRequestAuth {
 export type ParentAuthResolution = ({ ok: true } & ProviderRequestAuth) | { ok: false; error: string };
 
 export interface ParentModels {
-  describe(model: ResolvedModel): ParentModel | null;
-  nativeBinding?(model: Model<Api>): NativeBinding;
+  describe(model: ResolvedModel): Model<Api> | null;
   resolveAuth(model: Model<Api>): Promise<ParentAuthResolution>;
 }
 
-type ParentRegistry = Pick<ModelRegistry, "find" | "getRegisteredProviderConfig" | "getRegisteredNativeProvider" | "getApiKeyAndHeaders" | "streamSimple">;
+type ParentRegistry = Pick<ModelRegistry, "find" | "getRegisteredProviderConfig" | "getRegisteredNativeProvider" | "getApiKeyAndHeaders">;
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -55,18 +51,17 @@ function httpUrl(value: unknown): boolean {
 }
 
 /** Only public chat metadata crosses initialization; headers and auth fields are forbidden. */
-export function parseParentModel(value: unknown, admitted: { provider: string; id: string }): ParentModel {
+export function parseParentModel(value: unknown, admitted: { provider: string; id: string }): Model<Api> {
   boundedJson(value, MODEL_MAX_BYTES);
   if (!record(value) || Object.keys(value).some((key) => !(MODEL_FIELDS as readonly string[]).includes(key))) throw err("INVALID", "invalid parent model descriptor fields");
   if (value["provider"] !== admitted.provider || value["id"] !== admitted.id) throw err("POLICY_DENIED", "parent model descriptor does not match the admitted model");
-  if (typeof value["api"] !== "string" || value["api"].length === 0 || typeof value["name"] !== "string" || (value["transport"] === "parent-native" ? typeof value["baseUrl"] !== "string" : !httpUrl(value["baseUrl"]))) throw err("INVALID", "parent model descriptor requires api, name, and a valid transport baseUrl");
+  if (typeof value["api"] !== "string" || value["api"].length === 0 || typeof value["name"] !== "string" || !httpUrl(value["baseUrl"])) throw err("INVALID", "parent model descriptor requires api, name, and HTTP baseUrl");
   if ((value["type"] !== undefined && value["type"] !== "chat") || typeof value["reasoning"] !== "boolean") throw err("INVALID", "parent model descriptor must describe a chat model");
   if (!Array.isArray(value["input"]) || value["input"].length === 0 || !value["input"].every((input) => input === "text" || input === "image")) throw err("INVALID", "invalid parent model input modalities");
   for (const key of ["contextWindow", "maxTokens"] as const) if (!Number.isSafeInteger(value[key]) || (value[key] as number) <= 0) throw err("INVALID", "invalid parent model token limits");
   const cost = value["cost"];
   if (!record(cost) || !["input", "output", "cacheRead", "cacheWrite"].every((key) => typeof cost[key] === "number" && Number.isFinite(cost[key]) && cost[key] >= 0)) throw err("INVALID", "invalid parent model cost metadata");
-  if (value["transport"] !== undefined && value["transport"] !== "http" && value["transport"] !== "parent-native") throw err("INVALID", "invalid parent model transport");
-  return JSON.parse(JSON.stringify(value)) as ParentModel;
+  return JSON.parse(JSON.stringify(value)) as Model<Api>;
 }
 
 /** Private, bounded request credentials; errors must never echo their values. */
@@ -128,41 +123,25 @@ export class GoverningModels implements ParentModels {
     this.currentRegistry = currentRegistry;
   }
 
-  describe(model: ResolvedModel): ParentModel | null {
+  describe(model: ResolvedModel): Model<Api> | null {
     return this.describeReference(model);
   }
 
-  private describeReference(selected: { provider: string; id: string }): ParentModel | null {
+  private describeReference(selected: { provider: string; id: string }): Model<Api> | null {
     const registry = this.currentRegistry();
-    const native = registry.getRegisteredNativeProvider(selected.provider);
+    if (registry.getRegisteredNativeProvider(selected.provider) !== undefined) throw err("MODEL_UNAVAILABLE", "native extension providers cannot be transferred to a worker");
     const registration = registry.getRegisteredProviderConfig(selected.provider);
-    if (registration === undefined && native === undefined) return null;
-    if (registration !== undefined && registration.streamSimple !== undefined) throw err("MODEL_UNAVAILABLE", "custom extension streaming implementations cannot be transferred to a worker");
+    if (registration === undefined) return null;
+    if (registration.streamSimple !== undefined) throw err("MODEL_UNAVAILABLE", "custom extension streaming implementations cannot be transferred to a worker");
     const model = registry.find(selected.provider, selected.id);
     if (model === undefined) throw err("MODEL_UNAVAILABLE", "selected model is absent from the governing provider registration");
-    if (native !== undefined) nativeCapability(native, model.api);
-    const descriptor: ParentModel = {
-      ...(native !== undefined ? { transport: "parent-native" as const } : {}),
+    const descriptor: Model<Api> = {
       type: "chat", id: model.id, name: model.name, api: model.api, provider: model.provider, baseUrl: model.baseUrl,
       input: model.input, cost: model.cost, reasoning: model.reasoning, contextWindow: model.contextWindow, maxTokens: model.maxTokens,
       inputLimits: model.inputLimits, thinkingLevelMap: model.thinkingLevelMap, promptCache: model.promptCache,
       samplingParams: model.samplingParams, samplingParamsByThinkingLevel: model.samplingParamsByThinkingLevel, compat: model.compat,
     };
     return parseParentModel(descriptor, selected);
-  }
-
-  nativeBinding(admitted: Model<Api>): NativeBinding {
-    const registry = this.currentRegistry();
-    const raw = registry.getRegisteredNativeProvider(admitted.provider);
-    const capability = nativeCapability(raw, admitted.api);
-    const model = registry.find(admitted.provider, admitted.id);
-    if (model === undefined) throw err("MODEL_UNAVAILABLE", "native model is unavailable");
-    const identity = JSON.stringify(this.describeReference(admitted));
-    if (identity !== JSON.stringify(admitted)) throw err("MODEL_UNAVAILABLE", "native model metadata changed; reload the worker");
-    const assertCurrent = (): void => {
-      if (this.currentRegistry() !== registry || registry.getRegisteredNativeProvider(admitted.provider) !== raw || nativeCapability(raw, admitted.api) !== capability || JSON.stringify(this.describeReference(admitted)) !== identity) throw err("MODEL_UNAVAILABLE", "native provider registration changed; reload the worker");
-    };
-    return { capability, model, assertCurrent, stream: (context, options) => { assertCurrent(); return registry.streamSimple(model, context, options); } };
   }
 
   async resolveAuth(admitted: Model<Api>): Promise<ParentAuthResolution> {

@@ -28,7 +28,10 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
   const sent: Submission[] = [];
   const events = new EventEmitter();
   const pi = {
-    events,
+    events: {
+      on: (channel: string, handler: (value: unknown) => void) => { events.on(channel, handler); return () => { events.off(channel, handler); }; },
+      emit: (channel: string, value: unknown) => { events.emit(channel, value); },
+    },
     registerTool: (t: { name: string; execute: ToolExecute; parameters: Schema; description: string }) => {
       tools.set(t.name, t.execute);
       schemas.set(t.name, t.parameters);

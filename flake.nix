@@ -394,6 +394,9 @@
           pi-claude-code = pkgs.callPackage ./nix/pkg/pi-claude-code/package.nix {
             pi-coding-agent = self.packages.${system}.pi-coding-agent;
           };
+          pi-claude-code-subagents = pkgs.callPackage ./nix/pkg/pi-claude-code-subagents/package.nix {
+            inherit (self.packages.${system}) pi-coding-agent pi-claude-code ponygirls-pi-extensions;
+          };
           ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { inherit (self.packages.${system}) pi-coding-agent ponygirls-pi-settings; };
           ponygirls-pi-settings = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
           ponygirls-pi-extensions = pkgs.callPackage ./nix/pkg/pi-extensions/package.nix {
@@ -875,7 +878,6 @@
             mkdir -p ponygirls-subagents/src
             cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/parent-models.ts} ponygirls-subagents/src/parent-models.ts
             cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/errors.ts} ponygirls-subagents/src/errors.ts
-            cp ${./nix/pkg/pi-extensions/ponygirls-subagents/src/native-contract.ts} ponygirls-subagents/src/native-contract.ts
             chmod -R u+w codex-limits
             cd codex-limits
             mkdir -p node_modules/@earendil-works
@@ -917,6 +919,9 @@
           pi-search-hub = self.packages.${system}.pi-search-hub;
           pi-claude-code = pkgs.callPackage ./nix/pkg/pi-claude-code/check.nix {
             inherit (self.packages.${system}) pi-coding-agent pi-claude-code;
+          };
+          pi-claude-code-subagents = pkgs.callPackage ./nix/pkg/pi-claude-code-subagents/check.nix {
+            inherit (self.packages.${system}) pi-coding-agent pi-claude-code pi-claude-code-subagents ponygirls-pi-extensions;
           };
           pi-search-hub-eval = pkgs.callPackage ./nix/pkg/pi-search-hub/eval/check.nix {
             inherit (self.packages.${system}) pi-coding-agent pi-search-hub;
@@ -1284,8 +1289,6 @@
           ponygirls-subagents = pkgs.runCommand "ponygirls-subagents-test" {
             nativeBuildInputs = [ pkgs.nodejs pkgs.typescript pkgs.git pkgs.bubblewrap ];
             PI_SUBAGENTS_SDK_ROOT = "${self.packages.${system}.pi-coding-agent}/lib/node_modules/pi-monorepo";
-            PI_SUBAGENTS_CLAUDE_PACKAGE = self.packages.${system}.pi-claude-code;
-            PI_SUBAGENTS_CLAUDE_FIXTURE = ./nix/pkg/pi-claude-code/fake-cli.mjs;
             PI_OFFLINE = "1";
             PI_TELEMETRY = "0";
           } ''

@@ -63,3 +63,5 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
   console.log(JSON.stringify({ type: "assistant", message: { id: `fixture-${process.pid}`, role: "assistant", content, stop_reason: stopReason, usage } }));
   console.log(JSON.stringify({ type: "result", subtype: stopReason === "tool_use" ? "error_max_turns" : "success", is_error: stopReason === "tool_use", usage, ...uuid }));
 }
+
+if (!querying) await new Promise((resolve) => setTimeout(resolve, 50));

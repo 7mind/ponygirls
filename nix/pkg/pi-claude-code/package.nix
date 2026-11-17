@@ -1,4 +1,4 @@
-{ lib, stdenvNoCC, fetchFromGitHub, nodejs, pi-coding-agent }:
+{ lib, stdenvNoCC, fetchFromGitHub, nodejs, typescript, pi-coding-agent }:
 let
   sdk = "${pi-coding-agent}/lib/node_modules/pi-monorepo";
 in
@@ -13,7 +13,7 @@ stdenvNoCC.mkDerivation {
     hash = "sha256-86zfGr9YoM+I/PmWHDJb8AbcxhYC1m8aOeghJjvN414=";
   };
 
-  patches = [ ./native-delegation.patch ];
+  patches = [ ./execution.patch ];
 
   postPatch = ''
     substituteInPlace tests/{billing,claude-cli,model-discovery,stream}.test.ts \
@@ -22,14 +22,20 @@ stdenvNoCC.mkDerivation {
 
   dontBuild = true;
   doCheck = true;
-  nativeCheckInputs = [ nodejs ];
+  nativeCheckInputs = [ nodejs typescript ];
 
   checkPhase = ''
     runHook preCheck
+    cmp src/claude-cli.ts "$src/src/claude-cli.ts"
+    cmp src/turn-relay.ts "$src/src/turn-relay.ts"
+    cmp src/model-catalog.ts "$src/src/model-catalog.ts"
+    cp ${./execution.test.ts} tests/execution.test.ts
     export HOME=$TMPDIR/claude-code-test-home
     mkdir -p "$HOME" node_modules/@earendil-works
     ln -s ${sdk} node_modules/@earendil-works/pi-coding-agent
     ln -s ${sdk}/node_modules/@earendil-works/pi-ai node_modules/@earendil-works/pi-ai
+    ln -s ${sdk}/node_modules/@types node_modules/@types
+    tsc --noEmit
     node --experimental-transform-types --test tests/*.test.ts
     runHook postCheck
   '';

@@ -5,9 +5,9 @@ import { createAssistantMessageEventStream, InMemoryCredentialStore, normalizeCo
 import { NATIVE_CAPABILITY, NATIVE_DELEGATION, NATIVE_PROFILE, type NativeDelegationV1, type NativeRequestContext } from "../src/native-contract.ts";
 import { nativeModelProxy } from "../src/native-proxy.ts";
 import { NativeInferenceService, type NativeUsage } from "../src/native-service.ts";
-import { GoverningModels } from "../src/parent-models.ts";
-import type { IpcEnvelope } from "../src/protocol.ts";
-import { adaptStream } from "../src/stream-facade.ts";
+import { NativeModels } from "../src/models.ts";
+import type { IpcEnvelope } from "ponygirls-subagents/src/protocol.ts";
+import { adaptStream } from "ponygirls-subagents/src/stream-facade.ts";
 
 const COMPLETION_BOUND_MS = 250;
 
@@ -20,25 +20,25 @@ async function fixture(endWithResult: boolean) {
   const receipts: Array<{ id: string; usage: NativeUsage }> = [];
   let iterators = 0;
   const exposed = { result: () => raw.result(), [Symbol.asyncIterator]: () => { iterators++; return raw[Symbol.asyncIterator](); } } as unknown as AssistantMessageEventStream;
-  const cap: NativeDelegationV1 = { version: 1, apis: [model.api], requestProfile: NATIVE_PROFILE, disposeSession: async () => {} };
+  const cap: NativeDelegationV1 = { version: 1, apis: [model.api], requestProfile: NATIVE_PROFILE };
   const provider: Provider = {
     id: model.provider, name: model.provider, baseUrl: model.baseUrl, getModels: () => [model],
     auth: { apiKey: { name: "fixture", resolve: async () => ({ auth: { apiKey: "fixture" }, source: "fixture" }) } },
     stream: () => { throw new Error("unused stream"); },
     streamSimple: (_model, _context, options) => {
       const metadata = options!.metadata![NATIVE_DELEGATION] as NativeRequestContext;
-      metadata.beforeEntry(cap);
-      const captured = metadata.captureOriginal(exposed);
+      metadata.execution.beforeEntry();
+      const captured = metadata.execution.captureOriginal(exposed);
       if (endWithResult) raw.end(message); else raw.end();
       return captured;
     },
   };
   Object.defineProperty(provider, NATIVE_CAPABILITY, { value: cap });
   registry.registerProvider(provider);
-  const source = new GoverningModels(() => registry);
-  const admitted = source.describe({ provider: model.provider, id: model.id, thinkingLevel: "off" })!;
+  const source = new NativeModels(() => registry);
+  const admitted = source.describe({ provider: model.provider, id: model.id })!;
   const envelope: IpcEnvelope = { protocolVersion: 1, rootEpoch: "epoch", agentId: "agent", workerInstanceId: "worker", taskRunId: "original-task", executionGeneration: 7, operation: "provider.native", type: "request", requestId: "request", seq: 1, payload: null };
-  const service = new NativeInferenceService({ binding: () => source.nativeBinding(admitted), cwd: process.cwd(), assertOwner: () => {}, receipt: (_owner, id, usage) => { receipts.push({ id, usage }); return true; } });
+  const service = new NativeInferenceService({ binding: () => source.nativeBinding(admitted), run: async () => { throw new Error("fixture must not execute CLI"); }, cwd: process.cwd(), assertOwner: () => {}, receipt: (_owner, id, usage) => { receipts.push({ id, usage }); return true; } });
   const proxy = nativeModelProxy(admitted, () => (frame) => service.handle(frame, envelope));
   const stream = adaptStream(proxy.streamSimple(admitted, normalizeContext({ messages: [{ role: "user", content: "fixture", timestamp: 0 }] })), {}, { taskRunId: "original-task", generation: 7 });
   return { stream, raw, message, receipts, service, iterators: () => iterators };
