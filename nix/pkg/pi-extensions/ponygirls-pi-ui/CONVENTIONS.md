@@ -48,7 +48,6 @@ implements the pane parts; use it instead of formatting by hand.
 ## Badges
 
 - One place per badge: `BORDER_ORDER`, passed as `setWidget`'s `order`.
-- A badge with nothing to report is its glyph alone; it never says `ready`.
 
 ## Transcript
 
