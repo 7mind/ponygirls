@@ -426,7 +426,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     return box;
   });
   pi.registerCommand("decisions", {
-    description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn; automation: settings|on|off|inherit|default on|default off|status; project|session|global on|off|inherit",
+    description: "Decision inbox: read, answer, dismiss, reopen; settings",
     getArgumentCompletions: (prefix) => {
       const toggles = completeArgument(prefix, (previous) => {
         const choice = (token: string, description: string, continues: boolean) => ({ token, label: token, description, continues });

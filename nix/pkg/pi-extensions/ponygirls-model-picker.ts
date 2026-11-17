@@ -973,14 +973,14 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerCommand("pick-model", {
-		description: "Pick a model (favourites tab first; space marks a favourite, ctrl+e cycles its effort; queued when a turn is running)",
+		description: "Pick a model, mark favourites, pin their effort",
 		handler: async (_args, ctx) => {
 			latestCtx = ctx;
 			await withPicker(ctx, () => openModelPicker(pi, ctx));
 		},
 	});
 	pi.registerCommand("pick-thinking", {
-		description: "Pick the effort / thinking level (queued when a turn is running)",
+		description: "Pick the effort / thinking level",
 		handler: async (_args, ctx) => {
 			latestCtx = ctx;
 			await withPicker(ctx, () => openThinkingPicker(pi, ctx));

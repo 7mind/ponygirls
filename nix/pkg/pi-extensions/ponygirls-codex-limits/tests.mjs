@@ -244,6 +244,29 @@ test("lifecycle updates the active model before use, warns on failure, and expos
   assert.equal(notifications.length, before);
 });
 
+test("a start before discovery could run does not warn about a missing limit; the completed discovery decides", async () => {
+  const source = new MemoryCatalog();
+  const decorated = maximumContextProvider(base(), source);
+  const handlers = new Map(), notifications = [];
+  let allowNetwork = false;
+  let model = base().getModels()[0];
+  const ctx = { get model() { return model; }, modelRegistry: {
+    refresh: async () => { await decorated.provider.refreshModels(refreshContext({ allowNetwork })); return { errors: new Map() }; },
+    find: (_provider, id) => decorated.provider.getModels().find((m) => m.id === id),
+  }, ui: { notify: (message, type) => notifications.push({ message, type }) } };
+  const pi = { registerProvider: () => {}, on: (name, handler) => handlers.set(name, handler),
+    registerCommand: () => {}, setModel: async (next) => { model = next; return true; } };
+  registerCodexLimits(pi, decorated);
+  await handlers.get("session_start")({}, ctx);
+  assert.equal(decorated.needsRefresh(), true, "offline start leaves discovery pending");
+  assert.deepEqual(notifications, [], "discovery has not run: nothing is known to be missing");
+  allowNetwork = true;
+  model = { ...model, id: "unknown" };
+  await handlers.get("input")({}, ctx);
+  assert.equal(decorated.needsRefresh(), false);
+  assert.match(notifications.at(-1).message, /no discovered context limit/);
+});
+
 test("host: real Pi loader registers metadata and command; runtime applies discovery before requests", async (t) => {
   const fixture = await piCatalogFixture(t);
   const loader = new sdk.DefaultResourceLoader({

@@ -188,7 +188,7 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
     }
   };
   pi.registerCommand("cg", {
-    description: "Codegraph: status, discover, use, sync, reindex, cancel, init, erase, help",
+    description: "Code index: status, sync, reindex, choose project",
     getArgumentCompletions: (prefix) => completeCommand(prefix, listDirectories),
     handler: handle,
   });

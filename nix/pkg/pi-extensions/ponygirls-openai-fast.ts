@@ -56,7 +56,7 @@ export function registerFastMode(pi: ExtensionAPI, preferences: FastPreferenceSt
   let settings = new ScopedSettingsView();
   let lastRequest: RequestObservation | undefined;
   pi.registerCommand("fast", {
-    description: "OpenAI priority processing: on|off (global), settings, status, or global|project|session on|off|inherit",
+    description: "OpenAI priority processing: on/off, status, settings",
     getArgumentCompletions: prefix => completeArgument(prefix, previous => {
       if (previous.length === 0) return FAST_ACTIONS;
       if (previous.length === 1 && ["global", "project", "session"].includes(previous[0].toLowerCase())) return ["on", "off", "inherit"].map(token => ({ token, label: token, description: "scoped preference", continues: false }));

@@ -161,7 +161,7 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
   }
 
   pi.registerCommand("context-archive", {
-    description: "Context archival: on|off|inherit and thresholds HIGH LOW|inherit for this session; default on|off or default thresholds HIGH LOW; status",
+    description: "Move old tool output out of context: on/off, thresholds",
     getArgumentCompletions: completeArchiveArguments,
     handler: async (args, ctx) => {
       if (args.trim().toLowerCase() === 'settings') {

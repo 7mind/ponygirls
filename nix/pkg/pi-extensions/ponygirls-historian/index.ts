@@ -125,7 +125,7 @@ export default function (pi: ExtensionAPI): void {
     finally { await selected?.dispose(); }
   }
   pi.registerCommand('historian', {
-    description: 'Project journals: settings|project on|on|off|inherit|default on|default off|status|journal; chronicle settings|configure URL TOKEN_FILE|on|off|status|retry; [default] model PROVIDER MODEL THINKING; [default] focus TEXT',
+    description: 'Project journal: status, on/off, settings, Chronicle upload',
     getArgumentCompletions: prefix => completeHistorianArguments(prefix, context === null ? [] : context.modelRegistry.getAvailable()),
     handler: async (args, ctx) => {
       const enteredGeneration = generation;

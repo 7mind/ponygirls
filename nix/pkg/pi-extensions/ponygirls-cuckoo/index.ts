@@ -133,7 +133,7 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, n
     },
   });
   pi.registerCommand('cuckoo', {
-    description: 'Show objectives/progress; settings: scoped feature checkboxes; transfer export|import|task|revoke|clear|status; vectors approve|revoke|status; critic approve|revoke|status|reconcile; inquire now; history; on|off|inherit; [default|project] feature NAME on|off|inherit; [default|project] policy relative PERCENT|window PERCENT|tokens COUNT; policy inherit; status',
+    description: 'Objectives and progress checkpoints; settings, history',
     getArgumentCompletions: completeCuckooArguments,
     handler: async (args, ctx) => {
       try {

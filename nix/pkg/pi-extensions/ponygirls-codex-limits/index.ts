@@ -14,7 +14,9 @@ export function registerCodexLimits(pi: ExtensionAPI, decorated: MaximumContextP
     if (updated && (updated.contextWindow !== selected.contextWindow || updated.maxTokens !== selected.maxTokens)) {
       await pi.setModel(updated);
     }
-    const warning = decorated.hasLimit(selected.id) ? undefined : `${selected.id}: ${decorated.status()}`;
+    // While discovery is still pending nothing is known to be missing; the
+    // refresh before the next request decides.
+    const warning = decorated.needsRefresh() || decorated.hasLimit(selected.id) ? undefined : `${selected.id}: ${decorated.status()}`;
     if (warning !== undefined && warning !== lastWarning) {
       ctx.ui.notify("Codex limits: no discovered context limit for the selected model; Pi catalog limits retained.", "warning");
     }
@@ -40,9 +42,13 @@ export function registerCodexLimits(pi: ExtensionAPI, decorated: MaximumContextP
   pi.on("input", async (_event, ctx) => prepare(ctx));
   pi.on("before_agent_start", async (_event, ctx) => prepare(ctx));
   pi.registerCommand("codex-limits", {
-    description: "Show Codex limit sources, or refresh discovery with /codex-limits refresh",
+    description: "Codex context and output limits; refresh rediscovers",
+    // The only argument; this extension's check runs without the shared UI kit.
+    getArgumentCompletions: (prefix) => REFRESH_ARGUMENT.startsWith(prefix.toLowerCase())
+      ? [{ value: REFRESH_ARGUMENT, label: REFRESH_ARGUMENT, description: "discover the limits again" }]
+      : null,
     handler: async (args, ctx) => {
-      if (args.trim() === "refresh") await refresh(ctx);
+      if (args.trim() === REFRESH_ARGUMENT) await refresh(ctx);
       else if (args.trim() !== "") {
         ctx.ui.notify("Usage: /codex-limits [refresh]", "warning");
         return;
@@ -55,6 +61,8 @@ export function registerCodexLimits(pi: ExtensionAPI, decorated: MaximumContextP
     },
   });
 }
+
+const REFRESH_ARGUMENT = "refresh";
 
 export default function (pi: ExtensionAPI): void {
   const base = builtinProviders().find((provider) => provider.id === "openai-codex");
