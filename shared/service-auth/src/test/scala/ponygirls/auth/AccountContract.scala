@@ -178,7 +178,7 @@ abstract class AccountContract extends munit.FunSuite {
       assertEquals(unchanged.calls.toVector, Vector("allUsers"))
       val changed = new RecordingAccounts(repository)
       new Accounts(changed).reconcile(users)
-      assert(changed.calls.contains("lockOwner") && changed.calls.contains("putUser"))
+      assert(Vector("lockDirectory", "lockOwner", "putUser").forall(changed.calls.contains))
     }
   }
 
@@ -247,6 +247,7 @@ private final class MemoryAccounts extends AccountRepository {
   private val userRows = mutable.Map.empty[String, StoredUser]
   private val sessionRows = mutable.Map.empty[String, StoredSession]
   private val tokenRows = mutable.Map.empty[String, StoredToken]
+  def lockDirectory(): Unit = ()
   def lockOwner(owner: String): Unit = ()
   def allUsers: Vector[StoredUser] = userRows.values.toVector
   def user(owner: String): Option[StoredUser] = userRows.get(owner)
@@ -275,6 +276,7 @@ private final class MemoryAccounts extends AccountRepository {
 private final class RecordingAccounts(underlying: AccountRepository) extends AccountRepository {
   val calls = mutable.ArrayBuffer.empty[String]
   private def record[A](name: String)(value: => A): A = { calls += name; value }
+  def lockDirectory(): Unit = record("lockDirectory")(underlying.lockDirectory())
   def lockOwner(owner: String): Unit = record("lockOwner")(underlying.lockOwner(owner))
   def allUsers: Vector[StoredUser] = record("allUsers")(underlying.allUsers)
   def user(owner: String): Option[StoredUser] = record("user")(underlying.user(owner))

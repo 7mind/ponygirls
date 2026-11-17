@@ -49,6 +49,7 @@ object AccountSql {
 private[auth] final class PostgresAccounts(c: Connection) extends AccountRepository {
   private def readSession(r: ResultSet): StoredSession = StoredSession(r.getString("id"), r.getString("owner"), r.getString("digest"), r.getString("password_identity"))
   private def readToken(r: ResultSet): StoredToken = StoredToken(r.getString("id"), r.getString("owner"), r.getString("digest"), r.getString("name"), r.getTimestamp("created_at").toInstant, r.getBoolean("revoked"))
+  def lockDirectory(): Unit = Sql.exec(c, "SELECT pg_advisory_xact_lock(hashtextextended(?,71393723))", "ponygirls-account-directory")
   def lockOwner(owner: String): Unit = Sql.exec(c, "SELECT pg_advisory_xact_lock(hashtextextended(?,71393723))", "ponygirls-account:" + owner)
   private def readUser(r: ResultSet): StoredUser = StoredUser(r.getString("id"), r.getString("identity"), r.getBoolean("enabled"))
   def allUsers: Vector[StoredUser] = Sql.rows(c, "SELECT * FROM ponygirls_account_users")(readUser)

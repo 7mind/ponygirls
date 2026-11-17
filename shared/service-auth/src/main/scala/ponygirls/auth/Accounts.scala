@@ -9,6 +9,8 @@ private[auth] final case class StoredSession(id: String, owner: String, digest: 
 private[auth] final case class StoredToken(id: String, owner: String, digest: String, name: String, createdAt: Instant, revoked: Boolean)
 
 private[auth] trait AccountRepository {
+  /** Level 1 of the lock order (design D22); every fingerprint write happens under it. */
+  def lockDirectory(): Unit
   def lockOwner(owner: String): Unit
   def allUsers: Vector[StoredUser]
   def user(owner: String): Option[StoredUser]
@@ -70,22 +72,29 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
   /** Reconciles the declarative directory. Its scope is the declared owners and the owners with a
     * fingerprint row; imperative owners have none and are never touched. When every declared user's
     * fingerprint is current and every other fingerprint is disabled, it returns without locks or writes.
+    * Otherwise it takes the directory lock before reading its scope: fingerprint rows are written only
+    * under that lock, so the scope cannot grow before its owner locks are acquired.
     */
   def reconcile(users: Vector[AccountUser]): Unit = {
     val all = directory(users)
     check(users.forall(_.origin == AccountOrigin.Declarative), "config")
-    val rows = repository.allUsers
-    val fingerprints = rows.map(row => row.id -> row).toMap
-    val unchanged = users.forall(user => fingerprints.get(user.id).contains(stored(user))) && rows.forall(row => all.contains(row.id) || !row.enabled)
-    if (!unchanged) {
-      val scope = (all.keySet ++ fingerprints.keySet).toVector
-      lockOwners(scope, Vector.empty)
-      val inScope = scope.toSet
-      repository.allUsers.filter(row => inScope(row.id) && !all.contains(row.id)).foreach(row => repository.putUser(row.copy(enabled = false)))
-      users.foreach(user => repository.putUser(stored(user)))
-      repository.sessions.filter(row => inScope(row.owner) && !sessionLive(row, all)).foreach(row => repository.deleteSession(row.digest))
-      repository.allTokens.filter(row => inScope(row.owner) && !row.revoked && !all.get(row.owner).exists(eligible)).foreach(row => repository.revokeToken(row.id))
-      scope.foreach(pruneRevoked)
+    def unchanged(rows: Vector[StoredUser]): Boolean = {
+      val fingerprints = rows.map(row => row.id -> row).toMap
+      users.forall(user => fingerprints.get(user.id).contains(stored(user))) && rows.forall(row => all.contains(row.id) || !row.enabled)
+    }
+    if (!unchanged(repository.allUsers)) {
+      repository.lockDirectory()
+      val rows = repository.allUsers
+      if (!unchanged(rows)) {
+        val scope = (all.keySet ++ rows.map(_.id)).toVector
+        lockOwners(scope, Vector.empty)
+        rows.filterNot(row => all.contains(row.id)).foreach(row => repository.putUser(row.copy(enabled = false)))
+        users.foreach(user => repository.putUser(stored(user)))
+        val inScope = scope.toSet
+        repository.sessions.filter(row => inScope(row.owner) && !sessionLive(row, all)).foreach(row => repository.deleteSession(row.digest))
+        repository.allTokens.filter(row => inScope(row.owner) && !row.revoked && !all.get(row.owner).exists(eligible)).foreach(row => repository.revokeToken(row.id))
+        scope.foreach(pruneRevoked)
+      }
     }
   }
   /** Lock order of design D22: declarative-scope owners sorted, then imperative owners sorted.
@@ -119,15 +128,18 @@ private[auth] final class Accounts(repository: AccountRepository, clock: Clock) 
   def establish(users: Vector[AccountUser], userId: String, previous: Option[String]): AccountLogin = {
     val all = directory(users)
     val user = all.get(userId).filter(user => eligible(user) && user.passwordHash.nonEmpty).getOrElse(throw AccountFailure("unauthorized"))
-    val prior = previous.flatMap(secret => browser(users, secret))
-    lockUsers((Vector(user) ++ prior.map(owner => all(owner.userId))).distinct)
+    // The previous session's owner is locked whether or not that session is valid yet: it can become
+    // valid before the locks are held, and its owner must never be acquired after the target.
+    val priorOwner = previous.filter(Secrets.canonical).flatMap(secret => repository.session(Secrets.digest(secret))).flatMap(row => all.get(row.owner))
+    lockUsers((Vector(user) ++ priorOwner).distinct)
     check(current(user), "unauthorized")
     val secret = Secrets.generate()
     val digest = Secrets.digest(secret)
     val id = "session-" + UUID.randomUUID().toString
     repository.insertSession(StoredSession(id, user.id, digest, Secrets.digest(user.passwordHash.get)))
     val replaced = previous.flatMap(secret => browser(users, secret))
-    replaced.foreach(_ => logout(users, previous.get))
+    check(replaced.forall(prior => priorOwner.exists(_.id == prior.userId)), "unavailable")
+    replaced.foreach(prior => repository.deleteSession(prior.digest))
     AccountLogin(AccountSession(credential(user, id, digest, true), secret), replaced)
   }
   /** Deletes the owner's browser sessions except `keep`, under that owner's lock. */
