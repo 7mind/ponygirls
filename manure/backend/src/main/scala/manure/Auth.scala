@@ -6,7 +6,7 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.Base64
 import java.sql.Connection
 import cats.effect.IO
-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountSession,AccountSql,AccountToken,AccountUser,Password}
+import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountSession,AccountSql,AccountToken,AccountUser,Password}
 
 object SecretCodec:
   private val random = new SecureRandom()
@@ -81,7 +81,7 @@ final class Auth(users: Vector[UserConfig]):
       try Password.readHash(path)
       catch case _: Exception => throw DomainError("unavailable")
     }
-    AccountUser(u.id,u.userType,u.displayName,u.login,hash,u.enabled)
+    AccountUser(u.id,u.userType,u.displayName,u.login,hash,u.enabled,AccountOrigin.Declarative)
   }
   def current(tx: AuthTxn): Vector[AccountUser] =
     val snapshot = accountUsers

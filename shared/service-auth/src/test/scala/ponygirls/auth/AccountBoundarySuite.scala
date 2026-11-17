@@ -52,7 +52,7 @@ final class AccountBoundarySuite extends munit.FunSuite {
     assertEquals(AccountJson.failure("private SQL or secret").hcursor.downField("error").get[String]("code"), Right("unavailable"))
   }
   test("BA specified: account mutations bind the intended owner independently of cookie changes") {
-    val alice = AccountUser("alice", "human", "Alice", Some("alice"), None, true)
+    val alice = AccountUser("alice", "human", "Alice", Some("alice"), None, true, AccountOrigin.Declarative)
     val actor = AccountJson.user(alice).hcursor.get[String]("actor").toOption.get
     AccountJson.requireActor(Vector(actor), "alice")
     assertEquals(intercept[AccountFailure](AccountJson.requireActor(Vector(actor), "bob")).code, "conflict")

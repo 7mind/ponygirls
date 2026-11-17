@@ -7,9 +7,11 @@ abstract class AccountContract extends munit.FunSuite {
   protected def withRepository(body: AccountRepository => Unit): Unit
   private lazy val passwordHash = Password.hash("synthetic-account-password".toCharArray)
   protected def users: Vector[AccountUser] = Vector(
-    AccountUser("alice", "human", "Alice", Some("alice"), Some(passwordHash), true),
-    AccountUser("bob", "human", "Bob", Some("bob"), Some(passwordHash), true),
-    AccountUser("agent", "agent", "Agent", None, None, true))
+    AccountUser("alice", "human", "Alice", Some("alice"), Some(passwordHash), true, AccountOrigin.Declarative),
+    AccountUser("bob", "human", "Bob", Some("bob"), Some(passwordHash), true, AccountOrigin.Declarative),
+    AccountUser("agent", "agent", "Agent", None, None, true, AccountOrigin.Declarative))
+  private def merged: Vector[AccountUser] =
+    users :+ AccountUser("carol", "human", "Carol", Some("carol"), Some(passwordHash), true, AccountOrigin.Imperative)
 
   private def rejected(code: String)(body: => Any): Unit = assertEquals(intercept[AccountFailure](body).code, code)
 
@@ -164,6 +166,62 @@ abstract class AccountContract extends munit.FunSuite {
     }
   }
 
+  test("BG specified: reconciling an unchanged directory reads fingerprints only, without locks or writes") {
+    withRepository { repository =>
+      val accounts = new Accounts(repository)
+      val session = accounts.login(users, "alice", "synthetic-account-password")
+      accounts.issue(users, session.credential, "Synthetic client")
+      val withoutBob = users.filterNot(_.id == "bob")
+      accounts.reconcile(withoutBob)
+      val unchanged = new RecordingAccounts(repository)
+      new Accounts(unchanged).reconcile(withoutBob)
+      assertEquals(unchanged.calls.toVector, Vector("allUsers"))
+      val changed = new RecordingAccounts(repository)
+      new Accounts(changed).reconcile(users)
+      assert(changed.calls.contains("lockOwner") && changed.calls.contains("putUser"))
+    }
+  }
+
+  test("BG specified: reconciliation leaves owners outside its scope untouched while targeted revocation reaches them") {
+    withRepository { repository =>
+      val accounts = new Accounts(repository)
+      val first = accounts.establish(merged, "carol", None).session
+      val second = accounts.establish(merged, "carol", None).session
+      val issued = accounts.issue(merged, first.credential, "Carol client")
+      rejected("config")(accounts.reconcile(merged))
+      accounts.reconcile(users.filterNot(_.id == "alice"))
+      assertEquals(repository.user("carol"), None)
+      assertEquals(accounts.browser(users, first.secret), None)
+      assertEquals(accounts.browser(merged, first.secret), Some(first.credential))
+      assert(accounts.bearer(merged, issued.secret).nonEmpty)
+      accounts.revokeSessions("carol", Some(second.credential))
+      assertEquals(accounts.browser(merged, first.secret), None)
+      assertEquals(accounts.browser(merged, second.secret), Some(second.credential))
+      accounts.revokeTokens("carol")
+      assertEquals(accounts.bearer(merged, issued.secret), None)
+    }
+  }
+
+  test("BG specified: establish has password-login session semantics and declarative login never selects an imperative entry") {
+    withRepository { repository =>
+      val accounts = new Accounts(repository)
+      rejected("unauthorized")(accounts.login(merged, "carol", "synthetic-account-password"))
+      rejected("unauthorized")(accounts.loginReplacing(merged, "carol", "synthetic-account-password", None))
+      Vector("agent", "missing").foreach(id => rejected("unauthorized")(accounts.establish(merged, id, None)))
+      val alice = accounts.establish(merged, "alice", None)
+      assertEquals(alice.replaced, None)
+      assertEquals(accounts.browser(merged, alice.session.secret), Some(alice.session.credential))
+      assertEquals(accounts.bearer(merged, alice.session.secret), None)
+      assertEquals(repository.session(alice.session.credential.digest).get.passwordIdentity, Secrets.digest(passwordHash))
+      val carol = accounts.establish(merged, "carol", Some(alice.session.secret))
+      assertEquals(carol.replaced, Some(alice.session.credential))
+      assertEquals(carol.session.credential.userId, "carol")
+      assertEquals(accounts.browser(merged, alice.session.secret), None)
+      accounts.logout(merged, carol.session.secret)
+      assertEquals(accounts.browser(merged, carol.session.secret), None)
+    }
+  }
+
   test("BG specified: active issued tokens have a bounded per-owner limit") {
     withRepository { repository =>
       val accounts = new Accounts(repository)
@@ -194,6 +252,7 @@ private final class MemoryAccounts extends AccountRepository {
   def user(owner: String): Option[StoredUser] = userRows.get(owner)
   def putUser(row: StoredUser): Unit = userRows.update(row.id, row)
   def sessions: Vector[StoredSession] = sessionRows.values.toVector
+  def ownerSessions(owner: String): Vector[StoredSession] = sessionRows.values.filter(_.owner == owner).toVector
   def session(digest: String): Option[StoredSession] = sessionRows.get(digest)
   def insertSession(row: StoredSession): Unit = {
     require(!sessionRows.contains(row.digest) && !sessionRows.values.exists(_.id == row.id))
@@ -210,4 +269,26 @@ private final class MemoryAccounts extends AccountRepository {
   }
   def revokeToken(id: String): Unit = { val row = tokenRows(id); tokenRows.update(id, row.copy(revoked = true)) }
   def deleteToken(id: String): Unit = { tokenRows.remove(id); () }
+}
+
+/** Records repository calls so a contract can assert that an operation takes no locks and writes nothing. */
+private final class RecordingAccounts(underlying: AccountRepository) extends AccountRepository {
+  val calls = mutable.ArrayBuffer.empty[String]
+  private def record[A](name: String)(value: => A): A = { calls += name; value }
+  def lockOwner(owner: String): Unit = record("lockOwner")(underlying.lockOwner(owner))
+  def allUsers: Vector[StoredUser] = record("allUsers")(underlying.allUsers)
+  def user(owner: String): Option[StoredUser] = record("user")(underlying.user(owner))
+  def putUser(row: StoredUser): Unit = record("putUser")(underlying.putUser(row))
+  def sessions: Vector[StoredSession] = record("sessions")(underlying.sessions)
+  def ownerSessions(owner: String): Vector[StoredSession] = record("ownerSessions")(underlying.ownerSessions(owner))
+  def session(digest: String): Option[StoredSession] = record("session")(underlying.session(digest))
+  def insertSession(row: StoredSession): Unit = record("insertSession")(underlying.insertSession(row))
+  def deleteSession(digest: String): Unit = record("deleteSession")(underlying.deleteSession(digest))
+  def allTokens: Vector[StoredToken] = record("allTokens")(underlying.allTokens)
+  def tokenByDigest(digest: String): Option[StoredToken] = record("tokenByDigest")(underlying.tokenByDigest(digest))
+  def token(id: String): Option[StoredToken] = record("token")(underlying.token(id))
+  def tokens(owner: String): Vector[StoredToken] = record("tokens")(underlying.tokens(owner))
+  def insertToken(row: StoredToken): Unit = record("insertToken")(underlying.insertToken(row))
+  def revokeToken(id: String): Unit = record("revokeToken")(underlying.revokeToken(id))
+  def deleteToken(id: String): Unit = record("deleteToken")(underlying.deleteToken(id))
 }

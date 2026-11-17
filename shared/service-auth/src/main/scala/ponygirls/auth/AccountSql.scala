@@ -32,6 +32,11 @@ object AccountSql {
   def login(c: Connection, users: Vector[AccountUser], login: String, password: String): AccountSession = accounts(c).login(users, login, password)
   def loginReplacing(c: Connection, users: Vector[AccountUser], login: String, password: String, previous: Option[String]): AccountLogin =
     accounts(c).loginReplacing(users, login, password, previous)
+  def establish(c: Connection, users: Vector[AccountUser], userId: String, previous: Option[String]): AccountLogin =
+    accounts(c).establish(users, userId, previous)
+  def lockOwners(c: Connection, declarative: Vector[String], imperative: Vector[String]): Unit = accounts(c).lockOwners(declarative, imperative)
+  def revokeSessions(c: Connection, owner: String, keep: Option[AccountCredential]): Unit = accounts(c).revokeSessions(owner, keep)
+  def revokeTokens(c: Connection, owner: String): Unit = accounts(c).revokeTokens(owner)
   def browser(c: Connection, users: Vector[AccountUser], secret: String): Option[AccountCredential] = accounts(c).browser(users, secret)
   def bearer(c: Connection, users: Vector[AccountUser], secret: String): Option[AccountCredential] = accounts(c).bearer(users, secret)
   def live(c: Connection, users: Vector[AccountUser], userId: String, tokenId: String, digest: String): Boolean = accounts(c).live(users, userId, tokenId, digest)
@@ -50,6 +55,7 @@ private[auth] final class PostgresAccounts(c: Connection) extends AccountReposit
   def user(owner: String): Option[StoredUser] = Sql.rows(c, "SELECT * FROM ponygirls_account_users WHERE id=?", owner)(readUser).headOption
   def putUser(row: StoredUser): Unit = Sql.exec(c, "INSERT INTO ponygirls_account_users(id,identity,enabled) VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET identity=excluded.identity,enabled=excluded.enabled", row.id, row.identity, row.enabled)
   def sessions: Vector[StoredSession] = Sql.rows(c, "SELECT * FROM ponygirls_account_sessions")(readSession)
+  def ownerSessions(owner: String): Vector[StoredSession] = Sql.rows(c, "SELECT * FROM ponygirls_account_sessions WHERE owner=?", owner)(readSession)
   def session(digest: String): Option[StoredSession] = Sql.rows(c, "SELECT * FROM ponygirls_account_sessions WHERE digest=?", digest)(readSession).headOption
   def insertSession(row: StoredSession): Unit = Sql.exec(c, "INSERT INTO ponygirls_account_sessions(id,owner,digest,password_identity) VALUES(?,?,?,?)", row.id, row.owner, row.digest, row.passwordIdentity)
   def deleteSession(digest: String): Unit = Sql.exec(c, "DELETE FROM ponygirls_account_sessions WHERE digest=?", digest)

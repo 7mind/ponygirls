@@ -6,7 +6,7 @@ import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
 import java.net.URI
 import java.util.{Base64, Locale}
-import ponygirls.auth.{AccountUser,AccountToken,Password,PersistentCookie}
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,Password,PersistentCookie}
 
 final case class TokenConfig(id: String, hashFile: String)
 final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
@@ -91,7 +91,7 @@ object Auth {
       val passwordHash=user.passwordHashFile.map { path =>
         try Password.readHash(Path.of(path)) catch { case _: Exception => throw Fault("config", "invalid password credential file") }
       }
-      AccountUser(user.id,user.userType,user.displayName,user.login,passwordHash,user.enabled)
+      AccountUser(user.id,user.userType,user.displayName,user.login,passwordHash,user.enabled,AccountOrigin.Declarative)
     }
     val entries = config.users.flatMap { user =>
       if (!validId(user.id,128) || !Set("human", "agent").contains(user.userType)) throw Fault("config", "invalid user")

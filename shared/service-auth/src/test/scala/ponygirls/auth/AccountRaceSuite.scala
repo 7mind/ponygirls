@@ -23,7 +23,7 @@ final class AccountRaceSuite extends munit.FunSuite {
   Vector("removed", "disabled", "password").foreach { boundary =>
   test(s"Effectual GoodCommunication regression: password login waiting behind $boundary cannot re-create authority") {
     val hash = Password.hash("synthetic-race-password".toCharArray)
-    val users = Vector(AccountUser("alice", "human", "Alice", Some("alice"), Some(hash), true))
+    val users = Vector(AccountUser("alice", "human", "Alice", Some("alice"), Some(hash), true, AccountOrigin.Declarative))
     Using.resource(connection()) { setup =>
       AccountSql.initialize(setup)
       Using.resource(setup.createStatement())(_.execute("TRUNCATE ponygirls_account_sessions,ponygirls_account_tokens"))

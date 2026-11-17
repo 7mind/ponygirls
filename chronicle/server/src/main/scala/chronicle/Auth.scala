@@ -3,7 +3,7 @@ import chronicle.api.*
 import java.util.UUID
 import java.time.Instant
 import java.sql.Connection
-import ponygirls.auth.{AccountUser,AccountToken,AccountIssued,AccountJson}
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson}
 
 final class Auth(db: Database, config: Config) {
   private val allScopes = List(Scope.Ingest,Scope.Read,Scope.Raw)
@@ -54,7 +54,7 @@ final class Auth(db: Database, config: Config) {
   def tokens(i: Identity): TokensResult = { i.requireBrowser(); db.transaction { c => currentBrowser(c,i); TokensResult(listedTokens(c,i.user.id)) } }
   private def accountUser(c: Connection,i: Identity): AccountUser = {
     val hash=Sql.one(c,"SELECT credential FROM ch_users WHERE id=? AND enabled",i.user.id)(_.getString(1)).getOrElse(throw DomainError("unauthorized","session revoked"))
-    AccountUser(i.user.id,"human",i.user.login,Some(i.user.login),Some(hash),true)
+    AccountUser(i.user.id,"human",i.user.login,Some(i.user.login),Some(hash),true,AccountOrigin.Declarative)
   }
   private def accountToken(token: ListedToken): AccountToken = {
     val t=token.info

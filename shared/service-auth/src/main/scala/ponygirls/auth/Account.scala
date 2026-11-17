@@ -10,9 +10,14 @@ import ponygirls.runtime.BoundedSecretFile
 
 final case class AccountFailure(code: String) extends RuntimeException(code)
 
+/** Declarative users come from service configuration and are reconciled; imperative users are
+  * created at runtime, have no fingerprint row and are never reconciled.
+  */
+enum AccountOrigin { case Declarative, Imperative }
+
 final case class AccountUser(id: String, userType: String, displayName: String,
-  login: Option[String], passwordHash: Option[String], enabled: Boolean) {
-  override def toString: String = s"AccountUser($id,$userType,<credentials redacted>,$enabled)"
+  login: Option[String], passwordHash: Option[String], enabled: Boolean, origin: AccountOrigin) {
+  override def toString: String = s"AccountUser($id,$userType,<credentials redacted>,$enabled,$origin)"
 }
 final case class AccountCredential(userId: String, userType: String, tokenId: String, digest: String, browser: Boolean)
 final case class AccountToken(id: String, name: String, source: String, createdAt: Option[String], revoked: Boolean, scopes: Vector[String])
