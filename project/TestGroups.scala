@@ -3,8 +3,10 @@ import sbt.TestDefinition
 /** A suite that gets a test group of its own while groups remain; `reason` records why it is slow. */
 final case class IsolatedSuite(name: String, reason: String)
 
-/** Grouped test run: group i forks its own test JVM against database `jdbcPrefix + i`. */
-final case class TestGrouping(groups: Int, seed: Long, jdbcPrefix: String)
+/** Grouped test run: group i forks its own test JVM against `databases(i)`, a JDBC URL no other group uses. */
+final case class TestGrouping(databases: Seq[String], seed: Long) {
+  require(databases.nonEmpty && databases.distinct.size == databases.size, "test groups need distinct databases")
+}
 
 object TestGroups {
   /** Partitions suites into at most `groupCount` groups. While groups remain, each isolated suite gets its own group; all

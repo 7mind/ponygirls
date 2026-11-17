@@ -217,10 +217,10 @@ lazy val chronicleIsolatedSuites = Seq(
   IsolatedSuite("chronicle.PostgresPassageWorkerTest", "real 2 s worker back-off per failure case; 22 s"),
   IsolatedSuite("chronicle.ArchivePostgresTest", "order-dependent: its fixture keeps ch_groups/ch_members, so two cases fail after ArchivePublishedFormatTest")
 )
-// Set by chronicle/scripts/test-postgres.sh. Unset (plain sbt test/testOnly): sbt's single forked group against CHRONICLE_TEST_JDBC.
-lazy val chronicleTestGrouping: Option[TestGrouping] = sys.env.get("CHRONICLE_TEST_GROUPS").map { groups =>
-  TestGrouping(groups.toInt, sys.env.get("CHRONICLE_TEST_GROUP_SEED").fold(0L)(_.toLong),
-    sys.env.getOrElse("CHRONICLE_TEST_GROUP_JDBC_PREFIX", sys.error("CHRONICLE_TEST_GROUPS requires CHRONICLE_TEST_GROUP_JDBC_PREFIX")))
+// Set by chronicle/scripts/test-postgres.sh: CHRONICLE_TEST_GROUP_JDBC lists one JDBC URL per group.
+// Unset (plain sbt test/testOnly): sbt's single forked group against CHRONICLE_TEST_JDBC.
+lazy val chronicleTestGrouping: Option[TestGrouping] = sys.env.get("CHRONICLE_TEST_GROUP_JDBC").map { databases =>
+  TestGrouping(databases.split(' ').toSeq, sys.env.get("CHRONICLE_TEST_GROUP_SEED").fold(0L)(_.toLong))
 }
 lazy val chronicleTestGroupingSettings: Seq[Setting[?]] = chronicleTestGrouping.toSeq.flatMap { grouping =>
   Seq(
@@ -228,17 +228,17 @@ lazy val chronicleTestGroupingSettings: Seq[Setting[?]] = chronicleTestGrouping.
       val tests = (Test / definedTests).value
       val fork = (Test / forkOptions).value
       val log = streams.value.log
-      TestGroups.assign(tests, chronicleIsolatedSuites, grouping.groups, grouping.seed).zipWithIndex.map { case (group, i) =>
+      TestGroups.assign(tests, chronicleIsolatedSuites, grouping.databases.size, grouping.seed).zipWithIndex.map { case (group, i) =>
         val name = "chronicle-g" + i
         log.info(name + ": " + group.map(_.name).mkString(" "))
-        Tests.Group(name, group, Tests.SubProcess(fork.withEnvVars(fork.envVars.updated("CHRONICLE_TEST_JDBC", grouping.jdbcPrefix + i))))
+        Tests.Group(name, group, Tests.SubProcess(fork.withEnvVars(fork.envVars.updated("CHRONICLE_TEST_JDBC", grouping.databases(i)))))
       }
     },
     // Groups run concurrently; suites inside one forked group stay serial (one suite at a time per database).
     Test / parallelExecution := true,
     Test / testForkedParallel := false,
     // sbt 2.0.12 defaultRestrictions with the forked-test-group limit (default 1) raised to the group count.
-    Global / concurrentRestrictions := Seq(Tags.limitAll(EvaluateTask.SystemProcessors), Tags.limit(Tags.ForkedTestGroup, grouping.groups), Tags.exclusiveGroup(Tags.Clean))
+    Global / concurrentRestrictions := Seq(Tags.limitAll(EvaluateTask.SystemProcessors), Tags.limit(Tags.ForkedTestGroup, grouping.databases.size), Tags.exclusiveGroup(Tags.Clean))
   )
 }
 lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, serviceRuntime, serviceAuth, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
