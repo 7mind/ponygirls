@@ -67,7 +67,7 @@ const DATE_TIME_FORMAT = new Intl.DateTimeFormat('en', { month: 'short', day: 'n
 // Error texts shared by the views; `code` values come from describeFailure / the client's state machines.
 const UNAVAILABLE_TEXT = 'The account service is unavailable or returned an invalid response. Your credentials have not been rejected. Retry when the service is available.';
 const SESSION_TEXT = 'Your browser session is no longer authorized. Sign in again.';
-const HOLD_TEXT = 'A one-time secret or link is being created. Stay on this page until it is shown.';
+const HOLD_TEXT = 'A request on this page is still running. Stay here until it finishes; its result is shown only here.';
 
 function waitText(retryAfter) {
   if (retryAfter === null) return 'later';
@@ -104,6 +104,8 @@ export function installAccountUI({ document, window, fetch }) {
   let ids = 0;
   let auth = null;
   let area = null;
+  let authInFlight = 0; // signed-out submissions (login, signup, enrollment, recovery) whose result renders in the current view
+  async function authHeld(work) { authInFlight++; try { return await work(); } finally { authInFlight--; } }
 
   // ------------------------------------------------------------------------------------------
   // DOM helpers
@@ -355,13 +357,13 @@ export function installAccountUI({ document, window, fetch }) {
     if (!(login instanceof window.HTMLInputElement) || !(password instanceof window.HTMLInputElement)) throw new Error('Account login requires login and password inputs');
     const credentials = { login: login.value, password: password.value }; password.value = '';
     const start = entry.state.phase === 'credentials' ? entry.state : loginInitial();
-    await submitLogin(loginClient(), start, credentials, state => { if (form.isConnected) applyLogin(form, entry, state); });
+    await authHeld(() => submitLogin(loginClient(), start, credentials, state => { if (form.isConnected) applyLogin(form, entry, state); }));
   }
   async function submitSecondFactor(form, step, code) {
     const entry = loginForms.get(form);
     if (entry === undefined || entry.totp === null || entry.totp.step !== step || entry.state.phase !== 'second-factor') return;
     const totp = code.input.value.trim(); code.input.value = '';
-    await submitLogin(loginClient(), entry.state, { totp }, state => { if (form.isConnected) applyLogin(form, entry, state); });
+    await authHeld(() => submitLogin(loginClient(), entry.state, { totp }, state => { if (form.isConnected) applyLogin(form, entry, state); }));
   }
 
   // ------------------------------------------------------------------------------------------
@@ -442,7 +444,7 @@ export function installAccountUI({ document, window, fetch }) {
         if (recovery.phase !== 'form') return;
         const values = { username: username.input.value.trim(), totp: code.input.value.trim(), password: password.input.value };
         password.input.value = ''; code.input.value = '';
-        recovery = await submitRecovery(client, recovery, values, next => {
+        recovery = await authHeld(() => submitRecovery(client, recovery, values, next => {
           if (!state.alive) return;
           setBusy(form, next.phase === 'submitting');
           if (next.phase === 'done') { window.location.reload(); return; }
@@ -455,7 +457,7 @@ export function installAccountUI({ document, window, fetch }) {
             ? notice('danger', 'alert', null, 'Recovery was not accepted. Check the username and enter the code your authenticator shows right now. For accounts managed in server configuration, ask an administrator.')
             : error.code === 'rate-limited' ? notice('warn', 'clock', 'Too many attempts', `Recovery for this account is paused. Try again ${waitText(error.retryAfter)}.`)
               : notice('danger', 'alert', null, formErrorText(error, current)));
-        });
+        }));
       });
       show('recover', form, h('p', { class: 'xs muted' }, 'No authenticator any more? An administrator can issue a one-time reset link.'));
     }
@@ -527,7 +529,7 @@ export function installAccountUI({ document, window, fetch }) {
         current = next;
         if (next.phase === 'loading-policy') return;
         if (next.phase === 'form') {
-          if (view === null) { view = credentialForm({ policyValue: next.policy, secret: next.secret, fixed: null, onSubmit: values => submitSignup(client, current, values, emit) }); page.replaceChildren(view.form); }
+          if (view === null) { view = credentialForm({ policyValue: next.policy, secret: next.secret, fixed: null, onSubmit: values => authHeld(() => submitSignup(client, current, values, emit)) }); page.replaceChildren(view.form); }
           view.busy(false); view.showError(next.error); return;
         }
         if (next.phase === 'submitting') { view.busy(true); return; }
@@ -566,7 +568,7 @@ export function installAccountUI({ document, window, fetch }) {
         if (next.phase === 'form') {
           if (policy() === null) throw new Error('An enrollment link was accepted by a server without an account policy');
           if (view === null) {
-            view = credentialForm({ policyValue: policy(), secret: next.secret, fixed: { username: next.username, kind: next.kind, expiresAt: next.expiresAt }, onSubmit: values => submitEnrollment(client, current, { email: values.email, password: values.password, totpCode: values.totpCode, requireTotp: values.requireTotp }, emit) });
+            view = credentialForm({ policyValue: policy(), secret: next.secret, fixed: { username: next.username, kind: next.kind, expiresAt: next.expiresAt }, onSubmit: values => authHeld(() => submitEnrollment(client, current, { email: values.email, password: values.password, totpCode: values.totpCode, requireTotp: values.requireTotp }, emit)) });
             page.replaceChildren(view.form);
           }
           view.busy(false); view.showError(next.error); return;
@@ -612,7 +614,7 @@ export function installAccountUI({ document, window, fetch }) {
       tokenView: { mode: 'idle', busy: false, formUi: null, secret: null, secretUi: null, highlight: null, showRevoked: false, filter: '', notice: null },
       usersView: { filter: 'all', query: '', mode: 'idle', formUi: null, link: null, linkUi: null, notice: null },
       tokensUi: null, usersUi: null,
-      producing: 0 // requests in flight whose answer is a shown-once secret or link; navigation waits for them
+      inFlight: 0 // section-owned write requests (act, mint, revoke); leaving the section waits for them
     };
     const stale = { outlet, owner };
     const dialog = spec => { const opened = openDialog(spec); dialogs.add(opened); opened.element.addEventListener('close', () => dialogs.delete(opened)); return opened; };
@@ -650,18 +652,44 @@ export function installAccountUI({ document, window, fetch }) {
       return { password: profile.manage.password, 'two-factor': profile.manage.totp, users: profile.manage.users }[section];
     }
     const pendingProfile = section => self.profile.phase === 'loading' && section !== 'tokens';
-    function redirect(section) {
-      window.history.replaceState(null, '', ROUTE_PREFIX + section);
-      self.section = null; open(section);
-    }
-    function open(section) {
+    const fallbackSection = () => (available(DEFAULT_SECTION) ? DEFAULT_SECTION : FALLBACK_SECTION);
+    // Called only from route(), after mayLeave() allowed leaving the current section.
+    function open(requested) {
       if (root.parentNode !== outlet) outlet.replaceChildren(root);
-      if (!available(section) && !pendingProfile(section)) { redirect(available(DEFAULT_SECTION) ? DEFAULT_SECTION : FALLBACK_SECTION); return; }
+      const section = available(requested) || pendingProfile(requested) ? requested : fallbackSection();
+      if (section !== requested) window.history.replaceState(null, '', ROUTE_PREFIX + section);
       if (self.section === section) return;
+      leave();
       self.section = section; self.hash = ROUTE_PREFIX + section;
-      self.tokensUi = null; self.usersUi = null;
       renderNav(); renderSection();
       document.dispatchEvent(new window.CustomEvent('account:route', { detail: { section } }));
+    }
+    // Section ownership: everything the current section opened (dialogs, prompts, forms and their input)
+    // is discarded before another section renders. Shown-once values are kept: mayLeave() refuses to leave
+    // while they are shown or a request that may produce them is in flight.
+    function leave() {
+      if (self.section === null) return;
+      for (const opened of [...dialogs]) opened.close();
+      for (const view of [self.tokenView, self.usersView]) {
+        if (view.mode === 'form') Object.assign(view, { mode: 'idle', formUi: null });
+        view.notice = null;
+      }
+      self.section = null; self.hash = null; self.tokensUi = null; self.usersUi = null;
+    }
+    // A shown-once value is rendered only into its owning section; arriving for another one is an invariant
+    // violation: it is reported and the owning section is shown instead of writing into detached DOM.
+    function deliver(section) {
+      if (self.section === section) { renderNav(); (section === 'tokens' ? self.tokensUi : self.usersUi).renderAll(); return; }
+      window.reportError(new Error(`Account: a one-time value for section '${section}' arrived while '${self.section}' is shown`));
+      reveal(ROUTE_PREFIX + section);
+    }
+    async function held(work) {
+      self.inFlight++;
+      if (self.usersUi !== null) self.usersUi.renderAll();
+      try { return await work(); } finally {
+        self.inFlight--;
+        if (self.alive && self.usersUi !== null) self.usersUi.renderAll();
+      }
     }
     function renderSection() {
       const build = { profile: profileSection, password: passwordSection, 'two-factor': twoFactorSection, tokens: tokensSection, users: usersSection }[self.section];
@@ -712,7 +740,7 @@ export function installAccountUI({ document, window, fetch }) {
         const profile = profileData();
         if (profile !== null && profile.manage.users && self.admin.phase === 'idle') void loadAdmin();
         if (self.section === null) return;
-        if (!available(self.section)) { redirect(available(DEFAULT_SECTION) ? DEFAULT_SECTION : FALLBACK_SECTION); return; }
+        if (!available(self.section)) { window.history.replaceState(null, '', ROUTE_PREFIX + fallbackSection()); route(); return; }
         if (self.section !== 'tokens') renderSection();
       });
     }
@@ -730,7 +758,8 @@ export function installAccountUI({ document, window, fetch }) {
     }
 
     // Runs one ACCOUNT_ACTIONS entry: { ok, result } or { ok: false, text (null when torn down), error }.
-    async function act(action, target, input, proofText) {
+    function act(action, target, input, proofText) { return held(() => actNow(action, target, input, proofText)); }
+    async function actNow(action, target, input, proofText) {
       const final = await runAction(client, actionStart(action, target), owner, input, () => {});
       if (final.phase === 'done') return { ok: true, result: final.result };
       if (final.phase === 'owner-changed') { ownerChanged(stale); return { ok: false, text: null, error: null }; }
@@ -744,15 +773,6 @@ export function installAccountUI({ document, window, fetch }) {
       return { ok: false, text, error };
     }
     const reloadProfile = () => { self.profile = { phase: 'loading' }; loadProfile(); };
-    // Holds navigation while `work` may produce a shown-once value, so that the value lands in the visible section.
-    async function producing(work) {
-      self.producing++;
-      if (self.usersUi !== null) self.usersUi.renderAll();
-      try { return await work(); } finally {
-        self.producing--;
-        if (self.alive && self.usersUi !== null) self.usersUi.renderAll();
-      }
-    }
     const errorCode = outcome => (outcome.error === null ? null : outcome.error.code);
 
     // ── Profile ──────────────────────────────────────────────────────────────────────────────
@@ -1017,7 +1037,7 @@ export function installAccountUI({ document, window, fetch }) {
           showError(text) { error.replaceChildren(); error.hidden = text === null; if (text !== null) error.append(notice('danger', 'alert', null, text)); }
         };
       }
-      function mint(name, scopes) { return producing(() => mintHeld(name, scopes)); }
+      function mint(name, scopes) { return held(() => mintHeld(name, scopes)); }
       async function mintHeld(name, scopes) {
         const form = view.formUi;
         view.busy = true; setBusy(form.node, true); form.showError(null);
@@ -1039,7 +1059,7 @@ export function installAccountUI({ document, window, fetch }) {
           view.busy = false; view.mode = 'secret'; view.formUi = null; view.highlight = result.token.id;
           view.secret = { token: result.token, value: result.secret, revealed: false, seen: false, copied: false };
           view.secretUi = secretPanel(view.secret);
-          renderNav(); renderAll(); view.secretUi.focus();
+          deliver('tokens'); view.secretUi.focus();
         } catch (cause) {
           if (failed(cause)) return;
           view.busy = false;
@@ -1101,7 +1121,7 @@ export function installAccountUI({ document, window, fetch }) {
           body: [h('p', {}, 'Clients using this token lose access immediately. This cannot be undone; create a new token to restore access.'),
             h('dl', { class: 'dl' }, h('dt', {}, 'Permissions'), h('dd', {}, token.scopes.join(', ')), h('dt', {}, 'Created'), h('dd', {}, dateNode(token.createdAt, DATE_FORMAT)),
               h('dt', {}, 'Token ID'), h('dd', { class: 'mono' }, token.id))],
-          run: async () => {
+          run: () => held(async () => {
             let sent = false;
             try {
               const before = await readAccount();
@@ -1117,7 +1137,7 @@ export function installAccountUI({ document, window, fetch }) {
               if (failed(cause)) return null;
               return sent ? `Revocation could not be confirmed. Refresh the token list before retrying. ${legacyMessage(cause)}` : legacyMessage(cause);
             }
-          } });
+          }) });
       }
       self.tokensUi = { renderAll, renderRows };
       renderAll();
@@ -1147,7 +1167,7 @@ export function installAccountUI({ document, window, fetch }) {
       const enrollments = () => (self.admin.phase === 'ready' ? self.admin.data.enrollments : []);
       const nameOf = user => user.login ?? user.id;
       // A shown-once link must be acknowledged before another one can replace it.
-      const linkActionsAllowed = () => view.mode === 'idle' && self.producing === 0;
+      const linkActionsAllowed = () => view.mode === 'idle' && self.inFlight === 0;
       const matches = { all: () => true, pending: user => user.status === 'pending', disabled: user => user.status === 'disabled', admins: user => user.admin };
       function renderSegmented() {
         const count = key => (key === 'all' ? rows().length : users().filter(matches[key]).length);
@@ -1300,9 +1320,14 @@ export function installAccountUI({ document, window, fetch }) {
         dialog({ title: `Reset credentials of “${name}”?`, confirm: 'Create reset link', danger: false, cancel: 'Cancel', fields: [PROOF_FIELD], extra: [],
           body: [h('p', {}, `You get a one-time link that lets ${name} choose a new password and set up a new authenticator. The current credentials keep working until the link is used. API tokens, e-mail and role are kept.`)],
           run: async values => {
-            const outcome = await producing(() => act('reset-user', user.id, { currentPassword: values.currentPassword }, PROOF_REJECTED_TEXT));
+            // The link is delivered inside the counted request, so no navigation can slip in before it is shown.
+            const outcome = await held(async () => {
+              const result = await act('reset-user', user.id, { currentPassword: values.currentPassword }, PROOF_REJECTED_TEXT);
+              if (result.ok && self.alive) showLink('reset', name, result.result);
+              return result;
+            });
             if (!outcome.ok) return outcome.text;
-            showLink('reset', name, outcome.result); void loadAdmin();
+            void loadAdmin();
             return null;
           } });
       }
@@ -1332,10 +1357,14 @@ export function installAccountUI({ document, window, fetch }) {
           const value = username.input.value.trim();
           if (value.length === 0) { username.setError('Enter the username for the new account.'); return; }
           setBusy(form, true); status.replaceChildren(); username.setError(null);
-          const outcome = await producing(() => act('issue-invitation', null, { username: value }, null));
+          const outcome = await held(async () => {
+            const result = await act('issue-invitation', null, { username: value }, null);
+            if (result.ok && self.alive) showLink('invite', value, result.result);
+            return result;
+          });
           if (!alive()) return;
           setBusy(form, false);
-          if (outcome.ok) { showLink('invite', value, outcome.result); void loadAdmin(); return; }
+          if (outcome.ok) { void loadAdmin(); return; }
           const code = errorCode(outcome);
           if (code === 'username-unavailable') username.setError(`“${value}” is not available. Choose another username.`);
           else if (code === 'invalid') username.setError('Use 3–32 lowercase letters, digits, “-” or “_”, starting with a letter.');
@@ -1347,8 +1376,7 @@ export function installAccountUI({ document, window, fetch }) {
         if (view.mode === 'link') throw new Error('A shown-once link would replace an unacknowledged one');
         const link = { kind, name, url: enrollmentLink(window.location.origin, result.code), expiresAt: result.enrollment.expiresAt };
         view.mode = 'link'; view.formUi = null; view.link = link; view.linkUi = linkPanel(link);
-        if (self.usersUi !== null) self.usersUi.renderAll();
-        view.linkUi.focus();
+        deliver('users'); view.linkUi.focus();
       }
       function linkPanel(link) {
         const value = input({ readonly: true, value: link.url, 'aria-label': 'One-time link', spellcheck: false, 'data-account-link-value': true });
@@ -1409,9 +1437,8 @@ export function installAccountUI({ document, window, fetch }) {
 
     loadAccount(); loadProfile(); loadPolicy();
     return {
-      outlet, owner, open, guarded, askLeave, revalidate,
-      holding: () => self.producing > 0,
-      hash: () => self.hash,
+      outlet, owner, open, leave, guarded, askLeave, revalidate,
+      holding: () => self.inFlight > 0,
       dispose() {
         self.alive = false; controller.abort();
         for (const opened of [...dialogs]) opened.close();
@@ -1454,16 +1481,32 @@ export function installAccountUI({ document, window, fetch }) {
     window.scrollTo(0, scrollY);
     document.dispatchEvent(new window.CustomEvent('account:route', { detail: { section: null } }));
   }
-  // Every routing entry (hashchange, DOM observer, pageshow, invalidation) passes here, so the guard for
-  // shown-once values is enforced here: a different fragment is put back and held or asked about.
+  // The one function every way of leaving the current view consults: link clicks, hashchange and Back,
+  // programmatic navigate(), observer-triggered and pageshow routing all reach it (onClick, route).
+  // A view with a request in flight is held; one showing an unacknowledged secret or link asks first.
+  let routedHash = null; // the fragment the current view was rendered for
+  function mayLeave(target) {
+    if (routedHash === null || target === routedHash) return true;
+    const areaLive = area !== null && display !== null && display.outlet.isConnected;
+    const authLive = auth !== null && auth.mount.isConnected;
+    if ((areaLive && area.holding()) || (authLive && authInFlight > 0)) { toast(HOLD_TEXT); return false; }
+    if (areaLive && area.guarded()) { area.askLeave(() => navigate(target)); return false; }
+    return true;
+  }
+  const urlFor = hash => (hash === '' ? window.location.pathname + window.location.search : hash);
   function route() {
     const target = window.location.hash;
-    if (area !== null && display !== null && display.outlet.isConnected && target !== area.hash() && (area.holding() || area.guarded())) {
-      window.history.replaceState(null, '', area.hash());
-      heldBack(target);
-      return;
-    }
-    const name = parseAccountRoute(target);
+    if (!mayLeave(target)) { window.history.replaceState(null, '', urlFor(routedHash)); return; }
+    render(parseAccountRoute(target));
+    routedHash = window.location.hash;
+  }
+  // Shows the section that owns a shown-once value (used only by an area's invariant check).
+  function reveal(hash) {
+    window.history.replaceState(null, '', hash);
+    routedHash = hash;
+    route();
+  }
+  function render(name) {
     const authMount = document.querySelector('[data-account-auth]');
     const outlet = document.querySelector('[data-account-outlet]');
     const owner = outlet === null ? null : outlet.dataset.accountUserId;
@@ -1477,24 +1520,17 @@ export function installAccountUI({ document, window, fetch }) {
     if (auth !== null) auth.route(name);
     if (outlet === null) { display = null; return; }
     if (auth !== null && auth.mount === outlet) { showOutlet(outlet); return; }
-    if (name === null || AUTH_ROUTES.includes(name)) { hideOutlet(); return; }
+    if (name === null || AUTH_ROUTES.includes(name)) { if (area !== null) area.leave(); hideOutlet(); return; }
     showOutlet(outlet);
     if (blocked !== null) return;
     if (area === null) area = createArea(outlet, owner);
     area.open(SECTIONS.includes(name) ? name : DEFAULT_SECTION);
   }
-  // Leaving the account section while a shown-once value is pending waits; while one is shown, asks.
-  function heldBack(target) {
-    if (area === null || display === null || target === area.hash()) return false;
-    if (area.holding()) { toast(HOLD_TEXT); return true; }
-    if (area.guarded()) { area.askLeave(() => navigate(target)); return true; }
-    return false;
-  }
   function onClick(event) {
     if (!(event.target instanceof window.Element)) return;
     // In-app links ask before they navigate, so that keeping the panel leaves no extra history entry.
     const link = event.target.closest('a[href^="#"]');
-    if (link !== null && heldBack(link.getAttribute('href'))) { event.preventDefault(); return; }
+    if (link !== null && !mayLeave(link.getAttribute('href') === '#' ? '' : link.getAttribute('href'))) { event.preventDefault(); return; }
     const trigger = event.target.closest('[data-account-settings]');
     if (trigger === null || trigger.disabled) return;
     event.preventDefault();

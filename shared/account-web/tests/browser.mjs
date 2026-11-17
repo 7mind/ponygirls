@@ -12,6 +12,7 @@ if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Use the pinned Chrom
 
 const STEP_TIMEOUT_MS = 5000;
 const MASTHEAD_PX = 48, VIEWBAR_PX = 56;
+const HOLD_PREFIX = 'A request on this page is still running';
 const server = await startDevServer({ port: 0 });
 const browser = await chromium.launch({ headless: true });
 let cases = 0;
@@ -28,11 +29,12 @@ async function run(name, body) {
     await page.goto(`${server.origin}/?scenario=${scenario}&steps=0${extra}`);
     await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
   };
-  try { await body({ page, calls, open }); assert.deepEqual(errors, []); cases++; console.log(`PASS account views: ${name}`); }
+  try { await body({ page, calls, open, errors }); assert.deepEqual(errors, []); cases++; console.log(`PASS account views: ${name}`); }
   finally { await context.close(); }
 }
 const storageText = page => page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }, document.cookie]));
 const callsTo = (calls, path) => calls.filter(call => call.path === path);
+const posts = (calls, path) => callsTo(calls, path).filter(call => call.method === 'POST').length;
 const dialog = (page, name) => page.getByRole('dialog', { name, exact: true });
 const button = (page, name) => page.getByRole('button', { name, exact: true });
 async function mint(page, name) {
@@ -126,39 +128,87 @@ try {
     assert.equal((await storageText(page)).includes(FAKE_TOKEN_SECRET), false);
   });
 
-  await run('navigation waits while a secret is being created, so the secret lands in the visible section', async ({ page, calls }) => {
-    await page.goto(`${server.origin}/?scenario=settings-tokens-held&steps=0#/archive`);
-    await page.locator('[data-account-settings]').click();
-    await page.getByRole('link', { name: /^Access tokens/ }).click();
-    await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
-    await mint(page, 'laptop-cli');
-    await page.waitForFunction(() => window.__accountFake.calls.some(call => call.path === '/tokens'));
-    await page.getByRole('link', { name: 'Profile' }).click();
-    await page.getByText('A one-time secret or link is being created').first().waitFor();
-    await page.evaluate(() => history.back());
-    assert.equal(await page.evaluate(() => location.hash), '#account/tokens');
+  // Section ownership (README "Section ownership"): for every flow that shows a one-time value or asks for a
+  // proof, (a) leaving with the prompt open discards it, (b) leaving while its request is in flight is held,
+  // (c) so is a fragment change plus a DOM mutation in one task; the result then appears in the active view.
+  const link = async page => { await button(page, 'Copy link').click(); await button(page, 'I have sent it').click(); await button(page, 'Yes, I have sent it').click(); };
+  const FLOWS = [
+    { flow: 'token mint', view: 'tokens', scenario: 'settings-tokens', hash: '#account/tokens', away: '#account/profile', hold: '/tokens', ready: 'table[data-list="tokens"] tr[data-row-id]', prompt: '[data-account-token-form]',
+      open: async page => { await button(page, 'New token').click(); await page.getByLabel('Name', { exact: true }).fill('laptop-cli'); },
+      submit: 'Create token', result: page => page.locator('[data-account-secret]'),
+      acknowledge: async page => { await button(page, 'Reveal').click(); await button(page, 'I have saved it').click(); await button(page, 'Yes, I have saved it').click(); } },
+    { flow: 'invitation', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: '/admin/enrollments', ready: 'tr[data-row-id="erin"]', prompt: '[data-account-enroll-form]',
+      open: async page => { await button(page, 'Enroll user').click(); await page.getByLabel('Username', { exact: true }).fill('zoe'); },
+      submit: 'Create invitation link', result: page => page.locator('[data-account-link]'), acknowledge: link },
+    { flow: 'credential reset', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: '/admin/users/erin/reset', ready: 'tr[data-row-id="erin"]', prompt: 'dialog[open]',
+      open: async page => { await button(page, 'Actions for erin').click(); await page.getByRole('menuitem', { name: 'Reset credentials…' }).click(); await page.getByLabel('Your current password').fill(FAKE_PASSWORD); },
+      submit: 'Create reset link', result: page => page.locator('[data-account-link]'), acknowledge: link },
+    { flow: 'admin flag with password proof', view: 'users', scenario: 'users-default', hash: '#account/users', away: '#account/profile', hold: '/admin/users/erin/admin', ready: 'tr[data-row-id="erin"]', prompt: 'dialog[open]',
+      open: async page => { await button(page, 'Actions for erin').click(); await page.getByRole('menuitem', { name: 'Grant admin…' }).click(); await page.getByLabel('Your current password').fill(FAKE_PASSWORD); },
+      submit: 'Grant admin', result: page => page.getByText('erin is now an administrator'), acknowledge: null },
+    { flow: 'authenticator replacement', view: 'two-factor', scenario: 'settings-totp', hash: '#account/two-factor', away: '#account/tokens', hold: '/profile/totp', ready: '[data-view="two-factor"]', prompt: '[data-account-totp-replace]',
+      open: async page => { await button(page, 'Replace authenticator…').click(); await page.getByLabel('Current password', { exact: true }).fill(FAKE_PASSWORD); await page.getByLabel('Code from the new entry', { exact: true }).fill('123456'); },
+      submit: 'Replace authenticator', result: page => page.getByText('Authenticator replaced'), acknowledge: null },
+    { flow: 'signup with generated secret', view: 'signup-pending', scenario: 'signup-default', hash: '#account/signup', away: '', hold: '/signup', ready: '[data-view="signup"]', prompt: '[data-view="signup"]',
+      open: async page => { await page.getByLabel('Username', { exact: true }).fill('bob'); await page.getByLabel('E-mail', { exact: true }).fill('bob@example.org'); await page.getByLabel('Password', { exact: true }).fill('hunter2hunter2'); await page.getByLabel('Enter the 6-digit code the app shows', { exact: true }).fill('731905'); },
+      submit: 'Create account', result: page => page.getByRole('heading', { name: 'Account created — waiting for approval' }), acknowledge: null },
+    { flow: 'recovery', view: 'recover', scenario: 'recover-rejected', hash: '#account/recover', away: '', hold: '/recover', ready: '[data-view="recover"]', prompt: '[data-view="recover"]',
+      open: async page => { await page.getByLabel('Username', { exact: true }).fill('alice'); await page.getByLabel('Authenticator code', { exact: true }).fill('204817'); await page.getByLabel('New password', { exact: true }).fill('a-new-long-password'); },
+      submit: 'Set new password and sign in', result: page => page.getByText('Recovery was not accepted'), acknowledge: null }
+  ];
+  const leaveTo = (page, target, mutate) => page.evaluate(([hash, withMutation]) => { location.hash = hash; if (withMutation) document.body.append(document.createElement('span')); }, [target, mutate]);
+  async function submitHeld(page, row) {
+    await row.open(page);
+    await page.evaluate(path => { window.__accountFake.state.hold = path; }, row.hold);
+    await button(page, row.submit).click();
+    await page.waitForFunction(() => window.__accountFake.state.release !== null);
+  }
+  async function heldThenShown(page, row, mutate) {
+    const toasts = await page.getByText(HOLD_PREFIX).count();
+    await leaveTo(page, row.away, mutate);
+    await page.waitForFunction(count => [...document.querySelectorAll('.toast')].filter(node => node.textContent.startsWith('A request on this page is still running')).length > count, toasts);
+    assert.equal(await page.evaluate(() => location.hash), row.hash, `${row.flow}: the fragment is put back`);
     await page.evaluate(() => window.__accountFake.state.release());
-    await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'visible' });
-    assert.equal(await page.getByRole('heading', { name: 'Access tokens' }).isVisible(), true);
-    assert.equal(callsTo(calls, '/tokens').length, 1);
+    await row.result(page).waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => location.hash), row.hash, `${row.flow}: the result is shown in its own view`);
+    assert.equal(await page.locator(`[data-view="${row.view}"]`).isVisible(), true, `${row.flow}: its view is the visible one`);
+    if (row.acknowledge !== null) await row.acknowledge(page);
+  }
+  await run('section ownership: prompts are discarded on leaving, requests hold navigation, results land in the active view', async ({ page, calls }) => {
+    for (const row of FLOWS) {
+      await page.goto(`${server.origin}/?scenario=${row.scenario}&steps=0`);
+      await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
+      await page.locator(row.ready).first().waitFor();
+      await row.open(page);
+      await leaveTo(page, row.away, false);
+      await page.locator(row.prompt).first().waitFor({ state: 'detached' });
+      await leaveTo(page, row.hash, false);
+      await page.locator(row.ready).first().waitFor();
+      assert.equal(await page.locator(row.prompt).count(), row.prompt.startsWith('[data-view') ? 1 : 0, `${row.flow}: (a) the prompt was discarded`);
+      assert.equal(posts(calls, row.hold), 0, `${row.flow}: (a) nothing was submitted`);
+      await submitHeld(page, row);
+      await heldThenShown(page, row, false);
+      await page.goto(`${server.origin}/?scenario=${row.scenario}&steps=0`);
+      await page.waitForFunction(() => document.documentElement.dataset.harnessReady === 'true');
+      await page.locator(row.ready).first().waitFor();
+      await submitHeld(page, row);
+      await heldThenShown(page, row, true);
+      assert.equal(posts(calls, row.hold), 2, `${row.flow}: one request per attempt`);
+      calls.length = 0;
+    }
   });
 
-  await run('a fragment change together with a host DOM mutation cannot leave a pending secret behind', async ({ page, calls }) => {
-    await page.goto(`${server.origin}/?scenario=settings-tokens-held&steps=0#account/tokens`);
+  await run('a one-time value arriving for an inactive section is reported and shown in its own section', async ({ page, errors }) => {
+    await page.goto(`${server.origin}/?scenario=settings-tokens&steps=0`);
     await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
-    await mint(page, 'laptop-cli');
-    await page.waitForFunction(() => window.__accountFake.calls.some(call => call.path === '/tokens'));
-    await page.evaluate(() => { location.hash = '#account/profile'; document.querySelector('[data-host-main]').append(document.createElement('span')); });
-    await page.getByText('A one-time secret or link is being created').first().waitFor();
+    await submitHeld(page, FLOWS[0]);
+    // Fault injection: blind the guard so that the section changes under the in-flight request.
+    await page.evaluate(() => { Object.defineProperty(document.querySelector('[data-account-outlet]'), 'isConnected', { configurable: true, get: () => false }); location.hash = '#account/profile'; });
+    await page.getByRole('heading', { name: 'Profile' }).waitFor();
+    await page.evaluate(() => { delete document.querySelector('[data-account-outlet]').isConnected; window.__accountFake.state.release(); });
+    await page.locator('[data-account-secret]').waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => location.hash), '#account/tokens');
-    assert.equal(await page.getByRole('heading', { name: 'Access tokens' }).isVisible(), true);
-    await page.evaluate(() => window.__accountFake.state.release());
-    await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'visible' });
-    await page.evaluate(() => { location.hash = '#account/profile'; document.querySelector('[data-host-main]').append(document.createElement('span')); });
-    await dialog(page, 'Hide the secret for good?').waitFor();
-    await button(page, 'Keep it visible').click();
-    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).isVisible(), true);
-    assert.equal(callsTo(calls, '/tokens').length, 1);
+    assert.deepEqual(errors.splice(0), ["Account: a one-time value for section 'tokens' arrived while 'profile' is shown"]);
   });
 
   await run('uncertain creation warns in the form position and locks creation until the list is refreshed', async ({ page, calls, open }) => {

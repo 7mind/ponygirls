@@ -58,7 +58,6 @@ export const SCENARIOS = new Map([
   settings('tokens-revoke', { hash: TOKENS, steps: async d => { await d.wait(TOKEN_ROWS); await d.click('Revoke ci-collector-02'); }, ready: 'dialog[open]' }),
   settings('tokens-long', { hash: TOKENS, fixture: f => { for (let k = 1; k <= 26; k++) f.tokens.push({ ...f.tokens[2], id: `00000000-0000-4000-8000-${String(300040 + k).padStart(12, '0')}`, name: `laptop-cli-${k}`, scopes: f.app === 'chronicle' ? (k % 3 ? ['Ingest'] : ['Read', 'Raw']) : ['api'] }); }, ready: TOKEN_ROWS }),
   settings('tokens-uncertain', { hash: TOKENS, fixture: f => { f.mint = 'lost'; }, steps: async d => { await newToken(d, 'lost-reply-token'); await d.click('Create token'); }, ready: '[data-account-uncertain]' }),
-  settings('tokens-held', { hash: TOKENS, fixture: f => { f.mint = 'held'; }, ready: TOKEN_ROWS }),
   settings('tokens-loading', { hash: TOKENS, fixture: f => { f.account = 'loading'; }, ready: '[data-view="tokens"] .skeleton' }),
   settings('tokens-error', { hash: TOKENS, fixture: f => { f.account = 'error'; }, ready: '[data-view="tokens"] .notice-danger' }),
   settings('tokens-empty', { hash: TOKENS, fixture: f => { f.tokens = []; }, ready: '[data-view="tokens"] .empty:not([hidden])' }),

@@ -42,14 +42,46 @@ its own. Both files and `account-client.js` are served next to each other
 ## One-time secrets and links
 
 A token secret, an invitation link and a reset link are shown once in a panel
-that is not dismissed by Escape, window focus changes, section changes or Back:
-in-app navigation asks first ("Hide the secret for good?"), closing the tab uses
-`beforeunload`. "I have saved it" is enabled after Copy or Reveal. While a
-request that produces such a value is in flight, leaving the section is held back
-(a toast explains), so the value always appears in the visible section; while a
-link is shown, further link-producing actions (Enroll user, Reset credentials)
-are disabled until it is acknowledged. Window focus
-re-reads the account silently and updates only the token rows.
+that is not dismissed by Escape or window focus changes. "I have saved it" is
+enabled after Copy or Reveal. Window focus re-reads the account silently and
+updates only the token rows. While a link is shown or requested, further
+link-producing actions (Enroll user, Reset credentials) are disabled until it is
+acknowledged.
+
+## Section ownership
+
+Every dialog, prompt, form and in-flight write request belongs to the view that
+opened it (an account section, or the signed-out view). Every way of leaving a view
+— link click, `hashchange`/Back, programmatic navigation, routing triggered by the
+DOM observer or `pageshow` — passes through one function, `mayLeave()`:
+
+- a write request of the view is in flight → leaving is refused, the fragment is
+  put back and a toast explains;
+- a shown-once secret or link is unacknowledged → "Hide the secret for good?" asks
+  first (closing the tab: `beforeunload`);
+- otherwise the view's dialogs and prompts are closed and their input discarded
+  before the next view renders.
+
+A shown-once value is delivered only into its owning section. If it ever arrives
+while another section is shown (impossible through the routes above), the
+violation is reported with `reportError` and the owning section is shown with
+the value instead of rendering into detached DOM.
+
+| Flow | Prompt / one-time value | Leaving with the prompt open | Leaving while in flight | Result |
+|---|---|---|---|---|
+| Token mint | inline form → secret panel | form discarded | held | secret panel in Access tokens, guarded until "I have saved it" |
+| Invitation | inline form → link panel | form discarded | held | link panel in Users, guarded until "I have sent it" |
+| Credential reset | password-proof dialog → link panel | dialog closed, password discarded | held | link panel in Users, guarded |
+| Revoke reset/invitation, approve, reject, enable/disable | confirmation dialog | dialog closed | held | list refreshed, toast |
+| Admin flag change | password-proof dialog | dialog closed, password discarded | held | toast, list refreshed |
+| Two-factor: replace authenticator | inline card with a new secret (QR + key) | card and secret discarded (a new one is generated next time) | held | toast, section re-rendered |
+| Two-factor: require-code toggle | code dialog | dialog closed | held | toast |
+| Profile e-mail, password | inline forms | input discarded | held | inline result |
+| Token revoke | confirmation dialog | dialog closed | held | list refreshed |
+| Sign-up | form with a secret generated in the browser | form and secret discarded | held | pending screen (or reload when active) |
+| Enrollment landing | form with a generated secret | other fragments do not replace the landing until “Go to sign-in” (the code is in memory only) | held | reload into the new session |
+| Recovery | form | input discarded | held | reload, or the rejection in place |
+| Login (second factor) | code step holding login and password in memory | step and credentials discarded with the card | held | reload |
 
 ## Token creation recovery
 
