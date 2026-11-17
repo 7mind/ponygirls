@@ -38,7 +38,6 @@ in pkgs.runCommand "shared-postgresql-18-provider-rehearsal" {
   export PG_POLICY=${policy.manifest}
   export PG_PROVIDER=${../postgres/provider.py}
   export PG_BACKUP_TOOL=${../postgres/backup.py}
-  export PG_OFFLINE_TOOL=${../../manure/migration/offline.py}
   export PG_CONFIGURATION=${policy.configuration}
   mkdir -p "$out"
   python3 ${./provider-files-test.py} ${../postgres/provider.py} "$out/credential-boundaries.json"

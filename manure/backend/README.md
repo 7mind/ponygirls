@@ -3,11 +3,8 @@
 Main class `manure.Main`; executable CLI `manure-server serve CONFIG.json` or
 `manure-server --config CONFIG.json`. No Python production storage/server fallback.
 The portable Python package registers only `manure` and `manure-mcp`, never a
-server command. `python -m manure.server` fails closed (exit 2) before argument
-parsing, config/credential reads, storage or networking and points to the built
-Scala binary; it does not proxy to it. Retained `ArtifactStore`, validators and
-`create_server` definitions are unsupported historical test/oracle helpers, not
-public activation entrypoints.
+server command; the retired Python server was deleted after every deployment
+migrated off SQLite.
 Payload root MUST already exist, with no symlink components; explicit JNI mode
 `linked` for native static deployment, `shared` plus absolute `posix_library` for
 JVM verification. Physical-root claim acquired BEFORE DB migrations or mutations.
@@ -86,10 +83,8 @@ closed; `check-config` still does not open referenced files.
 
 Current generated artifact API: `POST /api/current` and raw chunk/file routes are
 in `../docs/current-api.md`. Server startup migrates the empty/current PostgreSQL
-schema only; NEVER imports SQLite. Offline conversion is a separately invoked
-`python3 manure/migration/convert.py` tool (see migration README for finalized
-arguments), with quiesced matched source snapshot and owned disposable destination.
-Live conversion/activation/rotation/deletion is not authorized by these files.
+schema only; NEVER imports SQLite. Live activation/rotation/deletion is not
+authorized by these files.
 
 Optional `embedding` object (absent/null means explicit lexical-only, no model
 client or model worker; semantic/hybrid requests return typed unavailable):

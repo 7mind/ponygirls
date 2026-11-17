@@ -48,12 +48,11 @@ class OwnedDatabase:
             if (not root.is_absolute() or root.resolve()!=root or not root.name.startswith('ponygirls-owned-pg-')
                     or (root/'.owned-test-only').read_bytes()!=b'ponygirls-owned-test-v1\n'):
                 raise RuntimeError('owned disposable fixture binding required')
-            self.helper=str(path);self.fixture_root=root
+            self.helper=str(path)
             cfg=json.loads((root/'provider.json').read_bytes())
             service=_required('PONYGIRLS_TEST_PROVISION_SERVICE')
             if service!='manure' or cfg['stateDirectory']!=str(root/'cluster'):
                 raise RuntimeError('owned Manure provider binding required')
-            self.provider=cfg
             try:
                 result=self._helper(self.name)
                 if not isinstance(result,dict) or set(result)!={'jdbcUrl','user','passwordFile'} or not all(isinstance(v,str) and v for v in result.values()):
@@ -181,23 +180,6 @@ class OwnedDatabase:
         if result.returncode or len(result.stdout)>65536 or len(result.stderr)>8192:
             raise RuntimeError('owned runtime SQL probe failed (private diagnostics withheld)')
         return result.stdout.decode('utf-8').strip()
-
-    def migration_service(self,name):
-        if not self.helper:
-            return f'[{name}]\nhost={self.parsed.hostname}\nport={self.parsed.port or 5432}\ndbname={self.name}\nuser={self.user}\npassfile={self.passfile}\n'
-        registry=json.loads((self.fixture_root/'created-databases.json').read_bytes())
-        if registry.get(self.name)!='manure':raise RuntimeError('migration fixture database is not registered')
-        # Only the synthetic import tool uses the explicit owned administrator.
-        # HTTP/JDBC runtime still receives the non-superuser helper result.
-        cfg=self.provider
-        return f'[{name}]\nhost={self.fixture_root}/cluster/socket\nport={cfg["port"]}\ndbname={self.name}\nuser={cfg["adminRole"]}\n'
-
-    def grant_import_runtime(self,pg):
-        if not self.helper:return
-        user='"'+self.user.replace('"','""')+'"'
-        statements=['ALTER TABLE manure.'+name+' OWNER TO '+user for name in ('artifacts','artifact_tags','receipts','one_time_grants','content_grants','external_passwords')]
-        statements+=['GRANT USAGE ON SCHEMA manure_offline TO '+user,'GRANT SELECT ON manure_offline.destination TO '+user]
-        pg.run('BEGIN;'+(';'.join(statements))+';COMMIT;')
 
     def close(self):
         try:

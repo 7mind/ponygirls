@@ -57,7 +57,6 @@ cleanup() {
 }
 trap cleanup EXIT
 export PATH="$POSTGRES_HOME/bin:$PATH"
-export MANURE_TEST_PG_BIN="$POSTGRES_HOME/bin"
 if [[ -n ${MANURE_TEST_PROVISION_COMMAND:-} ]]; then
  [[ $MANURE_TEST_PROVISION_COMMAND = /* && -x $MANURE_TEST_PROVISION_COMMAND ]] || { echo 'absolute executable owned provision helper required' >&2; exit 1; }
  : "${PONYGIRLS_OWNED_FIXTURE_ROOT:?owned provider fixture binding required}"

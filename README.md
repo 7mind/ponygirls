@@ -164,8 +164,7 @@ Haystack and Manure each expose one current Baboon contract; their owned clients
 move with it without historical wire adapters. Chronicle retains its documented
 versioned search contracts. Stored documents, credentials and acknowledged writes
 remain migration invariants. See [Haystack's server/configuration guide](haystack/server/README.md),
-[Manure's backend guide](manure/backend/README.md), and its
-[offline migration procedure](manure/docs/offline-conversion.md). Builds/tests
+and [Manure's backend guide](manure/backend/README.md). Builds/tests
 use disposable fixtures; deployment and production-data migration are explicit
 operator actions.
 

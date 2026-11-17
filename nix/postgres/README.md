@@ -98,8 +98,6 @@ Tests exercise actual inline, bound-parameter and constraint canaries in PG logs
   config identity must match; completion is marked only last. This is **not** an
   online snapshot algorithm: stop admission, sweeper/recovery/workers and external
   writers first. Credential/config backups remain private operator responsibilities.
-- `manure-offline`: separately packaged service-owned SQLite conversion/snapshot
-  tool, never imported by the production Scala server or portable clients.
 
 Outputs are new 0700 directories/0600 files. Failures retain incomplete private
 outputs for inspection, never overwrite/adopt them or print SQL/credentials.

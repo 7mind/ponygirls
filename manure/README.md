@@ -160,9 +160,8 @@ cfg = {"port": 47329, "data_dir": str(work / "data"), "api_origin": "http://127.
 EOF
 ```
 
-The generated config is historical source-format fixture data. It must not
-activate a Python backend: `python -m manure.server` now exits2 without reading
-it. Current server configuration and launch use the backend instructions above.
+The generated config is historical source-format fixture data. Current server
+configuration and launch use the backend instructions above.
 
 Loopback HTTP needs no setup on `127.0.0.1` (one socket,
 Host-routed). `*.localhost` content names depend on your resolver —
@@ -215,8 +214,7 @@ Web Crypto APIs; Python hashing/RNG are unchanged.
 
 Portable Python entrypoints: `manure` (CLI) and `manure-mcp`
 (`python -m manure.cli` / `python -m manure.mcp`). `manure-server` is the built
-Scala/native service, not a Python console script; `python -m manure.server`
-is deliberately fail-closed.
+Scala/native service, not a Python console script.
 
 Output is human-readable by default, including when redirected or piped. `list`
 shows a compact table with full artifact IDs, access/state and readable sizes;

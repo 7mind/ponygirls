@@ -151,10 +151,10 @@ def main():
             control=root/'control';control.mkdir();(control/'COMPLETE').write_text('owned-control-receipt')
             config_path=root/'service-config.json';config_path.write_text('{"data_dir":"synthetic-owned-root"}')
             try:
-                backup_module.matched(config,root/'forbidden-snapshot',payload,control,config_path,os.environ['PG_OFFLINE_TOOL'],False)
+                backup_module.matched(config,root/'forbidden-snapshot',payload,control,config_path,False)
                 raise AssertionError('unquiesced snapshot accepted')
             except ValueError: pass
-            backup_module.matched(config,root/'matched-snapshot',payload,control,config_path,os.environ['PG_OFFLINE_TOOL'],True)
+            backup_module.matched(config,root/'matched-snapshot',payload,control,config_path,True)
             check('shipped-matched-pg-payload-control-snapshot',(root/'matched-snapshot'/'COMPLETE').is_file() and (root/'matched-snapshot'/'payload'/'live'/'fixture').read_bytes()==b'owned-payload\x00bytes' and (root/'matched-snapshot'/'migration-control'/'COMPLETE').read_text()=='owned-control-receipt' and (root/'matched-snapshot'/'postgres'/'manure.dump').stat().st_size>0)
             check('shipped-matched-snapshot-requires-quiescence',not (root/'forbidden-snapshot').exists())
             # Concurrent mixed serving and time-bounded job load across databases.
