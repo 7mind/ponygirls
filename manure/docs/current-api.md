@@ -301,7 +301,6 @@ python3 manure/scripts/generate-fixtures.py
 TSC=<lockfile-pinned> manure/scripts/generate-web.sh
 PYTHONPATH=manure python3 -m unittest discover -s manure/tests -p 'test_current_*.py'
 node --test manure/tests/browser/current-protocol.test.mjs
-PYTHONPATH=manure python3 -m unittest discover -s manure/tests -p 'test_dashboard_markup.py'
 ```
 
 These are codec/client-controlled-transport/markup checks, **not** Scala server,

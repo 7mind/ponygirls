@@ -1,7 +1,7 @@
 {
-  "MANURE_PLAYWRIGHT_CORE_PATH": "/nix/store/phc5gsqnm205r6hvlay77f7ia3w4bzzk-playwright-core-1.64.1",
-  "MANURE_CHROMIUM_BIN": "/nix/store/r0f9i35n3r7rng8162xih4c1dag0s1vw-chromium-156.0.8078.47/bin/chromium",
-  "MANURE_MCP_SDK_PATH": "/nix/store/bwmfafypq7pl955jxwmnzgm9jbj7f5hk-manure-mcp-sdk-vendor-1.32.1/lib/node_modules/@modelcontextprotocol/sdk",
-  "MANURE_OPENSSL_BIN": "/nix/store/gvglnxscmvx4mh9my0cy0xgi0l1z6l9s-openssl-3.5.9-bin/bin/openssl",
-  "FONTCONFIG_FILE": "/nix/store/2g6xjpjkzi3g83slz71392l5bfpsr0kh-fonts.conf"
+  "MANURE_PLAYWRIGHT_CORE_PATH": "/nix/store/brvjfb1qxshzl0nibn4phcbs4mq30ya3-playwright-core-1.64.1",
+  "MANURE_CHROMIUM_BIN": "/nix/store/ibmk5b6m5p95q0mkgx1b7zg3a1wwggyz-chromium-157.0.8103.38/bin/chromium",
+  "MANURE_MCP_SDK_PATH": "/nix/store/nvchf4bbwkp6mzq8gd7jbbja234ga4fc-manure-official-mcp-sdk-test-dependencies-1.32.2/lib/node_modules/@modelcontextprotocol/sdk",
+  "MANURE_OPENSSL_BIN": "/nix/store/dhqsy67cw5cid7dhah87gdrjhkd346b0-openssl-3.5.9-bin/bin/openssl",
+  "FONTCONFIG_FILE": "/nix/store/pw7dr5x2l2p1sw9j60m36jngzj7b20j9-fonts.conf"
 }
