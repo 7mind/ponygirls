@@ -14,7 +14,7 @@ for (const scenario of ['markdown', 'render-failure', 'image']) {
     assert.ok(process.env.CHROMIUM_BIN, 'set CHROMIUM_BIN');
     const text = scenario === 'render-failure' ? '```mermaid\na-->b\n```\n'.repeat(33) : '# Héllo\r\n\r\n> quote\r\n- item\r\n\tindent\r\n```html\r\n<script>window.uploadExecuted=true</script>\r\n```\r\n<img src="https://example.invalid/unwanted">\r\n';
     const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
-    const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_KIND__', scenario === 'image' ? 'image' : 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+    const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', scenario === 'image' ? 'image' : 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
     const probe = `const check = (value, message) => { if (!value) throw new Error(message); };
       const timer = setInterval(async () => {
         if (document.querySelector('#status').textContent) return;

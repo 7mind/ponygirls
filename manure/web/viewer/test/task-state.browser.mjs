@@ -20,7 +20,7 @@ test('checked and unchecked Markdown tasks retain static accessible states', asy
     document.body.dataset.tasks = JSON.stringify(tasks.map(li => ({text:li.textContent, state:li.querySelector('[role="img"]')?.getAttribute('aria-label')})));
     document.body.dataset.inputs = article.querySelectorAll('input').length;
   },50);`;
-  const html = template.replaceAll('__MANURE_ASSET_BASE__','/assets').replaceAll('__MANURE_PATH__','readme.md').replaceAll('__MANURE_RAW_URL__','/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__','/download').replaceAll('__MANURE_KIND__','markdown').replace('</body>','<script type="module" src="/probe.js"></script></body>');
+  const html = template.replaceAll('__MANURE_ASSET_BASE__','/assets').replaceAll('__MANURE_PATH__','readme.md').replaceAll('__MANURE_RAW_URL__','/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__','/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__','markdown').replace('</body>','<script type="module" src="/probe.js"></script></body>');
   const server = createServer(async (req,res) => {
     try {
       if (req.url === '/') {res.setHeader('content-type','text/html'); res.end(html);}

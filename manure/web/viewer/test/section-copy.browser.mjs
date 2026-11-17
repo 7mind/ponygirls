@@ -16,7 +16,7 @@ test('section and table controls copy original source and navigate stable fragme
   const wide = '| ' + Array(30).fill('Column').join(' | ') + ' |\r\n| ' + Array(30).fill('---').join(' | ') + ' |\r\n| ' + Array(30).fill('Value').join(' | ') + ' |\r\n';
   const text = '<script>window.uploadExecuted=true</script>\r\n<img src="https://example.invalid/blocked" onerror="window.uploadExecuted=true">\r\n<div id="table-1"></div>\r\n\r\n' + parent + '# Next\r\n\r\n' + table + '\r\n<h2 id="authored">HTML section</h2>\r\n\r\n<table id="custom-table"><tr><th>HTML</th></tr><tr><td>Raw</td></tr></table>\r\n\r\n' + 'Tail paragraph.\r\n\r\n'.repeat(60) + wide;
   const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
-  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
   const probe = `
     const check = (ok, message) => { if (!ok) throw new Error(message); };
     const delay = () => new Promise(resolve => setTimeout(resolve, 50));

@@ -149,6 +149,11 @@ const shell = async (page, key, name = filename(key)) => {
   assert.ok(await meta.getAttribute("data-kind"), "shell specifies renderer kind");
   assert.equal(new URL(await meta.getAttribute("data-raw-url"), page.url()).href, rawURL(key, name));
   assert.equal(new URL(await meta.getAttribute("data-download-url"), page.url()).href, downloadURL(key, name));
+  const uploaded = page.locator(".heading time.uploaded-at");
+  assert.equal(await uploaded.isVisible(), true, "upload timestamp is visible in the preview heading");
+  assert.equal(await uploaded.getAttribute("datetime"), record(key).created_at);
+  assert.equal(await uploaded.textContent(), record(key).created_at);
+  assert.match(await uploaded.locator("..").textContent(), /^Uploaded /);
 };
 const open = async (page, key, name) => {
   const response = await page.goto(viewer(key, name), { waitUntil: "domcontentloaded" });
@@ -177,6 +182,7 @@ const downloadEqual = async (page, key, name = filename(key)) => {
 };
 const markdownRendered = async (page) => {
   await page.getByRole("heading", { name: "Viewer specification", exact: true }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: "Uploaded at", exact: true }).getAttribute("id"), "uploaded-at", "preview metadata must not reserve document heading anchors");
   await page.getByRole("cell", { name: "GFM table", exact: true }).waitFor();
   await page.locator('article.markdown li').filter({ has: page.getByRole('img', { name: 'Completed task', exact: true }) }).filter({ hasText: 'completed task' }).waitFor();
   await page.locator("article.markdown del").filter({ hasText: "removed text" }).waitFor();
@@ -205,6 +211,10 @@ await check("markdown renders headings, GFM and both fenced diagrams without exe
   await markdownRendered(page);
   await rawEqual(page, "markdown");
   await downloadEqual(page, "markdown");
+  await page.setViewportSize({ width: 375, height: 800 });
+  const uploaded = await page.locator(".heading time.uploaded-at").boundingBox();
+  assert.ok(uploaded && uploaded.x >= 0 && uploaded.x + uploaded.width <= 375, "timestamp fits a narrow preview viewport");
+  await page.setViewportSize({ width: 1000, height: 800 });
   await capture(page, "markdown-diagrams");
 }, true);
 

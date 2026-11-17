@@ -55,6 +55,8 @@ def png_fixture():
 
 MARKDOWN = b'''# Viewer specification
 
+## Uploaded at
+
 | Name | Value |
 | --- | --- |
 | GFM table | rendered |
@@ -127,6 +129,10 @@ class ViewerBrowserTests(unittest.TestCase):
             record = bf.upload_fixture(fix, name="viewer-" + key, kind=kind,
                                        visibility=visibility, files=files, empty_dirs=empty_dirs)
             record["content_url"] = bf.content_url_for(fix, record["artifact_id"])
+            info = fix.http.current(fix.api_base, bf.cp.Command_GetArtifact(record["artifact_id"]),
+                                    headers={"Authorization": f"Bearer {fix.identity.token}"})
+            self.assertEqual(info.status, 200)
+            record["created_at"] = info.json()["created_at"]
             # Password/token only transit stdin; never argv or browser artifacts.
             record["files"] = {name: base64.b64encode(blob).decode() for name, blob in files.items()}
             records[key] = record

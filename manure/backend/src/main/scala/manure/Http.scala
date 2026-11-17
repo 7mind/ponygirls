@@ -453,14 +453,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       bytes
     finally input.close()
   }
-  private def viewerShell(ctx: Context,path: String,directory: String): IO[Response[IO]] =
+  private def viewerShell(ctx: Context,a: Artifact,path: String,directory: String): IO[Response[IO]] =
     val kind = viewerKind(path).getOrElse(throw DomainError("not-found"))
     viewerBytes("index.html").map { bytes =>
       val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),
-        "__MANURE_PATH__" -> path,"__MANURE_RAW_URL__" -> (ctx.mount + "/__manure/raw/" + encoded(path)),
+        "__MANURE_CREATED_AT__" -> a.createdAt,"__MANURE_PATH__" -> path,"__MANURE_RAW_URL__" -> (ctx.mount + "/__manure/raw/" + encoded(path)),
         "__MANURE_DOWNLOAD_URL__" -> (ctx.mount + "/__manure/files/" + encoded(path) + "/content"),"__MANURE_KIND__" -> kind)
       // A single pass prevents filenames containing placeholder text from being re-expanded.
-      val html = "__MANURE_(?:ASSET_BASE|PATH|RAW_URL|DOWNLOAD_URL|KIND)__".r.replaceAllIn(Exact.string(bytes),
+      val html = "__MANURE_(?:ASSET_BASE|CREATED_AT|PATH|RAW_URL|DOWNLOAD_URL|KIND)__".r.replaceAllIn(Exact.string(bytes),
         m => java.util.regex.Matcher.quoteReplacement(htmlAttribute(values(m.matched))))
       val page = if directory.isEmpty then html else html.replace("<main>","<main>" + directory)
       Response[IO](Status.Ok).withEntity(page).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
@@ -492,7 +492,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       .filter(name => !name.contains('/') && name.equalsIgnoreCase("readme.md"))
       .sortBy(name => (if name == "README.md" then 0 else if name == "readme.md" then 1 else 2,name))
       .headOption.map(prefix + _)
-    if config.viewerDir.nonEmpty && readme.nonEmpty then viewerShell(ctx,readme.get,listing)
+    if config.viewerDir.nonEmpty && readme.nonEmpty then viewerShell(ctx,a,readme.get,listing)
     else IO.pure(Response[IO](Status.Ok).withEntity(
       "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Manure · Directory</title>" + faviconLink(ctx) + "</head><body><main>" +
         listing + "</main></body></html>").putHeaders(raw("Content-Type","text/html; charset=utf-8"),
@@ -576,7 +576,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { a =>
         Require(!trailing && a.manifest.exists(e => !e.directory && e.path == file) && viewerKind(file).nonEmpty, "not-found")
         if header(req,"Range").nonEmpty || config.viewerDir.isEmpty then serveFile(req,ctx,id,file,false,None)
-        else viewerShell(ctx,file,"")
+        else viewerShell(ctx,a,file,"")
       }
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
@@ -600,7 +600,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
               else if trailing then file + "/index.html" else file
             val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
             val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
-              viewerShell(ctx,target,"")
+              viewerShell(ctx,a,target,"")
             else serveFile(req,ctx,id,target,false,None)
             response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
       }.handleErrorWith {

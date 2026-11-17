@@ -15,7 +15,7 @@ test('rendered Markdown retains sibling artifact hyperlinks without requesting s
   const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
   const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_PATH__', 'docs/readme.md')
     .replaceAll('__MANURE_RAW_URL__', `${current}/__manure/raw/docs/readme.md`).replaceAll('__MANURE_DOWNLOAD_URL__', '/download')
-    .replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+    .replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
   const paths = [sibling, sibling + '/', sibling + '#7-limits', sibling + '/docs/guide.md#topic'];
   const probe = `
     const timer = setInterval(() => {

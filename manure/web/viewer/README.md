@@ -30,6 +30,15 @@ nix build --impure --no-link --print-out-paths --expr \
 The installation is `$out/share/manure/web/viewer/`. Never commit `node_modules`
 or `dist`. The source directory is not directly browser-usable; build first.
 
+## Upload timestamp
+
+The preview heading shows **Uploaded** followed by the artifact's server-recorded
+creation timestamp in UTC (ISO 8601). This is the same `created_at` shown in
+artifact metadata, not the file modification, upload-completion or preview-request
+time. All files and directory README previews in an artifact share that timestamp.
+The server renders the semantic `<time datetime="…">` after ordinary content
+authorization; no additional browser API request is needed.
+
 ## Markdown source
 
 Markdown previews (including directory READMEs) have **Preview** and **Show raw**
@@ -86,6 +95,7 @@ a README preview.
 Replace these placeholders with **HTML attribute escaped** strings (including
 quotes, ampersands and angle brackets):
 
+- `__MANURE_CREATED_AT__`: artifact creation timestamp in UTC, used as both the visible upload time and its `datetime` value
 - `__MANURE_PATH__`: original artifact-relative path, not URL-encoded
 - `__MANURE_RAW_URL__`: same-origin `/<mount>/__manure/raw/<encoded path>`
 - `__MANURE_DOWNLOAD_URL__`: original attachment download URL

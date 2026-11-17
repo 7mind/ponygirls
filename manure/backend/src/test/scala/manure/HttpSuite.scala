@@ -728,6 +728,30 @@ final class HttpSuite extends FunSuite:
       }
     yield ()
   }}
+  test("viewer shells show the original artifact creation time across preview routes and hosting modes") { run { (f,_) =>
+    val source = java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"))
+    val files = Vector("README.md","nested/readme.md")
+    for
+      a <- f.artifacts.init(f.identity,InitUpload("timestamp",ArtifactKind.Directory,Visibility.Public,
+        files.map(name => ManifestEntry(name,false,0,SecretCodec.sha256(Array.emptyByteArray))),None,Vector.empty,None,None))
+      _ <- IO { f.clock.now += 3600 }
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      _ <- Vector("path","subdomain").traverse_ { mode =>
+        val h = app(f,_.copy(viewerDir=Some(source.resolve("manure/web/viewer")),contentMode=mode,contentSuffix="localhost"))
+        val mount = if mode == "path" then s"/view/${a.artifact.id}" else ""
+        def req(path: String) = request(Method.GET,mount + path).putHeaders(Header.Raw(CIString("Host"),
+          if mode == "path" then "127.0.0.1:47329" else a.artifact.id + ".localhost:47329"))
+        Vector("/","/nested/","/__manure/view/README.md").traverse_ { path =>
+          h.app.run(req(path)).flatMap { response => response.as[String].map { html =>
+            assertEquals(response.status.code,200)
+            assert(html.contains("Uploaded <time class=\"uploaded-at\" datetime=\"" + a.artifact.createdAt + "\">" + a.artifact.createdAt + "</time>"))
+            assert(!html.contains("__MANURE_CREATED_AT__"))
+            assert(!html.contains(Exact.displayTime(f.clock.now)))
+          }}
+        }
+      }
+    yield ()
+  }}
   test("viewer negotiation, escaped shell, raw ranges, exact authorized assets and disabled fallback") { run { (f,_) =>
     val bytes = Exact.utf8("# viewer bytes")
     val name = "a&\"<馬>.md"

@@ -38,7 +38,7 @@ test('portrait and landscape images fit both axes at desktop and narrow viewport
   const server = createServer(async (req,res) => {
     try {
       if (['/portrait','/landscape'].includes(req.url)) {
-        const html = template.replaceAll('__MANURE_ASSET_BASE__','/assets').replaceAll('__MANURE_PATH__','image.svg').replaceAll('__MANURE_RAW_URL__',`/__manure/raw/${req.url.slice(1)}.svg`).replaceAll('__MANURE_DOWNLOAD_URL__','/download').replaceAll('__MANURE_KIND__','image').replace('</body>','<script type="module" src="/probe.js"></script></body>');
+        const html = template.replaceAll('__MANURE_ASSET_BASE__','/assets').replaceAll('__MANURE_PATH__','image.svg').replaceAll('__MANURE_RAW_URL__',`/__manure/raw/${req.url.slice(1)}.svg`).replaceAll('__MANURE_DOWNLOAD_URL__','/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__','image').replace('</body>','<script type="module" src="/probe.js"></script></body>');
         res.setHeader('content-type','text/html'); res.end(html);
       } else if (req.url === '/probe.js') {res.setHeader('content-type','text/javascript'); res.end(probe);}
       else if (req.url.startsWith('/__manure/raw/')) {
