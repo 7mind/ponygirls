@@ -40,7 +40,7 @@ final class TotpVaultSuite extends munit.FunSuite {
   directory.test("key file must be one canonical 32-byte base64url key") { dir =>
     val good = Secrets.generate()
     Seq("short" -> good.dropRight(4), "long" -> (good + "AAAA"), "padded" -> (good + "="),
-      "empty" -> "", "two-lines" -> (good + "\n" + good)).foreach { case (name, content) =>
+      "empty" -> "", "two-lines" -> (good + "\n" + good), "lone-cr" -> (good + "\r")).foreach { case (name, content) =>
       assertEquals(intercept[AccountFailure](TotpVault.load(keyFile(dir, name, content), "haystack")).code, "config", name)
     }
     assertEquals(intercept[AccountFailure](TotpVault.load(dir.resolve("missing"), "haystack")).code, "config")

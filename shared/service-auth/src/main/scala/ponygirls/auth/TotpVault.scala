@@ -47,9 +47,9 @@ object TotpVault {
   private val KeyIdChars = 16
   private val KeyFileMaxBytes = 256
 
-  /** `keyFile` holds the key as canonical unpadded base64url (43 characters) and one optional terminal newline. */
+  /** `keyFile` holds the key as canonical unpadded base64url (43 characters) and one optional terminal LF or CRLF. */
   def load(keyFile: Path, service: String): TotpVault = {
-    val text = try BoundedSecretFile.read(keyFile, KeyFileMaxBytes).stripSuffix("\n").stripSuffix("\r")
+    val text = try BoundedSecretFile.read(keyFile, KeyFileMaxBytes).replaceFirst("\\r?\\n\\z", "")
       catch { case scala.util.control.NonFatal(_) => throw AccountFailure("config") }
     if (!Secrets.canonical(text)) throw AccountFailure("config")
     val bytes = Base64.getUrlDecoder.decode(text)
