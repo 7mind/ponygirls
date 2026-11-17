@@ -80,7 +80,7 @@ in pkgs.testers.runNixOSTest {
         Path(os.environ["out"]).mkdir(exist_ok=True)
         Path(os.environ["out"], "portable-native.log").write_text(probe_log)
     residue = machine.succeed("find /srv/portable-volume -mindepth 1 -maxdepth 1 -printf '%f\\n'")
-    assert set(residue.splitlines()) == {"lost+found", "runtime-inputs.sha256", "elf-headers", "elf-dynamic"}
+    assert set(residue.splitlines()) == {"lost+found", "elf-headers", "elf-dynamic"}
     machine.succeed("umount /srv/portable-volume")
     receipt = json.loads([line for line in probe_log.splitlines() if line.startswith('{"scope":')][-1])
     artifact = "${native}/libexec/manure-server"
