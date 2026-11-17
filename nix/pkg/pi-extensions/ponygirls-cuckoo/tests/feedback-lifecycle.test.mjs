@@ -7,7 +7,7 @@ import { CONFIG_DIR_NAME, SessionManager } from '@earendil-works/pi-coding-agent
 import { registerCuckoo } from '../index.ts';
 import { inertNetworkServices } from './fixtures/task-network.mjs';
 import { checkpoints, historyText } from '../src/report.ts';
-import { COMMENT_TYPE, COMMENTS_TYPE, savedComments, undeliveredComments } from '../src/comments.ts';
+import { COMMENT_RESPONSE, COMMENT_RESPONSE_TYPE, COMMENT_TYPE, COMMENTS_TYPE, savedComments, undeliveredComments } from '../src/comments.ts';
 import { INQUIRY, INQUIRY_TYPE, RESUME_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 
 const usage = { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 2, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -22,7 +22,7 @@ const TAB = '\t', ENTER = '\r', ESCAPE = '\x1b';
 function fixture(t) {
   const cwd = mkdtempSync(join(tmpdir(), 'cuckoo-feedback-'));
   t.after(() => rmSync(cwd, { recursive: true, force: true }));
-  const manager = SessionManager.inMemory(); const handlers = new Map(); const commands = new Map(); const notifications = []; const views = []; const sent = [];
+  const manager = SessionManager.inMemory(); const handlers = new Map(); const commands = new Map(); const notifications = []; const views = []; const sent = []; const woken = [];
   let tokens = 20000; let idle = true; let trusted = false; let questions = []; let questionFault = null; const inputs = []; const selections = [];
   const preferences = { path: 'memory:cuckoo', read: () => ({ enabled: false, policy: { kind: 'relative', value: 15 } }), write() { assert.fail('preference write not expected'); } };
   const questionStore = { path: 'memory:questions', read: () => { if (questionFault !== null) throw questionFault; return questions; }, write: value => { questions = [...value]; } };
@@ -38,6 +38,12 @@ function fixture(t) {
         assert.deepEqual(options, { triggerTurn: false });
       }
       if (options.triggerTurn === false) manager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details);
+    },
+    // Like Pi's retained ingress on an idle session: the message is committed at once and the turn starts afterwards.
+    enqueueMessage(message, options) {
+      assert.equal(idle, true, 'a wake is requested only from an idle session');
+      woken.push({ message, options });
+      manager.appendCustomMessageEntry(message.customType, message.content, message.display, message.details);
     },
   };
   const ctx = { cwd, isProjectTrusted: () => trusted, sessionManager: manager, isIdle: () => idle, mode: 'tui', hasUI: true, model: { provider: 'fixture', id: 'fixture' },
@@ -81,7 +87,7 @@ function fixture(t) {
     return requestId;
   }
   const deliveries = () => manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
-  return { cwd, manager, ctx, handlers, sent, notifications, views, command, boundary, comment, checkpointed, deliveries,
+  return { cwd, manager, ctx, handlers, sent, woken, notifications, views, command, boundary, comment, checkpointed, deliveries,
     completions: prefix => commands.get('cuckoo').getArgumentCompletions(prefix),
     tokens: value => { tokens = value; }, idle: value => { idle = value; }, trust: value => { trusted = value; },
     questions: () => questions, breakQuestions: error => { questionFault = error; }, inputs, selections };
@@ -236,8 +242,13 @@ test('comments made while idle are saved as history entries and appended for the
   assert.ok(delivery.content.includes(`Checkpoint ${requestId}`));
   assert.deepEqual(delivery.details.commentIds, saved.map(item => item.commentId));
   assert.equal(delivery.display, true);
-  assert.match(f.notifications.at(-1)[0], /2 comments saved to checkpoint history and added to the conversation for the model/);
+  assert.match(f.notifications.at(-1)[0], /2 comments saved to checkpoint history; the model is responding to them/);
   assert.deepEqual(undeliveredComments(f.manager.getBranch()), []);
+  // Closing the panel while nothing runs asks the model to respond: one hidden request after the delivery, through retained ingress.
+  assert.deepEqual(f.woken, [{ message: { customType: COMMENT_RESPONSE_TYPE, content: COMMENT_RESPONSE, display: false }, options: { triggerTurn: true, deliverAs: 'steer' } }]);
+  const order = f.manager.getBranch().filter(entry => entry.type === 'custom_message').map(entry => entry.customType);
+  assert.deepEqual(order.slice(-2), [COMMENTS_TYPE, COMMENT_RESPONSE_TYPE], 'the request to respond follows the comments it refers to');
+  assert.match(COMMENT_RESPONSE, /expects a response now/); assert.match(COMMENT_RESPONSE, /not a Cuckoo inquiry/); assert.doesNotMatch(COMMENT_RESPONSE, /JSON only/);
   // No later boundary, run start or settlement repeats the delivery.
   assert.equal(f.handlers.get('before_agent_start')({ messageType: 'user', systemPromptOptions: { sections: {} } }, f.ctx), undefined);
   assert.equal(f.boundary(assistant('later work')), undefined);
@@ -257,6 +268,7 @@ test('comments made while the agent runs wait for a completed turn boundary and 
   assert.equal(f.deliveries().length, 0); assert.equal(savedComments(f.manager.getBranch()).length, 1);
   assert.match(f.notifications.at(-1)[0], /1 comment saved to checkpoint history; the model receives them at its next completed turn/);
   assert.equal(f.sent.filter(item => item.message.customType === COMMENTS_TYPE).length, 0);
+  assert.deepEqual(f.woken, [], 'a running model is not asked for a separate response');
   // An aborted turn is not a safe point; the comment stays pending.
   assert.equal(f.boundary(assistant('interrupted', 'aborted'), { outcome: 'aborted' }), undefined);
   assert.equal(undeliveredComments(f.manager.getBranch()).length, 1);
@@ -301,6 +313,7 @@ test('settlement and the next run start pick up comments that no boundary delive
   f.idle(true);
   f.handlers.get('agent_settled')({ aborted: true }, f.ctx);
   assert.equal(f.deliveries().length, 1); assert.match(f.deliveries()[0].content, /After the last turn/);
+  assert.deepEqual(f.woken, [], 'a delivery caught up after an abort does not restart the model');
   assert.equal(f.handlers.get('before_agent_start')({ messageType: 'user', systemPromptOptions: { sections: {} } }, f.ctx), undefined);
 });
 
@@ -310,6 +323,8 @@ test('closing with i delivers the comments before the inquiry it requests', asyn
   const before = f.sent.length;
   await f.comment([{ tabs: 2, text: 'Address this in the next report' }], 'i');
   assert.deepEqual(f.sent.slice(before).map(item => [item.message.customType, item.options.triggerTurn]), [[COMMENTS_TYPE, false], [INQUIRY_TYPE, true]]);
+  assert.deepEqual(f.woken, [], 'the inquiry is the request; a second one would contradict its JSON-only instruction');
+  assert.match(f.notifications.findLast(args => /saved to checkpoint history/.test(args[0]))[0], /added to the conversation for the model/);
   const branch = f.manager.getBranch();
   assert.ok(branch.findIndex(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE) < branch.findLastIndex(entry => entry.type === 'custom' && entry.customType === STATE_TYPE));
   assert.notEqual(stateOnBranch(branch).pending, null);
@@ -401,4 +416,5 @@ test('session shutdown saves comments still open in the panel', async t => {
   f.handlers.get('session_shutdown')({}, f.ctx); await shown;
   assert.deepEqual(savedComments(f.manager.getBranch()).map(item => item.text), ['Typed before quitting']);
   assert.equal(f.deliveries().length, 1, 'an idle session records the delivery before it closes');
+  assert.deepEqual(f.woken, [], 'a closing session is not asked to respond');
 });

@@ -6,7 +6,7 @@ import { dirname, join, resolve } from 'node:path';
 import * as sdk from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai';
 import { checkpoints, historyText } from '../src/report.ts';
-import { COMMENT_TYPE, COMMENTS_TYPE, commentRecord, savedComments, undeliveredComments } from '../src/comments.ts';
+import { COMMENT_RESPONSE_TYPE, COMMENT_TYPE, COMMENTS_TYPE, commentRecord, savedComments, undeliveredComments } from '../src/comments.ts';
 import { FileQuestionStore } from '../src/questions.ts';
 import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 import { readMemory, textDigest } from '../src/memory-core.ts';
@@ -65,14 +65,20 @@ async function until(condition, what) {
   for (let i = 0; i < 2000; i++) { if (condition()) return; await tick(); }
   assert.fail(`timed out waiting for ${what}`);
 }
-/** Comment on the node reached by `tabs` in the open report panel, then close the panel. */
-async function commentInPanel(f, tabs, text) {
+/** Comment on the node reached by `tabs` in the open report panel, then close the panel with `closeKey` (Escape by default). */
+async function commentInPanel(f, tabs, text, closeKey = '\x1b') {
   const shown = f.session.prompt('/cuckoo'); await until(() => f.views.length > 0 && !f.views.at(-1).closed, 'the report panel');
   const panel = f.views.at(-1).component; panel.render(100);
   for (let i = 0; i < tabs; i++) panel.handleInput('\t');
   panel.handleInput('c'); for (const character of text) panel.handleInput(character); panel.handleInput('\r');
-  panel.handleInput('\x1b'); await shown;
+  panel.handleInput(closeKey); await shown;
 }
+/** Retained wakes start on a later tick, after waitForIdle may already have resolved: let them start, then wait again. */
+async function settled(f) {
+  for (let pass = 0; pass < 3; pass++) { await f.session.waitForIdle(); await new Promise(resolve => setTimeout(resolve, 20)); }
+  await f.session.waitForIdle();
+}
+const customTypes = f => f.manager.getBranch().filter(entry => entry.type === 'custom_message').map(entry => entry.customType);
 
 const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","issues":["A decoder defect needs correction","Waiting for access approval","Serial validation"],"eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
 
@@ -388,20 +394,31 @@ test('real Pi standing questions are stored in a durable file, asked, validated,
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
 
-test('real Pi report comments made while idle are kept in the session file and reach the model once, without extra inference', { timeout: 20000 }, async t => {
+test('real Pi report comments made while idle are kept in the session file and the model responds to them at once, exactly once', { timeout: 20000 }, async t => {
   const f = await terminalFixture(t);
   f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
   f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
   const requestId = checkpoints(f.manager.getBranch())[0].requestId;
   const calls = f.contexts.length;
+  f.replies.push({ text: 'Understood: I will run the full suite first.', tokens: 20150 });
   // Two rules precede the objective in this report: the third node is the objective.
   await commentInPanel(f, 3, 'Run the full suite before claiming progress.');
-  assert.equal(f.contexts.length, calls, 'commenting and closing the panel never calls the model');
+  await until(() => f.contexts.length === calls + 1, 'the response to the comments'); await settled(f);
+  assert.equal(f.contexts.length, calls + 1, 'closing the panel while idle starts exactly one model request');
+  const responding = f.contexts.at(-1).messages;
+  assert.match(JSON.stringify(responding.at(-1)), /expects a response now/, 'the request ends with the instruction to respond');
+  assert.match(JSON.stringify(responding.at(-2)), /User comment: Run the full suite before claiming progress\./, 'directly after the comments');
+  assert.doesNotMatch(JSON.stringify(responding.slice(-2)), /JSON only/);
+  assert.deepEqual(customTypes(f).slice(-2), [COMMENTS_TYPE, COMMENT_RESPONSE_TYPE]);
+  const reply = f.manager.getBranch().at(-1);
+  assert.equal(reply.type, 'message'); assert.equal(reply.message.role, 'assistant');
+  assert.match(JSON.stringify(reply.message.content), /I will run the full suite first/, 'the reply is an ordinary response');
+  assert.equal(checkpoints(f.manager.getBranch()).length, 1, 'the reply is not captured as a checkpoint');
   const comments = savedComments(f.manager.getBranch());
   assert.deepEqual(comments.map(item => [item.requestId, item.target, item.subject, item.text]), [[requestId, { kind: 'objective', index: 0 }, 'Objective 1: Ship Cuckoo', 'Run the full suite before claiming progress.']]);
   const deliveries = () => f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
   assert.equal(deliveries().length, 1); assert.deepEqual(deliveries()[0].details.commentIds, [comments[0].commentId]);
-  assert.ok(f.notifications.some(args => /1 comment saved to checkpoint history and added to the conversation for the model/.test(args[0])));
+  assert.ok(f.notifications.some(args => /1 comment saved to checkpoint history; the model is responding to them/.test(args[0])));
   f.replies.push({ text: 'Acknowledged', tokens: 20200 }); await f.session.prompt('Continue the task');
   const request = JSON.stringify(f.contexts.at(-1).messages);
   assert.match(request, /On Objective 1: Ship Cuckoo\\n   User comment: Run the full suite before claiming progress\./);
@@ -415,6 +432,8 @@ test('real Pi report comments made while idle are kept in the session file and r
   f.replies.push({ text: 'Still acknowledged', tokens: 20300 }); await f.session.prompt('And more');
   assert.equal(JSON.stringify(f.contexts.at(-1).messages).split('User comment: Run the full suite').length - 1, 1, 'reload does not deliver the comment again');
   assert.equal(deliveries().length, 1);
+  assert.equal(customTypes(f).filter(type => type === COMMENT_RESPONSE_TYPE).length, 1, 'and does not ask for a response again');
+  assert.equal(f.contexts.length, calls + 3, 'one request each: the response to the comments and the two prompts');
   assert.equal(f.manager.getEntries().filter(entry => entry.type === 'custom' && entry.customType === COMMENT_TYPE).length, 1);
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
@@ -442,6 +461,9 @@ test('real Pi report comments made during a run reach the model at the next turn
   const final = branch.findLastIndex(entry => entry.type === 'message' && entry.message.role === 'assistant');
   assert.ok(toolResult >= 0 && toolResult < delivery && delivery < final, 'tool call, its result, the comments, then the next response');
   assert.equal(deliveries().length, 1); assert.deepEqual(undeliveredComments(branch), []);
+  await settled(f);
+  assert.equal(f.contexts.length, 4, 'a model that is already running is not asked for a separate response');
+  assert.ok(!customTypes(f).includes(COMMENT_RESPONSE_TYPE));
   assert.equal(checkpoints(branch).length, 1, 'a comment is not captured as a checkpoint');
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });
@@ -461,7 +483,9 @@ test('real Pi keeps a comment made during an aborted response and delivers it on
   const branch = f.manager.getBranch();
   const aborted = branch.findLastIndex(entry => entry.type === 'message' && entry.message.role === 'assistant' && entry.message.stopReason === 'aborted');
   assert.ok(aborted >= 0 && aborted < branch.indexOf(deliveries()[0]), 'the delivery follows the aborted response');
+  await settled(f);
   assert.equal(f.contexts.length, 3, 'delivery after an abort starts no request');
+  assert.ok(!customTypes(f).includes(COMMENT_RESPONSE_TYPE));
   f.replies.push({ text: 'Resumed', tokens: 20300 }); await f.session.prompt('Go on');
   assert.equal(JSON.stringify(f.contexts.at(-1).messages).split('User comment: Stop and rerun the suite.').length - 1, 1);
   assert.equal(deliveries().length, 1); assert.equal(checkpoints(f.manager.getBranch()).length, 1);
@@ -486,5 +510,23 @@ test('real Pi delivers a comment left undelivered by an earlier process with the
   f.replies.push({ text: 'Seen again', tokens: 20300 }); await f.session.prompt('Another task');
   assert.equal(JSON.stringify(f.contexts.at(-1).messages).split('User comment: Left by the previous process.').length - 1, 1, 'the next run does not deliver it again');
   assert.equal(deliveries().length, 1);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi closing the panel with i sends the comments and one JSON-only inquiry, not a second request to respond', { timeout: 20000 }, async t => {
+  const f = await terminalFixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const calls = f.contexts.length;
+  f.replies.push({ text: report, tokens: 20200 });
+  await commentInPanel(f, 3, 'Reflect this in the next report.', 'i');
+  await until(() => f.contexts.length === calls + 1, 'the inquiry'); await settled(f);
+  assert.equal(f.contexts.length, calls + 1);
+  const request = f.contexts.at(-1).messages;
+  assert.match(JSON.stringify(request.at(-1)), /Restate me your objectives/, 'the inquiry is the last message of the request');
+  assert.match(JSON.stringify(request), /User comment: Reflect this in the next report\./);
+  assert.doesNotMatch(JSON.stringify(request), /expects a response now/);
+  assert.ok(!customTypes(f).includes(COMMENT_RESPONSE_TYPE));
+  assert.equal(checkpoints(f.manager.getBranch()).length, 2); assert.equal(checkpoints(f.manager.getBranch())[1].error, null);
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });

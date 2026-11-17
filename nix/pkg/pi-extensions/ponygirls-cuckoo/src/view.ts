@@ -16,12 +16,14 @@ const PASTE_START = '\x1b[200~';
 const PASTE_END = '\x1b[201~';
 
 export type CommentScope = 'branch' | 'session';
+/** Why a panel closed: by the user, by the user requesting an inquiry (`i`), or because its session is ending. */
+export type PanelClose = 'close' | 'inquire' | 'shutdown';
 /** Where report comments are read from and persisted to; owned by the extension runtime. */
 export interface CommentHost {
   /** Comments already saved in the given scope of the current session. */
   saved(ctx: ExtensionContext, scope: CommentScope): readonly SavedComment[];
-  /** Persist comments made in a panel and hand them to the model at the next safe point. */
-  save(ctx: ExtensionContext, comments: readonly CommentDraft[]): void;
+  /** Persist comments made in a panel and hand them to the model; `reason` decides whether the model is also asked to respond. */
+  save(ctx: ExtensionContext, comments: readonly CommentDraft[], reason: PanelClose): void;
 }
 
 interface LineRange { start: number; end: number }
@@ -139,6 +141,7 @@ export class CuckooView {
     if (!this.active) return;
     let requested = false;
     const host = this.comments;
+    const closeReason = (): PanelClose => !this.active ? 'shutdown' : requested ? 'inquire' : 'close';
     await this.pane.toggle(ctx.ui, (tui, theme, keys, done) => {
       const state = { selectedIndex: 0, topRow: 0, scrollOffset: 0, node: null as number | null };
       // Comments made in this panel; persisted together when it closes.
@@ -200,7 +203,7 @@ export class CuckooView {
             }
           }
           if (staged.length === 0) return;
-          try { host.save(ctx, staged.splice(0)); }
+          try { host.save(ctx, staged.splice(0), closeReason()); }
           catch (error) { ctx.ui.notify(terminalText(`Cuckoo: comments were not saved: ${String(error)}`), 'error'); }
         }
 

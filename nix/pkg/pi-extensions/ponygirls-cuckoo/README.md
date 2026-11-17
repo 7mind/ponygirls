@@ -150,13 +150,23 @@ editor is saved too rather than dropped. Saving means:
   in `/cuckoo history` and in `cuckoo_recall`. An objective is commented as a
   whole; its issues and ETA are not separate items.
 - **The model.** The comments are delivered once as a visible `cuckoo.comments`
-  message that quotes each commented item. Closing the panel never starts a model
-  turn: an idle session gets the message appended immediately and the model reads
-  it with its next request; a running agent gets it at its next completed turn
-  boundary, before any inquiry issued at that boundary. Comments that neither
-  path could take (for example during compaction, or when Pi exits first) join
-  the first request of the next run. Closing with `i` delivers the comments
-  before the inquiry it requests.
+  message that quotes each commented item. What follows depends on what the
+  model is doing when the panel closes:
+  - **Idle:** the message is appended immediately and the model is asked to
+    respond at once, in an ordinary turn (not a JSON report). The request to
+    respond is a hidden `cuckoo.comments.respond` message. Escape aborts that
+    turn like any other.
+  - **Running:** the message arrives at the next completed turn boundary, before
+    any inquiry issued at that boundary; no separate turn is started, because the
+    running model reads it with its next request.
+  - **Closed with `i`:** the comments are delivered and the inquiry is the only
+    request, so the model answers with a report that can reflect them.
+  - **Session shutdown, or nothing new to save:** no turn is started.
+
+  Comments that no such point could take (made during compaction or an aborted
+  response, or when Pi exits first) are appended once the session is idle, or
+  join the first request of the next run; these catch-up deliveries do not start
+  a turn.
 
 Delivery is derived from the session tree, not from a queue: a comment counts as
 delivered on a branch only when a delivery message on that branch lists it. A

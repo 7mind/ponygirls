@@ -29,6 +29,8 @@ Base `f153d1ae`; branch `task/cuckoo-comments-questions`, worktree
   once and read on the next turn. Rejected alternative: start a turn when the
   panel closes while idle. It spends an unrequested model run on closing a
   viewer; `i` (close and inquire) already gives an explicit immediate path.
+  **Superseded by decision Q90** (see "Responding on an idle close" below): the
+  user chose the alternative rejected here.
 - An objective is one commentable node, including its progress, issues and
   ETA. Individual issues are not separate nodes; the comment text can name one.
 
@@ -213,6 +215,53 @@ during compaction with the real SDK; the fake host sets the flag directly.
 
 The skill-analysis subagent `0c036058-8c51-47c2-ba4d-38c59ae4beff` found the
 self-comparing prompt assertion noted above.
+
+## Responding on an idle close (decision Q90)
+
+Q90 was answered: accept the interface as built, but closing the panel while
+idle should start a model turn so that the model reacts to comments at once.
+
+- Delivery of the comments is unchanged (appended at once when idle, state
+  derived from the branch). The turn is requested by a second, hidden message
+  `cuckoo.comments.respond`, sent after the delivery through the retained
+  ingress `pi.enqueueMessage(..., { triggerTurn: true, deliverAs: 'steer' })`.
+  It carries no comment, so the exactly-once property of delivery does not
+  depend on how the SDK queues it.
+- Rejected: making the delivery itself the trigger. With `pi.sendMessage` the
+  starting message is committed only inside the run, so `before_agent_start`
+  would still see the comments as undelivered; with either API a copy held by
+  the SDK (for example while `agent_settled` handlers run) could be delivered
+  a second time by the branch-derived catch-up. Both points are read from the
+  SDK source (`_prepareRun`, `sendCustomMessage`, `_enqueueCustomMessage`),
+  not reproduced.
+- The retained API was chosen over `pi.sendMessage` for the wake because its
+  documented contract (SDK `types.d.ts`) lets a wake wait for a user prompt
+  that is still being prepared, and `abort()` clears the wake but not the
+  committed message. Precedent: ponygirls-decisions and ponygirls-subagents.
+- The panel reports why it closed (`close`, `inquire`, `shutdown`). Only a
+  user close of an idle session with a delivery asks for a response. `i` does
+  not: the inquiry is the request, and "answer normally" next to "JSON only"
+  would contradict it. Shutdown does not. Catch-up deliveries (after an abort,
+  or at the next run start) do not: restarting a model the user just aborted
+  would be wrong, and a run that is starting needs no wake.
+- Verification: the three behaviour tests were written first and failed for
+  the expected reasons (no notice, no request in the real-SDK test within its
+  deadline, no close reason). After the change 560 tests pass. Six mutations
+  (never ask, ask on `i`, ask on shutdown, ask while running, panel always
+  reporting a user close, request placed before the delivery) were each
+  detected. Real-SDK tests assert exactly one request after an idle close,
+  ending with the request to respond directly after the comments, an ordinary
+  reply that is not captured as a checkpoint, no second request after reload,
+  and one JSON-only inquiry request for `i`. A terminal run (tmux, 110×34,
+  scripted provider) showed the notice, the model's reply after Escape, and no
+  turn when the panel was closed without a comment; exit status 0. The Nix
+  check `ponygirls-cuckoo` passed on this tree: typecheck and 560 tests, 0
+  failed/skipped/cancelled; output
+  `/nix/store/f54293iqvj912wkns5s1pfxjdlvp91vv-ponygirls-cuckoo-test`.
+- No mockup was produced for this change: it adds no screen element beyond the
+  wording of one notice, and the behaviour is the one stated in the decision.
+- The published as-built page predates this change and still says that closing
+  the panel does not start a turn; it is a snapshot of commit `9d09d056`.
 
 ## Interface review
 

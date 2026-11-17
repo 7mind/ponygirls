@@ -14,7 +14,7 @@ import { CuckooCritic } from './src/critic-runtime.ts';
 import { nativeNetworkServices, type CuckooNetworkServices } from './src/network-services.ts';
 import { growthTokens, policyText, validatePolicy } from './src/policy.ts';
 import { REPORT_TYPE, answeredCheckpoint, checkpointRequestIds, checkpoints } from './src/report.ts';
-import { COMMENT_TYPE, commentDelivery, commentRecord, savedComments, undeliveredComments, type CommentDelivery } from './src/comments.ts';
+import { COMMENT_RESPONSE, COMMENT_RESPONSE_TYPE, COMMENT_TYPE, commentDelivery, commentRecord, savedComments, undeliveredComments, type CommentDelivery } from './src/comments.ts';
 import { FileQuestionStore, QUESTIONS_FILE, StandingQuestions, questionsText, type QuestionScope, type QuestionStore } from './src/questions.ts';
 import { RECALL_TOOL, RECALL_NOTICE, MODEL_GUIDANCE, DEFAULT_LIST_ITEMS, MAX_LIST_ITEMS, DEFAULT_READ_CHARS, MAX_READ_CHARS, MAX_RESPONSE_BYTES, recallRounds, type RecallRequest } from './src/recall.ts';
 import { INQUIRY_TYPE, RESUME, RESUME_TYPE, STATE_TYPE, inquiryDue, inquiryText, observe, stateOnBranch, type State } from './src/state.ts';
@@ -60,15 +60,23 @@ export function registerCuckoo(pi: ExtensionAPI, preferences: PreferenceStore, q
   }
   const commentHost: CommentHost = {
     saved: (ctx, scope) => savedComments(scope === 'branch' ? ctx.sessionManager.getBranch() : ctx.sessionManager.getEntries()),
-    save(ctx, drafts) {
+    save(ctx, drafts, reason) {
       const createdAt = new Date(networkServices.clock.civilNowMs()).toISOString();
       const records = drafts.map(draft => commentRecord(draft, networkServices.ids.nextId(), createdAt));
       if (records.length === 0) return;
       for (const record of records) pi.appendEntry(COMMENT_TYPE, record);
       const count = `${records.length} comment${records.length === 1 ? '' : 's'}`;
       try {
-        ctx.ui.notify(deliverComments(ctx) ? `Cuckoo: ${count} saved to checkpoint history and added to the conversation for the model` :
-          `Cuckoo: ${count} saved to checkpoint history; the model receives them at its next completed turn`, 'info');
+        const delivered = deliverComments(ctx);
+        // A user who closes the panel while nothing runs expects a reaction. `i` gets its turn from the inquiry,
+        // whose JSON-only instruction a second request would contradict; a closing session gets none.
+        const respond = delivered && reason === 'close';
+        // The delivery above is already on the branch, so this request carries no comment and cannot duplicate one.
+        // Retained ingress, not sendMessage: its wake waits for a user prompt that is still being prepared.
+        if (respond) pi.enqueueMessage({ customType: COMMENT_RESPONSE_TYPE, content: COMMENT_RESPONSE, display: false }, { triggerTurn: true, deliverAs: 'steer' });
+        ctx.ui.notify(respond ? `Cuckoo: ${count} saved to checkpoint history; the model is responding to them` :
+          delivered ? `Cuckoo: ${count} saved to checkpoint history and added to the conversation for the model` :
+            `Cuckoo: ${count} saved to checkpoint history; the model receives them at its next completed turn`, 'info');
       } catch (error) { commentFault(ctx, error); }
     },
   };

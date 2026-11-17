@@ -17,7 +17,7 @@ const report = answeredCheckpoint('req-1', JSON.stringify({
 const older = checkpoint('req-0', JSON.stringify({ objectives: [{ objective: 'Earlier goal', progress: 'Done', issues: [], eta: 'Complete' }], rules: [] }));
 
 function fixture(saved, uiTheme = theme) {
-  const widgets = []; const notifications = []; const views = []; const savedCalls = []; const scopes = []; let rows = 40;
+  const widgets = []; const notifications = []; const views = []; const savedCalls = []; const reasons = []; const scopes = []; let rows = 40;
   const ctx = { mode: 'tui', hasUI: true, ui: {
     setWidget: (...args) => widgets.push(args), notify: (...args) => notifications.push(args),
     custom: (factory, options) => new Promise(resolve => {
@@ -28,9 +28,9 @@ function fixture(saved, uiTheme = theme) {
   } };
   const host = {
     saved: (context, scope) => { assert.equal(context, ctx); scopes.push(scope); if (saved instanceof Error) throw saved; return saved; },
-    save: (context, comments) => { assert.equal(context, ctx); savedCalls.push(comments.map(item => structuredClone(item))); },
+    save: (context, comments, reason) => { assert.equal(context, ctx); savedCalls.push(comments.map(item => structuredClone(item))); reasons.push(reason); },
   };
-  return { ctx, host, views, widgets, notifications, savedCalls, scopes, resize: value => { rows = value; }, badge: () => widgets.at(-1)[1](null, theme) };
+  return { ctx, host, views, widgets, notifications, savedCalls, reasons, scopes, resize: value => { rows = value; }, badge: () => widgets.at(-1)[1](null, theme) };
 }
 async function open(f, reports, inquire) {
   const view = new CuckooView(inquire, f.host);
@@ -357,4 +357,23 @@ test('a fault while handling a key is reported and leaves the panel usable, so c
   assert.match(panel.render(100).join('\n'), /\[new\] made before the fault/);
   panel.handleInput(ESCAPE); await showing; view.dispose(f.ctx);
   assert.deepEqual(f.savedCalls.map(call => call.map(item => item.text)), [['made before the fault']]);
+});
+
+// The host decides what follows a save from why the panel closed: only a plain user close asks the model to respond.
+test('the host is told why the panel closed: by the user, for an inquiry, or with the session', async () => {
+  const one = async (close, inquire) => {
+    const f = fixture([]); const view = new CuckooView(inquire, f.host);
+    view.publish(f.ctx, [report], true, null);
+    const showing = view.showReports(f.ctx, [report], 'Cuckoo: ON'); await tick();
+    const panel = f.views[0].component; panel.render(100);
+    panel.handleInput(TAB); panel.handleInput('c'); type(panel, 'a comment'); panel.handleInput(ENTER);
+    await close({ f, view, panel }); await showing; view.dispose(f.ctx);
+    assert.equal(f.savedCalls.length, 1);
+    return f.reasons;
+  };
+  assert.deepEqual(await one(({ panel }) => panel.handleInput(ESCAPE), never), ['close']);
+  assert.deepEqual(await one(({ panel }) => panel.handleInput('q'), never), ['close']);
+  assert.deepEqual(await one(({ f }) => f.badge().handleMouse({ type: 'click', button: 'left' }), never), ['close']);
+  assert.deepEqual(await one(({ panel }) => panel.handleInput('i'), () => {}), ['inquire']);
+  assert.deepEqual(await one(({ f, view }) => view.dispose(f.ctx), never), ['shutdown']);
 });

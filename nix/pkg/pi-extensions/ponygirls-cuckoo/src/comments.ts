@@ -5,6 +5,9 @@ import type { Checkpoint } from './report.ts';
 export const COMMENT_TYPE = 'cuckoo.comment';
 /** The model-facing message that delivers comments; its details list the delivered ids. */
 export const COMMENTS_TYPE = 'cuckoo.comments';
+/** Hidden follow-up to a delivery made when the user closes the panel while nothing is running: asks the model to respond. */
+export const COMMENT_RESPONSE_TYPE = 'cuckoo.comments.respond';
+export const COMMENT_RESPONSE = 'The user closed the Cuckoo panel after writing the comments above and expects a response now. Reply to the comments and act on them within the current task and its existing constraints. This is not a Cuckoo inquiry: answer normally, not with a JSON report.';
 export const MAX_COMMENT_CHARS = 8000;
 export const MAX_DELIVERED_COMMENTS = 1000;
 const QUOTE_CHARS = 400;
