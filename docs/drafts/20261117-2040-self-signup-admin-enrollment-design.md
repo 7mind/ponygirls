@@ -1149,3 +1149,15 @@ The v1 questions are decided (§0.2). Two points remain that are choices of poli
 |---|---|---|---|
 | OQ-A | Admin **credential reset** is tied to `enrollment.enable` (orchestrator decision). In a signup-only deployment a user who enabled mandatory TOTP and loses the authenticator, or any user who loses both factors, then has no path short of the operator temporarily enabling enrollment. Should reset instead be part of account lifecycle under the master switch? | Tied to `enrollment.enable`; the settings view warns before the opt-in when enrollment is off. | Small: move one availability check; the reset redemption endpoint would then exist whenever the master is on. |
 | OQ-B | Pending applicants and disabled users are answered exactly like unknown names on login (uniform `401`), so an applicant who tries to sign in before approval sees "invalid login or password". Should a pending applicant who presents the **correct password** be told "awaiting approval" instead? | Uniform `401` (required by the brief's enumeration posture). | Small: one extra response code after a successful password check; reveals the pending state only to someone who knows the password. |
+
+---
+
+## 12 Amendments after v2 (orchestrator decisions, 2026-11-17)
+
+These override the text above wherever they differ; implementers follow this section.
+
+| # | Amendment | Replaces |
+|---|---|---|
+| AM1 (OQ-A) | **Admin credential reset is part of account lifecycle under the master switch.** `POST /admin/users/{id}/reset`, the listing/revocation of pending *reset* enrollments, and inspection/redemption of a code of kind `reset` are available whenever `accounts.enable` is true, independently of `enrollment.enable`. `enrollment.enable` governs only *invitations* (issuing, listing, revoking, inspecting and redeeming codes of kind `invite`). `GET /policy` and `profile.manage` report the two capabilities separately (`enrollment` for invitations, `reset` for resets). A declarative admin is therefore required whenever the master switch is on (configuration validation and Nix assertion), not only when approval or enrollment is on. | §4.4 / §5.1 availability columns, §6.3–§6.4 assertion 3, OQ-A default |
+| AM2 (OQ-B) | **A pending applicant who presents the correct password is told so.** Login for a `pending` account performs the normal password verification (same work and same failure counter as an active account); on a correct password it answers `403 pending-approval` (new error code) and establishes no session; on a wrong password it answers the uniform `401 unauthorized`. Recovery keeps the uniform `401` for pending accounts. The pending state is thus revealed only to someone who knows the password. The login view shows "awaiting approval by an administrator". | §4.3/§4.5.1 uniform-401 rule for pending accounts, OQ-B default |
+
