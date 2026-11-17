@@ -71,17 +71,22 @@ only the keys that apply to the selected task (`t`, `s`, `m` while it runs,
 `c` once it has finished); keys that are not shown stay bound, as do `r`
 (refresh; the pane refreshes itself) and `q`. A task stopped by terminate, in
 the pane or by the tool, is listed as `■ terminated` rather than `✖ failed`,
-with its exit evidence unchanged. A signal sent with `s` or the tool's
+with its exit evidence unchanged; the collapsed transcript lines (its
+completion notice, the tool's terminate result) say the same, and their
+expanded forms are unchanged. A signal sent with `s` or the tool's
 `signal` is recorded like any other death, so such a task reads `failed`.
 A list wider than the pane hides whole columns (log, notice, time, exit, in
 that order) and names them; task, label and state stay. The task view's title
 likewise keeps only the facts that fit whole. Closing the viewer never
 affects a task. The detail view holds at most 128 KiB of a log.
 
-While any task is unfinished the editor's bottom-left border shows `🛠️ N
-running` as a blue badge (next to the session goal and subagents badges
-when they are present); it clears when no running task remains. Clicking
-the badge opens the `/bg` inspector. The compact form is `🛠️N`.
+While any task is unfinished the editor's bottom-left border shows the badge
+`🛠️ N`: the glyph, then the number of running tasks in the running colour,
+without a background, as every border badge looks (it sits next to the
+session goal and subagents badges when they are present). It disappears
+when no running task remains. Clicking the badge opens the `/bg` inspector.
+The compact form is `🛠️N`. The badge is styled when it is drawn, so a theme
+switch restyles it at once.
 
 When the task supervisor cannot be reached, the badge keeps its last state
 and the transcript gets one `bg-task-status` notice for the outage and one
@@ -253,8 +258,8 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
 | `pi-runtime-probe.test.mjs` | pinned Pi delivery semantics (scripted provider, `pi.sendMessage()` path) |
 | `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start retry, provider-error re-send, supervisor-loss restart, mute, crash windows, switch/fork, reload, compaction, provider retry, a session without a file (one notice, no turn) |
 | `delivery-unit.test.ts` | deterministic dispatcher guard transitions, retry backoff, answered-receipt scanning |
-| `status.test.ts` | border badge text: running counts, singular/plural, clear when idle |
-| `extension-status.test.ts` | the real extension with a faked host: the badge follows spawn/terminate/clear; status notices and when they ask for a turn |
+| `status.test.ts` | border badge: glyph and running count in the shared badge look, full and compact, clear when idle |
+| `extension-status.test.ts` | the real extension with a faked host: the badge follows spawn/terminate/clear and a theme switch; status notices and when they ask for a turn |
 | `ui.test.ts` | the inspector on a real supervisor: live follow/scroll, escape fixtures, bounded windows, dead/missing labels, actions |
 | `ui-render.test.ts` | the inspector and the transcript lines on the memory dummy: exact text and colours, state-dependent hints, every line at 60 to 170 columns |
 | `transcript-wiring.test.ts` | the registered renderers and the `/bg` command: collapsed one-liners, expanded text unchanged |

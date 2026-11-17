@@ -4,12 +4,12 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { BORDER_ORDER, compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, borderBadge, borderBadgeCompact, CustomViewToggle } from "@ponygirls/pi-ui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
 import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, STATUS_CUSTOM_TYPE, type SessionId, type SignalName, type TaskRecord } from "./src/protocol.ts";
-import { BG_STATUS_KEY, bgStatusLine, countRunning } from "./src/status.ts";
+import { BG_STATUS_KEY, bgBadge, countRunning } from "./src/status.ts";
 import type { TaskBackend } from "./src/backend.ts";
 import { createBgTaskTool, taskLine } from "./src/tool.ts";
 import { OneLine, RECOVERED_TEXT, bgTaskRenderers, completionLine, isNoSessionNotice, statusLine, unavailableText, type StatusNoticeKind } from "./src/transcript.ts";
@@ -68,24 +68,20 @@ async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
   return seen;
 }
 
-/** Glyph of the short border form. */
-const BADGE_GLYPH = "🛠️";
-
 /** Publish (or clear) the bottom-left badge; a click opens the /bg inspector. */
 function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {
   const ui = entry.ctx.ui;
-  const line = bgStatusLine(tasks);
-  if (line === null) {
+  const badge = bgBadge(tasks);
+  if (badge === null) {
     ui.setWidget(BG_STATUS_KEY, undefined);
     return;
   }
-  const label = ui.theme.bg("selectedBg", ` ${line} `);
-  const running = countRunning(tasks);
   ui.setWidget(
     BG_STATUS_KEY,
-    () => ({
-      render: () => [label],
-      renderCompact: () => compactChip(ui.theme, BADGE_GLYPH, "running", String(running)),
+    // Styled when drawn, through the theme pi hands over: a theme switch restyles the badge.
+    (_tui, theme) => ({
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
@@ -156,9 +152,9 @@ async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<vo
   try {
     publishBadge(entry, tasks);
   } catch {
-    // Badge rendering failed (e.g. the theme is not initialized in a headless
-    // runtime): not a backend outage, so outside the episode above — a later
-    // refresh retries.
+    // Publishing the badge failed (e.g. the UI is stale after a session
+    // replacement or reload): not a backend outage, so outside the episode
+    // above — a later refresh retries.
   }
 }
 

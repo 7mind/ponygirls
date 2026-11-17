@@ -13,7 +13,7 @@ import {
   BgTaskError, MAX_LIST_ITEMS, MAX_READ_BYTES, isFinalized, type CompletionDetails, type SignalName, type TaskRecord,
 } from "./protocol.ts";
 import { consumableLength, decodeAndSanitize, displayValue, leadingContinuationBytes } from "./terminal-text.ts";
-import { exitCode, exitFailed, formatSize, informativeReason, shortTaskId, shownState, stateGlyph, taskStateColor } from "./present.ts";
+import { exitCode, exitFailed, formatSize, shortTaskId, shownReason, shownState, stateGlyph, taskStateColor } from "./present.ts";
 import { elapsed, formatExit, noticeLabel, noticeStatus, stateLabel } from "./tool.ts";
 
 /** Most log bytes held in memory by the detail view. */
@@ -325,15 +325,10 @@ export class BgInspector extends PanelLayout implements Component {
     return { text: `${stateGlyph(state)} ${state === "terminated" ? state : stateLabel(task)}`, color: taskStateColor(state) };
   }
 
-  /** The reason, unless the exit evidence (D5) or the shown state already says it. */
-  private reason(task: TaskRecord): TaskRecord["reason"] {
-    return shownState(task) === "terminated" ? null : informativeReason(task.reason, task.exit);
-  }
-
   /** Exit evidence plus a reason only when it adds something (D5). */
   private exitCell(task: TaskRecord, secondary: UiFg): Cell {
     if (!task.exit && !isFinalized(task)) return { text: "—", color: secondary };
-    const reason = this.reason(task);
+    const reason = shownReason(task);
     const text = `${exitCode(task.exit)}${reason ? ` ${reason}` : ""}`;
     if (!task.exit) return { text, color: "warning" };
     // The signal of a requested stop is its expected outcome, not an error.
@@ -439,7 +434,7 @@ export class BgInspector extends PanelLayout implements Component {
     const t = d.task;
     const facts = [displayValue(t.label)];
     if (t.exit || isFinalized(t)) {
-      const reason = this.reason(t);
+      const reason = shownReason(t);
       facts.push(`${formatExit(t.exit)}${reason ? ` (${reason})` : ""}`);
     }
     facts.push(noticeLabel(t, this.deps.noticeState(t)), formatSize(d.size));

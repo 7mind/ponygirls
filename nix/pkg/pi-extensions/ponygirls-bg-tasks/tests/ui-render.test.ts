@@ -4,10 +4,11 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { VStack, visibleWidth } from "@earendil-works/pi-tui";
 import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
-import { formatSize, informativeReason, shortTaskId } from "../src/present.ts";
+import { formatSize, informativeReason, shortTaskId, shownReason } from "../src/present.ts";
 import type { CompletionDetails, SessionId, TaskId, TaskRecord } from "../src/protocol.ts";
-import { collapsedCall, collapsedResult, completionLine, expandedCall, resultText, statusLine, type TranscriptTheme } from "../src/transcript.ts";
-import { BgInspector, type ViewerDeps } from "../src/ui.ts";
+import { OneLine, collapsedCall, collapsedResult, completionLine, expandedCall, resultText, statusLine, type TranscriptTheme } from "../src/transcript.ts";
+import { runBgTask, type ToolHost } from "../src/tool.ts";
+import { BgInspector, renderCompletion, type ViewerDeps } from "../src/ui.ts";
 import { defer, eventually } from "./fixtures.ts";
 import { MemoryTaskBackend } from "./memory-backend.ts";
 
@@ -397,6 +398,11 @@ test("formatSize, short ids and redundant reasons", () => {
   assert.equal(informativeReason("signaled", { kind: "signal", signal: "SIGKILL" }), null);
   assert.equal(informativeReason("terminated", { kind: "signal", signal: "SIGTERM" }), "terminated");
   assert.equal(informativeReason("supervisor_lost", null), "supervisor_lost");
+  // What the pane and the transcript lines both show: not the reason the shown state already is.
+  assert.equal(shownReason({ state: "failed", reason: "terminated", exit: { kind: "signal", signal: "SIGTERM" } }), null);
+  assert.equal(shownReason({ state: "failed", reason: "signaled", exit: { kind: "signal", signal: "SIGKILL" } }), null);
+  assert.equal(shownReason({ state: "failed", reason: "session_shutdown", exit: null }), "session_shutdown");
+  assert.equal(shownReason({ state: "dead", reason: "supervisor_lost", exit: null }), "supervisor_lost");
 });
 
 function details(events: CompletionDetails["events"]): CompletionDetails {
@@ -417,6 +423,62 @@ test("completion notice: one line from the retained record, or from the notice a
   assert.equal(completed, "⚙ bg mem0… ✓ completed · /bg to inspect");
   const many = completionLine(details([event, { ...event, eventId: "e2" }, { ...event, eventId: "e3", state: "completed", reason: "exit" }, { ...event, eventId: "e4", state: "dead", reason: "supervisor_lost" }]), () => undefined, Date.now(), PLAIN_TRANSCRIPT);
   assert.equal(many, "⚙ bg 4 tasks finished ✓ 1 completed · ✖ 2 failed · ⚠ 1 dead · /bg to inspect");
+});
+
+// The transcript still said `✖ failed · killed by SIGTERM · terminated`, in red, for a task stopped on request.
+test("completion notice: a task ended by terminate reads terminated and settled, as in the pane", async () => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const sleeper = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: true });
+  const stopped = await backend.terminate(sleeper.id);
+  const event = { taskId: stopped.id, eventId: "e1", state: "failed" as const, reason: "terminated" as const, logPath: "/x/terminal.log" };
+  const now = Date.now();
+  assert.match(completionLine(details([event]), () => stopped, now, PLAIN_TRANSCRIPT), /^⚙ bg sleeper ■ terminated · killed by SIGTERM · \d+s · log 0 B · \/bg to inspect$/);
+  assert.match(tags(completionLine(details([event]), () => stopped, now, TAG)), /^<accent>⚙ bg<\/> <text>sleeper<\/> <muted>■ terminated · killed by SIGTERM<\/><dim> · \d+s · log 0 B · \/bg to inspect<\/>$/);
+  assert.equal(completionLine(details([event]), () => undefined, now, PLAIN_TRANSCRIPT), "⚙ bg mem0… ■ terminated · /bg to inspect");
+  assert.equal(tags(completionLine(details([event]), () => undefined, now, TAG)), "<accent>⚙ bg</> <text>mem0…</> <muted>■ terminated</><dim> · /bg to inspect</>");
+
+  // A signal nobody here sent: the task failed on its own.
+  const oom = await backend.spawn({ label: "oom", command: "sleep 30", cwd: "/", notify: true });
+  backend.kill(oom.id, "SIGKILL");
+  const killed = await backend.get(oom.id);
+  const killedEvent = { ...event, taskId: killed.id, eventId: "e2", reason: "signaled" as const };
+  assert.match(tags(completionLine(details([killedEvent]), () => killed, now, TAG)), /^<accent>⚙ bg<\/> <text>oom<\/> <error>✖ failed · killed by SIGKILL<\/><dim> · /);
+
+  const failed = { ...event, eventId: "e3", reason: "exit_nonzero" as const };
+  const completed = { ...event, eventId: "e4", state: "completed" as const, reason: "exit" as const };
+  const many = details([event, failed, { ...event, eventId: "e5" }, completed]);
+  assert.equal(completionLine(many, () => undefined, now, PLAIN_TRANSCRIPT), "⚙ bg 4 tasks finished ✓ 1 completed · ■ 2 terminated · ✖ 1 failed · /bg to inspect");
+  assert.match(tags(completionLine(many, () => undefined, now, TAG)), /<success>✓ 1 completed<\/><dim> · <\/><muted>■ 2 terminated<\/><dim> · <\/><error>✖ 1 failed<\/>/);
+
+  // Expanded, the notice is what it was.
+  assert.deepEqual(renderCompletion(details([event]), "", PLAIN_THEME), ["Background task finished", "  bgt-mem0001  failed  terminated  log /x/terminal.log (until cleared)"]);
+
+  for (const notice of [details([event]), many]) {
+    for (const width of WIDTHS) assertFits(new OneLine(() => completionLine(notice, () => stopped, now, PLAIN_TRANSCRIPT), 1).render(width), width, "completion notice");
+  }
+});
+
+// `bg_task terminate … → ✖ failed · killed by SIGTERM` for the stop the call itself asked for.
+test("bg_task terminate collapsed: a requested stop reads terminated; a task that had already ended keeps its state", async () => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const host: ToolHost = { backend: async () => backend, sessionId: () => "ui-render" as SessionId, noticeState: () => null, noticeForgotten: () => {} };
+  const terminate = async (id: TaskId, theme: TranscriptTheme): Promise<{ line: string; text: string }> => {
+    const output = await runBgTask(host, { action: "terminate", id }, undefined);
+    const content = [{ type: "text", text: output.text }];
+    return { line: collapsedResult({ action: "terminate", id }, { content, details: output.details }, false, theme), text: resultText(content) };
+  };
+  const sleeper = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: false });
+  const stopped = await terminate(sleeper.id, PLAIN_TRANSCRIPT);
+  assert.equal(stopped.line, "bg_task terminate mem0… → ■ terminated · killed by SIGTERM");
+  assert.equal(stopped.text, "bgt-mem0001 finished: failed (terminated), killed by SIGTERM. Its log is retained until cleared.", "expanded, the tool's own text is unchanged");
+  assert.match(tags((await terminate(sleeper.id, TAG)).line), /<toolOutput> → <\/><muted>■ terminated<\/><toolOutput> · killed by SIGTERM<\/>$/);
+
+  const tests = await finishedTask(backend, "tests", "echo FAIL; exit 3");
+  assert.equal((await terminate(tests.id, PLAIN_TRANSCRIPT)).line, "bg_task terminate mem0… → ✖ failed · exit 3");
+  assert.match(tags((await terminate(tests.id, TAG)).line), /<error>✖ failed<\/><toolOutput> · exit 3<\/>$/);
+  const lint = await finishedTask(backend, "lint", "echo ok; exit 0");
+  assert.equal((await terminate(lint.id, PLAIN_TRANSCRIPT)).line, "bg_task terminate mem0… → ✓ completed · exit 0");
+  for (const width of WIDTHS) assertFits(new OneLine(() => stopped.line, 0).render(width), width, "terminate result");
 });
 
 const unavailable = (error: string): string => `bg-tasks: status backend unreachable (${error}); the badge keeps its last state.`;

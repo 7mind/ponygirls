@@ -4,17 +4,30 @@ import { execFileSync } from "node:child_process";
 import { chmodSync } from "node:fs";
 import test, { type TestContext } from "node:test";
 import { join } from "node:path";
+import { BORDER_ORDER } from "@ponygirls/pi-ui";
 import { advanceStatusEpisode, type StatusEpisode } from "../index.ts";
 import { SIDECAR_SUFFIX, STATUS_CUSTOM_TYPE } from "../src/protocol.ts";
 import { defer, eventually, tempDir } from "./fixtures.ts";
 
-type BadgeFactory = () => { render(): string[]; renderCompact?: (width: number) => string; handleMouse?: (event: unknown) => unknown };
+interface BadgeTheme { fg(color: string, text: string): string; bg(color: string, text: string): string; bold(text: string): string }
+/** As pi calls it: the TUI (unused here) and the theme the widget renders through. */
+type BadgeFactory = (tui: unknown, theme: BadgeTheme) => { render(width: number): string[]; renderCompact?: (width: number) => string; handleMouse?: (event: unknown) => unknown };
 type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft"; order: number } | undefined)?];
 
-/** The published badge's first rendered line. */
-function badgeLine(factory: unknown): string {
-  return (factory as BadgeFactory)().render()[0] ?? "";
+/** Wide enough for the test theme's styling, which is visible text. */
+const BORDER_WIDTH = 80;
+
+/** A theme whose styling names its palette, which a theme switch replaces. */
+function switchableTheme(): { theme: BadgeTheme; use(palette: string): void } {
+  let current = "dark";
+  return {
+    theme: { fg: (color, text) => `<${current}:${color}>${text}`, bg: (color, text) => `[${current}:${color}]${text}`, bold: (text) => text },
+    use: (palette) => { current = palette; },
+  };
 }
+
+/** Whether a badge (not its removal) was published under the tasks key. */
+const isBadge = ([key, factory]: StatusEntry): boolean => key === "bg" && factory !== undefined;
 
 test("border badge shows running tasks and clears when none remain", async (t) => {
   const dir = tempDir(t, "bg-status-");
@@ -63,10 +76,18 @@ test("border badge shows running tasks and clears when none remain", async (t) =
   const id = (spawned.details as { task: { id: string } }).task.id;
   assert.ok(id);
 
-  await eventually(async () => (statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === "[selectedBg] 🛠️ 1 ") ? true : null), "running status");
+  await eventually(async () => (statuses.some(isBadge) ? true : null), "running status");
   const mark = statuses.length;
-  const badge = statuses.findLast(([k, v]) => k === "bg" && v !== undefined)![1]!();
-  assert.equal(badge.renderCompact?.(10), "[toolPendingBg] <accent>🛠️<text>1 ", "short form: neutral chip, running glyph, count");
+  const [, factory, options] = statuses.findLast(isBadge)!;
+  assert.deepEqual(options, { placement: "borderBottomLeft", order: BORDER_ORDER.tasks });
+  const palette = switchableTheme();
+  const badge = factory!(undefined, palette.theme);
+  assert.equal(badge.render(BORDER_WIDTH)[0], " 🛠️ <dark:accent>1 ", "no chip: the glyph, then the count in the running colour");
+  assert.equal(badge.renderCompact?.(BORDER_WIDTH), "🛠️<dark:accent>1", "short form: glyph and count, unpadded");
+  // The badge is styled when it is drawn, so a theme switch reaches a badge already published.
+  palette.use("light");
+  assert.equal(badge.render(BORDER_WIDTH)[0], " 🛠️ <light:accent>1 ");
+  assert.equal(badge.renderCompact?.(BORDER_WIDTH), "🛠️<light:accent>1");
 
   badge.handleMouse?.({ type: "click", button: "left" });
   badge.handleMouse?.({ type: "click", button: "left" });
@@ -260,7 +281,7 @@ test("an outage while a task is known to be running asks for a turn, and so does
   const sessionFile = join(dir, "session.jsonl");
   const session = await startSession(t, "bg-status-turn", sessionFile);
   await session.tool("bg_task").execute("spawn-1" as never, { action: "spawn", label: "sleepy", command: "sleep 30", cwd: dir, notify: false } as never, undefined as never);
-  await eventually(async () => (session.statuses.some(([k, v]) => k === "bg" && v !== undefined && badgeLine(v) === "[selectedBg] 🛠️ 1 ") ? true : null), "the running task to be known");
+  await eventually(async () => (session.statuses.some(isBadge) ? true : null), "the running task to be known");
   assert.deepEqual(statusNotices(session), []);
 
   // The supervisor dies and its successor cannot start: the status backend is unreachable.

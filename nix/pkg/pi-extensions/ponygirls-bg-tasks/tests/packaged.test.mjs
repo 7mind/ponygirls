@@ -158,6 +158,8 @@ test("tui: /bg shows live task output without replaying control sequences, and q
     { send: spawnPrompt({ label: "tui-progress", command, notify: false }) },
     { send: "\r" },
     { wait: "spawned", timeout: 30 },
+    // The border badge: the glyph, then the running count in its own foreground colour (no chip around both).
+    { wait: " 🛠️ (?:\\x1b\\[[0-9;]*m)+1", timeout: 15 },
     { sleep: 1.5 },
     { send: "/bg" },
     { sleep: 0.5 },

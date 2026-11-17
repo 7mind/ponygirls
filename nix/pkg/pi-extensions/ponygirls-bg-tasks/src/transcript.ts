@@ -6,8 +6,8 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Container, Text, truncateToWidth, visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { stateColor, type UiFg, type UiState } from "@ponygirls/pi-ui";
-import type { BgTaskParamsSchema, CompletionDetails, CompletionEvent, ErrorCode, TaskRecord, TaskState } from "./protocol.ts";
-import { exitFailed, formatSize, informativeReason, shortTaskId, stateGlyph, taskStateColor } from "./present.ts";
+import type { BgTaskParamsSchema, CompletionDetails, CompletionEvent, ErrorCode, TaskRecord } from "./protocol.ts";
+import { exitFailed, formatSize, shortTaskId, shownReason, shownState, stateGlyph, taskStateColor, type ShownState } from "./present.ts";
 import { displayValue } from "./terminal-text.ts";
 import { elapsed, formatExit, stateLabel, type BgTaskDetails } from "./tool.ts";
 
@@ -102,7 +102,8 @@ function outcome(details: BgTaskDetails, theme: TranscriptTheme): string {
       return out(`${details.delivered ? "sent" : "not delivered"} · ${stateLabel(details.task)}`);
     case "terminate": {
       const task = details.task;
-      return theme.fg(taskStateColor(task.state), `${stateGlyph(task.state)} ${task.state}`) + out(` · ${formatExit(task.exit)}`);
+      const state = shownState(task);
+      return theme.fg(taskStateColor(state), `${stateGlyph(state)} ${state}`) + out(` · ${formatExit(task.exit)}`);
     }
     case "notify":
       return out(`notices ${details.task.notify ? "on" : "off"}`);
@@ -191,7 +192,8 @@ export const bgTaskRenderers: BgTaskRenderers = {
 /** A retained task record by id, if this activation has seen it. */
 export type TaskLookup = (id: string) => TaskRecord | undefined;
 
-const STATE_ORDER: readonly Exclude<TaskState, "running">[] = ["completed", "failed", "dead"];
+/** Finished states in the order a summary lists them: what went as intended first. */
+const STATE_ORDER: readonly Exclude<ShownState, "running">[] = ["completed", "terminated", "failed", "dead"];
 
 function bgLabel(theme: TranscriptTheme): string {
   return theme.fg("accent", `${BG_GLYPH} bg`);
@@ -199,16 +201,17 @@ function bgLabel(theme: TranscriptTheme): string {
 
 function eventLine(event: CompletionEvent, task: TaskRecord | undefined, now: number, theme: TranscriptTheme): string {
   const dim = (s: string) => theme.fg("dim", s);
-  const outcomeParts = [`${stateGlyph(event.state)} ${event.state}`];
+  const state = shownState(event);
+  const outcomeParts = [`${stateGlyph(state)} ${state}`];
   if (!task) {
-    if (event.reason !== "exit") outcomeParts.push(displayValue(event.reason));
-    return `${bgLabel(theme)} ${theme.fg("text", shortTaskId(event.taskId))} ${theme.fg(taskStateColor(event.state), outcomeParts.join(" · "))}${dim(` · ${INSPECT_HINT}`)}`;
+    if (event.reason !== "exit" && state !== "terminated") outcomeParts.push(displayValue(event.reason));
+    return `${bgLabel(theme)} ${theme.fg("text", shortTaskId(event.taskId))} ${theme.fg(taskStateColor(state), outcomeParts.join(" · "))}${dim(` · ${INSPECT_HINT}`)}`;
   }
   if (task.exit && exitFailed(task.exit)) outcomeParts.push(formatExit(task.exit));
-  const reason = informativeReason(task.reason, task.exit);
+  const reason = shownReason(task);
   if (reason) outcomeParts.push(reason);
   const facts = [elapsed(task, now), `log ${formatSize(task.logBytes)}`, INSPECT_HINT];
-  return `${bgLabel(theme)} ${theme.fg("text", displayValue(task.label))} ${theme.fg(taskStateColor(event.state), outcomeParts.join(" · "))}${dim(` · ${facts.join(" · ")}`)}`;
+  return `${bgLabel(theme)} ${theme.fg("text", displayValue(task.label))} ${theme.fg(taskStateColor(state), outcomeParts.join(" · "))}${dim(` · ${facts.join(" · ")}`)}`;
 }
 
 /**
@@ -219,7 +222,7 @@ function eventLine(event: CompletionEvent, task: TaskRecord | undefined, now: nu
 export function completionLine(details: CompletionDetails, lookup: TaskLookup, now: number, theme: TranscriptTheme): string {
   const events = details.events;
   if (events.length === 1) return eventLine(events[0]!, lookup(events[0]!.taskId), now, theme);
-  const counts = STATE_ORDER.map((state) => ({ state, count: events.filter((e) => e.state === state).length })).filter((c) => c.count > 0);
+  const counts = STATE_ORDER.map((state) => ({ state, count: events.filter((e) => shownState(e) === state).length })).filter((c) => c.count > 0);
   const summary = counts.map((c) => theme.fg(taskStateColor(c.state), `${stateGlyph(c.state)} ${c.count} ${c.state}`)).join(theme.fg("dim", " · "));
   return `${bgLabel(theme)} ${theme.fg("text", `${events.length} tasks finished`)} ${summary}${theme.fg("dim", ` · ${INSPECT_HINT}`)}`;
 }

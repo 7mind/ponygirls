@@ -18,7 +18,7 @@ export function shortTaskId(id: string): string {
   return chars.length > SHORT_ID_CHARS ? `${chars.slice(0, SHORT_ID_CHARS).join("")}…` : core;
 }
 
-/** A task state as the /bg pane shows it: a task stopped on request is `terminated`, not a failure. */
+/** A task state as the /bg pane and the transcript lines show it: a task stopped on request is `terminated`, not a failure. */
 export type ShownState = TaskState | "terminated";
 
 const STATE_GLYPH: Readonly<Record<ShownState, string>> = { completed: "✓", failed: "✖", dead: "⚠", running: "●", terminated: "■" };
@@ -49,6 +49,11 @@ const EXIT_REASONS: ReadonlySet<TaskReason> = new Set<TaskReason>(["exit", "exit
 export function informativeReason(reason: TaskReason | null, exit: ExitEvidence | null): TaskReason | null {
   if (reason === null) return null;
   return exit !== null && EXIT_REASONS.has(reason) ? null : reason;
+}
+
+/** The reason, unless the exit evidence (D5) or the shown state already says it. */
+export function shownReason(task: Pick<TaskRecord, "state" | "reason" | "exit">): TaskReason | null {
+  return shownState(task) === "terminated" ? null : informativeReason(task.reason, task.exit);
 }
 
 /** Whether the exit evidence reports a failure (non-zero code or a signal). */
