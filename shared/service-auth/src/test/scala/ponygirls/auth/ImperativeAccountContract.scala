@@ -122,6 +122,8 @@ abstract class ImperativeAccountContract extends munit.FunSuite {
     def step: Long = Totp.stepAt(clock.instant())
     def tick(): Unit = clock.advance(Duration.ofSeconds(Totp.StepSeconds))
     def code(secret: String): String = Totp.code(Totp.decodeSecret(secret).get, step)
+    /** The code of the next step, which the verification window already accepts. */
+    def codeAhead(secret: String): String = Totp.code(Totp.decodeSecret(secret).get, step + Totp.WindowSteps)
     def credentials(requireTotp: Boolean): NewCredentials = NewCredentials(password, secretText, code(secretText), requireTotp)
     def email(name: String): String = s"$name@example.test"
 
@@ -375,10 +377,16 @@ abstract class ImperativeAccountContract extends munit.FunSuite {
       assertEquals(world(_.issueInvitation(world.root, "hugo")), rejected(NotFound))
       world.configure(_.copy(enrollment = true))
       world.clock.advance(Duration.ofHours(24).minusSeconds(1))
+      val ivan = completed(world(_.issueInvitation(world.root, "ivan")))
       assertEquals(world.signup("gina", false), rejected(UsernameUnavailable))
       world.clock.advance(Duration.ofSeconds(1))
       assert(world.live(world.member("gina", false)))
       assertEquals(world(_.inspectEnrollment(gina.code)), rejected(NotFound))
+      world.clock.advance(Duration.ofHours(24))
+      def pending: Vector[String] = world.scope(_.users.enrollments.map(_.username))
+      assertEquals(pending, Vector("ivan"))
+      assertEquals(world(_.redeemEnrollment(ivan.code, Some(world.email("ivan")), world.credentials(false), None)), rejected(NotFound))
+      assertEquals(pending, Vector.empty)
     }
   }
 
@@ -500,6 +508,12 @@ abstract class ImperativeAccountContract extends munit.FunSuite {
       assertEquals(world(_.setTotpRequired(session, true, world.code(otherSecretText))), Completed(()))
       assertEquals((world.row("alice").totpRequired, world.live(first), world.live(second)), (true, true, false))
 
+      world.tick()
+      val ahead = world.codeAhead(otherSecretText)
+      assertEquals(world(_.replaceTotp(session, password, otherSecretText, world.code(otherSecretText), Some(ahead))), Completed(()))
+      assertEquals(world.login("alice", password, Some(ahead)), rejected(Unauthorized))
+      assertEquals(world.row("alice").totpLastStep, world.step + Totp.WindowSteps)
+      world.tick()
       world.tick()
       val replacement = world.code(secretText)
       assertEquals(world(_.replaceTotp(session, password, secretText, replacement, None)), rejected(Invalid))

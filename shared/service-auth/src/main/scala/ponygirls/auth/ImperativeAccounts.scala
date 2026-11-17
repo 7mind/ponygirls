@@ -49,11 +49,15 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
 
   // ---- locks, proofs ----
 
-  /** The only lock acquisition of an operation (design D22): the directory lock, then the complete owner
+  /** The lock acquisition of an operation (design D22): the directory lock, then the complete owner
     * set — actor, owner of the session being replaced, targets — through one `lockOwners` call.
     */
   private def acquire(directory: Boolean, actor: Option[String], previous: Option[String], targets: Vector[String]): Unit = {
     if (directory) repository.lockDirectory()
+    acquireOwners(actor, previous, targets)
+  }
+  /** For the one operation that learns its target from a read under the directory lock it already holds. */
+  private def acquireOwners(actor: Option[String], previous: Option[String], targets: Vector[String]): Unit = {
     val prior = previous.flatMap(sessions.sessionOwner).filter(id => declared.contains(id) || repository.user(id).nonEmpty)
     val (declarative, imperative) = (actor.toVector ++ prior ++ targets).distinct.partition(declared.contains)
     sessions.lockOwners(declarative, imperative)
@@ -256,23 +260,21 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
 
   /** `email` is required for an invitation and forbidden for a reset. The account is active at once. */
   def redeemEnrollment(code: String, email: Option[String], credentials: NewCredentials, previous: Option[String]): AccountOutcome[SignedIn] = whenOn { active =>
-    val offeredAt = now
-    // Unlocked read: it only decides whether the password-hashing work is spent. The row is read again under the directory lock.
-    enrollment(active, code, offeredAt) match {
+    repository.lockDirectory()
+    val at = now
+    repository.deleteExpiredEnrollments(at)
+    enrollment(active, code, at) match {
       case None => refuse(NotFound)
-      case Some(candidate) if !emailFits(candidate.kind, email) => refuse(Invalid)
-      case Some(candidate) => newCredentials(credentials, candidate.username, email, offeredAt) match {
+      case Some(row) if !emailFits(row.kind, email) => refuse(Invalid)
+      case Some(row) => newCredentials(credentials, row.username, email, at) match {
         case Left(rejected) => rejected
         case Right((secret, step)) =>
+          // The password is hashed under the directory lock: only the holder of a live code gets here.
           val hash = hashPassword(credentials.password)
-          acquire(directory = true, None, previous, Vector(candidate.username))
-          val at = now
-          repository.deleteExpiredEnrollments(at)
-          enrollment(active, code, at).filter(_.id == candidate.id).map(row => (row, row.kind, email)) match {
-            case Some((row, EnrollmentKind.Invite, Some(address))) =>
-              redeemInvitation(active, row, address, hash, secret, step, credentials.requireTotp, previous, at)
-            case Some((row, EnrollmentKind.Reset, None)) => redeemReset(active, row, credentials, hash, secret, step, previous, at)
-            case _ => refuse(NotFound)
+          acquireOwners(None, previous, Vector(row.username))
+          email match {
+            case Some(address) => redeemInvitation(active, row, address, hash, secret, step, credentials.requireTotp, previous, at)
+            case None => redeemReset(active, row, credentials, hash, secret, step, previous, at)
           }
       }
     }
@@ -371,9 +373,10 @@ final class ImperativeAccounts private[auth] (repository: ImperativeUserReposito
     else outcome(for {
       replacement <- secretProof(totpSecret, totpCode, at)
       proven <- passwordProof(row, currentPassword, ProofRejected, at)
-      _ <- currentTotp.fold[Checked[Long]](Right(proven.totpLastStep))(code => codeProof(active, proven, code, FailurePath.Totp, ProofRejected, at))
+      consumed <- currentTotp.fold[Checked[Long]](Right(proven.totpLastStep))(code => codeProof(active, proven, code, FailurePath.Totp, ProofRejected, at))
     } yield {
-      store(proven.copy(totp = active.vault.seal(row.id, replacement._1), totpLastStep = math.max(proven.totpLastStep, replacement._2),
+      // Every step accepted here is spent, whichever secret it was for: the new secret may equal the old one.
+      store(proven.copy(totp = active.vault.seal(row.id, replacement._1), totpLastStep = Vector(proven.totpLastStep, replacement._2, consumed).max,
         totpFailures = FailureCounter.Clear, recoveryFailures = FailureCounter.Clear, credentialsAt = at), at)
       ()
     })
