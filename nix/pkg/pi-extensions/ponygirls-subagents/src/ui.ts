@@ -2,7 +2,7 @@
  * ponygirls-subagents — governing-session observation and the /agents screen.
  *
  * One event model, several views: list_agents, read_agent, wait_agent, the
- * footer status, and the /agents screen project the same journal-backed
+ * border badge, and the /agents screen project the same journal-backed
  * state. The screen lists the tree with the selected agent's details and
  * opens any agent's transcript, whose chat line messages that agent.
  * Actions use the same supervisor API as tools and record human origin.
@@ -15,7 +15,7 @@
 import { readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { VStack, Input, Key, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type Focusable, type TuiMouseEvent } from "@earendil-works/pi-tui";
-import { HINT, KEY, MARKER_WIDTH, PLAIN_THEME, PanelLayout, type PanelParts, columnCells, columnHeader, compactChip, formatCompact, formatCount, frameRule, frameTitle, keyHints, listRow, stateColor, type Column, type KeyHint, type UiFg, type UiState, type UiTheme } from "@ponygirls/pi-ui";
+import { HINT, KEY, MARKER_WIDTH, PLAIN_THEME, PanelLayout, type PanelParts, columnCells, columnHeader, formatCompact, formatCount, frameRule, frameTitle, keyHints, listRow, stateColor, type BorderBadge, type Column, type KeyHint, type UiFg, type UiTheme } from "@ponygirls/pi-ui";
 import { AGENT_GLYPH, OUTCOME_GLYPH, PHASE_GLYPH, PLAIN_STYLE, homeRelative, outcomeTone, sanitizeDisplay, type AgentPhase, type UiStyle } from "./display.ts";
 import type { AgentView, TranscriptSource } from "./supervisor.ts";
 import { parseTranscript, renderConversation, type ReviewBlock, type TranscriptItem } from "./transcript.ts";
@@ -49,7 +49,7 @@ export function countTree(views: AgentView[]): TreeCounts {
   return counts;
 }
 
-/** Compact badge text: the total, plus whatever is running, queued, or waiting on a reply. */
+/** Headless summary line: the total, plus whatever is running, queued, or waiting on a reply. */
 export function widgetLine(views: AgentView[]): string {
   const c = countTree(views);
   const parts = [`agents ${views.length}`];
@@ -57,28 +57,6 @@ export function widgetLine(views: AgentView[]): string {
   if (c.queued > 0) parts.push(`queued ${c.queued}`);
   if (c.questions > 0) parts.push(`questions ${c.questions}`);
   return parts.join(" · ");
-}
-
-/** Badge-only identity; inspector and headless summaries keep their textual label. */
-export function badgeLine(views: AgentView[]): string {
-  const c = countTree(views);
-  const parts = [`👥 ${views.length}`];
-  if (c.running > 0) parts.push(`⚙️ ${c.running}`);
-  if (c.queued > 0) parts.push(`⏳ ${c.queued}`);
-  if (c.questions > 0) parts.push(`❓ ${c.questions}`);
-  return parts.join(" · ");
-}
-
-/** Border short form state: a question needs the user, live work runs, otherwise settled. */
-export function badgeState(views: AgentView[]): UiState {
-  if (views.some((v) => v.openQuestion !== null)) return "attention";
-  const c = countTree(views);
-  return c.running + c.queued > 0 ? "running" : "settled";
-}
-
-/** Border short form: the agent glyph in the tree's state colour and the total. */
-export function compactBadge(theme: UiTheme, views: AgentView[]): string {
-  return compactChip(theme, "👥", badgeState(views), String(views.length));
 }
 
 /** Headless projection: structured text, no terminal escapes. */
@@ -159,8 +137,12 @@ const TITLE = "Subagents";
 /** A table cell without a value (conventions: zeros stay quiet). */
 const NO_VALUE = "·";
 
+/** Phases with work under way, in the order the badge and the title count them. */
+const LIVE_PHASES: readonly AgentPhase[] = ["running", "queued", "asking"];
 /** Order of the title's counts. */
-const PHASES: readonly AgentPhase[] = ["running", "queued", "asking", "settled"];
+const PHASES: readonly AgentPhase[] = [...LIVE_PHASES, "settled"];
+/** Identity glyph of the border badge. */
+const BADGE_GLYPH = "👥";
 const PHASE_TONE: Readonly<Record<AgentPhase, UiFg>> = { running: stateColor("running"), queued: "muted", asking: stateColor("attention"), settled: stateColor("settled") };
 /** The state text an outcome stands in for. */
 const SETTLED = "settled";
@@ -171,6 +153,28 @@ export function phaseOf(v: AgentView): AgentPhase {
   if (v.observed === "running" || v.observed === "starting") return "running";
   if (v.observed === "queued") return "queued";
   return "settled";
+}
+
+/** The non-zero agent counts of `phases`, in their order. */
+function phaseCounts(views: AgentView[], phases: readonly AgentPhase[]): Array<{ phase: AgentPhase; count: number }> {
+  return phases.map((phase) => ({ phase, count: views.filter((v) => phaseOf(v) === phase).length })).filter(({ count }) => count > 0);
+}
+
+/**
+ * Border badge: the number of agents, then the live ones by phase behind the
+ * list's glyphs (`4 ●1 ○2 ?1`). An asking agent needs the user; otherwise
+ * live work runs, or the tree is settled. The narrow form keeps the number
+ * and marks a waiting question (`3?`).
+ */
+export function agentsBadge(views: AgentView[]): BorderBadge {
+  const live = phaseCounts(views, LIVE_PHASES);
+  const asking = live.some(({ phase }) => phase === "asking");
+  return {
+    glyph: BADGE_GLYPH,
+    state: asking ? "attention" : live.length > 0 ? "running" : "settled",
+    label: [String(views.length), ...live.map(({ phase, count }) => `${PHASE_GLYPH[phase]}${count}`)].join(" "),
+    compact: `${views.length}${asking ? PHASE_GLYPH.asking : ""}`,
+  };
 }
 
 /** A settled agent's state is its outcome. */
@@ -410,7 +414,7 @@ export class AgentInspector extends PanelLayout {
    * a width too narrow for all of them the last counts are left off instead.
    */
   private titleLine(width: number, meta: string): string {
-    const counts = PHASES.map((phase) => ({ phase, count: this.views.filter((v) => phaseOf(v) === phase).length })).filter(({ count }) => count > 0);
+    const counts = phaseCounts(this.views, PHASES);
     const title = (theme: UiTheme, shown: number): string => {
       const right = counts.slice(0, shown).map(({ phase, count }) => theme.fg(PHASE_TONE[phase], `${formatCount(count)} ${phase}`)).join(theme.fg("dim", " · "));
       return frameTitle(theme, width, shown > 0 ? { title: TITLE, meta, right } : { title: TITLE, meta }, "none").line;

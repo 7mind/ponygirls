@@ -27,7 +27,7 @@ export type AgentPhase = "running" | "queued" | "asking" | "settled";
 /** Glyph per phase, shown before the state; a settled agent with an outcome shows the outcome's glyph instead. */
 export const PHASE_GLYPH: Readonly<Record<AgentPhase, string>> = { running: "●", queued: "○", asking: "?", settled: "—" };
 
-/** The subagents glyph (border badge, transcript notices). */
+/** The subagents glyph in transcript notices (the border badge has its own). */
 export const AGENT_GLYPH = "◈";
 
 /** Success, warning, or error class of a terminal task outcome. */

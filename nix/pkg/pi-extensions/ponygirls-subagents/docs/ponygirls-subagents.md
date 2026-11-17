@@ -301,7 +301,7 @@ An explicit abort cancels the existing wake intent, not accepted context; it doe
 not immediately restart the canceled run. `clearQueue()` (for example dequeuing
 user input for editing) only clears user input and keeps the wake intent.
 Genuinely new child activity can request another turn. Shutdown revokes scheduled delivery and retries;
-the footer status independently shows tree counts.
+the border badge independently shows tree counts.
 
 The attachment's journal cursor suppresses repeat submissions, not a durable
 session receipt. A successful synchronous `enqueueMessage` return transfers message ownership to

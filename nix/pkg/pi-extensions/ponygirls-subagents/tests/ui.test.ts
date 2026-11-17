@@ -2,9 +2,9 @@ import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { BoundedVStack, VStack, visibleWidth } from "@earendil-works/pi-tui";
-import { AgentInspector, AgentsScreen, TranscriptView, badgeLine, badgeState, chatModeFor, compactBadge, countTree, phaseOf, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type AgentsScreenDeps, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
+import { AgentInspector, AgentsScreen, TranscriptView, agentsBadge, chatModeFor, countTree, phaseOf, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type AgentsScreenDeps, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
 import { PLAIN_STYLE, homeRelative, type UiStyle } from "../src/display.ts";
-import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
+import { PLAIN_THEME, borderBadge, borderBadgeCompact, type UiTheme } from "@ponygirls/pi-ui";
 import type { AgentView, TranscriptSource } from "../src/supervisor.ts";
 
 const UP = "\x1b[A";
@@ -64,12 +64,10 @@ test("hostile ANSI/OSC output is sanitized", () => {
   assert.equal(clean, "hellored");
 });
 
-test("the footer status names the total and only nonzero states", () => {
+test("the headless summary names the total and only nonzero states", () => {
   const views = [view(), view({ id: "a-2", path: "/root/b", observed: "queued", pendingIntent: "queued" })];
   assert.equal(widgetLine(views), "agents 2 · running 1 · queued 1");
   assert.equal(widgetLine([view({ observed: "settled", pendingIntent: "settled" })]), "agents 1");
-  assert.equal(badgeLine(views), "👥 2 · ⚙️ 1 · ⏳ 1");
-  assert.equal(badgeLine([view({ pendingIntent: "awaiting parent reply" })]), "👥 1 · ⚙️ 1 · ❓ 1");
   assert.deepEqual(countTree(views), { running: 1, queued: 1, parked: 0, questions: 0 });
 });
 
@@ -415,13 +413,30 @@ test("the inspector shows its scroll position in the title when the list overflo
   assert.match(ui.render(90)[0]!, /^── Subagents · 1–4 of 12 ─+ 12 running ──$/);
 });
 
-test("the border short form is the agent glyph in the tree's state colour and the total", () => {
-  const settled = view({ observed: "settled", pendingIntent: "settled" });
-  assert.equal(badgeState([settled]), "settled");
-  assert.equal(badgeState([settled, view({ id: "a-2", observed: "queued", pendingIntent: "queued" })]), "running");
-  assert.equal(badgeState([view(), view({ id: "a-2", openQuestion: { messageId: "q", to: "/root/a", text: "?", deadlineAt: "" } })]), "attention");
-  assert.equal(compactBadge(PLAIN_THEME, [settled, settled]), " 👥2 ");
-  assert.equal(tags(compactBadge(TAG_THEME, [view()])), "<bg:toolPendingBg> <accent>👥</><text>1</> </>");
+test("the border badge is the agent count, then the live agents by the pane's glyphs, in the tree's state colour", () => {
+  const settled = (id: string): AgentView => view({ id, observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" });
+  const running = (id: string): AgentView => view({ id });
+  const starting = (id: string): AgentView => view({ id, observed: "starting", pendingIntent: "starting" });
+  const queued = (id: string): AgentView => view({ id, observed: "queued", pendingIntent: "queued" });
+  const asking = (id: string): AgentView => view({ id, observed: "awaiting_parent", pendingIntent: "awaiting parent reply", openQuestion: { messageId: "q", to: "governor", text: "?", deadlineAt: "" } });
+  const quiet = [settled("a"), settled("b"), settled("c")];
+  const busy = [running("a"), settled("b"), starting("c")];
+  const waiting = [running("a"), asking("b"), settled("c")];
+  const all = [queued("a"), asking("b"), queued("c"), running("d")];
+  assert.deepEqual(agentsBadge(quiet), { glyph: "👥", state: "settled", label: "3", compact: "3" });
+  assert.deepEqual(agentsBadge(busy), { glyph: "👥", state: "running", label: "3 ●2", compact: "3" });
+  assert.deepEqual(agentsBadge(waiting), { glyph: "👥", state: "attention", label: "3 ●1 ?1", compact: "3?" });
+  assert.deepEqual(agentsBadge(all), { glyph: "👥", state: "attention", label: "4 ●1 ○2 ?1", compact: "4?" });
+  assert.deepEqual(agentsBadge([queued("a"), settled("b")]), { glyph: "👥", state: "running", label: "2 ○1", compact: "2" });
+  // An agent is counted once: a question it asked while running makes it asking, as in the pane.
+  assert.equal(agentsBadge([view({ openQuestion: { messageId: "q", to: "/root/a", text: "?", deadlineAt: "" } })]).label, "1 ?1");
+  // Through the kit: no background chip, the glyph unstyled, the label in the state's colour.
+  assert.equal(tags(borderBadge(TAG_THEME, agentsBadge(quiet), 80)), " 👥 <muted>3</> ");
+  assert.equal(tags(borderBadge(TAG_THEME, agentsBadge(busy), 80)), " 👥 <accent>3 ●2</> ");
+  assert.equal(tags(borderBadge(TAG_THEME, agentsBadge(waiting), 80)), " 👥 <warning>3 ●1 ?1</> ");
+  assert.equal(tags(borderBadgeCompact(TAG_THEME, agentsBadge(waiting), 80)), "👥<warning>3?</>");
+  assert.equal(tags(borderBadgeCompact(TAG_THEME, agentsBadge(busy), 80)), "👥<accent>3</>");
+  assert.equal(borderBadge(PLAIN_THEME, agentsBadge(all), 80), " 👥 4 ●1 ○2 ?1 ");
 });
 
 test("the transcript is framed with the agent path, kind and model, and its state and outcome on the right", () => {

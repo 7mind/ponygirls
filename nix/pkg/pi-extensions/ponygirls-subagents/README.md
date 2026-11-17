@@ -310,9 +310,13 @@ the reviewer's own conversation inside a `┃` gate frame, headed
 while the review runs); the gate's repair requests are labeled. A
 reviewer's row shows the reviews it ran. Each review is a fresh
 conversation (never resumed); its file is kept for the transcript.
-The badge (`👥 3 · running 1 · questions 1`; compact `👥3`) shows on the editor's
-bottom-left border, next to the background-tasks and goal badges. Clicking
-it opens `/agents`.
+The badge shows on the editor's bottom-left border, next to the
+background-tasks and goal badges, while the tree has at least one agent:
+`👥`, the number of agents, then the live ones behind the list's state glyphs
+(`👥 3 ●1 ?1` is three agents, one running and one asking; `○` counts the
+queued ones). Its colour follows the tree: an agent is asking, work is running
+or queued, or everything is settled. On a narrow border it is the number
+alone, with `?` while an agent is asking (`👥3?`). Clicking it opens `/agents`.
 
 ## Child tools
 

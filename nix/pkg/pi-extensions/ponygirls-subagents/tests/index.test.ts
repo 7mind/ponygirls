@@ -10,6 +10,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { BORDER_ORDER } from "@ponygirls/pi-ui";
 
 type Submission = { message: unknown; options: Parameters<ExtensionAPI["enqueueMessage"]>[1] };
 type ToolExecute = (id: string, params: unknown, signal: AbortSignal | undefined, onUpdate: undefined, ctx: unknown) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
@@ -64,6 +65,56 @@ test("the /agents command says what it is for, in at most 60 characters and with
     assert.deepEqual([...commands], [["agents", "Subagents: tree, transcripts, messages, controls"]]);
     assert.ok(commands.get("agents")!.length <= 60);
   } finally { rmSync(agentDir, { recursive: true, force: true }); }
+});
+
+type BadgeWidget = { render(width: number): string[]; renderCompact(width: number): string; handleMouse(event: { type: string; button: string }): { handled: boolean } | undefined };
+type WidgetCall = { key: string; factory: ((tui: unknown, theme: unknown) => BadgeWidget) | undefined; options: unknown };
+
+test("the border badge shows for at least one agent, is styled by the theme at each render, and opens /agents on a click", async () => {
+  const agentDir = mkdtempSync(join(tmpdir(), "subagents-badge-"));
+  const { tools, handlers, ctx } = await loadExtension(agentDir);
+  const published: WidgetCall[] = [];
+  const notices: string[] = [];
+  // One theme object whose colours change, as pi's does on a theme switch.
+  let palette = "dark";
+  const theme = { fg: (color: string, text: string) => `<${palette}:${color}>${text}</>`, bg: (color: string, text: string) => `<bg:${color}>${text}</>`, bold: (text: string) => `<bold>${text}</>` };
+  const ui = (ctx as { ui: { setWidget: (...call: [string, WidgetCall["factory"], unknown]) => void; notify: (text: string) => void; theme: typeof theme } }).ui;
+  ui.setWidget = (key, factory, options) => { published.push({ key, factory, options }); };
+  ui.notify = (text) => { notices.push(text); };
+  ui.theme = theme;
+  const until = async (done: () => boolean): Promise<void> => {
+    const deadline = Date.now() + 10_000;
+    while (!done() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 10));
+  };
+  const unstyled = (text: string | undefined): string | undefined => text?.replace(/<[^>]*>/g, "");
+  try {
+    await handlers.get("session_start")!({}, ctx);
+    await until(() => published.length > 0);
+    assert.deepEqual([...published], [{ key: "agents", factory: undefined, options: undefined }], "no agents, no badge");
+    // The fixture model is unavailable: the child ends failed, so the tree is one settled agent.
+    await tools.get("spawn_agent")!("badge-child", { task_name: "badge-child", message: "unused", profile: "reader", isolation: "none" }, undefined, undefined, ctx);
+    await until(() => unstyled(published.at(-1)!.factory?.({}, theme).render(80)[0]) === " 👥 1 ");
+    const last = published.at(-1)!;
+    assert.equal(last.key, "agents");
+    assert.deepEqual(last.options, { placement: "borderBottomLeft", order: BORDER_ORDER.agents });
+    // Mounted after a theme switch: nothing styled when the badge was published may remain.
+    palette = "dim";
+    const badge = last.factory!({}, theme);
+    assert.deepEqual(badge.render(80), [" 👥 <dim:muted>1</> "], "no background chip; the count in the settled colour");
+    assert.equal(badge.renderCompact(80), "👥<dim:muted>1</>");
+    palette = "light";
+    assert.deepEqual(badge.render(80), [" 👥 <light:muted>1</> "], "a theme switch restyles the mounted badge");
+    assert.equal(badge.renderCompact(80), "👥<light:muted>1</>");
+    assert.equal(badge.handleMouse({ type: "click", button: "right" }), undefined);
+    assert.deepEqual(badge.handleMouse({ type: "click", button: "left" }), { handled: true });
+    // This stand-in has no TUI, so /agents reports the tree instead of opening the pane.
+    await until(() => notices.some((text) => text.startsWith("agents 1\n")));
+    assert.ok(notices.some((text) => text.startsWith("agents 1\n")), `a left click opens /agents: ${JSON.stringify(notices)}`);
+  } finally {
+    await handlers.get("session_shutdown")!({}, ctx);
+    rmSync(agentDir, { recursive: true, force: true });
+  }
+  assert.equal(published.at(-1)!.factory, undefined, "shutdown clears the badge");
 });
 
 test("capacity tool descriptions explain descendant authority and reclaimable open slots", async () => {

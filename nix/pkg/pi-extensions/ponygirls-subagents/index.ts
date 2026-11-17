@@ -10,7 +10,7 @@
 import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { BORDER_ORDER, CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, borderBadge, borderBadgeCompact } from "@ponygirls/pi-ui";
 import { FileRunStore } from "./src/store.ts";
 import { HISTORY_CHANNEL, type HistoryRequest } from "./src/history.ts";
 import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
@@ -25,7 +25,7 @@ import { snapshotGoverningHandles, type PinnedGoverningHandle } from "./src/gove
 import { prepareThroughEventBus } from "./src/delegated-call.ts";
 import { DELEGATION_GUIDELINES, gateParameters, readParameters, reviewParameters, spawnParameters, waitParameters } from "./src/tools.ts";
 import type { InstructionSet, Isolation, ResolvedModel } from "./src/types.ts";
-import { AgentsScreen, badgeLine, compactBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
+import { AgentsScreen, agentsBadge, fileSessionReader, renderHeadless, sanitizeDisplay, widgetLine, type InspectorAction } from "./src/ui.ts";
 import { themeStyle } from "./src/display.ts";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
@@ -33,7 +33,7 @@ import { homedir } from "node:os";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-/** Footer statuses sort by key; this one sorts ahead of long ones such as "search". */
+/** Widget key of the border badge; its place on the border is BORDER_ORDER.agents. */
 const STATUS_KEY = "agents";
 /** How often an open /agents screen re-reads state and transcripts. */
 const SCREEN_POLL_MS = 500;
@@ -174,13 +174,13 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
     ui.setWidget(STATUS_KEY, undefined);
     return;
   }
-  const label = ui.theme.bg("toolSuccessBg", ` ${badgeLine(views)} `);
-  const compact = compactBadge(ui.theme, views);
+  const badge = agentsBadge(views);
   ui.setWidget(
     STATUS_KEY,
-    () => ({
-      render: () => [label],
-      renderCompact: () => compact,
+    // Styled with the theme at each render, so a theme switch restyles the badge.
+    (_tui, theme) => ({
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
