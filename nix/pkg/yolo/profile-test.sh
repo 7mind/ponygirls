@@ -1043,6 +1043,128 @@ assert_contains "--help keeps the closing paragraph" "$HELP_OUT" "declarative se
 assert_eq "-h prints the same help" "$HELP_OUT" "$(run_usage_yolo_streams -h 2>/dev/null)"
 assert_eq "--help has no launch side effect" "" "$(launch_side_effects)"
 
+# Launch trace: off by default. `--trace` (or YOLO_TRACE=1) hands the switch to
+# the sandbox layer, to the entrypoint only when one runs (nothing else would
+# drop the variable from the tool's environment), and to the clipboard broker.
+unset YOLO_TRACE # the caller's own setting must not decide these cases
+# The options the sandbox layer received, without the command after `--`.
+sandbox_options() { awk '$0 == "--" { exit } { print }' <<< "$1"; }
+option_count() { sandbox_options "$1" | grep -cx -- "$2"; }
+assert_trace_switches() {
+  local desc="$1" out="$2" sandbox_layer="$3" entrypoint="$4"
+  assert_eq "$desc: --trace for the sandbox layer" "$sandbox_layer" "$(option_count "$out" --trace)"
+  assert_eq "$desc: YOLO_SANDBOX_TRACE for the entrypoint" "$entrypoint" "$(option_count "$out" YOLO_SANDBOX_TRACE=1)"
+}
+TRACE_HOOKS='[{"command":"true trace-hook-marker","tags":[]}]'
+TRACE_SECRET="$WORKDIR/trace-secret"
+printf 'trace-secret-value\n' > "$TRACE_SECRET"
+
+assert_trace_switches "default launch" "$(run_yolo cmd true)" 0 0
+assert_trace_switches "--trace without an entrypoint" "$(run_yolo --trace cmd true)" 1 0
+assert_trace_switches "YOLO_TRACE=1 without an entrypoint" "$(YOLO_TRACE=1 run_yolo cmd true)" 1 0
+assert_trace_switches "YOLO_TRACE=0" "$(YOLO_TRACE=0 run_yolo cmd true)" 0 0
+assert_trace_switches "empty YOLO_TRACE" "$(YOLO_TRACE='' run_yolo cmd true)" 0 0
+OUT="$(run_yolo cmd true --trace)"
+assert_trace_switches "--trace after the command" "$OUT" 0 0
+assert_contains "--trace after the command belongs to the command" "$OUT" $'\n--\ntrue\n--trace'
+assert_trace_switches "sandbox hooks without --trace" "$(YOLO_CMD_HOOKS_JSON="$TRACE_HOOKS" run_yolo cmd true)" 0 0
+OUT="$(YOLO_CMD_HOOKS_JSON="$TRACE_HOOKS" run_yolo --trace cmd true)"
+assert_trace_switches "sandbox hooks with --trace" "$OUT" 1 1
+assert_contains "the entrypoint switch travels like its other inputs" "$OUT" $'--env\nYOLO_SANDBOX_TRACE=1\n'
+assert_trace_switches "secrets with YOLO_TRACE=1" \
+  "$(YOLO_TRACE=1 YOLO_SECRET_VARS="TRACE_TEST_SECRET=$TRACE_SECRET" run_yolo cmd true)" 1 1
+assert_trace_switches "--cowboy-ride" "$(run_yolo --cowboy-ride cmd true)" 0 0
+assert_trace_switches "--cowboy-ride --trace" "$(run_yolo --cowboy-ride --trace cmd true)" 1 0
+
+# The clipboard broker announces its socket only under the same switch.
+run_usage_yolo cmd true >/dev/null
+assert_eq "default launch starts the broker without --trace" "0" "$(grep -c -- '--trace' "$USAGE_BROKER_LOG")"
+launch_side_effects >/dev/null
+run_usage_yolo --trace cmd true >/dev/null
+assert_contains "--trace reaches the broker" "$(cat "$USAGE_BROKER_LOG")" "--tmux-socket $USAGE_TMUX_SOCKET"
+assert_eq "--trace reaches the broker as its own flag" "1" "$(grep -c -- ' --trace$' "$USAGE_BROKER_LOG")"
+launch_side_effects >/dev/null
+
+HELP_OUT="$(run_yolo --help)"
+assert_contains "--help documents --trace" "$HELP_OUT" $'\n      --trace  '
+assert_contains "--help names the environment form" "$HELP_OUT" "YOLO_TRACE=1"
+
+# End to end through the real sandbox layer and the real entrypoint. bwrap is a
+# stand-in without a mount namespace: it applies --clearenv/--setenv, maps a
+# value naming a bind destination back to its host source, and execs the command.
+E2E_BIN="$WORKDIR/e2e-bin"
+mkdir -p "$E2E_BIN"
+cat > "$E2E_BIN/bwrap" <<EOF
+#!$_bash_path
+declare -A bound=()
+pairs=()
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --setenv) pairs+=("\$2" "\$3"); shift 3 ;;
+    --bind|--ro-bind|--dev-bind) bound["\$3"]="\$2"; shift 3 ;;
+    --symlink) shift 3 ;;
+    --dir|--dev|--proc|--tmpfs) shift 2 ;;
+    --clearenv|--unshare-all|--share-net|--die-with-parent) shift ;;
+    --) shift; break ;;
+    -*) echo "bwrap stand-in: unexpected option \$1" >&2; exit 64 ;;
+    *) break ;;
+  esac
+done
+assignments=()
+for ((i = 0; i < \${#pairs[@]}; i += 2)); do
+  value="\${pairs[i + 1]}"
+  [[ -n "\$value" && -n "\${bound[\$value]+x}" ]] && value="\${bound[\$value]}"
+  assignments+=("\${pairs[i]}=\$value")
+done
+exec env -i "\${assignments[@]}" "\$@"
+EOF
+printf '%s\n' "#!$_bash_path" "exec '$_bash_path' '$SCRIPT_DIR/llm-sandbox.sh' \"\$@\"" > "$E2E_BIN/llm-sandbox"
+printf '%s\n' "#!$_bash_path" "exec '$_bash_path' '$SCRIPT_DIR/sandbox-entrypoint.sh' \"\$@\"" > "$E2E_BIN/entrypoint"
+chmod +x "$E2E_BIN/bwrap" "$E2E_BIN/llm-sandbox" "$E2E_BIN/entrypoint"
+# The tool reports whether either trace variable reached its environment.
+E2E_TOOL="$WORKDIR/e2e-tool.sh"
+printf '%s\n' 'printf "tool-output %s %s\n" "${YOLO_SANDBOX_TRACE-unset}" "${YOLO_TRACE-unset}"' > "$E2E_TOOL"
+# run_e2e_yolo STDERR_FILE [yolo flags...]: launches the tool behind a sandbox hook.
+run_e2e_yolo() {
+  local stderr_file="$1"
+  shift
+  cd "$PROJECT_DIR" &&
+    HOME="$FAKE_HOME" \
+    XDG_RUNTIME_DIR="$FAKE_XDG" \
+    PATH="$E2E_BIN:$PATH" \
+    YOLO_CMD_HOOKS_JSON='[{"command":"true e2e-hook-marker","tags":[]}]' \
+    YOLO_LLM_SANDBOX="$E2E_BIN/llm-sandbox" \
+    YOLO_SANDBOX_ENTRYPOINT="$E2E_BIN/entrypoint" \
+    YOLO_NIX_LD="$(command -v true)" \
+    YOLO_JQ="$(command -v jq)" \
+    YOLO_TASKSET="$(command -v taskset)" \
+    YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
+    bash "$SCRIPT" "$@" cmd "$_bash_path" "$E2E_TOOL" 2> "$stderr_file"
+}
+e2e_trace_shape() { sed -E 's/^(\++) [0-9]+[.,][0-9]+ /\1 T /' "$1"; }
+
+OUT="$(run_e2e_yolo "$WORKDIR/e2e.default")"
+assert_eq "default launch succeeds end to end" "0" "$?"
+assert_eq "default launch shows only the tool's output" "tool-output unset unset" "$OUT"
+assert_eq "default launch prints nothing of its own" "" "$(cat "$WORKDIR/e2e.default")"
+
+for _how in flag environment; do
+  if [[ "$_how" == flag ]]; then
+    OUT="$(run_e2e_yolo "$WORKDIR/e2e.$_how" --trace)"
+  else
+    OUT="$(YOLO_TRACE=1 run_e2e_yolo "$WORKDIR/e2e.$_how")"
+  fi
+  assert_eq "traced launch ($_how) succeeds end to end" "0" "$?"
+  assert_eq "traced launch ($_how) hides both switches from the tool" "tool-output unset unset" "$OUT"
+  E2E_TRACE="$(e2e_trace_shape "$WORKDIR/e2e.$_how")"
+  assert_eq "traced launch ($_how) prints the host exec and the four in-sandbox lines" "5" "$(grep -c '' <<< "$E2E_TRACE")"
+  assert_contains "traced launch ($_how) starts with the timestamped exec of bwrap" \
+    "$(head -n 1 <<< "$E2E_TRACE")" "+ T exec bwrap --unshare-all --share-net --die-with-parent --clearenv "
+  assert_contains "traced launch ($_how) traces the hook command" "$E2E_TRACE" $'\n++ T true e2e-hook-marker\n'
+  assert_eq "traced launch ($_how) ends with the final exec" \
+    "+ T exec $_bash_path $E2E_TOOL" "$(tail -n 1 <<< "$E2E_TRACE")"
+done
+
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"
   exit 1

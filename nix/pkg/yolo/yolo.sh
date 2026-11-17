@@ -36,6 +36,7 @@
 #   YOLO_CLIPBOARD_SHIM_DIR  - directory containing a `tmux` symlink to the proxy (prepended to
 #                              sandbox PATH so agent load-buffer/save-buffer calls hit the shim)
 #   YOLO_TMUX                - absolute path to host tmux (broker invokes this with fixed argv)
+#   YOLO_TRACE               - 1 prints the launch trace, like --trace (caller's environment)
 
 : "${YOLO_LLM_SANDBOX:?must be set}"
 : "${YOLO_SANDBOX_ENTRYPOINT:?must be set}"
@@ -70,6 +71,13 @@ UNSAFE_SHARE_HOME=0
 # Validated into MEM_LIMIT/CPU_LIMIT after argument parsing.
 MEM_LIMIT_SPEC=""
 CPU_LIMIT_SPEC=""
+# Launch trace, off by default: `--trace` or YOLO_TRACE=1 makes each layer echo
+# its launch steps to stderr with a timestamp (llm-sandbox its `exec bwrap`
+# line, the in-sandbox entrypoint its hook commands and final exec) and the
+# clipboard broker announce its socket. Without it a launch prints only its
+# warnings and errors before the tool's output.
+TRACE=0
+[[ "${YOLO_TRACE:-}" == "1" ]] && TRACE=1
 # Feature suppression: --disable=TAG (repeatable, comma-separated) drops every
 # device bind (extraDevicePaths), prompt fragment (promptExtensions) and host
 # pre-start hook (hooks.pre-start.host) carrying TAG. Audio is tagged "audio"
@@ -167,6 +175,8 @@ Flags (must precede the subcommand):
                          the pin (default: 1/4 of hardware threads).
       --unsafe-share-home  Allow running with $PWD == $HOME (binds all of $HOME
                          read-write; refused by default).
+      --trace            Print timestamped launch steps to stderr: the exec bwrap
+                         line, pre-start hooks, final exec. Same as YOLO_TRACE=1.
   -h, --help             Show this help and exit.
 
 Profile management (no subcommand; runs outside the sandbox):
@@ -299,6 +309,7 @@ while [[ $# -gt 0 ]]; do
       fi
       CPU_LIMIT_SPEC="$2"; shift 2 ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
+    --trace) TRACE=1; shift ;;
     --env)
       if [[ $# -lt 2 || -z "$2" ]]; then
         usage_error "$1 requires KEY=VAL"
@@ -803,10 +814,13 @@ if [[ -n "${TMUX:-}" ]]; then
       chmod 700 "$CLIP_PROXY_DIR"
       _clip_sock="${CLIP_PROXY_DIR}/sock"
       _tmux_bin="${YOLO_TMUX:-tmux}"
+      # The broker announces its socket only under the launch trace.
+      _clip_trace_args=()
+      [[ $TRACE -eq 1 ]] && _clip_trace_args=(--trace)
       "${YOLO_CLIPBOARD_PROXY}" broker \
         --listen "$_clip_sock" \
         --tmux-socket "$_tmux_sock" \
-        --tmux "$_tmux_bin" &
+        --tmux "$_tmux_bin" "${_clip_trace_args[@]}" &
       CLIP_BROKER_PID=$!
       # Readiness requires BOTH a live child and a successful connection to
       # the freshly created socket (a connect+close probe speaking no
@@ -1568,6 +1582,16 @@ if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
   BASE_ARGS+=(--env "SMIND_TMUX_WINDOW_CONTEXT=$_window_context")
 fi
 
+# Launch trace switches for the two layers below this one. The entrypoint's is
+# an environment variable like its other inputs, and is added only on the
+# launch that runs the entrypoint: the entrypoint is what removes it from the
+# tool's environment again.
+ENTRYPOINT_TRACE_ARGS=()
+if [[ $TRACE -eq 1 ]]; then
+  BASE_ARGS+=(--trace)
+  ENTRYPOINT_TRACE_ARGS=(--env "YOLO_SANDBOX_TRACE=1")
+fi
+
 # The sandbox clears inherited variables, including YOLO_* orchestration
 # settings. Stash the two paths needed for the final exec.
 _yolo_sandbox="$YOLO_LLM_SANDBOX"
@@ -1617,6 +1641,7 @@ if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMP
     # the sandboxed TUI (regression: "stdin is not a terminal").
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
+      "${ENTRYPOINT_TRACE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
       "${EXTRA_PATH_ARGS[@]}" \
       "${ADHOC_BIND_ARGS[@]}" \
