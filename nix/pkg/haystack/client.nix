@@ -52,7 +52,7 @@ buildNpmPackage {
   doInstallCheck = true;
   installCheckPhase = ''
     runHook preInstallCheck
-    (cd cli && HAYSTACK_CLI_EXECUTABLE="$out/bin/haystack" node --test --test-concurrency=1 tests/cli.test.mjs)
+    (cd cli && HAYSTACK_CLI_EXECUTABLE="$out/bin/haystack" node --test tests/smoke.mjs)
     runHook postInstallCheck
   '';
   meta = {

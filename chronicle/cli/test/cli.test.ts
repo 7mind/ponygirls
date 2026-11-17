@@ -1,4 +1,4 @@
-import { test } from 'node:test';
+import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
@@ -10,6 +10,7 @@ import type { Duplex } from 'node:stream';
 import { fileURLToPath } from 'node:url';
 import { decodeWire, encodeWire, operationPolicy } from '../src/wire.js';
 import { parseJson, isObject } from '../src/json.js';
+const CASE_CONCURRENCY = 16;
 const CLI = fileURLToPath(new URL('../src/main.js', import.meta.url));
 const ID = '11111111-1111-4111-8111-111111111111'; const GENERATION = '22222222-2222-4222-8222-222222222222';
 const USER = { id: 'alice', login: 'alice', displayName: 'Alice', actor: 'owner-binding' };
@@ -60,8 +61,9 @@ async function cli(args: string[], f: Fixture | null, environment: Record<string
   const child = spawn(installed === undefined ? process.execPath : installed, [...(installed === undefined ? [CLI] : []), ...(f === null ? [] : ['--url', f.origin, '--allow-insecure-http']), ...args], { env, stdio: ['pipe', 'pipe', 'pipe'] });
   let stdout = ''; let stderr = ''; child.stdout.on('data', data => { stdout += String(data); }); child.stderr.on('data', data => { stderr += String(data); }); child.stdin.on('error', () => {}); child.stdin.end(stdin === null ? undefined : stdin);
   const timer = setTimeout(() => child.kill('SIGKILL'), 10000);
-  try { const code = await new Promise<number>((resolve, reject) => { child.on('error', reject); child.on('exit', (code, signal) => signal === null ? resolve(code!) : reject(new Error(`CLI terminated ${signal}`))); }); return { code, stdout, stderr }; } finally { clearTimeout(timer); }
+  try { const code = await new Promise<number>((resolve, reject) => { child.on('error', reject); child.on('close', (code, signal) => signal === null ? resolve(code!) : reject(new Error(`CLI terminated ${signal}`))); }); return { code, stdout, stderr }; } finally { clearTimeout(timer); }
 }
+describe('chronicle CLI', { concurrency: CASE_CONCURRENCY }, () => {
 // Specified: actual CLI subprocesses against disposable owned HTTP/WS fixtures.
 // Regression: command discovery and invalid invocations must not require a configured service.
 test('command-specific help is local, concise and available through both help spellings', async () => {
@@ -491,4 +493,5 @@ test('CLI input-budget boundary rejects held stdin without acquiring a WebSocket
     try { const code = await new Promise<number | null>((done, reject) => { child.on('error', reject); child.on('close', done); }); assert.equal(code, 6, stderr); assert.equal(stdout, ''); assert.match(stderr, /^chronicle: deadline: Stdin deadline exceeded\.\n$/); assert.equal(f.requests.length, 0); }
     finally { clearTimeout(guard); child.stdin.destroy(); if (child.exitCode === null && child.signalCode === null) child.kill(); }
   } finally { await f.close(); }
+});
 });
