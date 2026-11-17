@@ -6,11 +6,13 @@ import { dirname, join, resolve } from 'node:path';
 import * as sdk from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, getCurrentSystemPrompt, getCurrentTools } from '@earendil-works/pi-ai';
 import { checkpoints, historyText } from '../src/report.ts';
+import { COMMENT_TYPE, COMMENTS_TYPE, commentRecord, savedComments, undeliveredComments } from '../src/comments.ts';
+import { FileQuestionStore } from '../src/questions.ts';
 import { INQUIRY_TYPE, STATE_TYPE, stateOnBranch } from '../src/state.ts';
 import { readMemory, textDigest } from '../src/memory-core.ts';
 
 const zero = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
-async function configuredFixture(t, enableMemory, loadDirectory) {
+async function configuredFixture(t, enableMemory, loadDirectory, terminal) {
   const dir = mkdtempSync(join(tmpdir(), 'cuckoo-host-')); const previous = process.env.PI_CODING_AGENT_DIR; process.env.PI_CODING_AGENT_DIR = dir;
   const settings = sdk.SettingsManager.inMemory({ compaction: { enabled: false }, retry: { enabled: false } });
   const entry = process.env.PI_CUCKOO_EXTENSION === undefined ? resolve(import.meta.dirname, '../index.ts') : process.env.PI_CUCKOO_EXTENSION;
@@ -32,28 +34,50 @@ async function configuredFixture(t, enableMemory, loadDirectory) {
           usage: { ...zero, input: reply.tokens, totalTokens: reply.tokens }, stopReason: options.signal.aborted ? 'aborted' : reply.reason === undefined ? content.some(part => part.type === 'toolCall') ? 'toolUse' : 'stop' : reply.reason, timestamp: Date.now() };
         stream.push({ type: 'start', partial: message }); stream.push({ type: 'done', reason: message.stopReason, message }); stream.end();
       };
-      if (reply.wait) options.signal.addEventListener('abort', finish, { once: true }); else queueMicrotask(finish);
+      if (reply.wait) options.signal.addEventListener('abort', finish, { once: true });
+      else if (reply.gate !== undefined) reply.gate.then(finish);
+      else queueMicrotask(finish);
       return stream;
     } });
   const manager = sdk.SessionManager.create(dir, dir);
   const { session } = await sdk.createAgentSession({ cwd: dir, agentDir: dir, modelRuntime: runtime, model: runtime.getModel('cuckoo-fixture', 'scripted'),
     thinkingLevel: 'off', settingsManager: settings, resourceLoader: loader, sessionManager: manager });
-  const errors = []; const notifications = [];
-  await session.bindExtensions({ mode: 'rpc', onError: error => errors.push(error), uiContext: { notify: (...args) => notifications.push(args), setWidget() {} } });
+  const errors = []; const notifications = []; const views = [];
+  // The terminal variant exposes Pi's custom-view boundary, so the report panel itself is driven; no real terminal is attached.
+  const custom = factory => new Promise(resolve => {
+    const view = { closed: false }; views.push(view);
+    view.component = factory({ terminal: { rows: 40 }, requestRender() {} }, { fg: (_token, text) => text, bg: (_token, text) => text, bold: text => text },
+      { matches: (key, action) => key === '\x1b' && action === 'tui.select.cancel' }, () => { view.closed = true; resolve(); });
+  });
+  await session.bindExtensions({ mode: terminal ? 'tui' : 'rpc', onError: error => errors.push(error), uiContext: { notify: (...args) => notifications.push(args), setWidget() {}, ...(terminal ? { custom } : {}) } });
   t.after(async () => { await session.abort(); session.dispose(); if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR; else process.env.PI_CODING_AGENT_DIR = previous; rmSync(dir, { recursive: true, force: true }); });
   if (enableMemory) {
     await session.prompt('/cuckoo on');
     for (const feature of ['evidence', 'corrections', 'verifiers', 'reader']) await session.prompt(`/cuckoo feature ${feature} on`);
   }
-  return { dir, session, manager, contexts, replies, errors, notifications, onRequest: fn => { onRequest = fn; } };
+  return { dir, session, manager, contexts, replies, errors, notifications, views, onRequest: fn => { onRequest = fn; } };
 }
-function fixture(t) { return configuredFixture(t, false, false); }
-function memoryFixture(t) { return configuredFixture(t, true, false); }
+function fixture(t) { return configuredFixture(t, false, false, false); }
+function memoryFixture(t) { return configuredFixture(t, true, false, false); }
+function terminalFixture(t) { return configuredFixture(t, false, false, true); }
+const tick = () => new Promise(setImmediate);
+async function until(condition, what) {
+  for (let i = 0; i < 2000; i++) { if (condition()) return; await tick(); }
+  assert.fail(`timed out waiting for ${what}`);
+}
+/** Comment on the node reached by `tabs` in the open report panel, then close the panel. */
+async function commentInPanel(f, tabs, text) {
+  const shown = f.session.prompt('/cuckoo'); await until(() => f.views.length > 0 && !f.views.at(-1).closed, 'the report panel');
+  const panel = f.views.at(-1).component; panel.render(100);
+  for (let i = 0; i < tabs; i++) panel.handleInput('\t');
+  panel.handleInput('c'); for (const character of text) panel.handleInput(character); panel.handleInput('\r');
+  panel.handleInput('\x1b'); await shown;
+}
 
 const report = '{"objectives":[{"objective":"Ship Cuckoo","progress":"Validating the runtime","issues":["A decoder defect needs correction","Waiting for access approval","Serial validation"],"eta":"Unknown: validation pending"}],"rules":[{"rule":"Show mockups before implementing","source":"user","scope":"This UI change"},{"rule":"Preserve cadence","source":"assistant","scope":"This change"}]}';
 
 test('real Pi package-directory loading does not enable audit memory implicitly', { timeout: 20000 }, async t => {
-  const f = await configuredFixture(t, false, true);
+  const f = await configuredFixture(t, false, true, false);
   assert.ok(f.session.getActiveToolNames().includes('cuckoo_recall'));
   assert.equal(f.session.getActiveToolNames().includes('cuckoo_memory'), false);
   f.replies.push({ text: 'Ordinary task finished', tokens: 20000 });
@@ -102,7 +126,7 @@ test('real Pi relative cadence, JSON persistence, no idle inference, view while 
   await f.session.prompt('/cuckoo off'); await f.session.prompt('/cuckoo');
   assert.equal(f.contexts.length, 5); assert.equal(existsSync(join(f.dir, 'cuckoo.json')), false);
   await f.session.reload(); assert.equal(checkpoints(f.manager.getBranch()).length, 1);
-  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, JSON.parse(report));
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, { ...JSON.parse(report), answers: null });
   assert.ok(f.notifications.some(args => String(args[0]).includes('ETA: Unknown: validation pending')));
   f.replies.push({ text: 'Normal work', tokens: 24000 }); await f.session.prompt('Continue normally');
   assert.match(JSON.stringify(f.contexts.at(-1)), /checkpoint is closed/);
@@ -167,7 +191,7 @@ test('real Pi manual inquiry runs while off, persists JSON and does not become a
   await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
   assert.equal(f.contexts.length, 2); assert.equal(f.replies.length, 0);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1);
-  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, JSON.parse(report));
+  assert.deepEqual(checkpoints(f.manager.getBranch())[0].report, { ...JSON.parse(report), answers: null });
   assert.equal(checkpoints(f.manager.getBranch())[0].version, 4);
   assert.equal(checkpoints(f.manager.getBranch())[0].report.objectives[0].issues.length, 3);
   assert.match(JSON.stringify(f.contexts.at(-1)), /Restate me your objectives/);
@@ -201,7 +225,7 @@ test('real Pi recall tool is declared, returns a saved round and stays readable 
   await f.session.prompt('Read that reflection');
   const read = f.manager.getEntries().find(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'recall-read').message;
   assert.equal(read.isError, false); assert.equal(read.details.nextOffset, null);
-  assert.deepEqual(JSON.parse(read.details.text).report, JSON.parse(report));
+  assert.deepEqual(JSON.parse(read.details.text).report, { ...JSON.parse(report), answers: null });
   assert.equal(JSON.parse(read.details.text).messageEntryId, saved.data.messageEntryId);
   assert.equal(JSON.parse(read.details.text).response.model, 'scripted');
   assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /Automatic inquiries at run start: OFF/);
@@ -317,5 +341,150 @@ test('real Pi busy manual request captures the checkpoint, not the ongoing respo
   assert.equal(f.contexts.length, 2);
   assert.equal(checkpoints(f.manager.getBranch()).length, 1);
   assert.equal(checkpoints(f.manager.getBranch())[0].raw, report);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi standing questions are stored in a durable file, asked, validated, recalled and dropped again', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await f.session.prompt('/cuckoo questions add What did you verify since the last checkpoint?');
+  const store = new FileQuestionStore(join(f.dir, 'cuckoo-questions.json'));
+  const [question] = store.read();
+  assert.equal(question.question, 'What did you verify since the last checkpoint?');
+  assert.deepEqual(JSON.parse(readFileSync(store.path, 'utf8')), { version: 1, questions: [question] });
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  const answered = JSON.stringify({ ...JSON.parse(report), answers: [{ id: question.id, answer: 'Only the decoder tests ran.' }] });
+  f.replies.push({ text: answered, tokens: 20100 });
+  await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const inquiry = JSON.stringify(f.contexts.at(-1).messages.at(-1));
+  assert.match(inquiry, /Restate me your objectives/); assert.match(inquiry, /What did you verify since the last checkpoint\?/);
+  assert.ok(inquiry.includes(question.id));
+  const saved = checkpoints(f.manager.getBranch())[0];
+  assert.equal(saved.version, 5); assert.equal(saved.error, null);
+  assert.deepEqual(saved.report.answers, [{ id: question.id, question: question.question, scope: 'global', answer: 'Only the decoder tests ran.' }]);
+  // A reloaded extension instance and a reopened session file observe the same question and answer.
+  await f.session.reload();
+  await f.session.prompt('/cuckoo questions');
+  assert.match(f.notifications.at(-1)[0], new RegExp(`${question.id} \\(global\\): What did you verify since the last checkpoint\\?`));
+  await f.session.prompt('/cuckoo status');
+  assert.match(f.notifications.at(-1)[0], /Standing questions: 1 asked at every checkpoint/);
+  assert.match(f.notifications.at(-1)[0], /Q1\. What did you verify since the last checkpoint\? \(global, .*\)\n   Answer: Only the decoder tests ran\./);
+  const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.deepEqual(checkpoints(reopened.getBranch())[0].report.answers, saved.report.answers);
+  const entry = f.manager.getEntries().find(item => item.type === 'custom' && item.customType === 'cuckoo.report');
+  f.replies.push({ content: [{ type: 'toolCall', id: 'recall-answers', name: 'cuckoo_recall', arguments: { action: 'read', entryId: entry.id } }], tokens: 20200 }, { text: 'Read', tokens: 20300 });
+  await f.session.prompt('Recall the answers');
+  const read = f.manager.getEntries().find(item => item.type === 'message' && item.message.role === 'toolResult' && item.message.toolCallId === 'recall-answers').message;
+  assert.equal(read.isError, false);
+  assert.equal(JSON.parse(read.details.text).report.answers[0].answer, 'Only the decoder tests ran.');
+  assert.equal(JSON.parse(read.details.text).questions[0].question, question.question);
+  assert.match(getCurrentSystemPrompt(f.contexts.at(-1).messages), /standing questions configured by the user/);
+  // Removed questions are no longer asked: the next inquiry is the base one and saves a base report.
+  await f.session.prompt(`/cuckoo questions remove ${question.id}`);
+  assert.deepEqual(store.read(), []);
+  f.replies.push({ text: report, tokens: 20400 });
+  await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  assert.doesNotMatch(JSON.stringify(f.contexts.at(-1).messages.at(-1)), /Standing questions as JSON/);
+  assert.equal(checkpoints(f.manager.getBranch())[1].version, 4); assert.equal(checkpoints(f.manager.getBranch())[1].report.answers, null);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi report comments made while idle are kept in the session file and reach the model once, without extra inference', { timeout: 20000 }, async t => {
+  const f = await terminalFixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const requestId = checkpoints(f.manager.getBranch())[0].requestId;
+  const calls = f.contexts.length;
+  // Two rules precede the objective in this report: the third node is the objective.
+  await commentInPanel(f, 3, 'Run the full suite before claiming progress.');
+  assert.equal(f.contexts.length, calls, 'commenting and closing the panel never calls the model');
+  const comments = savedComments(f.manager.getBranch());
+  assert.deepEqual(comments.map(item => [item.requestId, item.target, item.subject, item.text]), [[requestId, { kind: 'objective', index: 0 }, 'Objective 1: Ship Cuckoo', 'Run the full suite before claiming progress.']]);
+  const deliveries = () => f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
+  assert.equal(deliveries().length, 1); assert.deepEqual(deliveries()[0].details.commentIds, [comments[0].commentId]);
+  assert.ok(f.notifications.some(args => /1 comment saved to checkpoint history and added to the conversation for the model/.test(args[0])));
+  f.replies.push({ text: 'Acknowledged', tokens: 20200 }); await f.session.prompt('Continue the task');
+  const request = JSON.stringify(f.contexts.at(-1).messages);
+  assert.match(request, /On Objective 1: Ship Cuckoo\\n   User comment: Run the full suite before claiming progress\./);
+  assert.ok(request.indexOf('User comment: Run the full suite') < request.indexOf('Continue the task'), 'the comment precedes the next prompt');
+  const reopened = sdk.SessionManager.open(f.manager.getSessionFile());
+  assert.deepEqual(savedComments(reopened.getEntries()), comments);
+  assert.deepEqual(undeliveredComments(reopened.getBranch()), []);
+  assert.match(historyText(reopened.getEntries(), reopened.getBranch()), /ETA: Unknown: validation pending\n   Comment \(.*Z\): Run the full suite before claiming progress\./);
+  assert.match(readFileSync(f.manager.getSessionFile(), 'utf8'), /"customType":"cuckoo\.comment"/);
+  await f.session.reload();
+  f.replies.push({ text: 'Still acknowledged', tokens: 20300 }); await f.session.prompt('And more');
+  assert.equal(JSON.stringify(f.contexts.at(-1).messages).split('User comment: Run the full suite').length - 1, 1, 'reload does not deliver the comment again');
+  assert.equal(deliveries().length, 1);
+  assert.equal(f.manager.getEntries().filter(entry => entry.type === 'custom' && entry.customType === COMMENT_TYPE).length, 1);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi report comments made during a run reach the model at the next turn boundary of that run', { timeout: 20000 }, async t => {
+  const f = await terminalFixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  let release; const gate = new Promise(resolve => { release = resolve; });
+  f.replies.push({ content: [{ type: 'toolCall', id: 'held-tool', name: 'bash', arguments: { command: 'printf held' } }], tokens: 20200, gate }, { text: 'Finished after the comment', tokens: 20300 });
+  const running = f.session.prompt('Do tool work');
+  await until(() => f.contexts.length === 3, 'the held provider request');
+  // First node of this report: the user rule.
+  await commentInPanel(f, 1, 'I meant mockups for the settings dialog only.');
+  const deliveries = () => f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
+  assert.equal(savedComments(f.manager.getBranch()).length, 1, 'the comment is in history before the run continues');
+  assert.equal(deliveries().length, 0, 'nothing is inserted into a response that is still streaming');
+  assert.ok(f.notifications.some(args => /the model receives them at its next completed turn/.test(args[0])));
+  release(); await running;
+  assert.equal(f.contexts.length, 4);
+  assert.match(JSON.stringify(f.contexts[3].messages), /On Rule \(user\): Show mockups before implementing \(scope: This UI change\)\\n   User comment: I meant mockups for the settings dialog only\./);
+  const branch = f.manager.getBranch();
+  const toolResult = branch.findIndex(entry => entry.type === 'message' && entry.message.role === 'toolResult' && entry.message.toolCallId === 'held-tool');
+  const delivery = branch.findIndex(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
+  const final = branch.findLastIndex(entry => entry.type === 'message' && entry.message.role === 'assistant');
+  assert.ok(toolResult >= 0 && toolResult < delivery && delivery < final, 'tool call, its result, the comments, then the next response');
+  assert.equal(deliveries().length, 1); assert.deepEqual(undeliveredComments(branch), []);
+  assert.equal(checkpoints(branch).length, 1, 'a comment is not captured as a checkpoint');
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi keeps a comment made during an aborted response and delivers it once the run has settled', { timeout: 20000 }, async t => {
+  const f = await terminalFixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  f.replies.push({ text: 'Partial respon', tokens: 20200, wait: true });
+  const running = f.session.prompt('Long task');
+  await until(() => f.contexts.length === 3, 'the held provider request');
+  await commentInPanel(f, 3, 'Stop and rerun the suite.');
+  const deliveries = () => f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
+  assert.equal(deliveries().length, 0);
+  await f.session.abort(); await running;
+  assert.equal(deliveries().length, 1, 'an aborted turn is not a delivery point, but the settled session is');
+  const branch = f.manager.getBranch();
+  const aborted = branch.findLastIndex(entry => entry.type === 'message' && entry.message.role === 'assistant' && entry.message.stopReason === 'aborted');
+  assert.ok(aborted >= 0 && aborted < branch.indexOf(deliveries()[0]), 'the delivery follows the aborted response');
+  assert.equal(f.contexts.length, 3, 'delivery after an abort starts no request');
+  f.replies.push({ text: 'Resumed', tokens: 20300 }); await f.session.prompt('Go on');
+  assert.equal(JSON.stringify(f.contexts.at(-1).messages).split('User comment: Stop and rerun the suite.').length - 1, 1);
+  assert.equal(deliveries().length, 1); assert.equal(checkpoints(f.manager.getBranch()).length, 1);
+  assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
+});
+
+test('real Pi delivers a comment left undelivered by an earlier process with the first request of the next run, once', { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  f.replies.push({ text: 'Baseline', tokens: 20000 }); await f.session.prompt('Work');
+  f.replies.push({ text: report, tokens: 20100 }); await f.session.prompt('/cuckoo inquire now'); await f.session.waitForIdle();
+  const requestId = checkpoints(f.manager.getBranch())[0].requestId;
+  // As left behind when Pi exits between a panel close and the end of the running turn: saved, never delivered.
+  f.manager.appendCustomEntry(COMMENT_TYPE, commentRecord({ requestId, target: { kind: 'objective', index: 0 }, subject: 'Objective 1: Ship Cuckoo', text: 'Left by the previous process.' }, 'left-over', '2026-11-17T21:00:00.000Z'));
+  await f.session.reload();
+  assert.equal(undeliveredComments(f.manager.getBranch()).length, 1, 'opening the session writes nothing');
+  f.replies.push({ text: 'Seen', tokens: 20200 }); await f.session.prompt('Next task');
+  const request = JSON.stringify(f.contexts.at(-1).messages);
+  assert.match(request, /On Objective 1: Ship Cuckoo\\n   User comment: Left by the previous process\./);
+  const deliveries = () => f.manager.getBranch().filter(entry => entry.type === 'custom_message' && entry.customType === COMMENTS_TYPE);
+  assert.equal(deliveries().length, 1); assert.deepEqual(deliveries()[0].details, { version: 1, commentIds: ['left-over'] });
+  assert.deepEqual(undeliveredComments(f.manager.getBranch()), []);
+  f.replies.push({ text: 'Seen again', tokens: 20300 }); await f.session.prompt('Another task');
+  assert.equal(JSON.stringify(f.contexts.at(-1).messages).split('User comment: Left by the previous process.').length - 1, 1, 'the next run does not deliver it again');
+  assert.equal(deliveries().length, 1);
   assert.equal(f.replies.length, 0); assert.deepEqual(f.errors, []);
 });

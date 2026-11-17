@@ -13,7 +13,7 @@ const entry = (version, text) => ({ type: 'custom', customType: REPORT_TYPE, id:
 
 // Specified Behavioral-Active / Blackbox-Group: versioned contract and all projections, not semantic model quality.
 test('v4 consolidates three conceptual categories into one bounded issues list', () => {
-  assert.deepEqual(parseReport(raw), { objectives: [objective], rules: [] });
+  assert.deepEqual(parseReport(raw), { objectives: [objective], rules: [], answers: null });
   assert.equal(checkpoint('current', raw).version, 4);
   const parse = value => parseReport(JSON.stringify({ objectives: [{ ...objective, issues: value }], rules: [] }));
   assert.deepEqual(parse([]).objectives[0].issues, []);
@@ -55,23 +55,23 @@ test('v1 unknowns and v2/v3 statements survive normalization without rewriting r
 
 test('plain, history and themed details show one Issues list and distinguish empty from unrecorded', () => {
   const value = checkpoint('current', raw); const record = { ...entry(4, raw), data: value };
-  const outputs = [reportText([value]), historyText([record], [record]), checkpointDetail(theme, value, 160)];
+  const outputs = [reportText([value], []), historyText([record], [record]), checkpointDetail(theme, value, 160, [])];
   for (const text of outputs) {
     assert.equal((text.match(/Issues:/g) ?? []).length, 1);
     assert.doesNotMatch(text, /Obstacles:|Bottlenecks:/);
     for (const issue of objective.issues) assert.ok(text.includes(`- ${issue}`));
   }
   const empty = checkpoint('empty', JSON.stringify({ objectives: [{ ...objective, issues: [] }], rules: [] }));
-  assert.match(reportText([empty]), /Issues: None known/);
+  assert.match(reportText([empty], []), /Issues: None known/);
   const legacy = checkpoints([entry(1, '{"objectives":[{"objective":"Ship","progress":"Testing"}]}')])[0];
-  assert.match(reportText([legacy]), /Issues: Not recorded \(legacy report\)/);
+  assert.match(reportText([legacy], []), /Issues: Not recorded \(legacy report\)/);
 });
 
 test('multiline Unicode issue items wrap at narrow widths and presentation removes terminal controls only', () => {
   const issues = ['Risk 界 é '.repeat(8) + '\nContinuation\twith tab', 'Blocker\x1b\x07'];
   const value = checkpoint('wrapped', JSON.stringify({ objectives: [{ ...objective, issues }], rules: [] }));
   for (const width of [12, 24, 40, 80]) {
-    const text = checkpointDetail(theme, value, width);
+    const text = checkpointDetail(theme, value, width, []);
     const body = text.slice(text.indexOf('1. Ship'));
     assert.ok(body.includes('Risk')); assert.ok(body.includes('Blocker'));
     assert.doesNotMatch(body, /[\x1b\x07]/);

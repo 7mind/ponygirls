@@ -22,7 +22,7 @@ function fixture(enabled) {
   let saved = { enabled, policy: { kind: 'window', value: 15 }, features: { ...DEFAULT_FEATURES, evidence: true, corrections: true, verifiers: true, reader: true } };
   const preferences = { path: 'memory:fixture', read: () => structuredClone(saved), write(value) { saved = structuredClone(value); } };
   const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => ({ tokens: 20000, contextWindow: 200000, percent: 10 }), ui: { notify: (...args) => notices.push(args), setWidget() {} } };
-  registerCuckoo(pi, preferences, inertNetworkServices());
+  registerCuckoo(pi, preferences, { path: 'memory:questions', read: () => [], write() { assert.fail('standing questions write not expected'); } }, inertNetworkServices());
   handlers.get('session_start')({}, ctx);
   const memory = tools.get('cuckoo_memory');
   assert.ok(memory, 'normal extension registers the gated memory tool');

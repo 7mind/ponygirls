@@ -10,7 +10,10 @@ export default function (pi: ExtensionAPI): void {
       const inquiry = last !== undefined && JSON.stringify(last).includes('Restate me your objectives');
       const assistantCount = context.messages.filter(message => message.role === 'assistant').length;
       const tokens = assistantCount === 0 ? 20000 : 23000;
-      const text = inquiry ? JSON.stringify({ objectives: [{ objective: 'Ship Cuckoo', progress: 'Synthetic checkpoint preserved', issues: ['A decoder defect needs correction', 'Waiting for access approval', 'Serial checks limit progress'], eta: 'Unknown: checks pending' }, { objective: 'Verify UI', progress: 'Badge and report under test', issues: [], eta: 'Unknown: manual checks pending' }], rules: [{ rule: 'Show mockups before implementation.', source: 'user', scope: 'This UI change' }, { rule: 'Preserve cadence behavior.', source: 'assistant', scope: 'This change only' }] }) : 'Synthetic work response. No external provider contacted.';
+      // Standing questions arrive as a JSON array inside the inquiry text; answer each by id.
+      const asked = inquiry ? /Standing questions as JSON: (\[.*?\])\. Put the answers/s.exec(typeof last.content === 'string' ? last.content : last.content.map(part => part.type === 'text' ? part.text : '').join('\n')) : null;
+      const answers = asked === null ? {} : { answers: (JSON.parse(asked[1]) as { id: string }[]).map(question => ({ id: question.id, answer: `Synthetic answer to ${question.id}; nothing was verified.` })) };
+      const text = inquiry ? JSON.stringify({ ...answers, objectives: [{ objective: 'Ship Cuckoo', progress: 'Synthetic checkpoint preserved', issues: ['A decoder defect needs correction', 'Waiting for access approval', 'Serial checks limit progress'], eta: 'Unknown: checks pending' }, { objective: 'Verify UI', progress: 'Badge and report under test', issues: [], eta: 'Unknown: manual checks pending' }], rules: [{ rule: 'Show mockups before implementation.', source: 'user', scope: 'This UI change' }, { rule: 'Preserve cadence behavior.', source: 'assistant', scope: 'This change only' }] }) : 'Synthetic work response. No external provider contacted.';
       const stream = createAssistantMessageEventStream();
       queueMicrotask(() => {
         const aborted = options !== undefined && options.signal !== undefined && options.signal.aborted;

@@ -14,8 +14,8 @@ const entry = (id, data) => ({ type: 'custom', customType: REPORT_TYPE, id, pare
 
 // Specified Behavioral-Active / Blackbox-Atomic: schema and presentation contracts, not live-model recall quality.
 test('current reports require bounded rules with explicit origin and applicability, even without objectives', () => {
-  assert.deepEqual(parseReport(raw), { objectives: [objective], rules });
-  assert.deepEqual(parseReport('{"objectives":[],"rules":[]}'), { objectives: [], rules: [] });
+  assert.deepEqual(parseReport(raw), { objectives: [objective], rules, answers: null });
+  assert.deepEqual(parseReport('{"objectives":[],"rules":[]}'), { objectives: [], rules: [], answers: null });
   const invalidRules = [null, {}, Array(101).fill(rules[0]), [{ ...rules[0], source: 'system' }], [{ ...rules[0], source: 'USER' }], [{ ...rules[0], extra: true }]];
   for (const name of ['rule', 'source', 'scope']) for (const value of [undefined, null, '', ' ', 1, [], 'x'.repeat(MAX_FIELD_CHARS + 1)]) invalidRules.push([{ ...rules[0], [name]: value }]);
   for (const invalid of invalidRules) {
@@ -43,9 +43,9 @@ test('v1/v2 rules remain unrecorded, not confused with a current empty list; his
   const legacy = [entry('v1', { version: 1, requestId: 'v1', raw: '{"objectives":[]}', error: null }), entry('v2', { version: 2, requestId: 'v2', raw: JSON.stringify({ objectives: [{ objective: 'Legacy', progress: 'Testing', obstacles: 'None known', issues: 'None known', bottlenecks: 'Serial', eta: 'Unknown' }] }), error: null })];
   const current = entry('v4', checkpoint('v4', raw));
   for (const value of checkpoints(legacy)) assert.equal(value.report.rules, null);
-  for (const text of [reportText(checkpoints(legacy)), reportContent(checkpoints(legacy), '').render(plain, 100)]) assert.equal((text.match(/Session rules not recorded \(legacy report\)/g) ?? []).length, 2);
+  for (const text of [reportText(checkpoints(legacy), []), reportContent(checkpoints(legacy), '', []).render(plain, 100)]) assert.equal((text.match(/Session rules not recorded \(legacy report\)/g) ?? []).length, 2);
   const noRules = checkpoint('empty', '{"objectives":[],"rules":[]}');
-  const emptyText = reportContent([noRules], '').render(plain, 100);
+  const emptyText = reportContent([noRules], '', []).render(plain, 100);
   assert.match(emptyText, /No current objectives/); assert.match(emptyText, /No session-local rules reported/);
   const all = [...legacy, current];
   for (const text of [historyText(all, [current]), historyContent(all, [current]).render(plain, 140)]) {
@@ -56,14 +56,14 @@ test('v1/v2 rules remain unrecorded, not confused with a current empty list; his
 
 test('compact hierarchy uses inline fields, semantic headers and one rules section per checkpoint', () => {
   const value = checkpoint('request-123', raw);
-  const text = reportContent([value], 'Cuckoo: ON').render(styled, 300);
+  const text = reportContent([value], 'Cuckoo: ON', []).render(styled, 300);
   assert.match(text, /<accent><b>Checkpoint 1<\/b><\/accent>/);
   assert.match(text, /<warning><b>Session-local rules<\/b><\/warning>/);
   assert.match(text, /<muted><b>Status and configuration<\/b><\/muted>/);
   assert.match(text, /<accent><b>user:<\/b><\/accent>/);
   assert.match(text, /<muted><b>assistant:<\/b><\/muted>/);
   for (const [label, color] of [['Progress', 'accent'], ['Issues', 'warning'], ['ETA', 'accent']]) assert.match(text, new RegExp(`   <${color}><b>${label}:<\\/b><\\/${color}> +\\S`));
-  const unstyled = reportContent([value], '').render(plain, 140);
+  const unstyled = reportContent([value], '', []).render(plain, 140);
   assert.equal((unstyled.match(/Session-local rules/g) ?? []).length, 1);
   assert.ok(unstyled.indexOf('Session-local rules') < unstyled.indexOf('1. Improve'));
   assert.match(unstyled, /   Progress:    Inspected the renderer\n   Issues:      - Layout selection pending/);
@@ -73,14 +73,14 @@ test('compact hierarchy uses inline fields, semantic headers and one rules secti
 
 test('multi-digit objective headings reserve their full numbering width', () => {
   const value = checkpoint('many', JSON.stringify({ rules: [], objectives: Array.from({ length: 100 }, () => ({ ...objective, objective: 'x'.repeat(70) })) }));
-  const text = reportContent([value], '').render(plain, 40);
+  const text = reportContent([value], '', []).render(plain, 40);
   for (const line of text.slice(text.indexOf('1. ')).split('\n')) assert.ok(visibleWidth(line) <= 40, line);
 });
 
 test('multiline Unicode fields and rules have hanging indentation at wide widths and stay readable when narrow', () => {
   const value = checkpoint('wrapped', JSON.stringify({ rules: [{ ...rules[0], rule: 'Rule 界 é '.repeat(8) }], objectives: [{ ...objective, progress: 'Evidence 界 é '.repeat(14) + '\nSecond paragraph\twith tab' }] }));
   for (const width of [12, 24, 40, 80]) {
-    const text = reportContent([value], '').render(plain, width);
+    const text = reportContent([value], '', []).render(plain, width);
     const start = text.indexOf('Progress:');
     assert.ok(start >= 0);
     const field = text.slice(text.lastIndexOf('\n', start) + 1);
@@ -95,5 +95,5 @@ test('multiline Unicode fields and rules have hanging indentation at wide widths
     for (const line of field.split('\n')) assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
   }
   const hostile = checkpoint('controls', JSON.stringify({ objectives: [], rules: [{ ...rules[0], rule: 'Rule\x1b\x07\r\x9b', scope: 'Scope\x1b\x07\r\x9b' }] }));
-  assert.doesNotMatch(reportContent([hostile], '').render(plain, 80), /[\x1b\x07\r\x9b]/);
+  assert.doesNotMatch(reportContent([hostile], '', []).render(plain, 80), /[\x1b\x07\r\x9b]/);
 });

@@ -19,6 +19,15 @@ Opt-in objective/progress and session-local rule checkpoints from the **main con
 - `/cuckoo inquire now`: request a checkpoint even while automatic mode is OFF.
   Command completion walks both words, as well as the existing settings grammar.
 - Press **`i`** in any Cuckoo panel to close it and request the same inquiry.
+- `/cuckoo questions` (or `questions list`): show the standing questions and their stores.
+- `/cuckoo [default|project] questions add TEXT`: add a standing question, asked at
+  every checkpoint. `project` writes the trusted-project store; no prefix or `default`
+  writes the global store. Without `TEXT` the terminal UI prompts for it.
+- `/cuckoo [default|project] questions remove ID`: remove a question by the ID shown in
+  the list. Without a prefix every readable store is searched; without `ID` the
+  terminal UI offers a selection.
+- In a report panel, **Tab**/**Shift-Tab** (or a click) select a rule, objective or
+  answer and **`c`** comments on it; see [Commenting on a report](#commenting-on-a-report).
 - **Ctrl+Alt+C**: toggle the report view without submitting or losing the editor draft.
 - Click the **🐦 N** border badge to toggle reports (fullscreen, or regular
   mode with Pi's `regularMouse` enabled). Escape or `q` closes the view.
@@ -79,6 +88,88 @@ reopening that session restores its history without a separate global history
 file. A new session starts with no answers; a fork contains only entries Pi
 copies into that new session. Opening history does not request model inference.
 
+## Standing questions
+
+Standing questions are additional questions the model must answer in every
+checkpoint, next to objectives and rules. They are operator configuration, not
+session state:
+
+- Global questions live in `<agentDir>/cuckoo-questions.json`; project questions in
+  `<cwd>/<CONFIG_DIR_NAME>/cuckoo-questions.json` (normally
+  `.pi/cuckoo-questions.json`). Both are small versioned JSON files written by
+  atomic replacement (not a cross-process transaction) and survive sessions,
+  reloads and restarts. Home Manager does not manage or overwrite them.
+- The project file is neither read nor written without Pi's project trust: an
+  untrusted checkout cannot add text to the inquiry.
+- An inquiry asks the global questions, then the project ones. There is no
+  session-scoped list. Limits: 32 questions per store, one line of at most 2000
+  characters each; control characters are removed on entry.
+- Each question has a short ID (`q-…`), unique across both stores. The model
+  echoes it, so answers do not depend on question order or wording.
+- A malformed file, or one ID present in both stores (typically after copying
+  the global file into a project), is a visible configuration fault: badge `!`,
+  one error notification, and an error line at the top of the report panel and
+  of `/cuckoo status`. No inquiry is issued from questions that cannot be read;
+  saved reports stay readable and commentable.
+
+Adding or removing a question takes effect at the next inquiry. Each checkpoint
+stores the questions it asked, so saved answers stay readable after a question
+is edited or removed, and a reply is validated against what was actually asked.
+
+Without standing questions the inquiry text and the saved report format are
+exactly those described under [Cadence and output](#cadence-and-output). A
+standing question asks for a report; the prompt states that it is not a new
+task, instruction or authorization. Answers are model self-reports like the rest
+of a checkpoint.
+
+## Commenting on a report
+
+Every rule, objective and standing-question answer of a valid report is a
+selectable item in the report and history panels:
+
+1. Open the panel and scroll (`ctrl-u`/`ctrl-d`, wheel).
+2. **Tab**/**Shift-Tab** move the item cursor (accent bar in the left gutter) and
+   scroll it into view; from a cursor that is off screen, Tab takes the first
+   item on screen and Shift-Tab the last. A left click selects the item under the
+   pointer where mouse input is available.
+3. **`c`** opens an editor under the report for the selected item (with no cursor,
+   the first item on screen). **Enter** adds the comment, **Shift-Enter** inserts a
+   newline, **Escape** discards the draft without closing the panel. While the
+   editor is open all keys, including `i`, `q` and pasted text, are text.
+4. New comments appear under their item marked `[new]`. **`x`** removes the last
+   new comment of the selected item.
+
+When the panel closes, by any path (Escape, `q`, `i`, the badge, Ctrl+Alt+C,
+session shutdown), all new comments are saved together; text still in the
+editor is saved too rather than dropped. Saving means:
+
+- **History.** Each comment becomes its own `cuckoo.comment` session entry holding
+  the checkpoint request ID, the item, a quotation of the item, the text and a
+  timestamp. Comments are append-only: saved comments cannot be edited or
+  removed. They are shown under their item in the panel, in plain-text reports,
+  in `/cuckoo history` and in `cuckoo_recall`. An objective is commented as a
+  whole; its issues and ETA are not separate items.
+- **The model.** The comments are delivered once as a visible `cuckoo.comments`
+  message that quotes each commented item. Closing the panel never starts a model
+  turn: an idle session gets the message appended immediately and the model reads
+  it with its next request; a running agent gets it at its next completed turn
+  boundary, before any inquiry issued at that boundary. Comments that neither
+  path could take (for example during compaction, or when Pi exits first) join
+  the first request of the next run. Closing with `i` delivers the comments
+  before the inquiry it requests.
+
+Delivery is derived from the session tree, not from a queue: a comment counts as
+delivered on a branch only when a delivery message on that branch lists it. A
+branch that lacks the comment is not told about it; `/cuckoo history` still shows
+comments from all branches. A comment made in `/cuckoo history` on a checkpoint
+of another branch is saved on, and delivered to, the current branch; the
+delivery message says that the checkpoint belongs to another branch. Quotations
+of report text in comments and in the delivery message have terminal control
+characters removed. Comments are user feedback, not approval, and the
+delivery message says it is not an inquiry. Invalid reports have no items to
+comment on. Commenting requires the terminal UI; RPC/plain output only displays
+saved comments.
+
 ## Model awareness and reflection recall
 
 At each run start, a structured system-prompt section explains Cuckoo's
@@ -101,14 +192,16 @@ The model can use the read-only **`cuckoo_recall`** tool during ordinary work:
   list/read pages. No other session files or global memory are searched.
 - List returns newest-first metadata: stable report-entry ID, request ID,
   timestamp, current/other branch, schema version, valid/invalid status,
-  objective/rule counts and source-response entry ID when recorded. `valid`
+  objective/rule/answer/comment counts and source-response entry ID when recorded. `valid`
   means schema-valid, **not independently verified**. `nextBefore` is an
   exclusive entry-ID cursor: new rounds do not shift already enumerated pages.
   The default page is 10 rounds, maximum 20. A missing/out-of-scope cursor is
   an error; restart listing after changing branches.
 - Read returns `text`, a page of a JSON document containing the version-aware
-  parsed report, exact raw answer, validation/interruption error, and source
-  response metadata (provider/model when available). Concatenate `text` pages
+  parsed report (with standing-question answers), the questions that round
+  asked, exact raw answer, validation/interruption error, source response
+  metadata (provider/model when available) and the user comments attached to
+  that round within the selected scope. Concatenate `text` pages
   using `nextOffset` until it is `null`, then parse the combined JSON. Offsets
   count UTF-16 code units; default page size is 6000, maximum 8000. Responses
   are capped at 50000 UTF-8 bytes; oversized metadata is an explicit error,
@@ -116,6 +209,7 @@ The model can use the read-only **`cuckoo_recall`** tool during ordinary work:
   exposed by this tool.
 - Invalid/interrupted rounds remain readable. Legacy missing fields are
   `null` (not recorded), not invented values or evidence that no rules applied.
+  `answers` is `null` when the round asked no standing questions.
 - Recall uses persisted session entries, so it survives compaction/reload and
   follows branch navigation immediately. Forks expose only the entries Pi
   copied. It stays available while automatic inquiries are OFF, performs no
@@ -345,9 +439,11 @@ stripe; the selected row has an accent marker and selected-background band.
 **Detail pane:** Below the table, runtime errors appear first (prominently at
 top), then the detail header, then the selected checkpoint body. The detail
 header wraps at narrow widths so all metadata (timestamp, branch, entry ID,
-qualifier) remains accessible via scrolling. The body renders inline: rules
-section, then numbered objectives with compact labeled fields (progress,
-a single issues list, ETA). Invalid reports show the raw output and
+qualifier, comment count) remains accessible via scrolling. The body renders
+inline behind a two-column gutter: rules section, then numbered objectives with
+compact labeled fields (progress, a single issues list, ETA), then standing
+questions with their answers when the checkpoint asked any. Comments follow the
+item they belong to. The gutter shows an accent bar beside the selected item. Invalid reports show the raw output and
 error rather than parsed fields. After the detail, effective settings and
 configuration scroll into view. The entire body (errors + detail + settings)
 scrolls independently of the table via ctrl-u/ctrl-d (half-page) and Home/End
@@ -355,7 +451,9 @@ scrolls independently of the table via ctrl-u/ctrl-d (half-page) and Home/End
 clipped.
 
 **Footer:** Key hints are fixed at the bottom, always visible. The `i` key
-closes the panel and requests an immediate inquiry.
+closes the panel and requests an immediate inquiry. While a comment is being
+written the footer holds the editor and its own hints, and the commented item
+is kept in view, also across a resize.
 
 **History view** (`/cuckoo history`) adds timestamp, branch attribution, and
 entry IDs in the detail header metadata (wrapped, not as separate table columns).
@@ -367,9 +465,13 @@ entry IDs in the detail header metadata (wrapped, not as separate table columns)
 | `↑` `↓` `j` `k` | Move selection in table |
 | `ctrl-u` `ctrl-d` | Scroll detail half-page up/down |
 | `Home` `End` | Scroll detail to top/bottom |
+| `tab` `shift-tab` | Select next/previous rule, objective or answer |
+| `c` | Comment on the selected item |
+| `x` | Remove the last new comment of the selected item |
 | `i` | Close and request inquiry now |
 | `esc` `q` | Close panel |
 | Mouse wheel | Scroll detail |
+| Left click | Select the item under the pointer |
 
 In regular mode the table and detail fit within the allocated height. Pi
 fullscreen reserves PgUp/PgDn for transcript scrolling, so detail scrolling
@@ -437,7 +539,16 @@ means no session-local rules were reported. Assistant conventions are not user
 approval or authorization. This is a recall prompt, not a policy enforcement or
 independent provenance-verification mechanism.
 
-New checkpoints use metadata version 4. Version-1 through version-3 saved reports
+With standing questions configured, the inquiry also lists them as JSON and
+the response must carry `"answers":[{"id":"q-…","answer":"…"}]` with exactly one
+item per asked question: only `id` (copied exactly) and a nonempty `answer` of at
+most 8000 characters. Missing, duplicate, unknown or extra answers make the
+reply invalid; its raw text and the asked questions are retained. A reply to an
+inquiry without standing questions must not contain `answers`.
+
+New checkpoints use metadata version 4, or version 5 when the inquiry asked
+standing questions; a version-5 record stores the asked questions (`id`,
+`question`, `scope`). Version-1 through version-3 saved reports
 remain readable without rewriting their original raw responses. Version-2/3
 obstacles, issues and bottlenecks normalize into three labeled legacy items in
 the unified issues list, preserving every original statement (even `None known`)
@@ -485,6 +596,9 @@ establish workflow behavior, not live-model classification or semantic quality.
 Recall checks cover bounded enumeration/read, exact text reconstruction, legacy
 and invalid rounds, source provenance, branch/fork isolation, compaction/reload,
 model-facing guidance/tool declarations, argument validation, and continued
-checkpoint tool blocking.
+checkpoint tool blocking. Standing-question checks cover the file stores, trust,
+prompt composition, answer validation and history after removal; comment checks
+cover item selection, the editor, every close path, the allocated panel layout,
+branch-scoped single delivery and ordering relative to inquiries.
 `tests/fixtures/tui-provider.ts` is an explicitly loaded, network-free provider
 for manual PTY validation; it is not loaded by the extension.
