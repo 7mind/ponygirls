@@ -4,6 +4,9 @@ Reusable Pi terminal UI components. `ScopedSettingsPanel` and `ScopedSettingsVie
 render the structural controller port from `@ponygirls/pi-settings`; domain codecs,
 persistence, permissions and disclosure approval stay with each extension.
 
+Layout, wording, key-hint and command-line rules shared by all tools are in
+[CONVENTIONS.md](CONVENTIONS.md).
+
 ## Scoped settings interaction
 
 - Up/Down selects a field; Tab/Left/Right switches session, project or global scope.
