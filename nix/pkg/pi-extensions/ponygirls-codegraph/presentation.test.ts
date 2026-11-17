@@ -236,6 +236,19 @@ test("status pane: the title counts indexes, or names what is not ready", () => 
   assert.equal(open({ ...ONE, scopes: [] }, PLAIN_THEME, 40).lines(80)[0], `── Codegraph ${"─".repeat(67)}`);
 });
 
+test("status pane: a health record appended to a failure stays in the details, the pane names the failure", () => {
+  // The runtime keeps the CLI's status JSON on its own line of an "Index not ready" failure.
+  const health = JSON.stringify({ initialized: true, fileCount: 2860, nodesByKind: { class: 4175, method: 36770 } });
+  const failure = `Error: Index not ready at /home/u/work/failed\n${health}`;
+  const view = open({ ...ONE, scopes: [scope("/home/u/work/failed", { phase: "error", counts: null, isDefault: true,
+    lastCheck: { at: "2026-11-17T20:40:00.000Z", state: { phase: "error", detail: failure } }, lastFailure: { at: "2026-11-17T20:40:00.000Z", detail: failure } })] }, PLAIN_THEME, 30);
+  const facts = view.lines(120).join("\n");
+  assert.match(facts, /\nIndex not ready at \/home\/u\/work\/failed\nhealth record in details\n/);
+  assert.doesNotMatch(facts, /fileCount|nodesByKind/);
+  view.pane.handleInput("d");
+  assert.match(view.lines(120).join("\n"), /"fileCount":2860/, "the record is complete in the details");
+});
+
 test("status pane: the detail follows the selection and shows the complete failure, wrapped, in the error colour", () => {
   const view = open(MANY, PLAIN_THEME, 60);
   const detail = (width: number): string[] => {

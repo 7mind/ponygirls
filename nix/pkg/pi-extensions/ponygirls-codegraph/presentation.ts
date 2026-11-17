@@ -142,6 +142,22 @@ function failureText(detail: string): string {
   return detail.replace(ERROR_PREFIX, "").trimEnd();
 }
 
+const HEALTH_RECORD_NOTE = "health record in details";
+
+/** A line that is one complete JSON object: the CLI's health record the runtime appends to a failure. */
+function isHealthRecord(line: string): boolean {
+  if (!line.startsWith("{") || !line.endsWith("}")) return false;
+  try { JSON.parse(line); return true; }
+  catch { return false; }
+}
+
+/** A failure for the pane: its text, with a health record named instead of printed (the details show it whole). */
+function failureSummary(detail: string): { text: string; healthRecord: boolean } {
+  const lines = failureText(detail).split("\n");
+  const kept = lines.filter((line) => !isHealthRecord(line.trim()));
+  return { text: kept.join("\n").trimEnd(), healthRecord: kept.length < lines.length };
+}
+
 /** A path cut to `width` columns in its middle; the end, which names the checkout, keeps the larger share. */
 function shortenMiddle(text: string, width: number): string {
   const full = visibleWidth(text);
@@ -306,7 +322,9 @@ export class CodegraphStatusPane extends PanelLayout {
       if (scope.lastCheck === null || scope.lastCheck.state.phase !== "error") {
         lines.push(...this.wrap(`${label("last failure")} ${value(utcMinute(instant(scope.lastFailure.at)))}`, width));
       }
-      lines.push(...error(scope.lastFailure.detail));
+      const failure = failureSummary(scope.lastFailure.detail);
+      lines.push(...error(failure.text));
+      if (failure.healthRecord) lines.push(...this.wrap(label(HEALTH_RECORD_NOTE), width));
     }
     if (scope.size.ok && scope.size.value.partial) lines.push(...this.wrap(label(`size is partial: ${scope.size.value.detail}`), width));
     return lines;
