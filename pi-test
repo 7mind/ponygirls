@@ -53,16 +53,29 @@ for b in "${builtins[@]}"; do
   [[ " ${disabled[*]} " == *" $b "* ]] || args+=(-e "builtin:$b")
 done
 
-# Checkout extensions as pi.nix lists them: "${../pkg/pi-extensions/x}" or "${../pkg/pi-extensions}/x".
+# Checkout extensions as pi.nix lists them: "${piExtensions}/x".
+ext_root=$root/nix/pkg/pi-extensions
 mapfile -t rels < <(grep -v '^[[:space:]]*#' "$root/nix/hm/pi.nix" |
-  grep -o '"\${\.\./pkg/pi-extensions[^"]*"' |
-  sed -E 's|^"\$\{\.\./pkg/pi-extensions([^}]*)\}(.*)"$|\1\2|')
+  grep -o '"\${piExtensions}/[^"]*"' |
+  sed -E 's|^"\$\{piExtensions\}/(.*)"$|\1|')
 ((${#rels[@]} > 0)) || die "no extensions found in nix/hm/pi.nix"
 for rel in "${rels[@]}"; do
-  path="$root/nix/pkg/pi-extensions$rel"
+  path="$ext_root/$rel"
   [[ -e $path ]] || die "$path (listed in nix/hm/pi.nix) does not exist"
   args+=(-e "$path")
 done
+
+# The extensions import the compiled shared libraries (@ponygirls/pi-ui,
+# pi-settings, chronicle-api) through ./node_modules, which only the packaged
+# tree has. Build that tree from this checkout and link its node_modules beside
+# the checkout sources (git-ignored). Flake builds see tracked files only:
+# `git add` new library files first.
+ext_pkg=$(nix build "$root#ponygirls-pi-extensions" --no-link --print-out-paths) || die "cannot build ponygirls-pi-extensions"
+[[ -d $ext_pkg/node_modules/@ponygirls ]] || die "no shared libraries in $ext_pkg"
+if [[ -e $ext_root/node_modules && ! -L $ext_root/node_modules ]]; then
+  die "$ext_root/node_modules is not a pi-test link; remove it"
+fi
+ln -sfn "$ext_pkg/node_modules" "$ext_root/node_modules"
 
 # ponygirls-subagents workers import the SDK of the pi that runs them. The deployed
 # wrapper sets this once switched.
@@ -96,13 +109,25 @@ bwrap_args=(
   --dir /var --symlink /run /var/run
   --ro-bind /nix/store /nix/store
 )
-for path in /etc /bin /usr /run/current-system /run/wrappers /run/systemd/resolve /run/nscd; do
+# /lib* carry the dynamic loader of a non-NixOS host's /bin/sh: without them
+# every `#!/bin/sh` wrapper fails to spawn with ENOENT.
+for path in /etc /bin /sbin /lib /lib32 /lib64 /usr /run/current-system /run/wrappers /run/systemd/resolve /run/nscd; do
   [[ -e $path ]] && bwrap_args+=(--ro-bind "$path" "$path")
+done
+# Nix profiles on PATH are symlink chains through unbound state directories;
+# on a non-NixOS host they are where git and the other tools come from.
+for path in "$HOME/.nix-profile" /nix/var/nix/profiles/default; do
+  [[ -e $path ]] && bwrap_args+=(--ro-bind "$(realpath "$path")" "$path")
 done
 for path in "$HOME/.gitconfig" "$HOME/.config/git"; do
   [[ -e $path ]] && bwrap_args+=(--ro-bind "$path" "$path")
 done
 bwrap_args+=(--bind "$PWD" "$PWD" --bind "$agent_dir" "$agent_dir")
 [[ $root != "$PWD" ]] && bwrap_args+=(--bind "$root" "$root")
+# A linked worktree keeps its Git metadata in the main checkout's .git.
+for dir in "$PWD" "$root"; do
+  common=$(git -C "$dir" rev-parse --path-format=absolute --git-common-dir 2>/dev/null) || continue
+  [[ $common == "$dir"/* ]] || bwrap_args+=(--bind "$common" "$common")
+done
 
 exec bwrap "${bwrap_args[@]}" "$pi_pkg/bin/pi" "${args[@]}" "$@"
