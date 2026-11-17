@@ -1445,8 +1445,16 @@ export function installAccountUI({ document, window, fetch }) {
     window.scrollTo(0, scrollY);
     document.dispatchEvent(new window.CustomEvent('account:route', { detail: { section: null } }));
   }
+  // Every routing entry (hashchange, DOM observer, pageshow, invalidation) passes here, so the guard for
+  // shown-once values is enforced here: a different fragment is put back and held or asked about.
   function route() {
-    const name = parseAccountRoute(window.location.hash);
+    const target = window.location.hash;
+    if (area !== null && display !== null && display.outlet.isConnected && target !== area.hash() && (area.holding() || area.guarded())) {
+      window.history.replaceState(null, '', area.hash());
+      heldBack(target);
+      return;
+    }
+    const name = parseAccountRoute(target);
     const authMount = document.querySelector('[data-account-auth]');
     const outlet = document.querySelector('[data-account-outlet]');
     const owner = outlet === null ? null : outlet.dataset.accountUserId;
@@ -1473,12 +1481,6 @@ export function installAccountUI({ document, window, fetch }) {
     if (area.guarded()) { area.askLeave(() => navigate(target)); return true; }
     return false;
   }
-  function onHashChange() {
-    const target = window.location.hash;
-    if (area !== null && display !== null && target !== area.hash() && (area.holding() || area.guarded())) window.history.replaceState(null, '', area.hash());
-    if (heldBack(target)) return;
-    route();
-  }
   function onClick(event) {
     if (!(event.target instanceof window.Element)) return;
     // In-app links ask before they navigate, so that keeping the panel leaves no extra history entry.
@@ -1501,14 +1503,14 @@ export function installAccountUI({ document, window, fetch }) {
   const observer = new window.MutationObserver(() => route());
   observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-account-user-id'] });
   document.addEventListener('click', onClick); document.addEventListener('submit', onSubmit); document.addEventListener('account:invalidate', onInvalidate);
-  window.addEventListener('hashchange', onHashChange); window.addEventListener('focus', onFocus);
+  window.addEventListener('hashchange', route); window.addEventListener('focus', onFocus);
   window.addEventListener('pagehide', teardownArea); window.addEventListener('pageshow', route); window.addEventListener('beforeunload', onBeforeUnload);
   route();
   return {
     dispose() {
       observer.disconnect(); teardownArea(); if (auth !== null) auth.dispose();
       document.removeEventListener('click', onClick); document.removeEventListener('submit', onSubmit); document.removeEventListener('account:invalidate', onInvalidate);
-      window.removeEventListener('hashchange', onHashChange); window.removeEventListener('focus', onFocus);
+      window.removeEventListener('hashchange', route); window.removeEventListener('focus', onFocus);
       window.removeEventListener('pagehide', teardownArea); window.removeEventListener('pageshow', route); window.removeEventListener('beforeunload', onBeforeUnload);
       uncertainMints.clear();
     }

@@ -143,6 +143,24 @@ try {
     assert.equal(callsTo(calls, '/tokens').length, 1);
   });
 
+  await run('a fragment change together with a host DOM mutation cannot leave a pending secret behind', async ({ page, calls }) => {
+    await page.goto(`${server.origin}/?scenario=settings-tokens-held&steps=0#account/tokens`);
+    await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
+    await mint(page, 'laptop-cli');
+    await page.waitForFunction(() => window.__accountFake.calls.some(call => call.path === '/tokens'));
+    await page.evaluate(() => { location.hash = '#account/profile'; document.querySelector('[data-host-main]').append(document.createElement('span')); });
+    await page.getByText('A one-time secret or link is being created').first().waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#account/tokens');
+    assert.equal(await page.getByRole('heading', { name: 'Access tokens' }).isVisible(), true);
+    await page.evaluate(() => window.__accountFake.state.release());
+    await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'visible' });
+    await page.evaluate(() => { location.hash = '#account/profile'; document.querySelector('[data-host-main]').append(document.createElement('span')); });
+    await dialog(page, 'Hide the secret for good?').waitFor();
+    await button(page, 'Keep it visible').click();
+    assert.equal(await page.getByLabel('One-time token secret', { exact: true }).isVisible(), true);
+    assert.equal(callsTo(calls, '/tokens').length, 1);
+  });
+
   await run('uncertain creation warns in the form position and locks creation until the list is refreshed', async ({ page, calls, open }) => {
     await open('settings-tokens-uncertain');
     await page.locator('table[data-list="tokens"] tr[data-row-id]').first().waitFor();
