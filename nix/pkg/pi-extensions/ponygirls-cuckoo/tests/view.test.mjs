@@ -110,7 +110,7 @@ test('REPRO: 40×24 fullscreen shows detail (not zero-height body)', async () =>
   // Table must be visible
   assert.match(out, /req-8/);
   // Key hints always visible in footer
-  assert.match(out, /ctrl-u.d/, 'key hints must be visible in footer');
+  assert.match(out, /PgUp\/PgDn/, 'key hints must be visible in footer');
   // Settings after detail — reachable via End
   panel.handleInput('\x1b[F'); // End — scroll to bottom
   const outEnd = panel.render(40).join('\n');
@@ -330,6 +330,25 @@ test('detail scroll: ctrl-u/d and Home/End scroll detail independently of table'
   // End
   panel.handleInput('\x1b[F');
 
+  panel.handleInput('\x1b'); await tick(); view.dispose(f.ctx);
+});
+
+test('detail scroll: PgDn and PgUp, the advertised keys, scroll the detail', async () => {
+  const long = checkpoint('long-report', JSON.stringify({
+    objectives: Array.from({ length: 10 }, (_, i) => ({ objective: `Objective ${i + 1}`, progress: 'Progress '.repeat(20), issues: [], eta: 'Unknown' })),
+    rules: [],
+  }));
+  const f = fixture(theme); f.resize(30); const view = new CuckooView(() => {});
+  view.publish(f.ctx, [long], true, null);
+  f.badge().handleMouse(click); await tick();
+  const panel = f.views[0].component;
+  const initial = panel.render(80).join('\n');
+  assert.match(initial, /PgUp\/PgDn scroll detail/);
+  panel.handleInput('\x1b[6~');
+  const down = panel.render(80).join('\n');
+  assert.notEqual(down, initial, 'PgDn must move the detail');
+  panel.handleInput('\x1b[5~');
+  assert.equal(panel.render(80).join('\n'), initial, 'PgUp must return to the start');
   panel.handleInput('\x1b'); await tick(); view.dispose(f.ctx);
 });
 

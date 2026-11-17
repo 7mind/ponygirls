@@ -38,7 +38,7 @@ import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel } from 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, SizeValue, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { Input, matchesKey, parseKey, visibleWidth } from "@earendil-works/pi-tui";
-import { MARKER_WIDTH, fit, frameTitle, hintAt, type RenderedTitle, type Span } from "@ponygirls/pi-ui";
+import { KEY, MARKER_WIDTH, ctrlKey, fit, frameTitle, hintAt, type RenderedTitle, type Span } from "@ponygirls/pi-ui";
 
 import { effortRows, isThinkingLevel, thinkingApi, type EffortCompat, type EffortModel, type EffortRow, type ThinkingBudgets, type ThinkingLevelName } from "./ponygirls-model-picker-effort.ts";
 import {
@@ -89,7 +89,9 @@ const THINKING_SHORTCUT = "ctrl+shift+e";
 const CONTROLS_WIDGET_KEY = "model-picker-controls";
 /** Cycle the selected favourite's pinned effort through the model's native levels. */
 const EFFORT_CYCLE_SHORTCUT = "ctrl+e";
-const EFFORT_CYCLE_GLYPH = "⌃E";
+const EFFORT_CYCLE_GLYPH = ctrlKey("e");
+/** Columns of the page hint's key label that page up (`PgUp` of `PgUp/PgDn`). */
+const PAGE_UP_LABEL_WIDTH = KEY.page.indexOf("/");
 /** Keycap glyphs for the controls (⌃ ctrl, ⇧ shift). */
 const MODEL_SHORTCUT_GLYPH = "⌃⇧M";
 const THINKING_SHORTCUT_GLYPH = "⌃⇧E";
@@ -129,21 +131,21 @@ type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page" | "clos
 
 const MODEL_HINTS: readonly (readonly ActionHint<PickerAction>[])[] = [
 	[
-		{ key: "⏎", action: "select", command: "choose" },
-		{ key: "␣/right-click", action: "favourite", command: "favourite" },
+		{ key: KEY.enter, action: "select", command: "choose" },
+		{ key: KEY.space, action: "favourite", command: "favourite" },
 		{ key: EFFORT_CYCLE_GLYPH, action: "cycle effort", command: "cycle" },
 	],
 	[
-		{ key: "⇥", action: "switch tab", command: "switch" },
-		{ key: "⇞⇟", action: "page", command: "page" },
-		{ key: "⎋", action: "close", command: "close" },
+		{ key: KEY.tab, action: "switch tab", command: "switch" },
+		{ key: KEY.page, action: "page", command: "page" },
+		{ key: KEY.esc, action: "close", command: "close" },
 	],
 ];
 
 const EFFORT_HINTS: readonly (readonly ActionHint<PickerAction>[])[] = [
 	[
-		{ key: "⏎", action: "select", command: "choose" },
-		{ key: "⎋", action: "close", command: "close" },
+		{ key: KEY.enter, action: "select", command: "choose" },
+		{ key: KEY.esc, action: "close", command: "close" },
 	],
 ];
 
@@ -421,7 +423,7 @@ class ModelPicker implements BoxedBody {
 			if (!model) {
 				lines.push(
 					index === 0
-						? bodyLine(this.theme.fg("dim", this.tab === "favourites" ? "no favourites — ⇥ to All models, ␣ to mark" : "no match"), width)
+						? bodyLine(this.theme.fg("dim", this.tab === "favourites" ? `no favourites — ${KEY.tab} to All models, ${KEY.space} to mark` : "no match"), width)
 						: "",
 				);
 				continue;
@@ -455,8 +457,8 @@ class ModelPicker implements BoxedBody {
 		const hint = hitAt(this.hintHits, event.x, event.y);
 		if (hint) {
 			if (event.button !== "left") return { handled: true };
-			// "⇞⇟ page": the ⇞ column pages up, the rest of the hint pages down.
-			if (hint.action === "page") this.move(event.x === hint.start ? -this.visibleRows : this.visibleRows);
+			// "PgUp/PgDn page": the PgUp columns page up, the rest of the hint pages down.
+			if (hint.action === "page") this.move(event.x < hint.start + PAGE_UP_LABEL_WIDTH ? -this.visibleRows : this.visibleRows);
 			else this.activate(hint.action as PickerAction);
 			return { handled: true };
 		}

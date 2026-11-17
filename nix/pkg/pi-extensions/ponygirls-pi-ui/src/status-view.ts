@@ -1,5 +1,6 @@
 import { Key, matchesKey, ScrollView, Text, type TuiMouseEvent } from "@earendil-works/pi-tui";
 import { frameTitle, keyHints } from "./frame.ts";
+import { HINT } from "./keys.ts";
 import { PanelLayout, type PanelParts } from "./panel-layout.ts";
 import type { UiTheme } from "./theme.ts";
 
@@ -40,7 +41,7 @@ export class StatusView extends PanelLayout {
     return {
       header: [frameTitle(theme, width, { title }, "none").line],
       body: this.text.render(width),
-      footer: keyHints(theme, width, [{ key: "↑↓ PgUp PgDn", action: "scroll" }, { key: "esc/q", action: "close" }]).lines,
+      footer: keyHints(theme, width, [HINT.scroll, HINT.page, HINT.close]).lines,
     };
   }
 

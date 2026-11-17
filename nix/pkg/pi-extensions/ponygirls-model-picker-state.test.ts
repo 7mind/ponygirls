@@ -846,14 +846,14 @@ test("action hints keep the key-hint style and stay clickable after the indent",
 	const hints = actionHints(
 		TAGGED,
 		60,
-		[[{ key: "⏎", action: "select", command: "choose" }, { key: "⎋", action: "close", command: "close" }]],
+		[[{ key: "⏎", action: "select", command: "choose" }, { key: "esc", action: "close", command: "close" }]],
 		2,
 	);
-	assert.equal(plain(hints.lines[0]!), "  ⏎ select  ⎋ close");
+	assert.equal(plain(hints.lines[0]!), "  ⏎ select  esc close");
 	assert.ok(hints.lines[0]!.includes(`${fgCode("muted")}select`));
 	assert.deepEqual(hints.hits, [
 		{ line: 0, start: 2, end: 10, action: "choose" },
-		{ line: 0, start: 12, end: 19, action: "close" },
+		{ line: 0, start: 12, end: 21, action: "close" },
 	]);
 });
 

@@ -74,16 +74,16 @@ test("allocated fullscreen height preserves status hints and scrolls the complet
     { component: new Text("bottom badge\nPi status", 0, 0), shrink: 0 },
   ]);
   const frame = () => renderLayoutFrame(root, 48, 18, () => {}).lines;
-  assert.match(frame().join("\n"), /esc\/q close/, "actual allocation must keep the close hints visible");
+  assert.match(frame().join("\n"), /esc close/, "actual allocation must keep the close hints visible");
   view.handleInput("\u001b[F");
   assert.match(frame().join("\n"), /snapshot line 39/, "End reaches the real last row, not a pre-clipped body");
   assert.equal(frame().at(-1)!.trimEnd(), "Pi status");
   const grown = renderLayoutFrame(root, 80, 30, () => {}).lines.join("\n");
   assert.match(grown, /snapshot line 39/);
-  assert.match(grown, /esc\/q close/);
+  assert.match(grown, /esc close/);
   renderLayoutFrame(root, 48, 12, () => {});
   view.handleInput("\u001b[F");
   const shrunk = renderLayoutFrame(root, 48, 12, () => {}).lines.join("\n");
   assert.match(shrunk, /snapshot line 39/);
-  assert.match(shrunk, /esc\/q close/);
+  assert.match(shrunk, /esc close/);
 });

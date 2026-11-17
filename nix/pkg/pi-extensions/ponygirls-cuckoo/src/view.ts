@@ -1,6 +1,6 @@
 import type { ExtensionContext, SessionEntry } from '@earendil-works/pi-coding-agent';
 import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
-import { BORDER_ORDER, CustomViewToggle, fit, fitRight, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
+import { BORDER_ORDER, CustomViewToggle, HINT, KEY, fit, fitRight, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
 import type { Checkpoint } from './report.ts';
 import { checkpoints as collectCheckpoints, REPORT_TYPE } from './report.ts';
 import { checkpointDetail, reportContent, historyContent, terminalText } from './presentation.ts';
@@ -172,11 +172,10 @@ export class CuckooView {
 
           // Footer hints
           const footerHints = keyHints(theme, w, [
-            { key: '↑↓/j k', action: 'select' },
-            { key: 'ctrl-u/d', action: 'detail ↥↧' },
-            { key: 'Home End', action: 'detail ↥↧' },
+            HINT.select,
+            { key: KEY.page, action: 'scroll detail' },
             { key: 'i', action: 'inquire now' },
-            { key: 'esc/q', action: 'close' },
+            HINT.close,
           ]);
 
           // Empty state: no table chrome
@@ -257,14 +256,14 @@ export class CuckooView {
             if (total > 0) state.selectedIndex = clamp(state.selectedIndex - 1, 0, total - 1);
           } else if (matchesKey(data, Key.down) || data === 'j') {
             if (total > 0) state.selectedIndex = clamp(state.selectedIndex + 1, 0, total - 1);
-          } else if (matchesKey(data, Key.ctrl('u'))) {
+          } else if (matchesKey(data, Key.ctrl('u')) || matchesKey(data, Key.pageUp)) {
             const page = Math.max(1, Math.floor(Math.max(1, this.bodyScroll.viewportHeight) / 2));
             if (this.hasAllocatedHeight) { this.bodyScroll.scrollBy(-page); state.scrollOffset = this.bodyScroll.scrollTop; }
             else state.scrollOffset = Math.max(0, state.scrollOffset - page);
             this.invalidate();
             tui.requestRender();
             return;
-          } else if (matchesKey(data, Key.ctrl('d'))) {
+          } else if (matchesKey(data, Key.ctrl('d')) || matchesKey(data, Key.pageDown)) {
             const page = Math.max(1, Math.floor(Math.max(1, this.bodyScroll.viewportHeight) / 2));
             if (this.hasAllocatedHeight) { this.bodyScroll.scrollBy(page); state.scrollOffset = this.bodyScroll.scrollTop; }
             else state.scrollOffset = state.scrollOffset + page;
