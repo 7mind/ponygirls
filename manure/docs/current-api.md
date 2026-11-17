@@ -333,8 +333,7 @@ and a successful unauthenticated generated Version command **after** migration,
 reconcile and HTTP bind. Missing launcher/provider/opt-in fails, not skips.
 Shutdown waits for the real child before dropping its owned DB. Tests seed via
 public typed API only; browser TLS retains the controlled Host-preserving edge.
-Real TTL waits replace private clocks. See behavior-inventory.md for precise
-executed component scope and remaining full-target acceptance requirements.
+Real TTL waits replace private clocks.
 
 
 ### Retained client fixture verification update
@@ -364,8 +363,7 @@ whitespace/empty-as-unset rule; token/password direct values remain exact.
 CLI/MCP preflight all relevant pairs before resolving any other pair's file;
 CLI password flag/env combinations obey the same source-first rule. CLI returns
 exit2 without file/network effects. Existing one-source canonical file codecs
-and no-secret-diagnostics rules are unchanged. Focused fail-first evidence and
-the fresh153-method zero-skip regression receipt are in behavior-inventory.md.
+and no-secret-diagnostics rules are unchanged.
 
 
 ### Search embedding-space identity (sole current1.0.0)

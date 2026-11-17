@@ -47,12 +47,12 @@ class TargetHarnessSafetyTests(unittest.TestCase):
                 with self.subTest(control='NUL' if '\0' in value else 'LF'):
                     descriptor.write_text(json.dumps(dict(tools,MANURE_CHROMIUM_BIN=value)))
                     marker.unlink(missing_ok=True)
-                    result=subprocess.run([shutil.which('bash') or '/bin/bash',str(launcher),str(provider),str(wrapper),str(helper),'jvm','full'],env=env,capture_output=True,timeout=10)
+                    result=subprocess.run([shutil.which('bash') or '/bin/bash',str(launcher),str(provider),str(wrapper),str(helper),'jvm'],env=env,capture_output=True,timeout=10)
                     self.assertEqual((result.returncode,marker.exists()),(2,False),'invalid public tools path reached an owned fixture')
             # Positive controller: the SAME launcher must actually dispatch our
             # harmless owned wrapper for the unchanged valid five tool pins.
             descriptor.write_text(json.dumps(tools));marker.unlink(missing_ok=True)
-            result=subprocess.run([shutil.which('bash') or '/bin/bash',str(launcher),str(provider),str(wrapper),str(helper),'jvm','full'],env=env,capture_output=True,timeout=10)
+            result=subprocess.run([shutil.which('bash') or '/bin/bash',str(launcher),str(provider),str(wrapper),str(helper),'jvm'],env=env,capture_output=True,timeout=10)
             self.assertEqual((result.returncode,marker.exists()),(3,True))
 
     def test_browser_fixture_metadata_defaults_use_current_schema(self):

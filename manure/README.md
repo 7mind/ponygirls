@@ -523,17 +523,15 @@ form). No automatic staging outside the Nix build.
 
 ## Tests (what runs where — and what does not count)
 
-- Full suite from the repo root (no external network; server/client
-  tests still use loopback sockets, so “offline” means no outside
-  traffic, not no sockets):
-
-```bash
-MANURE_PLAYWRIGHT_CORE_PATH=/path/to/playwright-core \
-MANURE_CHROMIUM_BIN=/path/to/chromium \
-MANURE_MCP_SDK_PATH=/path/to/node_modules/@modelcontextprotocol/sdk \
-python3 -m unittest discover -s manure/tests -p "test_*.py"
-```
-
+- Full target suite (inside `nix develop .#chronicle`): `manure/scripts/test-target.sh
+  native /absolute/manure-server /absolute/build-source.sha256` or
+  `manure/scripts/test-target.sh jvm`; `nix build .#checks.x86_64-linux.manure-native`
+  runs the same `manure/scripts/target-suite.py` against the native ELF. The runner
+  discovers every `manure/tests/test_*.py` module and `*.test.mjs` suite and fails on
+  any failure, error, skip, expected failure, unexpected success or an empty run.
+  Test names after the mode (`test-target.sh jvm test_cli_process`) run a diagnostic
+  subset. Do not run `unittest discover` directly: the target tests need the owned
+  PostgreSQL provider and target executable that these runners supply.
 - Driver: absolute dir with `playwright-core`'s `package.json`;
   browser: `MANURE_CHROMIUM_BIN` else PATH/Nix; SDK:
   `MANURE_MCP_SDK_PATH` = the `@modelcontextprotocol/sdk` **package
@@ -548,7 +546,7 @@ directory** (resolved absolutely, first existing hit wins). Browser
   driver/browser/SDK/node/openssl or a skipped mandatory case is a
   failed acceptance, never a green run.
 - Additional workspace UX checks: run
-  `python3 -m unittest discover -s manure/tests -p test_browser_dashboard_ux.py`
+  `manure/scripts/test-target.sh jvm test_browser_dashboard_ux`
   with the same driver/browser environment. `MANURE_FIREFOX_BIN` explicitly
   selects Firefox instead of Chromium; `MANURE_UX_ARTIFACTS` optionally writes
   screenshots to a scratch directory. A Firefox UX run does not replace the

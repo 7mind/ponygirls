@@ -29,17 +29,6 @@ let
   # manifest with the native artifact's compiled-input manifest.
   manureCompiledInputs = [ "manure/generated/scala" "manure/migration/schema.sql" "manure/backend/src/main"
     "manure/server/src/main" "manure/server/native-image" ];
-  # Files named by the invariantGroups of manure/tests/current-test-inventory.json
-  # outside the directories above; target-suite.py fails when one is missing.
-  manureInventoryWitnesses = [ "manure/CONTRACT.md" "manure/docs/current-api.md"
-    "manure/backend/src/test/scala/manure/AcquisitionFailureSuite.scala" "manure/backend/src/test/scala/manure/ArtifactsContract.scala"
-    "manure/backend/src/test/scala/manure/CatalogueContract.scala" "manure/backend/src/test/scala/manure/DomainSuite.scala"
-    "manure/backend/src/test/scala/manure/HttpSuite.scala" "manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala"
-    "manure/backend/src/test/scala/manure/RootMigrationSuite.scala" "manure/backend/src/test/scala/manure/RuntimeSuite.scala"
-    "manure/backend/src/test/scala/manure/SecretBoundarySuite.scala" "manure/backend/src/test/scala/manure/WideAudienceAuditSuite.scala"
-    "manure/server/src/test/scala/manure/storage/FilesystemBehavior.scala"
-    "shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/AuthorizedCandidateTest.scala"
-    "shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala" ];
   # Web assets the JVM HTTP suites serve from MANURE_SOURCE_ROOT.
   manureServedAssets = [ "manure/web/dashboard/index.html" "manure/web/dashboard/favicon.svg" "manure/web/dashboard/current"
     "manure/web/unlock" "manure/web/viewer/index.html" "manure/web/viewer/styles.css" ];
@@ -75,7 +64,7 @@ in {
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
   haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
   haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" ]);
-  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ manureCompiledInputs ++ manureInventoryWitnesses ++ [
+  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ manureCompiledInputs ++ [
     "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/migration" "manure/generated/typescript"
     "manure/pyproject.toml" "shared/account-web" ]);
   manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureServedAssets ++ [
