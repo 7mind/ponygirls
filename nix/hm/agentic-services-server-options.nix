@@ -49,6 +49,10 @@ let
       login = str "operator" "Browser login for the preserved operator account. Password defaults to this service's existing operator token; no cross-service password unification is implied.";
       enabled = mkOption { type = types.bool; default = true; description = "Whether the preserved operator account may authenticate."; };
       passwordHashFile = runtimePath "Explicit canonical human operator PBKDF2 hash file. Null derives credentials/${service}-operator.pbkdf2 idempotently from the existing ${service}-operator.token without rotating any token. Use the same explicit runtime hash file in each service when intentionally unifying passwords.";
+      admin = mkOption { type = types.bool; default = true; description = "Whether the preserved operator account administers imperative accounts. Inert while accounts.enable is false."; };
+    };
+    accounts = accounts.accountsOptions { serviceName = serviceNames.${service}; host = cfg.host.hostname; } // {
+      keyFile = runtimePath "Absolute runtime accounts key file. Null provisions credentials/${service}-accounts.key once (32 random bytes, base64url, mode 0600) and retains it.";
     };
     users = mkOption {
       type = types.attrsOf (types.submodule {
@@ -71,6 +75,7 @@ let
       description = "Additional explicit declarative accounts. agent and operator are reserved for the preserved service credentials. No real-user identity mapping is inferred.";
     };
   };
+  serviceNames = { haystack = "Haystack"; manure = "Manure"; };
   backend = defaultPort: {
     listenAddress = str "127.0.0.1" "Loopback backend bind address; the proxy owns network exposure.";
     port = port defaultPort;

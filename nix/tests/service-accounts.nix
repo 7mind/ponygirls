@@ -18,8 +18,28 @@ let
       systemd.tmpfiles.rules = lib.mkOption { type = lib.types.listOf lib.types.str; default = [ ]; };
       users.users = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
       users.groups = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+      hardware = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
+      virtualisation = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
     };
   };
+  chronicleSystem = extra: (lib.evalModules {
+    specialArgs = { inherit pkgs; };
+    modules = [
+      (import ../nixos/chronicle.nix { mkChroniclePackage = factory; })
+      stubs
+      { smind.services.chronicle = {
+          enable = true;
+          package = pkgs.hello;
+          publicUrl = "https://chronicle.example.test";
+          users.alice = { login = "alice"; passwordHashFile = "/run/secrets/alice-pbkdf2"; };
+          database = { passwordFile = "/run/secrets/chronicle-database"; jdbcUrl = "jdbc:postgresql://127.0.0.1:15434/chronicle"; };
+          annotation = { requestPolicy = "strict-json-schema"; endpoint = "http://127.0.0.1:8000/v1/chat/completions"; model = "annotation"; revision = "v1"; credentialFile = "/run/secrets/annotation-key"; };
+          embedding = { endpoint = "http://127.0.0.1:8001/v1/embeddings"; model = "embedding"; revision = "v1"; credentialFile = "/run/secrets/embedding-key"; dimensions = 768; queryPrefix = ""; documentPrefix = ""; };
+        };
+      }
+      extra
+    ];
+  }).config;
   users = {
     alice = {
       type = "human";
@@ -86,6 +106,45 @@ let
   };
   legacyHm = hm { };
   user = id: list: lib.findFirst (u: u.id == id) (throw "missing account ${id}") list;
+  # Imperative accounts (docs/drafts/20261117-2040-self-signup-admin-enrollment-design.md §6, AM1).
+  accountServices = services ++ [ "chronicle" ];
+  serviceSystem = name: if name == "chronicle" then chronicleSystem else system name;
+  migrationUnit = { haystack = "haystack-setup"; manure = "manure-migrate"; chronicle = "chronicle-migrate"; };
+  keyFile = "/run/secrets/accounts-key";
+  rejects = needle: config: lib.any (a: !a.assertion && lib.hasInfix needle a.message) config.assertions;
+  accountsWith = name: settings: { smind.services.${name} = { accounts = settings; users.alice.admin = true; }; };
+  # Every account setting except the master switch; none may reach the generated configuration.
+  accountsOff = name: accountsWith name {
+    inherit keyFile;
+    signup = { requireApproval = false; maxUsers = 7; };
+    enrollment.ttlSeconds = 600;
+    issuer = "Inert";
+    reservedUsernames = [ "root" ];
+  };
+  accountsOn = name: lib.recursiveUpdate (accountsWith name { enable = true; inherit keyFile; signup.enable = true; enrollment.enable = true; })
+    (lib.optionalAttrs (name == "haystack") { smind.services.haystack.publicUrl = "https://memory.example.test"; });
+  onWith = name: change: serviceSystem name (lib.recursiveUpdate (accountsOn name) change);
+  hmAccounts = extra: hm (lib.recursiveUpdate { smind.hm.services.agentic = lib.genAttrs services (_: { accounts = { enable = true; signup.enable = true; }; }); } extra);
+  hmOn = hmAccounts { };
+  hmRendered = config: name: if name == "haystack" then config.lib.ponygirls.agenticServices.haystackAuth.value else config.lib.ponygirls.agenticServices.manureConfig.value;
+  hmSetup = config: config.systemd.user.services.ivm-services-setup.Service.ExecStart.text;
+  chronicleHm = settings: (lib.evalModules {
+    specialArgs = { inherit pkgs; };
+    modules = [
+      (import ../hm/chronicle-server.nix { mkChroniclePackage = factory; })
+      ./user-services-stub.nix
+      { smind.hm.services.chronicle = {
+          enable = true;
+          package = pkgs.hello;
+          stateDirectory = "/fixture/chronicle";
+          database.passwordFile = "/run/secrets/chronicle-database";
+          settings = { listenHost = "127.0.0.1"; listenPort = 47330; maxBodyBytes = 8388608; } // settings;
+        };
+      }
+    ];
+  }).config;
+  chronicleHmOn = chronicleHm { accounts.enabled = true; };
+  chronicleHmSetup = config: config.systemd.user.services.chronicle-setup.Service.ExecStart;
   checks = {
     nixos-positive = lib.all (name: valid (system name { })) services;
     nixos-password-only = lib.all (name: (system name { }).smind.services.${name}.users.password-only.tokens == { }) services;
@@ -148,14 +207,56 @@ let
     hm-store-password = lib.all (name: !valid (hm { smind.hm.services.agentic.${name}.operator.passwordHashFile = "/nix/store/hash"; })) services;
     hm-check-before-haystack-migrate = lib.hasInfix "check-config" hmExtra.systemd.user.services.ivm-haystack-migrate.Service.ExecStartPre;
     hm-check-before-manure-migrate = lib.hasInfix "check-config" hmExtra.systemd.user.services.ivm-manure-migrate.Service.ExecStartPre;
+    accounts-off-valid = lib.all (name: valid (serviceSystem name (accountsOff name))) accountServices;
+    # Manure runs in path content mode here: signup is permitted there (owner decision Q84).
+    accounts-on-valid = lib.all (name: valid (serviceSystem name (accountsOn name))) accountServices;
+    accounts-key-credential = lib.all (name:
+      let units = (serviceSystem name (accountsOn name)).systemd.services;
+      in builtins.elem "accounts-key:${keyFile}" units.${name}.serviceConfig.LoadCredential
+        && units.${migrationUnit.${name}}.serviceConfig.LoadCredential == units.${name}.serviceConfig.LoadCredential) accountServices;
+    accounts-creation-requires-master = lib.all (name: lib.all (flag:
+      rejects "never derived" (serviceSystem name (accountsWith name { inherit keyFile; ${flag}.enable = true; }))) [ "signup" "enrollment" ]) accountServices;
+    accounts-key-file-required = lib.all (name: lib.all (path:
+      rejects "accounts.keyFile" (onWith name { smind.services.${name}.accounts.keyFile = path; })) [ null "relative" "/nix/store/key" ]) accountServices;
+    accounts-declarative-admin-required = lib.all (name:
+      rejects "enabled declarative admin" (onWith name { smind.services.${name}.users.alice.admin = false; })
+      && rejects "enabled declarative admin" (onWith name { smind.services.${name}.users.alice.enabled = false; })) accountServices;
+    accounts-admin-human-browser = lib.all (name: lib.all (id:
+      rejects "admin = true" (system name { smind.services.${name}.users.${id}.admin = true; })) [ "agent" "retired" ]) services;
+    accounts-public-origin-required = rejects "public origin" (onWith "haystack" { smind.services.haystack.publicUrl = null; });
+    hm-accounts-off = lib.all (name: !(hmRendered legacyHm name ? accounts) && lib.all (u: !(u ? admin)) (hmRendered legacyHm name).users
+      && !(lib.hasInfix "accounts-key" (hmSetup legacyHm))) services;
+    hm-accounts-provisioned-key = valid hmOn && lib.all (name:
+      (hmRendered hmOn name).accounts.${if name == "haystack" then "keyFile" else "key_file"} == "/home/alice/.local/state/ivm-services/credentials/${name}-accounts.key"
+      && lib.hasInfix "--${name}-accounts-key" (hmSetup hmOn)
+      && (user "operator" (hmRendered hmOn name).users).admin && !(user "agent" (hmRendered hmOn name).users).admin) services;
+    hm-accounts-explicit-key = let c = hmAccounts { smind.hm.services.agentic.haystack.accounts.keyFile = keyFile; };
+      in valid c && c.lib.ponygirls.agenticServices.haystackAuth.value.accounts.keyFile == keyFile && !(lib.hasInfix "--haystack-accounts-key" (hmSetup c))
+        && rejects "accounts.keyFile" (hmAccounts { smind.hm.services.agentic.haystack.accounts.keyFile = "/nix/store/key"; });
+    hm-accounts-rules = rejects "enabled declarative admin" (hmAccounts { smind.hm.services.agentic.manure.operator.admin = false; })
+      && rejects "never derived" (hm { smind.hm.services.agentic.haystack.accounts.enrollment.enable = true; })
+      && rejects "admin = true" (hm { smind.hm.services.agentic.haystack.users.bot = { type = "agent"; admin = true; tokens.default.tokenHashFile = "/run/secrets/bot-sha256"; }; });
+    hm-chronicle-accounts-key = chronicleHmOn.lib.ponygirls.chronicleServer.serverConfig.value.accounts == { enabled = true; keyFile = "/fixture/chronicle/credentials/accounts.key"; }
+      && lib.hasInfix "accounts.key" (chronicleHmSetup chronicleHmOn).text
+      && !((chronicleHm { }).lib.ponygirls.chronicleServer.serverConfig.value ? accounts)
+      && !(lib.hasInfix "accounts.key" (chronicleHmSetup (chronicleHm { })).text)
+      && (chronicleHm { accounts = { enabled = true; inherit keyFile; }; }).lib.ponygirls.chronicleServer.serverConfig.value.accounts.keyFile == keyFile
+      && !(lib.hasInfix "accounts.key" (chronicleHmSetup (chronicleHm { accounts = { enabled = true; inherit keyFile; }; })).text);
   };
   checked = lib.mapAttrsToList (name: value: if value then name else throw "service account contract failed: ${name}") checks;
-  haystackConfig = lib.last (lib.splitString " " h.systemd.services.haystack.serviceConfig.ExecStart);
+  lastWord = command: lib.last (lib.splitString " " command);
+  haystackConfig = lastWord h.systemd.services.haystack.serviceConfig.ExecStart;
+  generatedConfig = name: config: if name == "manure" then config.systemd.services.manure.serviceConfig.ExecStart
+    else lastWord config.systemd.services.${name}.serviceConfig.ExecStart;
 in
 assert builtins.deepSeq checked true;
 pkgs.runCommandLocal "service-accounts-declarations" {
   nativeBuildInputs = [ pkgs.python3 ];
   inherit haystackConfig;
+  configsOff = builtins.toJSON (lib.genAttrs accountServices (name: generatedConfig name (serviceSystem name (accountsOff name))));
+  configsOn = builtins.toJSON (lib.genAttrs accountServices (name: generatedConfig name (serviceSystem name (accountsOn name))));
+  masterOff = ./fixtures/service-accounts-master-off.json;
+  chronicleSetup = chronicleHmSetup chronicleHmOn;
   manureLauncher = m.systemd.services.manure.serviceConfig.ExecStart;
   receipt = builtins.toJSON { checks = checked; cases = builtins.length checked + 1; failures = 0; errors = 0; skips = 0; };
 } ''
@@ -191,5 +292,45 @@ pkgs.runCommandLocal "service-accounts-declarations" {
   assert 'passwordHashFile' not in users['agent'] and 'login' not in users['agent']
   assert all('passwordCredential' not in u for u in users.values())
   PY
+  python3 - <<'PY'
+  import json, os, pathlib, re, subprocess
+  # Generated configuration: Haystack/Chronicle JSON files; Manure's template behind its launcher.
+  def generated(service, path):
+      if service == 'manure':
+          path = re.search(r"TEMPLATE=(\S+)", pathlib.Path(path).read_text()).group(1)
+      return json.loads(re.sub(r"/nix/store/[a-z0-9]{32}-[^/\"]*", "@STORE@", pathlib.Path(path).read_text()))
+  # Master switch off: equal to the pre-accounts golden (store paths normalized;
+  # the serializers are deterministic, so equal values are equal bytes).
+  golden = json.loads(pathlib.Path(os.environ['masterOff']).read_text())
+  for service, path in json.loads(os.environ['configsOff']).items():
+      actual = generated(service, path)
+      assert actual == golden[service], f"{service}: accounts master off differs from the golden:\n{json.dumps(actual, sort_keys=True)}"
+  on = {service: generated(service, path) for service, path in json.loads(os.environ['configsOn']).items()}
+  def camel(key_file, issuer):
+      return {'enabled': True, 'keyFile': key_file, 'signup': {'enabled': True, 'requireApproval': True, 'maxUsers': 100},
+              'enrollment': {'enabled': True, 'ttlSeconds': 86400}, 'issuer': issuer, 'reservedUsernames': []}
+  assert on['haystack']['auth']['accounts'] == camel('$CREDENTIALS_DIRECTORY/accounts-key', 'Haystack (memory.example.test)')
+  assert on['chronicle']['accounts'] == camel('/run/credentials/chronicle.service/accounts-key', 'Chronicle (chronicle.example.test)')
+  assert on['manure']['accounts'] == {'enabled': True, 'key_file': '/run/credentials/manure.service/accounts-key',
+                                      'signup': {'enabled': True, 'require_approval': True, 'max_users': 100},
+                                      'enrollment': {'enabled': True, 'ttl_s': 86400},
+                                      'issuer': 'Manure (artifacts.example.test)', 'reserved_usernames': []}
+  for users in (on['haystack']['auth']['users'], on['manure']['users'], on['chronicle']['users']):
+      assert {u['id']: u['admin'] for u in users if u['id'] != 'alice'} == {u['id']: False for u in users if u['id'] != 'alice'}
+      assert [u['admin'] for u in users if u['id'] == 'alice'] == [True]
+  launcher = json.loads(os.environ['configsOn'])['manure']
+  subprocess.run([launcher], check=True, env={**os.environ, 'CAPTURE_CONFIG': os.environ['TMPDIR'] + '/captured-on.json'})
+  resolved = json.loads(pathlib.Path(os.environ['TMPDIR'], 'captured-on.json').read_text())
+  assert resolved['accounts']['key_file'] == os.environ['CREDENTIALS_DIRECTORY'] + '/accounts-key'
+  PY
+  # Chronicle (Home Manager) provisions its accounts key once, privately, and retains it.
+  substitute "$chronicleSetup" chronicle-setup --replace-fail /fixture "$TMPDIR/fixture"
+  bash chronicle-setup
+  key="$TMPDIR/fixture/chronicle/credentials/accounts.key"
+  test "$(stat -c %a "$key")" = 600
+  grep -Eqx '[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]' "$key"
+  first="$(stat -c %i "$key"):$(cat "$key")"
+  bash chronicle-setup
+  test "$(stat -c %i "$key"):$(cat "$key")" = "$first"
   printf '%s\n' "$receipt" > "$out/receipt.json"
 ''

@@ -6,6 +6,8 @@ let
   staticTokenName = id: "static-token-${builtins.hashString "sha256" id}";
   maximumBodyBytes = 512 * 1024 * 1024;
   passwordName = id: "user-password-${builtins.hashString "sha256" id}";
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
+  accountsKeyName = "accounts-key";
   endpointOptions = {
     endpoint = lib.mkOption { type = lib.types.str; description = "Full OpenAI-compatible operation URL: /v1/chat/completions for annotation, /v1/embeddings for embedding."; };
     model = lib.mkOption { type = lib.types.str; description = "Served model name."; };
@@ -32,7 +34,7 @@ let
       inherit id;
       inherit (user) login enabled;
       passwordHashFile = "${credentialDir}/${passwordName id}";
-    }) cfg.users;
+    } // accounts.renderAdmin cfg.accounts user) cfg.users;
     staticTokens = map (token: {
       inherit (token) id userId name scopes;
       tokenFile = "${credentialDir}/${staticTokenName token.id}";
@@ -43,7 +45,7 @@ let
     embedding = endpointJson "embedding" cfg.embedding // {
       inherit (cfg.embedding) dimensions sendDimensions queryPrefix documentPrefix;
     };
-  };
+  } // accounts.renderAccounts accounts.accountsJsonKeys.camel cfg.accounts "${credentialDir}/${accountsKeyName}";
   serverConfig = pkgs.writeText "chronicle-server.json" (builtins.toJSON serverSettings);
   migrationConfig = pkgs.writeText "chronicle-migrate.json" (builtins.replaceStrings [ credentialDir ] [ "/run/credentials/chronicle-migrate.service" ] (builtins.toJSON serverSettings));
   runtimeFiles = [ cfg.database.passwordFile cfg.annotation.credentialFile cfg.embedding.credentialFile ]
@@ -70,10 +72,12 @@ in
           login = lib.mkOption { type = lib.types.str; description = "Unique login; attribute name is the stable user ID."; };
           passwordHashFile = lib.mkOption { type = lib.types.str; description = "Runtime PBKDF2 password hash file produced by chronicle-server password-hash."; };
           enabled = lib.mkOption { type = lib.types.bool; default = true; };
+          inherit (accounts.browserOptions) admin;
         };
       });
       default = { };
     };
+    accounts = accounts.accountsOptions { serviceName = "Chronicle"; host = if cfg.publicUrl == null then null else builtins.head (lib.splitString ":" host); };
     staticTokens = lib.mkOption {
       default = [ ];
       description = "Immutable config-managed bearer mappings. Token values are loaded only from private runtime files; metadata is visible to the owner.";
@@ -143,7 +147,13 @@ in
         { assertion = !cfg.database.ssdTuning; message = "Chronicle: database.ssdTuning has been retired; configure measured ponygirls.servicePostgres.randomPageCost, effectiveIoConcurrency and maintenanceIoConcurrency explicitly. Chronicle no longer owns cluster tuning."; }
         { assertion = !cfg.database.manageLocal; message = "Chronicle: implicit manageLocal has been retired. Migrate logically into the explicit shared servicePostgres provider and supply its connection fields/readinessUnit."; }
         { assertion = cfg.database.manageLocal || cfg.database.jdbcUrl != ""; message = "Chronicle: external database requires jdbcUrl and a preinstalled vector extension."; }
-      ];
+      ] ++ accounts.accountsAssertions {
+        context = "Chronicle";
+        settings = cfg.accounts;
+        users = cfg.users;
+        keyFile = cfg.accounts.keyFile;
+        origin = cfg.publicUrl;
+      };
       users.groups.chronicle = { };
       users.users.chronicle = { isSystemUser = true; group = "chronicle"; };
       systemd.services.chronicle-migrate = {
@@ -172,7 +182,8 @@ in
             "annotation-key:${cfg.annotation.credentialFile}"
             "embedding-key:${cfg.embedding.credentialFile}"
           ] ++ lib.mapAttrsToList (id: u: "${passwordName id}:${u.passwordHashFile}") cfg.users
-            ++ map (t: "${staticTokenName t.id}:${t.tokenFile}") cfg.staticTokens;
+            ++ map (t: "${staticTokenName t.id}:${t.tokenFile}") cfg.staticTokens
+            ++ lib.optional cfg.accounts.enable "${accountsKeyName}:${cfg.accounts.keyFile}";
           # IOApp TERM runs shutdown hooks, then the native runtime exits 128 + SIGTERM.
           SuccessExitStatus = [ 143 ];
           Restart = "on-failure";
@@ -199,6 +210,7 @@ in
           proxyPass = "http://${if cfg.listenAddress == "::1" then "[::1]" else cfg.listenAddress}:${toString cfg.port}";
           proxyWebsockets = true;
           extraConfig = ''
+            proxy_set_header X-Forwarded-For $remote_addr;
             proxy_buffering off;
             proxy_read_timeout 90s;
             client_max_body_size ${toString cfg.limits.maxBodyBytes};

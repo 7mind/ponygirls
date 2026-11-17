@@ -25,6 +25,12 @@ let
   crawl4ai = cfg.crawl4ai.package;
   pg = pkgs.postgresql_18;
   json = pkgs.formats.json { };
+  accounts = import ../lib/service-account-options.nix { inherit lib; };
+  # Null keyFile: setup provisions the key once under the credentials directory.
+  accountsKeyFile = service: if cfg.${service}.accounts.keyFile == null
+    then "${credentials}/${service}-accounts.key"
+    else cfg.${service}.accounts.keyFile;
+  provisionAccountsKey = service: stores.${service}.enable && cfg.${service}.accounts.enable && cfg.${service}.accounts.keyFile == null;
   serviceUsers = lib.genAttrs [ "haystack" "manure" ] (service: {
     agent = {
       type = "agent";
@@ -32,12 +38,13 @@ let
       enabled = true;
       login = null;
       passwordHashFile = null;
+      admin = false;
       tokens.default.tokenHashFile = "${credentials}/${service}-agent.sha256";
     };
     operator = {
       type = "human";
       displayName = "";
-      inherit (cfg.${service}.operator) login enabled;
+      inherit (cfg.${service}.operator) login enabled admin;
       passwordHashFile = if cfg.${service}.operator.passwordHashFile == null
         then "${credentials}/${service}-operator.pbkdf2"
         else cfg.${service}.operator.passwordHashFile;
@@ -55,8 +62,8 @@ let
     displayName = if user.displayName == "" then userId else user.displayName;
   } // lib.optionalAttrs (user.login != null) {
     inherit (user) login passwordHashFile;
-  }) serviceUsers.${service};
-  haystackAuth = json.generate "agentic-services-haystack-auth.json" {
+  } // accounts.renderAdmin cfg.${service}.accounts user) serviceUsers.${service};
+  haystackAuth = json.generate "agentic-services-haystack-auth.json" ({
     inherit (cfg.haystack) activityProjectId;
     users = renderUsers "haystack";
     cookieSecure = !privateHttp;
@@ -75,7 +82,7 @@ let
       windowMs = 60000;
       max = 600;
     };
-  };
+  } // accounts.renderAccounts accounts.accountsJsonKeys.camel cfg.haystack.accounts (accountsKeyFile "haystack"));
   haystackConfig = json.generate "agentic-services-haystack.json" {
     listenHost = cfg.haystack.listenAddress;
     listenPort = cfg.haystack.port;
@@ -108,7 +115,7 @@ let
   # Omit the default for unchanged configs and older package compatibility.
   } // lib.optionalAttrs (cfg.manure.rootBindingMode != "strict") {
     root_binding.mode = cfg.manure.rootBindingMode;
-  });
+  } // accounts.renderAccounts accounts.accountsJsonKeys.snake cfg.manure.accounts (accountsKeyFile "manure"));
   setup = pkgs.writeShellScript "agentic-services-setup" ''
     set -euo pipefail
     umask 077
@@ -128,7 +135,9 @@ let
       ${lib.optionalString stores.haystack.enable "--haystack-agent-file ${lib.escapeShellArg cfg.haystack.agentTokenFile}"} \
       ${lib.optionalString (stores.haystack.enable && cfg.haystack.operator.passwordHashFile != null) "--haystack-operator-password-hash-file ${lib.escapeShellArg cfg.haystack.operator.passwordHashFile}"} \
       ${lib.optionalString stores.manure.enable "--manure-agent-file ${lib.escapeShellArg cfg.manure.agentTokenFile}"} \
-      ${lib.optionalString (stores.manure.enable && cfg.manure.operator.passwordHashFile != null) "--manure-operator-password-hash-file ${lib.escapeShellArg cfg.manure.operator.passwordHashFile}"}
+      ${lib.optionalString (stores.manure.enable && cfg.manure.operator.passwordHashFile != null) "--manure-operator-password-hash-file ${lib.escapeShellArg cfg.manure.operator.passwordHashFile}"} \
+      ${lib.optionalString (provisionAccountsKey "haystack") "--haystack-accounts-key"} \
+      ${lib.optionalString (provisionAccountsKey "manure") "--manure-accounts-key"}
     ${lib.optionalString hasPublishToken ''
       # Generate the nginx basic-auth file for static publishing from the runtime token.
       if [ -r ${lib.escapeShellArg cfg.static.publishTokenFile} ]; then
@@ -194,6 +203,7 @@ let
   proxyHeaders = ''
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
@@ -313,7 +323,7 @@ in
   imports = [
     ./service-postgres.nix (import ./agentic-services-server-options.nix { inherit inputs; }) ];
   config = lib.mkIf cfg.enable {
-    assertions = import ./agentic-services-server-assertions.nix { inherit cfg lib pkgs serviceUsers; };
+    assertions = import ./agentic-services-server-assertions.nix { inherit cfg lib pkgs serviceUsers accountsKeyFile; };
     # Retain the actual renderer records for no-build configuration checks.
     lib.ponygirls.agenticServices = {
       proxyConfig = nginxConfig;

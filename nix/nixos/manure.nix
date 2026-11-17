@@ -44,6 +44,7 @@ let
   sanitizeId = accounts.sanitizeId;
   credName = userId: tokenId: "manure-hash-${sanitizeId userId}-${sanitizeId tokenId}";
   passwordCredName = userId: "manure-password-${sanitizeId userId}";
+  accountsKeyCredName = "accounts-key";
   allCredNames = lib.flatten (lib.mapAttrsToList
     (userId: user: lib.mapAttrsToList (tokenId: _: credName userId tokenId) user.tokens
       ++ lib.optional (user.passwordHashFile != null) (passwordCredName userId))
@@ -112,7 +113,7 @@ let
           id = tokenId;
           credential = credName userId tokenId;
         }) user.tokens;
-      })
+      } // accounts.renderAdmin cfg.accounts user)
       cfg.users;
     storage_quota_bytes = cfg.storageQuotaBytes;
     chunk_bytes = cfg.chunkBytes;
@@ -135,7 +136,8 @@ let
   # Omit the default for unchanged configs and older package compatibility.
   } // lib.optionalAttrs (cfg.rootBindingMode != "strict") {
     root_binding.mode = cfg.rootBindingMode;
-  } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; };
+  } // lib.optionalAttrs (cfg.contentSuffix != null) { content_suffix = cfg.contentSuffix; }
+    // accounts.renderAccounts accounts.accountsJsonKeys.snake cfg.accounts "/run/credentials/manure.service/${accountsKeyCredName}";
 
   templateJson = pkgs.writeText "manure-config.template.json" (builtins.toJSON serverTemplate);
 
@@ -191,6 +193,8 @@ let
     config["database"]["passwordFile"] = os.path.join(cred_dir,"database-password")
     if config["embedding"] is not None:
         config["embedding"]["credentialFile"] = os.path.join(cred_dir,"embedding-key")
+    if "accounts" in config:
+        config["accounts"]["key_file"] = os.path.join(cred_dir, "${accountsKeyCredName}")
     with open(out, "w", encoding="utf-8") as fh:
         os.chmod(out, 0o600)
         json.dump(config, fh)
@@ -267,6 +271,7 @@ let
     extraConfig = ''
       proxy_set_header Host $manure_host;
       proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_set_header X-Forwarded-For $remote_addr;
       # [R6-error] Intentionally disable the unsafe error channel for
       # this location (native format leaks query even at alert on
       # critical faults; verified via /dev/full repro). Safe channels
@@ -378,6 +383,7 @@ in
       default = { };
       description = "Declarative users, optional human browser credentials and immutable configured API token digests. Password-only humans may have no configured tokens; agent users remain token-only.";
     };
+    accounts = accounts.accountsOptions { serviceName = "Manure"; host = if cfg.apiOrigin == null then null else apiHost; };
     storageQuotaBytes = lib.mkOption { type = lib.types.ints.positive; default = 21474836480; description = "Atomic reservation cap (20 GiB)."; };
     chunkBytes = lib.mkOption { type = lib.types.ints.positive; default = 1048576; description = "Server-dictated chunk size (256 KiB–4 MiB)."; };
     maxFileBytes = lib.mkOption { type = lib.types.ints.positive; default = 536870912; description = "Per-file cap (512 MiB)."; };
@@ -436,7 +442,13 @@ in
   };
 
   config = lib.mkIf cfg.enable {
-    assertions = accounts.assertions "smind.services.manure" cfg.users ++ [
+    assertions = accounts.assertions "smind.services.manure" cfg.users ++ accounts.accountsAssertions {
+      context = "smind.services.manure";
+      settings = cfg.accounts;
+      users = cfg.users;
+      keyFile = cfg.accounts.keyFile;
+      origin = cfg.apiOrigin;
+    } ++ [
       {
         assertion = cfg.rootBindingMode == "strict" || cfg.migrationReceiptDirectory == null;
         message = "smind.services.manure: migrationReceiptDirectory requires strict rootBindingMode.";
@@ -568,7 +580,8 @@ in
             (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}")
             user.tokens
             ++ lib.optional (user.passwordHashFile != null) "${passwordCredName userId}:${user.passwordHashFile}")
-          cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ] ++ lib.optional (cfg.embedding != null) "embedding-key:${cfg.embedding.credentialFile}";
+          cfg.users) ++ [ "database-password:${cfg.database.passwordFile}" ] ++ lib.optional (cfg.embedding != null) "embedding-key:${cfg.embedding.credentialFile}"
+          ++ lib.optional cfg.accounts.enable "${accountsKeyCredName}:${cfg.accounts.keyFile}";
         TimeoutStopSec = 60;
         UMask = "0077";
       };

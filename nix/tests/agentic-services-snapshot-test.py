@@ -17,6 +17,8 @@ expected_proxy = normalize(baseline["proxy"])
 # all other proxy identity/body/timeouts/Host bindings remain characterized.
 assert expected_proxy.count("root @STORE@;") == 1
 expected_proxy = expected_proxy.replace("root @STORE@;", "error_log /dev/null;\nroot @STORE@;", 1)
+# Accounts design §6.6: the client address reaches the backends.
+expected_proxy = expected_proxy.replace("proxy_set_header X-Forwarded-Proto $scheme;", "proxy_set_header X-Forwarded-Proto $scheme;\nproxy_set_header X-Forwarded-For $remote_addr;")
 expected_proxy = expected_proxy.replace('{"error":{"code":"unavailable","message":"service unavailable"}}', json.dumps({"code":"unavailable","currentRevision":None,"message":"service unavailable","spans":[]},separators=(',',':'),sort_keys=True))
 assert normalize(current["proxy"]) == expected_proxy, "unintended proxy behavior changed"
 assert normalize(current["crawl"]) == normalize(baseline["crawl"]), "legacy crawler behavior changed"

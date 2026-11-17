@@ -12,6 +12,7 @@ let
   # the store; systemd loads the digest files listed here).
   credName = userId: tokenId: "haystack-hash-${userId}-${tokenId}";
   passwordCredName = userId: "haystack-password-${accounts.sanitizeId userId}";
+  accountsKeyCredName = "accounts-key";
   allCredNames = lib.flatten (lib.mapAttrsToList (userId: user:
     lib.mapAttrsToList (tokenId: _: credName userId tokenId) user.tokens
     ++ lib.optional (user.passwordHashFile != null) (passwordCredName userId)) cfg.users);
@@ -31,18 +32,19 @@ let
       } // lib.optionalAttrs (user.login != null) {
         login = user.login;
         passwordHashFile = "$CREDENTIALS_DIRECTORY/${passwordCredName userId}";
-      })
+      } // accounts.renderAdmin cfg.accounts user)
       cfg.users;
     cookieSecure = true;
     allowedHosts = lib.unique ([ "127.0.0.1" "localhost" ] ++ lib.optional (cfg.publicUrl != null) cfg.publicUrlHost);
     allowedOrigins = lib.optional (cfg.publicUrl != null) cfg.publicUrl;
     rateLimit = { windowMs = 60000; max = 600; };
-  };
+  } // accounts.renderAccounts accounts.accountsJsonKeys.camel cfg.accounts "$CREDENTIALS_DIRECTORY/${accountsKeyCredName}";
   credentials = lib.flatten (lib.mapAttrsToList (userId: user: lib.mapAttrsToList
     (tokenId: token: "${credName userId tokenId}:${token.tokenHashFile}") user.tokens
     ++ lib.optional (user.passwordHashFile != null) "${passwordCredName userId}:${user.passwordHashFile}") cfg.users)
     ++ [ "database-password:${cfg.database.passwordFile}" ]
-    ++ lib.optional (cfg.retrieval.embedding != null) "embedding-key:${cfg.retrieval.embedding.credentialFile}";
+    ++ lib.optional (cfg.retrieval.embedding != null) "embedding-key:${cfg.retrieval.embedding.credentialFile}"
+    ++ lib.optional cfg.accounts.enable "${accountsKeyCredName}:${cfg.accounts.keyFile}";
   serverConfig = pkgs.writeText "haystack-server.json" (builtins.toJSON {
     listenHost = cfg.listenAddress;
     listenPort = cfg.port;
@@ -132,6 +134,7 @@ in
       default = { };
       description = "Declarative users, optional human browser credentials and immutable configured API token digests. Password-only humans may have no configured tokens; agent users remain token-only.";
     };
+    accounts = accounts.accountsOptions { serviceName = "Haystack"; host = cfg.publicUrlHost; };
     clients = lib.mkOption {
       type = lib.types.attrsOf (lib.types.submodule {
         options = {
@@ -191,7 +194,13 @@ in
       );
     }
     (lib.mkIf cfg.enable {
-      assertions = accounts.assertions "smind.services.haystack" cfg.users ++ [
+      assertions = accounts.assertions "smind.services.haystack" cfg.users ++ accounts.accountsAssertions {
+        context = "smind.services.haystack";
+        settings = cfg.accounts;
+        users = cfg.users;
+        keyFile = cfg.accounts.keyFile;
+        origin = cfg.publicUrl;
+      } ++ [
         { assertion = lib.all (p: lib.hasPrefix "/" p && !(lib.hasPrefix "/nix/store/" p)) ([ cfg.database.passwordFile ] ++ lib.concatMap (u: map (t: t.tokenHashFile) (builtins.attrValues u.tokens)) (builtins.attrValues cfg.users) ++ lib.optional (cfg.retrieval.embedding != null) cfg.retrieval.embedding.credentialFile); message = "smind.services.haystack: credentials must be absolute runtime paths, never source/store files."; }
 
         {

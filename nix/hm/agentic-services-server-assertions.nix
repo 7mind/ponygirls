@@ -3,6 +3,7 @@
   lib,
   pkgs,
   serviceUsers,
+  accountsKeyFile,
 }:
 let
   accounts = import ../lib/service-account-options.nix { inherit lib; };
@@ -61,4 +62,10 @@ in
   accounts.assertions "smind.hm.services.agentic.${name}" serviceUsers.${name} ++ [
     (assertThat (!(cfg.${name}.users ? agent) && !(cfg.${name}.users ? operator)) "${name}.users must not replace the reserved agent/operator identities; use ${name}.operator for explicit operator browser credentials.")
     (assertThat (lib.all (user: lib.all (token: runtimePath token.tokenHashFile) (builtins.attrValues user.tokens)) (builtins.attrValues serviceUsers.${name})) "${name} configured token digests must be absolute runtime file references outside the Nix store.")
-  ]) [ "haystack" "manure" ]
+  ] ++ accounts.accountsAssertions {
+    context = "smind.hm.services.agentic.${name}";
+    settings = cfg.${name}.accounts;
+    users = serviceUsers.${name};
+    keyFile = accountsKeyFile name;
+    origin = cfg.urls.${name};
+  }) [ "haystack" "manure" ]

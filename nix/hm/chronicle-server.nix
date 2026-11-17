@@ -7,16 +7,24 @@ let
   credentials = "${state}/credentials";
   unit = suffix: "${cfg.unitPrefix}${suffix}.service";
   restartOn = units: map (name: config.xdg.configFile."systemd/user/${name}".source) (builtins.filter (name: builtins.hasAttr "systemd/user/${name}" config.xdg.configFile) units);
+  accountsKeyFile = "${credentials}/accounts.key";
+  # Master switch on without an explicit key file: setup provisions one.
+  provisionAccountsKey = builtins.isAttrs (cfg.settings.accounts or null)
+    && (cfg.settings.accounts.enabled or false) == true
+    && !(cfg.settings.accounts ? keyFile);
   settings = cfg.settings // {
     jdbcUrl = "jdbc:postgresql://127.0.0.1:${toString cfg.database.port}/${cfg.database.name}";
     databaseUser = cfg.database.user;
     databasePasswordFile = cfg.database.passwordFile;
     databaseLimits = cfg.database.limits;
+  } // lib.optionalAttrs provisionAccountsKey {
+    accounts = cfg.settings.accounts // { keyFile = accountsKeyFile; };
   };
   serverConfig = json.generate "chronicle-server.json" settings;
   proxyHeaders = ''
     proxy_set_header Host $http_host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection $connection_upgrade;
@@ -65,6 +73,21 @@ let
         printf '%s\n' "$fingerprint" > ${lib.escapeShellArg "${credentials}/${name}.sha256"}
       fi
     '') cfg.passwords)}
+    ${lib.optionalString provisionAccountsKey ''
+      # Created once (32 random bytes, unpadded base64url), then only verified.
+      key=${lib.escapeShellArg accountsKeyFile}
+      if [ ! -e "$key" ] && [ ! -L "$key" ]; then
+        ${pkgs.coreutils}/bin/head -c 32 /dev/urandom | ${pkgs.coreutils}/bin/basenc --base64url -w 0 | ${pkgs.coreutils}/bin/tr -d = > "$key.tmp"
+        printf '\n' >> "$key.tmp"
+        ${pkgs.coreutils}/bin/ln -T "$key.tmp" "$key"
+        ${pkgs.coreutils}/bin/rm -f "$key.tmp"
+      fi
+      if [ -L "$key" ] || [ ! -f "$key" ] || [ ! -O "$key" ] || [[ ! "$(<"$key")" =~ ^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$ ]]; then
+        echo "chronicle setup: invalid accounts key file: $key" >&2
+        exit 1
+      fi
+      ${pkgs.coreutils}/bin/chmod 600 "$key"
+    ''}
   '';
   service = description: dependencies: command: {
     Unit = { Description = description; After = dependencies; Requires = dependencies; X-Restart-Triggers = restartOn dependencies; };

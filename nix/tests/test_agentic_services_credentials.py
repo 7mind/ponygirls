@@ -307,6 +307,36 @@ class CredentialsTest(unittest.TestCase):
             credentials.provision(directory, None, None, None, None)
             self.assertEqual(sorted(path.name for path in directory.iterdir()), ["redis-password", "searx-secret"])
 
+    def test_accounts_key_is_created_once_privately_and_retained(self):
+        with tempfile.TemporaryDirectory() as root:
+            root = Path(root)
+            directory = root / "credentials"
+            key = directory / "manure-accounts.key"
+            command = [sys.executable, str(MODULE_PATH), str(directory), "--manure-accounts-key"]
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            first = (key.read_bytes(), key.stat().st_ino)
+            result = subprocess.run(command, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((key.read_bytes(), key.stat().st_ino), first)
+            self.assertEqual(key.stat().st_mode & 0o777, 0o600)
+            encoded = key.read_text().removesuffix("\n")
+            self.assertEqual(len(base64.urlsafe_b64decode(encoded + "=")), 32)
+            self.assertEqual(base64.urlsafe_b64encode(base64.urlsafe_b64decode(encoded + "=")).decode(), encoded + "=")
+            self.assertFalse((directory / "haystack-accounts.key").exists())
+
+    def test_malformed_accounts_key_is_rejected_without_replacement(self):
+        with tempfile.TemporaryDirectory() as root:
+            directory = Path(root) / "credentials"
+            directory.mkdir(mode=0o700)
+            key = directory / "haystack-accounts.key"
+            key.write_text("A" * 42 + "B\n")
+            result = subprocess.run([sys.executable, str(MODULE_PATH), str(directory), "--haystack-accounts-key"],
+                                    capture_output=True, text=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("invalid credential encoding: haystack-accounts.key", result.stderr)
+            self.assertEqual(key.read_text(), "A" * 42 + "B\n")
+
     def test_directory_symlink_is_rejected(self):
         with tempfile.TemporaryDirectory() as root:
             target = Path(root) / "target"
