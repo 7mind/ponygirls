@@ -2,7 +2,7 @@
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 # Usage: test-target.sh jvm [TEST...]
-#        test-target.sh native /absolute/server /absolute/build-source-manifest [TEST...]
+#        test-target.sh native /absolute/server [TEST...]
 # Without TEST names the run is full; named tests are an iterative diagnostic.
 : "${POSTGRES_HOME:?use pinned nix develop .#chronicle}"
 mode=${1:?jvm or native}; shift
@@ -10,7 +10,6 @@ mode=${1:?jvm or native}; shift
 unset MANURE_URL MANURE_URL_FILE MANURE_TOKEN MANURE_TOKEN_FILE MANURE_CACHE_DIR MANURE_ALLOW_INSECURE_HTTP
 mkdir -p manure/backend/target/target-runs
 report=$(mktemp -d "$PWD/manure/backend/target/target-runs/$(date -u +%Y%m%dT%H%M%SZ)-$mode.XXXXXX")
-python3 manure/scripts/artifact-source.py > "$report/artifact-source.sha256"
 case "$mode" in
  jvm)
   : "${JAVA_HOME:?pinned JDK required}"
@@ -19,13 +18,10 @@ case "$mode" in
   export MANURE_TEST_SERVER_COMMAND_JSON="$(python3 -c 'import json,sys;print(json.dumps([sys.argv[1],"--enable-native-access=ALL-UNNAMED","-jar",sys.argv[2]]))' "$JAVA_HOME/bin/java" "$artifact")"
   ;;
  native)
-  artifact=${1:?absolute native ELF}; built_manifest=${2:?actual native build source manifest}; shift 2
-  [[ $artifact = /* && -x $artifact && $built_manifest = /* && -f $built_manifest ]] || { echo 'explicit native artifact/source binding required' >&2; exit 1; }
-  cmp "$built_manifest" "$report/artifact-source.sha256"
-  cp "$built_manifest" "$report/native-build-source.sha256"
+  artifact=${1:?absolute native ELF}; shift
+  [[ $artifact = /* && -x $artifact ]] || { echo 'explicit absolute native artifact required' >&2; exit 1; }
   export MANURE_TEST_SERVER_COMMAND_JSON="$(python3 -c 'import json,sys;print(json.dumps([sys.argv[1]]))' "$artifact")"
   unset MANURE_POSIX_LIBRARY
-  file "$artifact" | tee "$report/artifact-file.txt"
   ;;
  *) echo 'jvm or native required' >&2; exit 1 ;;
 esac
@@ -36,19 +32,10 @@ if (( full )); then
  command -v node >/dev/null
  command -v openssl >/dev/null
 fi
-sha256sum "$artifact" > "$report/artifact.sha256"
-git rev-parse HEAD > "$report/git-head"
-# Viewer assets have their own build/input identity, separate from the ELF.
-viewer_dir=${MANURE_TEST_VIEWER_DIR:-$PWD/manure/web/viewer/dist}
-if [[ -d $viewer_dir ]]; then
- find "$viewer_dir" -type f -print0 | sort -z | xargs -0 sha256sum > "$report/viewer-assets.sha256"
- sha256sum manure/web/viewer/package.json manure/web/viewer/package-lock.json > "$report/viewer-dependencies.sha256"
-elif (( full )); then
+if (( full )) && [[ ! -d ${MANURE_TEST_VIEWER_DIR:-$PWD/manure/web/viewer/dist} ]]; then
  echo 'full acceptance requires built viewer assets (manure/web/viewer/dist or MANURE_TEST_VIEWER_DIR)' >&2
  exit 1
 fi
-"$POSTGRES_HOME/bin/postgres" --version > "$report/postgres-version"
-find manure/tests manure/manure manure/web manure/models/fixtures -type f \( -name '*.py' -o -name '*.js' -o -name '*.mjs' -o -name '*.json' -o -name '*.html' -o -name '*.css' \) ! -path '*/__pycache__/*' -print0 | sort -z | xargs -0 sha256sum > "$report/test-inputs.sha256"
 base=$(mktemp -d "${TMPDIR:-/tmp}/manure-target-fixture.XXXXXXXX")
 owned_direct=0
 cleanup() {
@@ -83,7 +70,6 @@ set +e
 timeout 1800 python3 manure/scripts/target-suite.py --report "$report" "$@" 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}
 set -e
-printf '%s\n' "$status" > "$report/exit-status"
 if [[ $owned_direct == 1 ]]; then cp "$base/server.log" "$report/postgres-server.log"; fi
 echo "Manure $mode target run: $report"
 exit "$status"

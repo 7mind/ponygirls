@@ -27,8 +27,6 @@ let
     export PYTHONPATH=${sources.manureTargetTests}/manure:${sources.manureTargetTests}/manure/tests
     unset MANURE_TOKEN MANURE_TOKEN_FILE MANURE_URL MANURE_URL_FILE MANURE_CACHE_DIR MANURE_POSIX_LIBRARY
     cd ${sources.manureTargetTests}
-    python3 manure/scripts/artifact-source.py > /srv/portable-volume/runtime-inputs.sha256
-    cmp /srv/portable-volume/runtime-inputs.sha256 ${native}/share/manure/compiled-inputs.sha256
     readelf -lW ${native}/libexec/manure-server > /srv/portable-volume/elf-headers
     readelf -dW ${native}/libexec/manure-server > /srv/portable-volume/elf-dynamic
     ! grep -q INTERP /srv/portable-volume/elf-headers

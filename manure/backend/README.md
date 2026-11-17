@@ -186,11 +186,9 @@ state, migrate a binding or deploy/restart a live service.
 
 ## Actual target acceptance runner
 
-`manure/scripts/test-target.sh jvm full` builds the current JVM artifact;
-`manure/scripts/test-target.sh native /absolute/ELF /absolute/build-source.sha256 full`
-requires byte-identical compiled-input manifests from
-`python3 manure/scripts/artifact-source.py` on the actual artifact source snapshot.
-Full runs require pinned Node/Chromium, `MANURE_PLAYWRIGHT_CORE_PATH`,
+`manure/scripts/test-target.sh jvm` builds the current JVM artifact and runs the
+full target suite; `manure/scripts/test-target.sh native /absolute/ELF` runs it
+against a native executable. Full runs require pinned Node/Chromium, `MANURE_PLAYWRIGHT_CORE_PATH`,
 `MANURE_CHROMIUM_BIN`, `MANURE_MCP_SDK_PATH`, `POSTGRES_HOME`, and a paired executable
 `MANURE_TEST_PROVISION_COMMAND`. The helper accepts `[generatedDatabaseName]` and
 returns exactly `{jdbcUrl,user,passwordFile}`; `[--drop,generatedDatabaseName]`

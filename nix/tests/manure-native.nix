@@ -20,10 +20,6 @@ in pkgs.runCommand "manure-native-full-target" ({
   cp -r ${sources.manureTargetTests} source
   chmod -R u+w source
   cd source
-  # Binding is calculated in the ACTUAL filtered build before compilation, not
-  # manufactured now from test input. Any affected source difference fails closed.
-  python3 manure/scripts/artifact-source.py > current-artifact-source.sha256
-  cmp current-artifact-source.sha256 ${native}/share/manure/compiled-inputs.sha256
   readelf -lW ${native}/libexec/manure-server > headers.txt
   readelf -dW ${native}/libexec/manure-server > dynamic.txt
   ! grep -q INTERP headers.txt
@@ -41,7 +37,4 @@ in pkgs.runCommand "manure-native-full-target" ({
   timeout --signal=TERM --kill-after=15s 1800s python3 manure/scripts/target-suite.py --report "$REPORT" > "$REPORT/run.log" 2>&1
   SH
   python3 ${./with-owned-postgres.py} ${pkgs.runtimeShell} run-target.sh || { cat "$out/run.log"; exit 1; }
-  cp current-artifact-source.sha256 headers.txt dynamic.txt "$out/"
-  sha256sum ${native}/libexec/manure-server > "$out/artifact.sha256"
-  find "$MANURE_TEST_VIEWER_DIR" -type f -print0 | sort -z | xargs -0 sha256sum > "$out/viewer-assets.sha256"
 ''

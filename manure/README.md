@@ -522,7 +522,7 @@ form). No automatic staging outside the Nix build.
 ## Tests (what runs where — and what does not count)
 
 - Full target suite (inside `nix develop .#chronicle`): `manure/scripts/test-target.sh
-  native /absolute/manure-server /absolute/build-source.sha256` or
+  native /absolute/manure-server` or
   `manure/scripts/test-target.sh jvm`; `nix build .#checks.x86_64-linux.manure-native`
   runs the same `manure/scripts/target-suite.py` against the native ELF. The runner
   discovers every `manure/tests/test_*.py` module and `*.test.mjs` suite and fails on

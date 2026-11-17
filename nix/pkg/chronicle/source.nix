@@ -25,10 +25,6 @@ let
     "shared/retrieval-core/src/main" "shared/retrieval-postgres/src/main" ];
   manure = [ "manure/server/src" "manure/server/native-image" ];
   manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
-  # Inputs of manure/scripts/artifact-source.py: the target suite compares that
-  # manifest with the native artifact's compiled-input manifest.
-  manureCompiledInputs = [ "manure/generated/scala" "manure/migration/schema.sql" "manure/backend/src/main"
-    "manure/server/src/main" "manure/server/native-image" ];
   # Web assets the JVM HTTP suites serve from MANURE_SOURCE_ROOT.
   manureServedAssets = [ "manure/web/dashboard/index.html" "manure/web/dashboard/favicon.svg" "manure/web/dashboard/current"
     "manure/web/unlock" "manure/web/viewer/index.html" "manure/web/viewer/styles.css" ];
@@ -61,11 +57,11 @@ in {
   ritesServer = backendSource "rites-native-source" (common ++ shared ++ [ "rites/generated/scala" "rites/models" "rites/server/src/main" "rites/migrations" ]);
   ritesTests = backendSource "rites-tests-source" (common ++ shared ++ [ "rites/generated/scala" "rites/server/src" "rites/migrations" "rites/models" "rites/tests" "rites/scripts" "rites/config.example.json" ]);
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
-  manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
+  manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
   haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
   haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" ]);
-  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ manureCompiledInputs ++ [
-    "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/migration" "manure/generated/typescript"
+  manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [
+    "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/generated/typescript"
     "manure/pyproject.toml" "shared/account-web" ]);
   manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureServedAssets ++ [
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);
@@ -86,7 +82,7 @@ in {
   backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ sharedTests ++ ontologyRuntime ++ ontologyTests ++ [
     "haystack/generated/scala" "haystack/server/src" "haystack/migrations"
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migrations"
-    "manure/migration/schema.sql" "manure/scripts/artifact-source.py" "manure/server/native-image"
+    "manure/migration/schema.sql" "manure/server/native-image"
     "rites/generated/scala" "rites/server/src" "rites/migrations" "rites/models" "rites/config.example.json"
   ]);
   protocol = source "chronicle-protocol-source" [ "package.json" "generated/typescript" "models" "server/src/test/fixtures" "scripts/codec-fixtures.mjs" "web/package.json" "web/package-lock.json" ];

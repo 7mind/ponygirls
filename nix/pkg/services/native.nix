@@ -24,7 +24,6 @@ in stdenv.mkDerivation {
     ''}
     # Exact filtered input bytes BEFORE compilation creates target/hosted files.
     find . -type f -print0 | sort -z | xargs -0 sha256sum > ../compiled-inputs.sha256
-    ${lib.optionalString (service == "manure") "python3 manure/scripts/artifact-source.py > ../compiled-runtime-inputs.sha256"}
     ${environment.setup}
     read -r -a sbtJavaOpts <<< "$SBT_JAVA_OPTS"
     java "''${sbtJavaOpts[@]}" -jar ${environment.tools.launcher} ${project}/assembly${lib.optionalString (service == "manure") "\n    python3 ${./verify-manure-assembly.py} ${jar} ../assembly-inputs.json"}
@@ -57,7 +56,7 @@ in stdenv.mkDerivation {
   installPhase = ''
     install -Dm755 ${service}-server "$out/libexec/${service}-server"
     install -Dm644 ../compiled-inputs.sha256 "$out/share/${service}/compiled-inputs-full.sha256"
-    install -Dm644 ../compiled-${if service == "manure" then "runtime-" else ""}inputs.sha256 "$out/share/${service}/compiled-inputs.sha256"${lib.optionalString (service == "manure") "\n    install -Dm644 ../assembly-inputs.json \"$out/share/manure/assembly-inputs.json\""}
+    install -Dm644 ../compiled-inputs.sha256 "$out/share/${service}/compiled-inputs.sha256"${lib.optionalString (service == "manure") "\n    install -Dm644 ../assembly-inputs.json \"$out/share/manure/assembly-inputs.json\""}
     printf '%s\n' '${sources."${service}Server"}' > "$out/share/${service}/runtime-source"
     printf '%s\n' '${environment.tools.graal}' > "$out/share/${service}/toolchain"
   '';
