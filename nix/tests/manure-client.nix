@@ -257,17 +257,6 @@ let
             assert rejected.returncode == 2 and rejected.stdout == "" and "--help" in rejected.stderr
             assert "private-parser-canary" not in rejected.stderr and "\x1b" not in rejected.stderr
             assert raw not in rejected.stderr
-        # A missing or unknown command is reported as a command with the
-        # accepted names, never under the parser's internal destination.
-        for args in ([], ["private-parser-canary"]):
-            rejected = subprocess.run([cli, "--color", "never"] + args,
-                capture_output=True, text=True, env=child_env, cwd=work, timeout=60)
-            assert rejected.returncode == 2 and rejected.stdout == "", (args, rejected.returncode)
-            message = rejected.stderr.strip().splitlines()[-1]
-            assert "command" in message and "cmd" not in message, message
-            assert "list, search, info, upload, fetch, delete, rotate-password, whoami" in message, message
-            assert message.endswith("Run manure --help for usage."), message
-            assert "private-parser-canary" not in rejected.stderr
         for resume in ([], ["--resume", "a" * 32]):
             rejected = subprocess.run([cli, "--json", "--color", "always", "upload", big,
                 "--access", "private-access-canary\x1b", *resume], capture_output=True, text=True,

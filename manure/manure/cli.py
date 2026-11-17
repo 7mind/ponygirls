@@ -84,17 +84,10 @@ class _ArgumentParser(argparse.ArgumentParser):
         if message.startswith(required):
             missing = message[len(required):].split(', ')
             if all(name in names for name in missing):
-                # The command is reported as such, not under its parser destination.
-                commands = [names[name] for name in missing
-                            if isinstance(names[name], argparse._SubParsersAction)]
-                if len(commands) == 1 and len(missing) == 1:
-                    return f'a command is required: {", ".join(commands[0].choices)}'
                 return message
         if message.startswith('argument '):
             name, separator, detail = message[len('argument '):].partition(': ')
             if separator and name in names:
-                if isinstance(names[name], argparse._SubParsersAction) and detail.startswith('invalid choice:'):
-                    return f'unknown command; choose from {", ".join(names[name].choices)}'
                 if detail.startswith('invalid int value:'):
                     return f'argument {name}: expected an integer'
                 if detail.startswith('invalid choice:'):
