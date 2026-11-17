@@ -15,7 +15,7 @@ function fixture() {
   const sent = []; const activeTools = new Set();
   const pi = { registerTool(tool) { if (tool.defaultActive !== false) activeTools.add(tool.name); }, getActiveTools: () => [...activeTools], setActiveTools(names) { activeTools.clear(); for (const name of names) activeTools.add(name); }, sendMessage: (...args) => sent.push(args), on: (name, fn) => handlers.set(name, fn), registerCommand: (name, command) => commands.set(name, command), registerShortcut: (key, value) => shortcuts.set(key, value), appendEntry: (type, data) => manager.appendCustomEntry(type, data) };
   const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, isIdle: () => true, mode: 'rpc', model: { provider: 'fixture', id: 'fixture' }, getContextUsage: () => tokens === null ? { tokens: null, contextWindow: 200000, percent: null } : { tokens, contextWindow: 200000, percent: tokens / 2000 }, ui: { notify: (...args) => notifications.push(args), setWidget: (...args) => widgets.push(args) } };
-  registerCuckoo(pi, preferences, inertNetworkServices()); handlers.get('session_start')({}, ctx);
+  registerCuckoo(pi, preferences, { path: 'memory:questions', read: () => [], write() { assert.fail('standing questions write not expected'); } }, inertNetworkServices()); handlers.get('session_start')({}, ctx);
   function boundary(message = assistant('ordinary work'), overrides = {}) {
     const messageEntryId = manager.appendMessage(message);
     const event = { message, messageEntryId, outcome: 'completed', entries: [], continue: false, context: { pendingMessages: [] }, ...overrides };

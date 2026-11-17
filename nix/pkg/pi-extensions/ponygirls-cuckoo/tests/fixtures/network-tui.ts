@@ -4,6 +4,7 @@ import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { getAgentDir } from '@earendil-works/pi-coding-agent';
 import { registerCuckoo } from '../../index.ts';
 import { FilePreferenceStore } from '../../src/preferences.ts';
+import { FileQuestionStore, QUESTIONS_FILE } from '../../src/questions.ts';
 import { nativeNetworkServices, type EncoderProfile } from '../../src/network-services.ts';
 import { NativeMemoryPort, nativeMemoryRuntime } from '../../src/memory-runtime.ts';
 import { appendMemory, makeTask, makeSnapshot, listSources } from '../../src/memory-core.ts';
@@ -22,7 +23,7 @@ export default async function (pi: ExtensionAPI): Promise<void> {
   const base = `http://127.0.0.1:${address.port}`;
   const agentDir = getAgentDir(), native = nativeNetworkServices(agentDir);
   const profile: EncoderProfile = Object.freeze({ id: 'owned-ui-encoder', label: 'Owned encoder for UI selection', url: `${base}/embeddings`, model: 'owned-ui-embedding', version: '1', dimensions: 2, normalization: 'unit', credentialEnv: 'FIXTURE_ONLY' });
-  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), {
+  registerCuckoo(pi, new FilePreferenceStore(join(agentDir, 'cuckoo.json')), new FileQuestionStore(join(agentDir, QUESTIONS_FILE)), {
     ...native, embeddingTransportPolicy: 'owned-loopback-http', encoderProfiles: { path: 'injected:owned-ui', read: () => [profile] },
     credential: name => { if (name !== 'FIXTURE_ONLY') throw new Error('Unexpected fixture credential'); return 'synthetic-fixture-only'; },
     fetch(input, init) {

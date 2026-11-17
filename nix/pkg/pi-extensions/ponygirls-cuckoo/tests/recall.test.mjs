@@ -13,7 +13,7 @@ function fixture() {
   const pi = { registerTool: tool => { tools.set(tool.name, tool); if (tool.defaultActive !== false) activeTools.add(tool.name); }, getActiveTools: () => [...activeTools], setActiveTools(names) { activeTools.clear(); for (const name of names) activeTools.add(name); }, on: (name, fn) => handlers.set(name, fn), registerCommand() {}, registerShortcut() {},
     sendMessage() { assert.fail('recall must not request inference'); }, appendEntry() { assert.fail('recall must not append entries'); } };
   const ctx = { cwd: '/fixture', isProjectTrusted: () => false, sessionManager: manager, ui: { notify() {}, setWidget() {} } };
-  registerCuckoo(pi, preferences, inertNetworkServices());
+  registerCuckoo(pi, preferences, { path: 'memory:questions', read: () => [], write() { assert.fail('standing questions write not expected'); } }, inertNetworkServices());
   handlers.get('session_start')({}, ctx);
   const call = async params => {
     const tool = tools.get('cuckoo_recall'); assert.ok(tool, 'cuckoo_recall must be registered');
@@ -80,7 +80,7 @@ test('list defaults to current branch and session scope explicitly labels other 
   assert.equal(all.rounds[1].requestId, 'other-round'); assert.equal(all.rounds[1].objectiveCount, 1); assert.equal(all.rounds[1].ruleCount, 1);
   assert.equal(all.rounds[1].timestamp, f.manager.getEntry(other).timestamp);
   await assert.rejects(f.call({ action: 'read', entryId: other }), /not found.*scope/i);
-  assert.deepEqual((await readAll(f, other, 'session')).report, JSON.parse(raw));
+  assert.deepEqual((await readAll(f, other, 'session')).report, { ...JSON.parse(raw), answers: null });
   assert.deepEqual(f.manager.getEntries(), before); assert.equal(f.manager.getLeafId(), leaf);
 });
 

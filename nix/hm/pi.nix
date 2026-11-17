@@ -58,6 +58,11 @@ let
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
   piClaudeCode = pkgs.callPackage ../pkg/pi-claude-code/package.nix { pi-coding-agent = piBase; };
+  piClaudeCodeSubagents = pkgs.callPackage ../pkg/pi-claude-code-subagents/package.nix {
+    pi-coding-agent = piBase;
+    pi-claude-code = piClaudeCode;
+    ponygirls-pi-extensions = piExtensions;
+  };
 
   piSettings = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = piBase; };
   piUi = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; ponygirls-pi-settings = piSettings; };
@@ -591,6 +596,12 @@ in
       '';
     };
 
+    smind.hm.dev.llm.pi.claudeCodeSubagents.enable = lib.mkOption {
+      type = lib.types.bool;
+      default = false;
+      description = "Load the additive pi-claude-code-subagents backend alongside the managed Claude Code provider and ponygirls-subagents.";
+    };
+
     smind.hm.dev.llm.pi.subagentsAllowAllModels = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -933,7 +944,7 @@ in
           # MiniMax uses Pi's built-in `minimax` provider (`MINIMAX_API_KEY`).
           packages = [
             "${piSearchHub}"
-          ] ++ enabledProviderPackages;
+          ] ++ enabledProviderPackages ++ lib.optional cfg.pi.claudeCodeSubagents.enable "${piClaudeCodeSubagents}";
           extensions = [
             # Codemode (model-written JS calling tools in a QuickJS sandbox)
             # is deliberately off; MCP tools use `deferred` / `direct`
@@ -1031,6 +1042,10 @@ in
       # A pooled worktree root must be an absolute path (never a store path).
       # Scheduler limits must be ordered as the extension validates them.
       assertions = [
+        {
+          assertion = !cfg.pi.claudeCodeSubagents.enable || cfg.pi.providers.claude-code.enable;
+          message = "smind.hm.dev.llm.pi.claudeCodeSubagents.enable requires the managed smind.hm.dev.llm.pi.providers.claude-code.enable provider.";
+        }
         {
           assertion = piCfg.historian.journalRoot == null || lib.hasPrefix "/" piCfg.historian.journalRoot;
           message = "programs.pi.historian.journalRoot must be null or an absolute path.";

@@ -5,6 +5,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { EventEmitter } from "node:events";
+import { spawnSync } from "node:child_process";
+import { Type, type TSchema } from "typebox";
+import { childToolSpec } from "../src/tools.ts";
 import { HISTORY_CHANNEL, type HistoryFeed } from "../src/history.ts";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,7 +33,10 @@ async function loadExtension(agentDir: string): Promise<{ tools: Map<string, Too
   const sent: Submission[] = [];
   const events = new EventEmitter();
   const pi = {
-    events,
+    events: {
+      on: (channel: string, handler: (value: unknown) => void) => { events.on(channel, handler); return () => { events.off(channel, handler); }; },
+      emit: (channel: string, value: unknown) => { events.emit(channel, value); },
+    },
     registerTool: (t: { name: string; execute: ToolExecute; parameters: Schema; description: string }) => {
       tools.set(t.name, t.execute);
       schemas.set(t.name, t.parameters);
@@ -404,5 +410,46 @@ test("the policy file's workspaceRoots gate spawn_agent workspace_path; a malfor
     assert.match(res.content[0]!.text, /POLICY_DENIED: .*workspaceRoots must be a list of absolute paths/);
   } finally {
     rmSync(malformed, { recursive: true, force: true });
+  }
+});
+
+test("repo_path is exposed only by the governing schema and mapped to source selection", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "subagents-repo-tool-"));
+  const agentDir = join(dir, "agent");
+  const projects = join(dir, "projects");
+  const repo = join(projects, "child");
+  mkdirSync(agentDir);
+  mkdirSync(repo, { recursive: true });
+  const git = (...args: string[]): string => {
+    const result = spawnSync("git", ["-C", repo, "-c", "core.hooksPath=/dev/null", "-c", "commit.gpgsign=false", "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args], { encoding: "utf8" });
+    assert.equal(result.status, 0, result.stderr);
+    return result.stdout.trim();
+  };
+  writeFileSync(join(repo, "file.txt"), "base\n");
+  git("init", "-q");
+  git("add", "file.txt");
+  git("commit", "-qm", "base");
+  writeFileSync(join(repo, "file.txt"), "dirty source\n");
+  const registrations = git("worktree", "list", "--porcelain");
+  const extension = await loadExtension(agentDir);
+  const ctx = { ...(extension.ctx as object), cwd: projects };
+  try {
+    assert.ok(extension.schemas.get("spawn_agent")!.properties!["repo_path"]);
+    assert.match(extension.descriptions.get("spawn_agent")!, /repo_path selects a committed Git top-level/);
+    const childSchema = childToolSpec<TSchema>(Type, "spawn_agent").parameters as Schema;
+    assert.equal(childSchema.properties!["repo_path"], undefined);
+    const spawn = extension.tools.get("spawn_agent")!;
+    const relative = await spawn("relative", { task_name: "relative", message: "m", profile: "writer", repo_path: "child" }, undefined, undefined, ctx);
+    assert.equal(relative.isError, true);
+    assert.match(relative.content[0]!.text, /INVALID: repo_path must be an absolute path/);
+    const selected = await spawn("selected", { task_name: "selected", message: "m", profile: "writer", repo_path: repo }, undefined, undefined, ctx);
+    assert.equal(selected.isError, true);
+    assert.match(selected.content[0]!.text, /CONFLICT: checkout has uncommitted changes; supply an explicit base_commit/);
+    assert.equal(git("worktree", "list", "--porcelain"), registrations);
+    const status = await extension.tools.get("list_agents")!("status", {}, undefined, undefined, ctx);
+    assert.deepEqual((JSON.parse(status.content[0]!.text) as { agents: unknown[] }).agents, []);
+  } finally {
+    await extension.handlers.get("session_shutdown")!({ reason: "quit" }, ctx);
+    rmSync(dir, { recursive: true, force: true });
   }
 });
