@@ -10,7 +10,7 @@
 import { Type, type TSchema } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { defineTool } from "@earendil-works/pi-coding-agent";
-import { CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle } from "@ponygirls/pi-ui";
 import { FileRunStore } from "./src/store.ts";
 import { HISTORY_CHANNEL, type HistoryRequest } from "./src/history.ts";
 import { CUSTOM_NOTICE, NoticeDelivery, type NoticeSink } from "./src/notice-delivery.ts";
@@ -188,7 +188,7 @@ function publishBadge(ui: ExtensionContext["ui"] | null, views: AgentView[] | nu
         return { handled: true };
       },
     }),
-    { placement: "borderBottomLeft" },
+    { placement: "borderBottomLeft", order: BORDER_ORDER.agents },
   );
 }
 

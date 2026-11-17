@@ -3,7 +3,7 @@ import { Type } from "typebox";
 import { defineTool, getAgentDir, CONFIG_DIR_NAME, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FileTogglePreferenceStore, FileProjectTogglePreferenceStore, SharedScopedToggleConfiguration, ScopedSettingsController, scopedBooleanField, parseScopedToggleCommand, parseToggleCommand, sessionEnabledData, type ScopedToggleSnapshot, type ToggleDefaults, type TogglePreferenceStore } from "@ponygirls/pi-settings";
 import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { completeArgument, compactChip, CustomViewToggle, ScopedSettingsView } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, completeArgument, compactChip, CustomViewToggle, ScopedSettingsView } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
@@ -199,7 +199,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
                 return { handled: true };
               },
             };
-          }, { placement: "borderBottomLeft" });
+          }, { placement: "borderBottomLeft", order: BORDER_ORDER.decisions });
           b.badge = badge;
         }
       }

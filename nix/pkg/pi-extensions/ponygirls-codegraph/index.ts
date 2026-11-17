@@ -1,7 +1,7 @@
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
 import { localBoundary } from "./runtime.ts";
 import type { State } from "./runtime.ts";
 import { localCatalog } from "./projects.ts";
@@ -65,7 +65,7 @@ export default function codegraphExtension(pi: ExtensionAPI): void {
         })).catch((error: unknown) => { if (workspace === runtime) notify(ctx, String(error), true); });
         return { handled: true };
       },
-    }), { placement: "borderBottomLeft" });
+    }), { placement: "borderBottomLeft", order: BORDER_ORDER.codegraph });
   };
   const create = (ctx: ExtensionContext): CodegraphWorkspace => {
     currentContext = ctx;

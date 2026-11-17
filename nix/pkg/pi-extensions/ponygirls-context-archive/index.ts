@@ -1,7 +1,7 @@
 import { completeArchiveArguments } from "./src/complete.ts";
 import { join } from "node:path";
 import { parseScopedToggleCommand, parseToggleCommand, resolveScopedSetting, sessionEnabledData } from "@ponygirls/pi-settings";
-import { CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle, StatusView } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { defineTool, estimateTokens, getAgentDir, type BoundaryState, type ExtensionAPI, type ExtensionContext, type SessionBoundaryDraft } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
@@ -75,7 +75,7 @@ export function registerContextArchive(pi: ExtensionAPI, preferences: Preference
         })).catch((error: unknown) => warn(ctx, String(error)));
         return { handled: true };
       },
-    }), { placement: "borderBottomLeft" });
+    }), { placement: "borderBottomLeft", order: BORDER_ORDER.archive });
   }
   function refresh(ctx: ExtensionContext, reconcileTools: boolean): boolean {
     try {

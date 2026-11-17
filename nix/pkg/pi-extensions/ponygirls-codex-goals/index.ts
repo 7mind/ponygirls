@@ -12,7 +12,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { defineTool, keyText, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, CustomViewToggle } from "@ponygirls/pi-ui";
 
 import {
   blockRecord,
@@ -152,7 +152,7 @@ function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["
           return { handled: true };
         },
       }),
-      { placement: "borderBottomLeft" },
+      { placement: "borderBottomLeft", order: BORDER_ORDER.goal },
     );
   } catch {
     try {

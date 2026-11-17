@@ -1,7 +1,7 @@
 import { join } from 'node:path';
 import { getAgentDir, type ExtensionAPI, type ExtensionContext } from '@earendil-works/pi-coding-agent';
 import { truncateToWidth } from '@earendil-works/pi-tui';
-import { CustomViewToggle, StatusView, confirmOperatorAction } from '@ponygirls/pi-ui';
+import { BORDER_ORDER, CustomViewToggle, StatusView, confirmOperatorAction } from '@ponygirls/pi-ui';
 import { parseToggleCommand } from '@ponygirls/pi-settings';
 import { HistorianController } from './src/controller.ts';
 import { completeHistorianArguments } from './src/complete.ts';
@@ -41,7 +41,7 @@ export default function (pi: ExtensionAPI): void {
         if (event.type !== 'click' || event.button !== 'left' || ctx.mode !== 'tui') return undefined;
         void show(ctx, false); return { handled: true };
       },
-    }), { placement: 'borderBottomLeft' });
+    }), { placement: 'borderBottomLeft', order: BORDER_ORDER.historian });
   };
   async function show(ctx: ExtensionContext, journal: boolean): Promise<void> {
     if (controller === null) { ctx.ui.notify('Historian is unavailable for this session', 'error'); return; }

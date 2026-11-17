@@ -2,6 +2,7 @@ import {
   Key,
   matchesKey,
   truncateToWidth,
+  visibleWidth,
   wrapTextWithAnsi,
   type TuiMouseEvent,
 } from '@earendil-works/pi-tui';
@@ -296,13 +297,15 @@ export class ScopedSettingsPanel extends PanelLayout {
       );
     }
 
-    body.push(
-      '',
-      ...wrapTextWithAnsi(
-        theme.fg('muted', plainText(state.notice)),
-        w,
-      ),
-    );
+    // The footer shows the notice on one line; only a notice it has to
+    // truncate is repeated here, wrapped and complete.
+    const notice = plainText(state.notice);
+    if (visibleWidth(notice) > w) {
+      body.push(
+        '',
+        ...wrapTextWithAnsi(theme.fg('muted', notice), w),
+      );
+    }
 
     const hints = keyHints(theme, w, [
       { key: '↑↓', action: 'select' },
@@ -317,11 +320,7 @@ export class ScopedSettingsPanel extends PanelLayout {
     ]);
 
     const footer = [
-      truncateToWidth(
-        theme.fg('muted', plainText(state.notice)),
-        w,
-        '…',
-      ),
+      truncateToWidth(theme.fg('muted', notice), w, '…'),
       ...hints.lines,
     ];
 

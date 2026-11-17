@@ -4,7 +4,7 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
@@ -69,7 +69,7 @@ function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {
         return { handled: true };
       },
     }),
-    { placement: "borderBottomLeft" },
+    { placement: "borderBottomLeft", order: BORDER_ORDER.tasks },
   );
 }
 

@@ -80,3 +80,13 @@ test('press is neutral and preserves the target before click changes a field', (
   assert.equal(press?.handled, true); assert.equal(press?.render, false);
   assert.equal(f.controller.state().rows[0].checked, false); p.handleMouse(event); assert.equal(f.controller.state().rows[0].checked, true);
 });
+
+test('a notice that fits the footer is shown once; a longer one is also shown in full', () => {
+  const f = fixture(); const p = panel(f, []);
+  const occurrences = (lines: readonly string[], text: string): number => lines.filter(line => line.includes(text)).length;
+  assert.equal(occurrences(p.render(120), 'Unsaved changes are discarded'), 1);
+  // Truncated in the one-line footer, so the body repeats it wrapped and complete.
+  const narrow = p.render(30);
+  assert.ok(narrow.some(line => line.includes('…')));
+  assert.ok(narrow.join(' ').replace(/\s+/g, ' ').includes('Unsaved changes are discarded when this dialog closes.'));
+});

@@ -1,6 +1,6 @@
 import type { ExtensionContext, SessionEntry } from '@earendil-works/pi-coding-agent';
 import { matchesKey, Key, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TuiMouseEvent } from '@earendil-works/pi-tui';
-import { CustomViewToggle, fit, fitRight, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
+import { BORDER_ORDER, CustomViewToggle, fit, fitRight, frameTitle, keyHints, PanelLayout, type PanelParts, type UiTheme } from '@ponygirls/pi-ui';
 import type { Checkpoint } from './report.ts';
 import { checkpoints as collectCheckpoints, REPORT_TYPE } from './report.ts';
 import { checkpointDetail, reportContent, historyContent, terminalText } from './presentation.ts';
@@ -332,7 +332,7 @@ export class CuckooView {
         void this.showReports(ctx, this.lastReports, intro);
         return { handled: true };
       },
-    }), { placement: 'borderBottomLeft' });
+    }), { placement: 'borderBottomLeft', order: BORDER_ORDER.cuckoo });
   }
 
   dispose(ctx: ExtensionContext): void { this.active = false; this.pane.dispose(); ctx.ui.setWidget('cuckoo', undefined); }

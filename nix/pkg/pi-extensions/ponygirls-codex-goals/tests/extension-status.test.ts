@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 type BadgeFactory = () => { render(): string[]; renderCompact?: (width: number) => string; handleMouse?: (event: unknown) => unknown };
-type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
+type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft"; order: number } | undefined)?];
 
 /** The published badge's first rendered line. */
 function badgeLine(factory: unknown): string {
@@ -17,7 +17,7 @@ function badgeLine(factory: unknown): string {
 function assertBadge(statuses: StatusEntry[], line: string, compact: string): void {
   const entry = statuses.at(-1)!;
   assert.equal(entry[0], "goal");
-  assert.deepEqual(entry[2], { placement: "borderBottomLeft" });
+  assert.deepEqual(entry[2], { placement: "borderBottomLeft", order: 10 });
   assert.equal(badgeLine(entry[1]), line);
   assert.equal((entry[1] as BadgeFactory)().renderCompact?.(10), compact);
   assert.equal(typeof (entry[1] as BadgeFactory)().handleMouse, "function");

@@ -6,7 +6,7 @@ import { advanceStatusEpisode } from "../index.ts";
 import { defer, eventually, tempDir } from "./fixtures.ts";
 
 type BadgeFactory = () => { render(): string[]; renderCompact?: (width: number) => string; handleMouse?: (event: unknown) => unknown };
-type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft" } | undefined)?];
+type StatusEntry = [string, BadgeFactory | undefined, ({ placement: "borderBottomLeft"; order: number } | undefined)?];
 
 /** The published badge's first rendered line. */
 function badgeLine(factory: unknown): string {
