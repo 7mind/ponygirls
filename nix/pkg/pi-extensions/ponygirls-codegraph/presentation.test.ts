@@ -30,9 +30,9 @@ test("badge: quiet when the index needs nothing; a word for work, chosen states 
   const cases: [State["phase"], number, string, string][] = [
     ["ready", 0, " 🕸️ ", "🕸️"],
     ["idle", 0, " 🕸️ ", "🕸️"],
-    ["working", 0, " 🕸️ <accent>indexing</accent> ", "🕸️<accent>▸</accent>"],
-    ["ready", 1, " 🕸️ <accent>querying</accent> ", "🕸️<accent>▸</accent>"],
-    ["skipped", 2, " 🕸️ <accent>querying 2</accent> ", "🕸️<accent>▸</accent>"],
+    ["working", 0, " 🕸️ <accent>indexing</accent> ", "🕸️<accent>●</accent>"],
+    ["ready", 1, " 🕸️ <accent>querying</accent> ", "🕸️<accent>●</accent>"],
+    ["skipped", 2, " 🕸️ <accent>querying 2</accent> ", "🕸️<accent>●</accent>"],
     ["error", 0, " 🕸️ <error>error</error> ", "🕸️<error>✖</error>"],
     ["cancelled", 0, " 🕸️ <warning>cancelled</warning> ", "🕸️<warning>!</warning>"],
     ["empty", 0, " 🕸️ <muted>empty</muted> ", "🕸️"],

@@ -1,5 +1,5 @@
 /**
- * Usage bars and border chips coloured by state.
+ * Usage bars coloured by state.
  */
 import { stateColor, type UiState, type UiTheme } from "./theme.ts";
 
@@ -20,12 +20,4 @@ export function usageBar(theme: UiTheme, fraction: number, width: number, state:
   const full = "█".repeat(filled);
   const empty = "░".repeat(cells - filled);
   return (full ? theme.fg(stateColor(state), full) : "") + (empty ? theme.fg("dim", empty) : "");
-}
-
-/**
- * The short border form: neutral chip, state-coloured glyph, optional short
- * label (a count or abbreviation) in text colour.
- */
-export function compactChip(theme: UiTheme, glyph: string, state: UiState, label: string): string {
-  return theme.bg("toolPendingBg", ` ${theme.fg(stateColor(state), glyph)}${label ? theme.fg("text", label) : ""} `);
 }

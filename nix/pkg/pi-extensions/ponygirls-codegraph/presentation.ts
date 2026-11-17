@@ -36,9 +36,9 @@ export function stateNotice(state: State): StateNotice | null {
  */
 export function codegraphBadge(phase: State["phase"], queries: number): BorderBadge {
   const glyph = BADGE_GLYPH;
-  if (queries > 0) return { glyph, state: "running", label: queries > 1 ? `querying ${queries}` : "querying", compact: "▸" };
+  if (queries > 0) return { glyph, state: "running", label: queries > 1 ? `querying ${queries}` : "querying", compact: "●" };
   switch (phase) {
-    case "working": return { glyph, state: "running", label: "indexing", compact: "▸" };
+    case "working": return { glyph, state: "running", label: "indexing", compact: "●" };
     case "error": return { glyph, state: "error", label: "error", compact: "✖" };
     case "cancelled": return { glyph, state: "attention", label: "cancelled", compact: "!" };
     case "skipped": return { glyph, state: "settled", label: "off", compact: "" };

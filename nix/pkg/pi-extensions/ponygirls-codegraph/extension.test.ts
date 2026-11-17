@@ -229,7 +229,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
     return { table, details };
   };
   emit("session_start", { type: "session_start", reason: "startup" });
-  assert.equal(badge!.renderCompact(20), "🕸️<accent>▸</accent>");
+  assert.equal(badge!.renderCompact(20), "🕸️<accent>●</accent>");
   await settle(() => notices.length > 0);
   assert.deepEqual(notices, [{ text: "Codegraph: nothing indexed in this checkout yet · /cg status for details", level: "info" }]);
   assert.equal(badge!.render(120)[0], " 🕸️ <muted>empty</muted> ");
@@ -266,7 +266,7 @@ test("Pi loader: empty checkout is an info notice and failures are one-line erro
   const syncAttempts = async () => (await readFile(attempts, "utf8").catch(() => "")).length;
   notices.length = 0;
   emit("session_start", { type: "session_start", reason: "startup" });
-  assert.equal(badge!.renderCompact(20), "🕸️<accent>▸</accent>");
+  assert.equal(badge!.renderCompact(20), "🕸️<accent>●</accent>");
   for (let n = 0; n < 500 && (await syncAttempts() === 0 || badge!.renderCompact(20) !== "🕸️"); n++) await new Promise((wait) => setTimeout(wait, 10));
   assert.equal(await syncAttempts(), 1, "the first sync must have met the lock");
   assert.deepEqual(notices, [], "lock contention is neither an error line nor any other notice");

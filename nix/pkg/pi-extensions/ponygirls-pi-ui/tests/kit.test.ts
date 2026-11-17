@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import {
-  PLAIN_THEME, columnCells, columnHeader, fit, compactChip, countCell, fractionState, frameRule, frameTitle, gridRule, hintAt,
+  PLAIN_THEME, columnCells, columnHeader, fit, countCell, fractionState, frameRule, frameTitle, gridRule, hintAt,
   keyHints, listRow, stateColor, usageBar, zebra, type UiBg, type UiFg, type UiTheme,
 } from "../src/index.ts";
 
@@ -120,11 +120,3 @@ test("usageBar keeps its width, colours the filled part by state and dims the re
   assert.ok(bar.includes(`${fgCode("dim")}░░░`));
 });
 
-test("compactChip: neutral chip, state glyph, label in text", () => {
-  assert.equal(compactChip(PLAIN_THEME, "⚙", "running", "1"), " ⚙1 ");
-  assert.equal(compactChip(PLAIN_THEME, "◉", "attention", ""), " ◉ ");
-  const chip = compactChip(TAGGED, "✖", "error", "cg");
-  assert.ok(chip.startsWith(bgCode("toolPendingBg")));
-  assert.ok(chip.includes(`${fgCode("error")}✖`));
-  assert.ok(chip.includes(`${fgCode("text")}cg`));
-});
