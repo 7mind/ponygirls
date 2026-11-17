@@ -5,14 +5,15 @@
  */
 import { Key, matchesKey, sliceByColumn, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component } from "@earendil-works/pi-tui";
 import {
-  PanelLayout, type PanelParts, MARKER_WIDTH, columnCells, columnHeader, frameRule, frameTitle, keyHints, listRow, type Column, type KeyHint, type UiFg, type UiTheme,
+  HINT, KEY, PanelLayout, type PanelParts, MARKER_WIDTH, columnCells, columnHeader, frameRule, frameTitle, keyHints, listRow, stateColor,
+  type Column, type FrameTitle, type KeyHint, type UiFg, type UiTheme,
 } from "@ponygirls/pi-ui";
 import type { TaskBackend } from "./backend.ts";
 import {
   BgTaskError, MAX_LIST_ITEMS, MAX_READ_BYTES, isFinalized, type CompletionDetails, type SignalName, type TaskRecord,
 } from "./protocol.ts";
 import { consumableLength, decodeAndSanitize, displayValue, leadingContinuationBytes } from "./terminal-text.ts";
-import { exitCode, exitFailed, formatSize, informativeReason, shortTaskId, stateGlyph, taskStateColor } from "./present.ts";
+import { exitCode, exitFailed, formatSize, informativeReason, shortTaskId, shownState, stateGlyph, taskStateColor } from "./present.ts";
 import { elapsed, formatExit, noticeLabel, noticeStatus, stateLabel } from "./tool.ts";
 
 /** Most log bytes held in memory by the detail view. */
@@ -28,33 +29,63 @@ const COLUMN_GAP = 2;
 const MAX_LABEL_COLUMN = 24;
 const MAX_STATE_COLUMN = 32;
 const MAX_EXIT_COLUMN = 28;
+/** Narrowest a `shrink` column gets when even the columns that always stay do not fit. */
+const MIN_SHRUNK_COLUMN = 8;
 
-const LIST_HINTS: readonly KeyHint[] = [
-  { key: "↑↓", action: "select" }, { key: "⏎", action: "open" }, { key: "t", action: "terminate" }, { key: "s", action: "signal" },
-  { key: "m", action: "mute" }, { key: "c", action: "clear" }, { key: "r", action: "refresh" }, { key: "q", action: "close" },
-];
+/** The empty list, also for clients without the pane. */
+export const NO_TASKS_TEXT = "No background tasks in this session. The model starts them with bg_task.";
 
-function detailHints(finished: boolean): KeyHint[] {
-  return [
-    { key: "↑ PgUp", action: "scroll" }, { key: "f End", action: finished ? "end of log" : "follow" }, { key: "t", action: "terminate" },
-    { key: "s", action: "signal" }, { key: "m", action: "mute" }, { key: "c", action: "clear" }, { key: "esc", action: "back" },
-  ];
+/**
+ * Actions that apply to the task in its current state. Keys that do not apply
+ * stay bound without being advertised, as do `r`, `q`, End and `j`/`k`.
+ */
+function taskHints(task: TaskRecord): KeyHint[] {
+  if (isFinalized(task)) return [{ key: "c", action: "clear" }];
+  return [{ key: "t", action: "terminate" }, { key: "s", action: "signal" }, { key: "m", action: task.notify ? "mute notice" : "unmute notice" }];
+}
+
+function listHints(selected: TaskRecord | null): KeyHint[] {
+  if (!selected) return [HINT.close];
+  return [HINT.select, { key: KEY.enter, action: "open" }, ...taskHints(selected), HINT.close];
+}
+
+function detailHints(task: TaskRecord, following: boolean): KeyHint[] {
+  return [HINT.scroll, HINT.page, ...(following ? [] : [{ key: "f", action: "follow" }]), ...taskHints(task), HINT.back];
 }
 
 interface ListColumn {
   header: string;
   max: number;
+  /**
+   * What a list too wide for the pane does with the column: `stay` keeps it
+   * whole (which task, how it is doing), a number hides it (lowest first),
+   * `shrink` shortens it once nothing is left to hide.
+   */
+  narrow: "stay" | "shrink" | number;
 }
 
 const LIST_COLUMNS: readonly ListColumn[] = [
-  { header: "TASK", max: Number.POSITIVE_INFINITY },
-  { header: "LABEL", max: MAX_LABEL_COLUMN },
-  { header: "STATE", max: MAX_STATE_COLUMN },
-  { header: "TIME", max: Number.POSITIVE_INFINITY },
-  { header: "EXIT", max: MAX_EXIT_COLUMN },
-  { header: "NOTICE", max: Number.POSITIVE_INFINITY },
-  { header: "LOG", max: Number.POSITIVE_INFINITY },
+  { header: "TASK", max: Number.POSITIVE_INFINITY, narrow: "stay" },
+  { header: "LABEL", max: MAX_LABEL_COLUMN, narrow: "shrink" },
+  { header: "STATE", max: MAX_STATE_COLUMN, narrow: "stay" },
+  { header: "TIME", max: Number.POSITIVE_INFINITY, narrow: 3 },
+  { header: "EXIT", max: MAX_EXIT_COLUMN, narrow: 4 },
+  { header: "NOTICE", max: Number.POSITIVE_INFINITY, narrow: 2 },
+  { header: "LOG", max: Number.POSITIVE_INFINITY, narrow: 1 },
 ];
+
+/** The list columns that fit a width, and the names of those that do not. */
+interface ListLayout {
+  /** Indices into LIST_COLUMNS, in table order. */
+  shown: number[];
+  columns: Column[];
+  hidden: string[];
+}
+
+/** `TIME` → `Time`, for the note that names hidden columns. */
+function columnName(header: string): string {
+  return `${header.slice(0, 1)}${header.slice(1).toLowerCase()}`;
+}
 
 /** One list cell: plain text and its colour. */
 interface Cell {
@@ -290,16 +321,23 @@ export class BgInspector extends PanelLayout implements Component {
   }
 
   private stateCell(task: TaskRecord): Cell {
-    return { text: `${stateGlyph(task.state)} ${stateLabel(task)}`, color: taskStateColor(task.state) };
+    const state = shownState(task);
+    return { text: `${stateGlyph(state)} ${state === "terminated" ? state : stateLabel(task)}`, color: taskStateColor(state) };
+  }
+
+  /** The reason, unless the exit evidence (D5) or the shown state already says it. */
+  private reason(task: TaskRecord): TaskRecord["reason"] {
+    return shownState(task) === "terminated" ? null : informativeReason(task.reason, task.exit);
   }
 
   /** Exit evidence plus a reason only when it adds something (D5). */
   private exitCell(task: TaskRecord, secondary: UiFg): Cell {
     if (!task.exit && !isFinalized(task)) return { text: "—", color: secondary };
-    const reason = informativeReason(task.reason, task.exit);
+    const reason = this.reason(task);
     const text = `${exitCode(task.exit)}${reason ? ` ${reason}` : ""}`;
     if (!task.exit) return { text, color: "warning" };
-    return { text, color: exitFailed(task.exit) ? "error" : "muted" };
+    // The signal of a requested stop is its expected outcome, not an error.
+    return { text, color: exitFailed(task.exit) && shownState(task) !== "terminated" ? "error" : "muted" };
   }
 
   private cells(task: TaskRecord, selected: boolean): Cell[] {
@@ -316,35 +354,62 @@ export class BgInspector extends PanelLayout implements Component {
     ];
   }
 
-  private columns(): Column[] {
+  /**
+   * Columns are shown whole or not at all: the least important ones are hidden
+   * until the rest fits; only then does the label give up width.
+   */
+  private listLayout(width: number): ListLayout {
     const rows = this.items.map((task) => this.cells(task, false));
-    return LIST_COLUMNS.map((column, index) => ({
-      header: column.header,
-      width: Math.min(column.max, Math.max(visibleWidth(column.header), ...rows.map((row) => visibleWidth(row[index]!.text)))),
-      align: "left",
-    }));
+    const widths = LIST_COLUMNS.map((column, index) => Math.min(column.max, Math.max(visibleWidth(column.header), ...rows.map((row) => visibleWidth(row[index]!.text)))));
+    // Deleting from a set keeps the order of the rest: the shown columns stay in table order.
+    const shown = new Set(LIST_COLUMNS.keys());
+    const excess = (): number => MARKER_WIDTH + [...shown].reduce((sum, index) => sum + widths[index]!, 0) + COLUMN_GAP * (shown.size - 1) - width;
+    const hideOrder = LIST_COLUMNS
+      .flatMap((column, index) => (typeof column.narrow === "number" ? [{ index, rank: column.narrow }] : []))
+      .sort((a, b) => a.rank - b.rank);
+    for (const { index } of hideOrder) {
+      if (excess() <= 0) break;
+      shown.delete(index);
+    }
+    LIST_COLUMNS.forEach((column, index) => {
+      if (column.narrow !== "shrink" || excess() <= 0) return;
+      widths[index] = Math.max(Math.min(MIN_SHRUNK_COLUMN, widths[index]!), widths[index]! - excess());
+    });
+    return {
+      shown: [...shown],
+      columns: [...shown].map((index) => ({ header: LIST_COLUMNS[index]!.header, width: widths[index]!, align: "left" })),
+      hidden: LIST_COLUMNS.filter((_column, index) => !shown.has(index)).map((column) => columnName(column.header)),
+    };
+  }
+
+  /** Dim text under the row gutter, wrapped between words. */
+  private note(text: string, width: number): string[] {
+    const gutter = " ".repeat(MARKER_WIDTH);
+    return wrapTextWithAnsi(text, Math.max(1, width - MARKER_WIDTH)).map((line) => this.deps.theme.fg("dim", `${gutter}${line}`));
   }
 
   private renderList(width: number): PanelParts {
     const th = this.deps.theme;
     const running = this.items.filter((task) => !isFinalized(task)).length;
-    const retained = `${this.items.length}${this.nextAfter !== null ? "+" : ""} retained`;
     const live = `${th.fg("success", "●")}${th.fg("dim", " live")}`;
-    const out = [frameTitle(th, width, { title: "Background tasks", meta: `${retained} · ${running} running`, right: live }, "none").line];
-    if (!this.items.length) out.push(th.fg("dim", `${" ".repeat(MARKER_WIDTH)}No retained tasks in this session.`));
-    else {
-      const columns = this.columns();
-      out.push(truncateToWidth(columnHeader(th, columns, COLUMN_GAP), width));
-      const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - (out.length - 1));
-      const first = Math.max(0, Math.min(this.selected - Math.floor(visible / 2), this.items.length - visible));
-      this.items.slice(first, first + visible).forEach((task, i) => {
-        const selected = first + i === this.selected;
-        const cells = this.cells(task, selected).map((cell, index) => th.fg(cell.color, clip(cell.text, columns[index]!.width)));
-        out.push(listRow(th, width, columnCells(columns, cells, COLUMN_GAP), selected));
-      });
-    }
-    if (this.nextAfter !== null) out.push(th.fg("dim", `${" ".repeat(MARKER_WIDTH)}… more history below`));
-    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, LIST_HINTS).lines] };
+    const title: FrameTitle = { title: "Background tasks", right: running > 0 ? `${th.fg(stateColor("running"), `${running} running`)}${th.fg("dim", " · ")}${live}` : live };
+    if (this.items.length) title.meta = `${this.items.length}${this.nextAfter !== null ? "+" : ""}`;
+    const header = [frameTitle(th, width, title, "none").line];
+    const footer = (hints: readonly KeyHint[]): string[] => [frameRule(th, width), ...keyHints(th, width, hints).lines];
+    if (!this.items.length) return { header, body: this.note(NO_TASKS_TEXT, width), footer: footer(listHints(null)) };
+    const layout = this.listLayout(width);
+    const body = [truncateToWidth(columnHeader(th, layout.columns, COLUMN_GAP), width)];
+    const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - body.length);
+    const first = Math.max(0, Math.min(this.selected - Math.floor(visible / 2), this.items.length - visible));
+    this.items.slice(first, first + visible).forEach((task, i) => {
+      const selected = first + i === this.selected;
+      const all = this.cells(task, selected);
+      const cells = layout.shown.map((index, position) => th.fg(all[index]!.color, clip(all[index]!.text, layout.columns[position]!.width)));
+      body.push(listRow(th, width, columnCells(layout.columns, cells, COLUMN_GAP), selected));
+    });
+    if (this.nextAfter !== null) body.push(th.fg("dim", `${" ".repeat(MARKER_WIDTH)}… more history below`));
+    const hidden = layout.hidden.length ? this.note(`hidden at this width: ${layout.hidden.join(", ")}`, width) : [];
+    return { header, body, footer: [...hidden, ...footer(listHints(this.items[this.selected] ?? null))] };
   }
 
   /** What the log view is doing: only an unfinished task can be followed live (D6). */
@@ -354,18 +419,33 @@ export class BgInspector extends PanelLayout implements Component {
     return d.follow ? th.fg("accent", "following") : th.fg("warning", "paused");
   }
 
+  /**
+   * The detail title with as many leading facts as fit whole. The first fact
+   * (the label) always stays; alone, it is the one the frame may shorten.
+   */
+  private detailTitle(width: number, id: string, facts: readonly string[], right: string): string {
+    const th = this.deps.theme;
+    for (let count = facts.length; count > 1; count--) {
+      const meta = facts.slice(0, count).join(" · ");
+      const line = frameTitle(th, width, { title: id, meta, right }, "none").line;
+      // A title the frame had to shorten no longer holds its meta.
+      if (line.includes(meta)) return line;
+    }
+    return frameTitle(th, width, { title: id, meta: facts[0]!, right }, "none").line;
+  }
+
   private renderDetail(width: number, d: DetailState): PanelParts {
     const th = this.deps.theme;
     const t = d.task;
     const facts = [displayValue(t.label)];
     if (t.exit || isFinalized(t)) {
-      const reason = informativeReason(t.reason, t.exit);
+      const reason = this.reason(t);
       facts.push(`${formatExit(t.exit)}${reason ? ` (${reason})` : ""}`);
     }
     facts.push(noticeLabel(t, this.deps.noticeState(t)), formatSize(d.size));
     const state = this.stateCell(t);
     const right = `${th.fg(state.color, state.text)}${th.fg("dim", " · ")}${this.viewMode(d)}`;
-    const out = [frameTitle(th, width, { title: t.id, meta: facts.join(" · "), right }, "none").line];
+    const out = [this.detailTitle(width, t.id, facts, right)];
     const fit = (line: string) => truncateToWidth(line, width);
     if (t.state === "dead") out.push(fit(th.fg("warning", `dead: supervision was interrupted (${t.reason}); the process outcome is unknown${t.exit ? `, root ${formatExit(t.exit)} was observed` : ""}.`)));
     const visible = Math.max(1, this.bodyHeight(this.deps.rows() - CHROME_ROWS) - (out.length - 1));
@@ -378,7 +458,7 @@ export class BgInspector extends PanelLayout implements Component {
         out.push(...lines.slice(Math.max(0, end - visible), end).map(fit));
       }
     }
-    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, detailHints(isFinalized(t))).lines] };
+    return { header: out.slice(0, 1), body: out.slice(1), footer: [frameRule(th, width), ...keyHints(th, width, detailHints(t, d.follow)).lines] };
   }
 
   private renderParts(width: number): PanelParts {
@@ -444,7 +524,8 @@ export class BgInspector extends PanelLayout implements Component {
       this.message = `terminating ${task.id}…`;
       this.enqueue(async () => {
         const done = await (await this.deps.backend()).terminate(task.id);
-        this.message = `${done.id}: ${done.state} (${done.reason}), ${formatExit(done.exit)}`;
+        const state = shownState(done);
+        this.message = `${done.id}: ${state}${state === "terminated" ? "" : ` (${done.reason})`}, ${formatExit(done.exit)}`;
         await this.reload();
       });
     } else if (key === "s") {

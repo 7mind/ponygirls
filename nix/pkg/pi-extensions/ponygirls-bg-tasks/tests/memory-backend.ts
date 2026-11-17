@@ -73,6 +73,13 @@ export class MemoryTaskBackend implements TaskBackend {
     this.finalize(t, code === 0 ? "completed" : "failed", code === 0 ? "exit" : "exit_nonzero", { kind: "code", code });
   }
 
+  /** Test control: a running task dies of a signal that no task operation sent. */
+  kill(id: string, signal: SignalName): void {
+    const t = this.tasks.get(id);
+    if (!t || t.state !== "running") return;
+    this.finalize(t, "failed", "signaled", { kind: "signal", signal });
+  }
+
   append(id: string, output: string): void {
     const prev = this.logs.get(id)!;
     const add = new TextEncoder().encode(output);

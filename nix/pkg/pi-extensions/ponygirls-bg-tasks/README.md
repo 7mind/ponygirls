@@ -66,13 +66,33 @@ reads report fewer consumed bytes instead of truncating silently.
 elapsed time, exit evidence, reason, notice state, and log size. Enter opens
 live output (follow mode); ↑/PgUp pauses and scrolls back, `f`/End resumes.
 `t` terminate, `s` signal (selector), `m` mute/unmute, `c` clear (finished
-tasks only, with a confirmation naming the ID and bytes). Closing the viewer
-never affects a task. The detail view holds at most 128 KiB of a log.
+tasks only, with a confirmation naming the ID and bytes). The footer shows
+only the keys that apply to the selected task (`t`, `s`, `m` while it runs,
+`c` once it has finished); keys that are not shown stay bound, as do `r`
+(refresh; the pane refreshes itself) and `q`. A task stopped by terminate, in
+the pane or by the tool, is listed as `■ terminated` rather than `✖ failed`,
+with its exit evidence unchanged. A signal sent with `s` or the tool's
+`signal` is recorded like any other death, so such a task reads `failed`.
+A list wider than the pane hides whole columns (log, notice, time, exit, in
+that order) and names them; task, label and state stay. The task view's title
+likewise keeps only the facts that fit whole. Closing the viewer never
+affects a task. The detail view holds at most 128 KiB of a log.
 
 While any task is unfinished the editor's bottom-left border shows `🛠️ N
 running` as a blue badge (next to the session goal and subagents badges
 when they are present); it clears when no running task remains. Clicking
 the badge opens the `/bg` inspector. The compact form is `🛠️N`.
+
+When the task supervisor cannot be reached, the badge keeps its last state
+and the transcript gets one `bg-task-status` notice for the outage and one
+for its recovery: `⚙ background task status unavailable: <reason>`, then
+`⚙ background task status is back` (ctrl+o shows the full text with the error
+code). The outage notice starts a model turn only if a task was known to be
+running, since only then can the model be waiting for one, and the recovery
+notice only if the outage notice did; otherwise both are shown and are in
+context for the next turn. A session without a file is not an outage: it
+says `⚙ background tasks are off: this session is not saved (--no-session)`
+once and never starts a turn.
 
 ## Outcomes
 
@@ -231,12 +251,14 @@ nix build ".#checks.$(nix eval --impure --raw --expr builtins.currentSystem).pon
 | `reload.test.ts` | replacement clients retain task identity, controls, output, and notices; rejected handshakes/handoffs close; detached handles permit owner exit |
 | `tool.test.ts` | the public tool on both backends: pagination under inserts/clears, budgets, sanitization, errors |
 | `pi-runtime-probe.test.mjs` | pinned Pi delivery semantics (scripted provider, `pi.sendMessage()` path) |
-| `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start retry, provider-error re-send, supervisor-loss restart, mute, crash windows, switch/fork, reload, compaction, provider retry |
+| `delivery.test.mjs` | the real extension in a scripted Pi runtime: idle/active/burst/opt-out, aborts, dropped follow-up, no-start retry, provider-error re-send, supervisor-loss restart, mute, crash windows, switch/fork, reload, compaction, provider retry, a session without a file (one notice, no turn) |
 | `delivery-unit.test.ts` | deterministic dispatcher guard transitions, retry backoff, answered-receipt scanning |
 | `status.test.ts` | border badge text: running counts, singular/plural, clear when idle |
-| `extension-status.test.ts` | the real extension with a faked host: the badge follows spawn/terminate/clear |
+| `extension-status.test.ts` | the real extension with a faked host: the badge follows spawn/terminate/clear; status notices and when they ask for a turn |
 | `ui.test.ts` | the inspector on a real supervisor: live follow/scroll, escape fixtures, bounded windows, dead/missing labels, actions |
-| `packaged.test.mjs` | wrapped pi binary + packaged extension in RPC, print, and TUI (PTY) sessions with a local fake provider |
+| `ui-render.test.ts` | the inspector and the transcript lines on the memory dummy: exact text and colours, state-dependent hints, every line at 60 to 170 columns |
+| `transcript-wiring.test.ts` | the registered renderers and the `/bg` command: collapsed one-liners, expanded text unchanged |
+| `packaged.test.mjs` | wrapped pi binary + packaged extension in RPC, print, and TUI (PTY) sessions with a local fake provider, including a `--no-session` start |
 
 ## Deviations from the plan (with evidence)
 

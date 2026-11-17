@@ -3,7 +3,7 @@
  * short ids, state glyphs, exit evidence without redundant reasons, log sizes.
  */
 import { stateColor, type UiFg, type UiState } from "@ponygirls/pi-ui";
-import type { ExitEvidence, TaskReason, TaskState } from "./protocol.ts";
+import type { ExitEvidence, TaskRecord, TaskReason, TaskState } from "./protocol.ts";
 import { displayValue } from "./terminal-text.ts";
 
 const TASK_ID_PREFIX = "bgt-";
@@ -18,15 +18,28 @@ export function shortTaskId(id: string): string {
   return chars.length > SHORT_ID_CHARS ? `${chars.slice(0, SHORT_ID_CHARS).join("")}…` : core;
 }
 
-const STATE_GLYPH: Readonly<Record<TaskState, string>> = { completed: "✓", failed: "✖", dead: "⚠", running: "●" };
-const STATE_UI: Readonly<Record<TaskState, UiState>> = { completed: "ok", failed: "error", dead: "attention", running: "running" };
+/** A task state as the /bg pane shows it: a task stopped on request is `terminated`, not a failure. */
+export type ShownState = TaskState | "terminated";
 
-export function stateGlyph(state: TaskState): string {
+const STATE_GLYPH: Readonly<Record<ShownState, string>> = { completed: "✓", failed: "✖", dead: "⚠", running: "●", terminated: "■" };
+const STATE_UI: Readonly<Record<ShownState, UiState>> = { completed: "ok", failed: "error", dead: "attention", running: "running", terminated: "settled" };
+
+export function stateGlyph(state: ShownState): string {
   return STATE_GLYPH[state];
 }
 
-export function taskStateColor(state: TaskState): UiFg {
+export function taskStateColor(state: ShownState): UiFg {
   return stateColor(STATE_UI[state]);
+}
+
+/**
+ * Reason `terminated` is the supervisor's record of a stop it carried out on
+ * request: its terminate operation (the pane's `t`, the tool's `terminate`),
+ * or its own stop of a task whose start it could not commit. A signal sent
+ * with `s`/`signal` is recorded like any other death and stays failed.
+ */
+export function shownState(task: Pick<TaskRecord, "state" | "reason">): ShownState {
+  return task.state === "failed" && task.reason === "terminated" ? "terminated" : task.state;
 }
 
 /** Reasons that only restate the exit evidence when that evidence exists. */
