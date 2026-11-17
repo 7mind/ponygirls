@@ -221,33 +221,45 @@ test("lifecycle updates the active model before use, warns on failure, and expos
   const pi = { registerProvider: () => {}, on: (name, handler) => handlers.set(name, handler),
     registerCommand: (name, command) => commands.set(name, command), setModel: async (next) => { model = next; return true; } };
   registerCodexLimits(pi, decorated);
+  const limits = async (args) => { await commands.get("codex-limits").handler(args, ctx); return notifications.at(-1); };
+  // The answer first (the selected model's limits, compact), then where they come from.
+  assert.deepEqual(await limits(""), { type: "info", message: "Codex limits for test-model: context 272k, output 128k\nDiscovery not performed; Pi catalog limits retained." });
+  notifications.length = 0;
   await handlers.get("session_start")({}, ctx);
   assert.equal(model.contextWindow, 1000000);
   assert.equal(model.maxTokens, 128000);
   assert.equal(notifications.length, 0);
-  await commands.get("codex-limits").handler("", ctx);
-  assert.match(notifications.at(-1).message, /context 1000000; output 128000/);
+  assert.deepEqual(await limits(""), { type: "info", message: "Codex limits for test-model: context 1M, output 128k\n" +
+    "Live context limits applied to 1 catalog models. Output limits retained from Pi's catalog (Codex discovery exposes no output maximum)." });
   model = { ...model, contextWindow: 272000 };
   await handlers.get("input")({}, ctx);
   assert.equal(model.contextWindow, 1000000, "background catalog refresh must synchronize before the next prompt");
   source.failure = true;
-  await commands.get("codex-limits").handler("refresh", ctx);
+  const failed = await limits("refresh");
   assert.ok(notifications.some((n) => n.type === "warning" && /discovery failed/.test(n.message)));
+  assert.deepEqual(failed, { type: "info", message: "Codex limits for test-model: context 1M, output 128k\nDiscovery failed; last-known limits (or Pi catalog defaults) retained." });
   await commands.get("codex-limits").handler("bad", ctx);
   assert.match(notifications.at(-1).message, /Usage:/);
   model = { ...model, id: "unknown", contextWindow: 100 };
   await handlers.get("model_select")({}, ctx);
   assert.match(notifications.at(-1).message, /no discovered context limit/);
+  for (const [contextWindow, maxTokens, shown] of [[100, 128000, "context 100, output 128k"], [1050000, 32768, "context 1.05M, output 32.8k"],
+    [999, 1000, "context 999, output 1k"], [999999, 400000, "context 1M, output 400k"], [2000000, 12345, "context 2M, output 12.3k"]]) {
+    model = { ...model, contextWindow, maxTokens };
+    assert.equal((await limits("")).message.split("\n")[0], `Codex limits for unknown: ${shown}`);
+  }
   model = { ...model, provider: "anthropic" };
   const before = notifications.length;
   await handlers.get("model_select")({}, ctx);
   assert.equal(notifications.length, before);
+  assert.deepEqual(await limits(""), { type: "info", message: "Codex limits: Discovery failed; last-known limits (or Pi catalog defaults) retained." },
+    "without a selected Codex model there are no limits to state");
 });
 
 test("a start before discovery could run does not warn about a missing limit; the completed discovery decides", async () => {
   const source = new MemoryCatalog();
   const decorated = maximumContextProvider(base(), source);
-  const handlers = new Map(), notifications = [];
+  const handlers = new Map(), commands = new Map(), notifications = [];
   let allowNetwork = false;
   let model = base().getModels()[0];
   const ctx = { get model() { return model; }, modelRegistry: {
@@ -255,11 +267,14 @@ test("a start before discovery could run does not warn about a missing limit; th
     find: (_provider, id) => decorated.provider.getModels().find((m) => m.id === id),
   }, ui: { notify: (message, type) => notifications.push({ message, type }) } };
   const pi = { registerProvider: () => {}, on: (name, handler) => handlers.set(name, handler),
-    registerCommand: () => {}, setModel: async (next) => { model = next; return true; } };
+    registerCommand: (name, command) => commands.set(name, command), setModel: async (next) => { model = next; return true; } };
   registerCodexLimits(pi, decorated);
   await handlers.get("session_start")({}, ctx);
   assert.equal(decorated.needsRefresh(), true, "offline start leaves discovery pending");
   assert.deepEqual(notifications, [], "discovery has not run: nothing is known to be missing");
+  await commands.get("codex-limits").handler("", ctx);
+  assert.deepEqual(notifications.splice(0), [{ type: "info",
+    message: "Codex limits for test-model: context 272k, output 128k\nDiscovery pending for this account/endpoint; Pi catalog limits retained." }]);
   allowNetwork = true;
   model = { ...model, id: "unknown" };
   await handlers.get("input")({}, ctx);

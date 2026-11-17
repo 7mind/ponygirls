@@ -53,16 +53,39 @@ export function registerCodexLimits(pi: ExtensionAPI, decorated: MaximumContextP
         ctx.ui.notify("Usage: /codex-limits [refresh]", "warning");
         return;
       }
+      // The answer first: the selected model's limits; then where they come from.
       const model = ctx.model;
-      const selected = model && model.provider === decorated.providerId
-        ? `\nSelected: ${model.id}; context ${ctx.modelRegistry.find(model.provider, model.id)?.contextWindow ?? model.contextWindow}; output ${model.maxTokens}.`
-        : "";
-      ctx.ui.notify(`Codex limits: ${decorated.status()}${selected}`, "info");
+      const limits = model && model.provider === decorated.providerId
+        ? ` for ${model.id}: context ${compactTokens(ctx.modelRegistry.find(model.provider, model.id)?.contextWindow ?? model.contextWindow)}, output ${compactTokens(model.maxTokens)}\n`
+        : ": ";
+      ctx.ui.notify(`Codex limits${limits}${decorated.status()}`, "info");
     },
   });
 }
 
 const REFRESH_ARGUMENT = "refresh";
+
+/** Each unit is a thousand of the one before. */
+const UNIT_STEP = 1000;
+const COMPACT_UNITS = [{ divisor: UNIT_STEP, suffix: "k" }, { divisor: UNIT_STEP ** 2, suffix: "M" }] as const;
+const COMPACT_DIGITS = 3;
+
+/**
+ * A token limit in at most three significant digits: `500k`, `32.8k`, `1.05M`.
+ * The shared kit's compact format; this extension's check runs without the kit.
+ */
+function compactTokens(tokens: number): string {
+  if (tokens < UNIT_STEP) return String(tokens);
+  let scaled = 0;
+  let suffix = "";
+  for (const unit of COMPACT_UNITS) {
+    scaled = Number((tokens / unit.divisor).toPrecision(COMPACT_DIGITS));
+    suffix = unit.suffix;
+    // Rounding to three digits can reach the next unit (999,999 → 1M).
+    if (scaled < UNIT_STEP) break;
+  }
+  return `${scaled}${suffix}`;
+}
 
 export default function (pi: ExtensionAPI): void {
   const base = builtinProviders().find((provider) => provider.id === "openai-codex");
