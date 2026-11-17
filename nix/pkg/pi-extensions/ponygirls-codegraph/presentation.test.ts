@@ -179,7 +179,7 @@ test("status pane: narrowing hides Symbols, Files, Size, then Checked; checkout 
 });
 
 test("status pane: an over-long path is shortened in the middle before columns are hidden for it", () => {
-  const long = "/home/u/.pi/agent/subagents/01a1eb45-0e75-7445-876e-7978edd60dc1/worktrees/wt-ponygirls-3b753fc68cdd-1794954281718";
+  const long = "/home/u/.pi/agent/subagents/0195c2e4-7a10-7c3b-9f21-5d0e8a4b6c12/worktrees/wt-ponygirls-3b753fc68cdd-1794954281718";
   const status: StatusSnapshot = { ...ONE, scopes: [scope(long, { isDefault: true })] };
   const at120 = open(status, PLAIN_THEME, 40).lines(120);
   assert.match(at120[1]!, /CHECKOUT +STATE +FILES +SYMBOLS +SIZE +CHECKED$/, "all columns stay at 120");

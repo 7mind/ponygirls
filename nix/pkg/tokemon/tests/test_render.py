@@ -551,7 +551,7 @@ class StatusTests(unittest.TestCase):
 
     def test_stale_marker_is_kept_before_a_provider_note_and_counted_when_dropped(self):
         window = QuotaWindow("weekly credits", 1961.1, 2000.0, "USD", None)
-        noted = _account("default", "openai-codex", "~/.pi/agent", "someone@example.com", "ent26", [window], note="resets: 0")
+        noted = _account("default", "openai-codex", "~/.pi/agent", "someone@example.com", "teams", [window], note="resets: 0")
         stale = replace(noted, cached=True, fetched_at=NOW - timedelta(minutes=10))
         self.assertEqual(self._status([stale], None), "low 98% · stale · 10m old · resets: 0")
         # 122 columns hold every column with the bare state; the note needs 12 more and hides nothing.

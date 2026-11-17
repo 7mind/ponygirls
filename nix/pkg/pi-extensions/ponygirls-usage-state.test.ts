@@ -232,40 +232,40 @@ function providerEntry(name: string, sessions: number, stats: ReturnType<typeof 
  */
 const captureStats: TimeFilteredStats = timeFilteredStats({
 	providers: new Map([
-		providerEntry("openai-codex", 199, usage(115_173, 40_609, 1236 * M, 1120 * M, 115 * M, 37_516 * M), [
-			modelEntry("gpt-6-astra", 21, usage(34_161, 32_491, 436 * M, 402 * M, 34 * M, 12_400 * M)),
-			modelEntry("gpt-6.1-sol", 184, usage(80_896, 8112, 799 * M, 718 * M, 81 * M, 25_100 * M)),
+		providerEntry("openai-codex", 140, usage(104_250, 12_840, 2071 * M, 1890 * M, 181 * M, 21_400 * M), [
+			modelEntry("gpt-6-astra", 21, usage(31_400, 10_310, 512 * M, 470 * M, 42 * M, 14_100 * M)),
+			modelEntry("gpt-6.1-sol", 128, usage(72_850, 2530, 655 * M, 590 * M, 65 * M, 17_200 * M)),
 		]),
-		providerEntry("anthropic", 26, usage(19_790, 7552, 1546 * M, 764 * M, 18 * M, 10_200 * M), [
-			modelEntry("claude-opus-5-5", 20, usage(14_292, 4140, 1060 * M, 525 * M, 11 * M, 6980 * M)),
+		providerEntry("anthropic", 26, usage(16_320, 8930, 1320 * M, 648 * M, 23 * M, 11_690 * M), [
+			modelEntry("claude-opus-5-5", 20, usage(11_870, 5518, 1030 * M, 497 * M, 14 * M, 7450 * M)),
 			modelEntry("claude-haiku-5-0-20260514", 9, usage(5498, 3412, 486 * M, 239 * M, 7 * M, 3220 * M)),
 		]),
-		providerEntry("ai-gateway-anthropic", 6, usage(7182, 4881, 759 * M, 375 * M, 8_700_000, 4280 * M), [
-			modelEntry("claude-fable-5-2", 6, usage(7182, 4881, 759 * M, 375 * M, 8_700_000, 4280 * M)),
+		providerEntry("ai-gateway-anthropic", 6, usage(6240, 1175, 688 * M, 341 * M, 9_300_000, 3910 * M), [
+			modelEntry("claude-fable-5-2", 6, usage(6240, 1175, 688 * M, 341 * M, 9_300_000, 3910 * M)),
 		]),
 		providerEntry("Tools", 0, usage(12, 3.17, 640_000, 598_000, 42_000, 0), [
 			modelEntry("summaries", 0, usage(12, 3.17, 640_000, 598_000, 42_000, 0)),
 		]),
 	]),
-	totals: { ...usage(142_157, 53_045.17, 3_541_640_000, 2_259_598_000, 141_742_000, 51_996 * M), sessions: 231 },
+	totals: { ...usage(126_822, 22_948.17, 4_079_640_000, 2_879_598_000, 213_342_000, 37_000 * M), sessions: 231 },
 });
 
 /** The target screen of the specification: per-model mode at 120 columns. */
 const CAPTURE_TABLE_120 = [
 	"Provider / model            │ Sessions │     Msgs │     Cost │  Tokens │     ↑In │    ↓Out │   Cache",
 	"────────────────────────────┼──────────┼──────────┼──────────┼─────────┼─────────┼─────────┼────────",
-	"openai-codex                │      199 │  115,173 │  $40,609 │   1.24B │   1.12B │    115M │   37.5B",
-	"  gpt-6-astra               │       21 │   34,161 │  $32,491 │    436M │    402M │     34M │   12.4B",
-	"  gpt-6.1-sol               │      184 │   80,896 │   $8,112 │    799M │    718M │     81M │   25.1B",
-	"anthropic                   │       26 │   19,790 │   $7,552 │   1.55B │    764M │     18M │   10.2B",
-	"  claude-opus-5-5           │       20 │   14,292 │   $4,140 │   1.06B │    525M │     11M │   6.98B",
+	"openai-codex                │      140 │  104,250 │  $12,840 │   2.07B │   1.89B │    181M │   21.4B",
+	"  gpt-6-astra               │       21 │   31,400 │  $10,310 │    512M │    470M │     42M │   14.1B",
+	"  gpt-6.1-sol               │      128 │   72,850 │   $2,530 │    655M │    590M │     65M │   17.2B",
+	"anthropic                   │       26 │   16,320 │   $8,930 │   1.32B │    648M │     23M │   11.7B",
+	"  claude-opus-5-5           │       20 │   11,870 │   $5,518 │   1.03B │    497M │     14M │   7.45B",
 	"  claude-haiku-5-0-20260514 │        9 │    5,498 │   $3,412 │    486M │    239M │      7M │   3.22B",
-	"ai-gateway-anthropic        │        6 │    7,182 │   $4,881 │    759M │    375M │    8.7M │   4.28B",
-	"  claude-fable-5-2          │        6 │    7,182 │   $4,881 │    759M │    375M │    8.7M │   4.28B",
+	"ai-gateway-anthropic        │        6 │    6,240 │   $1,175 │    688M │    341M │    9.3M │   3.91B",
+	"  claude-fable-5-2          │        6 │    6,240 │   $1,175 │    688M │    341M │    9.3M │   3.91B",
 	"Tools                       │        - │       12 │    $3.17 │    640k │    598k │     42k │       -",
 	"  summaries                 │        - │       12 │    $3.17 │    640k │    598k │     42k │       -",
 	"────────────────────────────┴──────────┴──────────┴──────────┴─────────┴─────────┴─────────┴────────",
-	"Total                       │      231 │  142,157 │  $53,045 │   3.54B │   2.26B │    142M │     52B",
+	"Total                       │      231 │  126,822 │  $22,948 │   4.08B │   2.88B │    213M │     37B",
 ];
 
 const NUMERIC_LABELS = ["Sessions", "Msgs", "Cost", "Tokens", "↑In", "↓Out", "Cache"];
@@ -344,11 +344,11 @@ test("renderUsageTable sizes the first column to the longest label of the tab, a
 test("renderUsageTable fits every column in 100 columns with 20-character provider names", () => {
 	const wide = timeFilteredStats({
 		providers: new Map([
-			providerEntry("ai-gateway-anthropic", 6, usage(7182, 4881, 759 * M, 375 * M, 8_700_000, 4280 * M), [
-				modelEntry("claude-fable-5-2", 6, usage(7182, 4881, 759 * M, 375 * M, 8_700_000, 4280 * M)),
+			providerEntry("ai-gateway-anthropic", 6, usage(6240, 1175, 688 * M, 341 * M, 9_300_000, 3910 * M), [
+				modelEntry("claude-fable-5-2", 6, usage(6240, 1175, 688 * M, 341 * M, 9_300_000, 3910 * M)),
 			]),
-			providerEntry("twenty-characters-ab", 199, usage(115_173, 40_609, 1236 * M, 1120 * M, 115 * M, 37_516 * M), [
-				modelEntry("gpt-6-astra", 21, usage(34_161, 32_491, 436 * M, 402 * M, 34 * M, 12_400 * M)),
+			providerEntry("twenty-characters-ab", 199, usage(104_250, 12_840, 2071 * M, 1890 * M, 181 * M, 21_400 * M), [
+				modelEntry("gpt-6-astra", 21, usage(31_400, 10_310, 512 * M, 470 * M, 42 * M, 14_100 * M)),
 			]),
 		]),
 		totals: { ...usage(122_355, 45_490, 1995 * M, 1495 * M, 123_700_000, 41_796 * M), sessions: 205 },
@@ -422,7 +422,7 @@ test("renderUsageTable never drops Msgs and Cost; below that it shortens labels 
 		const table = captureTable(width, "models");
 		assert.equal(firstColumnWidth(table.header[0]!), 12, `first column at ${width}`);
 		assert.deepEqual(cellsOf(table.header[0]!), ["Provid…model", "Msgs", "Cost"], `header at ${width}`);
-		assert.deepEqual(cellsOf(table.rows[6]!), ["ai-gat…ropic", "7,182", "$4,881"], `row at ${width}`);
+		assert.deepEqual(cellsOf(table.rows[6]!), ["ai-gat…ropic", "6,240", "$1,175"], `row at ${width}`);
 		assert.deepEqual(table.hidden, ["hidden at this width: Cache, ↓Out, ↑In, Sessions, Tokens"]);
 		for (const line of tableLines(table)) assert.equal(visibleWidth(line), 34, `table width at ${width}`);
 	}
@@ -432,15 +432,15 @@ test("renderUsageTable formats counts, compact tokens and cost", () => {
 	const cells = (row: Partial<UsageTableRow>): string[] =>
 		cellsOf(renderUsageTable([usageRow(row)], usageRow({ provider: "Total" }), PLAIN_THEME, { width: 170, mode: "aggregates" }).rows[0]!).slice(1);
 	// Sessions and Msgs: thousands separators.
-	assert.deepEqual(cells({ sessions: 1234, messages: 115_173 }).slice(0, 2), ["1,234", "115,173"]);
+	assert.deepEqual(cells({ sessions: 1234, messages: 104_250 }).slice(0, 2), ["1,234", "104,250"]);
 	// Token columns: three significant digits with k/M/B.
-	assert.deepEqual(cells({ tokens: 999, input: 1234, output: 96_000, cache: 8_700_000 }).slice(3), ["999", "1.23k", "96k", "8.7M"]);
-	assert.deepEqual(cells({ tokens: 1236 * M, input: 1120 * M, output: 115 * M, cache: 37_516 * M }).slice(3), ["1.24B", "1.12B", "115M", "37.5B"]);
+	assert.deepEqual(cells({ tokens: 999, input: 1234, output: 96_000, cache: 9_300_000 }).slice(3), ["999", "1.23k", "96k", "9.3M"]);
+	assert.deepEqual(cells({ tokens: 2071 * M, input: 1890 * M, output: 181 * M, cache: 21_400 * M }).slice(3), ["2.07B", "1.89B", "181M", "21.4B"]);
 	// Cost: the precision rules below $100 are unchanged; thousands separators from $1,000.
 	const cost = (value: number): string => cells({ cost: value })[2]!;
 	assert.deepEqual(
-		[0.0042, 0.42, 5.84, 61.3, 812.4, 8112, 40_609.3, 1_234_567.8].map(cost),
-		["$0.0042", "$0.42", "$5.84", "$61.3", "$812", "$8,112", "$40,609", "$1,234,568"],
+		[0.0042, 0.42, 5.84, 61.3, 812.4, 2530, 12_840.3, 1_234_567.8].map(cost),
+		["$0.0042", "$0.42", "$5.84", "$61.3", "$812", "$2,530", "$12,840", "$1,234,568"],
 	);
 	// Zero keeps its dash in every column.
 	assert.deepEqual(cells({ sessions: 0, messages: 0, cost: 0, tokens: 0, input: 0, output: 0, cache: 0 }), ["-", "-", "-", "-", "-", "-", "-"]);
@@ -451,11 +451,11 @@ test("the number formats do not follow the process locale", () => {
 	const script = `
 		import { PLAIN_THEME } from "@ponygirls/pi-ui";
 		import { buildInputDistribution, renderInputDistChart, renderUsageTable } from "./ponygirls-usage-state.ts";
-		const row = { provider: "p", model: null, sessions: 1234, messages: 115173, cost: 40609.3, tokens: 1, input: 1, output: 1, cache: 1 };
+		const row = { provider: "p", model: null, sessions: 1234, messages: 104250, cost: 12840.3, tokens: 1, input: 1, output: 1, cache: 1 };
 		const table = renderUsageTable([row], row, PLAIN_THEME, { width: 170, mode: "aggregates" });
 		const sizes = Array.from({ length: 1234 }, () => ({ input: 5000, cacheRead: 0, cacheWrite: 0 }));
 		const chart = renderInputDistChart(buildInputDistribution(sizes), 120);
-		console.log(JSON.stringify({ native: (115173).toLocaleString(), row: table.rows[0], bar: chart.rows[0], total: chart.totals[0] }));
+		console.log(JSON.stringify({ native: (104250).toLocaleString(), row: table.rows[0], bar: chart.rows[0], total: chart.totals[0] }));
 	`;
 	const output = execFileSync(process.execPath, ["--input-type=module", "--eval", script], {
 		cwd: import.meta.dirname,
@@ -463,8 +463,8 @@ test("the number formats do not follow the process locale", () => {
 		encoding: "utf8",
 	});
 	const rendered = JSON.parse(output) as { native: string; row: string; bar: string; total: string };
-	assert.equal(rendered.native, "115.173", "the child process formats in German by default");
-	assert.deepEqual(cellsOf(rendered.row).slice(0, 4), ["p", "1,234", "115,173", "$40,609"]);
+	assert.equal(rendered.native, "104.250", "the child process formats in German by default");
+	assert.deepEqual(cellsOf(rendered.row).slice(0, 4), ["p", "1,234", "104,250", "$12,840"]);
 	assert.match(rendered.bar, / 1,234 100%$/);
 	assert.equal(rendered.total, "1,234 messages");
 });
@@ -484,7 +484,7 @@ test("renderUsageTable styles the note dim and keeps model rows plain under bold
 	const mode = "models";
 	const table = renderUsageTable(buildUsageRows(captureStats, mode), usageTotalsRow(captureStats.totals), TAG_THEME, { width: 80, mode });
 	assert.deepEqual(table.hidden, ["<dim>hidden at this width: Cache, ↓Out</dim>"]);
-	assert.match(table.rows[0]!, /^<b>openai-codex +<\/b><dim> │ <\/dim><b> +199<\/b>/);
+	assert.match(table.rows[0]!, /^<b>openai-codex +<\/b><dim> │ <\/dim><b> +140<\/b>/);
 	assert.match(table.rows[1]!, /^  gpt-6-astra +<dim> │ <\/dim> +21<dim> │ <\/dim>/);
 	assert.doesNotMatch(table.rows[1]!, /<b>/);
 });
@@ -578,7 +578,7 @@ test("renderUsagePane keeps the hidden-columns note under the table while it scr
 		assert.equal(pane.lines[7], "─".repeat(80));
 	}
 	const whole = renderUsagePane(PLAIN_THEME, 80, paneStats, paneState({}));
-	assert.match(whole.lines[CAPTURE_TABLE_120.length]!, /^Total +│ +231 │ +142,157 │ +\$53,045 │ +3\.54B │ +2\.26B *$/);
+	assert.match(whole.lines[CAPTURE_TABLE_120.length]!, /^Total +│ +231 │ +126,822 │ +\$22,948 │ +4\.08B │ +2\.88B *$/);
 	assert.equal(whole.lines[CAPTURE_TABLE_120.length + 1]!.trimEnd(), "hidden at this width: Cache, ↓Out");
 });
 

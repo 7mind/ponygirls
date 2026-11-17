@@ -65,7 +65,7 @@ const RETRY_AT = new Date(NOW.getTime() + (55 * 60 + 28) * 1000);
 function captured(): QueryResult[] {
   return [
     result("anthropic", [], { snapshot: null, error: "rate limited (HTTP 429) by https://api.anthropic.com/api/oauth/usage", rateLimited: true, retryAt: RETRY_AT }),
-    result("openai-codex", [], { snapshot: { plan: "ent26", identity: "someone@example.com", windows: [{ ...win("credits", null, null, "credits"), unlimited: true }], note: "resets: 0" } }),
+    result("openai-codex", [], { snapshot: { plan: "teams", identity: "someone@example.com", windows: [{ ...win("credits", null, null, "credits"), unlimited: true }], note: "resets: 0" } }),
   ];
 }
 
@@ -100,7 +100,7 @@ test("at 120 columns every column fits and the rate-limit status stays on its ro
   assert.deepEqual(table.lines, [
     "Provider      Src        Login                Plan   Window   Used / limit  Usage  Resets  Status",
     "anthropic     auth.json                              —                   —  —           —  rate limited · retry 55m",
-    "openai-codex  auth.json  someone@example.com  ent26  credits     unlimited  —           —  unlimited · resets: 0",
+    "openai-codex  auth.json  someone@example.com  teams  credits     unlimited  —           —  unlimited · resets: 0",
   ]);
   assert.equal(table.caption, null);
 });
@@ -112,7 +112,7 @@ test("a wide table shows the locations and the full status text; no rule separat
       ["Provider", "Src", "Login", "Plan", "Window", "Used / limit", "Usage", "Resets", "Status"],
       ["anthropic", "auth.json", "—", "—", "—", "—", "rate limited (429) · retry in 55m 28s"],
       ["~/.pi/agent/auth.json"],
-      ["openai-codex", "auth.json", "someone@example.com", "ent26", "credits", "unlimited", "—", "—", "unlimited · resets: 0"],
+      ["openai-codex", "auth.json", "someone@example.com", "teams", "credits", "unlimited", "—", "—", "unlimited · resets: 0"],
       ["~/.pi/agent/auth.json"],
     ], String(width));
     assert.equal(table.caption, null);
@@ -171,11 +171,11 @@ test("a status is its state, then at most one qualifier that fits; the rest is d
 });
 
 test("a provider's note never hides a column; a stale marker does", () => {
-  const snapshot = { plan: "ent26", identity: "someone@example.com", windows: [win("weekly credits", 1961.1, 2000, "USD")], note: "resets: 0" };
+  const snapshot = { plan: "teams", identity: "someone@example.com", windows: [win("weekly credits", 1961.1, 2000, "USD")], note: "resets: 0" };
   const all = ["Provider", "Src", "Login", "Plan", "Window", "Used / limit", "Usage", "Resets", "Status"];
   // 119 columns hold every column with the bare state; the note needs 12 more.
   const noted = [result("openai-codex", [], { snapshot })];
-  assert.deepEqual(plainTable(noted, 119).lines.map(cells), [all, ["openai-codex", "auth.json", "someone@example.com", "ent26", "weekly credits", "$1,961.10 / $2,000.00", "██████████", "—", "low 98%"]]);
+  assert.deepEqual(plainTable(noted, 119).lines.map(cells), [all, ["openai-codex", "auth.json", "someone@example.com", "teams", "weekly credits", "$1,961.10 / $2,000.00", "██████████", "—", "low 98%"]]);
   assert.equal(cells(plainTable(noted, 131).lines[1]!).at(-1), "low 98% · resets: 0");
   const stale = [result("openai-codex", [], { snapshot, quotaCache: { fetchedAt: new Date(NOW.getTime() - 10 * 60_000), retryAt: NOW } })];
   // The same row, stale: one column goes so that the marker stays.

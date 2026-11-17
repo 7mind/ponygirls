@@ -51,7 +51,7 @@ function captured(): QueryResult[] {
   const base = { error: null, fetchedAt: NOW, rateLimited: false, retryAt: null };
   return [
     { ...base, target: target("anthropic"), snapshot: null, error: "rate limited (HTTP 429) by https://api.anthropic.com/api/oauth/usage", rateLimited: true, retryAt: new Date(NOW.getTime() + (55 * 60 + 28) * 1000) },
-    { ...base, target: target("openai-codex"), snapshot: { plan: "ent26", identity: "someone@example.com", windows: [{ ...quotaWindow("credits", null, null, "credits", null), unlimited: true }], note: "resets: 0" } },
+    { ...base, target: target("openai-codex"), snapshot: { plan: "teams", identity: "someone@example.com", windows: [{ ...quotaWindow("credits", null, null, "credits", null), unlimited: true }], note: "resets: 0" } },
     { ...base, target: target("xiaomi"), snapshot: { plan: null, identity: null, windows: [], note: "no quota endpoint" } },
   ];
 }
