@@ -13,6 +13,9 @@ Status is checked mechanically against the tree of the commit that last edited t
 discovered by `unittest`, a Scala/other reference must still contain its marker. Each reference removed by U14 names
 the commit group that removed it and its surviving guard. The note is a historical record, not an inventory to maintain.
 
+Result of the final check (end of U14): 153 target references; 136 present, 17 removed by U14, each with its
+surviving guard or the reason it is intentionally unguarded. No reference is unexplained.
+
 ## Groups
 
 ### `credentials`
@@ -81,11 +84,11 @@ Verify→publishing commit→tree/rename/parent/root fsync→ready commit→clea
 
 - `manure/backend/src/test/scala/manure/ArtifactsContract.scala` :: `test("each publish crash window remains unserved then restart reconciles ready or resumable"` — present
 - `manure/backend/src/test/scala/manure/ArtifactsContract.scala` :: `test("hash mismatch repairs receipts before reporting and never serves a partial ready tree"` — present
-- `test_target_migration.TargetMigrationTests.test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward` — present
-- `test_offline_conversion.PostgresContracts.test_process_death_after_commit_retries_without_duplicate_rows` — present
-- `test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction` — present
+- `test_target_migration.TargetMigrationTests.test_actual_target_import_resume_crash_windows_original_grants_restart_and_fixforward` — REMOVED — converter group (D3b): the offline converter that produced the imported state is deleted; the server-side import receipt checks stay guarded by `RootMigrationSuite.scala` ("imported legacy receipt tuples and raw hashes survive device-renumbering migration", "an unbound imported root cannot use portable planning as an adoption bypass")
+- `test_offline_conversion.PostgresContracts.test_process_death_after_commit_retries_without_duplicate_rows` — REMOVED — converter group (D3b): contract of the deleted converter; intentionally unguarded
+- `test_offline_conversion.PostgresContracts.test_killed_sql_connection_rolls_back_import_transaction` — REMOVED — converter group (D3b): contract of the deleted converter; intentionally unguarded
 - `test_target_durability.TargetDurabilityTests.test_server_sigkill_after_rename_before_ready_commit_recovers` — present
-- `test_target_migration.TargetMigrationTests.test_first_adoption_rejects_replaced_payload_root_without_blessing` — present
+- `test_target_migration.TargetMigrationTests.test_first_adoption_rejects_replaced_payload_root_without_blessing` — REMOVED — converter group (D3b): see above; first-adoption refusal also guarded by `RuntimeSuite.scala` ("nonempty payload root with no import/metadata fails closed, no orphan sweep adoption")
 
 ### `quota-session`
 
@@ -121,7 +124,7 @@ One-time artifact/principal-bound handoff, password/token-digest-bound grants an
 - `manure/backend/src/test/scala/manure/ArtifactsContract.scala` :: `test("single-use handoff and token-bound content grant revoke at logout and credential change"` — present
 - `manure/backend/src/test/scala/manure/ArtifactsContract.scala` :: `test("grant capacity keeps newly issued grant even when its hash sorts below timestamp-tied predecessor"` — present
 - `test_browser_access_modes.DashboardAccessModeTests.test_path_access_transitions_controls_and_races` — present
-- `test_browser_isolation.TestCurrentErrorEnvelope.test_current_command_fixture_projection_never_replaces_received_fault_bytes` — present
+- `test_browser_isolation.TestCurrentErrorEnvelope.test_current_command_fixture_projection_never_replaces_received_fault_bytes` — REMOVED — harness group: tested the `browser_fixtures.HttpResult` helper, not the product; intentionally unguarded
 - `test_browser_unlock.UnlockSeparateCase.test_b3_no_password_appears_in_listings_or_manifest` — present
 
 ### `filesystem-lifetime`
@@ -138,7 +141,7 @@ Descriptor-relative no-follow operations, regular-file checks, bounded non-follo
 - `manure/backend/src/test/scala/manure/RuntimeSuite.scala` :: `test("nonempty payload root with no import/metadata fails closed, no orphan sweep adoption"` — present
 - `manure/backend/src/test/scala/manure/RootMigrationSuite.scala` :: `test("authority-enabled startup refuses an unbound root before schema or adoption effects"` — present
 - `test_target_root_identity.PortableRootStartupTests.test_opted_in_unbound_root_refuses_before_schema_or_adoption` — present
-- `test_target_root_identity.PortableRootStartupTests.test_opted_in_legacy_root_refuses_and_default_auth_payload_remain_usable` — present
+- `test_target_root_identity.PortableRootStartupTests.test_opted_in_legacy_root_refuses_and_default_auth_payload_remain_usable` — REMOVED — root-identity merge: duplicate of `RootMigrationSuite.scala` "authority-enabled startup refuses an unmigrated legacy binding without side effects" (state, files and rows unchanged); the executable-level refusal path stays covered by `test_opted_in_unbound_root_refuses_before_schema_or_adoption`
 - `test_target_root_identity.PortableRootStartupTests.test_plan_command_reports_its_own_error_stage` — present
 - `test_target_root_identity.PortableRootStartupTests.test_apply_command_reports_its_own_error_stage` — present
 
@@ -185,7 +188,7 @@ Preserve CONTRACT7.1 Python Unicode casefold literal matching, no Unicode normal
 - `manure/backend/src/test/scala/manure/CatalogueContract.scala` :: `test("timestamp keysets retain adjacent source binary64 values and NULL expiry tails"` — present
 - `manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala` :: `test("forward catalogue projection bootstrap/backfill preserves original bytea and timestamp bits"` — present
 - `manure/backend/src/test/scala/manure/PostgresAdmissionSuite.scala` :: `test("trusted catalogue SQL has one keyset LIMIT and literal bytea parameters, never user SQL"` — present
-- `test_catalogue_casefold_oracle.HistoricalCatalogueCasefoldOracleTests.test_owned_sqlite_uses_full_casefold_for_eleven_supported_queries` — present
+- `test_catalogue_casefold_oracle.HistoricalCatalogueCasefoldOracleTests.test_owned_sqlite_uses_full_casefold_for_eleven_supported_queries` — REMOVED — converter group (D3b): oracle over the deleted SQLite store; casefold stays guarded by the `CatalogueContract.scala` casefold cases listed above and the native all-scalar probe in `test_target_durability`
 - `manure/backend/src/test/scala/manure/CatalogueContract.scala` :: `test("pinned Unicode16 full fold agrees with every scalar Python oracle and fixed string vectors"` — present
 - `test_target_durability.TargetDurabilityTests.test_all_scalar_casefold_probe_runs_in_actual_source_bound_executable` — present
 - `manure/backend/src/test/scala/manure/CatalogueContract.scala` :: `test("current casefold-equivalent queries share the same typed cursor and next page"` — present
@@ -198,7 +201,7 @@ Owned CLI/MCP remain restart-safe, credential-hermetic and stdout-clean; MCP2025
 
 - `test_mcp_protocol.TestMcpProtocol.test_full_lifecycle_ping_list_call` — present
 - `test_mcp_protocol.TestMcpProtocol.test_sdk_interop_if_available` — present
-- `test_mcp_environment.TestMcpFixtureEnvironment.test_fixtures_ignore_ambient_client_configuration` — present
+- `test_mcp_environment.TestMcpFixtureEnvironment.test_fixtures_ignore_ambient_client_configuration` — REMOVED — harness group: tested fixture isolation by re-running other cases in a subprocess; the isolation is structural (target-suite.py environment allowlist, `unset MANURE_*` in test-target.sh and manure-native); intentionally unguarded as a test
 - `test_client_realserver.TestRealServer.test_official_sdk_lifecycle_against_real_service` — present
 - `test_cli_process.TestSubprocessKillResume.test_kill_auto_resume` — present
 
@@ -217,20 +220,20 @@ Authenticated ready/unexpired metadata+manifest-path corpus only; lexical/semant
 
 Portable Python cannot activate the legacy SQLite HTTP server; refuse before parser/config/credentials/storage/network/write/subprocess. Current CLI and actual MCP stdio remain usable; historical helper imports are effect-free and unsupported as runtimes.
 
-- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_cli_registration_and_help_remain_usable` — present
-- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_mcp_registration_and_real_stdio_remain_usable` — present
-- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_public_module_refuses_before_parser_config_credentials_database_or_network` — present
-- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_python_server_console_script_is_not_registered` — present
-- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_unsupported_historical_helpers_remain_importable_without_effects` — present
+- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_cli_registration_and_help_remain_usable` — REMOVED — converter group (D3b): CLI help guarded by `test_cli_output.py:294` and `test_cli_ux.py:165`; installed CLI by the `manure-client` check
+- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_portable_mcp_registration_and_real_stdio_remain_usable` — REMOVED — converter group (D3b): installed `manure-mcp` stdio guarded by `nix/tests/manure-client.nix:125-180` and `test_mcp_protocol`
+- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_public_module_refuses_before_parser_config_credentials_database_or_network` — REMOVED — converter group (D3b): `manure/manure/server.py` is deleted; `nix/pkg/manure/client.nix` asserts it is absent from the client package
+- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_python_server_console_script_is_not_registered` — REMOVED — converter group (D3b): the module is deleted, so no registration can activate it
+- `test_retired_server_entrypoint.RetiredServerEntrypointTests.test_unsupported_historical_helpers_remain_importable_without_effects` — REMOVED — converter group (D3b): the historical helpers are deleted
 
 ### `compiled-source-location-identity`
 
 The same selected compiled source bytes have byte-identical SHA+relative-path manifests independently of checkout ancestors/cwd. Exclude only repository-relative target/.git components and noncompiled tooling, never legitimate source because an absolute ancestor is named target/.git. No count padding or blanket native-artifact invalidation.
 
-- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_git_ancestor_is_not_confused_with_repository_relative_git_metadata` — present
-- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_manifest_matches_independent_selected_hashes_and_relative_paths_from_any_cwd` — present
-- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_nested_build_metadata_and_generator_itself_never_enter_compiled_identity` — present
-- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_target_ancestor_cannot_change_selected_compiled_inputs` — present
+- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_git_ancestor_is_not_confused_with_repository_relative_git_metadata` — REMOVED — binding group: `artifact-source.py` is deleted; source/artifact identity is provided by Nix input addressing of the checks; intentionally unguarded as a test
+- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_manifest_matches_independent_selected_hashes_and_relative_paths_from_any_cwd` — REMOVED — binding group: `artifact-source.py` is deleted; source/artifact identity is provided by Nix input addressing of the checks; intentionally unguarded as a test
+- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_nested_build_metadata_and_generator_itself_never_enter_compiled_identity` — REMOVED — binding group: `artifact-source.py` is deleted; source/artifact identity is provided by Nix input addressing of the checks; intentionally unguarded as a test
+- `test_artifact_source_manifest.ArtifactSourceManifestTests.test_target_ancestor_cannot_change_selected_compiled_inputs` — REMOVED — binding group: `artifact-source.py` is deleted; source/artifact identity is provided by Nix input addressing of the checks; intentionally unguarded as a test
 
 ### `current-full-validation`
 
