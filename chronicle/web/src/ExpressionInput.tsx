@@ -5,6 +5,7 @@ import { ExpressionHintQuery, Operation_ExpressionHints, Result_ExpressionHints,
 import { read, type ChronicleConnection } from './client.ts';
 import type { ManagerStats } from './transport/types.ts';
 import { acceptExpressionHint, scalarBoundary } from './completion.ts';
+import { Icon } from './Icon.tsx';
 export interface CompletionContext { connection: ChronicleConnection; stats: ManagerStats; owner: string; target: ExpressionHintTarget }
 interface Props { context: CompletionContext; inputRef: RefObject<HTMLInputElement | null>; id: string; label: string; placeholder: string; value: string; change(value: string): void; clear(): void; canClear: boolean; maxLength: number; compositionChange?: (composing: boolean) => void }
 const HINT_DEBOUNCE_MS = 180, HINT_LIMIT = 12;
@@ -56,8 +57,8 @@ export function ExpressionInput({ context, inputRef, id, label, placeholder, val
       else if (event.key === 'Tab') setDismissed(stamp);
       else if (open && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) { event.preventDefault(); setChoice(index => (index + (event.key === 'ArrowDown' ? 1 : hints.hints.length - 1)) % hints.hints.length); }
       else if (open && event.key === 'Enter') { event.preventDefault(); accept(choice); }
-    }}/><button type="button" className="expression-clear" aria-label={`Clear ${label}`} title="Clear search · Escape (after closing suggestions)" aria-keyshortcuts="Escape" disabled={!canClear} onClick={reset}>×</button>
-    {open && <div className="expression-hints" id={listId} role="listbox" aria-label="Expression suggestions">{hints.hints.map((hint, index) => <div role="option" id={`${listId}-${index}`} key={`${index}:${hint.insertText}`} aria-selected={index === choice} onMouseDown={event => { event.preventDefault(); accept(index); }}><span>{hint.label}</span><small>{hint.kind}</small></div>)}<p className="tiny">{hints.truncated ? 'more suggestions available · ' : ''}↑↓ select · Enter insert · Escape close</p></div>}
-    {focused && error !== null && <span className="completion-error tiny" role="status">Completions unavailable: {error}</span>}
+    }}/><button type="button" className="btn btn-ghost btn-icon btn-sm expression-clear" aria-label={`Clear ${label}`} title="Clear search · Escape (after closing suggestions)" aria-keyshortcuts="Escape" disabled={!canClear} onClick={reset}><Icon name="x" small={true}/></button>
+    {open && <div className="expression-hints" id={listId} role="listbox" aria-label="Expression suggestions">{hints.hints.map((hint, index) => <div role="option" id={`${listId}-${index}`} key={`${index}:${hint.insertText}`} aria-selected={index === choice} onMouseDown={event => { event.preventDefault(); accept(index); }}><span>{hint.label}</span><small>{hint.kind}</small></div>)}<p className="expression-hints-foot">{hints.truncated ? 'more suggestions available · ' : ''}↑↓ select · Enter insert · Escape close</p></div>}
+    {focused && error !== null && <span className="completion-error" role="status">Completions unavailable: {error}</span>}
   </div>;
 }

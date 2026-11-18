@@ -1,19 +1,23 @@
-.table-controls{display:flex;align-items:center;font-size:10px;position:absolute;right:13px;top:50%;transform:translateY(-50%);min-width:0}
-.archive-table th:has(.table-controls)>button:not(.column-resizer){padding-right:50px}
-.activity-table thead th:has(.table-controls){padding-right:50px}
-.table-options>button{display:grid;place-items:center;min-width:32px;min-height:28px;padding:0 8px;font-size:20px;line-height:1}
+/* Table column controls (TableColumns.tsx). The Archive's view-bar menu uses the shared .menu; the per-table popover and
+ * column resizers below serve the Activity tables until they move to the view-bar menu (UX-C5). */
+.table-controls{display:flex;align-items:center;font-size:var(--text-xs);position:absolute;right:var(--space-3);top:50%;transform:translateY(-50%);min-width:0}
+.activity-table thead th:has(.table-controls){padding-right:var(--space-7)}
+.table-options>button{display:grid;place-items:center;min-width:var(--control-h);min-height:var(--control-h-sm);padding:0 var(--space-2);font-size:var(--text-xl);line-height:1}
 .transient-popover.table-options-panel{width:290px}
-.table-options-panel [role=group]{display:grid;gap:8px}
-.table-options-panel button,.table-column-options summary{font-size:12px;padding:6px 8px}
-.table-column-options{border-top:1px solid var(--control-border);padding-top:8px}
-.table-column-options[open]{display:grid;gap:8px}
+.table-options-panel [role=group]{display:grid;gap:var(--space-2)}
+.table-options-panel button,.table-column-options summary{font-size:var(--text-xs);padding:var(--space-1) var(--space-2)}
+.table-column-options{border-top:1px solid var(--border);padding-top:var(--space-2)}
+.table-column-options[open]{display:grid;gap:var(--space-2)}
 .table-column-options summary{cursor:pointer}
-.table-column-options label{display:flex;align-items:center;gap:8px;font-size:12px}
+.table-column-options label{display:flex;align-items:center;gap:var(--space-2);font-size:var(--text-xs)}
 .table-column-options input{width:auto}
-.archive-table th,.activity-table thead th{position:sticky;overflow:visible}
-.archive-table th>button:not(.column-resizer),.activity-table thead th>button:not(.column-resizer){padding-right:15px;overflow:hidden;text-overflow:ellipsis}
-.archive-table th>button.column-resizer,.activity-table thead th>button.column-resizer{position:absolute;right:0;top:0;bottom:0;width:12px;height:100%;min-width:0;padding:0;border:0;border-radius:0;border-left:1px solid var(--control-border);background:transparent;cursor:col-resize;touch-action:none;z-index:1}
-.archive-table th>button.column-resizer:hover,.activity-table thead th>button.column-resizer:hover{background:var(--soft)}
+.activity-table thead th{position:sticky;overflow:visible}
+.activity-table thead th>button:not(.column-resizer){padding-right:var(--space-4);overflow:hidden;text-overflow:ellipsis}
+.activity-table thead th>button.column-resizer{position:absolute;right:0;top:0;bottom:0;width:var(--space-3);height:100%;min-width:0;padding:0;border:0;border-radius:0;border-left:1px solid var(--border-strong);background:transparent;cursor:col-resize;touch-action:none;z-index:1}
+.activity-table thead th>button.column-resizer:hover{background:var(--bg-hover)}
 .column-resizer:focus-visible{outline-offset:-3px}
-
+.column-menu-panel{min-width:240px}
+.column-menu-panel [aria-disabled=true]{color:var(--text-muted);cursor:default}
+/* The check mark repeats aria-checked; empty alternative text keeps it out of the item's accessible name. */
+.column-menu-panel .menu-item[aria-checked=true]::after{content:"✓" / ""}
 @media(max-width:500px){.activity-table thead th:last-child{position:sticky;right:auto}}

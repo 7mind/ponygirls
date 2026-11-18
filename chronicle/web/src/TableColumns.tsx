@@ -1,4 +1,5 @@
-import { Popover } from './Popover.tsx';
+import { Anchored, Popover } from './Popover.tsx';
+import { Icon } from './Icon.tsx';
 import { useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { RefObject } from 'react';
 import { clampColumn, fitTableColumns, type SizedColumn, type TableColumnSpec } from './table-widths.ts';
@@ -36,11 +37,29 @@ function contentWidth(node: Node, context: CanvasRenderingContext2D): number {
   }
   return Math.max(width, line) + [style.paddingLeft, style.paddingRight, style.borderLeftWidth, style.borderRightWidth, style.marginLeft, style.marginRight].reduce((sum, value) => sum + Number.parseFloat(value), 0);
 }
-export function useTableColumns(specs: readonly TableColumnSpec[], rowCount: number, enabled: boolean): TableLayout {
+/** The visible column IDs remembered per browser (spec §5 rule 8); null when nothing usable is stored. */
+export interface ColumnChoiceStore { read(): readonly string[] | null; write(ids: readonly string[]): void }
+// A stored value that is not a list of strings (another version, a manual edit) is treated as absent and replaced at the next choice.
+export function browserColumnChoices(storage: Storage, key: string): ColumnChoiceStore {
+  return {
+    read() {
+      const raw = storage.getItem(key);
+      if (raw === null) return null;
+      let value: unknown;
+      try { value = JSON.parse(raw); } catch { return null; }
+      return Array.isArray(value) && value.every(item => typeof item === 'string') ? value as string[] : null;
+    },
+    write(ids) { storage.setItem(key, JSON.stringify(ids)); },
+  };
+}
+export function useTableColumns(specs: readonly TableColumnSpec[], rowCount: number, enabled: boolean): TableLayout { return useStoredTableColumns(null, specs, rowCount, enabled); }
+/** As `useTableColumns`; the chosen columns are read from and written to `choices`. */
+export function useStoredTableColumns(choices: ColumnChoiceStore | null, specs: readonly TableColumnSpec[], rowCount: number, enabled: boolean): TableLayout {
   const container = useRef<HTMLDivElement>(null), table = useRef<HTMLTableElement>(null), automatic = useRef(true), measured = useRef(false);
   const [available, setAvailable] = useState(0), [state, setState] = useState<ColumnState[]>(() => {
     if (new Set(specs.map(spec => spec.id)).size !== specs.length || !specs.some(spec => spec.required)) throw new Error('Table requires unique column IDs and a required column.');
-    return specs.map(spec => ({ spec, width: clampColumn(spec, spec.ideal), visible: spec.compact || spec.required }));
+    const stored = choices === null ? null : choices.read();
+    return specs.map(spec => ({ spec, width: clampColumn(spec, spec.ideal), visible: spec.required || (stored === null ? spec.compact : stored.includes(spec.id)) }));
   });
   function viewport() { return container.current === null ? available : container.current.clientWidth; }
   function fit(previous: readonly ColumnState[], width: number): ColumnState[] {
@@ -66,7 +85,11 @@ export function useTableColumns(specs: readonly TableColumnSpec[], rowCount: num
   }, [enabled]);
   useLayoutEffect(() => { if (enabled && automatic.current && available > 0) setState(previous => fit(previous, available)); }, [available, enabled]);
   useLayoutEffect(() => { if (enabled && !measured.current && rowCount > 0 && available > 0) { measured.current = true; if (automatic.current) setState(fit(natural(state), available)); } }, [rowCount, available, enabled]);
-  function updateVisibility(test: (column: ColumnState) => boolean) { automatic.current = true; const width = viewport(); setState(previous => fit(previous.map(column => ({ ...column, visible: column.spec.required || test(column) })), width)); }
+  function updateVisibility(test: (column: ColumnState) => boolean) {
+    automatic.current = true; const width = viewport(), next = state.map(column => ({ ...column, visible: column.spec.required || test(column) }));
+    if (choices !== null) choices.write(next.filter(column => column.visible).map(column => column.spec.id));
+    setState(fit(next, width));
+  }
   const columns = useMemo(() => state.filter(column => column.visible), [state]);
   return { columns, specs, visibilityKey: JSON.stringify(columns.map(column => column.spec.id)), width: columns.reduce((sum, column) => sum + column.width, 0), canPinEnds: columns[0]!.width + columns[columns.length - 1]!.width + MIN_UNPINNED_WIDTH <= available, container, table,
     resize(id, width) { automatic.current = false; setState(previous => { if (!previous.some(column => column.spec.id === id)) throw new Error('Unknown table column.'); return previous.map(column => column.spec.id === id ? { ...column, width: clampColumn(column.spec, width) } : column); }); },
@@ -76,7 +99,8 @@ export function useTableColumns(specs: readonly TableColumnSpec[], rowCount: num
     showAll() { updateVisibility(() => true); }, compact() { updateVisibility(column => column.spec.compact); },
   };
 }
-export function TableColumnGroup({ layout }: { layout: TableLayout }) { return <colgroup>{layout.columns.map(column => <col key={column.spec.id} style={{ width: column.width }}/>)}</colgroup>; }
+// Column widths are dynamic geometry: set through the CSSOM, never as style attributes (shared/ui-web rules).
+export function TableColumnGroup({ layout }: { layout: TableLayout }) { return <colgroup>{layout.columns.map(column => <col key={column.spec.id} ref={element => { if (element !== null) element.style.setProperty('width', `${column.width}px`); }}/>)}</colgroup>; }
 export function ColumnResize({ column, layout }: { column: SizedColumn; layout: TableLayout }) {
   const drag = useRef<{ pointer: number; x: number; width: number } | null>(null);
   return <button type="button" className="column-resizer" role="separator" aria-label={`Resize ${column.spec.label} column`} aria-orientation="vertical" aria-valuemin={column.spec.min} aria-valuemax={column.spec.max} aria-valuenow={Math.round(column.width)} title="Drag or use ← / → to resize" onPointerDown={event => { event.preventDefault(); event.stopPropagation(); drag.current = { pointer: event.pointerId, x: event.clientX, width: column.width }; event.currentTarget.setPointerCapture(event.pointerId); event.currentTarget.focus({ preventScroll: true }); }} onPointerMove={event => { const start = drag.current; if (start !== null && start.pointer === event.pointerId) layout.resize(column.spec.id, start.width + event.clientX - start.x); }} onPointerUp={event => { if (drag.current !== null && event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); drag.current = null; }} onPointerCancel={() => { drag.current = null; }} onLostPointerCapture={() => { drag.current = null; }} onClick={event => event.stopPropagation()} onKeyDown={event => {
@@ -98,4 +122,19 @@ export function TableControls({ name, layout }: { name: string; layout: TableLay
       </div>
     </Popover>
   </div>;
+}
+/** The table-options menu of a view bar (spec §3.1 Archive): column choice and fit modes. Choosing a column keeps the menu open. */
+export function ColumnMenu({ name, layout }: { name: string; layout: TableLayout }) {
+  return <Anchored className="column-menu" buttonClassName="btn btn-ghost btn-icon" buttonState={undefined} label={<Icon name="columns" small={false}/>} ariaLabel={`${name} table options`} describedBy={undefined} panel="menu" panelClassName="menu column-menu-panel" panelLabel={`${name} table options`}>
+    <div className="menu-label" aria-hidden="true">Columns</div>
+    <div role="group" aria-label="Columns">{layout.specs.map(spec => {
+      const shown = layout.columns.some(column => column.spec.id === spec.id);
+      return <button type="button" role="menuitemcheckbox" className="menu-item" key={spec.id} aria-checked={shown} aria-disabled={spec.required ? true : undefined} title={spec.required ? 'Always shown' : undefined} onClick={event => { event.stopPropagation(); if (!spec.required) layout.toggle(spec.id, !shown); }}>{spec.label}</button>;
+    })}</div>
+    <div className="menu-sep" role="separator"/>
+    <button type="button" role="menuitem" className="menu-item" onClick={layout.fitWidth}>Fit columns to width</button>
+    <button type="button" role="menuitem" className="menu-item" onClick={layout.fitContent}>Fit columns to content</button>
+    <button type="button" role="menuitem" className="menu-item" onClick={layout.showAll}>Show all columns</button>
+    <button type="button" role="menuitem" className="menu-item" onClick={layout.compact}>Reset columns</button>
+  </Anchored>;
 }
