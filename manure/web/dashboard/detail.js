@@ -61,6 +61,8 @@ export function createDetail(ctx, catalogue) {
   var manifest = null;
   var folder = "";
   var layout = "tree";
+  // At most one metadata editor (name or expiry) is open, and only for the artifact it was opened on.
+  var editTarget = null;
 
   // ── Page state ─────────────────────────────────────────────────────────
   // loading | loaded | not-found | expired | error (section[data-state]; CSS hides what a state has no data for).
@@ -222,7 +224,7 @@ export function createDetail(ctx, catalogue) {
   }
   function resetView() {
     currentDetailId = null; currentDetailInfo = null; accessDraft = null; manifest = null;
-    stopRename(false); stopExpiry(false);
+    stopRename(false); stopExpiry(false); editTarget = null;
     detailNotice(null); accessNotice(null);
     setText("detail-name", "Artifact"); $("detail-name").removeAttribute("title");
     $("detail-kind").replaceChildren(); $("detail-access").replaceChildren(); $("detail-state").replaceChildren();
@@ -494,6 +496,7 @@ export function createDetail(ctx, catalogue) {
     });
   }
   function removeArtifact(id, epoch) {
+    var generation = detailGeneration;
     deleting.add(id);
     document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = true; });
     if (currentDetailId === id) { updateDetailActions(); detailNotice("info", "Deleting artifact…", false); }
@@ -508,13 +511,43 @@ export function createDetail(ctx, catalogue) {
       }
       invalidateCatalogue();
     }).catch(function (error) {
-      if (epoch === ctx.sessionEpoch) { fail(id, "Delete failed (" + errorLabel(error) + "). The artifact is unchanged unless the request reached the server; reload to check."); }
+      if (epoch === ctx.sessionEpoch) { return reconcileDelete(id, epoch, generation, error); }
     }).finally(function () {
       deleting.delete(id);
       if (epoch === ctx.sessionEpoch) {
         document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = false; });
         if (currentDetailId === id) { updateDetailActions(); }
       }
+    });
+  }
+
+  // The delete may have been applied although its answer was lost: the artifact is read again (fenced to the same
+  // session and page) and the lists drop what they showed. Gone → not-found; unreadable → nothing stale stays usable.
+  function reconcileDelete(id, epoch, generation, error) {
+    var failure = "Delete could not be confirmed (" + errorLabel(error) + ").";
+    var here = function () { return epoch === ctx.sessionEpoch && generation === detailGeneration && currentDetailId === id && !section.hidden; };
+    invalidateCatalogue();
+    return apiFetch(current.artifact(id)).then(function (info) {
+      if (epoch !== ctx.sessionEpoch) { return; }
+      if (!here()) { failVisible(failure + " The artifact still exists."); return; }
+      renderDetail(info, id);
+      detailNotice("danger", failure + " The artifact still exists; nothing was deleted.", false);
+    }, function (readError) {
+      if (epoch !== ctx.sessionEpoch) { return; }
+      var label = errorLabel(readError);
+      var gone = label === "not-found" || label === "expired";
+      if (!here()) { if (gone) { overlays.toast("Artifact deleted"); } else { failVisible(failure + " Reload to check whether it still exists."); } return; }
+      detailGeneration++; openGeneration++; hidePassword();
+      currentDetailInfo = null; accessDraft = null;
+      if (gone) {
+        currentDetailId = null;
+        setText("detail-name", "Artifact");
+        setPageState(label, readError);
+        overlays.toast("Artifact deleted");
+        return;
+      }
+      $("detail-access").replaceChildren(element("span", "Access unknown", "chip chip-outline"));
+      detailNotice("danger", failure + " The artifact could not be read either (" + label + "). Reload before acting on it.", true);
     });
   }
 
@@ -573,11 +606,26 @@ export function createDetail(ctx, catalogue) {
     if (!passwordAvailable(id)) { return; }
     readPassword(id, revealPassword);
   }
+  // The clipboard answers asynchronously: its outcome counts only for the same session, page and reveal generation.
+  // A refused clipboard shows the password in this page's own (cleared-on-leave) field, never in a separate dialog.
+  function copyPassword(id, password) {
+    var request = { id: id, epoch: ctx.sessionEpoch, generation: detailGeneration, reveal: revealGeneration };
+    var clipboard = window.navigator.clipboard, pending;
+    try { pending = clipboard && typeof clipboard.writeText === "function" ? clipboard.writeText(password) : Promise.reject(new Error("clipboard-unavailable")); }
+    catch (error) { pending = Promise.reject(error); }
+    Promise.resolve(pending).then(function () {
+      if (canReveal(id, request)) { overlays.toast("External password copied"); }
+    }, function () {
+      if (!canReveal(id, request)) { return; }
+      revealPassword(password);
+      accessNotice("warn", "The browser did not allow clipboard access. The password is shown in the box; select it and copy it.", false);
+    });
+  }
   function onCopyPassword() {
     var id = currentDetailId;
-    if (revealed()) { overlays.copyText("External password", $("external-password").textContent, "External password copied"); return; }
+    if (revealed()) { copyPassword(id, $("external-password").textContent); return; }
     if (!passwordAvailable(id)) { return; }
-    readPassword(id, function (password) { overlays.copyText("External password", password, "External password copied"); });
+    readPassword(id, function (password) { copyPassword(id, password); });
   }
 
   // ── Mutations (access mode, rotation, name, expiry) ────────────────────
@@ -729,6 +777,8 @@ export function createDetail(ctx, catalogue) {
   }
   function startRename() {
     if (!editable(currentDetailId)) { return; }
+    stopExpiry(false);
+    editTarget = currentDetailId;
     section.dataset.editing = "name";
     $("rename-form").hidden = false;
     $("rename-input").value = currentDetailInfo.name;
@@ -736,15 +786,16 @@ export function createDetail(ctx, catalogue) {
     $("rename-input").focus(); $("rename-input").select();
   }
   function stopRename(restoreFocus) {
-    if (section.dataset.editing !== "name") { return; }
-    delete section.dataset.editing;
+    var open = !$("rename-form").hidden;
+    if (section.dataset.editing === "name") { delete section.dataset.editing; editTarget = null; }
     $("rename-form").hidden = true;
-    if (restoreFocus) { $("rename-button").focus(); }
+    $("rename-input").value = ""; $("rename-input").removeAttribute("aria-invalid");
+    if (open && restoreFocus) { $("rename-button").focus(); }
   }
   function onRenameSubmit(event) {
     event.preventDefault();
     var id = currentDetailId, name = $("rename-input").value;
-    if (!editable(id)) { return; }
+    if (!editable(id) || $("rename-form").hidden || editTarget !== id) { return; }
     if (name.length === 0) { $("rename-input").setAttribute("aria-invalid", "true"); $("rename-input").focus(); return; }
     var unchanged = name === currentDetailInfo.name;
     stopRename(true);
@@ -772,6 +823,8 @@ export function createDetail(ctx, catalogue) {
   function startExpiry() {
     if (!editable(currentDetailId)) { return; }
     var expires = currentDetailInfo.expires_at;
+    stopRename(false);
+    editTarget = currentDetailId;
     section.dataset.editing = "expiry";
     $("meta-expires-view").hidden = true; $("meta-expires-edit").hidden = false; $("expiry-note").hidden = false; $("expiry-note-term").hidden = false;
     $("expiry-select").value = expires === null || expires === undefined ? "never" : "custom";
@@ -780,15 +833,16 @@ export function createDetail(ctx, catalogue) {
     $("expiry-select").focus();
   }
   function stopExpiry(restoreFocus) {
-    if (section.dataset.editing !== "expiry") { return; }
-    delete section.dataset.editing;
+    var open = !$("meta-expires-edit").hidden;
+    if (section.dataset.editing === "expiry") { delete section.dataset.editing; editTarget = null; }
     $("meta-expires-view").hidden = false; $("meta-expires-edit").hidden = true; $("expiry-note").hidden = true; $("expiry-note-term").hidden = true;
-    if (restoreFocus) { $("expiry-change-button").focus(); }
+    $("expiry-select").value = "never"; $("expiry-custom").value = ""; $("expiry-custom").hidden = true; $("expiry-custom").removeAttribute("aria-invalid");
+    if (open && restoreFocus) { $("expiry-change-button").focus(); }
   }
   function onExpirySubmit(event) {
     event.preventDefault();
     var id = currentDetailId, seconds = chosenExpiry();
-    if (!editable(id)) { return; }
+    if (!editable(id) || $("meta-expires-edit").hidden || editTarget !== id) { return; }
     if (Number.isNaN(seconds)) { updateExpiryNote(); $("expiry-custom").focus(); return; }
     stopExpiry(true);
     patchMetadata(id, current.expiry(id, seconds), "Expiry");
