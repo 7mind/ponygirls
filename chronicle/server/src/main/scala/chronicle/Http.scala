@@ -31,7 +31,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def json(status: Status,j: io.circe.Json): Response[IO] = Response[IO](status).withEntity(j.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"))
   private def sessionCookie(secret: String,maxAge: Long): ResponseCookie = ResponseCookie("chronicle_session",secret,path=Some("/"),maxAge=Some(maxAge),secure=config.secureCookies,httpOnly=true,sameSite=Some(SameSite.Strict))
   private def failure(d: DomainError): Response[IO] = {
-    val status = d.code match { case "unauthorized" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" => Status.Conflict; case "gone" => Status.Gone; case "too-large" => Status.PayloadTooLarge; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
+    val status = d.code match { case "unauthorized" | "totp-required" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" => Status.Conflict; case "gone" => Status.Gone; case "too-large" => Status.PayloadTooLarge; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
     val r = json(status,Wire.encode(Failure.codecJson,Failure(d.code,d.detail)))
     if(status==Status.Unauthorized) r.putHeaders(Header.Raw(CIString("WWW-Authenticate"),"Bearer realm=\"chronicle\"")) else r
   }
@@ -77,20 +77,24 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   // The existing password login, for the configured logins the shared dispatcher hands back.
   private val declarativeLogin: DeclarativeLogin = new DeclarativeLogin {
     def login(login: String,password: String,previous: Option[String]): IO[SignedIn] = IO.blocking {
-      val (user,secret)=auth.accountLogin(login,password)
+      val (user,secret)=auth.configuredAccountLogin(login,password)
       val hash=Wire.hash(secret)
       SignedIn(user,AccountSession(AccountCredential(user.id,user.userType,hash,hash,true),secret))
     }.adaptError { case d: DomainError => AccountFailure(d.code) }
   }
   /** A request to the account plane of imperative accounts: the existing account boundary, then the shared
     * dispatcher; the audit events are logged after its transaction committed. */
-  private def imperativeAccount(r: Request[IO])(dispatch: AccountRequest => IO[AccountReply]): IO[Response[IO]] = handleAccount {
+  private def imperativeAccount(r: Request[IO])(dispatch: AccountRequest => IO[AccountReply]): IO[Response[IO]] = {
     val mutating=r.method!=Method.GET
-    IO(accountBoundary(r,mutating)) *> (if(mutating) accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body =>
-      IO.blocking(auth.accountSession(cookie(r))).flatMap { session =>
-        dispatch(AccountRequest(r.method.name,r.uri.path.renderString.stripPrefix(Http.accountPrefix),body,accountActors(r),session,presentedSession(r),clientAddress(r)))
-      }
-    }.flatMap(reply => IO(reply.events.foreach(audit)).as(accountReply(reply)))
+    val answered=handleAccount {
+      IO(accountBoundary(r,mutating)) *> (if(mutating) accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body =>
+        IO.blocking(auth.accountSession(cookie(r))).flatMap { session =>
+          dispatch(AccountRequest(r.method.name,r.uri.path.renderString.stripPrefix(Http.accountPrefix),body,accountActors(r),session,presentedSession(r),clientAddress(r)))
+        }
+      }.flatMap(reply => IO(reply.events.foreach(audit)).as(accountReply(reply)))
+    }
+    // Every 503 of these endpoints carries Retry-After, also one raised outside the dispatcher (the session lookup).
+    answered.map(response => if(response.status==Status.ServiceUnavailable && response.headers.get(CIString("Retry-After")).isEmpty) retryAfter(response,ImperativeAccountApi.UnavailableRetryAfterSeconds) else response)
   }
   // The legacy request cannot carry a TOTP code; it shares the address window and the credential gate of account login.
   private def legacyLogin(r: Request[IO],plane: AccountPlane): IO[Response[IO]] = {
@@ -100,37 +104,37 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
       case Some(wait) => IO.pure(retryAfter(rejected("rate-limited","too many login attempts"),Http.retryAfterSeconds(wait)))
       case None => plane.gate.run(boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap { raw =>
         val request=Wire.decode(LoginRequest.codecJson,Wire.parse(raw))
-        IO.blocking(auth.login(plane,request,presentedSession(r))).map(request.login -> _)
+        IO.blocking(auth.legacyLogin(request,presentedSession(r))).map(request.login -> _)
       }).flatMap {
         case None => IO.pure(retryAfter(rejected("unavailable","login capacity exhausted"),ImperativeAccountApi.UnavailableRetryAfterSeconds))
-        case Some((_,LegacyLogin.Established(response,secret))) => IO.pure(json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)))
-        case Some((login,LegacyLogin.Rejected(reason,locked))) =>
-          // Unknown, disabled and wrong-password logins answer exactly as a configured login with a wrong password.
+        case Some((_,LoginOutcome.Established((response,secret)))) => IO.pure(json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)))
+        case Some((login,LoginOutcome.Rejected(reason,locked))) =>
+          val refused=failure(Auth.rejection(reason))
           val answer=reason match {
-            case AccountRejection.Unauthorized => rejected(reason.code,"invalid credentials")
-            case AccountRejection.Invalid => rejected(reason.code,"invalid text length")
-            case AccountRejection.RateLimited(wait) => retryAfter(rejected(reason.code,"account temporarily locked"),Http.retryAfterSeconds(wait))
-            case _ => rejected(reason.code,"login rejected")
+            case AccountRejection.RateLimited(wait) => retryAfter(refused,Http.retryAfterSeconds(wait))
+            case _ => refused
           }
           IO(locked.foreach(path => audit(AccountEvent(AccountEventKind.Locked,None,Some(ImperativePolicy.fold(login)),Some(path.text),address)))).as(answer)
       }
     }
   }
-  /** The service without the account plane of imperative accounts: every login is a configured one. */
+  /** Present exactly while the master switch `accounts.enabled` is on. */
+  def accountPlane: Resource[IO,Option[AccountPlane]] = AccountPlane.resource(auth.accounts)
+  /** The service without the account plane: none of the imperative-account endpoints, and no per-address login window. */
   def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO]): HttpRoutes[IO] = routes(ws,loginGate,None)
-  /** `accounts` is present exactly while the master switch `accounts.enabled` is on (`AccountPlane.resource`). */
+  /** `accounts` is this service's `accountPlane`. */
   def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[AccountPlane]): HttpRoutes[IO] = accounts match {
     case None => declaredRoutes(ws,loginGate,None)
     case Some(plane) => declaredRoutes(ws,loginGate,accounts) <+> HttpRoutes.of[IO] {
       // After the routes above: the five existing account endpoints keep their handlers.
       case r if r.uri.path.renderString.startsWith(Http.accountPrefix+"/") =>
-        imperativeAccount(r)(plane.api.handle(Some(plane.settings),plane.declared,auth.imperative(plane),_))
+        imperativeAccount(r)(plane.api.handle(Some(plane.access.settings),plane.access.declared,auth.imperative(plane.access),_))
     }
   }
   private def declaredRoutes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[AccountPlane]): HttpRoutes[IO] = HttpRoutes.of[IO] {
     case r @ POST -> Root / "api" / "account" / "v1" / "login" => accounts match {
       case Some(plane) =>
-        imperativeAccount(r)(plane.api.login(plane.settings,plane.declared,auth.imperative(plane),declarativeLogin,_))
+        imperativeAccount(r)(plane.api.login(plane.access.settings,plane.access.declared,auth.imperative(plane.access),declarativeLogin,_))
       case None => handleAccount {
         IO(accountBoundary(r,true)) *> loginGate.permit.use { _ =>
           accountBody(r).flatMap { j => IO.blocking {

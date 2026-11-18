@@ -5,21 +5,18 @@ import java.time.Instant
 import java.sql.{Connection,SQLException}
 import java.nio.file.Path
 import cats.effect.{IO,Resource}
-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson,AccountCredential,AccountSession,AccountSessions,AccountFailure,AccountOutcome,AccountRejection,AttemptLimiter,CredentialGate,DeclaredDirectory,FailurePath,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,LoginDecision,PasswordHasher,TotpVault}
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson,AccountCredential,AccountSession,AccountSessions,AccountFailure,AccountOutcome,AccountRejection,AttemptLimiter,CredentialGate,DeclaredDirectory,FailurePath,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,LoginDecision,PasswordHasher,SignedIn,TotpVault}
 
-/** Outcome of the legacy `POST /api/login` while imperative accounts are on. A rejection is a value: the
-  * transaction that counted the failed attempt commits before the route answers. */
-enum LegacyLogin {
-  case Established(response: LoginResponse,secret: String)
+/** Outcome of a password login. A rejection of an imperative account is a value: the transaction that counted
+  * the failed attempt commits before the caller answers or raises it. */
+enum LoginOutcome[+A] {
+  case Established(value: A)
   case Rejected(reason: AccountRejection,locked: Option[FailurePath])
 }
-/** Imperative accounts of this process; exists exactly while the master switch `accounts.enabled` is on.
-  * Holds the settings with the TOTP key, the configured users (static until restart, like the rest of the
-  * configuration) and the in-memory limits of the unauthenticated account endpoints. */
-final class AccountPlane private (val settings: ImperativeSettings,val declared: DeclaredDirectory,val limiter: AttemptLimiter,val gate: CredentialGate) {
-  val api = new ImperativeAccountApi(limiter,gate)
-}
-object AccountPlane {
+/** Imperative accounts as configured; exists exactly while the master switch `accounts.enabled` is on. Holds the
+  * settings with the TOTP key and the configured users, static until restart like the rest of the configuration. */
+final class ImperativeAccess private (val settings: ImperativeSettings,val declared: DeclaredDirectory)
+object ImperativeAccess {
   private def settings(config: Config,accounts: AccountsConfig): ImperativeSettings =
     try {
       val keyFile=accounts.keyFile.getOrElse(throw AccountFailure("config"))
@@ -27,12 +24,19 @@ object AccountPlane {
       ImperativeSettings(AccountsConfig.service,accounts.signup.enabled,accounts.signup.requireApproval,accounts.enrollment.enabled,accounts.signup.maxUsers,
         java.time.Duration.ofSeconds(accounts.enrollment.ttlSeconds.toLong),issuer,accounts.reservedUsernames.toSet,TotpVault.load(Path.of(keyFile),AccountsConfig.service))
     } catch { case AccountFailure(_) => throw DomainError("config","invalid accounts settings or key file") }
-  def resource(config: Config): Resource[IO,Option[AccountPlane]] = config.accounts.filter(_.enabled) match {
+  /** Reads the key file and the password-hash files. */
+  def load(config: Config): Option[ImperativeAccess] =
+    config.accounts.filter(_.enabled).map(accounts => new ImperativeAccess(settings(config,accounts),DeclaredUsers.directory(DeclaredUsers.load(config))))
+}
+/** The account plane of imperative accounts: their configuration and the in-memory limits of the
+  * unauthenticated account endpoints. */
+final class AccountPlane private (val access: ImperativeAccess,val limiter: AttemptLimiter,val gate: CredentialGate) {
+  val api = new ImperativeAccountApi(limiter,gate)
+}
+object AccountPlane {
+  def resource(access: Option[ImperativeAccess]): Resource[IO,Option[AccountPlane]] = access match {
     case None => Resource.pure(None)
-    case Some(accounts) => for {
-      loaded <- Resource.eval(IO.blocking((settings(config,accounts),DeclaredUsers.directory(DeclaredUsers.load(config)))))
-      gate <- CredentialGate.resource
-    } yield Some(new AccountPlane(loaded._1,loaded._2,new AttemptLimiter(AttemptLimiter.Capacity,java.time.Clock.systemUTC()),gate))
+    case Some(configured) => CredentialGate.resource.map(gate => Some(new AccountPlane(configured,new AttemptLimiter(AttemptLimiter.Capacity,java.time.Clock.systemUTC()),gate)))
   }
 }
 object DeclaredUsers {
@@ -105,7 +109,27 @@ private object AccountStore {
 
 final class Auth(db: Database, config: Config) {
   private val allScopes = List(Scope.Ingest,Scope.Read,Scope.Raw)
-  def login(r: LoginRequest): (LoginResponse,String) = db.transaction(c => login(c,r))
+  /** Present exactly while the master switch is on. */
+  val accounts: Option[ImperativeAccess] = ImperativeAccess.load(config)
+  /** A configured login takes the unchanged statement; while imperative accounts are on, any other login is
+    * decided by the imperative core, without a TOTP code. */
+  private def decide[A](c: Connection,loginName: String,password: String,previous: Option[String])(configured: => A)(imperativeUser: SignedIn => A): LoginOutcome[A] =
+    accounts.fold(LoginDecision.NotImperative)(access => imperative(c,access).login(loginName,password,None,previous)) match {
+      case LoginDecision.NotImperative => LoginOutcome.Established(configured)
+      case LoginDecision.Imperative(AccountOutcome.Completed(signedIn)) => LoginOutcome.Established(imperativeUser(signedIn))
+      case LoginDecision.Imperative(AccountOutcome.Rejected(reason,locked)) => LoginOutcome.Rejected(reason,locked)
+    }
+  /** The legacy request cannot carry a TOTP code, so an account that requires one is refused. `previous` is the
+    * presented session, which an imperative login replaces. */
+  def legacyLogin(r: LoginRequest,previous: Option[String]): LoginOutcome[(LoginResponse,String)] = db.transaction { c =>
+    decide(c,r.login,r.password,previous)(login(c,r)) { signedIn =>
+      (LoginResponse(UserInfo(signedIn.user.id,signedIn.user.login.getOrElse(signedIn.user.id),allScopes),Wire.versions),signedIn.session.secret)
+    }
+  } match {
+    case LoginOutcome.Rejected(AccountRejection.TotpRequired,_) => LoginOutcome.Rejected(AccountRejection.Unauthorized,None)
+    case outcome => outcome
+  }
+  def login(r: LoginRequest): (LoginResponse,String) = Auth.established(legacyLogin(r,None))
   private def login(c: Connection,r: LoginRequest): (LoginResponse,String) = {
     Check.text(r.login,128); Check.text(r.password,1024)
     // An account that has been active imperatively is authenticated by the imperative core only (password counters, TOTP).
@@ -117,35 +141,26 @@ final class Auth(db: Database, config: Config) {
     Sql.exec(c,"INSERT INTO ch_sessions(hash,owner) VALUES(?,?)",Wire.hash(secret),id)
     (LoginResponse(UserInfo(id,r.login,allScopes),Wire.versions),secret)
   }
-  def accountLogin(loginName: String,password: String): (AccountUser,String) = db.transaction { c =>
+  private def configuredAccountLogin(c: Connection,loginName: String,password: String): (AccountUser,String) = {
     val (response,secret)=login(c,LoginRequest(loginName,password))
     (accountUser(c,Identity(response.user,true,Wire.hash(secret))),secret)
   }
-  private def imperative(c: Connection,plane: AccountPlane): ImperativeAccounts = {
+  /** Configured logins only: the fallback of the shared dispatcher, which decides every other login itself. */
+  def configuredAccountLogin(loginName: String,password: String): (AccountUser,String) = db.transaction(c => configuredAccountLogin(c,loginName,password))
+  def accountLogin(loginName: String,password: String): (AccountUser,String) = Auth.established(db.transaction { c =>
+    decide(c,loginName,password,None)(configuredAccountLogin(c,loginName,password))(signedIn => (signedIn.user,signedIn.session.secret))
+  })
+  private def imperative(c: Connection,access: ImperativeAccess): ImperativeAccounts = {
     val store=new AccountStore(c,db.profiles.preferred.profile)
-    ImperativeAccountSql.accounts(c,Some(plane.settings),plane.declared,store,store,PasswordHasher.Pbkdf2,java.time.Clock.systemUTC())
+    ImperativeAccountSql.accounts(c,Some(access.settings),access.declared,store,store,PasswordHasher.Pbkdf2,java.time.Clock.systemUTC())
   }
   /** One transaction per call, committed whatever `work` returns: a rejection may carry a failure counter. */
-  def imperative(plane: AccountPlane): ImperativeTransactions = new ImperativeTransactions {
-    def run[A](work: ImperativeAccounts => A): IO[A] = IO.blocking(db.transaction(c => work(imperative(c,plane))))
+  def imperative(access: ImperativeAccess): ImperativeTransactions = new ImperativeTransactions {
+    def run[A](work: ImperativeAccounts => A): IO[A] = IO.blocking(db.transaction(c => work(imperative(c,access))))
   }
   /** The live browser session of the presented cookie, as the account plane names it. */
   def accountSession(secret: String): Option[AccountCredential] =
     if(secret.isEmpty) None else db.transaction(c => liveBrowser(c,Wire.hash(secret))).map(identity => AccountStore.credential(identity.user.id,identity.credentialHash))
-  /** Legacy login while imperative accounts are on. A configured login takes the unchanged statement; any other
-    * login is decided by the imperative core. The legacy request cannot carry a TOTP code, so an account that
-    * requires one is refused. */
-  def login(plane: AccountPlane,r: LoginRequest,previous: Option[String]): LegacyLogin = db.transaction { c =>
-    imperative(c,plane).login(r.login,r.password,None,previous) match {
-      case LoginDecision.NotImperative =>
-        val (response,secret)=login(c,r)
-        LegacyLogin.Established(response,secret)
-      case LoginDecision.Imperative(AccountOutcome.Completed(signedIn)) =>
-        LegacyLogin.Established(LoginResponse(UserInfo(signedIn.user.id,signedIn.user.login.getOrElse(signedIn.user.id),allScopes),Wire.versions),signedIn.session.secret)
-      case LoginDecision.Imperative(AccountOutcome.Rejected(AccountRejection.TotpRequired,_)) => LegacyLogin.Rejected(AccountRejection.Unauthorized,None)
-      case LoginDecision.Imperative(AccountOutcome.Rejected(reason,locked)) => LegacyLogin.Rejected(reason,locked)
-    }
-  }
   private def liveBrowser(c: Connection,hash: String): Option[Identity] =
     Sql.one(c,s"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND ${AccountStore.liveSession}",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash))
   private def browserHash(c: Connection,hash: String): Identity = liveBrowser(c,hash).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
@@ -328,5 +343,19 @@ final class Auth(db: Database, config: Config) {
       case Operation.Logout() => lockBrowser(c,i); Sql.exec(c,"DELETE FROM ch_sessions WHERE hash=? AND owner=?",i.credentialHash,owner); receipt("Logout",None)
       case _ => throw DomainError("invalid","not a mutation")
     }
+  }
+}
+object Auth {
+  /** The failure a rejected login is reported as. Unknown, disabled and wrong-password logins read exactly
+    * like a configured login with a wrong password. */
+  def rejection(reason: AccountRejection): DomainError = reason match {
+    case AccountRejection.Unauthorized => DomainError(reason.code,"invalid credentials")
+    case AccountRejection.Invalid => DomainError(reason.code,"invalid text length")
+    case _ => DomainError(reason.code,"login rejected")
+  }
+  /** For the callers that take a login as a value or a raised failure; called after the login transaction ended. */
+  def established[A](outcome: LoginOutcome[A]): A = outcome match {
+    case LoginOutcome.Established(value) => value
+    case LoginOutcome.Rejected(reason,_) => throw rejection(reason)
   }
 }

@@ -80,7 +80,7 @@ class AccountHttpTest extends munit.FunSuite {
       services.database.initialize()
     })
     _ <- if(accounts.isEmpty) Resource.unit[IO] else Resource.make(IO.blocking(clearImperative(services.database)))(_ => IO.blocking(clearImperative(services.database)))
-    plane <- AccountPlane.resource(actual)
+    plane <- services.http.accountPlane
     gate <- Resource.eval(Semaphore[IO](2))
     server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => services.http.routes(ws,gate,plane).orNotFound).build
     client <- EmberClientBuilder.default[IO].build
@@ -404,6 +404,20 @@ class AccountHttpTest extends munit.FunSuite {
         accepted <- f.legacyLogin(plain,imperativePassword)
         configured <- f.legacyLogin("a","synthetic")
         account <- f.get(accepted.cookie)
+        // The login methods behind both routes decide an imperative login themselves and raise its rejection only after the counting transaction committed.
+        _ <- IO.blocking {
+          val auth=new Auth(f.services.database,f.config)
+          def failed: Option[Int] = f.services.database.transaction(c => Sql.one(c,"SELECT password_failures FROM ponygirls_imperative_users WHERE id=?",plain)(_.getInt(1)))
+          assertEquals(intercept[DomainError](auth.login(LoginRequest(plain,"wrong "+imperativePassword))).code,"unauthorized")
+          assertEquals(failed,Some(1))
+          assertEquals(intercept[DomainError](auth.accountLogin(plain,"wrong "+imperativePassword)).code,"unauthorized")
+          assertEquals(failed,Some(2))
+          assertEquals(auth.browser(auth.login(LoginRequest(plain,imperativePassword))._2).user.id,plain)
+          val (user,secret)=auth.accountLogin(plain,imperativePassword)
+          assertEquals((user.id,auth.browser(secret).user.id),(plain,plain))
+          assertEquals(failed,Some(0))
+          assertEquals(intercept[DomainError](auth.accountLogin(strict,imperativePassword)).code,"totp-required")
+        }
         _ <- IO {
           List(refused,wrong).foreach { reply =>
             assertEquals(reply.status,Status.Unauthorized)
