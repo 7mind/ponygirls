@@ -54,6 +54,8 @@ export const COLLECTORS_STATE = routeSlot<CollectorsState>('activity-collectors'
 export const COLLECTORS_DRAFT = routeSlot<string>('activity-collectors-draft', () => '');
 export const JOBS_STATE = routeSlot<JobsState>('activity-jobs', emptyJobs);
 export const JOBS_DRAFT = routeSlot<string>('activity-jobs-draft', () => '');
+// The job whose conversation was opened last: focus returns to its row when the list is shown again (spec §8 item 4).
+export const JOBS_OPENED = routeSlot<string | null>('activity-jobs-opened', () => null);
 export const SECTION = routeSlot<ActivitySection>('activity-section', () => DEFAULT_SECTION);
 export const COLLECTOR_CHAINS = routeSlot('activity-collector-chains', () => new SettledChainCache<ActivityCollector, ActivityResult, string>(CHAIN_LIMIT));
 export const JOB_CHAINS = routeSlot('activity-job-chains', () => new SettledChainCache<ActivityJob, ActivityJobsResult, string>(CHAIN_LIMIT));

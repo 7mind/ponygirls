@@ -12,6 +12,8 @@
 
 /* Lists (Collectors, Jobs) */
 .activity-viewbar .querybar{min-width:0}
+/* The column menus list up to 22 columns: the menu scrolls within the viewport under the sticky view bar. */
+.activity-viewbar .column-menu-panel{max-height:calc(100dvh - var(--masthead-h) - var(--subnav-h) - var(--viewbar-h) - var(--space-4));overflow-y:auto}
 .activity-notice{padding-bottom:var(--space-3)}
 .activity-notice .notice>.icon{color:var(--danger-fg)}
 .activity-table-frame{min-width:0}
@@ -100,6 +102,7 @@ a.attention-item:focus-visible{outline:2px solid var(--focus);outline-offset:-2p
   .activity-view .activity-table th{top:calc(var(--masthead-h) + var(--subnav-h))}
   .activity-view .update-pill{top:calc(var(--masthead-h) + var(--subnav-h) + var(--space-6))}
   .activity-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .activity-overview .grid-2{grid-template-columns:minmax(0,1fr)}
   .activity-detail{flex-direction:column;gap:var(--space-3)}
   .activity-detail-list{grid-template-columns:minmax(0,1fr)}
   .activity-counters{grid-template-columns:minmax(0,1fr)}

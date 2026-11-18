@@ -1,4 +1,4 @@
-import { useContext, useRef } from 'react';
+import { useContext, useLayoutEffect, useRef } from 'react';
 import { ActivityJobClass, ActivityJobScope, ActivityJobSort, ActivityJobsQuery, ExpressionHintTarget_ActivityJobs, JobState, Operation_ActivityJobs, Operation_RetryJob, Result_ActivityJobs, type ActivityJob, type ActivityJobsResult, type UserInfo } from '../api.ts';
 import { read, type ChronicleConnection } from '../client.ts';
 import { useSettledInfiniteResource } from '../infinite.ts';
@@ -13,7 +13,7 @@ import { Icon } from '../Icon.tsx';
 import { Glyph } from '../Glyph.tsx';
 import { windowProgress } from '../progress.ts';
 import { recordedYoloProfile } from '../recorded-yolo-profile.ts';
-import { ACTIVITY_INSTANCE, JOB_CHAINS, JOBS_DRAFT, JOBS_STATE, jobsRouteFor, type JobScope, type JobsState } from './state.ts';
+import { ACTIVITY_INSTANCE, JOB_CHAINS, JOBS_DRAFT, JOBS_OPENED, JOBS_STATE, jobsRouteFor, type JobScope, type JobsState } from './state.ts';
 import { collectorFilter, withCollector } from './collector-filter.ts';
 import { ListTable, count, nextOrder, useListTable, type Column } from './list.tsx';
 import { When } from './time.tsx';
@@ -22,8 +22,10 @@ const PAGE_SIZE = 50;
 const COLUMN_CHOICES_KEY = 'chronicle.activity.jobs.columns';
 const PLACEHOLDER = 'Filter — status:failed AND collector:"ci-runner-04"';
 const PERCENT = 100;
+// The details toggle, with the cell padding.
+const ACTIONS_WIDTH = { min: 72, ideal: 76, max: 120 };
 // Shortcut-row order: the fields of the mockup first; the rest fold into "more…".
-const fields: readonly FilterField[] = ['collector', 'project', 'branch', 'user', 'tag', 'reason', 'lease', 'status', 'producer', 'format', 'model', 'agent', 'yolo-profile', 'after', 'before', 'profile', 'classification']
+const fields: readonly FilterField[] = ['collector', 'project', 'branch', 'user', 'tag', 'reason', 'lease', 'agent', 'yolo-profile', 'status', 'producer', 'format', 'model', 'after', 'before', 'profile', 'classification']
   .map(attribute => ({ attribute, label: attribute === 'yolo-profile' ? 'Recorded yolo profile' : attribute[0]!.toUpperCase() + attribute.slice(1) }));
 const presets = [{ attribute: 'status', label: 'Failed', value: 'failed' }, { attribute: 'status', label: 'Running', value: 'running' }, { attribute: 'agent', label: 'Main agents', value: 'main' }, { attribute: 'agent', label: 'Subagents', value: 'subagent' }];
 const STATES: Readonly<Record<JobState, string>> = { [JobState.Complete]: 'status status-ok', [JobState.Queued]: 'status', [JobState.Running]: 'status status-run', [JobState.Failed]: 'status status-danger' };
@@ -104,6 +106,18 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow }: 
   const cache = useContext(RouteStateContext);
   if (cache === null) throw new Error('Jobs requires a RouteStateContext provider');
   const [state, setState] = useRouteState(JOBS_STATE, ACTIVITY_INSTANCE), [draft, setDraft] = useRouteState(JOBS_DRAFT, ACTIVITY_INSTANCE), input = useRef<HTMLInputElement>(null);
+  const [opened, setOpened] = useRouteState(JOBS_OPENED, ACTIVITY_INSTANCE), region = useRef<HTMLElement>(null), shown = useRef(false);
+  // The shell hides a retained view (`hidden` on an ancestor) while another route is shown and renders it again on return.
+  useLayoutEffect(() => {
+    const element = region.current;
+    if (element === null) throw new Error('Jobs region missing');
+    const visible = element.closest('[hidden]') === null;
+    if (visible && !shown.current && opened !== null && !element.contains(document.activeElement)) {
+      const link = element.querySelector<HTMLAnchorElement>(`tr[data-row-id="${CSS.escape(opened)}"] a.cell-title`);
+      if (link !== null) link.focus({ preventScroll: true });
+    }
+    shown.current = visible;
+  });
   const resource = useSettledInfiniteResource<ActivityJob, ActivityJobsResult, string>(cache.read(JOB_CHAINS, ACTIVITY_INSTANCE), connection, stats, JSON.stringify([user.id, state.scope, state.submitted, state.sort, state.direction]), refresh, true, undefined, async cursor => {
     validateMetadataExpression(state.submitted);
     const result = await read(connection, new Operation_ActivityJobs(new ActivityJobsQuery(undefined, state.scope, state.submitted, state.sort, state.direction, cursor, PAGE_SIZE)), reply => reply instanceof Result_ActivityJobs ? reply.result : null);
@@ -112,7 +126,7 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow }: 
     }
     return { items: result.jobs, next: result.nextCursor, previous: undefined, meta: result };
   }, item => item.job.id);
-  const table = useListTable(columns, COLUMN_CHOICES_KEY, 'Actions', resource.items.length);
+  const table = useListTable(columns, COLUMN_CHOICES_KEY, ACTIONS_WIDTH, resource.items.length);
   const meta = resource.meta, failed = resource.error !== null && resource.appendError === null, noun = scopeNoun(state.scope);
   const blocked = actions.busy || actions.uncertain !== null || stats.activeId === null;
   const chip = collectorFilter(state.submitted);
@@ -121,8 +135,8 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow }: 
   function clear() { setDraft(''); submit(''); }
   const retry = (id: string) => { void actions.run(new Operation_RetryJob(id), 'Retry indexing job'); };
   const counter = resource.loading ? `Loading ${noun} jobs…` : meta === null ? 'Not loaded' : <><strong>{meta.total.toLocaleString()}</strong> {noun} job{meta.total === 1n ? '' : 's'} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
-  return <section className="activity-list" aria-label="Jobs" data-view="activity-jobs">
-    <div className="viewbar activity-viewbar">
+  return <section className="activity-list" aria-label="Jobs" data-view="activity-jobs" ref={region} onClickCapture={event => { const row = event.target instanceof Element && event.target.closest('a.cell-title') !== null ? event.target.closest('tr[data-row-id]') : null; if (row instanceof HTMLElement && row.dataset.rowId !== undefined) setOpened(row.dataset.rowId); }}>
+    <div className="viewbar activity-viewbar" data-view-bar="">
       <div className="segmented" role="group" aria-label="Indexing job scope">{([[ActivityJobScope.Current, 'Current'], [ActivityJobScope.Historical, 'History']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={state.scope === value} onClick={() => scope(value)}>{label}</button>)}</div>
       <MetadataQueryBar inputRef={input} name="Indexing job" placeholder={PLACEHOLDER} value={draft} applied={state.submitted} change={setDraft} submit={submit} disabled={stats.activeId === null} completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityJobs(state.scope, undefined) }}/>
       <div className="viewbar-meta" role="status" aria-label="Jobs status">{counter}</div>

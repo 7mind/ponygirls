@@ -38,8 +38,10 @@ export function freshness(row: ActivityCollector): { label: string; status: stri
 // A collector's jobs: `collector:"<id>"` last, so that the Jobs view shows it as its removable chip (collector-filter.ts).
 const jobsOf = (id: string, status: string | null) => formatRoute(jobsRouteFor(withCollector(status === null ? '' : addMetadataFilter('', 'status', status), id), ActivityJobScope.Current));
 const NUMBER = { min: 72, ideal: 88, max: 140 };
+// The "Jobs" link and the details toggle, with the cell padding.
+const ACTIONS_WIDTH = { min: 140, ideal: 148, max: 180 };
 const columns: readonly Column<ActivityCollector, ActivityCollectorSort>[] = [
-  { sort: ActivityCollectorSort.CollectorId, label: 'Collector', cell: undefined, width: { min: 160, ideal: 260, max: 400 }, compact: true, narrow: true, required: true, title: row => row.collectorId, render: row => <span className="cell-title mono">{row.collectorId}</span> },
+  { sort: ActivityCollectorSort.CollectorId, label: 'Collector', cell: undefined, width: { min: 140, ideal: 260, max: 400 }, compact: true, narrow: true, required: true, title: row => row.collectorId, render: row => <span className="cell-title mono">{row.collectorId}</span> },
   { sort: ActivityCollectorSort.Phase, label: 'Phase', cell: undefined, width: { min: 96, ideal: 120, max: 200 }, compact: true, narrow: false, required: false, title: row => row.status === undefined ? 'No stored report' : row.status.report.phase, render: row => row.status === undefined ? <span className="muted">—</span> : <span className={row.status.report.phase === CollectorPhase.Failed ? 'status status-danger' : undefined}>{row.status.report.phase}</span> },
   { sort: ActivityCollectorSort.Freshness, label: 'Freshness', cell: undefined, width: { min: 100, ideal: 120, max: 200 }, compact: true, narrow: true, required: false, title: row => row.status === undefined ? 'No stored report' : undefined, render: row => { const value = freshness(row); return <span className={value.status}>{value.label}</span>; } },
   { sort: ActivityCollectorSort.ReceivedAt, label: 'Last report', cell: undefined, width: { min: 150, ideal: 200, max: 260 }, compact: true, narrow: false, required: false, title: row => row.status === undefined ? undefined : row.status.receivedAt, render: (row, now) => <When value={row.status === undefined ? undefined : row.status.receivedAt} now={now} relative="inline" missing="—"/> },
@@ -89,12 +91,12 @@ export function Collectors({ connection, stats, user, refresh, refreshNow }: { c
     if (result.user.id !== user.id) throw new Error('Activity response belongs to a different account');
     return { items: result.collectors, next: result.nextCursor, previous: undefined, meta: result };
   }, collector => collector.collectorId);
-  const table = useListTable(columns, COLUMN_CHOICES_KEY, 'Actions', resource.items.length);
+  const table = useListTable(columns, COLUMN_CHOICES_KEY, ACTIONS_WIDTH, resource.items.length);
   const meta = resource.meta, failed = resource.error !== null && resource.appendError === null;
   function submit(expression: string) { setState(value => ({ ...value, submitted: expression, expanded: null })); if (expression === state.submitted) refreshNow(); }
   const counter = resource.loading ? 'Loading collectors…' : meta === null ? 'Not loaded' : <><strong>{meta.totalCollectors.toLocaleString()}</strong>{state.submitted === '' ? ` collector${meta.allCollectors === 1n ? '' : 's'}` : ` of ${count(meta.allCollectors, 'collector', 'collectors')}`} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
   return <section className="activity-list" aria-label="Collectors" data-view="activity-collectors">
-    <div className="viewbar activity-viewbar">
+    <div className="viewbar activity-viewbar" data-view-bar="">
       <MetadataQueryBar inputRef={input} name="Collector" placeholder={PLACEHOLDER} value={draft} applied={state.submitted} change={setDraft} submit={submit} disabled={stats.activeId === null} completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityCollectors() }}/>
       <div className="viewbar-meta" role="status" aria-label="Collectors status">{counter}</div>
       <ColumnMenu name="Collectors" layout={table.layout}/>

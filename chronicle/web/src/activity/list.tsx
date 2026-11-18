@@ -19,7 +19,6 @@ export interface Column<Row, S extends string> {
   title(row: Row): string | undefined; render(row: Row, now: number): ReactNode;
 }
 const ACTIONS_COLUMN = 'actions';
-const ACTIONS_WIDTH: ColumnWidth = { min: 56, ideal: 64, max: 160 };
 // Phone widths (the shared 720 px breakpoint) start with their own short column choice, fitted to the viewport (spec §8 item 9).
 const NARROW_QUERY = '(max-width: 720px)';
 const SKELETON_ROWS = 10;
@@ -27,16 +26,16 @@ function useNarrow(): boolean {
   const query = useMemo(() => window.matchMedia(NARROW_QUERY), []);
   return useSyncExternalStore(listener => { query.addEventListener('change', listener); return () => query.removeEventListener('change', listener); }, () => query.matches);
 }
-function specs<Row, S extends string>(columns: readonly Column<Row, S>[], actionsLabel: string, narrow: boolean): TableColumnSpec[] {
+function specs<Row, S extends string>(columns: readonly Column<Row, S>[], actions: ColumnWidth, narrow: boolean): TableColumnSpec[] {
   return [...columns.map(column => ({ id: column.sort, label: column.label, ...column.width, grow: column.required, required: column.required, compact: narrow ? column.narrow : column.compact })),
-    { id: ACTIONS_COLUMN, label: actionsLabel, ...ACTIONS_WIDTH, grow: false, required: true, compact: true }];
+    { id: ACTIONS_COLUMN, label: 'Actions', ...actions, grow: false, required: true, compact: true }];
 }
 export interface ListTableLayout<Row, S extends string> { readonly layout: TableLayout; readonly shown: readonly Column<Row, S>[] }
-/** Column layout of a list, with the visible columns remembered per browser (spec §5 rule 8), separately for phones. */
-export function useListTable<Row, S extends string>(columns: readonly Column<Row, S>[], storageKey: string, actionsLabel: string, rowCount: number): ListTableLayout<Row, S> {
+/** Column layout of a list, with the visible columns remembered per browser (spec §5 rule 8), separately for phones; `actions` fits the row actions. */
+export function useListTable<Row, S extends string>(columns: readonly Column<Row, S>[], storageKey: string, actions: ColumnWidth, rowCount: number): ListTableLayout<Row, S> {
   const narrow = useNarrow();
   const choices = useMemo(() => browserColumnChoices(window.localStorage, storageKey), [storageKey]), narrowChoices = useMemo(() => browserColumnChoices(window.localStorage, `${storageKey}.narrow`), [storageKey]);
-  const wideSpecs = useMemo(() => specs(columns, actionsLabel, false), [columns, actionsLabel]), narrowSpecs = useMemo(() => specs(columns, actionsLabel, true), [columns, actionsLabel]);
+  const wideSpecs = useMemo(() => specs(columns, actions, false), [columns, actions]), narrowSpecs = useMemo(() => specs(columns, actions, true), [columns, actions]);
   const wide = useStoredTableColumns(choices, wideSpecs, rowCount, !narrow), phone = useStoredTableColumns(narrowChoices, narrowSpecs, rowCount, narrow);
   const layout = narrow ? phone : wide;
   return { layout, shown: columns.filter(column => layout.columns.some(item => item.spec.id === column.sort)) };
