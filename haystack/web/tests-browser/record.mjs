@@ -263,6 +263,15 @@ try {
       const due = page.getByRole("region", { name: "Changes: due", exact: true });
       assert.deepEqual(await due.locator("[data-diff]").evaluateAll((lines) => lines.map((line) => [line.dataset.diff, line.textContent])),
         [["del", "Removed: 2026-11-24"], ["add", "Added: 2026-12-01"]]);
+      // The viewed revision's complete fields JSON, exact, before restoring it; Typed view and Changes lead back.
+      await page.getByRole("button", { name: "More actions", exact: true }).click();
+      await page.getByRole("menuitem", { name: "View raw JSON", exact: true }).click();
+      const raw = await page.getByRole("region", { name: "Fields JSON", exact: true }).locator("pre").textContent();
+      assert.deepEqual([/"due": "2026-11-24"/.test(raw), /"n": 9007199254740993/.test(raw)], [true, true], "raw JSON of revision 1");
+      await page.getByRole("button", { name: "Typed view", exact: true }).click();
+      assert.equal(await value(page, "due").textContent(), "2026-11-24");
+      await page.getByRole("button", { name: "Changes", exact: true }).click();
+      await page.getByRole("heading", { name: "Changes from revision 1 to revision 3", exact: true }).waitFor();
       await banner.getByLabel("Compare with").selectOption("2");
       await page.getByRole("heading", { name: "Changes from revision 1 to revision 2", exact: true }).waitFor();
       // Restore asks first; Cancel is focused, Escape closes and returns focus to the trigger without writing.

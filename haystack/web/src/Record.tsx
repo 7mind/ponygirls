@@ -149,7 +149,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   useEffect(() => {
     if (!edit) { setEditing(false); return; }
     if (!ready) return;
-    setSnapshot(null);
+    showLatest();
     setEditStatus("");
     setEditing(true);
   }, [edit, ready]);
@@ -182,6 +182,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
         compareTo === null ? null : compareTo === latest.revision ? latest : api.historyGet(itemKey, compareTo)]);
       setSnapshot({ item, compare });
       setSnapshotOnly(compare === null);
+      setRawFields(false);
       window.scrollTo(0, 0);
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }
@@ -189,11 +190,16 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     }
   }
 
+  function showLatest() {
+    setSnapshot(null);
+    setRawFields(false);
+  }
+
   async function restore(latest: Item, revision: Item) {
     setBusy(true); setFailure(null);
     try {
       const out = await api.put(latest.key, documentJsonOf(revision.document, revision.document.humanAttention), latest.revision, uuidv7());
-      setRestoring(false); setSnapshot(null);
+      setRestoring(false); showLatest();
       setToast({ text: `Restored revision ${revision.revision} as new revision ${out.revision}`, action: null });
       await reload(true);
     } catch (error) {
@@ -276,19 +282,20 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
           {viewed.document.status === "archived" && <span className="chip">archived</span>}</div></div>
       {attention && <button type="button" className="btn record-clear" disabled={busy} onClick={() => void clearAttention(latest)}><UiIcon name="check" />Clear attention</button>}
       {snapshot === null && <button type="button" className="btn btn-primary" onClick={onEdit}><UiIcon name="edit" />Edit</button>}
-      <MoreMenu raw={snapshot === null && !rawFields} onRaw={() => setRawFields(true)}
+      <MoreMenu raw={!rawFields || (snapshot !== null && !snapshotOnly)} onRaw={() => { setRawFields(true); setSnapshotOnly(true); }}
         onCopyKey={() => copy(latest.key, "key")} onCopyLink={() => copy(`${location.origin}${location.pathname}${itemHash(latest.key, false)}`, "link")} />
     </div>
     {snapshot !== null && <SnapshotBanner snapshot={snapshot} latest={latest} revisions={revisions} now={Date.now()}
       onCompare={(compareTo) => void openSnapshot(latest, snapshot.item.revision, compareTo)}
-      onLatest={() => setSnapshot(null)} onRestore={() => setRestoring(true)} />}
+      onLatest={showLatest} onRestore={() => setRestoring(true)} />}
     <div className="page"><div className="page-narrow with-rail">
       <div className="record-main">
         {failure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div>
           <button type="button" className="btn btn-sm btn-ghost btn-icon" aria-label="Dismiss" onClick={() => setFailure(null)}><UiIcon name="x" /></button></div>}
         {refreshFailure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{refreshFailure}</div>
           <button type="button" className="btn btn-sm" onClick={() => void reload(true)}>Retry</button></div>}
-        {snapshot !== null ? <SnapshotMain snapshot={snapshot} only={snapshotOnly} onOnly={setSnapshotOnly} onCopy={copy} /> : <>
+        {snapshot !== null ? <SnapshotMain snapshot={snapshot} only={snapshotOnly} raw={rawFields} onTyped={() => setRawFields(false)} onCopy={copy}
+          onOnly={(only) => { setSnapshotOnly(only); if (!only) setRawFields(false); }} /> : <>
           {latest.document.status === "archived" && <div className="notice notice-neutral notice-row" role="note"><UiIcon name="archive" /><div className="grow">
             <span className="notice-title">Archived record.</span> Hidden from lists and search unless the query includes <code>archived:true</code>. To bring it back, edit it and set Status to <code>actual</code>.</div></div>}
           {attention && <div className="notice notice-warn notice-row" role="note"><UiIcon name="alert" /><div className="grow">
@@ -304,7 +311,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
         <MetadataCard item={viewed} created={latest.metadata} latestRevision={latest.revision} now={Date.now()}
           links={snapshot === null ? { outgoing: latest.document.links.length, incoming, jump: () => links.current!.scrollIntoView() } : null} />
         <HistoryCard revisions={revisions} latest={latest.revision} viewing={snapshot === null ? null : snapshot.item.revision} now={Date.now()}
-          onView={(revision) => revision === latest.revision ? setSnapshot(null) : void openSnapshot(latest, revision, latest.revision)} />
+          onView={(revision) => revision === latest.revision ? showLatest() : void openSnapshot(latest, revision, latest.revision)} />
       </aside>
     </div></div>
     {restoring && snapshot !== null && <RestoreDialog latest={latest} revision={snapshot.item} busy={busy}
@@ -458,7 +465,11 @@ function SnapshotBanner({ snapshot, latest, revisions, now, onCompare, onLatest,
   </div>;
 }
 
-function SnapshotMain({ snapshot, only, onOnly, onCopy }: { snapshot: Snapshot; only: boolean; onOnly: (only: boolean) => void; onCopy: CopyText }) {
+function SnapshotMain({ snapshot, only, raw, onOnly, onTyped, onCopy }: {
+  snapshot: Snapshot; only: boolean;
+  /** The revision's fields are shown as raw JSON (in the revision-only view). */
+  raw: boolean; onOnly: (only: boolean) => void; onTyped: () => void; onCopy: CopyText;
+}) {
   const title = useId();
   const { item, compare } = snapshot;
   const pair = useMemo(() => compare === null ? null : compare.revision < item.revision ? { older: compare, newer: item } : { older: item, newer: compare }, [item, compare]);
@@ -469,7 +480,7 @@ function SnapshotMain({ snapshot, only, onOnly, onCopy }: { snapshot: Snapshot; 
   </div>;
   if (pair === null || comparison === null || only) return <>
     <div className="section-head"><h2 className="section-title" id={title}>Revision {item.revision}</h2>{toggle}</div>
-    <RecordBody item={item} raw={false} onTyped={() => undefined} onCopy={onCopy} />
+    <RecordBody item={item} raw={raw} onTyped={onTyped} onCopy={onCopy} />
     <section className="card" aria-label="Outgoing links"><div className="card-head"><h3>Outgoing links <span className="muted">· {item.document.links.length}</span></h3></div>
       {item.document.links.length === 0 ? <div className="card-body small muted">This revision links to nothing.</div> :
         <ul className="link-list">{item.document.links.map(([relation, target], index) => <OutgoingLink key={index} relation={relation} target={target} />)}</ul>}
