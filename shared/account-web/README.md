@@ -85,25 +85,48 @@ buttons) is disabled; one function (`applyBusy()`) drives all of them.
 
 ## Sequencer and authority
 
-All state-changing asynchronous work of the signed-in area goes through one
-sequencer:
+The coordinator (`createCoordinator` in `account.js`) is the only holder of the
+account client and of the existing-endpoint requests. The signed-in area gets an
+`io` from it and nothing else; its section code never sees a client:
 
-- **One exclusive slot** for {section write | sign-out}. While it is occupied,
-  other write entry points and sign-out are disabled or held, and leaving the
-  view is held.
-- **A monotonic authority epoch.** Every authority read (`GET /` re-reads, the
-  profile read, write preflights and follow-ups, the client's fresh profile read
-  before a mutation) takes a new epoch when it starts. Its data is applied only if
-  it is newer than the data shown; its verdict counts only while it is still the
-  newest read. Every completion is bound to the area instance that started it.
+- `io.read(resource, apply, first)` — `account`, `profile`, `policy` or `admin`.
+  Each read takes a per-resource generation and, if it bears on authority, a new
+  authority epoch. `apply({ ok, data, cause, kind, verdict })` runs only while
+  the area lives and only if the read is newer than the data already applied
+  (an older snapshot never rolls the display back). The verdict counts only while
+  the read is the newest authority read.
+- `io.write(applyAccount, work)` — takes the one slot for {section write |
+  sign-out} (a refused start is an invariant violation: the busy rule disables
+  every entry point), preflights `GET /` with the owner check, runs
+  `work(ops)` with the fresh actor (`ops.post`, `ops.action`, `ops.readAccount`)
+  and releases the slot in `finally`. A failed preflight rejects with
+  `AccountStop`; a disposed area's write never resumes its caller.
+- `io.signOut()` — single-flight in the same slot; the preflight read is bound to
+  the area (its signal aborts on dispose) and to its owner: another owner means
+  no `POST /logout` and a lost area.
+
+Resources `account` and `profile` are owner-checked and confirm authority;
+`admin` is not owner-checked (its success decides nothing). For all three a
+transport failure moves a live area to `unverified` (only an area's very first
+load ignores it) and 401 or another owner means `lost`. Reads never rebuild a
+section while the slot is taken or the section has an open dialog, menu, form or
+card: the re-render waits and is flushed when the slot is freed or the prompt
+closes; list re-renders keep persistent panels (and their focus) in place.
 
 Authority is explicit: `verified` → `verifying` (a re-read is in flight: nothing
 is torn down, capabilities stay as they were) → `verified` again, `unverified`
-(the re-read failed for transport reasons: one-time values are kept but
-re-masked, Reveal, Copy and every write entry point are disabled behind
-"Connection lost — reconnect to continue"; re-verification on `online`, window
-focus, the next `account:invalidate` and Retry) or `lost` (401 or another owner:
-forced teardown; the notice lists the lost values by name, never their content).
+(one-time values are kept but re-masked, every write entry point is disabled
+behind "Connection lost — reconnect to continue"; re-verification on `online`,
+window focus, the next `account:invalidate` and Retry) or `lost` (forced
+teardown; the notice lists the lost values by name, never their content).
+
+One masking registry, `sensitive(element, kind)`, holds every element that
+displays or copies a one-time value: the token secret field (`mask`), Reveal and
+Copy (`action`), invitation/reset links (`mask`, `action`) and the
+authenticator-replacement QR and key (`conceal`) and Copy key (`action`). The
+signed-out signup and enrollment set-up blocks are deliberately unregistered:
+their key is generated in this browser for an account that does not exist yet,
+so there is no authority to lose while it is shown.
 
 ## Interleavings
 
@@ -129,7 +152,12 @@ table-driven browser case "sequencer interleavings"; ‡ are covered by the
 | V × S | a successful sign-out starts a new epoch, so no read that started earlier decides anything; the area is torn down by the sign-out |
 | S × S | second click held; one `/logout` request † |
 | S fails | nothing changes; with a shown secret the dialog reports the failure and "Keep it visible" keeps it † |
-| S × O / S × D | the sign-out completion is bound to the area that started it; a replacement area is not touched |
+| S × O | the sign-out preflight read must return the area's own owner: another owner (or 401) → no `POST /logout` for anyone; another owner → the area is lost with the notice † |
+| S × D | dispose aborts the sign-out preflight (area signal): no POST; the completion is bound to the area that started it and a replacement area is not touched |
+| background read × W | a read that returns while a write holds the slot (or a form/dialog/card is open) applies its data but does not rebuild the section; the re-render waits until the slot is free and the prompt closed † |
+| overlapping refreshes | per-resource generations: the newest list wins, an older snapshot arriving later is discarded † |
+| W preflight fails (transport) | the write stops with "connection lost", authority becomes `unverified` (Reveal/Copy/writes disabled) and recovers on re-verification † |
+| `unverified` × authenticator replacement | the replacement QR and key are hidden and Copy key disabled; the submit is disabled † |
 | O × D | one teardown; the second does nothing (bound to the area instance) |
 
 A shown-once value is delivered only into its owning section. If it ever arrives

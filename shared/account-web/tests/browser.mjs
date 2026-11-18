@@ -382,6 +382,74 @@ try {
       await page.getByText('The secret of token “laptop-cli” is no longer available').waitFor();
       assert.equal(calls.filter(call => call.method === 'GET' && call.path === '').length, reads);
     } },
+    { pair: 'sign-out held × owner replaced: no /logout for the new owner', run: async (page, calls) => {
+      await hold(page, 'GET ');
+      await button(page, 'Sign out').click();
+      await pendingCount(page, 1);
+      await page.evaluate(() => { const state = window.__accountFake.state; state.user = { id: 'bob', login: 'bob', displayName: 'bob', actor: 'actor-bob' }; state.release(); });
+      await page.getByText('The signed-in account changed').waitFor();
+      assert.equal(logoutPosts(calls), 0);
+    } },
+    { pair: 'background profile reload × authenticator replacement: the submitted form survives', scenario: 'settings-totp', ready: '[data-view="two-factor"]', run: async (page, calls) => {
+      await page.getByRole('checkbox', { name: /^Require a code at every sign-in/ }).click();
+      await page.getByLabel('Authenticator code', { exact: true }).fill('123456');
+      await hold(page, 'GET /profile');
+      await button(page, 'Require codes').click();
+      await pendingCount(page, 1);
+      // The toggle's own owner check is released; its success starts the background reload, which is held.
+      await page.evaluate(() => { const state = window.__accountFake.state; state.release(); state.hold = 'GET /profile'; });
+      await page.locator('dialog[open]').waitFor({ state: 'detached' });
+      await pendingCount(page, 1);
+      await FLOWS[4].open(page);
+      const key = await page.getByLabel('Authenticator set-up key', { exact: true }).innerText();
+      await button(page, 'Replace authenticator').click();
+      await pendingCount(page, 2);
+      await page.evaluate(() => window.__accountFake.state.releaseAt(0));
+      await settle(page);
+      assert.equal(await page.locator('[data-account-totp-replace]').count(), 1, 'the reload does not rebuild the section under the write');
+      assert.equal(await page.getByLabel('Authenticator set-up key', { exact: true }).innerText(), key, 'the generated key is unchanged');
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.getByText('Authenticator replaced').waitFor();
+      assert.equal(calls.filter(post('/profile/totp')).length, 1);
+    } },
+    { pair: 'revoke preflight transport failure × shown secret: unverified, then recovered', run: async page => {
+      await mintShown(page);
+      await page.evaluate(() => { window.__accountFake.state.account = 'down'; });
+      await button(page, 'Revoke ci-collector-02').click();
+      await button(page, 'Revoke token').click();
+      await page.locator('[data-account-unverified]').waitFor();
+      for (const name of ['Reveal', 'Copy secret']) assert.equal(await button(page, name).isDisabled(), true, `${name} disabled`);
+      assert.notEqual(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET);
+      await button(page, 'Cancel').click();
+      await page.evaluate(() => { window.__accountFake.state.account = 'ok'; window.dispatchEvent(new Event('online')); });
+      await page.locator('[data-account-unverified]').waitFor({ state: 'detached' });
+      assert.equal(await button(page, 'Reveal').isDisabled(), false);
+    } },
+    { pair: 'unverified × authenticator replacement: key and QR hidden, Copy key disabled', scenario: 'settings-totp', ready: '[data-view="two-factor"]', run: async page => {
+      await FLOWS[4].open(page);
+      assert.equal(await page.locator('[data-account-qr]').isVisible(), true);
+      await page.evaluate(() => { window.__accountFake.state.account = 'down'; });
+      await invalidate(page, null);
+      await page.locator('[data-account-unverified]').waitFor();
+      assert.equal(await page.locator('[data-account-qr]').isHidden(), true);
+      assert.equal(await page.locator('[data-account-totp-key]').isHidden(), true);
+      assert.equal(await button(page, 'Copy key').isDisabled(), true);
+      assert.equal(await button(page, 'Replace authenticator').isDisabled(), true);
+    } },
+    { pair: 'admin refresh × admin refresh: the newest list wins', scenario: 'users-default', ready: 'tr[data-row-id="erin"]', run: async page => {
+      await page.evaluate(() => { const state = window.__accountFake.state; state.snapshot = true; state.hold = 'GET /admin/users'; });
+      for (const name of ['bob', 'frank']) {
+        await button(page, `Approve ${name}…`).click();
+        await dialog(page, `Application of “${name}”`).getByRole('button', { name: 'Approve' }).click();
+        await page.locator('dialog[open]').waitFor({ state: 'detached' });
+      }
+      await pendingCount(page, 2);
+      await page.evaluate(() => window.__accountFake.state.releaseAt(1));
+      await page.locator('tr[data-row-id="frank"]', { hasText: 'Active' }).waitFor();
+      await page.evaluate(() => window.__accountFake.state.release());
+      await settle(page);
+      assert.equal(await page.locator('tr[data-row-id="frank"]', { hasText: 'Pending approval' }).count(), 0, 'the older snapshot does not roll the list back');
+    } },
     { pair: 'failed sign-out × shown secret: nothing changes', run: async (page, calls) => {
       await page.evaluate(() => { window.__accountFake.state.logout = 'fail'; });
       await mintShown(page);
@@ -402,7 +470,7 @@ try {
       rowPage.on('pageerror', error => errors.push(error.message));
       rowPage.on('dialog', native => { errors.push(`native ${native.type()} dialog`); void native.dismiss(); });
       await rowPage.exposeFunction('__accountCall', call => { calls.push(call); });
-      await load(rowPage, FLOWS[0]);
+      await load(rowPage, row.scenario === undefined ? FLOWS[0] : { scenario: row.scenario, ready: row.ready });
       try { await row.run(rowPage, calls); } catch (cause) { cause.message = `${row.pair}: ${cause.message}`; throw cause; }
       await rowPage.close({ runBeforeUnload: false });
       calls.length = 0;
@@ -454,6 +522,8 @@ try {
   });
 
   await run('admin approves a pending applicant', async ({ page, calls, open }) => {
+    await open('settings-password');
+    await page.getByRole('button', { name: 'Change password' }).waitFor(); // a profile-dependent route replaces its placeholder
     await open('users-default');
     await button(page, 'Approve bob…').click();
     const application = dialog(page, 'Application of “bob”');

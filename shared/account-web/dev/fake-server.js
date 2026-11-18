@@ -56,8 +56,9 @@ export function baseFixture(app) {
     // recover 'ok' | 'rejected' | 'weak' | 'rate-limited'; account 'ok' | 'loading' | 'error' | 'down' (network
     // failure of GET /); mint 'ok' | 'lost'; logout 'ok' | 'fail'.
     // hold: '<METHOD> <path>': matching requests wait in `pending` (oldest first) until release() / releaseAt(i);
-    // each reply is computed when it is released. The hold is cleared when the last pending request is released.
-    login: 'ok', recover: 'ok', account: 'ok', mint: 'ok', logout: 'ok', hold: null, pending: [],
+    // each reply is computed when it is released (or when it arrives, with snapshot: true). The hold is cleared
+    // when the last pending request is released.
+    login: 'ok', recover: 'ok', account: 'ok', mint: 'ok', logout: 'ok', hold: null, snapshot: false, pending: [],
     enrollment: { code: FAKE_ENROLLMENT_CODE, username: 'carol', kind: 'invite', expiresAt: iso(23 * HOUR_MS) },
     nextToken: 31
   };
@@ -168,7 +169,7 @@ export function createFakeAccountServer(fixture, onCall) {
   function releaseAt(index) {
     const [entry] = state.pending.splice(index, 1);
     if (state.pending.length === 0) state.hold = null;
-    entry.resolve(Promise.resolve().then(() => handle(entry.call)));
+    entry.resolve(entry.early === null ? Promise.resolve().then(() => handle(entry.call)) : entry.early);
   }
   state.releaseAt = releaseAt;
   state.release = () => releaseAt(0);
@@ -177,7 +178,10 @@ export function createFakeAccountServer(fixture, onCall) {
     if (!url.pathname.startsWith(API)) throw new Error(`The account harness only answers ${API}: ${url.pathname}`);
     const call = { method: options.method, path: url.pathname.slice(API.length), body: options.body === undefined ? null : JSON.parse(options.body), actor: options.headers['X-Account-Actor'] ?? null };
     calls.push(call); onCall(call);
-    if (state.hold !== null && `${call.method} ${call.path}` === state.hold) return new Promise(resolve => { state.pending.push({ call, resolve }); });
+    if (state.hold !== null && `${call.method} ${call.path}` === state.hold) {
+      const early = state.snapshot ? Promise.resolve().then(() => handle(call)) : null;
+      return new Promise(resolve => { state.pending.push({ call, resolve, early }); });
+    }
     return handle(call);
   }
   return { fetch, calls, state };
