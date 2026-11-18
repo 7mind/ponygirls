@@ -22,7 +22,7 @@ class TagSearchTest extends munit.FunSuite {
     val receipt=f.archive.ingest(owner,request)
     val claim=f.archive.claim(f.catalog.knownProfiles,ClaimScope.Owner(owner),300).get
     val chunks=tags.map(values => IndexedChunk(Chunk(UUID.randomUUID(),receipt.sessionId,"synthetic tag source","synthetic",values,Nil,0.0),ProblemPublicationFixtures.vector))
-    StoredPublicationFixtures.publish(f.db,claim,chunks)
+    TestPublications.stored(f.db,claim,chunks)
     receipt
   }
   private def request(tags: List[String]): IngestRequest = {
@@ -119,7 +119,7 @@ class TagSearchTest extends munit.FunSuite {
     val search=index(f)
     assertEquals(search.tags("a",query("",None,100)),List(Facet("old-generation",1),Facet("published-metadata",1)))
     val claim=f.archive.claim(f.catalog.knownProfiles,ClaimScope.Owner("a"),300).get
-    StoredPublicationFixtures.publish(f.db,claim,List(IndexedChunk(Chunk(UUID.randomUUID(),receipt.sessionId,"synthetic","synthetic",List("new-generation"),Nil,0.0),ProblemPublicationFixtures.vector)))
+    TestPublications.stored(f.db,claim,List(IndexedChunk(Chunk(UUID.randomUUID(),receipt.sessionId,"synthetic","synthetic",List("new-generation"),Nil,0.0),ProblemPublicationFixtures.vector)))
     assertEquals(search.tags("a",query("",None,100)),List(Facet("new-generation",1),Facet("pending-head",1)))
     assertEquals(search.tags("a",query("old-generation",None,100)),Nil)
     assertEquals(search.tags("a",query("published-metadata",None,100)),Nil)
