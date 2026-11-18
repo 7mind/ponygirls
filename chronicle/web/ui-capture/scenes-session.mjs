@@ -60,6 +60,7 @@ export function registerSession(scenario) {
         const hits = page.getByRole('list', { name: 'Matching messages', exact: true }).getByRole('button'); await hits.first().waitFor(); await hits.nth(2).click(); await settle(page, 600);
         await capture('find', 'Find: docked bar with the match position, hit list in the side pane, landed message current', 'Find tab, "timeout", Enter, hit 3');
         await page.getByRole('button', { name: 'Done', exact: true }).click();
+        await page.getByRole('tab', { name: /^Outline/ }).click();
         await page.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight / 2, behavior: 'instant' })); await settle(page, 600);
         await capture('scrolled', 'Transcript scrolled to the middle: position bar shows the visible range', 'scroll the transcript pane');
       });

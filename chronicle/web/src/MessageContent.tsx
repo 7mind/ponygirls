@@ -29,7 +29,7 @@ export function CopyButton({ text, label, done, compact }: { text: string; label
     try { await navigator.clipboard.writeText(text); setCopied(true); setError(null); }
     catch { setError('Clipboard unavailable. Select and copy the text manually.'); }
   }
-  return <span className="message-copy"><button type="button" className={compact ? 'btn btn-ghost btn-icon btn-sm' : 'btn btn-ghost btn-sm'} aria-label={label} title={label} onClick={() => void copy()}>{compact ? <Icon name={copied ? 'check' : 'copy'} small={true}/> : copied ? 'Copied' : label}</button><span className="sr-only" role="status" aria-label="Clipboard status">{copied ? done : ''}</span>{error !== null && <span className="copy-error" role="alert">{error}</span>}</span>;
+  return <span className="message-copy"><button type="button" className={compact ? 'btn btn-ghost btn-icon btn-sm' : 'btn btn-sm'} aria-label={label} title={label} onClick={() => void copy()}>{compact ? <Icon name={copied ? 'check' : 'copy'} small={true}/> : copied ? 'Copied' : label}</button><span className="sr-only" role="status" aria-label="Clipboard status">{copied ? done : ''}</span>{error !== null && <span className="copy-error" role="alert">{error}</span>}</span>;
 }
 function InlineText({ text }: { text: string }) {
   return <>{inlineParts(text).map((part, index) => part.kind === 'code' ? <code key={index}>{part.text}</code> : part.kind === 'strong' ? <strong key={index}>{part.text}</strong> : part.kind === 'emphasis' ? <em key={index}>{part.text}</em> : <span key={index}>{part.text}</span>)}</>;
