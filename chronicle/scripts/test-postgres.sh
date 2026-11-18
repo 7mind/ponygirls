@@ -27,15 +27,20 @@ printf '%s\n' chronicle-test-password > "$base/password"
 chmod 600 "$base/password"
 # Template cluster: database chronicle with the extensions; Database.initialize() applies the schema migrations in
 # every group, as it does for the single database of a serial run. Each group gets a copy of the stopped template.
+# The clusters are discarded on exit, so they skip crash durability ("Non-Durable Settings" in the PostgreSQL manual),
+# and the fixture superuser's SCRAM verifier uses one PBKDF2 iteration: suites open a connection per transaction
+# (IndexedSearchTest about 3,700 in its first case), and both costs otherwise sit on its 2-minute deadline.
+non_durable='-c fsync=off -c synchronous_commit=off -c full_page_writes=off'
 "$POSTGRES_HOME/bin/initdb" -D "$base/data" -U postgres -A scram-sha-256 --pwfile="$base/password" --no-locale --encoding=UTF8 >"$base/init.log"
 "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/template.log" -o "-c listen_addresses= -k $base -p ${ports[0]}" -w start >/dev/null
 PGPASSWORD=chronicle-test-password "$POSTGRES_HOME/bin/psql" -X -q -v ON_ERROR_STOP=1 -h "$base" -p "${ports[0]}" -U postgres -d postgres \
+  -c 'SET scram_iterations = 1' -c "ALTER ROLE postgres PASSWORD 'chronicle-test-password'" \
   -c 'CREATE DATABASE chronicle' -c '\connect chronicle' -c 'CREATE EXTENSION vector' -c 'CREATE EXTENSION pg_trgm'
 "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m fast -w stop >/dev/null
 urls=()
 for (( i = 0; i < groups; i++ )); do
   cp -a "$base/data" "$base/data$i"
-  "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data$i" -l "$base/server$i.log" -o "-h 127.0.0.1 -p ${ports[i]} -k $base" -w start >/dev/null
+  "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data$i" -l "$base/server$i.log" -o "-h 127.0.0.1 -p ${ports[i]} -k $base $non_durable" -w start >/dev/null
   urls+=("jdbc:postgresql://127.0.0.1:${ports[i]}/chronicle")
 done
 export CHRONICLE_TEST_GROUP_JDBC="${urls[*]}"
