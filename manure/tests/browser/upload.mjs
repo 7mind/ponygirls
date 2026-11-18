@@ -89,6 +89,7 @@ const files = (page, specs) => page.locator("#upload-files").setInputFiles(specs
 const rowStates = (page, state, count) => page.waitForFunction(([wanted, n]) => document.querySelectorAll(`tbody[data-upload-row][data-state="${wanted}"]`).length === n, [state, count]);
 const row = (page, name) => page.locator("tbody[data-upload-row]").filter({ hasText: name });
 const rowCount = (page, n) => page.waitForFunction((count) => document.querySelectorAll("tbody[data-upload-row]").length === count, n);
+const settings = (page) => page.getByRole("region", { name: "Settings for this upload" });
 const uploadButton = (page) => page.getByRole("button", { name: /^(Upload \d+ files?|Retry \d+ failed)$/ });
 const access = (page, label) => page.getByRole("group", { name: "Access" }).getByRole("button", { name: label, exact: true }).click();
 const signOut = async (page, userId) => {
@@ -309,17 +310,17 @@ await check("expiry and tags are sent and validated; settings lock while uploadi
     await access(page, label);
     await page.getByText(text).waitFor();
   }
-  await page.getByLabel("Expires", { exact: true }).selectOption("custom");
-  const days = page.getByLabel(/^Days from upload/);
+  await settings(page).getByLabel("Expires", { exact: true }).selectOption("custom");
+  const days = settings(page).getByLabel(/^Days from upload/);
   await days.fill("0");
   await page.getByText("Enter a whole number of days from 1 to 365.").waitFor();
   await files(page, [["settings.txt", Buffer.from("settings")]]);
   assert.equal(await uploadButton(page).isDisabled(), true, "an invalid expiry blocks Upload");
-  await page.getByLabel("Expires", { exact: true }).selectOption("7");
-  await page.getByLabel(/^Tags/).fill("a, a");
+  await settings(page).getByLabel("Expires", { exact: true }).selectOption("7");
+  await settings(page).getByLabel(/^Tags/).fill("a, a");
   await page.getByText("Tags must be distinct.").waitFor();
   assert.equal(await uploadButton(page).isDisabled(), true, "duplicate tags block Upload");
-  await page.getByLabel(/^Tags/).fill(" release , Report 1 ,");
+  await settings(page).getByLabel(/^Tags/).fill(" release , Report 1 ,");
   assert.equal(await uploadButton(page).isEnabled(), true);
   // Hold the first chunk: the row is Uploading, settings and the picker are locked, dropped files are refused.
   await page.evaluate(() => { window.__upload.holdChunk = true; });
@@ -328,7 +329,7 @@ await check("expiry and tags are sent and validated; settings lock while uploadi
   await rowStates(page, "uploading", 1);
   assert.equal(await page.getByRole("progressbar", { name: "Upload progress of settings.txt" }).count(), 1);
   assert.equal(await page.getByRole("group", { name: "Access" }).getByRole("button", { name: "Public" }).isDisabled(), true);
-  assert.equal(await page.getByLabel(/^Tags/).isDisabled(), true);
+  assert.equal(await settings(page).getByLabel(/^Tags/).isDisabled(), true);
   assert.equal(await page.getByRole("button", { name: "Choose files…" }).isDisabled(), true);
   await page.getByText("Locked while uploading").waitFor();
   await page.evaluate(() => {
