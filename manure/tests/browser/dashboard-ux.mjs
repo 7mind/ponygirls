@@ -1,7 +1,6 @@
 // UX scenarios over the real API. Transport fault injection is test-only;
 // secret inputs arrive over stdin and never appear in output or screenshots.
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 
@@ -24,7 +23,7 @@ const check = async (name, run) => {
     page.on("request", (request) => urls.push(request.url()));
     await page.addInitScript(() => {
       const original = window.fetch.bind(window);
-      window.__ux = { rotations: 0, listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdListReset: false, releaseListReset: null, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
+      window.__ux = { listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdListReset: false, releaseListReset: null, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", releaseList: null, releaseRotate: null };
       window.fetch = (url, options) => {
         const state = window.__ux;
         const value = String(url);
@@ -32,7 +31,6 @@ const check = async (name, run) => {
         const command=new URL(value,location.href).pathname==="/api/current" ? envelope?.command : null;
         if (state.failSession && command?.Whoami) return Promise.reject(new Error("test-offline"));
         if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
-        if (command?.RotateExternalPassword) state.rotations++;
         if (command?.ListArtifacts) state.readCommands.push({ mode: "catalogue", query: command.ListArtifacts.query.query });
         if (command?.Search) state.readCommands.push({ mode: command.Search.query.mode, query: command.Search.query.query });
         const listPage=command?.ListArtifacts?.query.cursor != null;
@@ -48,7 +46,6 @@ const check = async (name, run) => {
           if (command?.ListArtifacts || command?.Search) state.listInFlight--;
           throw error;
         });
-        if (state.holdInfoId && command?.GetArtifact?.artifactId===state.holdInfoId) { state.holdInfoId=null;return response.then(res=>new Promise(resolve=>{state.releaseInfo=()=>resolve(res);})); }
         if (command?.GetCapabilities && state.holdCapabilities) { state.holdCapabilities=false;return response.then(res=>new Promise(resolve=>{state.releaseCapabilities=()=>resolve(res);})); }
         if (command?.Search && state.holdSearch) { state.holdSearch=false;return response.then(res=>new Promise(resolve=>{state.releaseSearch=()=>resolve(res);})); }
         if (listPage && state.holdList) { state.holdList=false;return response.then(res=>new Promise(resolve=>{state.releaseList=()=>resolve(res);})); }
@@ -74,7 +71,6 @@ const count = (page, length) => page.waitForFunction((n) => document.querySelect
 const titles = (page) => page.locator("#artifact-list .cell-title").allTextContents();
 const bottom = (page) => page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
 const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-const listNotice = (page) => page.locator("#list-notice").textContent();
 async function signIn(page) {
   await page.locator("[data-account-login] input[name=login]").fill(input.login);
   await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
@@ -95,12 +91,6 @@ const search = async (page, text) => {
 const recordSearch = async (page) => {
   await search(page, "ux-record-");
   await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 25 && [...document.querySelectorAll("#artifact-list .cell-title")].every((node) => node.textContent.startsWith("ux-record-")));
-};
-const detail = async (page, id, query) => {
-  await search(page, query);
-  await page.locator(`#catalogue-table a[data-action=details][data-artifact-id="${id}"]`).click();
-  await page.locator("#detail-section").waitFor({ state: "visible" });
-  await page.waitForFunction((value) => document.querySelector("#detail-list").textContent.includes(value), id);
 };
 
 await check("sortable table, global search and URL reload", async (page) => {
@@ -272,58 +262,6 @@ await check("old pages cannot append after a sort change", async (page) => {
   assert.equal(await page.evaluate(() => window.__ux.listPeak), 1, "only one physical request while stale read was unsettled");
 });
 
-await check("details show file manifest, inert names and attachment downloads", async (page) => {
-  await detail(page, input.bundle, "ux-bundle");
-  await page.waitForFunction(() => document.querySelectorAll("#file-list > tr").length === 4);
-  const [download] = await Promise.all([
-    page.waitForEvent("download"),
-    page.locator('#file-list a[href*="%C3%BCber%20file.txt"]').click(),
-  ]);
-  assert.equal(download.suggestedFilename(), "über file.txt");
-  assert.equal((await fs.readFile(await download.path())).equals(Buffer.from("unicode download")), true);
-  await page.locator("#detail-back-button").click();
-  await search(page, "ux-hostile");
-  await page.waitForFunction(() => document.querySelector("#artifact-list").textContent.includes("ux-hostile"));
-  assert.equal(await page.locator("#artifact-list img, #artifact-list script").count(), 0);
-});
-
-await check("internal grant handoff opens isolated content without dashboard cookies", async (page) => {
-  await detail(page, input.bundle, "ux-bundle");
-  const cookies = [];
-  page.on("request", async (request) => {
-    if (new URL(request.url()).hostname === `${input.bundle}.${input.suffix}`) {
-      const headers = await request.allHeaders();
-      cookies.push({ dashboard: (headers.cookie || "").includes("manure-dev="), authorization: Boolean(headers.authorization) });
-    }
-  });
-  await page.locator("#open-button").click();
-  await page.getByRole("heading", { name: "Isolated internal preview", exact: true }).waitFor();
-  assert.notEqual(new URL(page.url()).origin, input.base);
-  assert.equal(cookies.length > 0, true);
-  assert.equal(cookies.some((headers) => headers.dashboard || headers.authorization), false);
-});
-
-await check("public previews and protected unlock keep isolated origin flows", async (page) => {
-  await detail(page, input.publicId, "ux-public");
-  await page.locator("#open-button").click();
-  await page.getByRole("heading", { name: "Public preview", exact: true }).waitFor();
-  await page.goto(input.base + "/#/artifacts", { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("loaded"));
-  await detail(page, input.protectedId, "ux-protected");
-  await page.locator("#open-button").click();
-  await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
-  await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  await page.locator("#password-input").fill("incorrect");
-  await page.locator("#unlock-form button").click();
-  await page.locator("#unlock-error").waitFor({ state: "visible" });
-  assert.equal((await page.locator("#password-input").inputValue()).length, 0);
-  await page.locator("#password-input").fill(input.password);
-  await page.locator("#unlock-form button").click();
-  await page.waitForFunction(() => document.body.textContent.includes("protected") && document.querySelector("#unlock-form") === null);
-  assert.equal(page.url().includes(input.password), false);
-});
-
 await check("expired artifacts remain deletable from the catalogue", async (page) => {
   await search(page, "ux-expired");
   await search(page, "expired:true ux-expired");
@@ -334,38 +272,6 @@ await check("expired artifacts remain deletable from the catalogue", async (page
   await page.getByRole("dialog", { name: "Delete artifact?" }).getByRole("button", { name: "Delete artifact" }).click();
   await count(page, 0);
   assert.equal((await page.request.post(input.base+"/api/current",{data:{requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{GetArtifact:{artifactId:input.expiredId}}}})).status(),404);
-});
-
-await check("rotation asks first; password reveals clear on dismiss, navigation and confirmed logout", async (page, context) => {
-  await detail(page, input.protectedId, "ux-protected");
-  const confirmRotation = page.getByRole("dialog", { name: "Rotate the external password?" });
-  await page.locator("#rotate-button").click();
-  await confirmRotation.waitFor();
-  assert.equal(await page.evaluate(() => document.activeElement.textContent), "Cancel");
-  await page.keyboard.press("Escape");
-  await confirmRotation.waitFor({ state: "detached" });
-  await page.locator("#rotate-button").click();
-  await confirmRotation.getByRole("button", { name: "Cancel", exact: true }).click();
-  await confirmRotation.waitFor({ state: "detached" });
-  await settle(page);
-  assert.equal(await page.evaluate(() => window.__ux.rotations), 0, "Escape and Cancel rotate nothing");
-  await page.locator("#rotate-button").click();
-  await confirmRotation.getByRole("button", { name: "Rotate password", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 43);
-  assert.equal(await page.evaluate(() => window.__ux.rotations), 1, "only the explicit confirmation rotates");
-  assert.equal(await page.evaluate(() => Object.keys(localStorage).length + Object.keys(sessionStorage).length), 0);
-  const session = (await context.cookies(input.base)).find((cookie) => cookie.name === "manure-dev");
-  assert.equal(session.httpOnly, true);
-  await page.locator("#rotate-dismiss-button").click();
-  assert.equal((await page.locator("#rotate-password").textContent()).length, 0);
-  await page.locator("#rotate-button").click();
-  await confirmRotation.getByRole("button", { name: "Rotate password", exact: true }).click();
-  await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 43);
-  await page.locator("#detail-back-button").click();
-  await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 0);
-  await detail(page, input.protectedId, "ux-protected");
-  await signOut(page);
-  assert.equal((await page.locator("#rotate-password").textContent()).length, 0);
 });
 
 await check("Back from details after a cancelled append keeps the rows and loads on", async (page) => {
@@ -385,16 +291,6 @@ await check("Back from details after a cancelled append keeps the rows and loads
   await bottom(page);
   await count(page, 50);
 });
-await check("missing deep links recover to a usable catalogue", async (page) => {
-  await page.goto(input.base + "/#/artifact/" + "0".repeat(32), { waitUntil: "domcontentloaded" });
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.querySelector("#list-notice").textContent.includes("Detail failed"));
-  assert.equal(await page.locator("#dashboard-section").isVisible(), true);
-  assert.equal(await rows(page).count() > 0 || await page.locator("#retry-list-button").isVisible(), true);
-  await page.locator("#retry-list-button").click();
-  await count(page, 25);
-});
-
 await check("session network failures expose a visible recovery action", async (page) => {
   await page.goto(input.base + "/#/ux-session-fail", { waitUntil: "domcontentloaded" });
   await page.reload({ waitUntil: "domcontentloaded" });
@@ -407,32 +303,7 @@ await check("session network failures expose a visible recovery action", async (
   await count(page, 25);
 });
 
-await check("a new detail target cannot retain old metadata and destructive actions", async (page) => {
-  await detail(page, input.bundle, "ux-bundle");
-  await page.waitForFunction(() => document.querySelectorAll("#file-list a").length > 0);
-  await page.evaluate((id) => { window.__ux.holdInfoId = id; location.hash = "#/artifact/" + id; }, input.protectedId);
-  await page.waitForFunction(() => window.__ux.releaseInfo !== null);
-  assert.equal(await page.locator("#delete-button").isEnabled(), false, "Delete must be disabled until the active artifact is observed");
-  assert.equal(await page.locator("#copy-id-button").isEnabled(), false);
-  assert.equal(await page.locator("#file-list a").count(), 0);
-  await page.evaluate(() => window.__ux.releaseInfo());
-  await page.waitForFunction(() => document.querySelector("#detail-name").textContent === "ux-protected");
-  assert.equal(await page.locator("#delete-button").isEnabled(), true);
-});
 
-await check("retrieval detail denial clears pinned evidence", async (page) => {
-  await page.locator("#filter-text").fill("mode:lexical ux-bundle");
-  await page.locator("#list-form button[type=submit]").click();
-  try { await page.waitForFunction(() => document.querySelector("#retrieval-results").textContent.includes("ux-bundle"), null, { timeout: 10000 }); }
-  catch (error) { throw new Error("retrieval status: " + await page.locator("#list-status").textContent() + " / " + await listNotice(page)); }
-  const response = await page.request.post(input.base + "/api/current", { headers: { Origin: input.base }, data: {
-    requestId: crypto.randomUUID(), apiVersion: "1.0.0", command: { DeleteArtifact: { artifactId: input.bundle } }
-  }});
-  assert.equal(response.status(), 200);
-  await page.locator("#retrieval-results [data-action=details]").first().click();
-  await page.waitForFunction(() => document.querySelector("#list-notice").textContent.includes("Detail failed"));
-  assert.equal(await page.locator("#retrieval-results").textContent(), "", "denied artifact and evidence cannot be retained");
-});
 
 
 

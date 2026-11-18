@@ -61,55 +61,61 @@ const info = async (page,name) => {
   return {artifact_id:a.artifactId,name:a.name,kind:a.kind==="Directory"?"dir":"file",visibility:a.visibility.toLowerCase(),state:a.state.toLowerCase(),
     expires_at:a.expiresAt,file_count:a.fileCount,total_bytes:a.totalBytes};
 };
-const metadataMode = (page) => page.locator("#detail-list dt").evaluateAll((nodes) =>
-  nodes.find((node) => node.textContent === "Access")?.nextElementSibling.textContent);
+// The access mode the artifact header shows (the last observed server state).
+const metadataMode = (page) => page.locator("#detail-access [data-access]").getAttribute("data-access");
+const modeButton = (page, mode) => page.getByRole("group", { name: "Access mode" }).getByRole("button", { name: mode[0].toUpperCase() + mode.slice(1), exact: true });
+// The mode selected in the access control (the draft until it is saved).
+const draftMode = (page) => page.evaluate(() => document.querySelector('#access-mode [aria-pressed="true"]')?.dataset.mode ?? null);
+const modeLocked = (page) => page.evaluate(() => [...document.querySelectorAll("#access-mode [data-mode]")].every((button) => button.disabled));
 const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const hiddenPassword = async (page) => {
-  assert.equal((await page.locator("#rotate-password").textContent()).length, 0, "one-time password must be cleared");
-  assert.equal(await page.locator("#rotate-output").isVisible(), false);
+  assert.equal((await page.locator('[data-secret="external-password"]').textContent()).length, 0, "one-time password must be cleared");
+  assert.equal(await page.getByRole("button", { name: "Hide password", exact: true }).count(), 0);
 };
 const password = async (page) => {
-  await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 43);
-  const value = await page.locator("#rotate-password").textContent();
+  await page.waitForFunction(() => document.querySelector('[data-secret="external-password"]').textContent.length === 43);
+  const value = await page.locator('[data-secret="external-password"]').textContent();
   secrets.add(value);
   assert.equal(/^[A-Za-z0-9_-]{43}$/.test(value), true, "password must be canonical");
-  assert.equal(await page.locator("#rotate-output").isVisible(), true);
-  assert.equal(await page.locator("#rotate-copy-button").isEnabled(), true);
+  assert.equal(await page.locator('[data-secret="external-password"]').isVisible(), true);
+  assert.equal(await page.getByRole("button", { name: "Copy password", exact: true }).isEnabled(), true);
   assert.equal(await page.evaluate(() => Object.keys(localStorage).length + Object.keys(sessionStorage).length), 0);
   return value;
 };
 const openDetail = async (page, name, query = "") => {
   const id = name === "incomplete" ? input.incomplete : input.artifacts[name].artifact_id;
   await page.evaluate(({ id, query }) => { location.hash = "#/artifact/" + id + query; }, { id, query });
-  await page.waitForFunction((id) => document.querySelector("#detail-subtitle").textContent === id &&
+  await page.waitForFunction((id) => document.querySelector('[data-view="artifact"]').dataset.state === "loaded" &&
     !document.querySelector("#detail-section").hidden && document.querySelector("#detail-list").textContent.includes(id), id);
   await page.locator("#access-form").waitFor({ state: "visible" });
 };
 const selectMode = async (page, mode) => {
-  await page.locator("#access-mode").selectOption(mode);
+  await modeButton(page, mode).click();
   await page.waitForFunction(() => !document.querySelector("#access-save-button").disabled);
 };
 const savedMode = async (page, mode) => {
-  await page.waitForFunction((mode) => {
-    const term = [...document.querySelectorAll("#detail-list dt")].find((node) => node.textContent === "Access");
-    return !document.querySelector("#detail-section").hidden && term?.nextElementSibling.textContent === mode &&
-      document.querySelector("#access-mode").value === mode && document.querySelector("#access-save-button").disabled;
-  }, mode);
+  await page.waitForFunction((mode) => !document.querySelector("#detail-section").hidden &&
+    document.querySelector("#detail-access [data-access]")?.dataset.access === mode &&
+    document.querySelector('#access-mode [aria-pressed="true"]')?.dataset.mode === mode && document.querySelector("#access-save-button").disabled, mode);
   assert.equal(await metadataMode(page), mode);
 };
 const errorVisible = async (page) => {
   await page.waitForFunction(() => /fail|error|could not|unable|unavailable|network|reload|refresh|confirm/i.test(document.querySelector("#access-status").textContent));
   assert.equal(await page.locator("#access-status").isVisible(), true);
 };
-// Saving the access mode; Public asks first in the in-app dialog (counted, accepted or cancelled per `dialogs`).
+// Saving the access mode; every change asks first in the in-app dialog (counted, accepted or cancelled per `dialogs`).
 const save = async (page, target, dialogs) => {
   await page.locator("#access-save-button").click();
-  if (target !== "public") return;
-  const confirm = page.getByRole("dialog", { name: "Make artifact public?" });
+  const confirm = page.getByRole("dialog", { name: target === "public" ? "Make this artifact public?" : `Change access to ${target[0].toUpperCase() + target.slice(1)}?` });
   await confirm.waitFor();
   dialogs.count++;
-  await confirm.getByRole("button", { name: dialogs.accept ? "Make public" : "Cancel", exact: true }).click();
+  await confirm.getByRole("button", { name: dialogs.accept ? "Make " + target : "Cancel", exact: true }).click();
   await confirm.waitFor({ state: "detached" });
+};
+// Saves the selected mode and accepts its confirmation (scenarios that do not count dialogs).
+const confirmSave = async (page) => {
+  await page.locator("#access-save-button").click();
+  await page.getByRole("dialog").getByRole("button", { name: /^Make / }).click();
 };
 const signOut = async (page) => {
   await page.locator("#user-menu-button").click();
@@ -218,7 +224,7 @@ await check("all six access transitions preserve metadata and enforce real acces
     assert.ok((await page.locator("#access-description").textContent()).trim().length > 0);
     await save(page, target, dialogs);
     await savedMode(page, target);
-    assert.equal(dialogs.count - confirmations, target === "public" ? 1 : 0);
+    assert.equal(dialogs.count - confirmations, 1, "every access change is confirmed");
     const patches = await page.evaluate(() => window.__accessProbe.patches);
     assert.equal(patches.length, before + 1);
     assert.deepEqual(patches.at(-1), {path:"/api/current",body:{artifactId:input.artifacts[name].artifact_id,patch:{name:null,visibility:target[0].toUpperCase()+target.slice(1),expiry:{Keep:{}}}}});
@@ -249,12 +255,12 @@ await check("all six access transitions preserve metadata and enforce real acces
       assert.equal(unlocked.status, 200);
       assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest(),{Cookie:unlocked.cookie})).status, 200);
       assert.equal(await page.locator("#rotate-button").isVisible(), true);
-      await page.locator("#rotate-dismiss-button").click();
+      await page.getByRole("button", { name: "Hide password", exact: true }).click();
       await hiddenPassword(page);
-      await page.getByRole("button", { name: "Copy current password", exact: true }).click();
+      await page.getByRole("button", { name: "Reveal password", exact: true }).click();
       assert.equal(await password(page), currentPassword, "retrieval returns the existing password without rotation");
       assert.equal((await contentWire(content(name),new api.ContentCommand_GetManifest(),{Cookie:unlocked.cookie})).status, 200, "retrieval must not revoke an existing grant");
-      await page.locator("#rotate-dismiss-button").click();
+      await page.getByRole("button", { name: "Hide password", exact: true }).click();
     } else assert.equal(await page.locator("#rotate-button").isVisible(), false);
     await hiddenPassword(page);
     await page.locator("#detail-back-button").click();
@@ -278,17 +284,17 @@ await check("all six access transitions preserve metadata and enforce real acces
 if (input.includeRaces) {
   await check("no-op, public cancellation, incomplete artifacts, busy guards and visible failures", async (page, context, dialogs) => {
     await openDetail(page, "incomplete");
-    assert.equal(await page.locator("#access-mode").isDisabled(), true);
+    assert.equal(await modeLocked(page), true);
     assert.equal(await page.locator("#access-save-button").isDisabled(), true);
     await openDetail(page, "controls");
     const descriptions = [];
     for (const mode of ["internal", "external", "public"]) {
-      await page.locator("#access-mode").selectOption(mode);
+      await modeButton(page, mode).click();
       descriptions.push((await page.locator("#access-description").textContent()).trim());
     }
     assert.equal(descriptions.every((text) => text.length > 0), true);
     assert.equal(new Set(descriptions).size, 3, "explanations must follow the selected access mode");
-    await page.locator("#access-mode").selectOption("internal");
+    await modeButton(page, "internal").click();
     assert.equal(await page.locator("#access-save-button").isDisabled(), true);
     await page.locator("#access-form").evaluate((form) => form.requestSubmit());
     await settle(page);
@@ -303,10 +309,10 @@ if (input.includeRaces) {
     dialogs.accept = true;
     await page.evaluate(() => { window.__accessProbe.hold = "response"; });
     await selectMode(page, "external");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await page.waitForFunction(() => window.__accessProbe.release !== null);
     assert.equal(await page.locator("#access-save-button").isDisabled(), true);
-    assert.equal(await page.locator("#access-mode").isDisabled(), true);
+    assert.equal(await modeLocked(page), true);
     await page.locator("#access-form").evaluate((form) => { form.requestSubmit(); form.requestSubmit(); });
     await settle(page);
     assert.equal(await page.evaluate(() => window.__accessProbe.patches.length), 1);
@@ -316,12 +322,12 @@ if (input.includeRaces) {
     for (const fault of ["server", "network"]) {
       await page.evaluate((fault) => { window.__accessProbe.fault = fault; }, fault);
       await selectMode(page, "internal");
-      await page.locator("#access-save-button").click();
+      await confirmSave(page);
       await errorVisible(page);
-      await page.waitForFunction(() => !document.querySelector("#access-mode").disabled);
+      await page.waitForFunction(() => !document.querySelector("#access-mode [data-mode]").disabled);
       assert.equal((await info(page, "controls")).visibility, "external");
       assert.equal(await metadataMode(page), "external");
-      const draft = await page.locator("#access-mode").inputValue();
+      const draft = await draftMode(page);
       assert.equal(await page.locator("#access-save-button").isDisabled(), draft === "external");
     }
   });
@@ -329,7 +335,7 @@ if (input.includeRaces) {
   await check("new access password clears on navigation and confirmed logout", async (page) => {
     await openDetail(page, "navigation");
     await selectMode(page, "external");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await savedMode(page, "external");
     await password(page);
     await openDetail(page, "other");
@@ -338,10 +344,10 @@ if (input.includeRaces) {
     await savedMode(page, "external");
     await hiddenPassword(page);
     await selectMode(page, "internal");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await savedMode(page, "internal");
     await selectMode(page, "external");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await savedMode(page, "external");
     await password(page);
     await signOut(page);
@@ -356,12 +362,12 @@ if (input.includeRaces) {
       await openDetail(page, name);
       if ((await info(page, name)).visibility !== "internal") {
         await selectMode(page, "internal");
-        await page.locator("#access-save-button").click();
+        await confirmSave(page);
         await savedMode(page, "internal");
       }
       await page.evaluate(() => { window.__accessProbe.hold = "response"; });
       await selectMode(page, "external");
-      await page.locator("#access-save-button").click();
+      await confirmSave(page);
       await page.waitForFunction(() => window.__accessProbe.release !== null);
       assert.equal((await info(page, name)).visibility, "external");
       if (action === "navigation") await openDetail(page, "other");
@@ -373,7 +379,7 @@ if (input.includeRaces) {
       await hiddenPassword(page);
       if (action === "navigation") {
         assert.equal(await metadataMode(page), "internal");
-        assert.equal(await page.locator("#access-mode").inputValue(), "internal");
+        assert.equal(await draftMode(page), "internal");
         assert.equal((await info(page, "other")).visibility, "internal");
       } else assert.equal(await page.locator("#main").isVisible(), false);
     });
@@ -383,7 +389,7 @@ if (input.includeRaces) {
     await openDetail(page, "lost");
     await page.evaluate(() => { window.__accessProbe.fault = "lost"; window.__accessProbe.failMetadata = true; });
     await selectMode(page, "external");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await page.waitForFunction(() => window.__accessProbe.lost);
     await errorVisible(page);
     await page.waitForFunction(() => window.__accessProbe.metadataPending === 0);
@@ -392,7 +398,7 @@ if (input.includeRaces) {
     await hiddenPassword(page);
     const refresh = page.locator("#access-refresh-button");
     assert.equal(await refresh.isVisible(), true, "a failed metadata refresh needs an explicit recovery control");
-    assert.equal(await page.locator("#access-mode").isDisabled(), true);
+    assert.equal(await modeLocked(page), true);
     await refresh.click();
     await savedMode(page, "external");
     await hiddenPassword(page);
@@ -408,7 +414,7 @@ if (input.includeRaces) {
     await openDetail(page, "pending-list", "?access=internal&sort=visibility&direction=asc");
     await page.evaluate(() => { window.__accessProbe.hold = "request"; });
     await selectMode(page, "external");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await page.waitForFunction(() => window.__accessProbe.release !== null);
     await page.locator("#detail-back-button").click();
     const id = input.artifacts["pending-list"].artifact_id;
@@ -429,12 +435,12 @@ if (input.includeRaces) {
     await openDetail(page, name);
     if ((await info(page, name)).visibility !== "internal") {
       await selectMode(page, "internal");
-      await page.locator("#access-save-button").click();
+      await confirmSave(page);
       await savedMode(page, "internal");
     }
     await page.evaluate(() => { window.__accessProbe.hold = "response"; });
     await selectMode(page, "external");
-    await page.locator("#access-save-button").click();
+    await confirmSave(page);
     await page.waitForFunction(() => window.__accessProbe.release !== null);
     await openDetail(page, "other");
     const {response:newer}=await management(page,new api.Command_PatchArtifact(input.artifacts[name].artifact_id,
@@ -444,15 +450,15 @@ if (input.includeRaces) {
     await savedMode(page, "public");
     await page.evaluate(() => {
       window.__accessProbe.observedModes = [];
-      const metadata = document.querySelector("#detail-list");
+      const metadata = document.querySelector("#detail-access");
       const observer = new MutationObserver(() => {
-        const term = [...metadata.querySelectorAll("dt")].find((node) => node.textContent === "Access");
-        if (term) window.__accessProbe.observedModes.push(term.nextElementSibling.textContent);
+        const chip = metadata.querySelector("[data-access]");
+        if (chip) window.__accessProbe.observedModes.push(chip.dataset.access);
       });
       observer.observe(metadata, { childList: true, subtree: true });
     });
     await release(page);
-    await page.waitForFunction(() => !document.querySelector("#access-mode").disabled && window.__accessProbe.metadataPending === 0);
+    await page.waitForFunction(() => !document.querySelector("#access-mode [data-mode]").disabled && window.__accessProbe.metadataPending === 0);
     assert.equal((await info(page, name)).visibility, "public");
     assert.equal(await metadataMode(page), "public");
     assert.equal((await page.evaluate(() => window.__accessProbe.observedModes)).includes("external"), false,

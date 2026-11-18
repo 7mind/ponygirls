@@ -83,7 +83,7 @@ try{
       await record('semantic');await record('hybrid');
       await page.locator('#retrieval-results [data-action=details]').first().click();
       await page.locator('#detail-section').waitFor({state:'visible',timeout:15000});
-      assert.match(await page.locator('#detail-list').textContent(),/search-manager/);
+      await page.waitForFunction(()=>/search-manager/.test(document.querySelector('#detail-list').textContent),null,{timeout:15000});
       await page.locator('#detail-back-button').click();
       await page.locator('#dashboard-section').waitFor({state:'visible',timeout:15000});
       assert.equal(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode==='Hybrid').length),1,

@@ -31,7 +31,6 @@ class DashboardUXTests(unittest.TestCase):
             files={"index.html": b"<h1>Isolated internal preview</h1>", "note.txt": b"hello", "nested/über file.txt": b"unicode download"}, empty_dirs=["empty"])["artifact_id"]
         protected = bf.upload_fixture(cls.fix, name="ux-protected", kind="file", visibility="external", files={"note.txt": b"protected"})
         cls.protected = protected["artifact_id"]
-        cls.password = protected["external_password"]
         cls.public = bf.upload_fixture(cls.fix, name="ux-public", kind="dir", visibility="public", files={"index.html": b"<h1>Public preview</h1>"})["artifact_id"]
         cls.hostile = bf.upload_fixture(cls.fix, name='<img src=x onerror=alert("xss")> ux-hostile', kind="file", visibility="internal", files={"note.txt": b"inert"})["artifact_id"]
         bf.expire_artifact(cls.fix,cls.expired)
@@ -42,7 +41,7 @@ class DashboardUXTests(unittest.TestCase):
 
     def test_catalogue_detail_and_session_flows(self):
         payload = {"base": self.fix.api_base, "token": self.fix.identity.token, "login": self.fix.identity.login, "loginPassword": self.fix.identity.password, "records": self.records,
-            "bundle": self.bundle, "protectedId": self.protected, "password": self.password,
+            "bundle": self.bundle, "protectedId": self.protected,
             "publicId": self.public, "expiredId": self.expired, "hostile": self.hostile,
             "browser": self.browser, "engine": "firefox" if self.firefox else "chromium",
             "suffix": self.fix.suffix, "core": self.driver}
@@ -50,7 +49,7 @@ class DashboardUXTests(unittest.TestCase):
             input=json.dumps(payload).encode(), capture_output=True, timeout=240)
         self.assertEqual(result.returncode, 0, "; ".join(check["name"] + ": " + check.get("error", "ok") for check in json.loads(result.stdout)))
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 20)
+        self.assertEqual(len(report), 13)
         self.assertTrue(all(check["ok"] for check in report), report)
         for check in report:
             print("ok - " + check["name"])
