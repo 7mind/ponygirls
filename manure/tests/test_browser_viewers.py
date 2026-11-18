@@ -171,19 +171,21 @@ class ViewerBrowserTests(unittest.TestCase):
                             "docs/guide ü.md": markdown + b"\n![local asset](../assets/picture.png)\n", "assets/picture.png": png_fixture()},
                kind="dir", visibility="external")
         upload("internal", {"private.md": b"# Internal viewer handoff\n"}, visibility="internal")
+        upload("code", {"tool.py": b"print('hi')\n# done\n"})
+        upload("archive", {"bundle.zip": b"PK\x05\x06" + bytes(18)})
+        upload("unlock-states", {"index.html": b"<h1>Unlock states</h1>"}, kind="dir", visibility="external")
+        upload("unlock-gone", {"index.html": b"<h1>Deleted while locked</h1>"}, kind="dir", visibility="external")
         payload = {"base": fix.api_base, "token": fix.identity.token, "login": fix.identity.login, "loginPassword": fix.identity.password,
                    "core": core, "browser": browser, "mode": mode,
-                   "resolver": bf.HOST_RESOLVER_RULES, "records": records,
-                   "artifacts": str(Path(os.environ["MANURE_VIEWER_ARTIFACTS"]).resolve())
-                   if os.environ.get("MANURE_VIEWER_ARTIFACTS") else ""}
+                   "resolver": bf.HOST_RESOLVER_RULES, "records": records}
         result = subprocess.run([node, str(Path(__file__).resolve().parent / "browser/viewers.mjs")],
                                 input=json.dumps(payload).encode(), capture_output=True, timeout=300)
         output = (result.stdout + result.stderr).decode("utf-8", "replace")
-        for secret in [fix.identity.token, records["external"]["external_password"]]:
+        for secret in [fix.identity.token] + [record["external_password"] for record in records.values() if record.get("external_password")]:
             output = output.replace(secret, "[REDACTED]")
         self.assertEqual(result.returncode, 0, output[-12000:])
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 12, report)
+        self.assertEqual(len(report), 15, report)
         self.assertTrue(all(item["ok"] for item in report), report)
         for item in report:
             print("ok - " + mode + " viewer: " + item["name"])

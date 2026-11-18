@@ -1,7 +1,6 @@
 // Specified viewer feature contracts. Real renderers, real HTTP, no CDN access.
 // Credentials are supplied over stdin and redacted from every failure report.
 import assert from "node:assert/strict";
-import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -9,7 +8,6 @@ import { randomUUID } from "node:crypto";
 let raw = "";
 for await (const chunk of process.stdin) raw += chunk;
 const input = JSON.parse(raw);
-if (input.artifacts) await fs.mkdir(input.artifacts, { recursive: true });
 const require = createRequire(path.join(input.core, "package.json"));
 const { chromium } = require("playwright-core");
 const browser = await chromium.launch({ executablePath: input.browser, args: [
@@ -17,7 +15,7 @@ const browser = await chromium.launch({ executablePath: input.browser, args: [
   `--host-resolver-rules=${input.resolver}`,
 ] });
 const results = [];
-const secrets = new Set([input.token, input.records.external.external_password]);
+const secrets = new Set([input.token, ...Object.values(input.records).map((item) => item.external_password).filter(Boolean)]);
 const clean = (error) => {
   let text = String(error.stack || error).split("\n").slice(0, 14).join("\n");
   for (const secret of secrets) if (secret) text = text.split(secret).join("[REDACTED]");
@@ -107,14 +105,6 @@ const check = async (name, run, hostileFixture) => {
   }
 };
 
-// Only public synthetic Markdown/PDF fixtures are captured: never an unlock
-// form, dashboard session, or one-time password. Mode prefixes avoid overwrites.
-const capture = async (page, name) => {
-  if (input.artifacts) await page.screenshot({
-    path: path.join(input.artifacts, `${input.mode}-${name}.png`), fullPage: true,
-  });
-};
-
 const favicon = async (page, key) => {
   const link = page.locator('link[rel="icon"]');
   assert.equal(await link.count(), 1);
@@ -149,11 +139,16 @@ const shell = async (page, key, name = filename(key)) => {
   assert.ok(await meta.getAttribute("data-kind"), "shell specifies renderer kind");
   assert.equal(new URL(await meta.getAttribute("data-raw-url"), page.url()).href, rawURL(key, name));
   assert.equal(new URL(await meta.getAttribute("data-download-url"), page.url()).href, downloadURL(key, name));
-  const uploaded = page.locator(".heading time.uploaded-at");
-  assert.equal(await uploaded.isVisible(), true, "upload timestamp is visible in the preview heading");
+  await uploadedTime(page, key);
+};
+// The meta line shows the server-recorded creation time in local time; the tooltip keeps the exact ISO value.
+const uploadedTime = async (page, key) => {
+  const uploaded = page.locator("time.uploaded-at");
+  await uploaded.waitFor({ state: "visible" });
   assert.equal(await uploaded.getAttribute("datetime"), record(key).created_at);
-  assert.equal(await uploaded.textContent(), record(key).created_at);
-  assert.match(await uploaded.locator("..").textContent(), /^Uploaded /);
+  assert.equal(await uploaded.getAttribute("title"), record(key).created_at);
+  await uploaded.filter({ hasText: /^[A-Z][a-z]{2} \d{1,2}, \d{2}:\d{2} · / }).waitFor();
+  assert.match(await uploaded.locator("..").textContent(), /· uploaded /);
 };
 const open = async (page, key, name) => {
   const response = await page.goto(viewer(key, name), { waitUntil: "domcontentloaded" });
@@ -212,10 +207,8 @@ await check("markdown renders headings, GFM and both fenced diagrams without exe
   await rawEqual(page, "markdown");
   await downloadEqual(page, "markdown");
   await page.setViewportSize({ width: 375, height: 800 });
-  const uploaded = await page.locator(".heading time.uploaded-at").boundingBox();
+  const uploaded = await page.locator("time.uploaded-at").boundingBox();
   assert.ok(uploaded && uploaded.x >= 0 && uploaded.x + uploaded.width <= 375, "timestamp fits a narrow preview viewport");
-  await page.setViewportSize({ width: 1000, height: 800 });
-  await capture(page, "markdown-diagrams");
 }, true);
 
 for (const [key, name] of [["markdown", filename("markdown")], ["directory", "docs/guide ü.md"], ["browse", "README.md"]]) {
@@ -332,19 +325,23 @@ const canvasSnapshot = async (page) => {
   });
   return page.locator("main canvas").first().evaluate((canvas) => canvas.toDataURL());
 };
-await check("two-page PDF paints nonempty distinct canvases and navigates forward and backward", async (page) => {
+await check("two-page PDF paints nonempty distinct canvases, navigates forward and backward, and releases its workers on pagehide", async (page) => {
   await open(page, "pdf");
   const first = await canvasSnapshot(page);
-  await capture(page, "pdf-page-1");
-  await page.getByRole("button", { name: /next/i }).click();
+  const pages = page.getByRole("toolbar", { name: "PDF pages", exact: true });
+  await pages.getByText("Page 1 of 2", { exact: true }).waitFor();
+  await pages.getByRole("button", { name: "Next page", exact: true }).click();
   await page.waitForFunction((first) => document.querySelector("main canvas")?.toDataURL() !== first, first);
   const second = await canvasSnapshot(page);
   assert.notEqual(second, first, "page two must actually repaint the PDF canvas");
-  await capture(page, "pdf-page-2");
-  await page.getByRole("button", { name: /prev/i }).click();
+  await pages.getByText("Page 2 of 2", { exact: true }).waitFor();
+  await pages.getByRole("button", { name: "Previous page", exact: true }).click();
   await page.waitForFunction((first) => document.querySelector("main canvas")?.toDataURL() === first, first);
   await rawEqual(page, "pdf");
   await downloadEqual(page, "pdf");
+  // Regression (D24): leaving the page called a destroy() the pdf.js 6 document does not have.
+  await page.evaluate(() => dispatchEvent(new PageTransitionEvent("pagehide")));
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve)));
 }, false);
 
 await check("directory index remains original while explicit nested viewer and raw assets work", async (page) => {
@@ -364,8 +361,8 @@ await check("no-index directory browsing renders README and safely navigates nes
   await page.goto(root("browse") + "/", { waitUntil: "domcontentloaded" });
   await shell(page, "browse", "README.md");
   await markdownRendered(page);
-  const listing = page.getByRole("region", { name: "Directory contents", exact: true });
-  assert.equal(await listing.locator("li").count(), 4, "only immediate children are listed");
+  const listing = page.getByRole("table", { name: "Directory contents", exact: true });
+  assert.equal(await listing.getByRole("row").count(), 1 + 4, "header plus only the immediate children");
   assert.equal(await listing.getByRole("link", { name: "Parent directory", exact: true }).count(), 0);
   await listing.getByRole("link", { name: "nested/", exact: true }).click();
   await page.getByRole("heading", { name: "Nested directory preview", exact: true }).waitFor();
@@ -385,7 +382,6 @@ await check("no-index directory browsing renders README and safely navigates nes
   const original = page.getByRole("link", { name: "original.bin", exact: true });
   assert.equal(await original.getAttribute("href"), new URL(root("browse")).pathname.replace(/\/$/, "") + "/original.bin");
   await downloadEqual(page, "browse", "original.bin");
-  await capture(page, "directory-readme");
 }, true);
 
 await check("invalid and oversized Graphviz sources fail visibly within a bounded time", async (page) => {
@@ -408,12 +404,14 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
   await favicon(page, key);
   const protectedURLs = [rawURL(key, name), rawURL(key, "assets/picture.png"), downloadURL(key, name),
-    ...["viewer.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
+    ...["viewer.js", "chrome.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
       .map((asset) => root(key) + "/__manure/viewer/" + asset)];
   for (const url of protectedURLs) {
     const denied = await fetchBytes(page, url);
     assert.ok(denied.status >= 400, "locked raw/assets/download must not bypass authorization");
   }
+  // The shared design system styles the locked page itself; it is public and carries no artifact data.
+  assert.equal((await fetchBytes(page, root(key) + "/__manure/ui/tokens.css")).status, 200);
   await page.locator("#password-input").fill(record(key).external_password);
   await page.locator("#unlock-form button[type=submit]").click();
   // Unlock may return the original directory root; navigate explicitly after
@@ -433,6 +431,96 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
   assert.ok(deniedAsset.status >= 400, "revoked cookie must deny fresh assets too");
 }, true);
 
+await check("source files preview as exact numbered text; archives get a download card instead of a preview", async (page) => {
+  await page.goto(root("code") + "/", { waitUntil: "domcontentloaded" });
+  await shell(page, "code");
+  const text = page.getByLabel("File text", { exact: true });
+  await text.waitFor();
+  assert.equal(await text.textContent(), expected("code").toString("utf8"), "text preview must be the exact file text");
+  assert.equal(await text.locator("span").count(), 2, "one numbered row per source line");
+  await page.getByText("2 lines", { exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Copy raw", exact: true }).isEnabled(), true);
+  await page.goto(root("archive") + "/", { waitUntil: "domcontentloaded" });
+  await shell(page, "archive");
+  await page.getByRole("heading", { name: "No preview for archives", exact: true }).waitFor();
+  const download = page.getByRole("main").getByRole("link", { name: "Download original", exact: true });
+  assert.equal(new URL(await download.getAttribute("href"), page.url()).href, downloadURL("archive"));
+  await downloadEqual(page, "archive");
+}, false);
+
+const scrollers = (page) => page.evaluate(() => [...document.querySelectorAll("body *")].filter((el) => {
+  const style = getComputedStyle(el);
+  return /(auto|scroll)/.test(style.overflowY) && el.scrollHeight > el.clientHeight + 1 && el.getBoundingClientRect().height > 0;
+}).map((el) => el.tagName));
+const scrolledChrome = async (page, selector) => {
+  await page.evaluate(() => scrollTo(0, document.scrollingElement.scrollHeight));
+  await page.waitForFunction(() => scrollY > 0);
+  return page.locator(selector).evaluate((el) => el.getBoundingClientRect().top);
+};
+await check("viewer pages scroll only the document under sticky chrome; section tools, theme and CLI disclosure work by keyboard", async (page) => {
+  await open(page, "markdown");
+  await markdownRendered(page);
+  assert.deepEqual(await scrollers(page), [], "the document is the only vertical scroller");
+  assert.ok(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), "the fixture overflows the viewport");
+  assert.equal(await scrolledChrome(page, "header"), 0, "the viewer bar stays at the top");
+  const anchor = page.getByRole("link", { name: "Link to section: Viewer specification", exact: true });
+  await anchor.focus();
+  assert.equal(await anchor.evaluate((el) => getComputedStyle(el.closest(".heading-tools")).opacity), "1", "section tools appear on keyboard focus");
+  await page.getByRole("button", { name: "Raw", exact: true }).click();
+  assert.equal(await page.getByLabel("Raw Markdown", { exact: true }).textContent(), expected("markdown").toString("utf8"));
+  await page.getByRole("button", { name: "Rendered", exact: true }).click();
+  await page.getByRole("button", { name: "Theme", exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Dark", exact: true }).click();
+  await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.themeChoice), "dark", "the theme choice persists");
+  await page.setViewportSize({ width: 1000, height: 500 });
+  await open(page, "pdf");
+  await canvasSnapshot(page);
+  assert.deepEqual(await scrollers(page), []);
+  assert.equal(await scrolledChrome(page, '[role="toolbar"]'), 48, "the PDF toolbar sticks under the bar");
+  await page.goto(root("browse") + "/", { waitUntil: "domcontentloaded" });
+  const cli = page.getByRole("group").filter({ has: page.getByText("Download all (CLI)…") });
+  await page.getByText("Download all (CLI)…", { exact: true }).click();
+  await page.getByText(`manure fetch ${record("browse").content_url} ./viewer-browse`, { exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(await cli.evaluate((el) => el.open), false, "Escape closes the disclosure");
+}, true);
+
+await check("unlock card reports a wrong password, pauses while throttled and explains a deleted artifact", async (page) => {
+  await page.clock.install();
+  const key = "unlock-states";
+  const unlock = root(key) + "/__manure/unlock";
+  await page.goto(root(key) + "/", { waitUntil: "domcontentloaded" });
+  const password = page.getByLabel("External password", { exact: true });
+  const submit = page.getByRole("button", { name: "Unlock", exact: true });
+  await password.fill("not-the-password");
+  await submit.click();
+  await page.getByText("That password is not correct. Check it and try again.", { exact: true }).waitFor();
+  assert.equal(await password.getAttribute("aria-invalid"), "true");
+  assert.equal(await password.inputValue(), "", "the password field is cleared after an attempt");
+  const statuses = await page.evaluate(async (unlock) => {
+    const out = [];
+    for (let i = 0; i < 12 && !out.includes(429); i++) out.push((await fetch(unlock, { method: "POST", body: new URLSearchParams({ password: "wrong" }) })).status);
+    return out;
+  }, unlock);
+  assert.ok(statuses.includes(429), `the server throttles repeated attempts: ${statuses}`);
+  await password.fill("still-wrong");
+  await submit.click();
+  await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
+  await page.getByText("Too many attempts", { exact: true }).waitFor();
+  assert.equal(await password.isDisabled(), true, "the form pauses while throttled");
+  await page.clock.runFor(60000);
+  assert.equal(await password.isDisabled(), false, "the form resumes after the server's rate window");
+  assert.equal(await page.getByText("Too many attempts", { exact: true }).isVisible(), false);
+  await page.goto(root("unlock-gone") + "/", { waitUntil: "domcontentloaded" });
+  await management(page, { DeleteArtifact: { artifactId: record("unlock-gone").artifact_id } });
+  await password.fill("any-password");
+  await submit.click();
+  await page.getByRole("heading", { name: "This artifact is no longer available", exact: true }).waitFor();
+  assert.equal(await page.getByRole("heading", { name: "Protected artifact", exact: true }).isVisible(), false);
+}, false);
+
 await check("internal dashboard Open hands off a grant and renders the standalone private viewer", async (page) => {
   await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
   await page.locator("[data-account-login] input[name=login]").fill(input.login);
@@ -449,6 +537,5 @@ await check("internal dashboard Open hands off a grant and renders the standalon
 }, false);
 
 await browser.close();
-if (input.artifacts) await fs.writeFile(path.join(input.artifacts, `${input.mode}-results.json`), JSON.stringify(results, null, 2));
 process.stdout.write(JSON.stringify(results));
 process.exitCode = results.some((result) => !result.ok) ? 1 : 0;

@@ -118,7 +118,7 @@ class UnlockFlows:
                 {"op": "fill", "selector": self.PW_SEL, "value": wrong},
                 self._submit_step(),
                 {"op": "waitForText", "selector": "#unlock-error",
-                 "contains": "Unlock failed"},
+                 "contains": "password is not correct"},
                 {"op": "text", "selector": "#unlock-error"},
                 {"op": "eval", "fn": "() => location.href"},
                 {"op": "cookies", "urls": [origin]},
@@ -236,7 +236,7 @@ class UnlockFlows:
                 self.assertNotIn(b"unlock-form", res.body)
             return
         for name, marker in (("unlock.js", "addEventListener"),
-                             ("styles.css", "font-family")):
+                             ("styles.css", ".password-field")):
             res = anon.request("GET", base + "/" + name)
             self.assertEqual(res.status, 200, (name, res.status))
             with open(os.path.join(bf.UNLOCK_DIR, name), "rb") as fh:
@@ -313,7 +313,7 @@ class UnlockFlows:
                 {"op": "fill", "selector": self.PW_SEL, "value": password},
                 self._submit_step(),
                 {"op": "waitForText", "selector": "#unlock-error",
-                 "contains": "Unlock failed"},
+                 "contains": "password is not correct"},
                 {"op": "fill", "selector": self.PW_SEL, "value": fresh},
                 self._submit_step(),
                 {"op": "waitForText", "selector": "h1",
