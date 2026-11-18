@@ -15,6 +15,7 @@ import { writePasswordHash } from "./credentials.mjs";
 import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, publicClient, freePort } from "./native.mjs";
 import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
 import { SearchRequest, SearchResult, SearchSort } from "../../generated/typescript/haystack/api/index.ts";
+import { RECORD_READ_TIMEOUT_MS } from "../src/record-reads.ts";
 
 const MASTHEAD_PX = 48;
 const VIEWBAR_PX = 56;
@@ -22,8 +23,6 @@ const DESKTOP = { width: 1440, height: 900 };
 const PHONE = { width: 390, height: 844 };
 /** Playwright's default wait, for the case's own held requests. */
 const WAIT_MS = 30_000;
-/** The record page's bound on one record read (record-reads.ts). */
-const RECORD_READ_TIMEOUT_MS = 15_000;
 const here = path.dirname(fileURLToPath(import.meta.url));
 
 await prerequisites("main");
