@@ -18,6 +18,8 @@ import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, public
 const MASTHEAD_PX = 48;
 const VIEWBAR_PX = 56;
 const RAIL_GAP_PX = 16;
+/** Playwright's default wait, for the case's own deferred events. */
+const WAIT_MS = 30_000;
 const SCROLL_PX = 1500;
 const DESKTOP = { width: 1440, height: 900 };
 const PHONE = { width: 390, height: 844 };
@@ -79,7 +81,7 @@ try {
   await put("ui:uncertain", docOf({ title: "Uncertain fixture" }), 0);
   await put("ui:conflict", docOf({ title: "Conflict fixture" }), 0);
   await put("ui:discard", docOf({ title: "Discard fixture" }), 0);
-  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user", "ui:draft-generation", "ui:draft-replay"])
+  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user", "ui:draft-generation", "ui:floor-0", "ui:floor-1", "ui:floor-2", "ui:floor-3", "ui:floor-4"])
     await put(key, withFields({ title: `Draft fixture ${key}` }, '{"n":1,"note":{"type":"md","content":"# Note"}}'), 0);
   await put("ui:histnav", docOf({ title: "History navigation fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture" }), 0);
@@ -325,6 +327,8 @@ try {
       // The newer draft now builds on the confirmed write: it saves with revision 2, so only someone else's change conflicts.
       await page.locator(".record-sub").getByText("based on revision 2", { exact: true }).waitFor();
       await put("ui:uncertain", docOf({ title: "Their change" }), 2);
+      // The user's floor (revision 2) does not mask the later write of someone else.
+      await page.getByRole("status").filter({ hasText: "Revision 3 was saved elsewhere." }).waitFor();
       await save(page).click();
       await page.getByRole("alert").filter({ hasText: "Revision 3 was saved by agent while you were editing" }).waitFor();
       assert.equal(sent[2].expectedRevision, 2);
@@ -639,53 +643,104 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("a save whose answer was lost, confirmed through the page's retry notice after the editor was left without any live announcement, ends its draft; no editor starts from the replaced revision", async () => {
-    const { context, page } = await open();
-    try {
-      const key = "ui:draft-replay";
-      const title = page.getByLabel("Title", { exact: true });
-      // The live connection stays up but announces no change: the page learns of the writes only through their confirmation.
-      let withheld = 0;
-      await page.routeWebSocket("**/api/v1/live", (socket) => {
-        const upstream = socket.connectToServer();
-        upstream.onMessage((message) => { if (JSON.parse(String(message)).kind === "changed") withheld++; else socket.send(message); });
-      });
-      await page.goto(`${base}/${recordHash(key)}`);
-      await page.getByRole("button", { name: "Edit", exact: true }).click();
-      await page.locator('[data-record="editing"]').waitFor();
-      await title.fill("Committed, answer lost");
-      await page.route("**/api/v1/put", async (route) => {
-        assert.equal((await route.fetch()).status(), 200, "the failure must happen after the actual commit");
-        await route.abort("failed");
-      }, { times: 1 });
-      await save(page).click();
-      await page.getByRole("alert").filter({ hasText: "The outcome of your save is unknown" }).waitFor();
-      await page.evaluate(() => history.go(-2));
-      await draftNote(page).waitFor();
-      const notice = page.locator("main > .notice").filter({ hasText: "is pending or uncertain" });
-      // The refresh that the confirmation starts is held: the page still has revision 1, which no editor may start from.
-      let releaseGet;
-      const heldGet = new Promise((resolve) => { releaseGet = resolve; });
-      await page.route("**/api/v1/get", async (route) => { await heldGet; await route.continue(); }, { times: 1 });
-      const refresh = page.waitForRequest("**/api/v1/get");
-      await notice.getByRole("button", { name: "Retry original write", exact: true }).click();
-      await page.getByText(/Original write confirmed as revision 2/).waitFor();
-      await refresh;
-      assert.equal(await draftNote(page).count(), 0, "the confirmed draft is not offered again");
-      await page.getByRole("button", { name: "Edit", exact: true }).click();
-      await page.getByRole("status").filter({ hasText: "Loading revision 2 before editing" }).waitFor();
-      assert.equal(await page.locator('[data-record="editing"]').count(), 0, "no editor starts from the revision the confirmed write replaced");
-      releaseGet();
-      await page.locator('[data-record="editing"]').waitFor();
-      assert.equal(await title.inputValue(), "Committed, answer lost");
-      assert.equal(await restoredNotice(page).count(), 0);
-      await title.fill("After the confirmed write");
-      await save(page).click();
-      await page.getByText("Saved as revision 3", { exact: true }).waitFor();
-      assert.deepEqual(page.puts.map((request) => request.expectedRevision), [1, 1, 2], "the replay repeats the original; the next save builds on it");
-      assert.ok(withheld > 0, "the fault injection withheld a real announcement");
-      await page.quiet();
-    } finally { await context.close(); }
+  /** A promise and the function that resolves it. */
+  const deferred = () => { let resolve; const promise = new Promise((done) => { resolve = done; }); return { promise, resolve }; };
+  /** `promise`, or a failure naming `what` if it does not settle within the same bound as a locator wait. */
+  const within = async (promise, what) => {
+    let timer;
+    try { return await Promise.race([promise, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${what} did not happen`)), WAIT_MS); })]); }
+    finally { clearTimeout(timer); }
+  };
+  // The user's own confirmed write against the record page's reads, without live announcements: when the page is mounted
+  // (before the write, while it is in flight, after its confirmation) and when its read answers relative to the confirmation.
+  const FLOOR_ORDERINGS = [
+    { name: "loaded before the confirmation", mount: "before", read: "free" },
+    { name: "loaded before the confirmation, the refresh held while Edit is tried at once", mount: "before", read: "held" },
+    { name: "mounted during the write, first read answered before the confirmation", mount: "during", read: "free" },
+    { name: "mounted during the write, first read (revision 1) answered after the confirmation", mount: "during", read: "held" },
+    { name: "mounted after the confirmation", mount: "after", read: "free" },
+  ];
+  await check("the user's confirmed write is a floor: whatever the order of reads, confirmation and mounting, no editor starts below it and the next save does not conflict with it", async () => {
+    const failed = [];
+    for (const [index, row] of FLOOR_ORDERINGS.entries()) {
+      console.log(`# ordering ${index}: ${row.name}`);
+      const { context, page } = await open();
+      try {
+        const key = `ui:floor-${index}`;
+        const saved = `Saved in ordering ${index}`;
+        const title = page.getByLabel("Title", { exact: true });
+        let withheld = 0;
+        await page.routeWebSocket("**/api/v1/live", (socket) => {
+          const upstream = socket.connectToServer();
+          upstream.onMessage((message) => { if (JSON.parse(String(message)).kind === "changed") withheld++; else socket.send(message); });
+        });
+        await page.goto(`${base}/${recordHash(key)}`);
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
+        await page.locator('[data-record="editing"]').waitFor();
+        await title.fill(saved);
+        // The save is committed when the ordering says so, and its answer is lost.
+        const commit = deferred(), committed = deferred();
+        await page.route("**/api/v1/put", async (route) => {
+          await commit.promise;
+          assert.equal((await route.fetch()).status(), 200);
+          await route.abort("failed");
+          committed.resolve();
+        }, { times: 1 });
+        const sent = page.waitForRequest("**/api/v1/put");
+        await save(page).click();
+        await sent;
+        if (row.mount === "before") await page.evaluate(() => history.go(-2));
+        else await page.evaluate(() => { location.hash = "#/browse"; });
+        await page.locator('[data-record="editing"]').waitFor({ state: "detached" });
+        // From here on the page's reads are fetched at once and answered when the ordering says so.
+        const answer = deferred(), fetched = deferred();
+        if (row.read === "held") await page.route("**/api/v1/get", async (route) => {
+          const response = await route.fetch();
+          fetched.resolve();
+          await answer.promise;
+          await route.fulfill({ response });
+        });
+        if (row.mount === "during") {
+          await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
+          if (row.read === "held") await within(fetched.promise, "the page's first read");
+          else await page.getByRole("heading", { name: `Draft fixture ${key}`, exact: true }).waitFor();
+        }
+        commit.resolve();
+        await within(committed.promise, "the commit");
+        const notice = page.locator("main > .notice").filter({ hasText: "is pending or uncertain" });
+        await notice.getByRole("button", { name: "Retry original write", exact: true }).click();
+        await page.getByText(/Original write confirmed as revision 2/).waitFor();
+        if (row.mount === "after") await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
+        if (row.mount === "before" && row.read === "held") {
+          await within(fetched.promise, "the read after the confirmation");
+          await page.getByRole("button", { name: "Edit", exact: true }).click();
+          await page.getByRole("status").filter({ hasText: "Loading revision 2 before editing" }).waitFor();
+          assert.equal(await page.locator('[data-record="editing"]').count(), 0, `${row.name}: no editor while the record shown is below the floor`);
+          answer.resolve();
+        } else {
+          answer.resolve();
+          await page.getByRole("button", { name: "Edit", exact: true }).click();
+        }
+        await page.locator('[data-record="editing"]').waitFor();
+        assert.equal(await basedOn(page, 2).count(), 1, `${row.name}: the editor starts from the confirmed revision`);
+        assert.equal(await title.inputValue(), saved, row.name);
+        await title.fill(`Edited after ordering ${index}`);
+        await save(page).click();
+        await page.getByText("Saved as revision 3", { exact: true }).waitFor();
+        assert.equal(page.puts.at(-1).expectedRevision, 2, `${row.name}: the next save builds on the user's own write`);
+        assert.ok(withheld > 0, "the fault injection withheld a real announcement");
+        await page.quiet();
+        console.log(`ok - ordering ${index}`);
+      } catch (error) {
+        console.error(error);
+        failed.push(row.name);
+      } finally {
+        // Reads still held or fetched when the row ends are not this row's outcome.
+        await page.unrouteAll({ behavior: "ignoreErrors" });
+        await context.close();
+      }
+    }
+    assert.deepEqual(failed, [], "orderings that failed");
   });
 
   await check("a draft survives a routine account invalidation and does not outlive the signed-in identity: signing out, a forced teardown the shell cannot follow up, or the account changing under an open page, leaves no draft", async () => {

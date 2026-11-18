@@ -15,6 +15,8 @@ import { changedParts, compareRevisions, type Comparison, type DiffLine, type Te
 
 /** Incoming links are one search page (no server-side link summary; spec §9 decision 13). */
 const INCOMING_LIMIT = 100;
+/** Reads in a row that answer below the record's confirmed-revision floor before the page stops and offers Retry. */
+const FLOOR_READS = 3;
 const TYPE_ICONS: ReadonlyMap<string, string> = new Map([["fact", "layers"], ["todo", "list"], ["decision", "shield"], ["note", "file"],
   ["skill-draft", "sparkle"], ["github-issue", "hash"], ["github-pr", "branch"]]);
 const DEFAULT_TYPE_ICON = "layers";
@@ -25,6 +27,8 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
 
+/** Why the record is read: something may have changed, or the record shown is below its floor. */
+type ReadReason = "change" | "floor";
 type Load = { kind: "loading" } | { kind: "ready"; item: Item } | { kind: "missing" } | { kind: "failed"; message: string };
 type Incoming = { kind: "loading" } | { kind: "loaded"; items: readonly Summary[]; more: boolean } | { kind: "unavailable" };
 type History = { kind: "loading" } | { kind: "loaded"; revisions: readonly RevisionMeta[] } | { kind: "unavailable" };
@@ -113,61 +117,79 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const live = useLiveUpdates();
   const openedAt = useRef(live.version);
   const links = useRef<HTMLElement>(null);
-  /** The latest revision shown, for actions that run after a reload (the saved toast's "View changes"). */
+  /** The record applied to the page, for actions that run after a read (the saved toast's "View changes"); null before the first. */
   const latestItem = useRef<Item | null>(null);
-  /** The record changed (announced, or a confirmed write) while the editor was open: it is reloaded once the editor closes. */
-  const stale = useRef(false);
+  /** The record's confirmed-revision floor (edit-drafts.ts): a read below it is never applied. */
+  const floor = useSyncExternalStore(drafts.subscribe, () => drafts.floor(itemKey));
+  /** One read at a time; a change requested meanwhile is read once more after it. */
+  const reading = useRef(false);
+  const again = useRef(false);
+  /** The read in flight has its record: it checked the floor before any later rise. */
+  const answered = useRef(false);
+  const alive = useRef(true);
 
-  const reload = useCallback(async (refresh: boolean) => {
-    stale.current = false;
-    if (!refresh) setLoad({ kind: "loading" });
-    let item: Item;
-    try {
-      item = await api.get(itemKey);
-    } catch (error) {
-      if (error instanceof AuthError) { onAuthLost(); return; }
-      if (refresh) setRefreshFailure(`Could not refresh the record: ${failureText(error)}.`);
-      else setLoad(error instanceof ApiError && error.code === "not-found" ? { kind: "missing" } : { kind: "failed", message: failureText(error) });
+  const read = useCallback(async (reason: ReadReason) => {
+    if (reading.current) {
+      // A read in flight that has not answered yet checks the floor when it does, so only a change needs one more.
+      if (reason === "change" || answered.current) again.current = true;
       return;
     }
-    setLoad({ kind: "ready", item });
-    setRefreshFailure(null);
-    await Promise.all([
-      api.search(incomingQuery(item.key), { limit: INCOMING_LIMIT }).then(
-        (page) => setIncoming({ kind: "loaded", items: page.items, more: page.cursor !== undefined }),
-        (error: unknown) => { if (error instanceof AuthError) onAuthLost(); else setIncoming({ kind: "unavailable" }); }),
-      api.history(itemKey).then(
-        (result) => setHistory({ kind: "loaded", revisions: result.revisions }),
-        (error: unknown) => { if (error instanceof AuthError) onAuthLost(); else setHistory({ kind: "unavailable" }); }),
-    ]);
+    reading.current = true;
+    try {
+      let below = 0;
+      do {
+        again.current = false;
+        const initial = latestItem.current === null;
+        let item: Item;
+        answered.current = false;
+        try {
+          item = await api.get(itemKey);
+        } catch (error) {
+          if (error instanceof AuthError) { onAuthLost(); return; }
+          if (!initial) setRefreshFailure(`Could not refresh the record: ${failureText(error)}.`);
+          else setLoad(error instanceof ApiError && error.code === "not-found" ? { kind: "missing" } : { kind: "failed", message: failureText(error) });
+          return;
+        }
+        answered.current = true;
+        const required = drafts.floor(itemKey);
+        if (item.revision < required) {
+          // Read before the user's own confirmed write reached it: not the record they saved. The next read sees it.
+          if (++below < FLOOR_READS) { again.current = true; continue; }
+          const message = `Revision ${required}, which your save created, could not be loaded`;
+          if (initial) setLoad({ kind: "failed", message }); else setRefreshFailure(`${message}.`);
+          return;
+        }
+        latestItem.current = item;
+        setLoad({ kind: "ready", item });
+        setRefreshFailure(null);
+        await Promise.all([
+          api.search(incomingQuery(item.key), { limit: INCOMING_LIMIT }).then(
+            (page) => setIncoming({ kind: "loaded", items: page.items, more: page.cursor !== undefined }),
+            (error: unknown) => { if (error instanceof AuthError) onAuthLost(); else setIncoming({ kind: "unavailable" }); }),
+          api.history(itemKey).then(
+            (result) => setHistory({ kind: "loaded", revisions: result.revisions }),
+            (error: unknown) => { if (error instanceof AuthError) onAuthLost(); else setHistory({ kind: "unavailable" }); }),
+        ]);
+      } while (again.current && alive.current);
+    } finally { reading.current = false; }
   }, [itemKey, onAuthLost]);
 
-  useEffect(() => { void reload(false); }, [reload]);
+  useEffect(() => { alive.current = true; void read("change"); return () => { alive.current = false; }; }, [read]);
 
   useEffect(() => {
-    // Only changes announced after the page opened; an open editor reports them itself and is not reloaded under.
-    if (live.version === openedAt.current) return;
-    if (editing) stale.current = true;
-    else void reload(true);
+    // Only changes announced after the page opened; an open editor reports them itself and is not read under.
+    if (live.version === openedAt.current || editing) return;
+    void read("change");
   }, [live.version]);
-  useEffect(() => { if (!editing && stale.current) void reload(true); }, [editing]);
-  // A confirmed write of this record (a save, or a replay through a retry notice) makes the page stale whether or not it is
-  // announced live; an open editor is not reloaded under.
-  const editingNow = useRef(editing);
-  editingNow.current = editing;
-  /** The highest revision a confirmed write of this record produced in this page. */
-  const [confirmedRevision, setConfirmedRevision] = useState(0);
-  useEffect(() => api.subscribeConfirmedWrite((operation, result) => {
-    if (latestItem.current === null || operation.key !== latestItem.current.key) return;
-    setConfirmedRevision((revision) => Math.max(revision, result.revision));
-    if (editingNow.current) stale.current = true;
-    else void reload(true);
-  }), [reload]);
+  // The record shown is below its floor (the user's own write was confirmed since it was read): read it, unless an editor is open.
+  useEffect(() => {
+    if (!editing && latestItem.current !== null && latestItem.current.revision < floor) void read("floor");
+  }, [editing, floor]);
 
   const ready = load.kind === "ready";
-  // A fresh editor starts from the record shown, so not from one older than a confirmed write: it waits for the reload. A
-  // kept draft carries its own base (exactly what it saves against) and opens at once.
-  const behind = ready && load.item.revision < confirmedRevision && draft === undefined;
+  // A fresh editor starts from the record shown, so never from one below the floor: it waits for the read. A kept draft
+  // carries its own base (exactly what it saves against) and opens at once.
+  const behind = ready && load.item.revision < floor && draft === undefined;
   useEffect(() => {
     if (!edit) { setEditing(false); return; }
     if (!ready || behind) return;
@@ -189,7 +211,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     try {
       const out = await api.put(item.key, documentJsonOf(item.document, "cleared"), item.revision, uuidv7());
       setToast({ text: `Attention cleared · saved as revision ${out.revision}`, action: null });
-      await reload(true);
+      await read("change");
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }
       setFailure(`Clear failed: ${failureText(error)}`);
@@ -222,7 +244,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
       const out = await api.put(latest.key, documentJsonOf(revision.document, revision.document.humanAttention), latest.revision, uuidv7());
       setRestoring(false); showLatest();
       setToast({ text: `Restored revision ${revision.revision} as new revision ${out.revision}`, action: null });
-      await reload(true);
+      await read("change");
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }
       setRestoring(false);
@@ -266,27 +288,25 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
           <a className="btn" href={browseQueryHash(item)}>Search for “{item}”</a></div>
       </div> : <div className="page"><div className="page-narrow">
         <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow"><span className="notice-title">Record unreadable.</span> {load.message}.</div>
-          <button type="button" className="btn btn-sm" onClick={() => void reload(false)}>Retry</button></div>
+          <button type="button" className="btn btn-sm" onClick={() => { setLoad({ kind: "loading" }); void read("change"); }}>Retry</button></div>
       </div></div>}
       {toasts}
     </div>;
   }
 
   const latest = load.item;
-  latestItem.current = latest;
   if (editing) return <RecordEdit itemKey={itemKey} item={latest} revisions={history.kind === "loaded" ? history.revisions : null} origin={origin}
-    onItem={(item) => setLoad({ kind: "ready", item })} onAuthLost={onAuthLost} onBack={onBack}
+    onItem={(item) => { if (item.revision >= drafts.floor(itemKey)) { latestItem.current = item; setLoad({ kind: "ready", item }); } }} onAuthLost={onAuthLost} onBack={onBack}
     onSaved={async (revision) => {
       setEditing(false); onEditDone();
       setToast({ text: `Saved as revision ${revision}`, action: revision > 1 ? { label: "View changes", run: () => {
         const current = latestItem.current!;
         void openSnapshot(current, revision - 1, current.revision);
       } } : null });
-      await reload(true);
     }}
     onCancel={() => { setEditing(false); onEditDone(); }}
     onViewRevision={(revision) => { setEditing(false); onEditDone(); void openSnapshot(latestItem.current!, revision, latestItem.current!.revision); }}
-    onDiscard={() => { setEditing(false); onEditDone(); void reload(true); }} />;
+    onDiscard={() => { setEditing(false); onEditDone(); void read("change"); }} />;
 
   const viewed = snapshot === null ? latest : snapshot.item;
   const attention = snapshot === null && latest.document.humanAttention === "required";
@@ -309,7 +329,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     <div className="page"><div className="page-narrow with-rail">
       <div className="record-main">
         {edit && behind && <div className="notice notice-row" role="status"><span className="spinner" aria-hidden="true" /><div className="grow">
-          <span className="notice-title">Loading revision {confirmedRevision} before editing</span> · the editor opens on the revision your save created.</div></div>}
+          <span className="notice-title">Loading revision {floor} before editing</span> · the editor opens on the revision your save created.</div></div>}
         {draft !== undefined && <div className="notice notice-row" role="note"><UiIcon name="edit" /><div className="grow">
           <span className="notice-title">You have an unsaved draft of this record</span> · started from revision {draft.baseRevision}.</div>
           <button type="button" className="btn btn-sm btn-primary" onClick={onEdit}>Continue editing</button>
@@ -317,7 +337,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
         {failure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div>
           <button type="button" className="btn btn-sm btn-ghost btn-icon" aria-label="Dismiss" onClick={() => setFailure(null)}><UiIcon name="x" /></button></div>}
         {refreshFailure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{refreshFailure}</div>
-          <button type="button" className="btn btn-sm" onClick={() => void reload(true)}>Retry</button></div>}
+          <button type="button" className="btn btn-sm" onClick={() => void read("change")}>Retry</button></div>}
         {snapshot !== null ? <SnapshotMain snapshot={snapshot} only={snapshotOnly} raw={rawFields} onTyped={() => setRawFields(false)} onCopy={copy}
           onOnly={(only) => { setSnapshotOnly(only); if (!only) setRawFields(false); }} /> : <>
           {latest.document.status === "archived" && <div className="notice notice-neutral notice-row" role="note"><UiIcon name="archive" /><div className="grow">

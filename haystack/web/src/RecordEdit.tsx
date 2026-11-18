@@ -51,7 +51,13 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   onAuthLost: () => void;
 }) {
   // A draft left behind by an earlier visit (the router unmounts the editor however the reader left) is restored.
-  const [restored] = useState(() => drafts.get(itemKey));
+  const [restored] = useState(() => {
+    const kept = drafts.get(itemKey);
+    // The record page opens a fresh editor only on a record at or above its confirmed-revision floor (edit-drafts.ts).
+    if (kept === undefined && item.revision < drafts.floor(itemKey))
+      throw new Error(`A fresh editor of ${itemKey} cannot start from revision ${item.revision}, below its confirmed revision ${drafts.floor(itemKey)}`);
+    return kept;
+  });
   const lastId = useRef(restored === undefined ? 0 : restored.lastId);
   const nextId = useCallback(() => ++lastId.current, []);
   const [lineage] = useState(() => restored === undefined ? drafts.lineage() : restored.lineage);

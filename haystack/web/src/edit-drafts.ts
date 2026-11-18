@@ -8,6 +8,12 @@
 // observing anyone else, or nobody (signed out, or an identity the account module ended), ends it. While no user is
 // known, nothing is kept: an open editor still holds its edit, but leaving it then loses the edit.
 //
+// The store also keeps each record's confirmed-revision floor: the highest revision the signed-in user's own writes were
+// confirmed as in this session, however they were confirmed (their answer or a replay) and whatever was on screen. A record
+// older than its floor is not the record the user saved: pages discard such a read and editors never start from one. The
+// floor is the same user's fact as the drafts, and ends with the identity the same way. It is one number per record written
+// in this tab, so it shares the drafts' bound.
+//
 // Bound: there is at most one draft per record, each holds two copies of one document (the edit and what it started
 // from), and only a person's edits create one — editing a record and leaving it unsaved. Growth is therefore linear in
 // what the reader typed in this tab, the same as the editors themselves; a cap would have to drop a draft, which is the
@@ -68,12 +74,15 @@ export class DraftStore {
   private submission: Submission | null = null;
   private lineages = 0;
   private generations = 0;
+  private readonly floors = new Map<string, number>();
 
   /** The draft of `key`, if the signed-in user wrote it. */
   get = (key: string): KeptDraft | undefined => {
     const kept = this.drafts.get(key);
     return kept !== undefined && kept.owner === this.owner ? kept : undefined;
   };
+  /** The highest revision of `key` that the signed-in user's own writes were confirmed as in this session; 0: none. */
+  floor = (key: string): number => this.floors.get(key) ?? 0;
   /** A new line of edits, for an editor that restores no draft. */
   lineage(): number { return ++this.lineages; }
   /** Writes the draft of `key` through for the signed-in user (none known: not kept); returns its generation. */
@@ -94,30 +103,33 @@ export class DraftStore {
     this.submission = { key, lineage, generation, requestId, draft: stored.draft };
   }
   /**
-   * The write `requestId` was confirmed as `revision`, however it was confirmed (its own answer or a replay). The generation
+   * The write `requestId` of `key` was confirmed as `revision`, however it was confirmed (its own answer or a replay): the
+   * record's floor rises to it. If the write is the editor's latest submission, the generation
    * it sent ends. A later generation of the same lineage (edits made after submitting) stays, now based on what was saved —
    * the submitted draft as revision `revision` — so it saves on top of the reader's own write instead of conflicting with it.
    * Another lineage of the record (started after the submitted one was discarded) is not the saved one's and is untouched.
    */
-  confirmed(requestId: string, revision: number): void {
+  confirmed(key: string, requestId: string, revision: number): void {
+    if (revision > this.floor(key)) { this.floors.set(key, revision); this.publish(); }
     const submission = this.submission;
     if (submission === null || submission.requestId !== requestId) return;
     this.submission = null;
-    const { key, lineage, generation, draft } = submission;
-    const kept = this.drafts.get(key);
+    const { lineage, generation, draft } = submission;
+    const kept = this.drafts.get(submission.key);
     const same = kept !== undefined && kept.lineage === lineage;
     const later = same && kept.generation > generation;
-    if (later) this.drafts.set(key, { ...kept, base: draft, baseRevision: revision });
-    else if (same) this.drafts.delete(key);
+    if (later) this.drafts.set(submission.key, { ...kept, base: draft, baseRevision: revision });
+    else if (same) this.drafts.delete(submission.key);
     if (same) this.publish();
-    for (const listener of this.confirmations) listener({ key, lineage, draft, revision, kept: later });
+    for (const listener of this.confirmations) listener({ key: submission.key, lineage, draft, revision, kept: later });
   }
-  /** The signed-in user as observed. Anyone else, or nobody (signed out), ends every draft: they are all the previous user's. */
+  /** The signed-in user as observed. Anyone else, or nobody (signed out), ends every draft and floor: they are all the previous user's. */
   observeOwner(owner: string | null): void {
     if (owner === this.owner) return;
     this.owner = owner;
     this.submission = null;
     this.drafts.clear();
+    this.floors.clear();
     this.publish();
   }
   subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
@@ -172,6 +184,6 @@ export function observeOwner(store: DraftStore, root: Document): () => void {
 
 /** The page's drafts. */
 export const drafts = new DraftStore();
-api.subscribeConfirmedWrite((operation, result) => drafts.confirmed(operation.requestId, result.revision));
+api.subscribeConfirmedWrite((operation, result) => drafts.confirmed(operation.key, operation.requestId, result.revision));
 // Markup checks render server-side, without a document.
 if (typeof document !== "undefined") observeOwner(drafts, document);

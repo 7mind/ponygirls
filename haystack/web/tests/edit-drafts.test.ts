@@ -37,26 +37,43 @@ test("a confirmed write ends exactly the generation it sent; later edits of its 
   const first = draft("first");
   store.submit("p:a", line, "r1", stored(first, 1));
   store.put("p:a", line, stored(first, 1));
-  store.confirmed("not-the-editors", 9);
+  store.confirmed("p:a", "not-the-editors", 9);
   assert.equal(store.get("p:a")!.draft, first, "another write reconciles nothing");
-  store.confirmed("r1", 2);
+  store.confirmed("p:a", "r1", 2);
   assert.equal(store.get("p:a"), undefined, "rewriting the same edit is the same generation, which the save ended");
   // Edited after submitting (in the same or a later editor of the lineage).
   const second = draft("second"), third = draft("third");
   store.submit("p:a", line, "r2", stored(second, 2, first));
   store.put("p:a", line, stored(third, 2, first));
-  store.confirmed("r2", 3);
+  store.confirmed("p:a", "r2", 3);
   const kept = store.get("p:a")!;
   assert.deepEqual([kept.draft, kept.base, kept.baseRevision], [third, second, 3], "the later edit saves on top of the reader's own save");
-  store.confirmed("r2", 3);
+  store.confirmed("p:a", "r2", 3);
   assert.equal(store.get("p:a")!.base, second, "a confirmation counts once");
   // A lineage started after the submitted one was discarded is not the saved one's.
   store.submit("p:a", line, "r3", stored(draft("fourth"), 3, second));
   store.drop("p:a");
   const fresh = draft("fresh");
   store.put("p:a", store.lineage(), stored(fresh, 3));
-  store.confirmed("r3", 4);
+  store.confirmed("p:a", "r3", 4);
   assert.deepEqual([store.get("p:a")!.base, store.get("p:a")!.baseRevision], [original, 3]);
   assert.deepEqual(confirmations.map(({ key, lineage, draft, revision, kept }) => [key, lineage, draft.title, revision, kept]),
     [["p:a", line, "first", 2, false], ["p:a", line, "second", 3, true], ["p:a", line, "fourth", 4, false]], "a mounted editor of the lineage adopts every confirmation");
+});
+
+test("the confirmed-revision floor rises with every confirmed write of the user, never falls, and ends with the identity", () => {
+  const store = new DraftStore();
+  store.observeOwner("op");
+  assert.equal(store.floor("p:a"), 0);
+  store.confirmed("p:a", "no-editor-write", 2);
+  store.confirmed("p:b", "elsewhere", 7);
+  store.confirmed("p:a", "late-replay", 1);
+  assert.deepEqual([store.floor("p:a"), store.floor("p:b")], [2, 7], "per record, monotone, also without an editor's submission");
+  store.observeOwner("op");
+  assert.equal(store.floor("p:a"), 2);
+  store.observeOwner("alice");
+  assert.equal(store.floor("p:a"), 0, "another user's floor starts empty");
+  store.confirmed("p:a", "alice-write", 3);
+  store.observeOwner(null);
+  assert.equal(store.floor("p:a"), 0);
 });
