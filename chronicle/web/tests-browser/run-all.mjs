@@ -20,9 +20,9 @@ const EXIT_FAILED = 1, EXIT_CONFIGURATION = 2;
 // Registration: add the entry file name here. Longest scripts first, so the pool's tail is short.
 const SCRIPTS = [
   'rebuild.mjs', 'run.mjs', 'goal50.mjs', 'ux.mjs', 'activity-tables.mjs', 'refresh-regression.mjs', 'theme-retry.mjs',
-  'filter-table-ux.mjs', 'live-archive.mjs', 'popup-regression.mjs', 'tool-catalog.mjs', 'history-find.mjs', 'rebuild-occlusion.mjs',
+  'filter-table-ux.mjs', 'live-archive.mjs', 'shell.mjs', 'tool-catalog.mjs', 'history-find.mjs',
   'persistent-login.mjs', 'search-serp.mjs', 'transcript.mjs', 'usage-presentation.mjs', 'source-filters.mjs', 'prior-error-regression.mjs',
-  'ui-controls.mjs', 'tab-layout.mjs',
+  'ui-controls.mjs',
 ];
 
 function positiveInteger(name, value) {

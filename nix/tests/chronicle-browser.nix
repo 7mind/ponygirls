@@ -15,7 +15,7 @@ in buildNpmPackage {
   FONTCONFIG_FILE = makeFontsConf { fontDirectories = [ dejavu_fonts ]; };
   ACCOUNT_WEB_ROOT = lib.fileset.toSource {
     root = ../../shared/account-web;
-    fileset = lib.fileset.unions [ ../../shared/account-web/account.js ../../shared/account-web/account.css ];
+    fileset = lib.fileset.unions [ ../../shared/account-web/account.js ../../shared/account-web/account-client.js ../../shared/account-web/account.css ];
   };
   UI_WEB_ROOT = callPackage ../pkg/ui-web.nix { };
   buildPhase = ''
