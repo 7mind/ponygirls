@@ -33,6 +33,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
     def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
     def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
+    def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
   }
   private def source(texts: List[String]): IngestRequest = {
     val messages=texts.zipWithIndex.map((text,index) => Message(s"m$index",None,"assistant",text,None,index))
@@ -251,6 +252,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def rejectAnnotation(c: Claim,key: CheckpointKey,attempt: Int,reason: String): Int = delegate.rejectAnnotation(c,key,attempt,reason)
         def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
         def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
+        def discardCheckpoints(c: Claim,stage: IndexingStage,window: Int): Int = delegate.discardCheckpoints(c,stage,window)
       }
       fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger(),ModelFixtures.failureBackoff).run.start
       _ <- blocked.get.timeout(3.seconds)
