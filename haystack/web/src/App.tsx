@@ -268,7 +268,8 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
         <PendingWriteNotice />
         {notice !== "" && <p role="status" className="notice">{notice}</p>}
         {view.lists.map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
-          <Browse preset={entry.route.preset} initial={entry.route.state} onOpen={openItem} onAuthLost={onAuthLost} />
+          <Browse preset={entry.route.preset} initial={entry.route.state} userId={identity.userId} activityProjectId={identity.activityProjectId}
+            onOpen={openItem} onAuthLost={onAuthLost} />
         </div>)}
         {route.name === "item" && <RecordPage key={route.key} itemKey={route.key} edit={route.edit} origin={presetOf(route.origin)} onAuthLost={onAuthLost}
           onBack={leaveItem}

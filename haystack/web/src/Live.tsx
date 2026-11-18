@@ -1,18 +1,26 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import { ConnectionManager, connectionLabel, type ConnectionStats, type ConnectionTone } from "./connection";
-import { useOverlay } from "./overlay";
+import { useOverlay, type Overlay } from "./overlay";
 import { uuidv7 } from "./api";
 
 interface Invalidation { version: number; key: string | null; revision: number | null }
 const LiveContext = createContext<Invalidation>({ version: 0, key: null, revision: null });
-interface ConnectionView { stats: ConnectionStats | null; retry: () => void }
+/** The live connection as the masthead indicator and the lists show it; `details` is the indicator's popover. */
+interface ConnectionView { stats: ConnectionStats | null; retry: () => void; details: Overlay }
 const ConnectionContext = createContext<ConnectionView | null>(null);
 export function useLiveUpdates(): Invalidation { return useContext(LiveContext); }
+export function useConnection(): ConnectionView {
+  const connection = useContext(ConnectionContext);
+  if (connection === null) throw new Error("useConnection requires LiveProvider");
+  return connection;
+}
 
 export function LiveProvider({ children, onAuthLost }: { children: ReactNode; onAuthLost: () => void }) {
   const manager = useRef<ConnectionManager | null>(null);
   const [stats, setStats] = useState<ConnectionStats | null>(null);
   const [invalidation, setInvalidation] = useState<Invalidation>({ version: 0, key: null, revision: null });
+  // Owned here, not by the indicator: a list's failure notice opens the same details.
+  const details = useOverlay();
   useEffect(() => {
     const url = new URL("/api/v1/live", location.href);
     url.protocol = location.protocol === "https:" ? "wss:" : "ws:";
@@ -31,7 +39,7 @@ export function LiveProvider({ children, onAuthLost }: { children: ReactNode; on
     return () => { manager.current = null; connection.destroy(); document.title = "Haystack"; };
   }, [onAuthLost]);
   return <LiveContext.Provider value={invalidation}>
-    <ConnectionContext.Provider value={{ stats, retry: () => { if (manager.current !== null) manager.current.retry(); } }}>
+    <ConnectionContext.Provider value={{ stats, retry: () => { if (manager.current !== null) manager.current.retry(); }, details }}>
       {children}
     </ConnectionContext.Provider>
   </LiveContext.Provider>;
@@ -75,10 +83,7 @@ function figures(stats: ConnectionStats, tone: ConnectionTone, now: number): Arr
 
 /** Masthead live-connection indicator: dot + label; diagnostics in a popover on demand. */
 export function ConnectionIndicator() {
-  const connection = useContext(ConnectionContext);
-  if (connection === null) throw new Error("ConnectionIndicator requires LiveProvider");
-  const { stats, retry } = connection;
-  const overlay = useOverlay();
+  const { stats, retry, details: overlay } = useConnection();
   const now = Date.now();
   const view = connectionLabel(stats, now);
   useEffect(() => { document.title = `Haystack · ${view.label}`; }, [view.label]);

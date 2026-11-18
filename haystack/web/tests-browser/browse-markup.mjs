@@ -16,10 +16,11 @@ try {
   assert.match(index, /href="\/account\.css"/);
   assert.match(index, /src="\/account\.js"/);
   const { Browse } = await vite.ssrLoadModule("/src/Browse.tsx");
-  const html = renderToStaticMarkup(createElement(Browse, {
+  const { LiveProvider } = await vite.ssrLoadModule("/src/Live.tsx");
+  const html = renderToStaticMarkup(createElement(LiveProvider, { onAuthLost() {} }, createElement(Browse, {
     initial: { query: "", sort: { field: "modified-at", direction: "desc" }, migrationError: null },
-    preset: "browse", onOpen() {}, onAuthLost() {},
-  }));
+    preset: "browse", userId: "op", activityProjectId: "agent-activity", onOpen() {}, onAuthLost() {},
+  })));
   assert.doesNotMatch(html, />Next<|>Back</, "cursor pagination must not be exposed as pages");
   assert.match(html, /aria-label="Sort by Modified"/);
   assert.match(html, /aria-sort="descending"/);
