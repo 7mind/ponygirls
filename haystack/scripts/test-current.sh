@@ -34,9 +34,9 @@ fi
 max_concurrency=4
 cores=${NIX_BUILD_CORES:-0}; (( cores > 0 )) || cores=$(nproc)
 concurrency=${HAYSTACK_CURRENT_CONCURRENCY:-$(( cores < max_concurrency ? cores : max_concurrency ))}
-# Whole-run deadline: measured 65-75 s concurrent and 230 s serial under host
-# load 150-200 (the 62 s two-heartbeat case is the concurrent floor); about 2x.
-if (( concurrency == 1 )); then deadline=480; else deadline=150; fi
+# Whole-run deadline: measured 64-66 s concurrent and 147 s serial under host
+# load 150-220 (the 62 s two-heartbeat case is the concurrent floor); about 2x.
+if (( concurrency == 1 )); then deadline=300; else deadline=150; fi
 cd haystack
 status=0
 timeout --signal=TERM --kill-after=10s "$deadline" node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency="$concurrency" \

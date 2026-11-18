@@ -82,7 +82,7 @@ existing database.
 
 Test files run concurrently (at most four at a time, each with its own server,
 database, port and temp directory); `HAYSTACK_CURRENT_CONCURRENCY=1` runs them
-serially. The runner has a 150-second whole-node deadline (480 seconds serial)
+serially. The runner has a 150-second whole-node deadline (300 seconds serial)
 and 10-second forced cleanup; ordinary Node tests are bounded60seconds; the
 healthy-peer regression has an 85-second budget to observe two unchanged
 real30-second protocol heartbeat intervals (its heartbeat assertion is

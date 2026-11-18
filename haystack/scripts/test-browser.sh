@@ -4,8 +4,10 @@
 # HAYSTACK_); optional paired PROVISION_COMMAND and PROXY_CONFIG_FILE.
 # Fails on any failing leg, a skip, or a run without a passing check.
 set -euo pipefail
+# The serial legs took 150-172 s under host load 147-167; about 2x that plus
+# npm ci and the web build.
 if [[ "${HAYSTACK_BROWSER_BOUNDED:-}" != 1 ]]; then
-  exec timeout --signal=TERM --kill-after=10s 575s env HAYSTACK_BROWSER_BOUNDED=1 bash "$0" "$@"
+  exec timeout --signal=TERM --kill-after=10s 420s env HAYSTACK_BROWSER_BOUNDED=1 bash "$0" "$@"
 fi
 if [[ -n "${POSTGRES_HOME:-}" ]]; then export PATH="$POSTGRES_HOME/bin:$PATH"; fi
 root="$(cd "$(dirname "$0")/../.." && pwd)"
