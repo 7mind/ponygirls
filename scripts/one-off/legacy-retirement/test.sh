@@ -2,12 +2,12 @@
 # Runs the two suites that exercise run.sh against fixture databases on one owned, throwaway PostgreSQL cluster:
 #   chronicle.LegacyRetirementScriptsTest and haystack.storage.LegacyRetirementScriptsTest.
 # Usage, from the repository root:  nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh
-# Optional argument: chronicle | haystack (default: both).
+# Optional argument: chronicle | haystack | drop (default: all; drop = test-drop-databases.sh, its own cluster).
 set -euo pipefail
 cd "$(dirname "$0")/../../.."
 : "${POSTGRES_HOME:?run inside nix develop .#chronicle (PostgreSQL 18 with pgvector)}"
 which=${1:-both}
-case $which in chronicle|haystack|both) ;; *) echo 'usage: test.sh [chronicle|haystack]' >&2; exit 2 ;; esac
+case $which in chronicle|haystack|drop|both) ;; *) echo 'usage: test.sh [chronicle|haystack|drop]' >&2; exit 2 ;; esac
 # Short private root: unix-socket paths are limited to 107 bytes.
 base=$(mktemp -d /tmp/lr-test.XXXXXX)
 stop() { "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/null 2>&1 || true; rm -rf "$base"; }
@@ -28,12 +28,15 @@ suite() {
   "$@" 2>&1 | tee "$log" || return 1
   grep -q "Passed: Total $expected, Failed 0, Errors 0, Passed $expected" "$log" || { echo "legacy-retirement test: expected exactly $expected passed cases" >&2; return 1; }
 }
-if [[ $which != haystack ]]; then
+if [[ $which == chronicle || $which == both ]]; then
   CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/chronicle" CHRONICLE_REQUIRE_POSTGRES=1 \
     suite chronicle 2 bash scripts/backend-sbt.sh 'chronicleServer/testOnly chronicle.LegacyRetirementScriptsTest' || status=1
 fi
-if [[ $which != chronicle ]]; then
+if [[ $which == haystack || $which == both ]]; then
   HAYSTACK_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/haystack_scala_test" HAYSTACK_TEST_DB_USER=postgres HAYSTACK_TEST_DB_PASSWORD_FILE="$base/password" \
     suite haystack 3 bash scripts/backend-sbt.sh 'haystackServer/testOnly haystack.storage.LegacyRetirementScriptsTest' || status=1
+fi
+if [[ $which == drop || $which == both ]]; then
+  bash scripts/one-off/legacy-retirement/test-drop-databases.sh || status=1
 fi
 exit "$status"

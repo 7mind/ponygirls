@@ -540,13 +540,67 @@ starts with `legacy-retirement refused:` is read and reported, never worked arou
 | 14 | Tag the last commit that contains the legacy code and these scripts | `git tag` (name chosen by the owner) | tag exists | — |
 | 15 | Repository work: delete the legacy code per section 6 for every guard met; add the clean-up migrations (6.6); full suites. `scripts/one-off/legacy-retirement` is removed here; the two `check-legacy-free.sql` files stay | — | suites green | — |
 | 16 | Deploy the legacy-free binaries (their start-up applies 6.6), then the **post-deployment check** with the retained files | `psql -X -q -v ON_ERROR_STOP=1 -f - < chronicle/scripts/check-legacy-free.sql` (through the same exec path; add `-v require_formats=f` if C-F was skipped); the same with `haystack/scripts/check-legacy-free.sql` | Chronicle: `LF.legacy_tables_present|0`, `LF.embedding_spaces.not_v2|0`, `LF.owner_targets.not_executable|0`, `LF.published.retired_or_unregistered|0`, `LF.sessions.deadline|0`, `LF.generations.not_retired_old_format|0`, `LF.generations.current_format_constraint|1`, `LF.result|legacy-free`. Haystack: `LF.replay.other_digest_format|0`, `LF.replay.column_default_present|0`, `LF.replay.current_format_constraint|1`, `LF.schema.node_replay_retired_marker|1`, `LF.result|legacy-free` | `LF.result|legacy-present`. Chronicle can be rolled back to the tag of step 14 (6.6); Haystack cannot once 0007 is applied — restore from the backup of step 12 instead |
-| 17 | **Separately confirmed:** drop the four rollback copies | `PGDATABASE=postgres sh scripts/one-off/legacy-retirement/drop-databases.sh preflight <name1> <name2> <name3> <name4>` (from the tag of step 14; names from the report's `out/00-inventory.txt`), then **for each name, after the owner confirms that name**: `… drop-databases.sh drop <name> --confirm-database <name> --expect-oid <OID from preflight>` | preflight: four `DB.named|<name>|present|<oid>|<bytes>|0|f` lines and the `DB.stays|…` lines for `chronicle`, `haystack`, `manure`, `postgres`. Each drop: `DB.remaining|0`, `DB.result|dropped` | a named database is absent, has connections, or appears under `DB.stays`; a live database appears among the names |
+| 17 | **Separately confirmed:** drop the four rollback copies | `PGDATABASE=postgres sh scripts/one-off/legacy-retirement/drop-databases.sh` (from the tag of step 14; default mode = plan, drops nothing; the four names are fixed in the script, it takes no free-form names), then **for each name, after the owner confirms that name**: `… drop-databases.sh drop --drop <name> --confirm-database <name> --expect-oid <OID from the plan>` | plan: four `DB.would_drop|<name>|<oid>|<bytes>|0|f|ok` lines and `DB.stays|…` for `chronicle`, `haystack`, `manure`, `postgres`, then `DB.result|plan-complete-nothing-dropped`. Each drop: `DB.remaining|0`, `DB.result|dropped` | any `DB.refuse` line (absent, connections, written during the 10 s sample window, service database); a refusal of a drop. The script refuses every name except the four copies, the live service databases explicitly (rehearsal incident: the earlier version dropped a live-named database given its OID) |
 
 Order note for steps 13–16: `run.sh … verify` reads the tables that the clean-up drops and is bound to the
 pre-clean-up schema, and it is deleted in step 15. It is therefore the **pre-removal** check (step 13) only. After
 the deployment the check is the retained SQL (step 16). Validated on the fixture databases: before the clean-up the
 retained check fails (`legacy-present`); after it, it passes and `run.sh chronicle verify` fails with "relation …
 does not exist" while `run.sh haystack dry-run` refuses with "unexpected schema_migrations".
+
+### 7.1 Exec streams break; a broken stream does not stop the pod-side process
+
+Observed during the rehearsal export (2026-11-18, production pod, read-only `pg_dump` through `kubectl exec`):
+
+- Bulk exec streams were cut twice, after 22m46s / 65.8 GB and 14m37s / 55.8 GB, with
+  `error executing command in container: error reading from error stream: … websocket: close 1006`. Switching the
+  client to SPDY did not help (the message comes from the server side of the exec path). The cuts did not coincide
+  with a credential renewal of the bastion, and a low-traffic exec stream stayed up for more than 20 minutes at the
+  same time. Cause unknown; plan for a cut at any moment, and for a usable window of about 14 minutes per stream.
+- After a cut, or after the local `kubectl` is killed, **the process in the pod keeps running**. Its standard
+  output is no longer drained but stays open: `pg_dump` blocked in a write while its backend waited in
+  `ClientWrite`, holding its snapshot and locks, until the process was ended by hand (twice). Killing the local
+  client delivered end-of-file to the pod process's standard input (probe).
+
+Consequences for every step that goes through `PSQL='kubectl … exec -i … psql …'`:
+
+1. **The pod-side psql keeps executing what it has received.** A `run.sh` session is up to 0.85 MB of text
+   (Chronicle apply with 200 batches per kind), streamed while psql consumes it. At end of input psql executes the
+   partial last statement and exits; an open transaction is then rolled back by the server. Every writing statement
+   in these sessions is a `DO` block, a CTE or inside an explicit transaction, so a truncated statement is a syntax
+   error, never a different valid statement. A statement that was complete when the cut happened still runs, and a
+   `COMMIT` that had been received still commits: **the operator cannot learn the outcome from the broken stream.**
+2. **Every invocation is recognisable.** `run.sh` prints `LR.application_name|lr:<target>:<mode>:<time>-<pid>` as
+   its first line and sets that `application_name`; it also sets `idle_in_transaction_session_timeout` and
+   `idle_session_timeout` to 120 s, so a session whose input stalls (the stream is gone but standard input stays
+   open) ends itself and the server rolls back its open transaction (rehearsed: ended after 120 s,
+   `FATAL: terminating connection due to idle-in-transaction timeout`). A session that is busy in a statement is not
+   idle and is not ended by these timeouts.
+3. **After any break, before anything else:**
+   ```sh
+   RUN <target> sessions          # LR.session|pid|application_name|state|wait|xact_age_s|state_age_s|blocked_by|blocking
+   RUN <target> terminate --application-name <the name printed by the broken invocation>   # only our own backend
+   RUN <target> preflight         # the real state, with a new plan token
+   ```
+   then re-run the step (with the new plan token). While an old session of this tool is still connected, `apply`
+   refuses on its own (`another legacy-retirement session holds the advisory lock`, or the other-connections
+   guard). For `pg_dump` (backup, export) the pod-side process must be ended as well: list it with
+   `kubectl … exec <pod> -c <container> -- ps -eo pid,args` and send `kill -TERM <pid>` to exactly that process,
+   then confirm that its backend is gone (`pg_stat_activity` by its `application_name`, set with
+   `env PGAPPNAME=…` in front of `pg_dump`). Idle timeouts do not end it: its backend is active in `ClientWrite`.
+4. **No step relies on a session outliving the window**: each one is short, or resumable, or both:
+
+| Step | Can it still commit after the stream is lost? | Why re-running is safe |
+|---|---|---|
+| `preflight`, `verify`, `sessions`, `export-stored-documents` | nothing to commit (read-only transaction) | read-only |
+| `dry-run` | no: one transaction that ends in `ROLLBACK`, or is rolled back when psql exits or the idle timeout fires. It holds the same locks as apply (part 3: `SHARE ROW EXCLUSIVE` on `ch_jobs`, `ch_owner_targets`) until then: terminate it | read-only in effect |
+| `apply`, batched parts (Chronicle `--retire-history` batches, unfinished-run resets; Haystack replay deletion) | yes, each batch whose `COMMIT` had arrived; the batch in flight is rolled back | each batch selects the remaining legacy rows by the legacy predicate; committed batches are not repeated (rehearsed: 185 → 135 → 85 → 35 → 0 over four broken runs and one complete run) |
+| `apply`, Chronicle part 3 (identity, one transaction) | yes, if the whole session text had reached the pod; otherwise rolled back | every statement selects by the legacy predicate; a second apply is a no-op (rehearsed) |
+| `drop-databases.sh drop` | yes (`DROP DATABASE` is one statement outside a transaction) | its preflight then shows the name `absent`; drop refuses an absent name |
+| `pg_dump` (backup, export) | nothing to commit; the archive is incomplete (fails `pg_restore --list`) | a new dump; end the old pod-side process first |
+
+Rehearsed on the clone with `simulate_break.sh` (rehearsal report): standard input cut inside a batch and before a
+batch's `COMMIT`, standard input stalled with the stream gone, explicit `terminate`, then a complete re-run.
 
 ## 8. Rehearsal (requirement A; review R4)
 
@@ -586,6 +640,28 @@ bash $L/rehearsal/clone.sh stop-cluster --dir "$D"
 bash $L/rehearsal/clone.sh delete --dir "$D" --confirm "$D"      # rm -rf of D; refuses while the cluster runs
 ls -d "$D"                                                       # must answer: No such file or directory
 ```
+
+**As run on 2026-11-18 (rehearsal report `reports/legacy-rehearsal/REPORT.md`), step 1 does not work for `chronicle`
+on the production exec path**: a single `pg_dump` stream of the 168 GB database was cut three times (section 7.1),
+uncompressed and with `--compress=zstd:1`. `manure` and `haystack` export in seconds as written. What worked for
+`chronicle` is a split export under **one** exported snapshot (all read-only at the source):
+
+1. a holder: one short exec starts a pod-side `psql` that runs `BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY`,
+   publishes `pg_export_snapshot()` in its own `application_name` (`lr-snapshot-holder:<id>`) and then
+   `pg_sleep(<at most 110 min>)`, so it ends by itself; its id is read from `pg_stat_activity`;
+2. `pg_dump --snapshot=<id> --section=pre-data`, one `pg_dump --snapshot=<id> --data-only --compress=zstd:1` with
+   `--exclude-table-data` for the six large tables, then per large table `COPY (SELECT * FROM t WHERE <primary key
+   range>) TO STDOUT (FORMAT binary)` after `SET TRANSACTION SNAPSHOT '<id>'`, each range a few GB so that every
+   stream ends well inside the window; `pg_dump --snapshot=<id> --section=post-data` last; row counts per table
+   and per range under the same snapshot;
+3. every part restartable on its own; the holder is checked before each part and terminated at the end;
+4. restore: `pg_restore` pre-data, the small-data archive, `\copy … FROM … (FORMAT binary)` per range, then
+   post-data with `--jobs 8` and `ANALYZE`; compare the counts.
+
+`clone.sh` gained `CLONE_SOCKET_DIR` / `CLONE_LISTEN` (a unix-socket-only cluster with its socket in a short private
+directory, as required for the rehearsal; restart with `CLONE_LISTEN=127.0.0.1` only while a service binary needs
+JDBC) and `start-cluster`. `check-stored-documents.sh` writes the exported documents under `${TMPDIR:-/tmp}`: run
+it with `TMPDIR` inside `D` when it reads a clone.
 
 Everything the rehearsal writes (binary configuration, logs, backups it practises) goes under `D`, so step 4 removes
 it. The mechanics of `clone.sh` were exercised on this host with a small local source cluster (export, mode 0700,
