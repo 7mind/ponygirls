@@ -9,9 +9,9 @@ import java.lang.reflect.{InvocationTargetException,Proxy}
 import java.util.concurrent.{Callable,CountDownLatch,Executors,TimeUnit}
 import java.util.concurrent.atomic.AtomicBoolean
 
-final class RetryFailedActionsTest extends munit.FunSuite {
-  private final case class Context(config: Config,db: Database,archive: PostgresArchive,auth: Auth,app: Application,owner: Identity)
-  private def database(f: Context => Unit): Unit = {
+private[chronicle] object ApplicationFixture extends munit.Assertions {
+  final case class Context(config: Config,db: Database,archive: PostgresArchive,auth: Auth,app: Application,owner: Identity)
+  def database(f: Context => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val config=Fixtures.config(); val db=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
     db.transaction { c =>
@@ -28,12 +28,16 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     val app=new Application(archive,new PostgresSearch(db,archive,config),forbiddenEmbedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,Clock.systemUTC()),ModelFixtures.usage(config))
     f(Context(config,db,archive,auth,app,owner))
   }
-  private def call(c: Context,i: Identity,operation: Operation): Result = c.app.operation(i,ClientEnvelope(UUID.randomUUID(),operation)).unsafeRunSync()
-  private def preview(c: Context): RetryFailedPlan = call(c,c.owner,Operation.PreviewRetryFailed()).asInstanceOf[Result.RetryFailedPreview].result
-  private def ingest(c: Context,owner: String,name: String): IngestReceipt = {
+  def call(c: Context,i: Identity,operation: Operation): Result = c.app.operation(i,ClientEnvelope(UUID.randomUUID(),operation)).unsafeRunSync()
+  def ingest(c: Context,owner: String,name: String): IngestReceipt = {
     val source=Fixtures.snapshot()
     c.archive.ingest(owner,source.copy(source=source.source.copy(producerSessionId=name)))
   }
+}
+
+final class RetryFailedActionsTest extends munit.FunSuite {
+  import ApplicationFixture.{Context,call,database,ingest}
+  private def preview(c: Context): RetryFailedPlan = call(c,c.owner,Operation.PreviewRetryFailed()).asInstanceOf[Result.RetryFailedPreview].result
   private def fail(c: Context,id: UUID): Unit = c.db.transaction { connection =>
     Sql.exec(connection,"UPDATE ch_jobs SET state='Failed',attempts=5,fence=7,lease_until=now()+interval '60 seconds',error='model-http',completed_windows=3,total_windows=5 WHERE id=?",id)
     ()
@@ -290,70 +294,4 @@ final class RetryFailedActionsTest extends munit.FunSuite {
     call(c,c.owner,Operation.Purge(first.sessionId))
     assertEquals(intercept[DomainError](next(cursor)).code,"conflict")
   }}
-
-  private final case class UnboundedArchiveField(sort: ArchiveSort,update: (Metadata,String) => Metadata)
-  private val unboundedArchiveFields=List(
-    UnboundedArchiveField(ArchiveSort.Title,(metadata,value) => metadata.copy(title=value)),
-    UnboundedArchiveField(ArchiveSort.Project,(metadata,value) => metadata.copy(project=Some(value))),
-    UnboundedArchiveField(ArchiveSort.Branch,(metadata,value) => metadata.copy(gitBranch=Some(value))),
-    UnboundedArchiveField(ArchiveSort.Producer,(metadata,value) => metadata.copy(producer=value)),
-    UnboundedArchiveField(ArchiveSort.Model,(metadata,value) => metadata.copy(model=Some(value))))
-  private def continuationBytes(operation: Operation): Int = Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),operation)).noSpaces.getBytes(java.nio.charset.StandardCharsets.UTF_8).length
-  unboundedArchiveFields.foreach { field =>
-    test(s"Behavioral-Blackbox GoodCommunication regression: actual valid ${field.sort} ingestion yields an Archive continuation within the WebSocket frame bound") { database { c =>
-      (1 to 2).foreach { n =>
-        val source=Fixtures.snapshot(); val metadata=field.update(source.metadata,"x"*50000+n)
-        c.archive.ingest("a",source.copy(metadata=metadata))
-      }
-      val query=ArchiveQuery("mode:lexical",field.sort,SortDirection.Asc,None,1,false)
-      val first=call(c,c.owner,Operation.Archive(query)).asInstanceOf[Result.Archive].result
-      val next=query.copy(cursor=first.nextCursor)
-      assert(next.cursor.nonEmpty)
-      val bytes=continuationBytes(Operation.Archive(next))
-      println(s"ARCHIVE ${field.sort} actual-ingestion cursor bytes=$bytes existingFrameLimit=${Http.socketFrameBytes}")
-      assert(bytes<=Http.socketFrameBytes,s"server-produced ${field.sort} continuation $bytes exceeds ${Http.socketFrameBytes}")
-      val second=call(c,c.owner,Operation.Archive(next)).asInstanceOf[Result.Archive].result
-      assertEquals(second.rows.size,1); assert(first.rows.head.head.id!=second.rows.head.head.id)
-    }}
-  }
-  test("Behavioral-Blackbox GoodCommunication regression: admitted long owner identities do not expand cursor context beyond the WebSocket frame bound") { database { c =>
-    val owner="x"*50000
-    val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true))
-    configured.validate()
-    val db=Fixtures.database(configured,IndexProfileCatalog.legacyOnly(configured)); db.initialize()
-    val auth=new Auth(db,configured)
-    val (_,cookie)=auth.login(LoginRequest("long-owner","synthetic")); val identity=auth.browser(cookie)
-    assertEquals(identity.user.id.length,owner.length)
-    val archive=new PostgresArchive(db,configured)
-    (1 to 2).foreach { n => val source=Fixtures.snapshot(); archive.ingest(owner,source.copy(metadata=source.metadata.copy(title=s"bounded-$n"))) }
-    val activity=new PostgresActivity(db,Clock.systemUTC())
-    val jobQuery=ActivityJobsQuery(None,ActivityJobScope.All,"",ActivityJobSort.JobId,SortDirection.Asc,None,1)
-    val jobs=activity.jobs(owner,jobQuery)
-    val collectorQuery=ActivityQuery("",ActivityCollectorSort.CollectorId,SortDirection.Asc,None,1)
-    val collectors=activity.summary(identity.user,collectorQuery)
-    val archiveQuery=ArchiveQuery("mode:lexical",ArchiveSort.Owner,SortDirection.Asc,None,1,false)
-    val index=new PostgresArchiveIndex(db,archive,configured)
-    val result=index.browse(owner,archiveQuery,ArchiveExpression.parse(archiveQuery.expression),Nil)
-    val frames=List(
-      "ActivityJobs"->continuationBytes(Operation.ActivityJobs(jobQuery.copy(cursor=jobs.nextCursor))),
-      "ActivityCollectors"->continuationBytes(Operation.Activity(collectorQuery.copy(cursor=collectors.nextCursor))),
-      "ArchiveOwner"->continuationBytes(Operation.Archive(archiveQuery.copy(cursor=result.nextCursor))))
-    frames.foreach { case (family,bytes) => println(s"$family actual-admitted-owner cursor bytes=$bytes existingFrameLimit=${Http.socketFrameBytes}") }
-    assert(frames.forall(_._2<=Http.socketFrameBytes),s"admitted owner continuation sizes ${frames.map { case (family,bytes) => s"$family=$bytes" }.mkString(",")} exceed ${Http.socketFrameBytes}")
-  }}
-  test("Behavioral-Blackbox GoodCommunication regression: admitted mutable failure reasons use bounded guarded cursor positions") { database { c =>
-    (1 to 2).foreach { n =>
-      ingest(c,"a",s"reason-$n")
-      (1 to 5).foreach { _ => val claim=c.archive.claim(Set(c.config.profile),ClaimScope.AllOwners,300).get; c.archive.fail(claim,"x"*50000+n) }
-    }
-    val query=ActivityJobsQuery(None,ActivityJobScope.All,"",ActivityJobSort.Reason,SortDirection.Asc,None,1)
-    val first=call(c,c.owner,Operation.ActivityJobs(query)).asInstanceOf[Result.ActivityJobs].result
-    val next=query.copy(cursor=first.nextCursor)
-    val bytes=continuationBytes(Operation.ActivityJobs(next))
-    println(s"ACTIVITY Reason actual-admitted-code cursor bytes=$bytes existingFrameLimit=${Http.socketFrameBytes}")
-    assert(bytes<=Http.socketFrameBytes,s"admitted Reason continuation $bytes exceeds ${Http.socketFrameBytes}")
-    val second=call(c,c.owner,Operation.ActivityJobs(next)).asInstanceOf[Result.ActivityJobs].result
-    assertEquals(second.jobs.size,1); assert(first.jobs.head.job.id!=second.jobs.head.job.id)
-  }}
-
 }
