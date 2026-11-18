@@ -374,7 +374,8 @@ await check("system theme changes update native controls and shared radius token
       return value;
     });
     assert.notEqual(token, "0px");
-    for (const control of [page.getByRole("combobox", { name: "Query", exact: true }), page.getByRole("button", { name: "Search", exact: true }), page.getByRole("button", { name: "Theme", exact: true })])
+    // The query input is borderless inside its query bar, which draws the control's boundary.
+    for (const control of [page.getByRole("combobox", { name: "Query", exact: true }).locator(".."), page.getByRole("button", { name: "Search", exact: true }), page.getByRole("button", { name: "Theme", exact: true })])
       assert.equal(await radius(control), token, "controls use the shared control radius");
     // The shared theme bootstrap follows the OS change on its media-query event (a task after emulation).
     await page.emulateMedia({ colorScheme: "dark" });

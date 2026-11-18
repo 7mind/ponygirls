@@ -433,6 +433,26 @@ try {
     } finally { await context.close(); }
   });
 
+  await check("a submission still being checked is dropped when the reader opens a record meanwhile", async () => {
+    const { page, done } = await open();
+    let arrived; let release;
+    const seen = new Promise((resolve) => { arrived = resolve; });
+    const held = new Promise((resolve) => { release = resolve; });
+    await page.route("**/api/v1/query/analyze", async (route) => { arrived(); await held; await route.continue(); });
+    await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
+    await query(page).fill("hello");
+    await searchButton(page).click();
+    await seen;
+    await list(page).getByRole("button", { name: "ui:note", exact: true }).click();
+    await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
+    const checked = page.waitForResponse((response) => response.url().endsWith("/api/v1/query/analyze"));
+    release();
+    await (await checked).finished();
+    await frames(page);
+    assert.ok(new URL(page.url()).hash.startsWith("#/item/"), "the record stays open");
+    await done();
+  });
+
   await check("query completion supports keyboard, caret insertion, and pointer selection", async () => {
     const { page, done } = await open();
     const input = query(page);

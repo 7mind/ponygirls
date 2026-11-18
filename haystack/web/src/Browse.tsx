@@ -173,6 +173,8 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const queryInput = useRef<HTMLInputElement | null>(null);
   const editedByShortcut = useRef(false);
   const syntax = useRef<HTMLDialogElement>(null);
+  // The syntax dialog is rendered only while open: a closed one would still be found by its label ("Query syntax").
+  const [syntaxOpen, setSyntaxOpen] = useState(false);
   const [changed, setChanged] = useState(false);
   // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
   const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
@@ -223,6 +225,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     window.scrollTo(0, route.pageTop);
     if (route.focus instanceof HTMLElement && route.focus.isConnected) route.focus.focus({ preventScroll: true });
   }, [items]);
+  useLayoutEffect(() => { if (syntaxOpen) syntax.current!.showModal(); }, [syntaxOpen]);
   // A filter shortcut edited the draft: the caret goes to its end so that completions follow the inserted term.
   useLayoutEffect(() => {
     if (!editedByShortcut.current || queryInput.current === null) return;
@@ -390,16 +393,19 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     const state: BrowseState = { query, sort, migrationError: initial.migrationError };
     if (query === applied.current.query) { apply(state); return; }
     const check = ++validation.current;
+    // A submission the reader has navigated away from (a record, another list) is dropped.
+    const from = location.hash;
+    const current = () => check === validation.current && location.hash === from;
     let result: { valid: boolean; diagnostics: Diagnostic[] };
     try { result = await api.analyze(query); }
     catch (err) {
-      if (check !== validation.current) return;
+      if (!current()) return;
       if (err instanceof AuthError) { onAuthLost(); return; }
       // The search reports what the analyzer could not.
       apply(state);
       return;
     }
-    if (check !== validation.current) return;
+    if (!current()) return;
     if (result.valid) apply(state);
     else setRejected({ query, diagnostics: result.diagnostics });
   }
@@ -458,7 +464,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       {FIELD_INSERTERS.map(({ field, hide }) => <button key={field} type="button" className={`filter filter-field ${hide}`} aria-label={`Add ${field} filter`}
         disabled={migration} onClick={() => editDraft(appendField(query, field))}>{field}:</button>)}
       <div className="sortline">
-        <button type="button" className="link-button" aria-haspopup="dialog" aria-controls={syntaxId} onClick={() => syntax.current!.showModal()}>Query syntax</button>
+        <button type="button" className="link-button" aria-haspopup="dialog" aria-controls={syntaxOpen ? syntaxId : undefined} onClick={() => setSyntaxOpen(true)}>Query syntax</button>
       </div>
     </div>
     {rejected !== null && <div className="inline-notice">
@@ -513,7 +519,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
         <div className="row">
           {appliedQuery !== "" && <button type="button" className="btn" onClick={() => { changeDraft(""); apply({ ...applied.current, query: "" }); }}>Clear query</button>}
           {includeArchived !== null && !/\barchived:/i.test(appliedQuery) && <button type="button" className="btn" onClick={() => { changeDraft(includeArchived); apply({ ...applied.current, query: includeArchived }); }}>Include archived</button>}
-          <button type="button" className="btn btn-ghost" onClick={() => syntax.current!.showModal()}>Query syntax</button>
+          <button type="button" className="btn btn-ghost" onClick={() => setSyntaxOpen(true)}>Query syntax</button>
         </div>
       </div>}
       {items.length > 0 && (laterFailure !== null ? <div className="inline-notice foot-notice">
@@ -524,7 +530,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       </div> : cursor === undefined ? <div className="list-foot list-end" data-list-end="">End of list · {records(items.length)}</div>
         : <div ref={sentinel} className="list-foot">{busy && <span className="spinner" aria-hidden="true" />}{busy ? "Loading more records…" : "More records load as you scroll"}</div>)}
     </div>
-    <dialog ref={syntax} id={syntaxId} className="dialog dialog-wide" aria-labelledby={`${syntaxId}-title`}>
+    {syntaxOpen && <dialog ref={syntax} id={syntaxId} className="dialog dialog-wide" aria-labelledby={`${syntaxId}-title`} onClose={() => setSyntaxOpen(false)}>
       <div className="dialog-head"><h2 id={`${syntaxId}-title`}>Query syntax</h2>
         <button type="button" className="btn btn-ghost btn-icon" aria-label="Close" onClick={() => syntax.current!.close()}><UiIcon name="x" /></button></div>
       <div className="dialog-body">
@@ -542,6 +548,6 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
         <p>Example: <code>(type:todo OR type:fact) tag:"machine learning"</code>. Press <span className="kbd">Enter</span> or Search to apply exactly the visible query; <span className="kbd">Ctrl</span> <span className="kbd">Space</span> asks for suggestions.</p>
       </div>
       <div className="dialog-foot"><button type="button" className="btn" onClick={() => syntax.current!.close()}>Close</button></div>
-    </dialog>
+    </dialog>}
   </section>);
 }
