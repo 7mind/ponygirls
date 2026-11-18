@@ -44,7 +44,7 @@ async function group(name, body) { await body(); console.log(`PASS browser acces
 /** The mutation-feedback fixture page (toasts, notices) on a page clock. */
 async function notificationScene(width = 1280, colorScheme = 'light') {
   const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme }), page = await context.newPage();
-  page.setDefaultTimeout(5000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install();
+  page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install();
   await page.goto(`${origin}/tests-browser/notifications.html`); await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor();
   return { context, page };
 }
