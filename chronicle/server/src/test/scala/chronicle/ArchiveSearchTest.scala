@@ -101,7 +101,7 @@ class ArchiveSearchTest extends munit.FunSuite {
     }
   }}
   test("positive literal evidence is query-local exact original UTF8, including expansion, contextual sigma and huge late matches") { database { f =>
-    val text="x"*(2*1024*1024)+"🙂İΣΑ ΟΣ K e\u0301 late-needle %_\\ end"
+    val text="x"*(2*ArchiveProjection.fragmentBytes)+"🙂İΣΑ ΟΣ K e\u0301 late-needle %_\\ end"
     val out=f.archive.ingest("a",snapshot(List(text)))
     val suffix=text.indexOf("🙂")
     val cases=List("i"->"İ","\u0307"->"İ","i\u0307"->"İ","σ"->"Σ","ος"->"ΟΣ","ς"->"Σ","k"->"K","🙂"->"🙂","e\u0301"->"e\u0301","late-needle"->"late-needle","%_\\"->"%_\\")
