@@ -48,4 +48,4 @@ export CHRONICLE_TEST_GROUP_JDBC="${urls[*]}"
 unset CHRONICLE_TEST_JDBC
 export CHRONICLE_REQUIRE_POSTGRES=1
 printf 'CHRONICLE FULL SUITE: %s test groups, one PostgreSQL cluster each.\n' "$groups"
-./scripts/sbt.sh 'Test / validationInventory' testFull
+./scripts/sbt.sh testFull

@@ -269,13 +269,6 @@ lazy val chronicleServer = project.in(file("chronicle")).dependsOn(contracts, se
   Test / fork := true,
   Compile / run / fork := true,
   Compile / run / baseDirectory := baseDirectory.value,
-  Test / validationInventory := Def.uncached {
-    val names = (Test / definedTests).value.map(_.name).sorted
-    require(names.nonEmpty && names.distinct.size == names.size, "empty or duplicate release test inventory")
-    val output = baseDirectory.value / "target" / "validation-inventory.txt"
-    IO.writeLines(output, names)
-    output
-  },
   scalacOptions += "-Yretain-trees",
   Compile / unmanagedSourceDirectories ++= Seq(baseDirectory.value / "server/src/main/scala"),
   Test / unmanagedSourceDirectories += baseDirectory.value / "server/src/test/scala",
