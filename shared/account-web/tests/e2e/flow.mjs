@@ -30,6 +30,8 @@ const PASSWORD_BYTES = 18;
 // Each person gets its own client address (TEST-NET-2) through the X-Forwarded-For header that the servers accept
 // from their loopback proxy; the per-address credential-endpoint windows then count one person each, as in use.
 const ADDRESS_PREFIX = '198.51.100.';
+// 32 random bytes, base64url without padding (design §4.4).
+const ENROLLMENT_CODE = /^[A-Za-z0-9_-]{43}$/;
 const ALICE = 'alice';
 const BOB = 'bob';
 
@@ -217,7 +219,9 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
     const panel = page.locator('[data-account-link]').filter({ hasText: title });
     await panel.waitFor();
     const link = remember(await panel.getByLabel('One-time link', { exact: true }).inputValue());
-    assert.ok(link.startsWith(`${baseUrl}/#account-enroll=`), 'the one-time link is an enrollment fragment on the service origin');
+    assert.ok(link.startsWith(`${baseUrl}/#account-enroll=`) && ENROLLMENT_CODE.test(link.slice(`${baseUrl}/#account-enroll=`.length)),
+      'the one-time link is an enrollment fragment with a 256-bit code on the service origin');
+    assert.equal(await shows(page, link), true);
     await page.keyboard.press('Escape');
     await page.getByRole('navigation', { name: 'Account sections' }).getByRole('link', { name: 'Profile' }).click();
     await button(dialog(page, 'Hide the link for good?'), 'Keep it visible').click();
@@ -228,8 +232,12 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
     await button(panel, 'I have sent it').click();
     await button(dialog(page, 'Hide the link for good?'), 'Yes, I have sent it').click();
     await panel.waitFor({ state: 'detached' });
+    assert.equal(await shows(page, link), false, 'an acknowledged link is gone from the page');
     return link;
   }
+  // Whether the page still displays `value`: its markup, its text or the value of any field.
+  const shows = (page, value) => page.evaluate(wanted => [document.documentElement.outerHTML, document.body.innerText,
+    ...[...document.querySelectorAll('input, textarea')].map(field => field.value)].some(text => text.includes(wanted)), value);
   async function noStoredSecret(page, values) {
     const stored = await page.evaluate(() => JSON.stringify([{ ...localStorage }, { ...sessionStorage }]));
     for (const value of values) assert.ok(!stored.includes(value), 'no secret in web storage');
@@ -326,6 +334,7 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await button(secretPanel, 'I have saved it').click();
       await button(dialog(aliceLaptop, 'Hide the secret for good?'), 'Yes, I have saved it').click();
       await secretPanel.waitFor({ state: 'detached' });
+      assert.equal(await shows(aliceLaptop, apiToken), false, 'an acknowledged token secret is gone from the page');
 
       await accountNav(aliceLaptop, 'Two-factor', 'two-factor');
       const twoFactor = section(aliceLaptop, 'two-factor');
