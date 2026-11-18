@@ -350,7 +350,13 @@ await check("rename and expiry are PatchArtifact edits; Escape and an invalid da
 await check("delete confirms in an in-app dialog naming the artifact; a hostile name stays inert text", async (page) => {
   await page.addInitScript(() => { window.confirm = () => { throw new Error("window.confirm used"); }; window.alert = () => { throw new Error("window.alert used"); }; });
   const name = '<img src=x onerror=alert("xss")> artifact-hostile';
-  await open(page, input.hostile, name);
+  await page.getByRole("combobox", { name: "Search artifacts" }).fill("artifact-hostile");
+  await page.getByRole("combobox", { name: "Search artifacts" }).press("Enter");
+  await page.waitForFunction((id) => document.querySelector(`#artifact-list tr[data-artifact-id="${id}"]`) !== null, input.hostile);
+  assert.equal(await page.locator('[data-view="catalogue"]').locator("img, script").count(), 0, "the list renders the name as text");
+  await page.getByRole("link", { name, exact: true }).click();
+  await pageState(page, "loaded");
+  await page.getByRole("heading", { level: 1, name, exact: true }).waitFor();
   assert.equal(await artifactPage(page).locator("img, script").count(), 0);
   const remove = page.getByRole("button", { name: "Delete artifact…", exact: true });
   await remove.click();
@@ -394,6 +400,8 @@ await check("Open artifact navigates to public content and to the unlock page of
   await open(page, input.protected, "artifact-protected");
   await page.getByRole("button", { name: "Open artifact", exact: true }).click();
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "the unlock page fits a phone");
   await page.locator("#password-input").fill("incorrect");
   await page.locator("#unlock-form button[type=submit]").click();
   await page.locator("#unlock-error").waitFor({ state: "visible" });
