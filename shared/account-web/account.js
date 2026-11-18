@@ -1016,7 +1016,7 @@ export function installAccountUI(environment) {
         const profile = profileData();
         if (profile !== null && profile.manage.users && self.admin.phase === 'idle') loadAdmin();
         if (self.section === null) return;
-        if (!available(self.section)) { window.history.replaceState(null, '', ROUTE_PREFIX + fallbackSection()); route(); return; }
+        if (!available(self.section)) { replaceRouted(ROUTE_PREFIX + fallbackSection()); return; }
         requestRender('section');
       }, first);
     }
@@ -1799,6 +1799,14 @@ export function installAccountUI(environment) {
     if (!mayLeave(target)) { window.history.replaceState(null, '', urlFor(routedHash)); return; }
     render(parseAccountRoute(target));
     routedHash = window.location.hash;
+  }
+  // Replaces, after the fact, the fragment the current view was routed for (an open section the profile does not offer)
+  // and routes the replacement like any navigation (mayLeave). Only while the location is still that fragment: a
+  // navigation whose hashchange is not delivered yet is never overwritten; its own route() decides on its fragment.
+  function replaceRouted(hash) {
+    if (window.location.hash !== routedHash) return;
+    window.history.replaceState(null, '', hash);
+    route();
   }
   // Shows the section that owns a shown-once value (used only by an area's invariant check).
   function reveal(hash) {

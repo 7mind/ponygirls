@@ -601,6 +601,32 @@ try {
     await page.getByLabel('One-time token secret', { exact: true }).waitFor();
   });
 
+  // README "Interleavings", N × P: the fragment is set, the first profile read's answer is applied, and only then is the
+  // hashchange delivered. Window listeners run in registration order (capture or not), so the holding listener is
+  // installed before the module's own.
+  await run('the profile fallback replaces only the routed fragment, never a navigation still being delivered', async ({ page, open }) => {
+    await page.addInitScript(() => {
+      let held = 0;
+      window.__holdRoutes = false;
+      window.__heldRoutes = () => held;
+      window.addEventListener('hashchange', event => { if (window.__holdRoutes) { event.stopImmediatePropagation(); held++; } });
+      window.__deliverRoutes = () => { window.__holdRoutes = false; for (; held > 0; held--) window.dispatchEvent(new HashChangeEvent('hashchange')); };
+    });
+    await open('settings-legacy', '#/archive');
+    await page.evaluate(() => { window.__accountFake.state.hold = 'GET /profile'; location.hash = '#account/profile'; });
+    await page.locator('[data-account-outlet] [data-view="loading"]').waitFor();
+    // The account read has been applied: no other answer changes the DOM (whose observer routes too) in between.
+    await page.locator('[data-account-outlet] a[data-section="tokens"] .count').waitFor();
+    await page.evaluate(() => { window.__holdRoutes = true; location.hash = '#/archive'; window.__accountFake.state.release(); });
+    await page.locator('[data-account-outlet] a[data-section="profile"]').waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => window.__heldRoutes()), 1, 'the hashchange is still undelivered');
+    assert.equal(await page.evaluate(() => location.hash), '#/archive', 'the pending navigation keeps its fragment');
+    await page.evaluate(() => window.__deliverRoutes());
+    await page.getByRole('heading', { name: 'Host view' }).waitFor();
+    assert.equal(await page.locator('[data-account-outlet]').isHidden(), true);
+    assert.equal(await page.evaluate(() => location.hash), '#/archive');
+  });
+
   await run('long token list: the document is the only scroller and the list head sticks; markup is app-independent', async ({ page, open }) => {
     await open('settings-tokens-long');
     const scrollers = () => page.evaluate(() => [...document.querySelectorAll('body *')].filter(element => {

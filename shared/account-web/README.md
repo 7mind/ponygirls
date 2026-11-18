@@ -132,9 +132,11 @@ so there is no authority to lose while it is shown.
 
 Outcome of each pair of concurrent flows (W section write, N navigation,
 V `account:invalidate` → verify, S sign-out, O an owner-changed or 401 response
-of an authority read, D dispose/forced teardown). Rows marked † are rows of the
+of an authority read, D dispose/forced teardown, P the area's first profile read).
+Rows marked † are rows of the
 table-driven browser case "sequencer interleavings"; ‡ are covered by the
-"section ownership" and invalidation cases.
+"section ownership" and invalidation cases; § by the case "the profile fallback
+replaces only the routed fragment, never a navigation still being delivered".
 
 | Pair | Outcome |
 |---|---|
@@ -146,6 +148,7 @@ table-driven browser case "sequencer interleavings"; ‡ are covered by the
 | W × O | owner change or 401 from the newest read → forced teardown; the write's late completion is bound to the dead area and does nothing; a possibly created value is listed as lost |
 | W × D | requests aborted, slot released; late completions do nothing; possibly created values recorded as lost |
 | N × V | navigation is allowed (a read is not a write); the verdict applies to the area whatever section is shown |
+| N × P | a section the profile does not offer falls back (`#account/profile`, else `#account/tokens`) only while the location is still the fragment the module routed; a navigation whose `hashchange` is not delivered yet keeps its fragment and is routed as usual § |
 | V × V | the newest read decides: a stale 401 after a newer success is discarded †, a stale success after a newer 401 cannot revive the area † |
 | V fails (transport) | `unverified`: masked, Reveal/Copy/writes disabled; `online` re-verifies and re-enables † |
 | V with `reason: 'signed-out'` | `lost` at once, no read † |
