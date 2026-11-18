@@ -5,6 +5,7 @@ import { Operation_SearchSessionMessages, Result_SessionMessageSearch, type Cont
 import { read, type ChronicleConnection } from './client.ts';
 import { RequestFailure, type ManagerStats } from './transport/types.ts';
 import { contentViewKey } from './source-view.ts';
+import { isAuthorityDenial } from './source-authority.ts';
 import { FIND_PAGE_SIZE, validateFindLiteral, validateFindPage, type SessionFindReadGate } from './session-find.ts';
 import { Icon } from './Icon.tsx';
 import { InfiniteTrigger } from './InfiniteTrigger.tsx';
@@ -67,7 +68,7 @@ export function SessionFind({ connection, stats, ownerId, sessionId, view, navig
       advance.current = false;
       const current = mounted.current && currentScope.current === atScope;
       if (cause instanceof RequestFailure && cause.code === 'indexed-view-retired' && current) { sequence.current++; setDraft(''); setFound(null); setSelected(null); setNotice(null); sourceUnavailable(cause); return; }
-      const denied = cause instanceof RequestFailure && ['forbidden', 'not-found', 'unauthorized'].includes(cause.code);
+      const denied = cause instanceof RequestFailure && isAuthorityDenial(cause.code);
       // A denial concerns the source, not this Find: it is reported while the source scope holds, also after a navigation
       // superseded the Find (a Search link's `at` and `find` run together).
       if (!authoritative()) { if (denied && current) sourceUnavailable(cause); return; }

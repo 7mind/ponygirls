@@ -72,7 +72,6 @@ function revocationAffects(revocation: SourceRevocation, view: ContentView | und
   if (revocation.kind === 'withdrawn' || isAuthorityDenial(revocation.code)) return true;
   return view === undefined ? null : sourceFailureAffectsView(revocation.pin, view, revocation.code);
 }
-const UNAVAILABLE_CODES: ReadonlySet<string> = new Set(['indexed-view-retired', 'forbidden', 'not-found', 'unauthorized']);
 interface SessionViewProps {
   connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; sessionId: string; initialView: ContentView | undefined; findReads: SessionFindReadGate;
   relatedHref(sessionId: string): string; pane: SessionPane; setPane(pane: SessionPane): void; page: PageIntegration;
@@ -368,14 +367,14 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
   function retireIndexedView() { navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRetired(true); }
   // The source-unavailable state: transcript, outline, Find and landing leave the document; replies of reads started before
   // it are fenced (access epoch, navigation, disabled resources). Retry reads again.
-  const [revoked, setRevoked] = useState<string | null>(null);
+  const [revoked, setRevoked] = useState<string | null>(null), cleared = useRef(false);
   function clearSource(message: string) {
-    accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
+    cleared.current = true; accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
     setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setSearchSpan(null); setFindEpoch(epoch => epoch + 1); setRevoked(message);
   }
   /** A read of this session failed: an authority or retirement failure is published (`pin` the read's view, null for the default view or an unpinned read) and applied here. */
   function sourceUnavailable(cause: RequestFailure, pin: ContentView | null) {
-    if (UNAVAILABLE_CODES.has(cause.code)) reportUnavailable({ sessionId, pin, code: cause.code, message: cause.message });
+    if (cause.code === 'indexed-view-retired' || isAuthorityDenial(cause.code)) reportUnavailable({ sessionId, pin, code: cause.code, message: cause.message });
     if (cause.code === 'indexed-view-retired') retireIndexedView();
     else if (isAuthorityDenial(cause.code)) clearSource(cause.message);
   }
@@ -406,7 +405,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     }
   }
   function readPinned<T>(operation: Operation, extract: (reply: Result) => T | null): Promise<T> { return readSource(operation, extract, view === undefined ? null : view); }
-  useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setRevoked(null); setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
+  useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setRevoked(null); cleared.current = false; setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
   useEffect(() => () => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; }, []);
   const session = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', true, async () => {
     const result = await readPinned(new Operation_GetSession(sessionId, view), value => value instanceof Result_Session ? value.result : null);
@@ -414,7 +413,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     return result;
   });
   // A cleared source stays cleared: a late default-view reply does not choose a view (Retry reads again).
-  useEffect(() => { if (view === undefined && session.data !== null && revoked === null) resolveView(session.data.session.view); }, [view, session.data, resolveView, revoked]);
+  // (A ref: a clear in an effect of the same commit is not yet in `revoked`.)
+  useEffect(() => { if (view === undefined && session.data !== null && !cleared.current) resolveView(session.data.session.view); }, [view, session.data, resolveView, revoked]);
   const snapshot = view === undefined || retired || revoked !== null ? null : session.data;
   const passages = useInfiniteResource<PassageInfo, PassagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}`, '', snapshot !== null, undefined, async cursor => {
     const offset = cursor === undefined ? 0 : cursor;
@@ -491,7 +491,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
       const pending = { messageId: target, operation, origin, position: location.position, focus };
       if (messages.items.some(message => message.id === target)) finishSourceScroll(pending);
       else { pendingScroll.current = pending; setMessageStart(Math.floor(location.position / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE); }
-    } catch (cause) { if (navigation.current === operation) { pendingScroll.current = null; setSeekError(cause instanceof Error ? cause.message : 'Source navigation failed'); if ((origin === 'find' && cause instanceof UnverifiedSourceLocator) || (cause instanceof RequestFailure && ['forbidden', 'not-found', 'unauthorized'].includes(cause.code))) setFindEpoch(epoch => epoch + 1); } }
+    } catch (cause) { if (navigation.current === operation) { pendingScroll.current = null; setSeekError(cause instanceof Error ? cause.message : 'Source navigation failed'); if ((origin === 'find' && cause instanceof UnverifiedSourceLocator) || (cause instanceof RequestFailure && isAuthorityDenial(cause.code))) setFindEpoch(epoch => epoch + 1); } }
     finally { if (navigation.current === operation) setSeeking(false); }
   }
   /** The position bar: a known position needs no locator; an unloaded one restarts the message chain at its page. */

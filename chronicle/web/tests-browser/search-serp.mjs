@@ -454,7 +454,7 @@ try {
     await page.locator('[data-state="intro"]').waitFor(); assert.equal(await rows(page).count(), 0);
     await context.close();
   });
-  await group('a Search denial clears the open session of that pin while it is read, leaving no transcript in the document; a failure of another pin of that session leaves it', async () => {
+  await group('a Search denial clears the open session of that pin while it is read, leaving no transcript in the document; a failure of another pin of that session leaves it; a retirement of its own pin retires its view', async () => {
     // Search's excerpt reads are held; the session is opened from the first result's title (its published pin, landing on m65).
     async function opened(failure) {
       const current = await scene(f => { f.archiveSearchTransform = mixedPins; f.holdContext = true; failure(f); });
@@ -476,16 +476,23 @@ try {
     assert.equal(await page.locator('[data-message-id], [data-passage-id], [data-pane="transcript"]').count(), 0, 'no transcript element stays in the document');
     assert.equal(await session.evaluate(element => element.innerHTML.includes('Literal archived text') || element.innerHTML.includes('continued source')), false, 'no transcript text stays in the document');
     await context.close();
+    // A view-local failure (retirement) of the page's own pin retires the page's view.
+    const own = await opened(f => { f.contextFailure = operation => operation.view.generationId === undefined ? null : 'indexed-view-retired'; });
+    own.held.filter(reply => reply.view.generationId !== undefined).forEach(reply => reply());
+    await sessionMain(own.page).getByRole('region', { name: 'Indexed view unavailable', exact: true }).waitFor();
+    assert.equal(await own.page.locator('[data-message-id], [data-passage-id]').count(), 0, 'the retired view leaves the document');
+    await own.context.close();
   });
-  for (const kind of ['find', 'locator', 'append']) await group(`a denied ${kind} read clears the session page's transcript, outline and Find from the document, also against a late reply of an earlier read, and clears Search`, async () => {
+  // Every authority code (source-authority.ts isAuthorityDenial), from nested Find, the locator and a message page (readSource).
+  for (const [kind, code] of [['find', 'forbidden'], ['locator', 'forbidden'], ['append', 'forbidden'], ['find', 'authorization-changed'], ['append', 'authorization-changed']]) await group(`a ${code} ${kind} read clears the session page's transcript, outline and Find from the document, also against a late reply of an earlier read, and clears Search`, async () => {
     const { page, fixture, context } = await scene(f => { f.messageCount = 400; f.holdFind = kind === 'append'; }, { probe: true }); await submit(page); await ready(page);
     await link(rows(page).first(), TITLE(1)).click(); const session = sessionMain(page); await session.locator('#message-m65').waitFor();
     // The earlier read whose reply arrives after the denial: the arrival Find (held) for an appended page, else a later message page.
     if (kind !== 'append') { const pages = calls(fixture, api.Operation_GetMessages).length; fixture.holdMessages = true; await session.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight, behavior: 'instant' })); await fixture.waitCall(api.Operation_GetMessages, pages + 1); }
     else await fixture.waitCall(api.Operation_SearchSessionMessages, 1);
-    if (kind === 'find') { fixture.findFailure = 'forbidden'; await session.getByRole('search', { name: 'Find in selected history', exact: true }).getByRole('button', { name: 'Find messages', exact: true }).click(); }
-    else if (kind === 'locator') { fixture.locatorFailure = 'forbidden'; await session.getByRole('list', { name: 'Passages', exact: true }).getByRole('button', { name: /Keep original source independent/ }).click(); }
-    else { fixture.messagesFailure = 'forbidden'; await session.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight, behavior: 'instant' })); }
+    if (kind === 'find') { fixture.findFailure = code; await session.getByRole('search', { name: 'Find in selected history', exact: true }).getByRole('button', { name: 'Find messages', exact: true }).click(); }
+    else if (kind === 'locator') { fixture.locatorFailure = code; await session.getByRole('list', { name: 'Passages', exact: true }).getByRole('button', { name: /Keep original source independent/ }).click(); }
+    else { fixture.messagesFailure = code; await session.locator('[data-pane="transcript"]').evaluate(pane => pane.scrollTo({ top: pane.scrollHeight, behavior: 'instant' })); }
     await session.getByRole('alert').filter({ hasText: 'This session can no longer be read' }).waitFor();
     assert.equal(await page.locator(SOURCE_CONTENT).count(), 0, 'no transcript, outline or Find element stays in the document'); assert.equal(await sourceText(session), false);
     const delivered = await inbound(page);

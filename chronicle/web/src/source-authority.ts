@@ -11,7 +11,7 @@ import { sameContentView } from './source-view.ts';
  * A SESSION VIEW MUST
  *  1. Publish, whenever a read of its source fails with an authority or retirement failure — get session, locate
  *     message, passages, message pages, nested Find (`SearchSessionMessages`); a related session is a session page of its
- *     own (codes `indexed-view-retired`, `forbidden`, `not-found`, `unauthorized`):
+ *     own (`indexed-view-retired` and every authority code, `isAuthorityDenial`):
  *       reportSourceUnavailable(document, { origin: 'session', sessionId, view: sourcePin(pinOfTheFailedRead), code: failure.code, message: failure.message })
  *     `view` is the pin the FAILED read used (an archive-only HEAD view has `generationId: null`; null when the read asked
  *     for the session's default view, before any pin was chosen), `sessionId` the session that read addressed, `code` the
