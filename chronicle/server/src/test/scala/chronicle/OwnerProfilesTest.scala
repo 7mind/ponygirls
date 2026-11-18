@@ -178,6 +178,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     val query=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
     assertEquals(search.search("a",query,Some(List(1.0,0.0,0.0))).total,2,"old publication remains available during owner-only reprocessing")
     publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get)
+    assertEquals(search.search("a",query.copy(query="",mode=SearchMode.Hybrid),Some(List(1.0,0.0,0.0))).total,2,"hybrid search accepts empty query text")
     List(SearchMode.Semantic,SearchMode.Hybrid).foreach { mode =>
       assertEquals(search.search("a",query.copy(mode=mode),Some(List(1.0,0.0,0.0))).total,2)
       assertEquals(search.searchLegacy("a",query.copy(mode=mode),Some(List(1.0,0.0,0.0))).total,2)
