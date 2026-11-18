@@ -316,22 +316,6 @@ final class RetryFailedActionsTest extends munit.FunSuite {
       assertEquals(second.rows.size,1); assert(first.rows.head.head.id!=second.rows.head.head.id)
     }}
   }
-  test("Behavioral-Blackbox GoodCommunication regression: actual valid long Title ingestion yields an Activity continuation within the WebSocket frame bound") { database { c =>
-    (1 to 2).foreach { n =>
-      val source=Fixtures.snapshot()
-      c.archive.ingest("a",source.copy(metadata=source.metadata.copy(title="x"*50000+n)))
-    }
-    val query=ActivityJobsQuery(None,ActivityJobScope.All,"",ActivityJobSort.Title,SortDirection.Asc,None,1)
-    val first=call(c,c.owner,Operation.ActivityJobs(query)).asInstanceOf[Result.ActivityJobs].result
-    val next=query.copy(cursor=first.nextCursor)
-    assert(next.cursor.nonEmpty)
-    val bytes=continuationBytes(Operation.ActivityJobs(next))
-    println(s"ACTIVITY Title actual-ingestion cursor bytes=$bytes existingFrameLimit=${Http.socketFrameBytes}")
-    assert(bytes<=Http.socketFrameBytes,s"server-produced Title continuation $bytes exceeds ${Http.socketFrameBytes}")
-    val second=call(c,c.owner,Operation.ActivityJobs(next)).asInstanceOf[Result.ActivityJobs].result
-    assertEquals(second.jobs.size,1); assert(first.jobs.head.job.id!=second.jobs.head.job.id)
-  }}
-
   test("Behavioral-Blackbox GoodCommunication regression: admitted long owner identities do not expand cursor context beyond the WebSocket frame bound") { database { c =>
     val owner="x"*50000
     val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true))

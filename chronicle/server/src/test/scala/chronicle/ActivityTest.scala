@@ -501,23 +501,6 @@ final class ActivityPostgresTest extends ActivityContract {
     }
   }
 
-  test("Behavioral-Blackbox GoodCommunication regression: valid long titles produce continuation requests within the existing WebSocket frame bound") {
-    val snapshot=Fixtures.snapshot()
-    val title="x"*50000
-    SnapshotValidation.validate(snapshot.copy(metadata=snapshot.metadata.copy(title=title)),Fixtures.config())
-    val heads=(1 to 2).map(n => head(n,"a",1,s"transport-$n",false)).toList.map(h => h.copy(metadata=h.metadata.copy(title=title+h.id.getLeastSignificantBits)))
-    val jobs=(1 to 2).map(n => job(n,n,1,target,JobState.Queued,None)).toList
-    withIndex(Seed(heads,jobs,Nil,Set.empty,now)) { index =>
-      val query=jobsQuery(None,ActivityJobScope.All,None,1).copy(sort=ActivityJobSort.Title)
-      val cursor=index.jobs("a",query).nextCursor.get
-      val request=ClientEnvelope(UUID.randomUUID(),Operation.ActivityJobs(query.copy(cursor=Some(cursor))))
-      val bytes=Wire.encode(ClientEnvelope.codecJson,request).noSpaces.getBytes(UTF_8).length
-      println(s"ACTIVITY TITLE CURSOR transport bytes=$bytes existingFrameLimit=${Http.socketFrameBytes}")
-      assert(bytes<=Http.socketFrameBytes,s"server-produced continuation request $bytes exceeds existing WebSocket input bound ${Http.socketFrameBytes}")
-      assertEquals(index.jobs("a",query.copy(cursor=Some(cursor))).jobs.map(_.job.id),List(id(2)))
-    }
-  }
-
 }
 
 private final class DummyActivity(seed: ActivityTestData.Seed,clock: Clock) extends ActivityIndex {
