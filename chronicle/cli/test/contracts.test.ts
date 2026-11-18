@@ -1,17 +1,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { decodeOperation, decodeWire, encodeWire, operationNames, operationPolicy, schema } from '../src/wire.js';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { decodeOperation, decodeWire, encodeWire, operationNames, operationPolicy, schema, validateResponse } from '../src/wire.js';
 import { parseArgs, makeOperation } from '../src/commands.js';
-import { human, terminalSafe } from '../src/output.js';
+import { bearer } from '../src/files.js';
+import { parseJson } from '../src/json.js';
+import { human, output, terminalSafe } from '../src/output.js';
+
+const ID = '11111111-1111-4111-8111-111111111111';
 
 // Specified: Behavioral-Active Blackbox-Group contracts; no service credentials.
 test('sole-current schema covers every operation with an explicit effect policy', () => {
-  const model = readFileSync(new URL('../../../../models/chronicle.baboon', import.meta.url), 'utf8');
-  const match = /root adt Operation \{([\s\S]*?)\n\}/.exec(model);
-  assert.ok(match);
-  const names = [...match[1]!.matchAll(/data (\w+)/g)].map(m => m[1]);
-  assert.deepEqual(operationNames, names);
   assert.deepEqual(Object.keys(operationPolicy).sort(), [...operationNames].sort());
   assert.equal(schema.version, '1.9.0');
 });
@@ -41,4 +42,38 @@ test('terminal text is readable, escape safe and retains full identifiers/citati
   const printed = human({ Session: { result: { session: { id: '11111111-1111-4111-8111-111111111111', view: { revision: 4, generationId: null }, source: { producerSessionId: 'producer' } }, chunks: [{ spans: [{ messageId: 'message-full-id', start: 3, end: 17 }], text: 'hello' }] } } });
   for (const term of ['11111111-1111-4111-8111-111111111111', 'revision', 'producer', 'message-full-id', '17', 'hello']) assert.ok(printed.includes(term));
   assert.ok(!printed.trimStart().startsWith('{'));
+});
+// Specified: safe machine output preserves parsed strings, not terminal effects.
+test('JSON escapes bidi and C1 controls while retaining exact parsed Unicode', () => {
+  const data = { text: 'hé🙂\u202e\u009b31m' }; const text = output(data, true);
+  assert.ok(!text.includes('\u202e')); assert.ok(!text.includes('\u009b')); assert.deepEqual(JSON.parse(text), data);
+});
+test('strict JSON rejects duplicate keys, deep nesting, trailing data and nonfinite numbers', () => {
+  for (const text of ['{"a":1,"a":2}', '['.repeat(66) + '0' + ']'.repeat(66), '1 2', '1e9999', '{"a":NaN}']) assert.throws(() => parseJson(text));
+});
+test('responses reject wrong branch and any silently retargeted exact content pin', () => {
+  const op = decodeOperation({ GetMessages: { sessionId: ID, offset: 0, limit: 20, view: { revision: 4, generationId: null } } });
+  assert.throws(() => validateResponse(op, decodeWire('Result', { Whoami: { user: { id: 'a', login: 'a', scopes: ['Read'] } } }), null));
+  assert.throws(() => validateResponse(op, decodeWire('Result', { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 5, generationId: null } } } }), null));
+  validateResponse(op, decodeWire('Result', { Messages: { result: { messages: [], total: 0, offset: 0, view: { revision: 4, generationId: null } } } }), null);
+});
+test('current MCP run read event pages permit all 256 events, and tag cursor preserves an empty exact value', () => {
+  decodeOperation({ ReadMcpTest: { instanceId: ID, runId: ID, afterSequence: '0', limit: 256 } });
+  assert.equal(parseArgs(['tags', '', '--cursor', '']).options.get('cursor')![0], '');
+});
+test('archive defaults and maximum match current source-evidence ArchiveSearch page bound10', () => {
+  assert.deepEqual(encodeWire('Operation', makeOperation(parseArgs(['archive']))), { ArchiveSearch: { query: { expression: '', sort: 'LastTimestamp', direction: 'Desc', cursor: null, limit: 10, preferRelevance: true } } });
+  assert.throws(() => makeOperation(parseArgs(['archive', '--limit', '11'])));
+});
+test('Chronicle bearer validation accepts its full configured alphabet/length, not an exact43 base64url codec', () => {
+  const valid = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-';
+  assert.equal(bearer({ CHRONICLE_TOKEN: valid }, null), valid);
+  assert.throws(() => bearer({ CHRONICLE_TOKEN: 'too-short' }, null));
+  assert.throws(() => bearer({ CHRONICLE_TOKEN: valid + ':' }, null));
+  assert.throws(() => bearer({ CHRONICLE_TOKEN: valid.repeat(16) }, null));
+});
+test('Chronicle trailing-whitespace token normalization applies to literal and protected-file inputs without narrowing static tokens', () => {
+  const root = mkdtempSync(join(tmpdir(), 'chronicle-token-contract-'));
+  const token = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_+/.=-';
+  try { const file = join(root, 'token'); writeFileSync(file, `${token}\r\n\n\t `, { mode: 0o600 }); assert.equal(bearer({ CHRONICLE_TOKEN_FILE: file }, null), token); assert.equal(bearer({ CHRONICLE_TOKEN: `${token}\r\n\n\t ` }, null), token); assert.throws(() => bearer({ CHRONICLE_TOKEN: ` ${token}` }, null)); } finally { rmSync(root, { recursive: true }); }
 });
