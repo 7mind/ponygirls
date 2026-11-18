@@ -36,12 +36,6 @@ class IndexedSearchTest extends munit.FunSuite {
     val archive=new PostgresArchive(db,config)
     SearchDatabase(config,db,archive,new PostgresSearch(db,archive,config))
   }
-  private def database(dimensions: Int)(f: (Config,Database,PostgresArchive,PostgresSearch) => Unit): Unit = {
-    clearCorpus()
-    val database=openDatabase(dimensions)
-    try f(database.config,database.db,database.archive,database.index)
-    finally clear(database.db)
-  }
   private def members(db: Database): List[(UUID,String)] = db.transaction(c => Sql.rows(c,"SELECT group_id,user_id FROM ch_members ORDER BY group_id,user_id")(r => (r.getObject(1,classOf[UUID]),r.getString(2))))
   private def assertCorpus(corpus: SeededCorpus): Unit = corpus.database.db.transaction { c =>
     List("ch_sources","ch_revisions","ch_generations","ch_chunks","ch_search_chunks","ch_revision_info","ch_messages").foreach { table =>
@@ -162,27 +156,6 @@ class IndexedSearchTest extends munit.FunSuite {
     db.transaction(c => Sql.exec(c,"DELETE FROM ch_members WHERE user_id='b'"))
     val privateOnly=index.search("a",query(SearchMode.Semantic),Some(vector(100,testDimensions)))
     assertEquals(privateOnly.total,corpusSize/100); assert(privateOnly.hits.forall(_.session.ownerId=="a"))
-  }}
-  test("Effectual-GoodCommunication: projection replaces complete generations, backfills idempotently and purges without deleting pinned history early") { database(3) { (config,db,archive,index) =>
-    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
-    val first=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
-    def chunk()=IndexedChunk(Fragments.split(request.messages).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0))
-    val whole=chunk(); val middle=whole.chunk.text.length/2
-    val pieces=List(whole.copy(chunk=whole.chunk.copy(text=whole.chunk.text.take(middle),spans=List(Span("u",0,middle)))),whole.copy(chunk=whole.chunk.copy(id=UUID.randomUUID(),text=whole.chunk.text.drop(middle),spans=List(Span("u",middle,whole.chunk.text.length)))))
-    assert(archive.publish(first,pieces))
-    val old=archive.session("a",out.sessionId).view
-    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,List(chunk())))
-    db.initialize(); db.initialize()
-    db.transaction { c =>
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(1))
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_chunks")(_.getInt(1)),Some(3))
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks ch JOIN ch_sources s ON s.id=ch.session_id WHERE ch.generation<>s.published")(_.getInt(1)),Some(0))
-    }
-    assertEquals(archive.pageChunks("a",out.sessionId,0,100,Some(old)).total,2)
-    val auth=new Auth(db,config); val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
-    auth.mutate(auth.browser(cookie),ClientEnvelope(UUID.randomUUID(),Operation.Purge(out.sessionId)))
-    db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(0)))
   }}
   test("Effectual-GoodCommunication: 2048-dimensional embeddings use halfvec HNSW while preserving float vectors and exact cosine scores") { corpus(2048,highDimensionCorpusSize) { (config,db,archive,index) =>
     val highQuery=query(SearchMode.Semantic)

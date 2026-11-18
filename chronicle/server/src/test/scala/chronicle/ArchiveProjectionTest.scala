@@ -330,4 +330,25 @@ class ArchiveProjectionTest extends munit.FunSuite {
       assertEquals(Sql.one(c,"SELECT count(*) FROM ch_archive_fragments")(_.getInt(1)),Some(0))
     }
   }}
+  test("Effectual-GoodCommunication: projection replaces complete generations, backfills idempotently and purges without deleting pinned history early") { database { (config,db,archive) =>
+    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
+    val first=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
+    def chunk()=IndexedChunk(Fragments.split(request.messages).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0))
+    val whole=chunk(); val middle=whole.chunk.text.length/2
+    val pieces=List(whole.copy(chunk=whole.chunk.copy(text=whole.chunk.text.take(middle),spans=List(Span("u",0,middle)))),whole.copy(chunk=whole.chunk.copy(id=UUID.randomUUID(),text=whole.chunk.text.drop(middle),spans=List(Span("u",middle,whole.chunk.text.length)))))
+    assert(archive.publish(first,pieces))
+    val old=archive.session("a",out.sessionId).view
+    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
+    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,List(chunk())))
+    db.initialize(); db.initialize()
+    db.transaction { c =>
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(1))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_chunks")(_.getInt(1)),Some(3))
+      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks ch JOIN ch_sources s ON s.id=ch.session_id WHERE ch.generation<>s.published")(_.getInt(1)),Some(0))
+    }
+    assertEquals(archive.pageChunks("a",out.sessionId,0,100,Some(old)).total,2)
+    val auth=new Auth(db,config); val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
+    auth.mutate(auth.browser(cookie),ClientEnvelope(UUID.randomUUID(),Operation.Purge(out.sessionId)))
+    db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(0)))
+  }}
 }
