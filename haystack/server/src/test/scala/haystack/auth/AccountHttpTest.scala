@@ -86,6 +86,13 @@ class AccountHttpTest extends ContractSuite {
     def send(method:Method,path:String,body:Option[String],cookie:Option[String]=None,actor:Option[String]=None,
       origin:Boolean=true,bearer:Option[String]=None):IO[(Response[IO],String)]=
       exchange(method,path,body.map(text=>Stream.emits(text.getBytes(StandardCharsets.UTF_8)).covary[IO]),cookie,actor,origin,bearer)
+    /** From a page on the opted-in plain-HTTP origin: no Origin or Fetch Metadata, only the account module's header. */
+    def headerProof(method:Method,path:String,body:Option[String]):IO[(Response[IO],String)]={
+      val headers=Vector(Header.Raw(CIString("Host"),"nb.test:8085"),Header.Raw(CIString(Sessions.AccountRequestHeader),Sessions.AccountRequestValue))++
+        body.map(_=>Header.Raw(CIString("Content-Type"),"application/json"))
+      val request=body.fold(Request[IO](method,Uri.unsafeFromString(path)))(text=>Request[IO](method,Uri.unsafeFromString(path)).withEntity(text))
+      http.routes(ws).orNotFound(headers.foldLeft(request)((r,header)=>r.putHeaders(header))).flatMap(response=>response.bodyText.compile.string.map(response->_))
+    }
     /** A POST whose body is held after the route admitted it, while `during` changes the configuration. */
     def held(path:String,body:String,cookie:Option[String],actor:Option[String])(during:IO[Unit]):IO[(Response[IO],String)]=for{
       entered<-Deferred[IO,Unit];release<-Deferred[IO,Unit]
@@ -176,6 +183,10 @@ class AccountHttpTest extends ContractSuite {
     seam(on) { h=>for{
       (noOrigin,noOriginBody)<-h.send(Method.POST,"/api/account/v1/signup",Some("{}"),origin=false)
       _=assertEquals((noOrigin.status,code(noOriginBody)),(Status.Forbidden,"forbidden"))
+      (provenRead,_)<-h.headerProof(Method.GET,"/api/account/v1/policy",None)
+      _=assertEquals(provenRead.status,Status.Ok,"an imperative read on the plain-HTTP origin accepts the account request header")
+      (provenWrite,provenWriteBody)<-h.headerProof(Method.POST,"/api/account/v1/signup",Some("{}"))
+      _=assertEquals((provenWrite.status,code(provenWriteBody)),(Status.Forbidden,"forbidden"),"an unauthenticated write still requires Origin")
       (bearer,bearerBody)<-h.send(Method.GET,"/api/account/v1/policy",None,bearer=Some(AliceToken))
       _=assertEquals((bearer.status,code(bearerBody)),(Status.Unauthorized,"unauthorized"))
       (policy,_)<-h.send(Method.GET,"/api/account/v1/policy",None)
