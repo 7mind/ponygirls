@@ -72,7 +72,7 @@ Endpoint keys are FULL operation URLs, e.g. `/v1/chat/completions` and `/v1/embe
 
 ## Current indexing and durable accepted work (1.7)
 
-Only `ContextAwareProblemsV1` is executable. Historical profile/format metadata remains readable without historical annotation executors. The maximum-reasoning request policy retains `max_tokens=65536`, maximum reasoning and a 900-second operation deadline. Annotation `model-output` and exact `model-output/truncated` rejections share a durable limit of five per immutable window/input/retry epoch; each retry uses identical input and policy. Transport/deadline errors use the separate existing five-job-claim infrastructure limit, not local retries. Before calling the annotator, the worker durably reserves an authorization bound to job/run/retry epoch/window/input hash/fence. Cancellation or a response/commit crash may consume an authorization without a recorded rejection or an observed provider call. A ten-authorization backstop independently bounds unknown outcomes; the serial-window/five-claim invariant normally bounds the composition to nine. Rejections are recorded idempotently against their original reservation/fence. Exhaustion is terminal regardless of job claim count: `annotation-attempts-exhausted` for five rejections, `annotation-reservations-exhausted` for the authorization backstop. Accepted checkpoint reads and local state reconstruction never spend or retry the provider budget.
+Only `ContextAwareProblemsV1` is executable, and only its index profiles are read: registry rows of the retired policies `LegacyV4` and `ContiguousPassagesV1` remain solely as inert labels of retired generations and old jobs. The maximum-reasoning request policy retains `max_tokens=65536`, maximum reasoning and a 900-second operation deadline. Annotation `model-output` and exact `model-output/truncated` rejections share a durable limit of five per immutable window/input/retry epoch; each retry uses identical input and policy. Transport/deadline errors use the separate existing five-job-claim infrastructure limit, not local retries. Before calling the annotator, the worker durably reserves an authorization bound to job/run/retry epoch/window/input hash/fence. Cancellation or a response/commit crash may consume an authorization without a recorded rejection or an observed provider call. A ten-authorization backstop independently bounds unknown outcomes; the serial-window/five-claim invariant normally bounds the composition to nine. Rejections are recorded idempotently against their original reservation/fence. Exhaustion is terminal regardless of job claim count: `annotation-attempts-exhausted` for five rejections, `annotation-reservations-exhausted` for the authorization backstop. Accepted checkpoint reads and local state reconstruction never spend or retry the provider budget.
 
 The annotator explicitly partitions every nonempty normalized source scalar into `Problem` or `Context` using canonical half-open fragment/Unicode-scalar coordinates. Windows contain at most64 fragments of at most2048 UTF8 bytes. Substantive domain facts, decisions, parameters, ownership, outcomes and rejected factual alternatives are Problem material even without an explicit question or imperative; Context is non-task runtime/bootstrap/heartbeat/tool-inventory material. Context has exactly kind/start/end: no invented summary, tags, problem ID or vector. Only real Problem slices become exact-source retrieval pieces; pieces never join distinct messages or bridge omitted Context. Context advances the original cursor without closing an open problem, and continuation may refer to a problem opened earlier in the same window. System/developer/subagent role or bootstrap-looking prefixes are not blanket exclusion rules. Empty/context-only sessions can publish a complete, zero-problem generation without embedding calls.
 
@@ -90,7 +90,7 @@ There is no exactly-once provider-call claim across response/commit crashes: onl
 
 Old publication/search stays intact until validated atomic replacement and final live-lease acceptance. Then all obsolete derived generations for that selected source are retired; raw data, normalized revisions, receipts and job IDs are not deleted by rebuild. Retirement consent is ONE-SHOT per captured source/target epoch/profile, separate from exact revision/job/run completion: a validated superseding revision may fulfill retirement while its captured member remains Superseded. Later ordinary publications preserve the new current-policy history unless another explicit rebuild is accepted. Publication rollback also rolls back completion/retirement markers and all derived changes.
 
-Retired full-generation pins first reauthorize, then return exactly `indexed-view-retired`, never redirect to HEAD. Revision-only views, Find and raw revisions remain available. Historical index-profile formats and persisted content remain readable under the current API; removing old wire codecs does not remove historical data.
+Retired full-generation pins first reauthorize, then return exactly `indexed-view-retired`, never redirect to HEAD. Revision-only views, Find and raw revisions remain available. The old publication formats exist only as such retired generations (see "Published generation format"); removing old wire codecs does not remove raw revisions.
 
 `GetChunks` / MCP `get_chunks` pages every published annotation in deterministic original source order, never UUID order. Read scope and live same-session ACL apply before limits. Count+rows use one REPEATABLE READ transaction and captured generation pointer; concurrent publication cannot mix generations within one page. GetSession retains its first100chunk compatibility response.
 
@@ -253,16 +253,26 @@ false-negative constraint.
 ## Published generation format (1.5)
 
 `ArchiveRow` appends `publishedFormat:opt[PassageFormat]`, read from the same
-stored generation as its authorized `publishedView` in the Archive snapshot.
-`LegacyAnnotations`, `ContiguousProblems` and (since1.7) `ContextAwareProblems` describe actual stored output,
-not the current target policy. Null remains unknown, including a known legacy
-profile with missing provenance; no publication also has no published format.
-HEAD metadata/source format, stale revisions, profile hashes and Complete/Failed
-job states cannot substitute for this value. An explicitly legacy publication
-remains legacy while a replacement is Queued, Running or Failed.
+stored generation as its authorized `publishedView` in the Archive snapshot; no
+publication has no published format. HEAD metadata/source format, stale
+revisions, profile hashes and Complete/Failed job states cannot substitute for
+this value.
+
+Every generation that is not retired is stored as `ContextAwareProblems`: the
+database refuses any other format, or none, on such a generation (start-up
+migration 22; a database that still holds one refuses the start with
+`migration-required`). So `publishedFormat` of a publication and
+`PassagesResult.format` of an indexed view are always `ContextAwareProblems`,
+and `Unindexed` marks a revision-only view. `PassageFormat` keeps
+`LegacyAnnotations` and `ContiguousProblems` as dead values without an API
+version change: no response carries them. Generations in those formats exist
+only as retired tombstones (row, revision, historical format and profile
+labels); a pin of one answers `indexed-view-retired`. A generation stored in
+another format regardless (only a manual schema change admits one) is never
+relabeled: its passage pages and spans are `unavailable`, and an Archive page
+that would show it as a publication fails with `projection`.
 
 Historical wire fixtures remain frozen. No migration, re-ingestion, owner retargeting or generation rewrite is implicit in the single-API consolidation.
-The warning uses joined row metadata, not per-row content or passage requests.
 
 ## Agent expression predicate
 Archive expressions and Activity job expressions accept `agent:main` and `agent:subagent` (field and values case-insensitive). They are ordinary metadata atoms supporting AND, OR, NOT and the existing candidate-filter policy; `producer`, `model` and `format` keep their existing meanings. Main means `SourceIdentity.subagentId` is absent or null; subagent means it is present. No title, producer/model label, filename, producer session ID or raw `parentSession` link affects classification. Archive evaluates the current HEAD identity; Activity evaluates the job's own revision identity, including historical jobs. Activity collector expressions do not accept `agent`. Expression hints expose the fixed `main`/`subagent` vocabulary for Archive and Activity jobs, independent of corpus contents. This is recorded-source classification, not cryptographic identity or proof of legacy lineage: a legacy source with no recorded subagent ID is main operationally, even if its true lineage is unknown. Missing provenance is never inferred or backfilled.
