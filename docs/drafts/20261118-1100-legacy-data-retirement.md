@@ -184,7 +184,12 @@ outputs and 10 reservations per window and retry epoch (`AnnotationAttempts.scal
 the worklist prints the head-job states and error codes.
 
 A job retried this way publishes as an ordinary publication: it does **not** retire the old generation (fact 6). The
-old generation becomes unpublished, non-retired history and is handled by step 2.
+old generation becomes unpublished, non-retired history and is handled by step 2. **Rehearsal (2026-11-18, full
+clone): the opposite was observed for all 12**: after the 12 per-job retries, `LR.generations.old_format.history`
+was 0 and the tombstones rose from 130 to 143, i.e. the product retired the 12 old generations *and* the one
+non-retired `LegacyAnnotations` generation (inferred: the 12 head jobs are members of an unfinished rebuild cohort,
+whose publication retires as `ReindexCohort.published` does; not traced further). The runbook therefore takes N for
+`--confirm-retire-history N` from the preflight **after** the re-index; it may be 0.
 
 **Step 2 — explicit retirement of non-retired old-format history (`--retire-history`).**
 
@@ -254,9 +259,12 @@ touches at most a few thousand small rows.
 
 A temporary index on `ch_search_chunks(profile)` is **not** recommended: building it costs one scan plus a sort,
 it saves about three scans, every rewritten row would pay one more index entry, and it is DDL on the largest search
-table. The duration is **not measured**; the rehearsal on the full clone measures it (section 8), and runbook step 4
-measures one scan read-only on production. Decision rule: if one scan takes longer than about 5 minutes, raise
-`--statement-timeout`; only if it takes longer than about 30 minutes reconsider the index.
+table. **Measured on the full clone (2026-11-18):** a `ch_search_chunks` scan by `profile` reads only the 640 MB main
+heap (the 5.5 GB of TOAST is not touched) and took 94 ms; the index question is moot. The expensive statement is the
+`UPDATE ch_search_chunks SET profile` of the relocation: **40,833 rows** (not about 14,000), each maintained in the
+HNSW index; part 3 took 130–141 s and holds `SHARE ROW EXCLUSIVE` on `ch_jobs` and `ch_owner_targets` throughout.
+The batched reset of unfinished runs (851 runs, 61,404 accepted checkpoints) took about 25 s and writes about
+9.7 GB of WAL (TOAST deletions); part 3 about 1 GB. A dry-run writes the same WAL although it rolls back.
 
 ### 2.5 Verification
 
@@ -530,7 +538,7 @@ starts with `legacy-retirement refused:` is read and reported, never worked arou
 | 4 | Measure one scan of `ch_search_chunks` (read-only) | `EXPLAIN (ANALYZE, BUFFERS) SELECT count(*) FROM ch_search_chunks WHERE profile = repeat('0', 64);` under `SET statement_timeout = '300s'` | one sequential scan; note its time | above about 5 min: plan `--statement-timeout` accordingly (2.4) |
 | 5 | C-F step 1: re-index the worklist, service running | per-job "Retry indexing job" as in 2.3 | jobs Complete; `RUN chronicle preflight`: `LR.generations.old_format.published|0` | a job fails again, a source has no target job, or an owner is disabled: **stop and report to the owner**; C-I can still proceed with `--skip-formats` |
 | 6 | Owner's explicit go for the irreversible part, and the choice of the backup mechanism | — | explicit | no go |
-| 7 | Stop Chronicle (workers and API); wait for leases | deployment repository | `RUN chronicle preflight`: `LR.info.jobs.running_live_lease|0`, `LR.other_client_backends|0` | either is non-zero |
+| 7 | Stop Chronicle (workers and API); wait for leases (a stopped worker's last claim keeps its lease for up to 300 s; rehearsed: about 5 min) | deployment repository | `RUN chronicle preflight`: `LR.info.jobs.running_live_lease|0`, `LR.other_client_backends|0` | either is non-zero |
 | 8 | **Backup** (2.6), sized from `LR.size.*` and `df` | deployment repository | a restorable artefact; its identifier becomes `REF` | no restorable backup |
 | 9 | Chronicle dry-run | `RUN chronicle dry-run --retire-history --confirm-retire-history <LR.generations.old_format.history> --batch-size 10` | `LR.result|dry-run-rolled-back`; `LR.after.*` all 0; `LR.step.history_generations_retired` sums to the confirmed number | refusal |
 | 10 | Chronicle apply | `RUN chronicle preflight` (take `LR.plan`), then `RUN chronicle apply --apply-irreversible --confirm-database <name> --expect-plan <LR.plan> --backup-reference <REF> --retire-history --confirm-retire-history <n> --batch-size 10` | `LR.backup_reference|<REF>`; `LR.result|applied` | refusal; `legacy-retirement incomplete` → preflight and apply again |
@@ -582,7 +590,11 @@ Consequences for every step that goes through `PSQL='kubectl … exec -i … psq
    RUN <target> terminate --application-name <the name printed by the broken invocation>   # only our own backend
    RUN <target> preflight         # the real state, with a new plan token
    ```
-   then re-run the step (with the new plan token). While an old session of this tool is still connected, `apply`
+   then re-run the step (with the new plan token). **The exit status of `kubectl exec` is not evidence of
+   completion** (observed 14:34Z: a cut stream ended with exit status 0 and 3 MB of output missing): a step is
+   complete only when its own end marker arrived — `LR.result|…` as the last line of a `run.sh` session,
+   `DB.result|…` for `drop-databases.sh`, the binary COPY trailer or a passing `pg_restore --list` for exports — or
+   when a following `preflight`/`verify` shows the expected state. While an old session of this tool is still connected, `apply`
    refuses on its own (`another legacy-retirement session holds the advisory lock`, or the other-connections
    guard). For `pg_dump` (backup, export) the pod-side process must be ended as well: list it with
    `kubectl … exec <pod> -c <container> -- ps -eo pid,args` and send `kill -TERM <pid>` to exactly that process,
