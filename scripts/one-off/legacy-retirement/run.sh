@@ -4,6 +4,7 @@
 #   run.sh chronicle <preflight|dry-run|apply|verify> [options]
 #   run.sh haystack  <preflight|dry-run|apply|verify|export-stored-documents> [options]
 #   run.sh manure    <preflight|verify>                    (shared retrieval model identity only)
+#   run.sh <target>  sessions | terminate --application-name NAME     (this tool's own backends; see below)
 #
 # The script composes ONE psql session (a script on standard input) and runs it with `${PSQL:-psql}`.
 # Connection parameters are the operator's: the standard PG* environment variables, or a complete command in PSQL
@@ -16,6 +17,14 @@
 #   apply      requires --apply-irreversible, --confirm-database NAME, --expect-plan TOKEN, --backup-reference REF
 #   verify     read-only; exits non-zero unless every legacy counter of the selected items is zero
 #   export-stored-documents  (haystack) read-only; every stored document as hex, for check-stored-documents.sh
+#   sessions   read-only; this tool's backends on the database (application_name lr:*), with state and ages
+#   terminate  ends the backends whose application_name is exactly --application-name NAME (a name printed as
+#              LR.application_name by an earlier invocation); never another client's backend
+#
+# Every session sets application_name lr:<target>:<mode>:<time>-<pid> (printed first as LR.application_name) and
+# idle_in_transaction_session_timeout / idle_session_timeout (120s). Over an exec stream that breaks, the pod-side
+# psql keeps running: it executes what it has already received, may still COMMIT, and a session whose input stalls
+# ends itself after 120 s. After a break: `sessions`, wait for or `terminate` the listed name, `preflight`, re-run.
 #
 # Options
 #   --confirm-database NAME      must equal current_database() of the session (apply)
@@ -31,6 +40,7 @@
 #   --max-batches N              batches per kind in one run (default 200); a longer backlog needs another run
 #   --lock-timeout D             default 5s
 #   --statement-timeout D        default 120s (read-only modes) or 900s (dry-run, apply)
+#   --application-name NAME      the backend name to end (terminate)
 #   --emit                       print the psql session instead of running it
 #
 # Output: lines `LR.<key>|<value>` (counts and state only, never row contents; export-stored-documents is the one
@@ -39,7 +49,7 @@
 set -eu
 
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
-usage() { sed -n '2,39p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,48p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail() { printf 'legacy-retirement: %s\n' "$1" >&2; exit 2; }
 
 [ $# -ge 2 ] || usage
@@ -48,11 +58,12 @@ case $target:$mode in
   chronicle:preflight|chronicle:dry-run|chronicle:apply|chronicle:verify) ;;
   haystack:preflight|haystack:dry-run|haystack:apply|haystack:verify|haystack:export-stored-documents) ;;
   manure:preflight|manure:verify) ;;
+  chronicle:sessions|haystack:sessions|manure:sessions|chronicle:terminate|haystack:terminate|manure:terminate) ;;
   *) usage ;;
 esac
 
 confirm_database=''; expect_plan=''; acknowledged=f; allow_connections=f; emit=f; backup_reference=''
-skip_formats=f; retire_history=f; confirm_retire_history=''
+skip_formats=f; retire_history=f; confirm_retire_history=''; terminate_name=''
 batch_size=50; max_batches=200; lock_timeout=5s; statement_timeout=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -68,6 +79,7 @@ while [ $# -gt 0 ]; do
     --max-batches) [ $# -ge 2 ] || usage; max_batches=$2; shift 2 ;;
     --lock-timeout) [ $# -ge 2 ] || usage; lock_timeout=$2; shift 2 ;;
     --statement-timeout) [ $# -ge 2 ] || usage; statement_timeout=$2; shift 2 ;;
+    --application-name) [ $# -ge 2 ] || usage; terminate_name=$2; shift 2 ;;
     --emit) emit=t; shift ;;
     *) usage ;;
   esac
@@ -92,6 +104,14 @@ fi
 [ -z "$expect_plan" ] || matches "$expect_plan" '[0-9]+(\.[0-9]+)*' || fail '--expect-plan is not a plan token'
 [ -z "$backup_reference" ] || matches "$backup_reference" '[A-Za-z0-9_.:/@+=-]{1,200}' || fail '--backup-reference has unexpected characters'
 [ -z "$confirm_retire_history" ] || matches "$confirm_retire_history" '[0-9]{1,9}' || fail '--confirm-retire-history must be a number'
+if [ "$mode" = terminate ]; then
+  matches "$terminate_name" 'lr:[a-z]+:[a-z-]+:[0-9]{6}-[0-9]{1,10}' || fail 'terminate requires --application-name NAME as printed in LR.application_name'
+else
+  [ -z "$terminate_name" ] || fail '--application-name applies to terminate only'
+fi
+# A recognisable name per invocation: after a broken exec stream the operator finds exactly this session.
+application_name="lr:$target:$mode:$(date -u +%H%M%S)-$$"
+idle_timeout=120s
 if [ "$target" != chronicle ]; then
   [ "$skip_formats$retire_history" = ff ] && [ -z "$confirm_retire_history" ] || fail '--skip-formats and --retire-history apply to chronicle only'
 fi
@@ -112,6 +132,8 @@ flag() { printf '\\set %s %s\n' "$1" "$2"; }
 
 compose() {
   printf '%s\n' '\set ON_ERROR_STOP on' '\pset pager off' '\pset format unaligned' '\pset tuples_only on' "\\pset fieldsep '|'"
+  printf "\\\\echo LR.application_name|%s\nSET application_name = '%s';\n" "$application_name" "$application_name"
+  printf "SET idle_in_transaction_session_timeout = '%s';\nSET idle_session_timeout = '%s';\n" "$idle_timeout" "$idle_timeout"
   printf "\\\\set mode '%s'\n\\\\set confirm_database '%s'\n\\\\set expect_plan '%s'\n\\\\set allow_connections '%s'\n" "$mode" "$confirm_database" "$expect_plan" "$allow_connections"
   printf "\\\\set backup_reference '%s'\n\\\\set skip_formats '%s'\n\\\\set retire_history '%s'\n\\\\set confirm_retire_history '%s'\n" "${backup_reference:--}" "$skip_formats" "$retire_history" "$confirm_retire_history"
   printf "\\\\set batch_size %s\n\\\\set lock_timeout '%s'\n\\\\set statement_timeout '%s'\n" "$batch_size" "$lock_timeout" "$statement_timeout"
@@ -122,6 +144,16 @@ compose() {
     preflight) fragment preflight.sql ;;
     verify) fragment verify.sql ;;
     export-stored-documents) fragment export-stored-documents.sql ;;
+    sessions)
+      printf '%s\n' "SET default_transaction_read_only = on;" "SET statement_timeout = '15s';" \
+        "SELECT 'LR.session', a.pid, a.application_name, coalesce(a.state, '-'), coalesce(a.wait_event_type, '-'), coalesce(extract(epoch FROM now() - a.xact_start)::bigint, -1), coalesce(extract(epoch FROM now() - a.state_change)::bigint, -1), cardinality(pg_blocking_pids(a.pid)), (SELECT count(*) FROM pg_stat_activity b WHERE a.pid = ANY (pg_blocking_pids(b.pid))) FROM pg_stat_activity a WHERE a.datname = current_database() AND a.application_name LIKE 'lr:%' AND a.pid <> pg_backend_pid() ORDER BY a.backend_start;" \
+        "SELECT 'LR.sessions', count(*) FROM pg_stat_activity WHERE datname = current_database() AND application_name LIKE 'lr:%' AND pid <> pg_backend_pid();"
+      printf '%s\n' '\echo LR.result|sessions-listed' ;;
+    terminate)
+      printf '%s\n' "SET statement_timeout = '15s';" \
+        "SELECT 'LR.terminated', count(*) FILTER (WHERE pg_terminate_backend(pid, 5000)) FROM pg_stat_activity WHERE datname = current_database() AND application_name = '$terminate_name' AND pid <> pg_backend_pid();" \
+        "SELECT 'LR.remaining', count(*) FROM pg_stat_activity WHERE datname = current_database() AND application_name = '$terminate_name';"
+      printf '%s\n' '\echo LR.result|terminate-complete' ;;
     dry-run|apply)
       fragment 10-guards.sql
       case $target in

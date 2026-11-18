@@ -2,7 +2,6 @@
 SET statement_timeout = :'statement_timeout';
 SET lock_timeout = :'lock_timeout';
 SET client_min_messages = warning;
-SET application_name = 'legacy-retirement';
 SELECT set_config('lr.mode', :'mode', false), set_config('lr.confirm_database', :'confirm_database', false),
        set_config('lr.expect_plan', :'expect_plan', false), set_config('lr.allow_connections', :'allow_connections', false),
        set_config('lr.skip_formats', :'skip_formats', false), set_config('lr.retire_history', :'retire_history', false),
