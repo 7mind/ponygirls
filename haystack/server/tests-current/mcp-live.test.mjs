@@ -79,17 +79,6 @@ describe('current generated WS invalidations heartbeat and session security',()=
    assert.ok(established.every(live=>live.socket.readyState===WebSocket.OPEN));
   }finally{await Promise.all(established.map(live=>close(live.socket)));}
  });
- it('idle heartbeat revalidates a revoked token within the real30second interval',{timeout:35000},async()=>{
-  const idle=await fixture();try{
-   const live=await open(idle,await login(idle));const closed=once(live.socket,'close');
-   // HTTP101/open can precede allocation of the upgraded stream resource.
-   // Prove admission while still authorized, then leave the connection idle;
-   // otherwise a correct pre-admission revocation can close immediately4401.
-   live.socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'idle-established',1,undefined))));await waitFor(()=>live.messages.some(value=>value.kind==='pong'&&value.nonce==='idle-established'));
-   const started=Date.now();await idle.reload(auth=>{auth.users=auth.users.filter(u=>u.id!=='alice');});
-   const [code]=await Promise.race([closed,sleep(32000).then(()=>{throw new Error('revocation heartbeat deadline exceeded');})]);assert.equal(code,4401);assert.ok(Date.now()-started>=29000,'production heartbeat interval must not be shortened for tests');
-  }finally{await idle.stop();}
- });
  it('logout/login session replacement and loaded-token revocation close sockets4401',async()=>{
   const cookie=await login(f);const live=await open(f,cookie);let closed=once(live.socket,'close');await f.call('/api/v1/logout',{}, {headers:{Origin:f.base,Cookie:cookie}});assert.equal((await closed)[0],4401);
   const secondCookie=await login(f);const second=await open(f,secondCookie);closed=once(second.socket,'close');await f.login({Cookie:secondCookie});assert.equal((await closed)[0],4401);

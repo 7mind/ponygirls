@@ -34,8 +34,10 @@ in pkgs.runCommand "haystack-native-current-transport" ({
   export HAYSTACK_TEST_JDBC=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_HAYSTACK"])["jdbcUrl"])')
   export HAYSTACK_TEST_DB_USER=haystack
   export HAYSTACK_TEST_DB_PASSWORD_FILE=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_HAYSTACK"])["passwordFile"])')
+  cores=''${NIX_BUILD_CORES:-0}; (( cores > 0 )) || cores=$(nproc)
+  concurrency=$(( cores < 4 ? cores : 4 ))
   cd haystack
-  timeout --signal=TERM --kill-after=10s 240s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency=1 \
+  timeout --signal=TERM --kill-after=10s 240s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency="$concurrency" \
     --test-reporter=tap --test-reporter-destination="$RECEIPT_DIR/transport.tap" \
     --test-reporter=junit --test-reporter-destination="$RECEIPT_DIR/transport.xml" \
     server/tests-current/*.test.mjs

@@ -34,9 +34,16 @@ if [[ -z "${HAYSTACK_TEST_PROVISION_COMMAND:-}" ]]; then export HAYSTACK_FIXTURE
   printf 'artifact-kind=%s\ncommand=%s\n' "$HAYSTACK_ARTIFACT_KIND" "$HAYSTACK_SERVER_COMMAND"
   find haystack/server/src/main/scala haystack/server/tests-current haystack/generated/scala haystack/generated/typescript haystack/models haystack/migrations shared/service-auth/src shared/service-runtime/src/main shared/baboon-runtime/src/main shared/lossless-json/src/main shared/retrieval-core/src/main shared/retrieval-postgres/src/main shared/model-http/src/main -type f -print0 | sort -z | xargs -0 sha256sum
 } > "$report/source.txt"
+# Test files run concurrently, each with its own server, database, port and temp
+# directory; HAYSTACK_CURRENT_CONCURRENCY=1 runs them serially. The cap keeps
+# simultaneous servers (and their database connections) bounded: the 65 s
+# two-heartbeat file holds one slot, the other files fit in the remaining three.
+max_concurrency=4
+cores=${NIX_BUILD_CORES:-0}; (( cores > 0 )) || cores=$(nproc)
+concurrency=${HAYSTACK_CURRENT_CONCURRENCY:-$(( cores < max_concurrency ? cores : max_concurrency ))}
 cd haystack
 set +e
-timeout --signal=TERM --kill-after=10s 360s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency=1 --test-reporter=tap --test-reporter-destination="$report/transport.tap" --test-reporter=junit --test-reporter-destination="$report/transport.xml" server/tests-current/*.test.mjs > "$report/runner.log" 2>&1
+timeout --signal=TERM --kill-after=10s 360s node --import ./scripts/register-generated.mjs --test --test-timeout=60000 --test-concurrency="$concurrency" --test-reporter=tap --test-reporter-destination="$report/transport.tap" --test-reporter=junit --test-reporter-destination="$report/transport.xml" server/tests-current/*.test.mjs > "$report/runner.log" 2>&1
 status=$?
 set -e
 cat "$report/transport.tap" "$report/runner.log"

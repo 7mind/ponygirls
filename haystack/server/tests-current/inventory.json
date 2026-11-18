@@ -1,7 +1,7 @@
 [
   "revocation while a real HTTP body is held denies dispatch without a committed item or replay",
   "failed real live handshakes and normal socket close release all per-token capacity",
-  "healthy automatic protocol pongs keep a socket live across two real30second heartbeat intervals",
+  "healthy automatic protocol pongs keep a socket live across two real30second heartbeat intervals while an idle revoked session closes4401 at its first",
   "exact bearer, missing/wrong credentials, ambiguous cookie+bearer, no-store errors",
   "current version info and explicit removed/future version rejection",
   "login ignores stale cookies; rolling cookie flags/restart persistence/logout",
@@ -24,7 +24,6 @@
   "foreign origin forbidden, cookie missing/bearer rejected4401, wrong cookie name not fallback",
   "invalid JSON/heartbeat/binary/oversized frames close permanently, no content leak",
   "per-token live capacity is8 and overflow is retryable1013 without evicting established sessions",
-  "idle heartbeat revalidates a revoked token within the real30second interval",
   "logout/login session replacement and loaded-token revocation close sockets4401",
   "exact opted-in authority alone selects plain cookie, other authorities remain Secure",
   "mixed-authority live sessions select only the current cookie and reject cross-authority Origin",
