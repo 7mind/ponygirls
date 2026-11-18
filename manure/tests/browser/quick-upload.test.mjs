@@ -3,7 +3,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {Sha256,hashBlob,HASH_READ_BYTES} from '../../web/dashboard/sha256.js';
-import {FileUpload} from '../../web/dashboard/quick-upload.js';
+import {FileUpload,parseTags,MAX_TAGS,MAX_TAG_SCALARS} from '../../web/dashboard/quick-upload.js';
 import * as current from '../../web/dashboard/current-protocol.js';
 const id='a'.repeat(32);
 const digest=data=>createHash('sha256').update(data).digest('hex');
@@ -22,7 +22,7 @@ function transport(options) {
     state.commands.push(name);let result;
     if(name==='GetCapabilities') result={CapabilityInfo:{capabilities:{contentMode:'Path',searchModes:['Lexical'],metadataOnlySearch:true,chunkBytes:4,maxListLimit:50,maxRequestBodyBytes:'1048576',maxFileBytes:String(options.limit),maxArtifactBytes:String(options.limit),maxFilesPerArtifact:1,maxTtlSeconds:100,cataloguePolicy:'current'}}};
     if(name==='InitUpload') {
-      state.inits++;assert.deepEqual(command.InitUpload.tags,[]);assert.equal(command.InitUpload.hostname,null);assert.equal(command.InitUpload.projectPath,null);assert.equal(command.InitUpload.visibility,options.visibility);assert.equal(command.InitUpload.files[0].File.sha256,digest(Buffer.from('screenshot bytes')));
+      state.inits++;assert.deepEqual(command.InitUpload.tags,options.tags??[]);assert.equal(command.InitUpload.expiresInSeconds,options.expiry??null);assert.equal(command.InitUpload.hostname,null);assert.equal(command.InitUpload.projectPath,null);assert.equal(command.InitUpload.visibility,options.visibility);assert.equal(command.InitUpload.files[0].File.sha256,digest(Buffer.from('screenshot bytes')));
       if(options.initFailure) throw new Error('offline');
       if(options.initError && state.inits===1) return new Response(JSON.stringify({requestId:envelope.requestId,result:{Error:{failure:{code:options.initError,message:'controlled admission',retryAfterSeconds:5}}}}),{status:options.initError==='QuotaExceeded'?413:429});
       result={UploadInitialized:{artifactId:id,chunkBytes:4,contentUrl:'http://test/view/'+id,externalPassword:options.visibility==='External'?'transient-password':null}};
@@ -62,6 +62,24 @@ test('typed upload uses server chunks and retries failed bytes without a duplica
   assert.deepEqual(t.state.chunks.map(c=>c.offset),[0,4,4,8,12]);
   assert.equal(Buffer.concat(t.state.chunks.filter((_,i)=>i!==1).map(c=>c.data)).toString(),'screenshot bytes');
   item.clear();assert.equal(item.password,null);assert.equal(item.file,null);assert.equal(item.link,null);
+});
+
+test('expiry and tags travel in the reservation; an expiry beyond the server maximum is refused before any reservation',async()=>{
+  const t=transport({limit:100,visibility:'Public',expiry:60,tags:['release','Report 1']}), item=new FileUpload(file(),'public');
+  item.expiresInSeconds=60;item.tags=['release','Report 1'];
+  await run(item,t,check);assert.equal(item.phase,'ready');assert.equal(t.state.inits,1);
+  const late=transport({limit:100,visibility:'Public',expiry:200}), refused=new FileUpload(file(),'public');
+  refused.expiresInSeconds=200;
+  await assert.rejects(run(refused,late,check),/invalid-ttl/);assert.equal(late.state.inits,0);assert.equal(refused.phase,'staged');
+});
+
+test('tag input is comma separated, trimmed, exact and bounded',()=>{
+  assert.deepEqual(parseTags(' release , Report 1,, '),{tags:['release','Report 1'],error:null});
+  assert.deepEqual(parseTags(''),{tags:[],error:null});
+  assert.match(parseTags('a, a').error,/distinct/);
+  assert.match(parseTags(Array.from({length:MAX_TAGS+1},(_,i)=>'t'+i).join(',')).error,new RegExp(String(MAX_TAGS)));
+  assert.match(parseTags('x'.repeat(MAX_TAG_SCALARS+1)).error,new RegExp(String(MAX_TAG_SCALARS)));
+  assert.equal(parseTags('€'.repeat(MAX_TAG_SCALARS)).error,null);
 });
 
 test('uncertain finish retries the same ID and duplicate concurrent submit is ignored',async()=>{

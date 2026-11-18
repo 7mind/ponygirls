@@ -1,11 +1,22 @@
 import * as current from './current-protocol.js';
 import {hashBlob} from './sha256.js';
 
+export const MAX_TAGS=32;
+export const MAX_TAG_SCALARS=128;
+// Comma separated; exact and case-sensitive like the server's tags. Returns an inline error instead of throwing.
+export function parseTags(text) {
+  const tags=text.split(',').map(tag=>tag.trim()).filter(tag=>tag!=='');
+  if(new Set(tags).size!==tags.length) return {tags,error:'Tags must be distinct.'};
+  if(tags.length>MAX_TAGS) return {tags,error:'At most '+MAX_TAGS+' tags.'};
+  if(tags.some(tag=>[...tag].length>MAX_TAG_SCALARS)) return {tags,error:'A tag is at most '+MAX_TAG_SCALARS+' characters.'};
+  return {tags,error:null};
+}
+
 // One instance per staged file. Retain the exact artifact/offset across retries;
 // correlation IDs do not deduplicate InitUpload.
 export class FileUpload {
   constructor(file,visibility) {
-    this.file=file;this.visibility=visibility;this.id=null;this.offset=0;
+    this.file=file;this.visibility=visibility;this.expiresInSeconds=null;this.tags=[];this.id=null;this.offset=0;
     this.chunkBytes=null;this.password=null;this.link=null;this.phase='staged';this.busy=false;
   }
   async run(request,fetch,check,signal,progress) {
@@ -17,13 +28,14 @@ export class FileUpload {
         this.phase='hashing';progress();
         const caps=await request(current.capabilities());check();
         if(BigInt(this.file.size)>caps.max_file_bytes || BigInt(this.file.size)>caps.max_artifact_bytes || caps.max_files_per_artifact<1) throw new Error('too-large');
+        if(this.expiresInSeconds!==null && this.expiresInSeconds>caps.max_ttl_seconds) throw new Error('invalid-ttl');
         const digest=await hashBlob(this.file,check);check();
         this.phase='initializing';progress();
         // Once dispatched, a lost/malformed response may still have reserved an
         // artifact. Do not silently create another reservation on Retry.
         this.phase='init-uncertain';
         let init;
-        try { init=await request(current.initUpload(this.file,this.visibility,digest)); }
+        try { init=await request(current.initUpload(this.file,this.visibility,digest,this.expiresInSeconds,this.tags)); }
         catch (error) {
           check();
           // These typed admission checks precede all reservation/payload writes.
@@ -51,6 +63,10 @@ export class FileUpload {
       const result=await request(current.finishUpload(this.id));check();
       if(result.artifact_id!==this.id || result.state!=='ready') throw new Error('bad-response');
       this.link=result.content_url;this.phase='ready';progress();
+    } catch (error) {
+      // A failure before the reservation was dispatched leaves a plain staged file.
+      if(this.id===null && this.phase!=='init-uncertain') this.phase='staged';
+      throw error;
     } finally { this.busy=false; }
   }
   clear() {this.password=null;this.file=null;this.link=null;}

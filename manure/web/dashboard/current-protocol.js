@@ -158,9 +158,9 @@ export const capabilities = () => [new p.Command_GetCapabilities(),p.Result_Capa
   value.search_modes=r.capabilities.searchModes.map(mode=>mode.toLowerCase());
   return value;
 }];
-export const initUpload = (file,visibility,sha256) => [new p.Command_InitUpload(file.name,p.ArtifactKind.File,
-  p.Visibility[visibility[0].toUpperCase()+visibility.slice(1)],null,
-  [new p.ManifestEntry_File(file.name,BigInt(file.size),sha256)],[],null,null),p.Result_UploadInitialized,r=>{
+export const initUpload = (file,visibility,sha256,expiresInSeconds,tags) => [new p.Command_InitUpload(file.name,p.ArtifactKind.File,
+  p.Visibility[visibility[0].toUpperCase()+visibility.slice(1)],expiresInSeconds,
+  [new p.ManifestEntry_File(file.name,BigInt(file.size),sha256)],tags,null,null),p.Result_UploadInitialized,r=>{
     const value=local(r);value.external_password=r.externalPassword === undefined ? null : r.externalPassword;return value;
   }];
 export const finishUpload = id => [new p.Command_FinishUpload(id),p.Result_UploadFinished,r=>local(r)];

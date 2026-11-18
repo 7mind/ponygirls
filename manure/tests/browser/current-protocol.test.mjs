@@ -152,7 +152,7 @@ test('metadata adapters append every required wire field, absent values explicit
       for(const [key,value] of Object.entries(metadata)) assert.deepEqual(plan[key],value,key);
     }
   }
-  const upload=boundary.initUpload({name:'file.txt',size:1},'public','a'.repeat(64));
+  const upload=boundary.initUpload({name:'file.txt',size:1},'public','a'.repeat(64),null,[]);
   const wire=p.ClientEnvelope_JsonCodec.instance.encode(ctx,new p.ClientEnvelope(id,'1.0.0',upload[0]));
   boundary.validate('ClientEnvelope',wire);
   assert.deepEqual(wire.command.InitUpload.tags,[]);
