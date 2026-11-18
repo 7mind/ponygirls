@@ -1,93 +1,80 @@
-.search-panel { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; background: var(--surface); border: 1px solid var(--line); border-radius: 0; padding: 12px 14px; }
-.search-input { display: flex; align-items: center; border: 1px solid var(--line); border-radius: 0; padding-left: 9px; color: var(--muted); }
-.search-input input { border: 0; background: transparent; min-width: 0; flex: 1; }
-.query-clear { border: 0; background: transparent; color: var(--muted); font-size: 20px; padding: 0 8px; cursor: pointer; }
+/* Browse and its presets (spec §3.2, mockup haystack-browse.html): scroll model A — the document is the only
+ * vertical scroller; the masthead, the view bar and the table header are sticky (components.css). Tokens only. */
+
+/* List views are full-bleed on the surface: the view bar and the table reach the window edges. */
+.workspace[data-view="list"] { padding: 0 0 var(--space-7); }
+.workspace[data-view="list"] > .notice { margin: var(--space-3) var(--gutter) 0; }
+
+/* ── View bar: query bar and counter ───────────────────────────────────── */
 .query-clear:disabled { visibility: hidden; }
-.query-help { font-size: 11px; color: var(--muted); }
-.query-help summary { cursor: pointer; width: fit-content; }
-.query-help p { margin: 5px 0; line-height: 1.5; }
-.draft-status { margin: 5px 14px; font-size: 11px; color: var(--muted); }
-.query-control { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
-.query-field { position: relative; min-width: 0; }
-.query-popup { position: absolute; top: calc(100% + 3px); left: 0; right: 0; z-index: 6; background: var(--surface); border: 1px solid var(--line-strong); box-shadow: var(--shadow-1); }
-.query-options { max-height: 260px; overflow-y: auto; }
-.query-options button { display: block; width: 100%; border: 0; background: transparent; padding: 7px 10px; text-align: left; font: 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
-.query-options button[aria-selected=true], .query-options button:hover { background: var(--selected); color: var(--selected-ink); }
-.query-popup p, .query-shortcuts { margin: 0; padding: 7px 10px; font-size: 10px; color: var(--muted); }
-.query-shortcuts { border-top: 1px solid var(--line); }
-.search-actions { grid-column: 2; grid-row: 1; display: flex; flex-direction: column; gap: 6px; align-self: start; padding-top: 20px; }
-.results-heading { display: flex; align-items: center; justify-content: space-between; margin: 18px 0 10px; gap: 12px; }
-.results-heading h2 { margin: 0; display: flex; align-items: center; gap: 9px; }
-.results-heading > span { font-size: 11px; color: var(--muted); }
-.count-badge { background: var(--surface-muted); color: var(--selected-ink); padding: 3px 7px; border-radius: 0; font-size: 11px; font-weight: 500; }
-.scroll-help { color: var(--muted); font-size: 11px; margin: 0 0 10px; }
-.records-panel { overflow: auto; max-height: 70vh; background: var(--surface); border: 1px solid var(--line); border-radius: 0; }
-.records-panel table { table-layout: fixed; }
-.records-panel th, .records-panel td { overflow-wrap: anywhere; white-space: normal; }
-.records-panel th, .records-panel td { padding: 7px 8px; }
-.records-panel th:first-child, .records-panel td:first-child { width: 28%; min-width: 0; }
-.records-panel th:nth-child(2) { width: 12%; }
-.records-panel th:nth-child(3) { width: 10%; }
-.records-panel th:nth-child(4) { width: 7%; }
-.records-panel th:nth-child(5) { width: 6%; }
-.records-panel th:nth-child(6) { width: 9%; }
-.records-panel th:nth-child(7) { width: 14%; }
-.records-panel th:nth-child(8) { width: 10%; }
-.records-panel th:nth-child(9) { width: 4%; }
-.records-panel .record-open > span:last-child { min-width: 0; }
-.records-panel :is(.type-badge, .attention-badge, .modified-cell span, .modified-cell time) { white-space: normal; }
-.records-panel th { position: sticky; top: 0; z-index: 1; }
-.sort-header { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; max-width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; letter-spacing: inherit; }
-.sort-header span { color: var(--muted); }
-th[aria-sort=ascending] .sort-header, th[aria-sort=descending] .sort-header { color: var(--ink); }
-.project-cell { max-width: 160px; overflow-wrap: anywhere; }
-.scroll-sentinel { height: 1px; }
-.results-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 10px; color: var(--muted); font-size: 11px; }
-.results-footer button { font-size: 11px; padding: 6px 10px; }
-.record-open { display: flex; align-items: center; gap: 9px; border: 0; padding: 0; background: transparent; text-align: left; width: 100%; }
-.record-open:hover { background: transparent; }
-.record-open strong { display: block; font-weight: 550; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }
-.record-open small { display: block; margin-top: 2px; color: var(--muted); font-size: 10px; line-height: 1.4; overflow-wrap: anywhere; }
-.record-icon { width: 26px; height: 28px; background: var(--surface-muted); border: 1px solid var(--line); color: var(--muted); border-radius: 0; display: grid; place-items: center; flex: none; }
-.type-github-pr, .type-github-issue { background: var(--upstream-surface); border-color: var(--upstream-line); color: var(--upstream); }
-.type-skill-draft { background: var(--warning-surface); border-color: var(--warning-line); color: var(--warning); }
-.type-badge { display: inline-block; max-width: 100%; color: var(--muted); font-size: 10px; border: 1px solid var(--line); border-radius: 0; padding: 2px 4px; white-space: nowrap; }
-.status-badge { color: var(--muted); font-size: 11px; }
-.status-badge::before { content: ''; display: inline-block; width: 5px; height: 5px; background: currentColor; border-radius: 0; margin-right: 6px; }
-.status-badge.archived { color: var(--muted); }
-.status-badge.archived::before { background: var(--line-strong); }
-.priority { color: var(--muted); font-size: 11px; }
-.priority.high { color: var(--warning); }
-.attention-badge { color: var(--muted); font-size: 10px; white-space: nowrap; }
-.attention-badge.required { background: var(--warning-surface); color: var(--warning); border-radius: 0; padding: 3px 5px; }
-.modified-cell span, .modified-cell time { display: block; font-size: 10px; white-space: nowrap; }
-.modified-cell time { color: var(--muted); margin-top: 5px; }
-.empty-state { text-align: center; border: 1px dashed var(--line); border-radius: 0; padding: 28px 14px; margin-top: 12px; color: var(--muted); background: var(--surface-muted); }
-.empty-state .icon { width: 26px; height: 26px; margin-bottom: 10px; }
-.empty-state h3 { font: 500 18px ui-sans-serif, sans-serif; color: var(--ink); }
-.empty-state p { font-size: 12px; margin-bottom: 0; }
-/* Reflow every field at compact widths instead of hiding columns or clipping text. */
+.query-draft { flex: none; font-size: var(--text-xs); color: var(--text-muted); white-space: nowrap; }
+.query-suggest ul { max-height: min(320px, 50dvh); overflow-y: auto; }
+.query-suggest li { cursor: pointer; overflow-wrap: anywhere; }
+.query-suggest p { padding: var(--space-2) var(--space-3); font-size: var(--text-xs); color: var(--text-muted); }
+
+/* ── Filter shortcuts ──────────────────────────────────────────────────── */
+.browse .filter:disabled { opacity: 0.5; cursor: not-allowed; }
+.link-button { min-height: var(--control-h-sm); border: 0; background: none; padding: 0; color: var(--accent); font-size: inherit; cursor: pointer; }
+.link-button:hover { text-decoration: underline; }
+
+/* ── Notices between the bars and the table ───────────────────────────── */
+.inline-notice { padding: 0 var(--gutter) var(--space-3); }
+.notice-row { align-items: center; }
+.notice-row > .icon { margin-top: 0; }
+.foot-notice { padding-top: var(--space-4); padding-bottom: var(--space-5); }
+.query-diag { margin-top: var(--space-2); padding: var(--space-2) var(--space-3); border-radius: var(--radius-sm); background: var(--bg-surface); border: 1px solid var(--danger-bd); font-family: var(--font-mono); font-size: var(--text-sm); white-space: pre-wrap; overflow-wrap: anywhere; }
+.diag-span { background: var(--danger-bg); color: var(--danger-fg); text-decoration: underline 2px var(--danger-fg); text-underline-offset: 3px; }
+.diag-caret { color: var(--danger-fg); }
+
+/* ── Records table ─────────────────────────────────────────────────────── */
+.col-type { width: 136px; }
+.col-project { width: 152px; }
+.col-tags { width: 224px; }
+.col-attn { width: 136px; }
+.col-imp { width: 112px; }
+.col-mod { width: 140px; }
+.col-rev { width: 64px; }
+.records tbody tr { cursor: pointer; }
+.rec { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.rec-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: var(--radius-md); background: var(--neutral-bg); color: var(--neutral-fg); }
+.rec-icon[data-family="work"] { background: var(--accent-soft); color: var(--accent); }
+.rec-icon[data-family="upstream"] { background: var(--info-bg); color: var(--info-fg); }
+.rec-open { flex: 1; min-width: 0; display: block; border: 0; padding: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.rec-open:hover .cell-title { color: var(--accent); }
+.rec-key { font-family: var(--font-mono); }
+.cell-sub .chip { flex: none; }
+tr.is-archived td, tr.is-archived .cell-title { color: var(--text-muted); }
+tr.is-archived .rec-icon { background: var(--bg-sunken); color: var(--text-faint); }
+.importance-low { color: var(--text-muted); }
+.importance-high { font-weight: var(--weight-semibold); }
+.tags { align-items: center; }
+.tags .chip { flex: 0 1 auto; min-width: 0; display: inline-block; line-height: 22px; overflow: hidden; text-overflow: ellipsis; }
+.tags-more { flex: none; padding: 0 var(--space-1); color: var(--text-muted); font-size: var(--text-xs); font-weight: var(--weight-medium); }
+.tags-more-narrow { display: none; }
+.none { color: var(--text-faint); }
+.show-sm { display: none; }
+/* Unsorted columns show their affordance on hover and focus only. */
+th:not([aria-sort]) .th-sort:is(:hover, :focus-visible)::after { content: "↕"; color: var(--text-faint); }
+.th-sort:disabled { cursor: not-allowed; }
+
+/* ── Query syntax dialog ──────────────────────────────────────────────── */
+.syntax-dl code, .browse .dialog-body code { background: var(--bg-sunken); border-radius: var(--radius-sm); padding: 0 var(--space-1); color: var(--text); }
+
+/* 1024: the table stays a table; Project and Rev hide (components.css .hide-md), tags show one chip. */
 @media (max-width: 1100px) {
-  .records-panel table, .records-panel thead, .records-panel tbody { display: block; }
-  .records-panel thead { position: sticky; top: 0; z-index: 1; background: var(--surface-muted); border-bottom: 1px solid var(--line-strong); }
-  .records-panel thead tr { display: flex; flex-wrap: wrap; gap: 5px 14px; padding: 8px 10px; }
-  .records-panel thead th:nth-child(n) { position: static; width: auto; padding: 0; }
-  .records-panel tbody tr { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line-strong); padding: 10px; gap: 10px 14px; }
-  .records-panel tbody td { width: auto; min-width: 0; padding: 0; border: 0; vertical-align: top; }
-  .records-panel tbody td:first-child { grid-column: 1 / -1; width: auto; }
-  .records-panel td[data-label]::before { content: attr(data-label); display: block; font-size: 10px; color: var(--muted); margin-bottom: 3px; }
-  .project-cell { max-width: none; }
+  .col-type { width: 118px; }
+  .col-tags { width: 148px; }
+  .col-attn { width: 128px; }
+  .col-imp { width: 108px; }
+  .col-mod { width: 124px; }
+  .tags .chip:nth-child(2), .tags-more-wide { display: none; }
+  .tags-more-narrow { display: inline; }
 }
-@media (max-width: 800px) {
-  .search-panel { grid-template-columns: minmax(0, 1fr) auto; padding: 12px; gap: 10px; }
-  .search-actions { grid-column: 1 / -1; grid-row: auto; flex-direction: row; padding-top: 0; }
-}
-@media (max-width: 430px) {
-  .search-panel { grid-template-columns: 1fr; }
-  .results-heading > span { max-width: 125px; text-align: right; }
-}
-@media (max-width: 600px) {
-  .records-panel tbody tr { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .results-footer { flex-wrap: wrap; }
-  .record-open strong { font-size: 14px; }
+/* Phones: Record and Modified only; "Needs review" moves into the record's sub-line. */
+@media (max-width: 720px) {
+  .col-mod { width: 112px; }
+  .show-sm { display: inline-flex; }
+  .browse .viewbar { gap: var(--space-2); }
+  .browse .viewbar-meta { display: none; min-width: 0; }
+  .browse .querybar { min-width: 0; }
 }

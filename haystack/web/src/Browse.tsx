@@ -1,21 +1,25 @@
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
-import { browseHash, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
+import { browseHash, PRESETS, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
 import { useLiveUpdates } from "./Live";
-import { Icon } from "./Icon";
+import { UiIcon } from "./Masthead";
 import { QueryInput } from "./QueryInput";
+import { appendField, appendFilter, hasConjunct, toggleConjunct } from "./query-edit";
 
 const PAGE_SIZE = 20;
-const HEADINGS: Record<Preset, string> = { browse: "Records", inbox: "Attention inbox", upstream: "Upstream activity", skills: "Skill candidates", archive: "Archive" };
-const PREFETCH_MARGIN = "200px";
+/** The next page is requested when the end of the list comes this close to the viewport (the document scrolls). */
+const PREFETCH_MARGIN = "0px 0px 240px 0px";
 /** Largest page the search API serves (limit 1–100); a refresh reloads the loaded chain in pages of this size. */
 const SEARCH_LIMIT_MAX = 100;
+const SKELETON_ROWS = 14;
 /**
  * first: a new query or sort (the list restarts); append: the next page of the chain; refresh: reload the first
  * `rows` rows of the same query in place — rows stay until the new chain arrives and the first visible row keeps
  * its position (live updates, spec §5 rule 6).
  */
 type Load = { kind: "first" } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
+/** The load whose failure is shown: its Retry repeats it. */
+type Failure = { load: Load["kind"]; message: string };
 interface Anchor { key: string; top: number }
 type Diagnostic = { message: string; start: number; end: number };
 /**
@@ -27,18 +31,123 @@ type Diagnostic = { message: string; start: number; end: number };
  * an explicit Search or sort runs anew. `version` is the live-update count when kept: later changes are announced.
  */
 type Kept =
-  | { tag: "complete"; items: Summary[]; cursor: string | undefined; error: string; changesPending: boolean; version: number;
-      panelTop: number; pageTop: number; focus: Element | null }
-  | { tag: "failed"; error: string; diagnostics: Diagnostic[]; pageTop: number; focus: Element | null };
+  | { tag: "complete"; items: Summary[]; cursor: string | undefined; failure: Failure | null; changesPending: boolean; version: number;
+      pageTop: number; focus: Element | null }
+  | { tag: "failed"; failure: Failure; diagnostics: Diagnostic[]; pageTop: number; focus: Element | null };
 /** Settlement of the initial search of the route shown: only a settled route may be kept. */
 type Phase = "loading" | "settled" | "failed";
 const MAX_KEPT_ROUTES = 6;
-const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
-  { field: "title", label: "Record" }, { field: "project", label: "Project" },
-  { field: "type", label: "Type" }, { field: "status", label: "Status" },
-  { field: "importance", label: "Priority" }, { field: "human-attention", label: "Attention" },
-  { field: "modified-at", label: "Modified" }, { field: "revision", label: "Rev" },
+const INVALID_QUERY = "Invalid search query.";
+
+/** One table column; `hide` names the shared responsive class that drops it at narrower widths (spec §3.2). */
+/** Skeleton cell of the loading state (mockup "loading"): bar widths as shared classes, `record` the icon tile + two lines. */
+type Skeleton = "record" | "two-line" | "bar" | "short" | "full" | "none";
+interface Column { label: string; sort: { field: SearchSortField; name: string } | null; col: string; hide: "" | "hide-md" | "hide-sm"; skeleton: Skeleton }
+const COLUMNS: readonly Column[] = [
+  { label: "Record", sort: { field: "title", name: "Record" }, col: "", hide: "", skeleton: "record" },
+  { label: "Type", sort: { field: "type", name: "Type" }, col: "col-type", hide: "hide-sm", skeleton: "bar" },
+  { label: "Project", sort: { field: "project", name: "Project" }, col: "col-project", hide: "hide-md", skeleton: "bar" },
+  { label: "Tags", sort: null, col: "col-tags", hide: "hide-sm", skeleton: "full" },
+  { label: "Attention", sort: { field: "human-attention", name: "Attention" }, col: "col-attn", hide: "hide-sm", skeleton: "none" },
+  { label: "Importance", sort: { field: "importance", name: "Importance" }, col: "col-imp", hide: "hide-sm", skeleton: "short" },
+  { label: "Modified", sort: { field: "modified-at", name: "Modified" }, col: "col-mod", hide: "", skeleton: "two-line" },
+  { label: "Rev", sort: { field: "revision", name: "Revision" }, col: "col-rev", hide: "hide-md", skeleton: "none" },
 ];
+/** Filter toggles: on while their term is a conjunct of the draft (query-edit `hasConjunct`). */
+const TOGGLES: ReadonlyArray<{ label: string; term: string }> = [
+  { label: "Needs review", term: PRESETS.inbox.query },
+  { label: "Archived", term: PRESETS.archive.query },
+];
+const FIELD_INSERTERS: ReadonlyArray<{ field: string; hide: "" | "hide-md" }> = [
+  { field: "type", hide: "" }, { field: "project", hide: "" }, { field: "tag", hide: "" }, { field: "status", hide: "" },
+  { field: "importance", hide: "" }, { field: "modified-by", hide: "hide-md" }, { field: "created-by", hide: "hide-md" },
+];
+const TYPE_ICONS: Readonly<Record<string, string>> = {
+  fact: "layers", todo: "list", decision: "shield", note: "file", "skill-draft": "sparkle", "github-issue": "hash", "github-pr": "branch",
+};
+const TYPE_FAMILIES: Readonly<Record<string, string>> = { "skill-draft": "work", "github-issue": "upstream", "github-pr": "upstream" };
+const DEFAULT_TYPE_ICON = "layers";
+const VISIBLE_TAGS = 2;
+const DATE_FORMAT: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" };
+
+const records = (count: number) => `${count} ${count === 1 ? "record" : "records"}`;
+const visible = (element: Element | null) => element !== null && element.getClientRects().length > 0;
+
+function SkeletonCell({ shape }: { shape: Skeleton }) {
+  switch (shape) {
+    case "record": return <div className="rec"><span className="rec-icon" /><div className="grow"><span className="skeleton sk-60" /><span className="skeleton sk-30" /></div></div>;
+    case "two-line": return <><span className="skeleton sk-60" /><span className="skeleton sk-30" /></>;
+    case "bar": return <span className="skeleton sk-60" />;
+    case "short": return <span className="skeleton sk-30" />;
+    case "full": return <span className="skeleton" />;
+    case "none": return null;
+  }
+}
+
+/** The query with every diagnostic span marked, and one caret line per diagnostic (mockup "invalid"). */
+function QueryDiagnostics({ query, diagnostics }: { query: string; diagnostics: readonly Diagnostic[] }) {
+  const marked = (index: number) => diagnostics.some((d) => index >= d.start && index < Math.max(d.end, d.start + 1));
+  const segments: Array<{ text: string; marked: boolean }> = [];
+  // A span at the end of the query marks the position after it.
+  const text = diagnostics.some((d) => d.start >= query.length) ? `${query} ` : query;
+  for (let index = 0; index < text.length; index++) {
+    const last = segments.at(-1);
+    if (last !== undefined && last.marked === marked(index)) last.text += text[index];
+    else segments.push({ text: text[index]!, marked: marked(index) });
+  }
+  return <div className="query-diag">
+    <div aria-hidden="true">{segments.map((segment, index) => segment.marked ? <span key={index} className="diag-span">{segment.text}</span> : segment.text)}</div>
+    <ul className="diag-caret" aria-label="Search errors">{diagnostics.map((d, index) => <li key={index}>
+      <span aria-hidden="true">{" ".repeat(d.start)}^ </span>position {d.start + 1}: {d.message}</li>)}</ul>
+  </div>;
+}
+
+function Tags({ tags }: { tags: readonly string[] }) {
+  if (tags.length === 0) return <span className="none">—</span>;
+  const sorted = [...tags].sort();
+  // At most two chips then "+N"; one chip below 1100 px (the narrow counter replaces the wide one there).
+  return <div className="tags">
+    {sorted.slice(0, VISIBLE_TAGS).map((tag) => <span key={tag} className="chip" title={tag}>{tag}</span>)}
+    {sorted.length > VISIBLE_TAGS && <span className="tags-more tags-more-wide" title={sorted.slice(VISIBLE_TAGS).join(", ")}>+{sorted.length - VISIBLE_TAGS}</span>}
+    {sorted.length > 1 && <span className="tags-more tags-more-narrow" title={sorted.slice(1).join(", ")}>+{sorted.length - 1}</span>}
+  </div>;
+}
+
+function Importance({ value }: { value: string }) {
+  return value === "critical" ? <span className="status status-danger">critical</span> : <span className={`importance importance-${value}`}>{value}</span>;
+}
+
+function RecordRow({ item, onOpen }: { item: Summary; onOpen: (key: string) => void }) {
+  const key = summaryKey(item);
+  const archived = item.status === "archived";
+  const review = item.humanAttention === "required";
+  const modified = new Date(item.modifiedAt);
+  // The whole row opens the record; its button is the keyboard path and keeps text selection usable.
+  const open = (event: MouseEvent<HTMLTableRowElement>) => {
+    if (event.target instanceof Element && event.target.closest("button, a") !== null) return;
+    if (window.getSelection()?.isCollapsed === false) return;
+    onOpen(key);
+  };
+  return <tr data-row-id={key} className={archived ? "is-archived" : undefined} onClick={open}>
+    <td><div className="rec">
+      <span className="rec-icon" data-family={TYPE_FAMILIES[item.type]}><UiIcon name={TYPE_ICONS[item.type] ?? DEFAULT_TYPE_ICON} /></span>
+      <button type="button" className="rec-open" aria-label={key} onClick={() => onOpen(key)}>
+        <span className="cell-title" title={item.title}>{item.title}</span>
+        <span className="cell-sub"><span className="rec-key" title={key}>{key}</span>
+          {archived ? <span className="chip">archived</span> : item.status !== "actual" && <span className="chip chip-outline">{item.status}</span>}
+          {review && <span className="chip chip-warn show-sm">Needs review</span>}</span>
+      </button>
+    </div></td>
+    <td className="hide-sm"><span className="chip chip-outline" title={item.type}>{item.type}</span></td>
+    <td className="hide-md" title={item.project}>{item.project}</td>
+    <td className="hide-sm"><Tags tags={item.tags ?? []} /></td>
+    <td className="hide-sm">{review && <span className="chip chip-warn">Needs review</span>}</td>
+    <td className="hide-sm"><Importance value={item.importance} /></td>
+    <td><time dateTime={item.modifiedAt} title={item.modifiedAt}>{modified.toLocaleString(undefined, DATE_FORMAT)}</time>
+      <span className="cell-sub" title={item.modifiedBy}><span>by {item.modifiedBy}</span></span></td>
+    <td className="col-num hide-md" title={String(item.revision)}>{item.revision}</td>
+  </tr>;
+}
 
 export function Browse({ initial, preset, onOpen, onAuthLost }: {
   initial: BrowseState;
@@ -51,7 +160,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const [items, setItems] = useState<Summary[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
   const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
-  const [error, setError] = useState("");
+  const [failure, setFailure] = useState<Failure | null>(null);
   const [busy, setBusy] = useState(true);
   const sequence = useRef(0);
   const composing = useRef(false);
@@ -59,9 +168,15 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const pending = useRef<number | null>(null);
   const continuation = useRef<string | undefined>(undefined);
   const applied = useRef(initial);
-  const panel = useRef<HTMLDivElement>(null);
+  const table = useRef<HTMLTableElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  const queryInput = useRef<HTMLInputElement | null>(null);
+  const editedByShortcut = useRef(false);
+  const syntax = useRef<HTMLDialogElement>(null);
   const [changed, setChanged] = useState(false);
+  // A submitted query the server's analyzer rejected: it is not applied, the list keeps the applied query's rows.
+  const [rejected, setRejected] = useState<{ query: string; diagnostics: Diagnostic[] } | null>(null);
+  const validation = useRef(0);
   const anchor = useRef<Anchor | null>(null);
   const section = useRef<HTMLElement>(null);
   const kept = useRef(new Map<string, Kept>());
@@ -74,20 +189,20 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   // Where the page was while this list was last shown: the list may be hidden when its route changes.
   const pageTop = useRef(0);
   useEffect(() => {
-    const onScroll = () => { if (section.current !== null && section.current.getClientRects().length > 0) pageTop.current = window.scrollY; };
+    const onScroll = () => { if (visible(section.current)) pageTop.current = window.scrollY; };
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
   }, []);
-  const helpId = useId();
+  const headingId = useId();
+  const syntaxId = useId();
   const live = useLiveUpdates();
-  const inbox = preset === "inbox";
 
-  // The first row visible in the scrolled results panel and its offset, so that a refreshed chain keeps it in place.
+  // The first row below the sticky table header and its offset, so that a refreshed chain keeps it in place.
   function captureAnchor(): Anchor | null {
-    const container = panel.current;
-    if (container === null || container.scrollTop === 0) return null;
-    const top = container.getBoundingClientRect().top;
-    for (const row of container.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")) {
+    const element = table.current;
+    if (element === null || !visible(element) || window.scrollY === 0) return null;
+    const top = element.tHead!.getBoundingClientRect().bottom;
+    for (const row of element.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")) {
       const rect = row.getBoundingClientRect();
       if (rect.bottom > top) return { key: row.dataset.rowId!, top: rect.top };
     }
@@ -96,27 +211,32 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   useLayoutEffect(() => {
     const kept = anchor.current;
     anchor.current = null;
-    const container = panel.current;
-    if (kept === null || container === null) return;
-    const row = [...container.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")].find((candidate) => candidate.dataset.rowId === kept.key);
-    if (row !== undefined) container.scrollTop += row.getBoundingClientRect().top - kept.top;
+    if (kept === null || table.current === null) return;
+    const row = [...table.current.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")].find((candidate) => candidate.dataset.rowId === kept.key);
+    if (row !== undefined) window.scrollBy(0, row.getBoundingClientRect().top - kept.top);
   }, [items]);
-  // A restored route gets its scroll positions and focus back once its rows are rendered.
+  // A restored route gets its scroll position and focus back once its rows are rendered.
   useLayoutEffect(() => {
     const route = restored.current;
     restored.current = null;
     if (route === null) return;
-    if (panel.current !== null) panel.current.scrollTop = route.tag === "complete" ? route.panelTop : 0;
     window.scrollTo(0, route.pageTop);
     if (route.focus instanceof HTMLElement && route.focus.isConnected) route.focus.focus({ preventScroll: true });
   }, [items]);
+  // A filter shortcut edited the draft: the caret goes to its end so that completions follow the inserted term.
+  useLayoutEffect(() => {
+    if (!editedByShortcut.current || queryInput.current === null) return;
+    editedByShortcut.current = false;
+    queryInput.current.setSelectionRange(query.length, query.length);
+    queryInput.current.focus({ preventScroll: true });
+  }, [query]);
 
   const run = useCallback(async (state: BrowseState, load: Load) => {
     if (load.kind === "append" && (pending.current !== null || load.cursor !== continuation.current)) return;
     const request = ++sequence.current;
     pending.current = request;
     setBusy(true);
-    setError("");
+    setFailure(null);
     setDiagnostics([]);
     if (load.kind !== "append") setChanged(false);
     refreshing.current = load.kind === "refresh";
@@ -125,10 +245,11 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       setItems([]);
       continuation.current = undefined;
       setCursor(undefined);
-      if (panel.current !== null) panel.current.scrollTop = 0;
+      // A new query or sort starts at the top of its list.
+      if (visible(section.current) && window.scrollY > 0) window.scrollTo(0, 0);
     }
     try {
-      if (state.migrationError !== null) { phase.current = "failed"; setError(state.migrationError); return; }
+      if (state.migrationError !== null) { phase.current = "failed"; setFailure({ load: "first", message: state.migrationError }); return; }
       const wanted = load.kind === "refresh" ? load.rows : PAGE_SIZE;
       const rows: Summary[] = [];
       let next = load.kind === "append" ? load.cursor : undefined;
@@ -153,17 +274,18 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       if (request !== sequence.current) return;
       // A failed first search fails the route; a failed append or refresh keeps the settled rows and shows the error.
       if (load.kind === "first") phase.current = "failed";
-      if (load.kind === "refresh") { refreshing.current = false; setChanged(true); }
+      // A failed refresh of shown rows announces the change again; a failed route offers Retry instead.
+      if (load.kind === "refresh") { refreshing.current = false; if (phase.current === "settled") setChanged(true); }
       if (err instanceof AuthError) {
         onAuthLost();
         return;
       }
       if (err instanceof ApiError && err.code === "invalid-query") {
         setDiagnostics(err.spans ?? []);
-        setError("Invalid search query.");
+        setFailure({ load: load.kind, message: INVALID_QUERY });
         return;
       }
-      setError(err instanceof NetworkError ? "Server unreachable — the service may be down." : `Search failed: ${err instanceof Error ? err.message : "unknown"}`);
+      setFailure({ load: load.kind, message: err instanceof NetworkError ? "Server unreachable — the service may be down." : `Search failed: ${err instanceof Error ? err.message : "unknown"}.` });
     } finally {
       if (request === sequence.current) { pending.current = null; setBusy(false); }
     }
@@ -174,6 +296,8 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     if (!sameBrowseState(initial, applied.current)) {
       setQuery(initial.query);
     }
+    validation.current++;
+    setRejected(null);
     setSort(initial.sort);
     applied.current = initial;
     const outgoing = shown.current;
@@ -182,12 +306,12 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       const key = browseHash(outgoing, preset);
       const focused = document.activeElement;
       const focus = focused !== null && section.current !== null && section.current.contains(focused) ? focused : null;
-      const top = section.current !== null && section.current.getClientRects().length > 0 ? window.scrollY : pageTop.current;
+      const top = visible(section.current) ? window.scrollY : pageTop.current;
       kept.current.delete(key);
       // `cursor` is the settled continuation: an append in flight has not replaced it, so the next append can follow.
-      if (phase.current === "settled") kept.current.set(key, { tag: "complete", items, cursor, error, changesPending: changed || refreshing.current,
-        version: live.version, panelTop: panel.current === null ? 0 : panel.current.scrollTop, pageTop: top, focus });
-      else if (phase.current === "failed") kept.current.set(key, { tag: "failed", error, diagnostics, pageTop: top, focus });
+      if (phase.current === "settled") kept.current.set(key, { tag: "complete", items, cursor, failure, changesPending: changed || refreshing.current,
+        version: live.version, pageTop: top, focus });
+      else if (phase.current === "failed" && failure !== null) kept.current.set(key, { tag: "failed", failure, diagnostics, pageTop: top, focus });
       if (kept.current.size > MAX_KEPT_ROUTES) kept.current.delete(kept.current.keys().next().value!);
     }
     const hash = initial.migrationError === null ? browseHash(initial, preset) : null;
@@ -200,7 +324,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     refreshing.current = false;
     restored.current = back;
     setBusy(false);
-    setError(back.error);
+    setFailure(back.failure);
     if (back.tag === "failed") {
       phase.current = "failed";
       continuation.current = undefined;
@@ -223,23 +347,26 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const refresh = () => run(applied.current, { kind: "refresh", rows: Math.max(items.length, PAGE_SIZE) });
   useEffect(() => {
     if (live.version === 0) return;
-    const untouched = (panel.current === null || panel.current.scrollTop === 0) && items.length <= PAGE_SIZE;
-    if (untouched) void refresh();
+    const top = visible(section.current) ? window.scrollY : pageTop.current;
+    if (top === 0 && items.length <= PAGE_SIZE) void refresh();
     else setChanged(true);
   }, [live.version, run]);
   useEffect(() => () => { sequence.current++; }, []);
 
+  const blocked = failure !== null && failure.load === "append";
   useEffect(() => {
-    if (cursor === undefined || busy || error !== "" || sentinel.current === null || typeof IntersectionObserver === "undefined") return;
+    if (cursor === undefined || busy || blocked || sentinel.current === null || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver((entries) => {
       if (entries.some((entry) => entry.isIntersecting)) void run(applied.current, { kind: "append", cursor });
-    }, { root: panel.current, rootMargin: PREFETCH_MARGIN });
+    }, { rootMargin: PREFETCH_MARGIN });
     observer.observe(sentinel.current);
     return () => observer.disconnect();
-  }, [cursor, busy, error, run]);
+  }, [cursor, busy, blocked, run]);
 
   function apply(state: BrowseState) {
     if (state.migrationError !== null) return;
+    validation.current++;
+    setRejected(null);
     // Invalidate an in-flight page before the hashchange event can arrive.
     pending.current = ++sequence.current;
     continuation.current = undefined;
@@ -258,82 +385,163 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     apply({ ...applied.current, sort: next });
   }
 
-  function sortHeader(field: SearchSortField, label: string) {
-    return <th key={field} scope="col" aria-sort={sort.field === field ? sort.direction === "asc" ? "ascending" : "descending" : "none"}>
-      <button type="button" className="sort-header" disabled={initial.migrationError !== null} aria-label={`Sort by ${label}`} onClick={() => changeSort(field)}>
-        {label}<span aria-hidden="true">{sort.field === field ? sort.direction === "asc" ? "↑" : "↓" : "↕"}</span>
-      </button>
-    </th>;
+  /** Search: a changed expression is checked by the server's analyzer first, so that an invalid one is not applied. */
+  async function submit() {
+    const state: BrowseState = { query, sort, migrationError: initial.migrationError };
+    if (query === applied.current.query) { apply(state); return; }
+    const check = ++validation.current;
+    let result: { valid: boolean; diagnostics: Diagnostic[] };
+    try { result = await api.analyze(query); }
+    catch (err) {
+      if (check !== validation.current) return;
+      if (err instanceof AuthError) { onAuthLost(); return; }
+      // The search reports what the analyzer could not.
+      apply(state);
+      return;
+    }
+    if (check !== validation.current) return;
+    if (result.valid) apply(state);
+    else setRejected({ query, diagnostics: result.diagnostics });
   }
 
-  return (<>
-    {changed && <div className="update-pill"><button type="button" onClick={() => void refresh()}>Records changed · Show</button></div>}
-    <section ref={section} className="browse-view" aria-label="Browse" aria-busy={busy}>
-      <div className="page-heading"><div>
-        <h1>{HEADINGS[preset]}</h1>
-        <p>{inbox ? "Records requiring review." : "Search by text, metadata, tags, or project."}</p></div></div>
-      <form
-        className="search-panel"
-        onSubmit={(e) => {
-          e.preventDefault();
-          if (composing.current) return;
-          apply({ query, sort, migrationError: initial.migrationError });
-        }}
-      >
-        <QueryInput value={query} onChange={setQuery} onAuthLost={onAuthLost} onCompositionChange={(state) => { composing.current = state; }} />
-        <div className="search-actions"><button className="primary" type="submit" disabled={initial.migrationError !== null}
+  function changeDraft(next: string) {
+    setRejected(null);
+    setQuery(next);
+  }
+
+  function editDraft(next: string | null) {
+    if (next === null) return;
+    editedByShortcut.current = true;
+    changeDraft(next);
+  }
+
+  function retry(load: Failure["load"]) {
+    if (load === "first") void run(applied.current, { kind: "first" });
+    else if (load === "refresh") void refresh();
+    else if (cursor !== undefined) void run(applied.current, { kind: "append", cursor });
+  }
+
+  const migration = initial.migrationError !== null;
+  const draft = !migration && query !== applied.current.query;
+  const appliedQuery = applied.current.query;
+  const firstFailure = failure !== null && items.length === 0 ? failure : null;
+  const laterFailure = failure !== null && items.length > 0 ? failure : null;
+  const loadingFirst = busy && items.length === 0 && failure === null;
+  const empty = !busy && failure === null && items.length === 0;
+  const inboxEmpty = empty && preset === "inbox" && appliedQuery === PRESETS.inbox.query;
+  const counter = rejected !== null ? `Query not applied · ${items.length} loaded`
+    : migration || (firstFailure !== null && diagnostics.length === 0) ? "Not loaded"
+    : firstFailure !== null ? "Query not applied"
+    : loadingFirst ? "Loading records…"
+    : empty ? inboxEmpty ? "Nothing to review" : "No matches"
+    : cursor === undefined ? `All ${records(items.length)} loaded` : `${items.length} loaded · more available`;
+  const includeArchived = appendFilter(appliedQuery, "archived", "all");
+
+  return (<section ref={section} className="browse" aria-labelledby={headingId} aria-busy={busy}>
+    <h1 id={headingId} className="sr-only">{PRESETS[preset].label}</h1>
+    <form className="viewbar" role="search" aria-label="Search records" onSubmit={(e) => {
+      e.preventDefault();
+      if (composing.current) return;
+      void submit();
+    }}>
+      <QueryInput value={query} draft={draft && rejected === null} inputRef={queryInput} onChange={changeDraft} onAuthLost={onAuthLost} onCompositionChange={(state) => { composing.current = state; }}>
+        <button className="btn btn-primary" type="submit" disabled={migration}
           onPointerDownCapture={(event) => { blockedSearchPointer.current = composing.current; if (composing.current) event.preventDefault(); }}
-          onClickCapture={(event) => { if (composing.current || blockedSearchPointer.current) { event.preventDefault(); event.stopPropagation(); } blockedSearchPointer.current = false; }}>Search</button></div>
-      </form>
-      {(initial.migrationError === null && query !== applied.current.query) && <p className="draft-status" role="status">Draft changed · press Search to update results.</p>}
-      {diagnostics.length > 0 && (
-        <ul aria-label="Search errors">
-          {diagnostics.map((d, i) => (
-            <li key={i}>
-              {d.message} [{d.start},{d.end})
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="results-heading"><h2>{inbox ? "Waiting for review" : "Records"} <span className="count-badge">{items.length}{cursor !== undefined && "+"}</span></h2><span>Sorted by {SORT_COLUMNS.find((column) => column.field === sort.field)?.label ?? "record key"} {sort.direction === "asc" ? "↑" : "↓"}</span></div>
-      <p id={helpId} className="scroll-help">Scroll the table to load more records. Select a column heading to sort all results.</p>
-      {error !== "" && <p role="alert">{error} {diagnostics.length === 0 && initial.migrationError === null && <button type="button" onClick={() => void run(applied.current, cursor === undefined ? { kind: "first" } : { kind: "append", cursor })}>Retry loading records</button>}</p>}
-      {items.length === 0 && !busy && error === "" && <div className="empty-state"><Icon name={inbox ? "inbox" : "search"} /><h3>{inbox ? "No records requiring review" : "No records found"}</h3><p>{inbox ? "Records requiring attention appear here." : "Try a different query or include archived records."}</p></div>}
-        <div className="records-panel" ref={panel} role="region" aria-label="Record results" aria-describedby={helpId} tabIndex={0}><table>
-          <thead>
-            <tr>
-              {SORT_COLUMNS.slice(0, 6).map((column) => sortHeader(column.field, column.label))}
-              <th scope="col">Tags</th>
-              {SORT_COLUMNS.slice(6).map((column) => sortHeader(column.field, column.label))}
-            </tr>
-          </thead>
-          <tbody>
-            {items.map((item) => (
-              <tr key={summaryKey(item)} data-row-id={summaryKey(item)}>
-                <td>
-                  <button className="record-open" type="button" aria-label={summaryKey(item)} onClick={() => onOpen(summaryKey(item))}>
-                    <span className={`record-icon type-${item.type}`}><Icon name={item.type === "skill-draft" ? "spark" : item.type.startsWith("github-") ? "branch" : "stack"} /></span>
-                    <span><strong>{item.title}</strong><small>{item.item}</small></span>
-                  </button>
-                </td>
-                <td data-label="Project" className="project-cell">{item.project}</td>
-                <td data-label="Type"><span className="type-badge">{item.type}</span></td>
-                <td data-label="Status"><span className={`status-badge ${item.status === "archived" ? "archived" : ""}`}>{item.status}</span></td>
-                <td data-label="Priority"><span className={`priority ${item.importance === "high" ? "high" : ""}`}>{item.importance}</span></td>
-                <td data-label="Attention"><span className={`attention-badge ${item.humanAttention === "required" ? "required" : ""}`}>{item.humanAttention === "required" ? "Needs review" : "Reviewed"}</span></td>
-                <td data-label="Tags">{(item.tags ?? []).length === 0 ? <span className="empty-tags">—</span> : (item.tags ?? []).join(", ")}</td>
-                <td data-label="Modified" className="modified-cell">
-                  <span>{item.modifiedBy}</span><time dateTime={item.modifiedAt} title={item.modifiedAt}>{new Date(item.modifiedAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}</time>
-                </td>
-                <td data-label="Revision">{item.revision}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table><div ref={sentinel} className="scroll-sentinel" aria-hidden="true" /></div>
-      <div className="results-footer">
-        <span role="status" aria-live="polite">{busy ? items.length === 0 ? "Searching…" : "Loading more records…" : error === "" && items.length > 0 && cursor === undefined ? `All ${items.length} records loaded.` : `${items.length} records loaded.`}</span>
-        {cursor !== undefined && error === "" && <button type="button" disabled={busy} onClick={() => void run(applied.current, { kind: "append", cursor })}>Load more records</button>}
+          onClickCapture={(event) => { if (composing.current || blockedSearchPointer.current) { event.preventDefault(); event.stopPropagation(); } blockedSearchPointer.current = false; }}>Search</button>
+      </QueryInput>
+      <div className="viewbar-meta" role="status" aria-live="polite">{counter}</div>
+    </form>
+    <div className="filterbar" role="group" aria-label="Filter shortcuts">
+      {TOGGLES.map(({ label, term }) => <button key={term} type="button" className="filter" aria-pressed={hasConjunct(query, term)} title={term}
+        disabled={migration} onClick={() => editDraft(toggleConjunct(query, term))}>{label}</button>)}
+      <span className="filter-divider" aria-hidden="true" />
+      {FIELD_INSERTERS.map(({ field, hide }) => <button key={field} type="button" className={`filter filter-field ${hide}`} aria-label={`Add ${field} filter`}
+        disabled={migration} onClick={() => editDraft(appendField(query, field))}>{field}:</button>)}
+      <div className="sortline">
+        <button type="button" className="link-button" aria-haspopup="dialog" aria-controls={syntaxId} onClick={() => syntax.current!.showModal()}>Query syntax</button>
       </div>
-    </section>
-  </>);
+    </div>
+    {rejected !== null && <div className="inline-notice">
+      <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">
+        <div className="notice-title">{INVALID_QUERY}</div>
+        The query was not applied; the list below still shows the previous query.
+        <QueryDiagnostics query={rejected.query} diagnostics={rejected.diagnostics} />
+      </div></div>
+    </div>}
+    {firstFailure !== null && (migration || diagnostics.length > 0) && <div className="inline-notice">
+      <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">
+        {migration ? firstFailure.message : <>
+          <div className="notice-title">{INVALID_QUERY}</div>
+          <QueryDiagnostics query={appliedQuery} diagnostics={diagnostics} />
+        </>}
+      </div></div>
+    </div>}
+    {firstFailure !== null && !migration && diagnostics.length === 0 && <div className="page">
+      <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">
+        <div className="notice-title">Records could not be loaded</div>
+        {firstFailure.message} Your query is unchanged and nothing was modified.
+        <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => retry("first")}>Retry</button></div>
+      </div></div>
+    </div>}
+    {changed && <div className="update-pill" role="status"><button type="button" onClick={() => void refresh()}><UiIcon name="arrow-up" />Records changed · Show</button></div>}
+    <div className="records" role="region" aria-label="Record results">
+      {(items.length > 0 || loadingFirst) && <table ref={table} className="table table-2line" aria-label="Records">
+        <colgroup>{COLUMNS.map((column) => <col key={column.label} className={`${column.col} ${column.hide}`} />)}</colgroup>
+        <thead><tr>{COLUMNS.map((column) => {
+          const sorted = column.sort !== null && sort.field === column.sort.field;
+          return <th key={column.label} scope="col" className={column.label === "Rev" ? `col-num ${column.hide}` : column.hide}
+            aria-sort={sorted ? sort.direction === "asc" ? "ascending" : "descending" : undefined}>
+            {column.sort === null ? column.label : <button type="button" className="th-sort" disabled={migration} aria-label={`Sort by ${column.sort.name}`}
+              onClick={() => changeSort(column.sort!.field)}>{column.label}</button>}
+          </th>;
+        })}</tr></thead>
+        {loadingFirst ? <tbody aria-hidden="true" data-skeleton="">
+          {Array.from({ length: SKELETON_ROWS }, (_, row) => <tr key={row}>{COLUMNS.map((column) => <td key={column.label} className={column.hide}>
+            <SkeletonCell shape={column.skeleton} /></td>)}</tr>)}
+        </tbody> : <tbody>{items.map((item) => <RecordRow key={summaryKey(item)} item={item} onOpen={onOpen} />)}</tbody>}
+      </table>}
+      {inboxEmpty && <div className="empty">
+        <UiIcon name="check-circle" />
+        <h2>Inbox zero</h2>
+        <p>No record is waiting for human review. Records flagged by agents or people appear here automatically.</p>
+        <div className="row"><a className="btn" href="#/browse">Browse all records</a></div>
+      </div>}
+      {empty && !inboxEmpty && <div className="empty">
+        <UiIcon name="search" />
+        <h2>No matching records</h2>
+        <p>{appliedQuery.trim() === "" ? "There are no records yet." : <>Nothing matches <code>{appliedQuery}</code>.</>} Archived records are not searched unless the query says <code>archived:all</code>.</p>
+        <div className="row">
+          {appliedQuery !== "" && <button type="button" className="btn" onClick={() => { changeDraft(""); apply({ ...applied.current, query: "" }); }}>Clear query</button>}
+          {includeArchived !== null && !/\barchived:/i.test(appliedQuery) && <button type="button" className="btn" onClick={() => { changeDraft(includeArchived); apply({ ...applied.current, query: includeArchived }); }}>Include archived</button>}
+          <button type="button" className="btn btn-ghost" onClick={() => syntax.current!.showModal()}>Query syntax</button>
+        </div>
+      </div>}
+      {items.length > 0 && (laterFailure !== null ? <div className="inline-notice foot-notice">
+        <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">
+          <span className="notice-title">{laterFailure.load === "refresh" ? "The changed records could not be loaded." : "The next records could not be loaded."}</span>
+          {" "}{laterFailure.message} The {records(items.length)} above {items.length === 1 ? "is" : "are"} kept.{laterFailure.load === "append" && " Automatic loading is paused."}
+        </div><button type="button" className="btn btn-sm" onClick={() => retry(laterFailure.load)}>Retry loading records</button></div>
+      </div> : cursor === undefined ? <div className="list-foot list-end" data-list-end="">End of list · {records(items.length)}</div>
+        : <div ref={sentinel} className="list-foot">{busy && <span className="spinner" aria-hidden="true" />}{busy ? "Loading more records…" : "More records load as you scroll"}</div>)}
+    </div>
+    <dialog ref={syntax} id={syntaxId} className="dialog dialog-wide" aria-labelledby={`${syntaxId}-title`}>
+      <div className="dialog-head"><h2 id={`${syntaxId}-title`}>Query syntax</h2>
+        <button type="button" className="btn btn-ghost btn-icon" aria-label="Close" onClick={() => syntax.current!.close()}><UiIcon name="x" /></button></div>
+      <div className="dialog-body">
+        <p>Unquoted words match normalised text; quoted text matches a phrase. All filters belong in the expression: combine them with <code>AND</code>, <code>OR</code>, <code>NOT</code> and parentheses. A space means <code>AND</code>; quote values that contain spaces or colons.</p>
+        <dl className="dl syntax-dl">
+          <dt><code>type:todo</code></dt><dd>record type</dd>
+          <dt><code>project:example</code></dt><dd>project (namespace) of the record</dd>
+          <dt><code>tag:"machine learning"</code></dt><dd>has the tag</dd>
+          <dt><code>human-attention:required</code></dt><dd>waiting for human review (the Inbox)</dd>
+          <dt><code>importance:high</code></dt><dd>also <code>status:</code>, <code>id:</code></dd>
+          <dt><code>modified-by:op</code></dt><dd>author of the latest revision; <code>created-by:</code> of the first</dd>
+          <dt><code>archived:true</code></dt><dd>only archived; <code>archived:all</code> includes them (default: hidden)</dd>
+        </dl>
+        <p>Time comparison: <code>modified-at &gt;= "2026-10-01T00:00:00Z"</code>.</p>
+        <p>Example: <code>(type:todo OR type:fact) tag:"machine learning"</code>. Press <span className="kbd">Enter</span> or Search to apply exactly the visible query; <span className="kbd">Ctrl</span> <span className="kbd">Space</span> asks for suggestions.</p>
+      </div>
+      <div className="dialog-foot"><button type="button" className="btn" onClick={() => syntax.current!.close()}>Close</button></div>
+    </dialog>
+  </section>);
 }

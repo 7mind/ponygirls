@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { appendFilter, completionEdit, completionRange } from "../src/query-edit.ts";
+import { appendField, appendFilter, completionEdit, completionRange, hasConjunct, toggleConjunct } from "../src/query-edit.ts";
 
 test("legacy scope edits conjoin the entire OR body and encode exact literals", () => {
   assert.equal(appendFilter("type:todo OR type:fact", "tag", 'a b:"\\🐎'), '(type:todo OR type:fact) tag:"a b:\\\"\\\\🐎"');
@@ -38,4 +38,23 @@ test("completion inserts a separator after operators but never exceeds the query
   assert.deepEqual(completionEdit("(type:f)", { start: 1, end: 7 }, "type:fact"), { query: "(type:fact)", caret: 10 });
   assert.deepEqual(completionEdit("ty fact", { start: 0, end: 2, fragment: "ty" }, "type:"), { query: "type: fact", caret: 5 });
   assert.equal(completionEdit("a".repeat(4091) + " ty", { start: 4092, end: 4094, fragment: "ty" }, "type:"), null);
+});
+
+test("filter shortcuts toggle a top-level conjunct and append field prefixes to the draft", () => {
+  assert.equal(toggleConjunct("", "archived:true"), "archived:true");
+  assert.equal(toggleConjunct("type:todo", "archived:true"), "type:todo archived:true");
+  assert.equal(toggleConjunct("type:todo OR type:fact", "archived:true"), "(type:todo OR type:fact) archived:true");
+  assert.equal(toggleConjunct("type:todo AND archived:true", "archived:true"), "type:todo");
+  assert.equal(toggleConjunct('archived:true AND tag:"a b"', "archived:true"), 'tag:"a b"');
+  assert.equal(toggleConjunct("type:todo (", "archived:true"), null, "an incomplete draft is not edited");
+  assert.equal(hasConjunct("human-attention:required", "human-attention:required"), true);
+  assert.equal(hasConjunct("type:todo human-attention:required", "human-attention:required"), true);
+  assert.equal(hasConjunct("type:todo OR human-attention:required", "human-attention:required"), false, "a disjunct is not a filter");
+  assert.equal(hasConjunct("NOT human-attention:required", "human-attention:required"), false);
+  assert.equal(hasConjunct('tag:"human-attention:required"', "human-attention:required"), false);
+  assert.equal(hasConjunct("(type:todo human-attention:required)", "human-attention:required"), false);
+  assert.equal(appendField("", "type"), "type:");
+  assert.equal(appendField("project:a  ", "tag"), "project:a tag:");
+  assert.equal(appendField("(", "tag"), "(tag:");
+  assert.equal(appendField("a".repeat(4092), "tag"), null);
 });

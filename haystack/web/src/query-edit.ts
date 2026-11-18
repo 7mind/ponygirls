@@ -37,6 +37,65 @@ export function appendFilter(query: string, field: string, value: string): strin
   return next.length <= MAX_QUERY ? next : null;
 }
 
+/** Top-level terms of an expression: whitespace outside JSON strings, parentheses and brackets separates them. */
+function topLevelTerms(query: string): string[] {
+  const terms: string[] = [];
+  let term = "", quoted = false, escaped = false, depth = 0;
+  for (const char of query) {
+    if (escaped) escaped = false;
+    else if (quoted && char === "\\") escaped = true;
+    else if (char === '"') quoted = !quoted;
+    else if (!quoted && (char === "(" || char === "[")) depth++;
+    else if (!quoted && (char === ")" || char === "]")) depth--;
+    if (!quoted && depth === 0 && /\s/.test(char)) { if (term !== "") terms.push(term); term = ""; continue; }
+    term += char;
+  }
+  if (term !== "") terms.push(term);
+  return terms;
+}
+const OPERAND_PREFIX = /^(?:NOT|!=|<=|>=|=|<|>)$/i;
+
+/** Index of `term` as an unnegated conjunct of a complete expression without a top-level OR, else -1. */
+function conjunctIndex(terms: readonly string[], term: string): number {
+  if (terms.some((candidate) => /^OR$/i.test(candidate))) return -1;
+  return terms.findIndex((candidate, index) => candidate === term && (index === 0 || !OPERAND_PREFIX.test(terms[index - 1]!)) &&
+    (index + 1 === terms.length || !OPERAND_PREFIX.test(terms[index + 1]!)));
+}
+
+/** A filter shortcut is on when its exact term is a top-level conjunct of the expression. */
+export function hasConjunct(query: string, term: string): boolean {
+  return completeBody(query) && conjunctIndex(topLevelTerms(query), term) !== -1;
+}
+
+/**
+ * Turns a filter shortcut on (conjoins its term with the whole expression) or off (removes that conjunct and its
+ * adjacent AND). null when the expression is incomplete or the result would exceed the query limit.
+ */
+export function toggleConjunct(query: string, term: string): string | null {
+  if (!completeBody(query)) return null;
+  const terms = topLevelTerms(query);
+  const index = conjunctIndex(terms, term);
+  let next: string;
+  if (index === -1) {
+    const body = query.trim();
+    next = body === "" ? term : terms.some((candidate) => /^OR$/i.test(candidate)) ? `(${body}) ${term}` : `${body} ${term}`;
+  } else {
+    const and = (at: number) => at >= 0 && at < terms.length && /^AND$/i.test(terms[at]!);
+    const from = and(index - 1) ? index - 1 : index;
+    const to = from === index && and(index + 1) ? index + 2 : index + 1;
+    next = [...terms.slice(0, from), ...terms.slice(to)].join(" ");
+  }
+  return next.length <= MAX_QUERY ? next : null;
+}
+
+/** Appends a field prefix (`type:`) as the next term of the draft; null past the query limit. */
+export function appendField(query: string, field: string): string | null {
+  if (!FIELDS.has(field)) throw new Error(`unknown query field: ${field}`);
+  const body = query.trimEnd();
+  const next = `${body}${body === "" || body.endsWith("(") ? "" : " "}${field}:`;
+  return next.length <= MAX_QUERY ? next : null;
+}
+
 /** The completion API accepts a fragment, not a replacement span. Never splice
  * inside quotes (including a closed quoted value) or a noncollapsed selection. */
 export function completionRange(query: string, start: number, end: number): { start: number; end: number; fragment: string } | null {

@@ -1,18 +1,23 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode, type RefObject } from "react";
 import { api, AuthError } from "./api";
-import { Icon } from "./Icon";
+import { UiIcon } from "./Masthead";
 import { completionEdit, completionRange } from "./query-edit";
 
 interface Completion { stamp: string; start: number; end: number; values: string[] }
 const COMPLETION_DELAY_MS = 180;
 const COMPLETION_LIMIT = 20;
 
-export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }: {
-  value: string; onChange: (value: string) => void; onAuthLost: () => void; onCompositionChange: (value: boolean) => void;
+/**
+ * The query bar of a list's view bar: the expression input with completions, Clear, the draft hint and the
+ * submit control (`children`). `inputRef` lets the filter shortcuts edit the draft and return focus here.
+ */
+export function QueryInput({ value, draft, inputRef, onChange, onAuthLost, onCompositionChange, children }: {
+  value: string; draft: boolean; inputRef: RefObject<HTMLInputElement | null>; onChange: (value: string) => void; onAuthLost: () => void;
+  onCompositionChange: (value: boolean) => void; children: ReactNode;
 }) {
   const id = useId();
-  const input = useRef<HTMLInputElement | null>(null);
-  const list = useRef<HTMLDivElement | null>(null);
+  const input = inputRef;
+  const list = useRef<HTMLUListElement | null>(null);
   const pendingCaret = useRef<number | null>(null);
   const busy = useRef(false);
   const serial = useRef(0);
@@ -121,33 +126,32 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
     } else if (event.key === "Tab") setDismissed(true);
   }
 
-  return <div className="query-control">
-    <label htmlFor={`${id}-input`}>Query</label>
-    <div className="query-field">
-      <span className="search-input"><Icon name="search" />
-        <input id={`${id}-input`} ref={input} role="combobox" aria-autocomplete="list" aria-expanded={expanded}
-          aria-controls={expanded ? `${id}-options` : undefined} aria-activedescendant={expanded && values.length > 0 ? `${id}-option-${active}` : undefined}
-          placeholder='Search text or type:todo · Ctrl/⌘ K' maxLength={4096} value={value} autoComplete="off" spellCheck={false}
-          onChange={(event) => { setCompletion(null); locate(event.currentTarget); onChange(event.currentTarget.value); }}
-          onFocus={(event) => { setFocused(true); locate(event.currentTarget); }} onClick={(event) => locate(event.currentTarget)}
-          onSelect={(event) => { const element = event.currentTarget; setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart ?? -1 : -1); }}
-          onBlur={() => { setFocused(false); setDismissed(true); }} onKeyDown={keydown}
-          onCompositionStart={() => { setComposing(true); onCompositionChange(true); setCompletion(null); }}
-          onCompositionEnd={(event) => { setComposing(false); onCompositionChange(false); locate(event.currentTarget); }} />
-        <button type="button" className="query-clear" aria-label="Clear search expression" title="Clear query · Escape after dismissing suggestions" disabled={value === ""}
-          onMouseDown={(event) => event.preventDefault()} onClick={clear}>×</button>
-      </span>
-      {expanded && <div className="query-popup">
-        <div ref={list} id={`${id}-options`} role="listbox" aria-label="Query suggestions" className="query-options">
-          {values.map((suggestion, index) => <button key={`${index}:${suggestion}`} id={`${id}-option-${index}`} type="button" role="option"
-            tabIndex={-1} aria-selected={active === index} onMouseDown={(event) => event.preventDefault()}
-            onMouseMove={() => setActive(index)} onClick={() => accept(suggestion)}>{suggestion}</button>)}
-        </div>
-        {loading && <p role="status">Loading suggestions…</p>}
-        {error !== "" && <p role="status">{error}</p>}
-        {values.length > 0 && <div className="query-shortcuts">↑ ↓ select · Enter insert · Tab next field · Esc dismiss</div>}
-      </div>}
-    </div>
-    <details className="query-help"><summary>Search syntax</summary><p>Combine text and filters with <code>AND</code>, <code>OR</code>, <code>NOT</code> or parentheses. Spaces mean AND; quote values with spaces or colons.</p><p><code>(type:todo OR type:fact) tag:"machine learning"</code> · <code>modified-at &gt;= "2026-10-01T00:00:00Z"</code></p><p>All filters belong in this expression: <code>project:example tag:mcp archived:all</code>. Press Search to apply the exact visible query. Unquoted text matches normalized words; quoted text matches a phrase.</p></details>
+  return <div className="querybar">
+    <UiIcon name="search" />
+    <input id={`${id}-input`} ref={input} role="combobox" aria-label="Query" aria-autocomplete="list" aria-expanded={expanded}
+      aria-controls={expanded ? `${id}-options` : undefined} aria-activedescendant={expanded && values.length > 0 ? `${id}-option-${active}` : undefined}
+      placeholder="Search text or type:todo" maxLength={4096} value={value} autoComplete="off" spellCheck={false}
+      onChange={(event) => { setCompletion(null); locate(event.currentTarget); onChange(event.currentTarget.value); }}
+      onFocus={(event) => { setFocused(true); locate(event.currentTarget); }} onClick={(event) => locate(event.currentTarget)}
+      onSelect={(event) => { const element = event.currentTarget; setCaret(element.selectionStart === element.selectionEnd ? element.selectionStart ?? -1 : -1); }}
+      onBlur={() => { setFocused(false); setDismissed(true); }} onKeyDown={keydown}
+      onCompositionStart={() => { setComposing(true); onCompositionChange(true); setCompletion(null); }}
+      onCompositionEnd={(event) => { setComposing(false); onCompositionChange(false); locate(event.currentTarget); }} />
+    <button type="button" className="btn btn-ghost btn-icon btn-sm query-clear" aria-label="Clear search expression" title="Clear query · Escape after dismissing suggestions"
+      disabled={value === ""} onMouseDown={(event) => event.preventDefault()} onClick={clear}><UiIcon name="x" /></button>
+    {draft && <span className="query-draft" role="status">Draft · press Enter to apply</span>}
+    {!draft && <span className="kbd hide-md" aria-hidden="true">Ctrl K</span>}
+    {children}
+    {expanded && <div className="query-suggest">
+      <ul ref={list} id={`${id}-options`} role="listbox" aria-label="Query suggestions">
+        {values.map((suggestion, index) => <li key={`${index}:${suggestion}`} id={`${id}-option-${index}`} role="option"
+          aria-selected={active === index} onMouseDown={(event) => event.preventDefault()}
+          onMouseMove={() => setActive(index)} onClick={() => accept(suggestion)}>{suggestion}</li>)}
+      </ul>
+      {loading && <p role="status">Loading suggestions…</p>}
+      {error !== "" && <p role="status">{error}</p>}
+      {values.length > 0 && <footer aria-hidden="true"><span><span className="kbd">↑</span> <span className="kbd">↓</span> select</span>
+        <span><span className="kbd">Enter</span> insert</span><span><span className="kbd">Tab</span> next field</span><span><span className="kbd">Esc</span> dismiss</span></footer>}
+    </div>}
   </div>;
 }
