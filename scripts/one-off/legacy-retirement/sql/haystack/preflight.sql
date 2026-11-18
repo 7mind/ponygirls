@@ -15,7 +15,9 @@ SELECT 'LR.retrieval.v1_profiles', count(*) FROM pony_retrieval_profiles WHERE d
 \else
 \echo LR.retrieval.v1_profiles|0
 \endif
+SELECT 'LR.size.database_bytes', pg_database_size(current_database());
 SELECT 'LR.other_client_backends', count(*) FROM pg_stat_activity
 WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend';
 ROLLBACK;
+\echo LR.note|stored-document tolerance is decided by check-stored-documents.sh (real codec), not by these counters
 \echo LR.result|preflight-complete

@@ -1,4 +1,5 @@
--- Haystack verify: every legacy counter must be zero. Read-only; a non-zero counter fails the session (exit 3).
+-- Haystack verify: the replay ledger and the retrieval registry hold no legacy rows. Read-only; a non-zero counter
+-- fails the session (exit 3). The stored-document tolerance is verified separately by check-stored-documents.sh.
 SET default_transaction_read_only = on;
 SET statement_timeout = :'statement_timeout';
 SET lock_timeout = :'lock_timeout';
@@ -19,6 +20,7 @@ SELECT count(*) = 0 AS lr_retrieval_clean FROM pony_retrieval_profiles WHERE des
 \endif
 ROLLBACK;
 SELECT (:'lr_clean'::boolean AND :'lr_retrieval_clean'::boolean) AS lr_all_clean \gset
+\echo LR.note|stored-document tolerance is decided by check-stored-documents.sh (real codec), not by these counters
 \if :lr_all_clean
 \echo LR.result|verify-zero
 \else

@@ -14,6 +14,7 @@ DO $$ BEGIN RAISE EXCEPTION 'legacy-retirement refused: another legacy-retiremen
 BEGIN;
 \endif
 SELECT 'LR.database', current_database();
+\echo LR.backup_reference|:backup_reference
 \ir_counts
 SELECT 'LR.before.' || key, value FROM counts ORDER BY key;
 \ir_counts

@@ -23,17 +23,17 @@ export LEGACY_RETIREMENT_SCRIPTS=1   # the suites register their case only with 
 status=0
 # A selection that ran no case must fail: sbt reports success for an empty testOnly.
 suite() {
-  local log=$base/$1.log
-  shift
+  local log=$base/$1.log expected=$2
+  shift 2
   "$@" 2>&1 | tee "$log" || return 1
-  grep -q 'Passed: Total 1, Failed 0, Errors 0, Passed 1' "$log" || { echo "legacy-retirement test: expected exactly one passed case" >&2; return 1; }
+  grep -q "Passed: Total $expected, Failed 0, Errors 0, Passed $expected" "$log" || { echo "legacy-retirement test: expected exactly $expected passed cases" >&2; return 1; }
 }
 if [[ $which != haystack ]]; then
   CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/chronicle" CHRONICLE_REQUIRE_POSTGRES=1 \
-    suite chronicle bash scripts/backend-sbt.sh 'chronicleServer/testOnly chronicle.LegacyRetirementScriptsTest' || status=1
+    suite chronicle 2 bash scripts/backend-sbt.sh 'chronicleServer/testOnly chronicle.LegacyRetirementScriptsTest' || status=1
 fi
 if [[ $which != chronicle ]]; then
   HAYSTACK_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/haystack_scala_test" HAYSTACK_TEST_DB_USER=postgres HAYSTACK_TEST_DB_PASSWORD_FILE="$base/password" \
-    suite haystack bash scripts/backend-sbt.sh 'haystackServer/testOnly haystack.storage.LegacyRetirementScriptsTest' || status=1
+    suite haystack 3 bash scripts/backend-sbt.sh 'haystackServer/testOnly haystack.storage.LegacyRetirementScriptsTest' || status=1
 fi
 exit "$status"

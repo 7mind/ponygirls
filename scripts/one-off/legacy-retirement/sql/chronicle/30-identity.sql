@@ -1,6 +1,7 @@
 -- Chronicle migrate, part 3: one transaction. Transport-only relocation of the remaining v1 model identities
 -- (the transformation ModelIdentityMigration.apply performs for an executable profile, applied to retained ones),
 -- then removal of the proof, namespace and registry rows that only the v1 identity needed.
+-- No generation, job or rebuild receipt is deleted here or anywhere else in this migration.
 \if :lr_apply
 BEGIN;
 \endif
@@ -26,7 +27,7 @@ END $f$;
 CREATE FUNCTION pg_temp.lr_sha256(v text) RETURNS text LANGUAGE sql IMMUTABLE AS $f$ SELECT encode(sha256(convert_to(v, 'UTF8')), 'hex') $f$;
 DO $$
 DECLARE
-  n bigint; total bigint;
+  n bigint; total bigint; rehomed bigint := 0;
   s1 record; p record; pair record;
   canonical_space text; canonical_descriptor jsonb;
   new_descriptor jsonb; new_profile text; existing record;
@@ -35,29 +36,19 @@ DECLARE
                                   ['ch_generations','profile'],['ch_search_chunks','profile'],['ch_reindex_requests','target_profile']];
 BEGIN
   -- The batched part must be complete before identities are rewritten.
-  SELECT count(*) INTO n FROM ch_generations g
-  WHERE (g.passage_format IS DISTINCT FROM 'ContextAwareProblems' OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'));
-  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement incomplete: % retired-format generation(s) remain; run again (raise --max-batches or --batch-size)', n; END IF;
-  SELECT count(*) INTO n FROM ch_jobs WHERE profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1');
-  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement incomplete: % retired-policy job(s) remain; run again', n; END IF;
-  SELECT count(*) INTO n FROM ch_checkpoint_namespaces ns JOIN ch_jobs j ON j.id = ns.job_id AND j.run_id = ns.run_id WHERE j.state <> 'Complete';
-  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement incomplete: % unfinished v1-namespace run(s) remain; run again', n; END IF;
+  SELECT count(*) INTO n FROM ch_jobs j
+  WHERE j.state <> 'Complete' AND (
+    EXISTS (SELECT 1 FROM ch_checkpoint_namespaces ns WHERE ns.job_id = j.id AND ns.run_id = j.run_id)
+    OR (j.profile IN (SELECT q.profile FROM ch_index_profiles q JOIN ch_embedding_spaces e ON e.id = q.embedding_space WHERE e.descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')
+        AND (EXISTS (SELECT 1 FROM ch_index_checkpoints c WHERE c.job_id = j.id AND c.run_id = j.run_id)
+          OR EXISTS (SELECT 1 FROM ch_annotation_attempts a WHERE a.job_id = j.id AND a.run_id = j.run_id AND a.retry_epoch = j.annotation_retry_epoch))));
+  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement incomplete: % unfinished run(s) still hold v1-identity accepted work; run again (raise --max-batches or --batch-size)', n; END IF;
 
   -- Pre-persistent sessions: the conversion of migration 020, for a database that acquired deadline rows afterwards.
   DELETE FROM ch_sessions WHERE expires <= clock_timestamp();
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('sessions_expired_deleted', n);
   UPDATE ch_sessions SET expires = NULL WHERE expires IS NOT NULL;
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('sessions_made_persistent', n);
-
-  -- Rebuild receipts whose target is a retired policy: only superseded ones may go.
-  SELECT count(*) INTO n FROM ch_reindex_requests r
-  WHERE r.target_profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1')
-    AND NOT EXISTS (SELECT 1 FROM ch_reindex_requests later WHERE later.owner = r.owner AND (later.created_at, later.request_id) > (r.created_at, r.request_id));
-  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % owner(s) have a retired-policy rebuild as their latest rebuild request; rebuild those owners with the product first', n; END IF;
-  DELETE FROM ch_reindex_members m USING ch_reindex_requests r
-  WHERE m.owner = r.owner AND m.request_id = r.request_id AND r.target_profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1');
-  DELETE FROM ch_reindex_requests r WHERE r.target_profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1');
-  GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('retired_policy_rebuild_requests_deleted', n);
 
   -- The pre-owner-target singleton (read only by the startup seed for pre-007 archives): keep it resolvable until
   -- its table is dropped with the legacy code. A v1 profile it names is relocated with every other reference below.
@@ -88,14 +79,19 @@ BEGIN
     FOR p IN SELECT profile, policy, descriptor FROM ch_index_profiles WHERE embedding_space = s1.id ORDER BY profile LOOP
       SELECT (SELECT count(*) FROM ch_profile WHERE active = p.profile OR target = p.profile) + (SELECT count(*) FROM ch_owner_targets WHERE profile = p.profile)
            + (SELECT count(*) FROM ch_jobs WHERE profile = p.profile) + (SELECT count(*) FROM ch_generations WHERE profile = p.profile)
-           + (SELECT count(*) FROM (SELECT 1 FROM ch_search_chunks WHERE profile = p.profile LIMIT 1) one)
            + (SELECT count(*) FROM ch_reindex_requests WHERE target_profile = p.profile) INTO n;
+      -- ch_search_chunks has no index on profile: probe it only when nothing else decides.
+      IF n = 0 THEN SELECT count(*) INTO n FROM (SELECT 1 FROM ch_search_chunks WHERE profile = p.profile LIMIT 1) one; END IF;
       IF n = 0 THEN CONTINUE; END IF;  -- already relocated by the product CLI, or never used: only the registry row remains
       IF EXISTS (SELECT 1 FROM ch_model_identity_migrations WHERE legacy_profile = p.profile) THEN
         RAISE EXCEPTION 'legacy-retirement refused: a profile the product already relocated is referenced again';
       END IF;
       IF p.policy <> 'ContextAwareProblemsV1' THEN
-        RAISE EXCEPTION 'legacy-retirement refused: a retired-policy profile on a v1 space is still referenced';
+        -- A retired policy has no derivable canonical id (its writer is gone) and its id is opaque to the current
+        -- code: the registry row is re-homed onto the canonical space, id and descriptor unchanged.
+        UPDATE ch_index_profiles SET embedding_space = canonical_space WHERE profile = p.profile;
+        rehomed := rehomed + 1;
+        CONTINUE;
       END IF;
       IF jsonb_typeof(p.descriptor) <> 'array' OR jsonb_array_length(p.descriptor) <> 3 OR p.descriptor->>0 <> 'index-profile-descriptor-v1'
          OR jsonb_typeof(p.descriptor->2) <> 'string' OR p.descriptor->>2 = '' OR jsonb_typeof(p.descriptor->1) <> 'array' OR jsonb_array_length(p.descriptor->1) <> 5
@@ -122,6 +118,7 @@ BEGIN
     END LOOP;
   END LOOP;
   INSERT INTO lr_log(step, n) VALUES ('profiles_relocated', total);
+  INSERT INTO lr_log(step, n) VALUES ('retired_policy_profiles_rehomed', rehomed);
 
   -- A relocated rebuild receipt keeps a v1 id in its stored result; bring it to the control column's identity.
   UPDATE ch_reindex_requests SET result = jsonb_set(result, '{targetProfile}', to_jsonb(target_profile))
@@ -136,14 +133,18 @@ BEGIN
   DELETE FROM ch_model_identity_migrations;
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('model_identity_migrations_deleted', n);
   SELECT count(*) INTO n FROM ch_index_profiles q
-  WHERE (q.policy <> 'ContextAwareProblemsV1' OR q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2'))
+  WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')
     AND (EXISTS (SELECT 1 FROM ch_profile WHERE active = q.profile OR target = q.profile) OR EXISTS (SELECT 1 FROM ch_owner_targets WHERE profile = q.profile)
       OR EXISTS (SELECT 1 FROM ch_jobs WHERE profile = q.profile) OR EXISTS (SELECT 1 FROM ch_generations WHERE profile = q.profile)
-      OR EXISTS (SELECT 1 FROM ch_search_chunks WHERE profile = q.profile) OR EXISTS (SELECT 1 FROM ch_reindex_requests WHERE target_profile = q.profile));
-  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % legacy registry profile(s) are still referenced', n; END IF;
+      OR EXISTS (SELECT 1 FROM ch_reindex_requests WHERE target_profile = q.profile));
+  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: % v1 registry profile(s) are still referenced', n; END IF;
+  -- One scan instead of one per profile: no search row may still name a registry row that is about to go.
+  SELECT count(*) INTO n FROM (SELECT 1 FROM ch_search_chunks WHERE profile IN (SELECT q.profile FROM ch_index_profiles q
+    WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2')) LIMIT 1) one;
+  IF n > 0 THEN RAISE EXCEPTION 'legacy-retirement refused: search rows still name a v1 registry profile that no generation uses'; END IF;
   DELETE FROM ch_index_profiles q
-  WHERE q.policy <> 'ContextAwareProblemsV1' OR q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2');
-  GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('legacy_registry_profiles_deleted', n);
+  WHERE q.embedding_space IN (SELECT id FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2');
+  GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('v1_registry_profiles_deleted', n);
   DELETE FROM ch_embedding_spaces WHERE descriptor->>0 IS DISTINCT FROM 'embedding-space-v2';
   GET DIAGNOSTICS n = ROW_COUNT; INSERT INTO lr_log(step, n) VALUES ('v1_embedding_spaces_deleted', n);
 END $$;
@@ -151,14 +152,18 @@ SELECT 'LR.step.' || step, n FROM lr_log ORDER BY ord;
 \ir_counts
 SELECT 'LR.after.' || key, value FROM counts ORDER BY key;
 \ir_counts
-SELECT coalesce(sum(value), 0) = 0 AS lr_clean FROM counts WHERE must_be_zero \gset
+SELECT coalesce(sum(value) FILTER (WHERE item = 'identity'), 0) = 0 AND (coalesce(sum(value) FILTER (WHERE item = 'formats'), 0) = 0 OR :'skip_formats'::boolean) AS lr_clean FROM counts WHERE must_be_zero \gset
 \if :lr_clean
 \else
-DO $$ BEGIN RAISE EXCEPTION 'legacy-retirement refused: legacy counters are not zero after the migration (see LR.after.*); nothing of this transaction is kept'; END $$;
+DO $$ BEGIN RAISE EXCEPTION 'legacy-retirement refused: legacy counters of the selected items are not zero after the migration (see LR.after.*); nothing of this transaction is kept'; END $$;
 \endif
 \if :lr_apply
 COMMIT;
+\if :lr_skip_formats
+\echo LR.result|applied-formats-skipped
+\else
 \echo LR.result|applied
+\endif
 \else
 ROLLBACK;
 \echo LR.result|dry-run-rolled-back

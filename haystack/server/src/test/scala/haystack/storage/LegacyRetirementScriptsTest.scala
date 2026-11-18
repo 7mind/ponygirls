@@ -9,6 +9,7 @@ import java.sql.DriverManager
 import java.util.Properties
 import scala.jdk.CollectionConverters.*
 import TestSupport.*
+import LegacyStoredDocumentCheck.Verdict
 
 /** One-off: exercises scripts/one-off/legacy-retirement against a database holding the Node-era shapes, seeded the
   * way MigrationsTest and HistoricalStoredReadTest seed them. Deleted together with the legacy code once production
@@ -38,6 +39,27 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     val exit = builder.start().waitFor()
     try Ran(exit, Files.readString(out, UTF_8), Files.readString(err, UTF_8)) finally { Files.delete(out); Files.delete(err) }
   }
+  private def psqlFile(database: String, file: Path): IO[Ran] = IO.blocking {
+    val config = databaseConfig
+    val address = config.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_ != '/')
+    val located = Iterator.iterate(Path.of("").toAbsolutePath)(_.getParent).takeWhile(_ != null).map(_.resolve(file)).find(Files.isRegularFile(_)).getOrElse(fail(s"missing SQL file $file"))
+    val builder = new ProcessBuilder(List(Path.of(sys.env("POSTGRES_HOME"), "bin", "psql").toString, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", located.toString).asJava)
+    val env = builder.environment()
+    List("PGSERVICE", "PGOPTIONS", "PGSSLMODE").foreach(env.remove)
+    env.put("PGHOST", address.takeWhile(_ != ':')); env.put("PGPORT", address.dropWhile(_ != ':').drop(1)); env.put("PGUSER", config.user)
+    env.put("PGPASSWORD", CredentialFile.read(config.passwordFile)); env.put("PGDATABASE", database)
+    val out = Files.createTempFile("legacy-retirement-", ".out"); val err = Files.createTempFile("legacy-retirement-", ".err")
+    builder.redirectOutput(out.toFile).redirectError(err.toFile)
+    val exit = builder.start().waitFor()
+    try Ran(exit, Files.readString(out, UTF_8), Files.readString(err, UTF_8)) finally { Files.delete(out); Files.delete(err) }
+  }
+  /** The codec check exactly as check-stored-documents.sh performs it: psql export, then the real decoder. */
+  private def codecCheck(database: String, mutate: String => String = identity): IO[LegacyStoredDocumentCheck.Report] =
+    script(database, "export-stored-documents").flatMap { exported => IO.blocking {
+      assertEquals(exported.exit, 0, exported.err)
+      val file = Files.createTempFile("legacy-retirement-", ".export")
+      try { Files.writeString(file, mutate(exported.out), UTF_8); LegacyStoredDocumentCheck.check(file) } finally Files.delete(file)
+    } }
   private def everything(db: JdbcDatabase): IO[Vector[String]] = db.transaction { c =>
     Vector("items", "item_revisions", "item_links", "item_search", "item_tag_values", "write_requests", "store_metadata", "schema_migrations", "haystack_contract_cutovers").flatMap { table =>
       Sql.rows(c, s"SELECT '$table '||md5(row_to_json(t)::text) FROM $table t ORDER BY 1")(_.getString(1))
@@ -49,26 +71,29 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     DriverManager.getConnection(config.jdbcUrl.take(config.jdbcUrl.lastIndexOf('/') + 1) + database, properties)
   }.bracket(_ => body)(connection => IO.blocking(connection.close()))
 
+  private val enabled = sys.env.get("LEGACY_RETIREMENT_SCRIPTS").contains("1")
+  /** Node-era rows exactly as MigrationsTest's cut-over case seeds them; TestSupport.Now precedes the cut-over marker. */
+  private def seedNodeEra(db: JdbcDatabase, original: String, latest: String, oldId: String, oldFailureId: String): IO[Unit] = db.transaction { c =>
+    Sql.update(c, "INSERT INTO items(project_id,item_id,revision,document,document_text,created_at,created_by,modified_at,modified_by) VALUES('p','legacy',2,?::jsonb,?,?,?,?,'bot')", latest, latest, Now, "alice", Later)
+    Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('p','legacy',1,?::jsonb,?,?,'alice','old-human-token')", original, original, Now)
+    Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('p','legacy',2,?::jsonb,?,?,'bot','old-agent-token')", latest, latest, Later)
+    Sql.update(c, "INSERT INTO item_links VALUES('p','legacy',0,'origin','else','missing')")
+    Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, oldId, "f" * 64, "{\"kind\":\"committed\",\"revision\":1,\"legacy\":\"retained\"}", Now)
+    // No explicit format: the 0001 column default still stamps the Node format.
+    Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest,outcome,created_at) VALUES(?,?,?::uuid,?,?::jsonb,?)", Alice.userId, Alice.tokenId, oldFailureId, "e" * 64, "{\"kind\":\"invalid-document\",\"detail\":\"legacy terminal\"}", Now)
+    ()
+  }
+
   // Opt-in (scripts/one-off/legacy-retirement/test.sh sets the variable): the Nix-filtered sources of the permanent
   // full-suite checks do not contain scripts/one-off, and this one-off is not meant to join them.
-  if (sys.env.get("LEGACY_RETIREMENT_SCRIPTS").contains("1")) test("legacy retirement: Node-era replay rows are counted, refused on failed preconditions, deleted once, and the current service keeps every acknowledged document") {
+  if (enabled) test("legacy retirement: Node-era replay rows are counted, refused on failed preconditions, deleted once, and the current service keeps every acknowledged document") {
     val oldId = requestId(); val oldFailureId = requestId()
     val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
     val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
-    val wide = HistoricalFixtures.values.find(_.name == "unicode-bmp-over-new-byte-envelope").get.text
     run(emptyDatabase.use { db => for {
       _ <- Migrations.initialize(db, Activity)
       name <- database(db)
-      // Node-era rows exactly as MigrationsTest's cut-over case seeds them; TestSupport.Now precedes the cut-over marker.
-      _ <- db.transaction { c =>
-        Sql.update(c, "INSERT INTO items(project_id,item_id,revision,document,document_text,created_at,created_by,modified_at,modified_by) VALUES('p','legacy',2,?::jsonb,?,?,?,?,'bot')", latest, latest, Now, "alice", Later)
-        Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('p','legacy',1,?::jsonb,?,?,'alice','old-human-token')", original, original, Now)
-        Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('p','legacy',2,?::jsonb,?,?,'bot','old-agent-token')", latest, latest, Later)
-        Sql.update(c, "INSERT INTO item_links VALUES('p','legacy',0,'origin','else','missing')")
-        Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, oldId, "f" * 64, "{\"kind\":\"committed\",\"revision\":1,\"legacy\":\"retained\"}", Now)
-        // No explicit format: the 0001 column default still stamps the Node format.
-        Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest,outcome,created_at) VALUES(?,?,?::uuid,?,?::jsonb,?)", Alice.userId, Alice.tokenId, oldFailureId, "e" * 64, "{\"kind\":\"invalid-document\",\"detail\":\"legacy terminal\"}", Now)
-      }
+      _ <- seedNodeEra(db, original, latest, oldId, oldFailureId)
       repo = new PostgresItemRepository(db)
       current <- repo.commit(op(key = "p:current", document = doc("scala")), Bot, Later)
       _ = assertEquals(current.revision, 1L)
@@ -77,7 +102,7 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       preflight <- script(name, "preflight")
       _ = assertEquals(preflight.exit, 0, preflight.err)
       _ = assertEquals(preflight.count("LR.replay.node_format"), 2L); _ = assertEquals(preflight.count("LR.info.replay.current_format"), 1L)
-      _ = assertEquals(preflight.count("LR.stored.revisions_over_1mib"), 0L)
+      _ = assertEquals(preflight.count("LR.info.item_revisions"), 3L); _ = assert(preflight.count("LR.size.database_bytes") > 0L)
       token = preflight.value("LR.plan")
       unverified <- script(name, "verify"); _ = assertEquals(unverified.exit, 3); _ = assertEquals(unverified.value("LR.result"), "verify-nonzero")
 
@@ -87,12 +112,14 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       unchanged <- everything(db); _ = assertEquals(unchanged, before)
 
       // Refusals: acknowledgement, database name, stale plan, a foreign connection, a Node-format row newer than the cut-over.
-      unacknowledged <- script(name, "apply", "--confirm-database", name, "--expect-plan", token); _ = assertEquals(unacknowledged.exit, 2)
-      wrongName <- script(name, "apply", "--apply-irreversible", "--confirm-database", "haystack", "--expect-plan", token, "--allow-active-connections")
+      unacknowledged <- script(name, "apply", "--confirm-database", name, "--expect-plan", token, "--backup-reference", "x"); _ = assertEquals(unacknowledged.exit, 2)
+      noBackup <- script(name, "apply", "--apply-irreversible", "--confirm-database", name, "--expect-plan", token).map(_.exit)
+      _ = assertEquals(noBackup, 2)
+      wrongName <- script(name, "apply", "--apply-irreversible", "--backup-reference", "fixture-backup", "--confirm-database", "haystack", "--expect-plan", token, "--allow-active-connections")
       _ = assertEquals(wrongName.exit, 3); _ = assert(wrongName.err.contains("--confirm-database does not name the connected database"), wrongName.err)
-      stale <- script(name, "apply", "--apply-irreversible", "--confirm-database", name, "--expect-plan", "9.9.9", "--allow-active-connections")
+      stale <- script(name, "apply", "--apply-irreversible", "--backup-reference", "fixture-backup", "--confirm-database", name, "--expect-plan", "9.9.9", "--allow-active-connections")
       _ = assertEquals(stale.exit, 3); _ = assert(stale.err.contains("differ from the preflight plan token"), stale.err)
-      connected <- held(name)(script(name, "apply", "--apply-irreversible", "--confirm-database", name, "--expect-plan", token))
+      connected <- held(name)(script(name, "apply", "--apply-irreversible", "--backup-reference", "fixture-backup", "--confirm-database", name, "--expect-plan", token))
       _ = assertEquals(connected.exit, 3); _ = assert(connected.err.contains("other client connection"), connected.err)
       lateId = requestId()
       _ <- db.transaction(c => Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest,outcome) VALUES(?,?,?::uuid,?,'{}'::jsonb)", Alice.userId, Alice.tokenId, lateId, "d" * 64))
@@ -101,14 +128,14 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       _ <- db.transaction(c => Sql.update(c, "DELETE FROM write_requests WHERE request_id=?::uuid", lateId))
       stillUnchanged <- everything(db); _ = assertEquals(stillUnchanged, before)
 
-      applied <- script(name, "apply", "--apply-irreversible", "--confirm-database", name, "--expect-plan", token, "--allow-active-connections", "--batch-size", "1")
+      applied <- script(name, "apply", "--apply-irreversible", "--backup-reference", "fixture-backup", "--confirm-database", name, "--expect-plan", token, "--allow-active-connections", "--batch-size", "1")
       _ = assertEquals(applied.exit, 0, applied.err + applied.out); _ = assertEquals(applied.value("LR.result"), "applied"); _ = assertEquals(applied.steps("node_replay_rows_deleted"), 2L)
       verified <- script(name, "verify"); _ = assertEquals(verified.exit, 0, verified.out + verified.err); _ = assertEquals(verified.value("LR.result"), "verify-zero")
       after <- everything(db)
       // Only replay rows changed: the two Node-era rows are gone, the current-format row is the one that was there.
       _ = assertEquals(after.filterNot(_.startsWith("write_requests ")), before.filterNot(_.startsWith("write_requests ")))
       _ = assertEquals(after.count(_.startsWith("write_requests ")), 1); _ = assert(after.filter(_.startsWith("write_requests ")).forall(before.contains))
-      again <- script(name, "preflight").flatMap(p => script(name, "apply", "--apply-irreversible", "--confirm-database", name, "--expect-plan", p.value("LR.plan"), "--allow-active-connections"))
+      again <- script(name, "preflight").flatMap(p => script(name, "apply", "--apply-irreversible", "--backup-reference", "fixture-backup", "--confirm-database", name, "--expect-plan", p.value("LR.plan"), "--allow-active-connections"))
       _ = assertEquals(again.exit, 0, again.err); _ = assertEquals(again.steps("node_replay_rows_deleted"), 0L)
       idempotent <- everything(db); _ = assertEquals(idempotent, after)
 
@@ -129,16 +156,83 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       _ = assertEquals((once.replayed, twice.replayed, twice.revision), (false, true, 1L))
       settled <- script(name, "verify"); _ = assertEquals(settled.exit, 0, settled.out + settled.err)
 
-      // The wide stored-read predicates guard the later code deletion: a Node-only oversize document fails verify,
-      // and no script shrinks it (the document is authoritative content).
+    } yield () })
+  }
+
+  if (enabled) test("legacy retirement: the stored-document tolerance is decided by the real codec; invalid historical link targets and oversize documents block, omitted links pass") {
+    val oldId = requestId(); val oldFailureId = requestId()
+    val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
+    val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
+    val wide = HistoricalFixtures.values.find(_.name == "unicode-bmp-over-new-byte-envelope").get.text
+    run(emptyDatabase.use { db => for {
+      _ <- Migrations.initialize(db, Activity)
+      name <- database(db)
+      _ <- seedNodeEra(db, original, latest, oldId, oldFailureId)
+      repo = new PostgresItemRepository(db)
+      _ <- repo.commit(op(key = "p:current", document = doc("scala")), Bot, Later)
+      // Stored-document tolerance: decided by the real codec over every stored text, never by SQL.
+      clean <- codecCheck(name)
+      _ = assert(clean.strict, clean.toString); _ = assertEquals((clean.items, clean.revisions), (2L, 3L))
+      // A document that omits `links` is valid for the current codec and must pass.
+      omitted = doc("no-link-key").replace(",\"links\":[]", "")
+      _ = assert(!omitted.contains("\"links\""))
+      _ <- db.transaction { c =>
+        Sql.update(c, "INSERT INTO items(project_id,item_id,revision,document,document_text,created_at,created_by,modified_at,modified_by) VALUES('historical','omitted',1,?::jsonb,?,?,'historical-author',?,'historical-author')", omitted, omitted, Now, Now)
+        Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('historical','omitted',1,?::jsonb,?,?,'historical-author','old-human-token')", omitted, omitted, Now)
+      }
+      withOmitted <- codecCheck(name); _ = assert(withOmitted.strict, withOmitted.toString)
+      // A truncated export never passes.
+      truncated <- codecCheck(name, _.linesIterator.filterNot(_.startsWith("LR.export.complete")).mkString("\n"))
+      _ = assert(!truncated.strict && !truncated.complete)
+      // Historical percent-encoded link targets that only the relaxed read accepts: invalid UTF-8 and a decoded NUL.
+      // An approximate SQL pattern accepts both; the codec rejects both, so they block the removal of the tolerance.
+      _ = List("p:%FF", "p:%00").foreach(target => assert(scala.util.Try(QualifiedId.decodeKey(target)).isFailure, target))
+      badLinks = doc("bad-links").replace("\"links\":[]", "\"links\":[[\"origin\",\"p:%FF\"],[\"origin\",\"p:%00\"]]")
+      _ <- db.transaction { c =>
+        Sql.update(c, "INSERT INTO items(project_id,item_id,revision,document,document_text,created_at,created_by,modified_at,modified_by) VALUES('historical','bad-links',1,?::jsonb,?,?,'historical-author',?,'historical-author')", badLinks, badLinks, Now, Now)
+        Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('historical','bad-links',1,?::jsonb,?,?,'historical-author','old-human-token')", badLinks, badLinks, Now)
+      }
+      readable <- repo.current(ItemKey("historical", "bad-links")); _ = assertEquals(readable.get.documentCanonical, badLinks)
+      blocked <- codecCheck(name)
+      _ = assert(!blocked.strict); _ = assertEquals(blocked.of(Verdict.NeedsRelaxedLinks), 2L); _ = assertEquals(blocked.of(Verdict.NeedsWideEnvelope), 0L)
+      // A Node-only oversize document needs the wide envelope; no script shrinks it (it is authoritative content).
       _ <- db.transaction { c =>
         Sql.update(c, "INSERT INTO items(project_id,item_id,revision,document,document_text,created_at,created_by,modified_at,modified_by) VALUES('historical','wide',1,?::jsonb,?,?,'historical-author',?,'historical-author')", wide, wide, Now, Now)
         Sql.update(c, "INSERT INTO item_revisions(project_id,item_id,revision,document,document_text,modified_at,modified_by,token_id) VALUES('historical','wide',1,?::jsonb,?,?,'historical-author','old-human-token')", wide, wide, Now)
       }
-      oversize <- script(name, "verify")
-      _ = assertEquals(oversize.exit, 3); _ = assertEquals(oversize.count("LR.stored.revisions_over_1mib"), 1L); _ = assertEquals(oversize.count("LR.stored.items_over_1mib"), 1L)
-      keptWide <- script(name, "dry-run", "--allow-active-connections"); _ = assertEquals(keptWide.exit, 0, keptWide.err)
+      oversize <- codecCheck(name)
+      _ = assertEquals((oversize.of(Verdict.NeedsWideEnvelope), oversize.of(Verdict.NeedsRelaxedLinks), oversize.of(Verdict.Unreadable)), (2L, 2L, 0L))
       stored <- repo.current(ItemKey("historical", "wide")); _ = assertEquals(stored.get.documentCanonical, wide)
+      // The replay verify is not the authority for these documents and says so.
+      replayOnly <- script(name, "verify"); _ = assert(replayOnly.out.contains("LR.note|stored-document tolerance is decided by check-stored-documents.sh"), replayOnly.out)
+      _ <- db.transaction { c => Sql.update(c, "DELETE FROM item_revisions WHERE project_id='historical' AND item_id IN ('wide','bad-links')"); Sql.update(c, "DELETE FROM items WHERE project_id='historical' AND item_id IN ('wide','bad-links')") }
+      restored <- codecCheck(name); _ = assert(restored.strict, restored.toString)
+
+    } yield () })
+  }
+
+  if (enabled) test("legacy retirement: the proposed clean-up schema (0007) passes the retained check; the one-off refuses afterwards; the current binary cannot start on it") {
+    run(emptyDatabase.use { db => for {
+      _ <- Migrations.initialize(db, Activity)
+      name <- database(db)
+      repo = new PostgresItemRepository(db)
+      _ <- repo.commit(op(key = "p:current", document = doc("scala")), Bot, Later)
+      verified <- script(name, "verify"); _ = assertEquals(verified.exit, 0, verified.out + verified.err)
+      // Runbook steps 14-16 against the proposed clean-up schema (migration 0007).
+      before0007 <- psqlFile(name, Path.of("haystack", "scripts", "check-legacy-free.sql")); _ = assertEquals(before0007.exit, 3)
+      cleaned <- psqlFile(name, Path.of("scripts", "one-off", "legacy-retirement", "sql", "haystack", "proposed-cleanup.sql")); _ = assertEquals(cleaned.exit, 0, cleaned.err)
+      legacyFree <- psqlFile(name, Path.of("haystack", "scripts", "check-legacy-free.sql"))
+      _ = assertEquals(legacyFree.exit, 0, legacyFree.out + legacyFree.err); _ = assertEquals(legacyFree.value("LF.result"), "legacy-free")
+      // The one-off is bound to schema 0001..0006 and refuses afterwards; its read-only verify still answers.
+      boundSchema <- script(name, "dry-run", "--allow-active-connections"); _ = assertEquals(boundSchema.exit, 3); _ = assert(boundSchema.err.contains("unexpected schema_migrations"), boundSchema.err)
+      // The default is gone: an insert that omits the format is refused instead of being stamped as a Node row.
+      defaulted <- db.transaction(c => Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest,outcome) VALUES(?,?,?::uuid,?,'{}'::jsonb)", Alice.userId, Alice.tokenId, requestId(), "c" * 64)).attempt
+      _ = assert(defaulted.isLeft)
+      // The current repository code works on the cleaned schema ...
+      written <- repo.commit(op(key = "p:after-0007", document = doc("after-0007")), Bot, Later.plusSeconds(9)); _ = assertEquals(written.revision, 1L)
+      // ... but the current binary's start-up refuses a ledger it does not know: after 0007 there is no rollback to it.
+      startup <- Migrations.initialize(db, Activity).attempt
+      _ = assert(startup.left.exists { case fault: Fault => fault.code == "config"; case _ => false }, startup.toString)
     } yield () })
   }
 }

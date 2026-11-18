@@ -4,7 +4,9 @@ SET lock_timeout = :'lock_timeout';
 SET client_min_messages = warning;
 SET application_name = 'legacy-retirement';
 SELECT set_config('lr.mode', :'mode', false), set_config('lr.confirm_database', :'confirm_database', false),
-       set_config('lr.expect_plan', :'expect_plan', false), set_config('lr.allow_connections', :'allow_connections', false) \gset lr_ignored_
+       set_config('lr.expect_plan', :'expect_plan', false), set_config('lr.allow_connections', :'allow_connections', false),
+       set_config('lr.skip_formats', :'skip_formats', false), set_config('lr.retire_history', :'retire_history', false),
+       set_config('lr.confirm_retire_history', :'confirm_retire_history', false), set_config('lr.batch_size', :'batch_size', false) \gset lr_ignored_
 SELECT pg_try_advisory_lock(hashtextextended('legacy-retirement', 0)) AS lr_locked \gset
 \if :lr_locked
 \else
@@ -14,6 +16,7 @@ DO $$ BEGIN RAISE EXCEPTION 'legacy-retirement refused: another legacy-retiremen
 BEGIN;
 \endif
 SELECT 'LR.database', current_database();
+\echo LR.backup_reference|:backup_reference
 \ir_counts
 SELECT 'LR.before.' || key, value FROM counts ORDER BY key;
 \ir_counts
@@ -22,6 +25,7 @@ DO $$
 DECLARE
   n bigint;
   versions text;
+  breakdown text;
 BEGIN
   IF current_setting('lr.mode') = 'apply' THEN
     IF current_setting('lr.confirm_database') IS DISTINCT FROM current_database() THEN
@@ -47,13 +51,6 @@ BEGIN
   IF n > 0 AND current_setting('lr.allow_connections') <> 't' THEN
     RAISE EXCEPTION 'legacy-retirement refused: % other client connection(s) to this database; stop the service (or pass --allow-active-connections knowingly)', n;
   END IF;
-  -- A published generation in a retired output format cannot be converted by SQL: it needs the product re-index.
-  SELECT count(*) INTO n FROM ch_sources s JOIN ch_generations g ON g.id = s.published
-  WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-     OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1');
-  IF n > 0 THEN
-    RAISE EXCEPTION 'legacy-retirement refused: % source(s) are still published in a retired output format; re-index them with the product first (see LR.reindex_worklist in preflight)', n;
-  END IF;
   SELECT count(*) INTO n FROM ch_owner_targets t WHERE NOT EXISTS (SELECT 1 FROM ch_index_profiles p WHERE p.profile = t.profile AND p.policy = 'ContextAwareProblemsV1');
   IF n > 0 THEN
     RAISE EXCEPTION 'legacy-retirement refused: % owner target(s) point at a retired or unregistered index profile; rebuild those owners with the product first', n;
@@ -62,12 +59,41 @@ BEGIN
   IF n > 0 THEN
     RAISE EXCEPTION 'legacy-retirement refused: % generation(s) reference an unregistered profile; not a shape this script understands', n;
   END IF;
+
+  -- The publication-formats item. Skipped as a whole with --skip-formats: the two old formats then stay supported.
+  IF current_setting('lr.skip_formats') <> 't' THEN
+    WITH old_format AS (
+      SELECT coalesce(g.passage_format, '<null>') AS format,
+             CASE WHEN EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id) THEN 'published' ELSE 'history' END AS state
+      FROM ch_generations g
+      WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
+         OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'))
+    ), grouped AS (SELECT format, state, count(*) AS c FROM old_format GROUP BY format, state)
+    SELECT coalesce(string_agg(format || '/' || state || '=' || c, ', ' ORDER BY format, state), 'none') INTO breakdown FROM grouped;
+    -- A published generation in a retired format cannot be converted or retired by SQL: it needs the product re-index.
+    SELECT count(*) INTO n FROM ch_sources s JOIN ch_generations g ON g.id = s.published
+    WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
+       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1');
+    IF n > 0 THEN
+      RAISE EXCEPTION 'legacy-retirement refused: % source(s) are still published in a retired output format (%); re-index them with the product first (LR.reindex_worklist in preflight), or pass --skip-formats to leave the formats item alone', n, breakdown;
+    END IF;
+    -- Unpublished, not retired: a readable pinned view of an earlier revision. Never removed by default.
+    SELECT count(*) INTO n FROM ch_generations g
+    WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
+       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy <> 'ContextAwareProblemsV1'));
+    IF current_setting('lr.retire_history') <> 't' THEN
+      IF n > 0 THEN
+        RAISE EXCEPTION 'legacy-retirement refused: % historical generation(s) in a retired output format are not retired and remain readable as pinned views (%). Nothing is removed by default: pass --skip-formats, or retire them explicitly with --retire-history --confirm-retire-history %', n, breakdown, n;
+      END IF;
+    ELSIF current_setting('lr.confirm_retire_history') IS DISTINCT FROM n::text THEN
+      RAISE EXCEPTION 'legacy-retirement refused: --confirm-retire-history must be the number of historical generations to retire (found %: %)', n, breakdown;
+    END IF;
+  END IF;
 END $$;
 \if :lr_apply
 \echo LR.guards|passed-apply
 \else
 \echo LR.guards|passed-dry-run
 \endif
-\set lr_more_generations t
-\set lr_more_jobs t
-\set lr_more_namespaces t
+\set lr_more_history :lr_retire_history
+\set lr_more_unfinished t
