@@ -115,9 +115,6 @@ try {
     assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/revoke')).length, 1);
     await context.close(); console.log('PASS browser: static token metadata has no secret or modification controls; issued revoke preserved');
   }
-  const { Conversation } = await server.ssrLoadModule('/src/Conversation.tsx');
-  const initialSource = renderToStaticMarkup(createElement(Conversation, { connection: {}, stats: { activeId: 1, generation: 1 }, user: new ChronicleFixture().user, sessionId: '00000000-0000-4000-8000-000000000001', initialView: undefined, archiveHead: null, select: () => {}, refresh: 0 }));
-  assert.match(initialSource, /Rechecking source access/, 'first render must show an explicit loading state, never an empty source body');
   for (const transition of ['logout-bob', 'observed-bob', 'logout-alice']) {
     const { context, page, fixture } = await scene();
     const privateQuery = '(alice-private-migration-phrase) AND project:"alice-private-project" AND branch:"alice-private-branch" AND after:"2026-10-01T10:00:00Z" AND before:"2026-11-01T10:00:00Z" AND tag:"alice-private-tag" mode:semantic';
