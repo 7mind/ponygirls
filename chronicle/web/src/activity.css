@@ -1,97 +1,117 @@
-.activity-page-heading{display:flex;align-items:center;justify-content:space-between;gap:16px;margin-bottom:12px}
-.activity-page-heading>div{min-width:0}
-.activity-heading-actions{display:flex;align-items:center;gap:14px;position:relative}
-.activity-heading-actions>button{font-size:11px;padding:7px 12px;white-space:nowrap}
-.activity-about{font-size:11px;color:var(--muted)}
-.activity-about-content p{font-size:12px}
-.activity-about-content p+p{margin-top:8px}
-.activity-overview{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px 16px;align-items:start;padding:11px 14px;border:1px solid var(--rule);background:var(--paper);margin-bottom:14px}
-.activity-overview>.section-heading{grid-column:1;grid-row:1;min-width:0;flex-wrap:wrap;gap:8px}
-.activity-summary-totals{grid-column:1/-1;grid-row:3;min-width:0}
-.activity-overview>.section-heading>.tiny{font-size:10px}
-.activity-head-counts{display:flex;gap:8px 32px;flex-wrap:wrap;margin:8px 0}
-.activity-head-counts>div{min-width:0}
-.activity-head-counts dt{font-size:10px;color:var(--muted)}
-.activity-head-counts dd{margin:2px 0 0;font-size:18px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.activity-head-counts dd>span{font-size:11px;color:var(--muted)}
-.activity-counts{width:100%;border-collapse:collapse;table-layout:fixed;font-size:11px;margin:8px 0}
-.activity-counts th,.activity-counts td{padding:4px 4px;text-align:right;border-bottom:1px solid var(--rule);overflow-wrap:anywhere;vertical-align:top}
-.activity-counts th:first-child{text-align:left;width:19%;padding-left:0}
-.activity-counts th:last-child,.activity-counts td:last-child{padding-right:0}
-.activity-counts thead th{font-size:9px;font-weight:500;color:var(--muted)}
-.activity-counts tbody th{font-size:10px;font-weight:600}
-.activity-counts td{font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:11px;font-variant-numeric:tabular-nums}
-.activity-running-leases{margin:3px 0;font-size:10px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.activity-running-leases strong{font-weight:550}
-.activity-workspace{display:grid;grid-template-columns:minmax(0,1fr);gap:24px}
-.activity-workspace>.management-section>.section-heading{gap:12px;flex-wrap:wrap;padding:0 0 9px;min-height:31px}
-.activity-section-note{margin:10px 0;overflow-wrap:anywhere}
-.activity-collector-scroll,.activity-job-scroll{height:clamp(240px,43vh,470px);overflow:auto;overscroll-behavior:contain;scrollbar-gutter:stable;scroll-padding-top:45px;border:1px solid var(--rule);background:var(--paper)}
-.activity-job-scroll{height:clamp(280px,50vh,550px)}
-.activity-table{width:100%;border-collapse:separate;border-spacing:0;font-size:11px;table-layout:fixed}
-.activity-table th,.activity-table td{padding:6px 8px;border-bottom:1px solid var(--rule);text-align:left;vertical-align:middle;white-space:nowrap;font-variant-numeric:tabular-nums}
-.activity-table thead th{position:sticky;top:0;z-index:3;background:var(--soft);font-weight:500}
-.activity-table thead button{display:flex;gap:8px;align-items:center;justify-content:space-between;width:100%;border:0;background:none;padding:2px 0;text-align:left;font-size:10px;font-weight:500;line-height:1.35;white-space:normal;color:var(--muted)}
-.activity-table thead [aria-sort=ascending] button,.activity-table thead [aria-sort=descending] button{color:var(--ink);font-weight:650}
-.activity-table thead button span{font-size:12px}
-.activity-table tbody td{height:35px;background:var(--paper);overflow:hidden;text-overflow:ellipsis}
-.activity-table tbody td.activity-row-actions{overflow:visible;white-space:normal}
-.activity-table tbody tr:hover td{background:var(--row-hover)}
-.activity-table th:first-child,.activity-table td:first-child{position:sticky;left:0;z-index:2;border-right:1px solid var(--rule)}
-.activity-table th:first-child{z-index:4}
-.activity-table th:last-child,.activity-table td:last-child{position:sticky;right:0;z-index:2;border-left:1px solid var(--rule)}
-.activity-table th:last-child{z-index:4}
-.activity-table[data-inline-pinned=false] th:first-child,.activity-table[data-inline-pinned=false] td:first-child,.activity-table[data-inline-pinned=false] th:last-child,.activity-table[data-inline-pinned=false] td:last-child{left:auto;right:auto}
-.activity-table td code,.activity-job-title,.activity-subline,.activity-reason{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
-.activity-job-title{font-size:11px;font-weight:550}
-.activity-subline{color:var(--muted);font-size:10px;margin-top:2px}
-.activity-table .job-state{font-size:10px;padding:0}
-.activity-table .badge{font-size:9px}
-.activity-row-actions>button{font-size:10px;padding:4px 7px;margin-right:10px}
-.activity-row-actions>button[aria-pressed=true]{background:var(--soft);border-color:var(--accent)}
-.activity-row-details{display:inline-block;font-size:10px;white-space:normal;text-align:left}
-.activity-detail-panel h3{font-size:12px;margin-bottom:8px}
-.activity-detail-panel code{display:inline!important;max-width:none!important}
-.activity-detail-panel p+p{margin-top:7px}
-.activity-detail-panel .activity-last-report{margin-top:8px}
-.activity-detail-panel .activity-failure{margin-top:8px}
-.activity-job-row.activity-historical .state-failed,.activity-job-row.activity-historical .activity-reason,.activity-job-row.activity-historical .activity-failure{color:var(--muted)}
-.metadata-editor>.search-line{border:1px solid var(--rule)}
-.metadata-editor .search-line input{min-width:0}
-.activity-last-report{border-top:1px dashed var(--rule);padding-top:7px}
-.activity-last-report .badge{display:inline-block;line-height:1.5}
-.activity-last-report>.tiny{font-size:10px;margin-top:6px}
-.activity-report-unknown{border-top:1px dashed var(--rule);padding-top:10px}
-.activity-report-details{margin-top:10px;font-size:11px}
-.activity-report-details>summary{font-weight:600}
-.activity-report-details>.tiny{font-size:10px;margin-top:9px}
-.activity-run-counters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px 14px;margin:12px 0}
-.activity-run-counters dt{font-size:10px;color:var(--muted)}
-.activity-run-counters dd{margin:3px 0 0;font-size:11px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-.activity-failure{color:var(--error);font-size:11px;white-space:pre-wrap;overflow-wrap:anywhere}
-.activity-last-report>.activity-failure{margin-top:6px}
-.activity-warning{color:var(--warning-ink)}
-.badge.activity-warning{border-color:var(--warning-border);background:var(--warning-surface)}
-.activity-job-controls{display:flex;align-items:end;flex-wrap:wrap;gap:8px 14px;padding-top:8px}
-.activity-scope-switch{display:inline-flex;border:1px solid var(--control-border);border-radius:3px;overflow:hidden}
-.activity-scope-switch button{border:0;border-radius:0;font-size:12px;padding:7px 14px;color:var(--ink);transition:none}
-.activity-scope-switch button+button{border-left:1px solid var(--control-border)}
-.activity-scope-switch button[aria-pressed=true]{background:var(--accent);color:var(--on-accent)}
-.activity-scope-switch button[aria-pressed=true]:hover:not(:disabled){background:var(--accent-hover);color:var(--on-accent)}
-.activity-scope-switch button:focus-visible{outline-offset:-3px}
-.activity-collector-filter{display:flex;align-items:end;gap:8px;flex:1;min-width:240px;flex-wrap:wrap}
-.activity-collector-filter label{flex:1;min-width:170px;font-size:10px}
-.activity-collector-filter input{width:100%;padding:7px 9px;font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;font-size:11px}
-.activity-collector-filter>button{padding:8px 9px;font-size:10px}
-.activity-job-observed{font-size:10px;overflow-wrap:anywhere;margin:8px 0}
-.activity-loading{font-size:12px;color:var(--muted);padding:14px 0}
-.activity-show-updates{margin:0 0 10px;background:var(--soft)}
-.activity-workspace .blank{min-height:200px;padding:30px 20px}
-.activity-workspace .blank h2{font-size:21px}
-.activity-workspace .blank p{font-size:11px}
-.activity-workspace .blank-icon{font-size:38px}
-@media(max-width:800px){.activity-collector-filter{min-width:200px}.activity-collector-scroll{height:40vh}.activity-job-scroll{height:50vh}}
-@media(max-width:640px){.activity-overview{grid-template-columns:minmax(0,1fr)}.activity-overview .retry-failed-toolbar{grid-column:1;grid-row:2;justify-self:stretch}.activity-overview .retry-failed-scope{grid-row:3}.activity-overview .activity-summary-totals{grid-row:4}.activity-overview .retry-failed-preview{grid-row:5}}
-@media(max-width:500px){.activity-page-heading{flex-direction:column;align-items:start;gap:5px}.activity-heading-actions{width:100%;justify-content:space-between}.activity-overview{padding:11px 12px}.activity-head-counts{gap:12px 20px}.activity-head-counts dd{font-size:18px}.activity-head-counts dd>span{display:block;font-size:10px}.activity-counts th,.activity-counts td{padding:6px 2px}.activity-counts th:first-child{width:22%}.activity-counts tbody th{font-size:9px}.activity-counts thead th{font-size:8px}.activity-counts td{font-size:10px}.activity-collector-filter{min-width:0}.activity-collector-filter label{min-width:100%}.activity-run-counters{gap:9px 12px}.activity-table th:last-child,.activity-table td:last-child{position:static}.activity-workspace .eyebrow{font-size:9px}}
+/* Activity (redesign spec §3.1), on shared/ui-web tokens and components. Scroll model A with a sub-navigation: the document
+ * is the only vertical scroller; the sub-navigation sticks under the masthead, a list's view bar under the sub-navigation and
+ * its table header under the view bar (components.css `.has-subnav`). */
+.activity-view{display:block;min-width:0;padding-bottom:var(--space-6)}
+.activity-view .mono{font-family:var(--font-mono)}
+.activity-view code{font-family:var(--font-mono);font-size:var(--text-xs)}
+.activity-subnav .tabs{min-width:0}
+.activity-about-panel,.usage-about-panel{font-size:var(--text-xs);color:var(--text-muted)}
+.activity-about-panel p+p,.usage-about-panel p+p{margin-top:var(--space-2)}
+.activity-about-title{font-size:var(--text-sm);font-weight:var(--weight-semibold);color:var(--text)}
+.usage-about-panel{width:360px}
 
-.activity-collector-scroll,.activity-job-scroll,.archive-table-scroll{isolation:isolate}
+/* Lists (Collectors, Jobs) */
+.activity-viewbar .querybar{min-width:0}
+/* The column menus list up to 22 columns: the menu scrolls within the viewport under the sticky view bar. */
+.activity-viewbar .column-menu-panel{max-height:calc(100dvh - var(--masthead-h) - var(--subnav-h) - var(--viewbar-h) - var(--space-4));overflow-y:auto}
+.activity-notice{padding-bottom:var(--space-3)}
+.activity-viewbar [data-state=pending]{color:var(--text-faint);overflow:hidden;text-overflow:ellipsis}
+.activity-list[data-editing] .activity-table tbody{opacity:.6}
+.activity-notice .notice>.icon{color:var(--danger-fg)}
+.activity-table-frame{min-width:0}
+.activity-table .th-sort{max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.activity-table .cell-title{white-space:nowrap}
+.activity-table .cell-title:focus-visible{outline:2px solid var(--focus);outline-offset:-2px;border-radius:var(--radius-sm)}
+.activity-table .col-mono{font-family:var(--font-mono);font-size:var(--text-xs);color:var(--text-muted)}
+.activity-view .when-rel{display:block;margin-top:var(--space-0);color:var(--text-muted);font-size:var(--text-xs)}
+.activity-table .branch{font-family:var(--font-mono);font-size:var(--text-xs)}
+.activity-table .row-actions{align-items:center}
+.activity-table .row-toggle .icon{transition:transform var(--ease)}
+.activity-table .row-toggle[aria-expanded=true] .icon{transform:rotate(180deg)}
+.activity-table tr[data-state=historical] .status-danger{color:var(--text-muted);font-weight:var(--weight-regular)}
+.activity-table tr[data-state=historical] .status-danger::before{background:var(--text-faint)}
+.activity-skeleton td{cursor:default}
+.activity-view .activity-table thead th>button.column-resizer{border-left:0}
+.activity-view .activity-table thead th>button.column-resizer:hover,.activity-view .activity-table thead th>button.column-resizer:focus-visible{background:var(--accent-soft-border)}
+/* Row headers of the static tables (job totals, usage) read as cells, not as column headers. */
+.activity-view .table tbody th{position:static;height:var(--row-h);background:none;border-top:0;color:var(--text);font-size:var(--text-sm);font-weight:var(--weight-regular)}
+.activity-view .list-foot-count{color:var(--text-faint)}
+.activity-view .list-foot .btn{flex:none}
+.activity-view .empty code{color:var(--text)}
+.activity-chip{height:var(--control-h-sm)}
+.activity-chip .link-button{display:inline-grid;place-items:center;width:24px;height:24px;border-radius:var(--radius-sm);color:inherit}
+.activity-chip .link-button:hover{background:var(--accent-soft-border);text-decoration:none}
+.progress{display:inline-block;width:64px;height:6px;margin-right:var(--space-2);border-radius:var(--radius-full);background:var(--bg-sunken);box-shadow:inset 0 0 0 1px var(--border);overflow:hidden;vertical-align:middle}
+.progress>span{display:block;height:100%;background:var(--info-fg)}
+.progress[data-state=complete]>span{background:var(--ok-fg)}
+.progress[data-state=failed]>span{background:var(--danger-fg)}
+.activity-reason{overflow:hidden;text-overflow:ellipsis}
+/* Count links in table cells (failed jobs) keep the 24 px inline target of spec §8 item 6. */
+.activity-view td>a.status-danger{display:inline-block;min-width:24px;line-height:24px;text-align:right}
+/* Row details expand in place (spec §3.1 V7). */
+.activity-detail{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-5);font-size:var(--text-sm)}
+.activity-detail-main{flex:1;min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3) var(--space-6);align-items:start}
+.activity-detail-main>p{grid-column:1/-1}
+.activity-detail-list{grid-template-columns:120px minmax(0,1fr);gap:var(--space-1) var(--space-4)}
+.activity-detail-actions{flex:none}
+.activity-run-counters>summary{cursor:pointer;color:var(--accent);font-size:var(--text-sm)}
+.activity-run-counters[open]>summary{margin-bottom:var(--space-2)}
+.activity-counters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-0) var(--space-5);font-size:var(--text-xs)}
+.activity-counters>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 var(--space-2);min-width:0}
+.activity-counters dt{color:var(--text-muted)}
+.activity-counters dd{font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.activity-failure{color:var(--danger-fg);white-space:pre-wrap;overflow-wrap:anywhere}
+.activity-warning{color:var(--warn-fg)}
+
+/* Overview */
+.activity-tiles{grid-template-columns:repeat(6,minmax(0,1fr))}
+.attention-list{display:flex;flex-direction:column}
+.attention-item{display:flex;align-items:center;gap:var(--space-3);min-height:48px;padding:var(--space-2) var(--space-4);border-bottom:1px solid var(--border);color:var(--text);font-size:var(--text-sm)}
+.attention-item:last-child{border-bottom:0}
+a.attention-item:hover{background:var(--bg-hover);text-decoration:none}
+a.attention-item:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.attention-item>.icon{flex:none;color:var(--text-faint);transform:rotate(-90deg)}
+.bar{display:flex;height:8px;border-radius:var(--radius-full);overflow:hidden;background:var(--bg-sunken)}
+.bar>span{display:block;height:100%}
+.bar-ok{background:var(--ok-fg)}
+.bar-run{background:var(--info-fg)}
+.bar-queue{background:var(--neutral-bd)}
+.bar-fail{background:var(--danger-fg)}
+.legend{display:flex;flex-wrap:wrap;gap:var(--space-2) var(--space-4);font-size:var(--text-xs);color:var(--text-muted)}
+.legend .status{font-size:var(--text-xs);color:var(--text-muted)}
+.card>.table th:first-child{border-top-left-radius:var(--radius-md)}
+.card>.table th:last-child{border-top-right-radius:var(--radius-md)}
+
+/* Model usage */
+.usage-table td,.usage-table tbody th{height:var(--row-h-2);white-space:normal}
+.usage-table .col-purpose{width:26%}
+.usage-table .when-rel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.activity-view .table-inset tr:last-child th{border-bottom:0}
+.usage-table tbody th{font-weight:var(--weight-regular);color:var(--text);text-align:left}
+.usage-main{display:block;white-space:nowrap;font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums}
+.usage-settings{grid-template-columns:200px minmax(0,1fr)}
+
+/* Maintenance */
+.activity-maintenance{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-4)}
+.activity-maintenance>.card{display:flex;flex-direction:column}
+.activity-maintenance .card-body{flex:1}
+.activity-maintenance .card-foot{flex-wrap:wrap}
+
+@media(max-width:1100px){
+  .activity-tiles{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .activity-maintenance{grid-template-columns:minmax(0,1fr)}
+  .activity-detail-main{grid-template-columns:minmax(0,1fr)}
+}
+@media(max-width:720px){
+  .activity-subnav .tabs{overflow-x:auto;overflow-y:hidden}
+  .activity-viewbar{position:static;height:auto;flex-wrap:wrap;padding-top:var(--space-2);padding-bottom:var(--space-2)}
+  .activity-viewbar .querybar{flex-basis:100%}
+  .activity-viewbar .viewbar-meta{flex:1;min-width:0;justify-content:flex-start}
+  .activity-view .activity-table th{top:calc(var(--masthead-h) + var(--subnav-h))}
+  .activity-view .update-pill{top:calc(var(--masthead-h) + var(--subnav-h) + var(--space-6))}
+  .activity-tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .activity-overview .grid-2{grid-template-columns:minmax(0,1fr)}
+  .activity-detail{flex-direction:column;gap:var(--space-3)}
+  .activity-detail-list{grid-template-columns:minmax(0,1fr)}
+  .activity-counters{grid-template-columns:minmax(0,1fr)}
+}

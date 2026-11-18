@@ -23,7 +23,8 @@ import { SessionFindReadGate } from './session-find.ts';
 import { ReindexProgress, useRebuildProgress } from './ReindexProgress.tsx';
 import { Access } from './Access.tsx';
 import { McpTester, useMcpTester } from './McpTester.tsx';
-import { Activity } from './Activity.tsx';
+import { Activity } from './activity/Activity.tsx';
+import { retainedActivityRoute } from './activity/state.ts';
 import { useMutations } from './mutations.ts';
 import { MutationNotice } from './MutationNotice.tsx';
 export function ErrorNotice({ children }: { children: React.ReactNode }) { return <div className="notice error" role="alert">{children}</div>; }
@@ -123,6 +124,7 @@ function retainedRoute(view: NavView, cache: RouteStateCache): Route {
   switch (view) {
     case 'archive': return viewRouteWith('archive', archiveParams(cache.read(ARCHIVE_STATE, ARCHIVE_INSTANCE)));
     case 'search': return viewRouteWith('search', searchParams(cache.read(SEARCH_SUBMITTED, SEARCH_INSTANCE)));
+    case 'activity': return retainedActivityRoute(cache);
     default: return viewRoute(view);
   }
 }
@@ -288,7 +290,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     switch (item) {
       case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} stats={stats} user={user} routing={routing} withdrawn={withdrawn}/>;
       case 'search': return <SearchView connection={connection} stats={stats} user={user} routing={routing}/>;
-      case 'activity': return <Activity connection={connection} stats={stats} user={user} actions={actions}/>;
+      case 'activity': return <Activity connection={connection} stats={stats} user={user} actions={actions} routing={routing}/>;
       case 'mcp': return <McpTester tester={tester}/>;
       case 'access': return <Access connection={connection} stats={stats} user={user} actions={actions}/>;
     }

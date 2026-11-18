@@ -2,6 +2,7 @@
 // real Chromium, DOM, focus and clipboard; the account HTTP plane is the in-page fake of dev/fake-server.js.
 // Run: nix develop .#chronicle --command node shared/account-web/tests/browser.mjs
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { startDevServer } from '../dev/serve.mjs';
 import { FAKE_PASSWORD, FAKE_TOKEN_SECRET, FAKE_WRONG_CODE } from '../dev/fake-server.js';
@@ -563,6 +564,10 @@ try {
     await page.keyboard.press('Escape');
     await panel.getByText('Credential reset link for “erin”').waitFor();
     assert.equal(callsTo(calls, '/admin/users/erin/reset').length + callsTo(calls, '/admin/users/mallory/reset').length, 1);
+    // Codes are base64url: the field must draw '_' (the pinned Chromium dropped it in a 14 px DejaVu Sans Mono input).
+    const field = panel.getByLabel('One-time link', { exact: true });
+    const drawn = async text => { await field.evaluate((input, value) => { input.value = value; }, text); return createHash('sha256').update(await field.screenshot()).digest('hex'); };
+    assert.notEqual(await drawn('AAAA____BBBB'), await drawn('AAAA    BBBB'), 'underscores of a one-time value are drawn');
   });
 
   await run('a pending reset link can be revoked in-app, also with invitations disabled', async ({ page, calls, open }) => {

@@ -17,8 +17,9 @@ in pkgs.runCommand "haystack-native-complete-browser" {
   # Do not nest the service runner that owns a separate cluster. This wrapper
   # owns exactly the declared provider fixture; preview tests explicitly own
   # their additional disposable standalone-launcher fixture as characterized.
-  # The serial legs took 150-172 s under host load 147-167; about 2x that.
-  timeout --signal=TERM --kill-after=10s 360s \
+  # The serial legs took 150-172 s under host load 147-167, plus 50-60 s for the accounts leg under load 150-240;
+  # about 2x that.
+  timeout --signal=TERM --kill-after=10s 460s \
     ${fixtureTools}/bin/with-service-postgres \
     ${fixtureTools}/bin/with-browser-environment \
     ${fixtureTools}/bin/validate-haystack-native \

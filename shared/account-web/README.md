@@ -234,3 +234,11 @@ The browser checks use the harness page in the pinned Chromium (playwright-core
 from `chronicle/web`, provisioned with `npm ci`). They do not establish backend
 or deployment behaviour; per-service smokes against the real endpoints belong
 to the host integration.
+
+`tests/e2e/flow.mjs` is that smoke: one scenario (sign-up → approval → opt-in
+TOTP → recovery → invitation → admin flag → reset → disable) through a service's
+real dashboard and server, run by `haystack/web/tests-browser/accounts-e2e.mjs`
+(`test:browser`, check `haystack-browser`), `manure/tests/test_browser_accounts.py`
+(target suite, check `manure-native`) and `chronicle/scripts/account-e2e.mjs`
+(check `chronicle-account-e2e`). `ACCOUNT_E2E_EVIDENCE_DIR=/absolute/dir` saves a
+screenshot of each step.

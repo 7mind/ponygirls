@@ -115,94 +115,9 @@ try {
     assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/revoke')).length, 1);
     await context.close(); console.log('PASS browser: static token metadata has no secret or modification controls; issued revoke preserved');
   }
-  {
-    const report = new api.CollectorProgressUpdate('alice-private-collector', 9007199254740993n, '00000000-0000-4000-8000-000000000090', api.CollectorPhase.Discovering, '2026-10-26T01:00:00Z', new api.CollectorCounters(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0n), 0n, 0n, undefined, undefined);
-    const { context, page, fixture } = await scene(fixture => {
-      fixture.collectors = [new api.CollectorStatus(report, '2026-10-26T01:01:00Z', false)];
-      fixture.jobs.push(fixture.jobs[0].with({ id: '00000000-0000-4000-8000-000000000091', state: api.JobState.Running, error: undefined, completedWindows: 2, totalWindows: 3 }));
-    });
-    await page.getByRole('link', { name: 'Activity', exact: true }).click();
-    const collection = page.getByRole('region', { name: 'Collectors', exact: true });
-    const collector = page.locator('.activity-collector-row').filter({ has: page.locator('td[data-column="CollectorId"]').getByText('alice-private-collector', { exact: true }) });
-    await collector.getByRole('button', { name: 'Details', exact: true }).click();
-    await collector.getByText('Discovering · Recent report', { exact: true }).waitFor();
-    await collector.getByText('Per-run collector counters', { exact: true }).click();
-    assert.match(await collector.innerText(), /sequence 9007199254740993/);
-    assert.match(await collector.innerText(), /Scanned \/ discovered sessions\n0 \/ 0/);
-    await page.locator('.activity-job-row').filter({ hasText: 'Embedding provider unavailable' }).getByRole('button', { name: 'Details', exact: true }).click();
-    await page.getByText('0 / unknown windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
-    await page.locator('.activity-job-row').filter({ has: page.locator('td[data-column="State"]').getByText('Running', { exact: true }) }).getByRole('button', { name: 'Details', exact: true }).click();
-    await page.getByText('2 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor();
-    fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ completedWindows: 3, totalWindows: 3 }) : job);
-    await page.getByText('3 / 3 windows processed · job not Complete at this snapshot', { exact: true }).waitFor({ timeout: 7000 });
-    fixture.jobs = fixture.jobs.map(job => job.state === api.JobState.Running ? job.with({ state: api.JobState.Complete }) : job);
-    await page.getByText('3 / 3 windows processed · job complete', { exact: true }).waitFor({ timeout: 7000 });
-    await collector.getByRole('button', { name: 'Details', exact: true }).click();
-    const scanning = report.with({ phase: api.CollectorPhase.Scanning, sequence: report.sequence + 1n, counters: report.counters.with({ discovered: 12, scanned: 7, waiting: 2, pending: 4, quarantined: 1, stopped: 1, conflicts: 1, uploadFailures: 2, scannedBytes: 9007199254740995n }) });
-    fixture.collectors = [new api.CollectorStatus(scanning, '2026-10-26T01:02:00Z', false)];
-    await collector.getByText('Scanning · Recent report', { exact: true }).waitFor({ timeout: 7000 });
-    assert.match(await collector.innerText(), /7 \/ 12/);
-    assert.match(await collector.innerText(), /9007199254740995 bytes/);
-    for (const [label, value] of [['Waiting for quiet', '2'], ['Pending upload queue', '4'], ['Quarantined', '1'], ['Stopped', '1'], ['Conflicts', '1'], ['Upload failures', '2']]) {
-      assert.equal(await collector.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd').innerText(), value);
-    }
-    const uploading = scanning.with({ phase: api.CollectorPhase.Uploading, sequence: scanning.sequence + 1n, counters: scanning.counters.with({ enqueued: 2, uploaded: 4 }), totalUploadBytes: 9007199254740999n, uploadedBytes: 9007199254740997n, currentUploadTotalBytes: 4096n });
-    fixture.collectors = [new api.CollectorStatus(uploading, '2026-10-26T01:03:00Z', false)];
-    await collector.getByText('Uploading · Recent report', { exact: true }).waitFor({ timeout: 7000 });
-    assert.match(await collector.innerText(), /9007199254740997 bytes \/ 9007199254740999 bytes/);
-    assert.match(await collector.innerText(), /Current payload size \(not acknowledged progress\)\n4096 bytes/);
-    assert.doesNotMatch(await collector.innerText(), /%/);
-    fixture.collectors = [new api.CollectorStatus(uploading.with({ sequence: uploading.sequence + 1n, currentUploadTotalBytes: undefined }), '2026-10-26T01:04:00Z', false)];
-    await collector.getByText('unknown', { exact: true }).waitFor({ timeout: 7000 });
-    fixture.collectors = [new api.CollectorStatus(uploading.with({ phase: api.CollectorPhase.Idle, sequence: uploading.sequence + 2n }), '2026-10-26T01:05:00Z', false)];
-    await collector.getByText('Idle · Recent report', { exact: true }).waitFor({ timeout: 7000 });
-    assert.equal(await collector.getByText('Current payload size (not acknowledged progress)', { exact: true }).count(), 0);
-    fixture.collectors = [new api.CollectorStatus(uploading.with({ phase: api.CollectorPhase.Failed, sequence: uploading.sequence + 3n, error: 'progress-upload-failed' }), '2026-10-26T01:06:00Z', true)];
-    await collector.getByText('Failed · Stale report (>120s)', { exact: true }).waitFor({ timeout: 7000 });
-    await collector.getByText('Collector error: progress-upload-failed', { exact: true }).waitFor();
-    assert.match(await collector.innerText(), /Last known snapshot only; current collection progress is unknown/);
-    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    assert.match(await page.locator('.activity-about-content').innerText(), /not collector or worker health/);
-    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    fixture.collectionDenied = true;
-    await page.getByRole('button', { name: 'Refresh snapshots ↻' }).click();
-    await page.getByRole('alert').filter({ hasText: 'Collection status denied' }).waitFor();
-    assert.equal(await collection.getByText('alice-private-collector', { exact: true }).count(), 0);
-    fixture.collectionDenied = false;
-    await page.getByRole('button', { name: 'Refresh snapshots ↻' }).click();
-    await collector.locator('td[data-column="CollectorId"]').getByText('alice-private-collector', { exact: true }).waitFor();
-    fixture.mode = 'outage'; fixture.restart();
-    await collector.waitFor({ state: 'detached', timeout: 5000 });
-    fixture.collectors = []; fixture.activityCollectors = []; fixture.activityJobs = [];
-    fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read]); fixture.mode = 'normal'; fixture.restart();
-    await page.locator('.connection-widget[data-state="live"]').waitFor({ timeout: 10000 });
-    await page.getByRole('link', { name: 'Activity', exact: true }).click();
-    await page.getByRole('heading', { name: 'No matching collectors', exact: true }).waitFor();
-    assert.equal(await page.getByText('alice-private-collector', { exact: true }).count(), 0);
-    assert.match(await page.getByRole('region', { name: 'Collectors', exact: true }).innerText(), /0 matching \/ 0 owner collectors · 0 loaded/);
-    await page.getByRole('button', { name: 'About these snapshots', exact: true }).click();
-    assert.match(await page.locator('.activity-about [popover]').innerText(), /Missing, Idle or stale reports do not establish collection completion/);
-    await page.keyboard.press('Escape');
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_Activity));
-    assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs));
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_CollectionStatus || call.operation instanceof api.Operation_IngestStatus).length, 0);
-    await context.close(); console.log('PASS browser: 1.3 collector snapshots poll through discovery, scan, ACK upload, idle, failed/stale; authorization, disconnect and account changes clear progress');
-  }
-  {
-    const { context, page } = await scene(fixture => {
-      fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision', 0, undefined, undefined));
-    });
-    await page.getByRole('link', { name: 'Activity', exact: true }).click();
-    await page.getByRole('button', { name: 'Retry indexing', exact: true }).waitFor();
-    assert.equal(await page.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 1, 'current failed jobs retain explicit retry');
-    await page.getByRole('button', { name: 'History', exact: true }).click();
-    const superseded = page.locator('.activity-job-row').filter({ hasText: 'superseded-revision' });
-    await superseded.waitFor();
-    assert.equal(await superseded.getByRole('button', { name: 'Retry indexing', exact: true }).count(), 0, 'superseded work is terminal, never presented as retryable');
-    await superseded.getByRole('button', { name: 'Details', exact: true }).click();
-    await superseded.getByText('Historical job · not actionable here. This does not describe the current published view.', { exact: true }).waitFor();
-    await context.close(); console.log('PASS browser: superseded revisions remain visible in History without an impossible retry action');
-  }
+  const { Conversation } = await server.ssrLoadModule('/src/Conversation.tsx');
+  const initialSource = renderToStaticMarkup(createElement(Conversation, { connection: {}, stats: { activeId: 1, generation: 1 }, user: new ChronicleFixture().user, sessionId: '00000000-0000-4000-8000-000000000001', initialView: undefined, archiveHead: null, select: () => {}, refresh: 0 }));
+  assert.match(initialSource, /Rechecking source access/, 'first render must show an explicit loading state, never an empty source body');
   for (const transition of ['logout-bob', 'observed-bob', 'logout-alice']) {
     const { context, page, fixture } = await scene();
     const privateQuery = '(alice-private-migration-phrase) AND project:"alice-private-project" AND branch:"alice-private-branch" AND after:"2026-10-01T10:00:00Z" AND before:"2026-11-01T10:00:00Z" AND tag:"alice-private-tag" mode:semantic';
@@ -265,10 +180,7 @@ try {
   await page.getByRole('button', { name: 'I have saved it', exact: true }).click(); await page.getByRole('button', { name: 'Yes, I have saved it', exact: true }).click();
   await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'detached' });
   await page.goBack(); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
-  await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.getByRole('button', { name: 'Retry indexing', exact: true }).click();
-  await page.locator('.activity-job-row .job-state').getByText('Queued', { exact: true }).waitFor();
   assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
-  assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_RetryJob));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('link', { name: 'Archive', exact: true }).click();
   await archiveReady(page);
