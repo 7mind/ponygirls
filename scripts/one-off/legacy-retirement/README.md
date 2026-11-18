@@ -14,7 +14,7 @@ restore of an older database copy needs that binary and these scripts. Two files
 |---|---|---|
 | `run.sh` | POSIX sh, `awk`, `grep` locally; `psql` at the database | Composes one psql session per invocation and writes it to psql's standard input. Targets `chronicle`, `haystack`, `manure`. |
 | `sql/*/counts-cte.sql` | — | The legacy counters (what "legacy exists" means), shared by every mode. |
-| `sql/chronicle/10-guards.sql`, `20-batch-retire-history.sql`, `21-batch-unfinished-runs.sql`, `30-identity.sql` | — | The Chronicle migration: refusals, two batched steps, one final transaction. |
+| `sql/chronicle/10-guards.sql`, `19-batch-retire-published.sql`, `20-batch-retire-history.sql`, `21-batch-unfinished-runs.sql`, `30-identity.sql` | — | The Chronicle migration: refusals, three batched steps, one final transaction. |
 | `sql/haystack/10-guards.sql`, `20-batch-replay.sql`, `30-finish.sql`, `export-stored-documents.sql` | — | The Haystack migration and the document export. |
 | `check-stored-documents.sh` | the above **and a JVM** (`nix develop .#chronicle`) | Decides with the real Haystack codec whether stored documents still need the wide stored-read tolerance. |
 | `drop-databases.sh` | as `run.sh` | Separately confirmed drop of rollback copies, one named database at a time. |
@@ -43,8 +43,14 @@ $RUN chronicle dry-run --emit > session.sql   # print the psql session instead o
 
 Chronicle flags for the publication-formats item:
 
-- none: refuses while any old-format generation is published (re-index those sources with the product first) or
-  exists as non-retired history; the refusal lists the counts by format and state.
+- none: refuses while any old-format generation is published or exists as non-retired history; the refusal lists
+  the counts by format and state and names the switch to use.
+- `--retire-published --confirm-retire-published N` (owner decision Q106): retires the generations still PUBLISHED
+  in an old format the same way and unpublishes them (publication pointer cleared, search rows removed). Each such
+  source then reads like a never-indexed source (transcript and messages readable, no chunks, passages `Unindexed`,
+  no search hits, a pinned link answers `indexed-view-retired`) until its owner re-indexes it with the product.
+  N is `LR.generations.old_format.published`; preflight and worklist list the sources as
+  `LR.retire_published|source|owner|generation|format|revision`.
 - `--retire-history --confirm-retire-history N`: retires the non-retired historical generations exactly as a product
   rebuild does (derived rows deleted, the generation row kept as a tombstone, so a pinned read answers
   `indexed-view-retired`). N is the count preflight prints as `LR.generations.old_format.history`.

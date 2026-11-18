@@ -21,7 +21,8 @@ facts but was not itself checked; **proposed** = a choice of this plan; **decide
 | Q96 C | Haystack Node-era replay rows are deleted. |
 | Q96 D, Q98 (2) | **All four** rollback database copies (two Chronicle, one Haystack, one Manure) are dropped after the migration is verified. The drop step takes the explicit list of four names from its own preflight. |
 | Q96 E | The evaluation v2 layer is deleted; the V3 binder that still expects v1 descriptors is corrected in the same unit. |
-| Q98 (1) | Old-format generations **are retired with tombstones**: a pinned reference to a `ContiguousProblems` or `LegacyAnnotations` generation must answer the product's "retired" outcome. `--retire-history` is the chosen path for the formats item; the default refusal and the separate typed confirmation stay as safety mechanics; the item stays skippable as a whole. The 12 published old-format sources are re-indexed by the product first. |
+| Q98 (1) | Old-format generations **are retired with tombstones**: a pinned reference to a `ContiguousProblems` or `LegacyAnnotations` generation must answer the product's "retired" outcome. `--retire-history` is the chosen path for the formats item; the default refusal and the separate typed confirmation stay as safety mechanics; the item stays skippable as a whole. (Re-indexing the 12 published old-format sources first is superseded by Q106.) |
+| Q106 (2026-11-18) | **No re-index of the sources still published in an old format.** "Retire those 12 old-format publications with tombstones like the rest (their content stops being readable until someone re-indexes the sources)." Done by `--retire-published --confirm-retire-published N` (2.3): each such source then reads like a never-indexed source until its owner re-indexes it. |
 | Review decisions | (1) a source whose re-annotation keeps failing, or whose owner is disabled: the scripts keep refusing, the runbook says stop and report; nothing unpublishes automatically. (2) The 41 current-format sources are relocated by SQL. (3) Accepted checkpoints of unfinished v1 runs are discarded. (4) A backup is a hard precondition of apply. (7) The clone export procedure is written now and not run. |
 
 Deliverables:
@@ -44,7 +45,7 @@ The items are independent: each has its own counters, its own verify result and 
 | Item | Production *(report)* | Method | Model time | Tool | Fixture-tested |
 |---|---|---|---|---|---|
 | **C-I** Chronicle model identity v1 (with pre-persistent sessions, the `ch_profile` singleton, opaque targets) | 6 profiles on the v1 space; 53 sources published on it; 2 retained-read approvals; 1 relocation row; 3,014 namespace rows; 0 deadline sessions; 0 opaque targets | SQL: transport-only relocation of the retained current-policy profile; retired-policy registry rows re-homed onto the v2 space; accepted work of unfinished v1 runs reset; proof, mapping and namespace rows removed. **No generation, job or receipt is deleted.** | no | `run.sh chronicle [--skip-formats]` | yes |
-| **C-F** Chronicle publication formats (skippable) | 99 `ContiguousProblems` generations (12 published), 44 `LegacyAnnotations` (1 not retired, 0 published) | Product re-index of the 12 published sources (their old generations are retired by the product or by the next step); then `--retire-history` retires the remaining non-retired old-format generations as the product does: tombstone stays, derived rows go | **yes**, 12 sources | dashboard, then `run.sh chronicle --retire-history --confirm-retire-history N` | yes |
+| **C-F** Chronicle publication formats (skippable) | 99 `ContiguousProblems` generations (12 published), 44 `LegacyAnnotations` (1 not retired, 0 published) | Q106: no re-index. `--retire-published` retires the 12 published old-format generations and unpublishes their sources; `--retire-history` retires the remaining non-retired old-format generations; both as the product retires: tombstone stays, derived rows go | no | `run.sh chronicle --retire-published --confirm-retire-published N --retire-history --confirm-retire-history M` | yes |
 | **H-1** Haystack Node-era replay ledger | 185 rows `haystack-op-v1` | Delete | no | `run.sh haystack` | yes |
 | **H-2** Haystack wide stored-read tolerance | 0 oversize, depth ≤ 6 *(report's SQL approximations)* | Nothing to migrate; decided by the real codec over every stored text | no | `check-stored-documents.sh` (JVM) | yes |
 | **R** shared retrieval registry (Haystack, Manure) | **not measured** | Nothing expected; verify predicate | no | `run.sh haystack|manure preflight|verify` | predicate smoke-tested |
@@ -158,40 +159,51 @@ Safety of the removals (observed):
 
 Nothing else is removed. In particular the 3,473 jobs on v1 profiles *(report)* are relabelled or left as they are.
 
-### 2.3 C-F: publication formats (decided: re-index the published ones, retire the rest with tombstones)
+### 2.3 C-F: publication formats (decided: retire every old-format generation with tombstones, the published ones included — Q98 (1), Q106)
 
 **Why not convert by SQL.** `LegacyAnnotations` has no passages to convert. `ContiguousProblems` is structurally
 close, but a conversion would relabel output of the contiguous policy as output of the context-aware policy, and
 nothing validates a stored generation against the current publication invariants
 (`ProblemsPublication.validate`, `ProblemsPublication.scala:10-80`, runs only on a new publication).
 
-**Step 1 — product re-index of the published old-format sources (12 *(report)*).** For each line of
-`LR.reindex_worklist`:
+**Step 1 — retirement of the generations still PUBLISHED in an old format (`--retire-published`, owner decision
+Q106).** Production: 12 *(preflight 2026-11-18 21:49Z; the full clone of `chronicle_pristine` shows 12)*, all
+`ContiguousProblems`, all owned by `pavel`, each with a `Failed` (`model-output`) head job on the owner's target.
 
-| Worklist state | Operator action (as the owning account) | Cost |
-|---|---|---|
-| `Failed` head job on the target | Activity → "Retry indexing job" for that job (fact 8) | one job |
-| `Queued` / `Running` | wait | — |
-| `no-target-job`, or `stale-revision` without a job | only "Rebuild archive index" can queue it, and that queues **every head of the owner** (2,829 sources exist *(report)*): **stop and report to the owner** | — |
-| job fails again; `owner-disabled` | **stop and report to the owner** (decision 1). The script keeps refusing; nothing unpublishes automatically. | — |
+What the product does, and what the script therefore produces (`retire12/report.md` has the evidence):
 
-Do not use the owner-wide "Retry failed" for this: it re-queues every Failed head job of the owner
-(`LR.info.jobs.failed_at_head_on_target` says how many).
+- The product retires a generation in exactly one place, when a rebuild publishes a successor
+  (`ReindexCohort.published`, `ReindexCohort.scala:83-93`): the derived rows of `ch_chunks`, `ch_problem_spans`,
+  `ch_problem_passages`, `ch_context_spans`, `ch_generation_tags` are deleted and the row gets `retired = true`;
+  the row stays, so a pinned read answers `indexed-view-retired` (`Database.scala:149-151`). The product never
+  retires a published generation without a successor.
+- A source without a published generation is an ordinary product state: every source before its first
+  publication. `published` is a nullable pointer; the reads treat `NULL` as "no indexed view"
+  (`Database.scala:147`: the view is the head revision without a generation; chunks are empty,
+  `Database.scala:349`; passages answer `Unindexed`, `PassageStorage.scala:36`). Search only matches rows of the
+  published generation (`Search.scala:57,62`), and a publication replaces the session's search rows
+  (`Database.scala:325-327`).
+- So `--retire-published --confirm-retire-published N` (`sql/chronicle/19-batch-retire-published.sql`) does, per
+  batch and in one transaction:
+  1. clear `ch_sources.published` (the never-indexed state);
+  2. delete the session's search rows of that generation;
+  3. run the product's five deletes;
+  4. set `retired = true`.
 
-Cost model: per source `W` annotation windows; one accepted chat-completion call per window plus at most 5 rejected
-outputs and 10 reservations per window and retry epoch (`AnnotationAttempts.scala:10-12`);
-`ceil(pieces / embeddingBatchSize)` embedding calls per window (`Models.scala:156-162`). Providers: the deployed
-`annotation.endpoint` (OpenAI-compatible chat completions, strict JSON schema) and `embedding.endpoint`
-(`config.example.json`). The deployed values were not read. Why the 12 are still on the old format is **unknown**;
-the worklist prints the head-job states and error codes.
-
-A job retried this way publishes as an ordinary publication: it does **not** retire the old generation (fact 6). The
-old generation becomes unpublished, non-retired history and is handled by step 2. **Rehearsal (2026-11-18, full
-clone): the opposite was observed for all 12**: after the 12 per-job retries, `LR.generations.old_format.history`
-was 0 and the tombstones rose from 130 to 143, i.e. the product retired the 12 old generations *and* the one
-non-retired `LegacyAnnotations` generation (inferred: the 12 head jobs are members of an unfinished rebuild cohort,
-whose publication retires as `ReindexCohort.published` does; not traced further). The runbook therefore takes N for
-`--confirm-retire-history N` from the preflight **after** the re-index; it may be 0.
+  Sessions, revisions, messages, jobs and the generation row stay. N is preflight's
+  `LR.generations.old_format.published`. Without the switch the script refuses and says what to do; a wrong N
+  refuses. The sources are listed with identifiers as `LR.retire_published|source|owner|generation|format|revision`
+  in preflight and worklist.
+- **Consequence for readers (Q106).** Each such source reads like a never-indexed source until its owner
+  re-indexes it:
+  - its transcript, messages and raw revisions stay readable;
+  - its indexed view has no chunks and no passages (`Unindexed`);
+  - a pinned link to the old generation answers `indexed-view-retired`;
+  - Search returns nothing from it;
+  - Activity shows its head job as before (`Failed`, `model-output`).
+- **Re-index afterwards.** Nothing re-indexes it automatically. The owner re-indexes through the product: "Retry
+  indexing job" on the head job, or "Rebuild archive index". A later publication is an ordinary one.
+  Rehearsed: one of the 12 re-indexed with the stub provider; fixture: a rebuild of both retired sources.
 
 **Step 2 — explicit retirement of non-retired old-format history (`--retire-history`).**
 
@@ -201,17 +213,17 @@ whose publication retires as `ReindexCohort.published` does; not traced further)
   wrong N refuses) runs `sql/chronicle/20-batch-retire-history.sql`: the five `DELETE`s of fact 6 in the product's
   order, then `retired = true`. Nothing else: the generation row, its id, revision, format and profile labels stay.
   No security-epoch change (the trigger fires on delete of a generation row only, `009_transient_security_epoch.sql:47-49`).
-- A published generation is never retired by the script (the product never retires the published generation):
-  with one present it refuses and points to step 1.
+- `--retire-history` never touches a published generation; that is step 1 (`--retire-published`), which runs first
+  in the same apply.
 - Already-retired old-format generations (87 + 43 *(report)*) are not touched at all.
 
 Effect on pinned reads (asserted in the fixture, before → after):
 
-| Generation | Before | After the product re-index | After `--retire-history` |
-|---|---|---|---|
-| published, old format | chunks | `indexed-view-retired` (rebuild) or chunks (single-job retry) | `indexed-view-retired` |
-| unpublished, not retired, old format | chunks | chunks | `indexed-view-retired` |
-| already retired, old format | `indexed-view-retired` | same | same; row byte-identical |
+| Generation | Before | After `--retire-published` / `--retire-history` |
+|---|---|---|
+| published, old format | chunks | `indexed-view-retired`; the source's own indexed view: no chunks, passages `Unindexed` (never-indexed state) |
+| unpublished, not retired, old format | chunks | `indexed-view-retired` |
+| already retired, old format | `indexed-view-retired` | same; row byte-identical |
 
 The raw revision of every source stays readable (`ch_revisions` is not touched; asserted).
 
@@ -242,7 +254,7 @@ after the identity apply). C-F can run later, or never; then inventory 6.2 stays
 | Question | Answer |
 |---|---|
 | Binary during the migration | The binary built from `main` (`de43b916` or later; it contains CH-FIX, plan Q101). Its Chronicle and Haystack schema migrations are those of `ab3e8a87` (no migration was added on `main`); re-validated on the clone with that binary (LEG-LAND). It must have started once against the database (migrations 018–020 present; the configured v2 space registered). The script is bound to `ch_schema_migrations` = `2,3,6,8,9,14,17,20`. |
-| Quiescence | Step 1 of C-F needs the service running with workers. The SQL needs the workers stopped and no live lease; it refuses on a live lease and, by default, on any other client connection. Proposed: stop the service for the SQL. |
+| Quiescence | No step of the migration needs the product (Q106). The SQL needs the workers stopped and no live lease; it refuses on a live lease and, by default, on any other client connection. Proposed: stop the service for the SQL. |
 | Can it run while the service is up? | Not recommended for Chronicle: part 3 holds `SHARE ROW EXCLUSIVE` on `ch_jobs` and `ch_owner_targets` (as the CLI does, `ModelIdentityMigration.scala:77`), so ingests and claims block. `--allow-active-connections` exists for `serve-standby` and tests. |
 | Idempotency | Every statement selects by the legacy predicate; a second run finds nothing. Asserted (database content identical after a second apply, for both items). |
 | Transaction boundaries | `apply`: each batch is one transaction; part 3 is one transaction. `dry-run`: everything in one transaction, rolled back. A refusal or error ends the psql session; the server rolls the open transaction back. Committed batches leave a database the current binary reads. |
@@ -266,11 +278,15 @@ heap (the 5.5 GB of TOAST is not touched) and took 94 ms; the index question is 
 `UPDATE ch_search_chunks SET profile` of the relocation: **40,833 rows** (not about 14,000), each maintained in the
 HNSW index; part 3 holds `SHARE ROW EXCLUSIVE` on `ch_jobs` and `ch_owner_targets` throughout.
 
-**Budget (re-validation with the binary built from the merged tree, LEG-LAND 2026-11-18, runbook order on a fresh
-copy):** binary start 0.21 s (no schema migration); lease wait after the stop 282 s; batched reset of unfinished runs
-839 runs / 61,087 accepted checkpoints; **dry-run 153.6 s, 9.94 GB WAL, `SHARE ROW EXCLUSIVE` ~129 s**; **apply
-142.4 s, 9.69 GB WAL, the same lock ~113 s**; verify 0.4 s; second apply 1.4 s; after `unfence` the service served
+**Budget (the current plan, Q106: no re-index; LEG-RETIRE12 2026-11-18, binary built from `main`, fresh copy of
+`chronicle_pristine`, `--retire-published 12 --retire-history 1`, `--batch-size 10`):** binary start 0.21 s (no
+schema migration); batched reset of unfinished runs 851 runs / 61,404 accepted checkpoints (none re-indexed first);
+published retirement 12 generations, 12 sources unpublished, 12,249 search rows deleted; **dry-run 154.1 s,
+9.97 GB WAL, `SHARE ROW EXCLUSIVE` ~128 s**; **apply 138.2 s, 10.00 GB WAL, the same lock ~110 s**; verify 0.4 s;
+second apply 1.8 s. From LEG-LAND (same binary): lease wait after the stop 282 s; after `unfence` the service served
 131 s later (next scheduled restart). A dry-run writes about as much WAL as the apply although it rolls back.
+*LEG-LAND (with the re-index first, superseded):* 839 runs / 61,087 checkpoints; dry-run 153.6 s, 9.94 GB WAL, lock
+~129 s; apply 142.4 s, 9.69 GB WAL, lock ~113 s.
 *First rehearsal (`ab3e8a87` JAR, for comparison only):* 851 runs / 61,404 checkpoints, reset ~25 s and ~9.7 GB WAL
 (TOAST deletions), part 3 130–141 s and ~1 GB WAL, dry-run 154–168 s.
 
@@ -284,7 +300,8 @@ copy):** binary start 0.21 s (no schema migration); lease wait after the stop 28
    `C4.retained | 0`; `C5.formats`: old formats only with `retired = t`; `C7.opaque | 0 | 0 | 0`.
 3. Product checks with the current binary restarted: one semantic search per owner returns hits and not
    `unavailable` (the guard `IndexProfiles.semantic`, `IndexProfiles.scala:84-92`, fails the whole request if any
-   visible publication is unreadable); the passages panel of a relocated source and of a re-annotated source renders;
+   visible publication is unreadable); the passages panel of a relocated source renders; a source whose old-format
+   publication was retired (Q106) shows its transcript and no indexed view (`Unindexed`);
    a pinned link to a retired old-format generation shows the "retired" outcome; a new ingest is indexed.
 
 ### 2.6 Irreversibility, backup, abort
@@ -394,11 +411,11 @@ evaluation-v2 unit (6.5), with the commands that verify it.
 
 | Deployment / copy | State *(report)* | What it needs |
 |---|---|---|
-| Four rollback copies in the production cluster | the Chronicle copies hold legacy data and lack migration 020 | Dropped after verification (decided): runbook step 17. Until then they must not be restored under a legacy-free binary. |
+| Four rollback copies in the production cluster | the Chronicle copies hold legacy data and lack migration 020 | Dropped after verification (decided): runbook step 15. Until then they must not be restored under a legacy-free binary. |
 | MAN prototype cluster | scaled to 0; volumes recorded as empty test state, not queried | Before any restart under a legacy-free binary: `preflight` on its databases, or delete its volumes. |
 | Personal VM deployments | declared with the services disabled; actual state not observed | Same. |
 | Old compute host leftovers | not running, contents not inspected | Delete, or treat as needing the compatibility binary. |
-| Backups / off-cluster archives | none configured; a 2026-11-06 Chronicle source archive was not located | A restore of a pre-migration copy needs the last binary that contains the legacy code (tagged at step 14) and these scripts from that tag. |
+| Backups / off-cluster archives | none configured; a 2026-11-06 Chronicle source archive was not located | A restore of a pre-migration copy needs the last binary that contains the legacy code (tagged at step 12) and these scripts from that tag. |
 | Developer and test instances elsewhere | unknown | `run.sh … preflight` is read-only and safe to run anywhere. |
 
 ## 6. Deletion inventory
@@ -429,7 +446,7 @@ accepted. Line numbers are at `ab3e8a87`; symbols are given so the deletion unit
 | `…/test/PersistentBrowserSessionTest.scala` | 61–85 | tests the 020 conversion |
 | `…/test/RetryFailedJobsTest.scala` 37, 55, 101; `…/test/ActivityTest.scala` 446, 457; the `UPDATE ch_profile` lines of about 25 suites | fixture upkeep of the singleton | table dropped (6.6) |
 | `shared/retrieval-core/src/test/…/RetrievalCoreTest.scala` 13–21; `shared/retrieval-postgres/src/test/…/RetrievalContractTest.scala` 171–189 | v1 cases | test the v1 branch |
-| `…/test/LegacyRetirementScriptsTest.scala`, `scripts/one-off/legacy-retirement/` | whole | this one-off (reachable from the tag of step 14) |
+| `…/test/LegacyRetirementScriptsTest.scala`, `scripts/one-off/legacy-retirement/` | whole | this one-off (reachable from the tag of step 12) |
 
 Keep: `Database.scala:49` and `liveSession` in `Auth.scala:102` (deadline semantics of the `expires` column).
 
@@ -513,7 +530,7 @@ tables and serves again, so a deployment rollback is possible there; the retaine
 ## 7. Runbook
 
 Conventions (LEG-SAFE round 3, 2026-11-18). **Every** production step goes through the operator wrapper of a
-**tooling checkout** that is created first and survives the deletion of the scripts (step 15):
+**tooling checkout** that is created first and survives the deletion of the scripts (step 13):
 
 ```sh
 git -C <ponygirls checkout> tag legacy-retirement-tooling <reviewed commit>                    # once, step 0
@@ -544,8 +561,8 @@ means done.**
 | `OP.result|failed|7|…` | 7 | a container restarted or the pod was replaced during the command | check the service; re-check the command's state (preflight / plan) before anything else |
 
 **What the operator must have:** the tooling checkout, bash, `python3`, `kubectl` with the context; `nix develop
-.#chronicle` for `codec-check` (JVM) and `backup-haystack` / `backup-manure` (local `pg_restore`); a browser session as the owning
-account for step 5; the running Chronicle service with workers and model endpoints for step 5.
+.#chronicle` for `codec-check` (JVM) and `backup-haystack` / `backup-manure` (local `pg_restore`); no product re-index and no
+browser session (Q106).
 
 Owner decisions: **Q102** — no backup of `chronicle` (not in production use): the apply takes
 `--backup-reference none-owner-decision-Q102` (recorded as `LR.backup|none (owner decision Q102)`, Chronicle only);
@@ -568,22 +585,21 @@ fence (7.2) relies on.
 | # | Step | Command (exactly) | Success: the record `OP.result|ok|…` ends with | Stop when |
 |---|---|---|---|---|
 | 0 | Tooling checkout; settings; identity | see the block above | `OP.confirm|identified` (above it `OP.confirm|pod=…|system_identifier=…`) | anything differs from the deployment repository |
-| 0a | Pre-deployment net: **before `./redeploy-team-tools --apply`** (the deployment replaces pod `core-0` and restarts PostgreSQL; it is reversible, these dumps are a cheap net) | `"$OP" backup-haystack /<dir>/haystack-<time>.dump`; `"$OP" backup-manure /<dir>/manure-<time>.dump` | `LR.result|backup-published` each (above it `LR.backup.file|<file>|<size>|<sha256>`) | any other last line: do not deploy |
-| 1 | The binary built from `main` (`de43b916` or later, CH-FIX) deployed with the **deployed** config, unchanged (Q101); credential preflight | `bullshit-renew status --json`; `"$OP" ready` | `OP.ready|observed` with all containers `ready` and `OP.ready|pod|True` above it | not ready |
-| 2 | Chronicle preflight and worklist | `"$OP" chronicle preflight`; `"$OP" chronicle worklist` | `LR.result|preflight-complete`; `LR.result|worklist-complete` (one `LR.reindex_job|<job>|<source>|<owner>|…` per source) | schema ≠ `2,3,6,8,9,14,17,20`; counters far from section 1 |
-| 3 | Haystack, Manure preflight; codec check | `"$OP" haystack preflight`; `"$OP" manure preflight`; `"$OP" codec-check` | `preflight-complete` twice (with `LP.retrieval.not_proven_v2|0`); `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero; codec check fails |
-| 5 | Re-index the worklist (service running) | Activity → each job id from step 2 → "Retry indexing job" (never "Retry failed"); then `"$OP" chronicle preflight` | `LR.generations.old_format.published|0`; note `N` = `LR.generations.old_format.history` | a job fails again, `no-target-job`, owner disabled |
-| 6 | Owner's explicit go (Q102) | — | explicit | no go |
-| 7 | Fence Chronicle (7.2), wait for leases | `"$OP" chronicle fence --role chronicle`; repeat `"$OP" chronicle preflight` until `LR.info.jobs.running_live_lease|0` and `LR.other_client_backends|0` (≤ 5 min) | `LR.result|fenced`; later commands start with `FENCED since` | fence not confirmed → `fence-status`; see "Abort / lost session" |
-| 9 | Dry-run immediately before the apply | `"$OP" chronicle dry-run --retire-history --confirm-retire-history N --batch-size 10` | `LR.result|dry-run-rolled-back` | refusal |
-| 10 | Apply | `"$OP" chronicle preflight` (note `LR.plan` = P); `"$OP" chronicle apply --apply-irreversible --confirm-database chronicle --expect-plan P --backup-reference none-owner-decision-Q102 --retire-history --confirm-retire-history N --batch-size 10` | `LR.result|applied` | refusal. **Re-run after a partial run** (cut, `legacy-retirement incomplete`): preflight again and use the NEW plan token and the REMAINING count `N` it prints (committed batches are not repeated) |
-| 11 | Verify; unfence; service back | `"$OP" chronicle verify`; `"$OP" chronicle unfence --role chronicle`; repeat `"$OP" ready` | `LR.result|verify-zero`; `LR.result|unfenced`; `OP.ready|containers|chronicle=ready…` and `OP.ready|pod|True` (≤ ~5 min: restart back-off) | not ready after 6 min |
-| 12 | Haystack: backup, dry-run, apply, verify (service up) | `"$OP" backup-haystack /<dir>/haystack-<time>.dump`; `"$OP" haystack dry-run --allow-active-connections`; `"$OP" haystack preflight` (P); `"$OP" haystack apply --apply-irreversible --confirm-database haystack --expect-plan P --backup-reference <file>:<sha256> --allow-active-connections`; `"$OP" haystack verify` | `LR.result|backup-published` (above it `LR.backup.file|<file>|<size>|<sha256>`); `dry-run-rolled-back`; `preflight-complete`; `applied`; `verify-zero` | any other last line |
-| 13 | Pre-removal verification | `"$OP" chronicle verify`; `"$OP" haystack verify`; `"$OP" manure verify`; `"$OP" codec-check` | three `verify-zero`; `stored-documents-strict-ok` | a guard not met: its inventory block is not deleted |
-| 14 | Tag the last commit that contains the legacy code | `git tag <name chosen by the owner>` in the main checkout | tag exists | — |
-| 15 | Repository work: delete the legacy code (section 6), add the clean-up migrations (6.6), full suites. The main checkout loses `scripts/one-off/legacy-retirement`; **the tooling checkout of step 0 keeps it** | — | suites green | — |
-| 16 | Deploy the legacy-free binaries; post-deployment check with the retained files | first `git diff legacy-retirement-tooling <deployed commit> -- chronicle/scripts/check-legacy-free.sql haystack/scripts/check-legacy-free.sql` (must be empty); then `"$OP" check-legacy-free chronicle` (add `-v require_formats=f` if C-F was skipped); `"$OP" check-legacy-free haystack` | `LF.result|legacy-free` (each; with `-v require_formats=f` the line `LF.formats|kept` precedes it) | `LF.result|legacy-present` |
-| 17 | **Separately confirmed:** drop the four rollback copies | `"$OP" drop` (plan); per confirmed name: `"$OP" drop drop --drop <name> --confirm-database <name> --expect-oid <OID from the plan>` | plan: `DB.result|plan-complete-nothing-dropped` (four `DB.would_drop`, no `DB.tombstone_*`); each drop: `DB.result|dropped|oid=<OID>` (or `DB.result|already-gone|oid=<OID>` on a repeat) | any `OP.result|failed|…`, `DB.tombstone_unowned` |
+| 1 | Pre-deployment net: **before `./redeploy-team-tools --apply`** (the deployment replaces pod `core-0` and restarts PostgreSQL; it is reversible, these dumps are a cheap net) | `"$OP" backup-haystack /<dir>/haystack-<time>.dump`; `"$OP" backup-manure /<dir>/manure-<time>.dump` | `LR.result|backup-published` each (above it `LR.backup.file|<file>|<size>|<sha256>`) | any other last line: do not deploy |
+| 2 | The binary built from `main` (`de43b916` or later, CH-FIX) deployed with the **deployed** config, unchanged (Q101); credential preflight | `bullshit-renew status --json`; `"$OP" ready` | `OP.ready|observed` with all containers `ready` and `OP.ready|pod|True` above it | not ready |
+| 3 | Chronicle preflight and worklist | `"$OP" chronicle preflight`; `"$OP" chronicle worklist` | `LR.result|preflight-complete`; `LR.result|worklist-complete`; note `N` = `LR.generations.old_format.published` (12 at the last production preflight; the sources are the `LR.retire_published|<source>|<owner>|<generation>|<format>|<revision>` lines, keep them for the owners: Q106) and `M` = `LR.generations.old_format.history` | schema ≠ `2,3,6,8,9,14,17,20`; counters far from section 1 |
+| 4 | Haystack, Manure preflight; codec check | `"$OP" haystack preflight`; `"$OP" manure preflight`; `"$OP" codec-check` | `preflight-complete` twice (with `LP.retrieval.not_proven_v2|0`); `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero; codec check fails |
+| 5 | Owner's explicit go (Q102; Q106: the `N` sources become unindexed until re-indexed) | — | explicit | no go |
+| 6 | Fence Chronicle (7.2), wait for leases | `"$OP" chronicle fence --role chronicle`; repeat `"$OP" chronicle preflight` until `LR.info.jobs.running_live_lease|0` and `LR.other_client_backends|0` (≤ 5 min) | `LR.result|fenced`; later commands start with `FENCED since` | fence not confirmed → `fence-status`; see "Abort / lost session" |
+| 7 | Dry-run immediately before the apply | `"$OP" chronicle dry-run --retire-published --confirm-retire-published N --retire-history --confirm-retire-history M --batch-size 10` | `LR.result|dry-run-rolled-back` | refusal |
+| 8 | Apply | `"$OP" chronicle preflight` (note `LR.plan` = P); `"$OP" chronicle apply --apply-irreversible --confirm-database chronicle --expect-plan P --backup-reference none-owner-decision-Q102 --retire-published --confirm-retire-published N --retire-history --confirm-retire-history M --batch-size 10` | `LR.result|applied` | refusal. **Re-run after a partial run** (cut, `legacy-retirement incomplete` or counters not zero): preflight again and use the NEW plan token and the REMAINING counts `N`, `M` it prints (committed batches are not repeated) |
+| 9 | Verify; unfence; service back | `"$OP" chronicle verify`; `"$OP" chronicle unfence --role chronicle`; repeat `"$OP" ready` | `LR.result|verify-zero`; `LR.result|unfenced`; `OP.ready|containers|chronicle=ready…` and `OP.ready|pod|True` (≤ ~5 min: restart back-off) | not ready after 6 min |
+| 10 | Haystack: backup, dry-run, apply, verify (service up) | `"$OP" backup-haystack /<dir>/haystack-<time>.dump`; `"$OP" haystack dry-run --allow-active-connections`; `"$OP" haystack preflight` (P); `"$OP" haystack apply --apply-irreversible --confirm-database haystack --expect-plan P --backup-reference <file>:<sha256> --allow-active-connections`; `"$OP" haystack verify` | `LR.result|backup-published` (above it `LR.backup.file|<file>|<size>|<sha256>`); `dry-run-rolled-back`; `preflight-complete`; `applied`; `verify-zero` | any other last line |
+| 11 | Pre-removal verification | `"$OP" chronicle verify`; `"$OP" haystack verify`; `"$OP" manure verify`; `"$OP" codec-check` | three `verify-zero`; `stored-documents-strict-ok` | a guard not met: its inventory block is not deleted |
+| 12 | Tag the last commit that contains the legacy code | `git tag <name chosen by the owner>` in the main checkout | tag exists | — |
+| 13 | Repository work: delete the legacy code (section 6), add the clean-up migrations (6.6), full suites. The main checkout loses `scripts/one-off/legacy-retirement`; **the tooling checkout of step 0 keeps it** | — | suites green | — |
+| 14 | Deploy the legacy-free binaries; post-deployment check with the retained files | first `git diff legacy-retirement-tooling <deployed commit> -- chronicle/scripts/check-legacy-free.sql haystack/scripts/check-legacy-free.sql` (must be empty); then `"$OP" check-legacy-free chronicle` (add `-v require_formats=f` if C-F was skipped); `"$OP" check-legacy-free haystack` | `LF.result|legacy-free` (each; with `-v require_formats=f` the line `LF.formats|kept` precedes it) | `LF.result|legacy-present` |
+| 15 | **Separately confirmed:** drop the four rollback copies | `"$OP" drop` (plan); per confirmed name: `"$OP" drop drop --drop <name> --confirm-database <name> --expect-oid <OID from the plan>` | plan: `DB.result|plan-complete-nothing-dropped` (four `DB.would_drop`, no `DB.tombstone_*`); each drop: `DB.result|dropped|oid=<OID>` (or `DB.result|already-gone|oid=<OID>` on a repeat) | any `OP.result|failed|…`, `DB.tombstone_unowned` |
 
 **Abort / lost session.** Whatever happens, first `"$OP" ready` and `"$OP" chronicle fence-status --role chronicle`.
 - **Pod monitoring unavailable while fenced** (`get pod` forbidden or failing: every ordinary command ends with
@@ -600,13 +616,13 @@ fence (7.2) relies on.
   ALTER ROLE chronicle LOGIN;
   COMMENT ON ROLE chronicle IS NULL;
   ```
-- Lost during **fence** (step 7) or any later Chronicle step: the role may be NOLOGIN; `fence-status` says
+- Lost during **fence** (step 6) or any later Chronicle step: the role may be NOLOGIN; `fence-status` says
   `fenced` / `unfenced`. To abort, `"$OP" chronicle unfence --role chronicle` (idempotent; safe after a cut) and
   wait for `ready`. The service does not come back by itself while fenced.
 - Lost during **dry-run/apply**: follow 7.1 (`sessions`, `terminate` our own backend, `preflight`), then either
-  continue at step 9/10 with the new token and remaining count, or abort by unfencing (committed batches stay; the
+  continue at step 7/8 with the new token and remaining counts, or abort by unfencing (committed batches stay; the
   database is readable by the current binary at every batch boundary).
-- Lost during **drop** (step 17): run the same `drop` command again — it resumes the tombstone `lr_drop_<OID>` under
+- Lost during **drop** (step 15): run the same `drop` command again — it resumes the tombstone `lr_drop_<OID>` under
   the full guard or answers `already-gone`. `"$OP" drop` (plan) runs the same guard for every tombstone and prints
   either `DB.tombstone_of|<copy>|<OID>` with the two command lines `DB.tombstone_command|continue|…` and
   `DB.tombstone_command|restore|drop-databases.sh restore --oid <OID> --confirm-database <copy>` (run through
@@ -633,9 +649,9 @@ fence (7.2) relies on.
   Haystack/Manure compare the configured profile's row byte-for-byte at start-up ("immutable retrieval profile
   mismatch") and do not use unconfigured profile rows.
 
-Order note for steps 13–16: `run.sh … verify` reads the tables that the clean-up drops and is bound to the
-pre-clean-up schema, and it is deleted in step 15. It is therefore the **pre-removal** check (step 13) only. After
-the deployment the check is the retained SQL (step 16). Validated on the fixture databases: before the clean-up the
+Order note for steps 11–14: `run.sh … verify` reads the tables that the clean-up drops and is bound to the
+pre-clean-up schema, and it is deleted in step 13. It is therefore the **pre-removal** check (step 11) only. After
+the deployment the check is the retained SQL (step 14). Validated on the fixture databases: before the clean-up the
 retained check fails (`legacy-present`); after it, it passes and `run.sh chronicle verify` fails with "relation …
 does not exist" while `run.sh haystack dry-run` refuses with "unexpected schema_migrations".
 
@@ -758,7 +774,7 @@ production use, decision Q102 (e)); for Haystack/Manure users it is an outage of
 What the fence does NOT prevent: sessions of other roles (`postgres`, Haystack's, Manure's, ours); a superuser
 reverting it; requests to the Chronicle HTTP endpoint failing (collectors retry or lose nothing only if they
 retry); the restart loop itself; a deployment rollout during the window (it would not unfence). Fence only right
-before step 9 and unfence right after step 11.
+before step 7 and unfence right after step 9.
 
 ## 8. Rehearsal (requirement A; review R4)
 
@@ -792,7 +808,7 @@ SOURCE_PG_DUMP='kubectl <flags> exec -i <database pod> -c <container> -- pg_dump
 bash $L/rehearsal/clone.sh init-cluster --dir "$D"
 bash $L/rehearsal/clone.sh restore --dir "$D" --jobs 8 chronicle haystack manure
 eval "$(bash $L/rehearsal/clone.sh env --dir "$D")"      # PGHOST, PGPORT, PGUSER for run.sh
-# 3. rehearse the runbook steps 2–13 and 15–17 against the clone (section 7), with PGDATABASE=<database>
+# 3. rehearse the runbook steps 3–11 and 13–15 against the clone (section 7), with PGDATABASE=<database>
 # 4. delete — the exact deletion step
 bash $L/rehearsal/clone.sh stop-cluster --dir "$D"
 bash $L/rehearsal/clone.sh delete --dir "$D" --confirm "$D"      # rm -rf of D; refuses while the cluster runs
@@ -835,7 +851,7 @@ What the rehearsal needs beyond PostgreSQL:
   `revision`, `requestPolicy`, `maxResponseBytes` (`IndexProfiles.scala:10-13,21-32`). Endpoints and credentials do
   not enter the v2 identity. Check after start-up that `ch_owner_targets.profile` equals the profile the binary
   registered; otherwise the rehearsal proves nothing.
-- Model endpoints for C-F step 1 — `annotation.endpoint` (chat completions) and `embedding.endpoint`:
+- Model endpoints (needed for the product checks only; the C-F re-index is superseded by Q106) — `annotation.endpoint` (chat completions) and `embedding.endpoint`:
   - *local stub on loopback* (schema-valid annotations, unit vectors): proves the queue → claim → publish mechanics on
     real rows, every guard, the SQL, the relocation hashes on the real descriptors, idempotency, the clean-up schema
     and the reads of the current binary. It does **not** prove that the real annotator succeeds on the 12 sources and
@@ -929,4 +945,4 @@ shell fixture suites (`test-drop-databases.sh`, `test-scripts.sh`) are the on-de
 4. **Restores** of any pre-migration copy need the tagged legacy binary plus these scripts.
 5. **Guards not yet measured in production**: the retrieval registry of Haystack and Manure (guard R), the codec
    check of stored documents (6.4), the number of unfinished v1 runs, the head-job states of the 12 sources, the scan
-   duration. Each has a read-only measurement in runbook steps 2–4 and in the rehearsal.
+   duration. Each has a read-only measurement in runbook steps 3–4 and in the rehearsal.
