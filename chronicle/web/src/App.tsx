@@ -1,6 +1,6 @@
 import './styles.css';
 import { Anchored, dismissPopoverOnExternalFocus } from './Popover.tsx';
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { ReactNode } from 'react';
 import { ThemeControl } from './ThemeControl.tsx';
 import type { ThemeController } from './theme.ts';
@@ -16,7 +16,7 @@ import type { ArchiveState } from './Archive.tsx';
 import { Dialog } from './Dialog.tsx';
 import { Conversation } from './Conversation.tsx';
 import { Icon } from './Icon.tsx';
-import { DEFAULT_ROUTE, HashRouter, RouteParams, RouteStateCache, RouteStateContext, formatRoute, parentRoute, routeSlot, sessionIdOf, sessionRoute, useRouteState, useRouteSync, useRouter, viewRoute, viewRouteWith, type Route, type View } from './router.ts';
+import { DEFAULT_ROUTE, HashRouter, RouteParams, RouteStateCache, RouteStateContext, formatRoute, routeSlot, sessionIdOf, sessionRoute, useRouteState, useRouteSync, useRouter, viewRoute, viewRouteWith, type Route, type View } from './router.ts';
 import type { ManagerStats } from './transport/types.ts';
 import { ArchiveReadLane } from './archive-requests.ts';
 import { SessionFindReadGate } from './session-find.ts';
@@ -37,6 +37,8 @@ const NAV_ITEMS: readonly { readonly view: NavView; readonly label: string }[] =
 ];
 // Document-like views sit on the canvas; list views are full-bleed on the surface (spec §2.2 Layout).
 const CANVAS_VIEWS: readonly View[] = ['access', 'mcp'];
+// The brand links to the default route (router DEFAULT_ROUTE) with its retained parameters.
+const HOME_VIEW: NavView = 'search';
 const MAIN_CONTENT_ID = 'main-content';
 const ARCHIVE_STATE = routeSlot<ArchiveState>('archive', emptyArchive);
 const ARCHIVE_DRAFT = routeSlot<string>('archive-draft', () => '');
@@ -111,6 +113,29 @@ function searchParams(submitted: string | null): RouteParams { return new RouteP
 // A hidden view keeps its state and its own subscriptions but is not re-rendered for the shell's updates (transport
 // statistics, other routes) until it is shown again, so retained views add no rendering work.
 const RetainedView = memo(function RetainedView({ render }: { active: boolean; render: () => ReactNode }) { return render(); }, (previous, next) => !previous.active && !next.active);
+// In-app links carry a list view's retained submitted state, so following one never changes it; addresses that
+// arrive otherwise (history, deep links, edits) are authoritative (useRouteSync).
+function retainedRoute(view: NavView, cache: RouteStateCache): Route {
+  switch (view) {
+    case 'archive': return viewRouteWith('archive', archiveParams(cache.read(ARCHIVE_STATE, ARCHIVE_INSTANCE)));
+    case 'search': return viewRouteWith('search', searchParams(cache.read(SEARCH_SUBMITTED, SEARCH_INSTANCE)));
+    default: return viewRoute(view);
+  }
+}
+function useRetainedHref(view: NavView): string {
+  const cache = useContext(RouteStateContext);
+  if (cache === null) throw new Error('useRetainedHref requires a RouteStateContext provider');
+  return useSyncExternalStore(cache.subscribe, () => formatRoute(retainedRoute(view, cache)), () => formatRoute(retainedRoute(view, cache)));
+}
+function NavLink({ view, label, current, attention }: { view: NavView; label: string; current: boolean; attention: string | null }) {
+  return <a href={useRetainedHref(view)} aria-current={current ? 'page' : undefined} title={attention ?? undefined}>{label}{attention !== null && <span className="nav-dot" title={attention} aria-hidden="true"/>}</a>;
+}
+function MainNavigation({ current, attention }: { current: NavView | null; attention: string | null }) {
+  return <nav className="nav" aria-label="Main navigation">{NAV_ITEMS.map(item => <NavLink key={item.view} view={item.view} label={item.label} current={current === item.view} attention={item.view === 'activity' ? attention : null}/>)}</nav>;
+}
+function Brand() {
+  return <a href={useRetainedHref(HOME_VIEW)} className="brand" aria-label="Chronicle home"><span className="brand-mark"><Icon name="book" small={false}/></span><span className="brand-name">chronicle</span></a>;
+}
 interface ViewRouting { readonly active: boolean; readonly route: Route; readonly router: HashRouter }
 function ArchiveView({ routing, ...props }: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; routing: ViewRouting }) {
   const [archive, setArchive] = useRouteState(ARCHIVE_STATE, ARCHIVE_INSTANCE), [draft, setDraft] = useRouteState(ARCHIVE_DRAFT, ARCHIVE_INSTANCE);
@@ -237,11 +262,11 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   function sessionDialog(user: UserInfo) {
     if (route.view !== 'session') return null;
     const sessionId = sessionIdOf(route);
-    return <div className="legacy-view"><Dialog title="Source conversation" close={() => router.back(parentRoute(route))}><Conversation key={sessionId} connection={connection} stats={stats} user={user} sessionId={sessionId} initialView={undefined} archiveHead={null} select={id => router.navigate(sessionRoute(id), 'push')} refresh={0} findReads={findReads}/></Dialog></div>;
+    return <div className="legacy-view"><Dialog title="Source conversation" close={() => router.back(retainedRoute('archive', scope.cache))}><Conversation key={sessionId} connection={connection} stats={stats} user={user} sessionId={sessionId} initialView={undefined} archiveHead={null} select={id => router.navigate(sessionRoute(id), 'push')} refresh={0} findReads={findReads}/></Dialog></div>;
   }
   return <RouteStateContext.Provider value={scope.cache}><div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skipToContent}>Skip to content</a>
-    <header className="masthead"><a href={formatRoute(DEFAULT_ROUTE)} className="brand" aria-label="Chronicle home"><span className="brand-mark"><Icon name="book" small={false}/></span><span className="brand-name">chronicle</span></a>
-      {user && <nav className="nav" aria-label="Main navigation">{NAV_ITEMS.map(item => <a key={item.view} href={formatRoute(viewRoute(item.view))} aria-current={!accountShown && current === item.view ? 'page' : undefined} title={item.view === 'activity' && attentionText !== null ? attentionText : undefined}>{item.label}{item.view === 'activity' && attentionText !== null && <span className="nav-dot" title={attentionText} aria-hidden="true"/>}</a>)}</nav>}
+    <header className="masthead"><Brand/>
+      {user && <MainNavigation current={accountShown ? null : current} attention={attentionText}/>}
       <div className="masthead-end">{stats.terminal !== 'unauthorized' && <ConnectionHealth connection={connection} stats={stats}/>}<ThemeControl controller={theme}/>{user && <UserMenu user={user} admin={admin}/>}</div></header>
     <div id={MAIN_CONTENT_ID} className="app-views" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/><ReindexProgress progress={rebuild}/></div>
       {identity.error && stats.terminal !== 'unauthorized' && <div className="page shell-notice"><div className="notice notice-danger" role="alert">{identity.error}</div></div>}

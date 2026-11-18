@@ -133,7 +133,7 @@ try {
     assert.equal(archiveReads(fixture).length, reads);
   });
 
-  await run('route parameters: filtered and sorted deep links, and reload after submitting, restore query and order', { width: 1440, height: 900 }, fixture => { fixture.archiveRowCount = 30; }, async ({ page, fixture }) => {
+  await run('route parameters: filtered and sorted deep links, reload after submitting, Back to unfiltered entries and clearing through the address restore query and order', { width: 1440, height: 900 }, fixture => { fixture.archiveRowCount = 30; }, async ({ page, fixture }) => {
     await page.goto(`${origin}/${PAGE}#/archive?q=${encodeURIComponent('project:"Project 1"')}&sort=Title&dir=Asc`);
     await archiveRows(page).first().waitFor();
     assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'project:"Project 1"');
@@ -156,6 +156,25 @@ try {
     assert.equal(await searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), SEARCH_TEXT, 'a Search deep link submits its query');
     await submitSearch(page, 'mode:semantic migration'); await page.reload(); await searchSummary(page).waitFor();
     assert.equal(await searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'mode:semantic migration', 'reload restores the submitted Search');
+
+    // Addresses that arrive through history or an edit are authoritative, also with default (empty) parameters.
+    const archiveQuery = value => page.waitForFunction(value => document.querySelector('[data-view="archive"] input[role="combobox"]')?.value === value, value);
+    const lastArchive = () => { const query = archiveReads(fixture).at(-1).operation.query; return [query.expression, query.sort, query.direction, query.preferRelevance]; };
+    const defaults = ['', api.ArchiveSort.LastTimestamp, api.SortDirection.Desc, true];
+    await page.goto(`${origin}/${PAGE}#/archive`); await archiveRows(page).first().waitFor();
+    await navLink(page, 'Search').click(); await searchMain(page).waitFor(); await navLink(page, 'Archive').click();
+    const archiveMain = page.getByRole('main', { name: 'Archive', exact: true }); await archiveMain.waitFor();
+    await archiveMain.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('branch:"branch-3"'); await archiveMain.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('q') === 'branch:"branch-3"');
+    await page.goBack(); await page.goBack(); await page.waitForFunction(() => location.hash === '#/archive');
+    await archiveQuery(''); await page.waitForFunction(() => document.querySelector('table[aria-label="Conversations"]')?.getAttribute('aria-busy') === 'false');
+    assert.deepEqual(lastArchive(), defaults, 'Back to an earlier unfiltered entry restores the unfiltered Archive');
+    assert.equal(await hash(page), '#/archive', 'the earlier entry is not rewritten');
+    await page.goForward(); await page.goForward(); await archiveQuery('branch:"branch-3"');
+    assert.deepEqual(lastArchive(), ['branch:"branch-3"', api.ArchiveSort.LastTimestamp, api.SortDirection.Desc, true], 'Forward restores the filter');
+    await page.evaluate(() => { location.hash = '#/archive?q='; }); await archiveQuery('');
+    await page.waitForFunction(() => document.querySelector('table[aria-label="Conversations"]')?.getAttribute('aria-busy') === 'false');
+    assert.deepEqual(lastArchive(), defaults, 'clearing the query in the address clears the filter');
   });
 
   for (const [width, height, theme] of [[1440, 900, 'light'], [1024, 700, 'dark'], [390, 844, 'light']]) {

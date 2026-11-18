@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useReducer, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useEffect, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 // Fragment routes of the dashboard (redesign spec §5): `#/<view>[/<segment>][?<query>]`.
@@ -34,8 +34,6 @@ export function sessionIdOf(route: Route): string {
   return sessionId;
 }
 export const DEFAULT_ROUTE = viewRoute('search');
-/** In-page Back without in-app history goes to the parent list (spec §5 rule 3). */
-export function parentRoute(route: Route): Route { return route.view === 'session' ? viewRoute('archive') : route; }
 
 export type Fragment = { readonly kind: 'route'; readonly route: Route } | { readonly kind: 'account' } | { readonly kind: 'empty' } | { readonly kind: 'invalid' };
 
@@ -203,12 +201,19 @@ export interface RouteSlot<T> { readonly name: string; initial(): T }
 export function routeSlot<T>(name: string, initial: () => T): RouteSlot<T> { return { name, initial }; }
 export class RouteStateCache {
   private readonly slots = new Map<RouteSlot<unknown>, Map<string, unknown>>();
+  private readonly listeners = new Set<() => void>();
+  subscribe = (listener: () => void): (() => void) => { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; };
   read<T>(slot: RouteSlot<T>, key: string): T {
     const entries = this.entries(slot);
     if (!entries.has(key)) entries.set(key, slot.initial());
     return entries.get(key) as T;
   }
-  write<T>(slot: RouteSlot<T>, key: string, value: T): void { this.entries(slot).set(key, value); }
+  write<T>(slot: RouteSlot<T>, key: string, value: T): void {
+    const entries = this.entries(slot);
+    if (entries.has(key) && entries.get(key) === value) return;
+    entries.set(key, value);
+    for (const listener of this.listeners) listener();
+  }
   private entries<T>(slot: RouteSlot<T>): Map<string, unknown> {
     let entries = this.slots.get(slot as RouteSlot<unknown>);
     if (entries === undefined) { entries = new Map(); this.slots.set(slot as RouteSlot<unknown>, entries); }
@@ -216,25 +221,24 @@ export class RouteStateCache {
   }
 }
 export const RouteStateContext = createContext<RouteStateCache | null>(null);
-/** `useState` whose value lives in the owner's RouteStateCache under (slot, key). */
+/** `useState` whose value lives in the owner's RouteStateCache under (slot, key); every reader follows its writes. */
 export function useRouteState<T>(slot: RouteSlot<T>, key: string): [T, Dispatch<SetStateAction<T>>] {
   const cache = useContext(RouteStateContext);
   if (cache === null) throw new Error('useRouteState requires a RouteStateContext provider');
-  const [, rerender] = useReducer((count: number) => count + 1, 0);
+  const value = useSyncExternalStore(cache.subscribe, () => cache.read(slot, key), () => cache.read(slot, key));
   const update = useCallback((action: SetStateAction<T>) => {
-    const next = typeof action === 'function' ? (action as (previous: T) => T)(cache.read(slot, key)) : action;
-    cache.write(slot, key, next); rerender();
+    cache.write(slot, key, typeof action === 'function' ? (action as (previous: T) => T)(cache.read(slot, key)) : action);
   }, [cache, slot, key]);
-  return [cache.read(slot, key), update];
+  return [value, update];
 }
 
 /**
  * Keeps a view's submitted state (query, sort) and its route parameters equal while the view is shown. `fromUrl` and
  * `fromState` are canonical parameter strings ('' for the defaults). A fragment that changed since this view last saw
- * it (deep link, reload, Back/Forward) and carries parameters is applied to the state; otherwise the state rewrites
- * the fragment (replace), so a plain nav link keeps the retained state. The last fragment seen is kept in the owner's
- * route cache: a view remounted after a reconnect does not re-apply a fragment its state has since dropped.
- * Drafts are not parameters.
+ * it (deep link, reload, Back/Forward, an edited address, also to empty parameters) is authoritative and applied to
+ * the state; a state change rewrites the fragment (replace). In-app links to a view carry its retained parameters
+ * (App's masthead), so they change nothing. The last fragment seen is kept in the owner's route cache: a view
+ * remounted after a reconnect does not re-apply a fragment its state has since dropped. Drafts are not parameters.
  */
 const SEEN_FRAGMENT = routeSlot<string | null>('route-sync', () => null);
 export function useRouteSync(view: View, active: boolean, fromUrl: string, fromState: string, applyUrl: () => void, writeUrl: () => void): void {
@@ -245,6 +249,6 @@ export function useRouteSync(view: View, active: boolean, fromUrl: string, fromS
     const changed = fromUrl !== cache.read(SEEN_FRAGMENT, view);
     cache.write(SEEN_FRAGMENT, view, fromUrl);
     if (fromUrl === fromState) return;
-    if (changed && fromUrl !== '') applyUrl(); else writeUrl();
+    if (changed) applyUrl(); else writeUrl();
   }, [cache, view, active, fromUrl, fromState]);
 }
