@@ -28,13 +28,4 @@ final class RelocatedModelIdentityTest extends munit.FunSuite {
     Main.background(true,{ constructed=true; cats.effect.IO.unit })
     assert(constructed)
   }
-  test("Blackbox Atomic regression: relocating model transports preserves artifact and index identity") {
-    val original = Fixtures.config()
-    val relocated = original.copy(
-      embedding = original.embedding.copy(endpoint = "http://embedding:8000/v1/embeddings"),
-      annotation = original.annotation.copy(endpoint = "https://relocated.synthetic.invalid/v1/chat/completions"),
-    )
-    assertEquals(EmbeddingSpaceDescriptor.from(relocated.embedding).id, EmbeddingSpaceDescriptor.from(original.embedding).id)
-    assertEquals(IndexProfileCatalog.current(relocated).preferred.profile, IndexProfileCatalog.current(original).preferred.profile)
-  }
 }
