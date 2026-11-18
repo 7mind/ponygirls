@@ -462,7 +462,8 @@ await check("Open artifact navigates to public content and to the unlock page of
   await page.locator("#unlock-error").waitFor({ state: "visible" });
   await page.locator("#password-input").fill(input.protectedPassword);
   await page.locator("#unlock-form button[type=submit]").click();
-  await page.waitForFunction(() => document.body.textContent.includes("protected") && document.querySelector("#unlock-form") === null);
+  await page.getByRole("region", { name: "File preview" }).getByText("protected", { exact: true }).waitFor();
+  assert.equal(await page.locator("#unlock-form").count(), 0, "the unlocked content replaces the unlock card");
   assert.equal(page.url().includes(input.protectedPassword), false);
 });
 

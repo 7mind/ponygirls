@@ -3,6 +3,7 @@ filtered flat list), confirmed access changes, the external password, rename/exp
 handoff, and the loading/not-found states."""
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import unittest
@@ -17,7 +18,9 @@ PARTS = 10
 
 class ArtifactPageTests(unittest.TestCase):
     def test_artifact_page(self):
-        fix = bf.start_server(suffix_mode="separate", config_overrides={"rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000})
+        viewer_dir = os.environ.get("MANURE_TEST_VIEWER_DIR", str(Path(__file__).resolve().parents[1] / "web/viewer/dist"))
+        fix = bf.start_server(suffix_mode="separate", config_overrides={"rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000,
+                                                                        "viewer_dir": viewer_dir})
         self.addCleanup(fix.close)
 
         def put(name, kind, visibility, files, **options):
