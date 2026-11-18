@@ -127,7 +127,7 @@ final class PostgresRunAuthorizationTest extends RunAuthorizationContract {
       assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh")
     }
     val config=Fixtures.config()
-    val db=new Database(config,IndexProfileCatalog.legacyOnly(config))
+    val db=new Database(config,IndexProfileCatalog.current(config))
     db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_groups,ch_sessions CASCADE")

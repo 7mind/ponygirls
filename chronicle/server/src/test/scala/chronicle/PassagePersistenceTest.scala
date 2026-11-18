@@ -190,7 +190,7 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
 }
 final class PassagePersistenceDummyTest extends PassagePersistenceContract {
   def withFixture(f: PassagePersistenceFixture => Unit): Unit = {
-    val config=Fixtures.config(); val profiles=IndexProfileCatalog.passages(config,PassagePolicyIdentity(ProblemPassages.identity))
+    val config=Fixtures.config(); val profiles=IndexProfileCatalog.current(config)
     val value=new DummyArchive(config,profiles); value.retainTarget("b",config.profile)
     f(new PassagePersistenceFixture {
       val archive: SessionArchive=value; val reader: PassageReader=value; val catalog: IndexProfileCatalog=profiles

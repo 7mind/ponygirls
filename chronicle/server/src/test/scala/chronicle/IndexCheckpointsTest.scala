@@ -92,7 +92,7 @@ abstract class IndexCheckpointsContract extends munit.FunSuite {
 }
 final class DummyIndexCheckpointsTest extends IndexCheckpointsContract {
   def withFixture(run: CheckpointFixture => Unit): Unit = {
-    val config=Fixtures.config(); val value=new DummyArchive(config,IndexProfileCatalog.legacyOnly(config))
+    val config=Fixtures.config(); val value=new DummyArchive(config,IndexProfileCatalog.current(config))
     run(new CheckpointFixture {
       val archive: SessionArchive=value
       def expire(claim: Claim): Unit=value.expireClaim(claim)

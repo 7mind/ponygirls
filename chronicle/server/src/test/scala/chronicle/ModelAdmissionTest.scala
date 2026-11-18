@@ -19,11 +19,11 @@ class ModelAdmissionTest extends munit.FunSuite {
   }
   test("BA specified: execution knobs validate independently and never alter either semantic profile") {
     val base=Fixtures.config()
-    val original=IndexProfileCatalog.passages(base,PassagePolicyIdentity(ProblemPassages.identity))
+    val original=IndexProfileCatalog.current(base)
     List(IndexingCapacity(1,1,1),IndexingCapacity(8,32,16),IndexingCapacity(4,8,7)).foreach { capacity =>
       val config=base.copy(indexing=capacity); config.validate()
       assertEquals(config.profile,base.profile)
-      assertEquals(IndexProfileCatalog.passages(config,PassagePolicyIdentity(ProblemPassages.identity)).profiles,original.profiles)
+      assertEquals(IndexProfileCatalog.current(config).profiles,original.profiles)
     }
     List(IndexingCapacity(0,8,16),IndexingCapacity(9,8,16),IndexingCapacity(4,0,16),IndexingCapacity(4,33,16),IndexingCapacity(4,8,0),IndexingCapacity(4,8,17)).foreach { capacity =>
       assertEquals(intercept[DomainError](base.copy(indexing=capacity).validate()).code,"config")

@@ -38,7 +38,7 @@ class McpSourceBoundaryTest extends munit.FunSuite {
     test(s"WG GoodCommunication: huge deployment $field is preflighted before the authoritative guard fetches any text") { ReadSourceFixture.withFixture(_ => IO.pure(vector)) { f =>
       val selected=if(field=="descriptor") f.config.copy(embedding=f.config.embedding.copy(documentPrefix="\u0080"*50000)) else f.config
       if(field=="descriptor") {
-        val catalog=IndexProfileCatalog.legacyOnly(selected); Fixtures.database(selected,catalog).initialize()
+        val catalog=IndexProfileCatalog.current(selected); Fixtures.database(selected,catalog).initialize()
         f.db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=? WHERE owner='a'",selected.profile))
       } else f.db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=? WHERE owner='a'","opaque"*20000))
       val tools=new LiveMcpRunTools(new Mcp(f.application(selected)))

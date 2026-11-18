@@ -71,7 +71,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
     config <- Resource.eval(IO(Fixtures.config()))
     db <- Resource.eval(IO.blocking {
       Check(sys.env.contains("CHRONICLE_TEST_JDBC"),"test","PostgreSQL required; use the isolated fixture runner")
-      val db=new Database(config,IndexProfileCatalog.legacyOnly(config))
+      val db=new Database(config,IndexProfileCatalog.current(config))
       db.initialize()
       db.transaction { c =>
         List("/009_transient_security_epoch.sql","/014_renewable_sessions.sql","/020_persistent_sessions.sql").foreach { migration =>

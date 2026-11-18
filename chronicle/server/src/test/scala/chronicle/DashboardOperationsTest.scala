@@ -15,7 +15,7 @@ final class DashboardOperationsTest extends munit.FunSuite {
       assume(false,"PostgreSQL explicitly skipped")
     }
     val config=Fixtures.config()
-    val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_groups,ch_sessions,ch_mutations CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)

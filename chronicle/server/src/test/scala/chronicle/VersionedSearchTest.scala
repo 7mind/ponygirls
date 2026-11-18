@@ -16,7 +16,7 @@ class VersionedSearchTest extends munit.FunSuite {
   private val timeoutSeconds=10
   test("Blackbox-GoodCommunication: sole API retains complete workflows and current ANN scope") {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    val config=Fixtures.config(); val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
     val chunk=Wire.encode(Chunk.codecJson,Fragments.split(Fixtures.snapshot().messages).head).noSpaces
     db.transaction { c =>

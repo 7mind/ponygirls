@@ -194,7 +194,7 @@ abstract class MessageContextContract extends munit.FunSuite {
 }
 final class MessageContextDummyTest extends MessageContextContract {
   def withFixture(f: MessageContextFixture => Unit): Unit = {
-    val c=Fixtures.config(); val value=new DummyArchive(c,IndexProfileCatalog.legacyOnly(c))
+    val c=Fixtures.config(); val value=new DummyArchive(c,IndexProfileCatalog.current(c))
     f(new MessageContextFixture {
       val archive: SessionArchive=value; val reader: ContextReader=value
       def share(): Unit=value.share("a","b"); def revoke(): Unit=value.revokeSharing("a","b")

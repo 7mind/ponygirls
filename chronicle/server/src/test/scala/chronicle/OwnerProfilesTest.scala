@@ -78,7 +78,7 @@ abstract class OwnerProfileContract extends munit.FunSuite {
 }
 final class OwnerProfilesDummyTest extends OwnerProfileContract {
   def withOwnerProfiles(f: (SessionArchive,OwnerReindex,Config,IndexProfileCatalog) => Unit): Unit = {
-    val c=Fixtures.config(); val catalog=IndexProfileCatalog.passages(c,PassagePolicyIdentity("synthetic:contiguous-v1"))
+    val c=Fixtures.config(); val catalog=IndexProfileCatalog.current(c)
     val a=new DummyArchive(c,catalog); List("a","b","c").foreach(a.retainTarget(_,c.profile))
     f(a,a,c,catalog)
   }
@@ -94,12 +94,12 @@ private[chronicle] object OwnerProfilePostgres extends munit.Assertions {
       Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required")
       assume(false,"PostgreSQL explicitly skipped")
     }
-    val c=Fixtures.config(); val legacy=new Database(c,IndexProfileCatalog.legacyOnly(c)); legacy.initialize()
+    val c=Fixtures.config(); val legacy=new Database(c,IndexProfileCatalog.current(c)); legacy.initialize()
     legacy.transaction { x =>
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members CASCADE")
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
     }
-    val catalog=IndexProfileCatalog.passages(c,PassagePolicyIdentity("synthetic:contiguous-v1"))
+    val catalog=IndexProfileCatalog.current(c)
     val db=new Database(c,catalog); db.initialize()
     f(c,db,new PostgresArchive(db,c),catalog)
   }
@@ -202,7 +202,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     db.transaction(x => Sql.exec(x,"UPDATE ch_generations SET profile='opaque-same-dimensions' WHERE session_id=?",out.sessionId)); rejected()
     assertEquals(intercept[DomainError](a.claim(Set("opaque-same-dimensions"),ClaimScope.Owner("a"),300)).code,"unavailable")
     val incompatible=c.copy(embedding=c.embedding.copy(revision="different-space-same-dimensions"))
-    db.transaction { x => IndexProfileCatalog.legacyOnly(incompatible).register(x); Sql.exec(x,"UPDATE ch_generations SET profile=? WHERE session_id=?",incompatible.profile,out.sessionId) }
+    db.transaction { x => IndexProfileCatalog.current(incompatible).register(x); Sql.exec(x,"UPDATE ch_generations SET profile=? WHERE session_id=?",incompatible.profile,out.sessionId) }
     rejected()
     // The configured model on a v1 space (a transport hash prepended): no approval can bridge it any more.
     val v1=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString("e"*64))++catalog.preferred.embedding.json.asArray.get.tail)*)

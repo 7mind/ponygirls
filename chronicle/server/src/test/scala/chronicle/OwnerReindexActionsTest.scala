@@ -14,12 +14,12 @@ final class OwnerReindexActionsTest extends munit.FunSuite {
       Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required")
       assume(false,"PostgreSQL explicitly skipped")
     }
-    val c=Fixtures.config(); val legacy=Fixtures.database(c,IndexProfileCatalog.legacyOnly(c)); legacy.initialize()
+    val c=Fixtures.config(); val legacy=Fixtures.database(c,IndexProfileCatalog.current(c)); legacy.initialize()
     legacy.transaction { x =>
       Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_sessions,ch_mutations,ch_tokens,ch_collector_progress CASCADE")
       Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile)
     }
-    val catalog=IndexProfileCatalog.passages(c,PassagePolicyIdentity(ProblemPassages.identity))
+    val catalog=IndexProfileCatalog.current(c)
     val db=Fixtures.database(c,catalog); db.initialize()
     val auth=new Auth(db,c); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2)
     f(Context(c,db,new PostgresArchive(db,c),auth,owner))

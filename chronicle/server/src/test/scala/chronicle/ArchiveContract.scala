@@ -443,14 +443,14 @@ abstract class ArchiveContract extends munit.FunSuite {
 final class ArchiveDummyTest extends ArchiveContract {
   def withArchive(f: (SessionArchive,Config) => Unit): Unit = {
     val c=Fixtures.config()
-    Injector().produceGet[SessionArchive](new ModuleDef { tag(StandardAxis.Repo.Dummy); make[Config].fromValue(c); make[IndexProfileCatalog].fromValue(IndexProfileCatalog.legacyOnly(c)); make[SessionArchive].from[DummyArchive] }).use(a => f(a,c))
+    Injector().produceGet[SessionArchive](new ModuleDef { tag(StandardAxis.Repo.Dummy); make[Config].fromValue(c); make[IndexProfileCatalog].fromValue(IndexProfileCatalog.current(c)); make[SessionArchive].from[DummyArchive] }).use(a => f(a,c))
   }
 }
 final class ArchivePostgresTest extends ArchiveContract {
   def withArchive(f: (SessionArchive,Config) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped; run scripts/test-postgres.sh for full verification") }
     val c=Fixtures.config()
-    val db=new Database(c,IndexProfileCatalog.legacyOnly(c)); db.initialize()
+    val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
     Injector().produceGet[SessionArchive](new ModuleDef { tag(StandardAxis.Repo.Prod); make[Config].fromValue(c); make[Database].fromValue(db); make[SessionArchive].from[PostgresArchive] }).use(a => f(a,c))
   }

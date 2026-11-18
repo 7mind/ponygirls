@@ -177,7 +177,7 @@ abstract class SessionMessageSearchContract extends munit.FunSuite {
 }
 final class SessionMessageSearchDummyTest extends SessionMessageSearchContract {
   def withFixture(f: MessageSearchFixture => Unit): Unit = {
-    val c=Fixtures.config(); val value=new DummyArchive(c,IndexProfileCatalog.legacyOnly(c))
+    val c=Fixtures.config(); val value=new DummyArchive(c,IndexProfileCatalog.current(c))
     f(new MessageSearchFixture {
       val archive: SessionArchive=value; val reader: MessageSearchReader=value
       def share(): Unit=value.share("a","b"); def revoke(): Unit=value.revokeSharing("a","b")

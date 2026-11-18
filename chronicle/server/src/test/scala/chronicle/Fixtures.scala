@@ -1,11 +1,5 @@
 package chronicle
 import chronicle.api.*
-// Historical test constructor names now seed the one current policy, never an old executor.
-final case class PassagePolicyIdentity(value: String)
-extension (factory: IndexProfileCatalog.type) {
-  def legacyOnly(config: Config): IndexProfileCatalog = factory.current(config)
-  def passages(config: Config,identity: PassagePolicyIdentity): IndexProfileCatalog = factory.current(config)
-}
 extension (archive: SessionArchive) {
   def publish(claim: Claim,chunks: List[IndexedChunk]): Boolean = archive.publishProblems(claim,TestPublications.from(claim,chunks))
 }

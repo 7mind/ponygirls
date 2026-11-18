@@ -28,7 +28,7 @@ class IndexedSearchTest extends munit.FunSuite {
   private def openDatabase(dimensions: Int): SearchDatabase = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val original=Fixtures.config(); val config=original.copy(embedding=original.embedding.copy(dimensions=dimensions))
-    val db=new Database(config,IndexProfileCatalog.legacyOnly(config)); db.initialize()
+    val db=new Database(config,IndexProfileCatalog.current(config)); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)

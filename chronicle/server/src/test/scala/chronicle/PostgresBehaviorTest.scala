@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 class PostgresBehaviorTest extends munit.FunSuite {
   def database(f: (Config,Database,PostgresArchive,Auth) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.legacyOnly(c)); db.initialize()
+    val c=Fixtures.config(); val db=new Database(c,IndexProfileCatalog.current(c)); db.initialize()
     db.transaction(x => { Sql.exec(x,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_invites,ch_members,ch_tokens,ch_sessions,ch_mutations CASCADE"); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) })
     f(c,db,new PostgresArchive(db,c),new Auth(db,c))
   }
@@ -243,7 +243,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
     assert(blocked,s"expected database lock wait: $prefix")
   }
   test("BG-GoodCommunication: new-head supersession and publication use source-before-job lock order") { database { (c,db,a,auth) =>
-    val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds)); val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed))
+    val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds)); val timedDb=new Database(timed,IndexProfileCatalog.current(timed))
     val archive=new PostgresArchive(timedDb,timed); val request=Fixtures.snapshot()
     archive.ingest("a",request); val old=archive.claim(Set(c.profile),ClaimScope.AllOwners,300).get
     val executor=java.util.concurrent.Executors.newFixedThreadPool(2)
@@ -264,7 +264,7 @@ class PostgresBehaviorTest extends munit.FunSuite {
   }}
   test("BG-GoodCommunication regression: confirmed rebuild waits behind in-flight publication and rejects its now-stale preview") { database { (c,db,a,auth) =>
     val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds))
-    val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
+    val timedDb=new Database(timed,IndexProfileCatalog.current(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
     val out=oldArchive.ingest("a",Fixtures.snapshot())
     val old=oldArchive.claim(Set(timed.profile),ClaimScope.AllOwners,300).get
     val service=new PostgresOwnerReindex(timedDb); val plan=service.preview("a")
@@ -291,14 +291,14 @@ class PostgresBehaviorTest extends munit.FunSuite {
   }}
   test("BG-GoodCommunication regression: publisher waiting for a target switch rechecks the committed target") { database { (c,db,a,auth) =>
     val timed=c.copy(databaseLimits=c.databaseLimits.copy(statementTimeout=scala.concurrent.duration.DurationInt(5).seconds))
-    val timedDb=new Database(timed,IndexProfileCatalog.legacyOnly(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
+    val timedDb=new Database(timed,IndexProfileCatalog.current(timed)); val oldArchive=new PostgresArchive(timedDb,timed)
     oldArchive.ingest("a",Fixtures.snapshot()); val old=oldArchive.claim(Set(timed.profile),ClaimScope.AllOwners,300).get
     val next=timed.copy(embedding=timed.embedding.copy(revision="maintenance-first"))
     val executor=java.util.concurrent.Executors.newSingleThreadExecutor()
     var pending: java.util.concurrent.Future[Boolean]=null
     try {
       db.transaction { held =>
-        IndexProfileCatalog.legacyOnly(next).register(held)
+        IndexProfileCatalog.current(next).register(held)
         Sql.exec(held,"UPDATE ch_owner_targets SET profile=?,epoch=epoch+1 WHERE owner='a'",next.profile)
         pending=executor.submit(new java.util.concurrent.Callable[Boolean] { def call(): Boolean=oldArchive.publish(old,Nil) })
         awaitBlocked(timedDb,"SELECT profile,epoch FROM ch_owner_targets")

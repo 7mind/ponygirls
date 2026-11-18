@@ -108,7 +108,7 @@ private[chronicle] final class ReadSourceFixture(val config: Config,val db: Data
 private[chronicle] object ReadSourceFixture extends munit.Assertions {
   def withFixture(embedding: String => IO[List[Double]])(test: ReadSourceFixture => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped") }
-    val config=Fixtures.config(); val catalog=IndexProfileCatalog.legacyOnly(config); val db=Fixtures.database(config,catalog); db.initialize()
+    val config=Fixtures.config(); val catalog=IndexProfileCatalog.current(config); val db=Fixtures.database(config,catalog); db.initialize()
     db.transaction { c =>
       Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks,ch_groups,ch_members,ch_sessions CASCADE")
       Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",config.profile)

@@ -264,7 +264,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
 class DummyPassageWorkerTest extends PassageWorkerContract {
   protected def withArchive(f: (Config,IndexProfileCatalog,SessionArchive & PassageReader,(String,String) => Unit) => Unit): Unit = {
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(timeoutSeconds=900,requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning),indexing=IndexingCapacity(2,2,3))
-    val catalog=IndexProfileCatalog.passages(config,PassagePolicyIdentity(ProblemPassages.identity)); val archive=new DummyArchive(config,catalog)
+    val catalog=IndexProfileCatalog.current(config); val archive=new DummyArchive(config,catalog)
     f(config,catalog,archive,(owner,profile) => archive.retainTarget(owner,profile))
   }
 }
@@ -272,7 +272,7 @@ class PostgresPassageWorkerTest extends PassageWorkerContract {
   protected def withArchive(f: (Config,IndexProfileCatalog,SessionArchive & PassageReader,(String,String) => Unit) => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val base=Fixtures.config(); val config=base.copy(annotation=base.annotation.copy(timeoutSeconds=900,requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning),indexing=IndexingCapacity(2,2,3))
-    val catalog=IndexProfileCatalog.passages(config,PassagePolicyIdentity(ProblemPassages.identity)); val db=new Database(config,catalog); db.initialize()
+    val catalog=IndexProfileCatalog.current(config); val db=new Database(config,catalog); db.initialize()
     db.transaction(c => { Sql.exec(c,"TRUNCATE ch_sources,ch_revisions,ch_ingest_receipts,ch_jobs,ch_generations,ch_chunks CASCADE"); Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0",catalog.preferred.profile) })
     f(config,catalog,new PostgresArchive(db,config),(owner,profile) => { db.transaction(c => Sql.exec(c,"UPDATE ch_owner_targets SET profile=?,epoch=0 WHERE owner=?",profile,owner)); () })
   }

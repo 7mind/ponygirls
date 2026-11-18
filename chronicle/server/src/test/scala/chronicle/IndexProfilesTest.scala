@@ -23,7 +23,7 @@ final class IndexProfilesTest extends munit.FunSuite {
     changes.foreach(change => assertNotEquals(EmbeddingSpaceDescriptor.from(change).id,space.id))
     assertNotEquals(space.copy(normalization="different").id,space.id)
     assertEquals(EmbeddingSpaceDescriptor.from(embedding.copy(endpoint="http://relocated.invalid/v1/embeddings",credentialFile="/synthetic/secret-not-metadata",timeoutSeconds=2,maxResponseBytes=999)).id,space.id)
-    val annotated=IndexProfileCatalog.passages(c.copy(annotation=c.annotation.copy(revision="different")),PassagePolicyIdentity("synthetic-kernel-v1"))
+    val annotated=IndexProfileCatalog.current(c.copy(annotation=c.annotation.copy(revision="different")))
     assertEquals(annotated.preferred.embedding,space)
     assert(!annotated.preferred.descriptor.noSpaces.contains(c.annotation.credentialFile))
     assert(!space.json.noSpaces.contains(embedding.endpoint))

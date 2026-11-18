@@ -11,7 +11,7 @@ import scala.collection.mutable.ListBuffer
 class McpTextPresentationTest extends munit.FunSuite {
   private def s(value: String): Json = Json.fromString(value)
   private def fixture: ReadSourceFixture = {
-    val config=Fixtures.config(); val catalog=IndexProfileCatalog.legacyOnly(config); val db=new Database(config,catalog)
+    val config=Fixtures.config(); val catalog=IndexProfileCatalog.current(config); val db=new Database(config,catalog)
     new ReadSourceFixture(config,db,new PostgresArchive(db,config),catalog,new SourceProbe,_ => IO.raiseError(new AssertionError("no embedding expected")))
   }
   private def invoke(f: ReadSourceFixture,args: Json): Json =

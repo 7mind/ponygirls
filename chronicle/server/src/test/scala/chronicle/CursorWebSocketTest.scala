@@ -134,7 +134,7 @@ final class CursorWebSocketTest extends munit.FunSuite {
     val owner="x"*50000
     val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true,false))
     configured.validate()
-    val db=Fixtures.database(configured,IndexProfileCatalog.legacyOnly(configured)); db.initialize()
+    val db=Fixtures.database(configured,IndexProfileCatalog.current(configured)); db.initialize()
     val auth=new Auth(db,configured)
     val (_,cookie)=auth.login(LoginRequest("long-owner","synthetic")); val identity=auth.browser(cookie)
     assertEquals(identity.user.id.length,owner.length)
