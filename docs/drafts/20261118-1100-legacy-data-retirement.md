@@ -543,14 +543,23 @@ account for step 5; the running Chronicle service with workers and model endpoin
 
 Owner decisions: **Q102** — no backup of `chronicle` (not in production use): the apply takes
 `--backup-reference none-owner-decision-Q102` (recorded as `LR.backup|none (owner decision Q102)`, Chronicle only);
-the dry-run stays immediately before the apply. Haystack's backup stays required. **Q101** — until the separate fix
-of the two process-exit defects is deployed, the deployed Chronicle config stays unchanged (`indexing` absent →
-batch size 16); the fixed binary is re-checked on the clone (retry of a Failed job holding saved results, batch 4).
+the dry-run stays immediately before the apply. Haystack's backup stays required. **Q101** — the fix of the two
+process-exit defects is on `main` (CH-FIX, `a99cf163`, in `de43b916`) and was re-checked on the clone with the binary
+built from the merged tree (LEG-LAND): with `indexing.embeddingBatchSize = 4`, retrying Failed jobs whose saved
+embedding results were written under 16 logs `accepted work discarded … discardedParts=… currentParts=…
+embeddingBatchSize=4` per affected window and recomputes it (a 3-window job completed; a 257-window job recomputed
+its 30 saved windows and reached publication); a claim blocked past the 30 s statement timeout is logged as `job
+claim failed … sqlState=57014` and retried; the process kept running in both cases. So the batch size is no longer
+pinned to 16: changing it costs the recomputation of the saved embedding windows of unfinished runs, nothing else.
+Still, the migration does not need any configuration change, so keep the deployed configuration (`indexing` absent
+→ defaults 4, 8, 16) unchanged during the migration window and change it, if wanted, separately. Not fixed by
+CH-FIX: a job failure that cannot be recorded (database unavailable) still ends the process — which is what the
+fence (7.2) relies on.
 
 | # | Step | Command (exactly) | Success: the record `OP.result|ok|…` ends with | Stop when |
 |---|---|---|---|---|
 | 0 | Tooling checkout; settings; identity | see the block above | `OP.confirm|identified` (above it `OP.confirm|pod=…|system_identifier=…`) | anything differs from the deployment repository |
-| 1 | Current overhaul binary deployed with the **deployed** config (Q101); credential preflight | `bullshit-renew status --json`; `"$OP" ready` | `OP.ready|observed` with all containers `ready` and `OP.ready|pod|True` above it | not ready |
+| 1 | The binary built from `main` (`de43b916` or later, CH-FIX) deployed with the **deployed** config, unchanged (Q101); credential preflight | `bullshit-renew status --json`; `"$OP" ready` | `OP.ready|observed` with all containers `ready` and `OP.ready|pod|True` above it | not ready |
 | 2 | Chronicle preflight and worklist | `"$OP" chronicle preflight`; `"$OP" chronicle worklist` | `LR.result|preflight-complete`; `LR.result|worklist-complete` (one `LR.reindex_job|<job>|<source>|<owner>|…` per source) | schema ≠ `2,3,6,8,9,14,17,20`; counters far from section 1 |
 | 3 | Haystack, Manure preflight; codec check | `"$OP" haystack preflight`; `"$OP" manure preflight`; `"$OP" codec-check` | `preflight-complete` twice (with `LP.retrieval.not_proven_v2|0`); `LR.result|stored-documents-strict-ok` | a retrieval counter non-zero; codec check fails |
 | 5 | Re-index the worklist (service running) | Activity → each job id from step 2 → "Retry indexing job" (never "Retry failed"); then `"$OP" chronicle preflight` | `LR.generations.old_format.published|0`; note `N` = `LR.generations.old_format.history` | a job fails again, `no-target-job`, owner disabled |
@@ -715,6 +724,15 @@ exited after ~2 s (`database-unavailable`); restarts followed the kubelet back-o
 leases expired by 17:20:54; a `TEMPLATE … FILE_COPY` copy succeeded under the fence (no connection needed, 135 s);
 apply with a client connecting during the batches was refused at the identity step (batches committed); dry-run
 132 s; apply 127 s; `verify-zero`; unfence 17:29:07 → the next scheduled restart (17:31:22) served at 17:31:25.
+Re-rehearsed with the binary built from `main` (LEG-LAND, 20:21Z; rehearsal report `land/`): unchanged. CH-FIX keeps a
+failed claim from ending the process, but at the fence the interrupted job's failure cannot be recorded
+(`database-unavailable`), which still ends it 0.2 s later; every restart exits at start-up; after `unfence` the next
+scheduled restart served (131 s later in that run). Start-up of that binary: 19 idempotent schema statements in one
+session (`Database.initialize`, under an advisory transaction lock; 20 ms in total on the clone): `ALTER TABLE … ADD
+COLUMN IF NOT EXISTS` / `DROP CONSTRAINT IF EXISTS` / `ALTER COLUMN` on `ch_jobs`, `ch_tokens`, `ch_generations`,
+`ch_sessions`, `ch_index_profiles` (each takes `ACCESS EXCLUSIVE` even when nothing changes), `CREATE INDEX IF NOT
+EXISTS` on `ch_search_chunks`, `CREATE TABLE IF NOT EXISTS` of the imperative-account tables; no schema migration.
+While the fence is on it cannot run (no login), so it never queues behind the dry-run's or apply's lock.
 
 What Kubernetes does: the container exits on every start while fenced, `restartCount` rises and the restart back-off
 doubles from 10 s to its 5-minute cap (reset after 10 minutes of running). After `unfence` the service returns at the
