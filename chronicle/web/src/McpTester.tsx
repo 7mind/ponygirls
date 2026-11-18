@@ -25,7 +25,7 @@ export function useMcpTester(connection: ChronicleConnection, stats: ManagerStat
   const handles = useRef(new Map<string, RunHandle>()), handle = owner === null ? null : handles.current.get(owner) ?? null;
   const [display, setDisplay] = useState<Display>({ key, catalog: null, events: [], error: null, observedAt: null, state: null });
   const data = useRef(display); data.current = display;
-  const authorityEpoch = useRef(0), startLock = useRef(false), readLock = useRef(false), cancelLock = useRef(false), readPump = useRef<() => void>(() => {});
+  const authorityEpoch = useRef(0), startLock = useRef(false), readLock = useRef(false), cancelLock = useRef(false), readPump = useRef<() => void>(() => {}), pumpTimer = useRef<number | null>(null), disposed = useRef(false);
   function erase(message: string | null) { authorityEpoch.current++; if (owner !== null) { const run = handles.current.get(owner); if (run !== undefined) run.state = 'Uncertain'; } setPrompt(''); const next: Display = { key, catalog: null, events: [], error: message, observedAt: null, state: owner !== null && handles.current.has(owner) ? 'Uncertain' : null }; data.current = next; setDisplay(next); }
   useEffect(() => connection.onInvalidate(() => {
     live.current = ''; authorityEpoch.current++; setPrompt(''); setDisplay(previous => ({ ...previous, key: '', catalog: null, events: [], error: null, observedAt: null, state: 'Uncertain' }));
@@ -52,26 +52,31 @@ export function useMcpTester(connection: ChronicleConnection, stats: ManagerStat
     const next: Display = { key, catalog: data.current.key === key ? data.current.catalog : null, events, error: page.failure === undefined ? null : `${page.failure.code}: ${page.failure.message}`, observedAt: page.observedAt, state: page.state };
     data.current = next; setDisplay(next);
   }
+  // The pump outlives its effect: a dependency change only kicks it. A read in flight is judged by the live key, handle and
+  // authority epoch when its reply arrives, never by the effect run that started it, so a re-render cannot discard the reply
+  // and restart the cursor.
+  readPump.current = () => {
+    if (disposed.current || owner === null || handle === null || stats.activeId === null || startLock.current || readLock.current) return;
+    if (handle.state === McpTestState.AuthorizationLost || handle.state === McpTestState.Expired) return;
+    readLock.current = true; const requestAuthority = authorityEpoch.current;
+    const cursor = data.current.key === key ? data.current.events.at(-1)?.sequence ?? 0n : 0n;
+    let discarded = false;
+    const superseded = () => discarded = disposed.current || live.current !== key || authorityEpoch.current !== requestAuthority || handles.current.get(owner) !== handle;
+    void read(connection, new Operation_ReadMcpTest(handle.instanceId, handle.runId, cursor, MCP_EVENT_PAGE_LIMIT), result => result instanceof Result_McpTestRun ? result.result : null).then(page => {
+      if (superseded()) return;
+      accept(page, handle, key);
+      pumpTimer.current = window.setTimeout(() => readPump.current(), page.hasMore ? 0 : MCP_POLL_MS);
+    }).catch((cause: unknown) => {
+      if (superseded()) return;
+      handle.state = 'Uncertain';
+      erase(`${cause instanceof Error ? cause.message : 'Run read failed'}. Outcome unknown; no Start will be replayed. Retain the original instance and run IDs.`);
+      // Explicit read retry avoids treating a rotated/changed registry as evidence of non-execution.
+    }).finally(() => { readLock.current = false; if (discarded) readPump.current(); });
+  };
+  useEffect(() => { disposed.current = false; return () => { disposed.current = true; if (pumpTimer.current !== null) window.clearTimeout(pumpTimer.current); }; }, []);
   useEffect(() => {
-    let mounted = true, timer: number | null = null;
-    readPump.current = () => {
-      if (!mounted || owner === null || handle === null || stats.activeId === null || startLock.current || readLock.current) return;
-      if (handle.state === McpTestState.AuthorizationLost || handle.state === McpTestState.Expired) return;
-      readLock.current = true; const requestAuthority = authorityEpoch.current;
-      const cursor = data.current.key === key ? data.current.events.at(-1)?.sequence ?? 0n : 0n;
-      void read(connection, new Operation_ReadMcpTest(handle.instanceId, handle.runId, cursor, MCP_EVENT_PAGE_LIMIT), result => result instanceof Result_McpTestRun ? result.result : null).then(page => {
-        if (!mounted || live.current !== key || authorityEpoch.current !== requestAuthority || handles.current.get(owner) !== handle) return;
-        accept(page, handle, key);
-        timer = window.setTimeout(() => readPump.current(), page.hasMore ? 0 : MCP_POLL_MS);
-      }).catch((cause: unknown) => {
-        if (!mounted || live.current !== key || authorityEpoch.current !== requestAuthority || handles.current.get(owner) !== handle) return;
-        handle.state = 'Uncertain';
-        erase(`${cause instanceof Error ? cause.message : 'Run read failed'}. Outcome unknown; no Start will be replayed. Retain the original instance and run IDs.`);
-        // Explicit read retry avoids treating a rotated/changed registry as evidence of non-execution.
-      }).finally(() => { readLock.current = false; if (!mounted) readPump.current(); });
-    };
+    if (pumpTimer.current !== null) { window.clearTimeout(pumpTimer.current); pumpTimer.current = null; }
     readPump.current();
-    return () => { mounted = false; if (timer !== null) window.clearTimeout(timer); };
   }, [connection, key, handle?.instanceId, handle?.runId, version, pollRevision, starting]);
   async function run() {
     if (owner === null || stats.activeId === null || startLock.current || cancelLock.current || (handle !== null && active(handle.state))) return;
