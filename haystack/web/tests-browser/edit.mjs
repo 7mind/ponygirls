@@ -79,7 +79,7 @@ try {
   await put("ui:uncertain", docOf({ title: "Uncertain fixture" }), 0);
   await put("ui:conflict", docOf({ title: "Conflict fixture" }), 0);
   await put("ui:discard", docOf({ title: "Discard fixture" }), 0);
-  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user"])
+  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user", "ui:draft-generation", "ui:draft-replay"])
     await put(key, withFields({ title: `Draft fixture ${key}` }, '{"n":1,"note":{"type":"md","content":"# Note"}}'), 0);
   await put("ui:histnav", docOf({ title: "History navigation fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture" }), 0);
@@ -226,9 +226,10 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("root typed content is edited in place and cancelled through the dialog without writing", async () => {
+  await check("root typed content is edited in place and cancelled through the dialog without writing or leaving a history entry behind", async () => {
     const { context, page } = await open();
     try {
+      await page.goto(`${base}/#/browse`);
       await edit(page, "ui:root-markdown");
       await page.getByLabel("Content: Value", { exact: true }).fill("# Draft root");
       await page.getByRole("region", { name: "Preview: Value", exact: true }).getByRole("heading", { name: "Draft root", exact: true }).waitFor();
@@ -239,6 +240,8 @@ try {
       await page.getByRole("heading", { name: "Root content", exact: true }).waitFor();
       assert.equal(await page.getByRole("heading", { name: "Draft root", exact: true }).count(), 0);
       assert.equal(page.puts.length, 0);
+      await page.goBack();
+      await page.waitForFunction(() => location.hash === "#/browse");
       await page.quiet();
     } finally { await context.close(); }
   });
@@ -288,7 +291,7 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("an unconfirmed write is replayed with its original id and payload, blocks other writes, and leaves the draft for an explicit overwrite", async () => {
+  await check("an unconfirmed write is replayed with its original id and payload, blocks other writes, and the newer draft then saves on top of it; a conflict is overwritten explicitly", async () => {
     const { context, page } = await open();
     try {
       await edit(page, "ui:uncertain");
@@ -319,16 +322,18 @@ try {
       assert.equal(committed.document.title, "Committed original");
       assert.deepEqual((await seed.history("ui:uncertain")).revisions.map((revision) => revision.revision), [2, 1], "one revision, not two");
       assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Newer local draft");
-      // The unresolved draft still carries its original base revision: saving reports the conflict instead of overwriting.
+      // The newer draft now builds on the confirmed write: it saves with revision 2, so only someone else's change conflicts.
+      await page.locator(".record-sub").getByText("based on revision 2", { exact: true }).waitFor();
+      await put("ui:uncertain", docOf({ title: "Their change" }), 2);
       await save(page).click();
-      await page.getByRole("alert").filter({ hasText: "Revision 2 was saved by op while you were editing" }).waitFor();
-      assert.equal(sent[2].expectedRevision, 1);
+      await page.getByRole("alert").filter({ hasText: "Revision 3 was saved by agent while you were editing" }).waitFor();
+      assert.equal(sent[2].expectedRevision, 2);
       assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Newer local draft");
       assert.equal(await save(page).isDisabled(), true);
-      await page.getByRole("button", { name: "Overwrite as revision 3", exact: true }).click();
-      await page.getByText("Saved as revision 3", { exact: true }).waitFor();
+      await page.getByRole("button", { name: "Overwrite as revision 4", exact: true }).click();
+      await page.getByText("Saved as revision 4", { exact: true }).waitFor();
       assert.notEqual(sent[3].requestId, sent[0].requestId, "only the explicit overwrite is a new operation");
-      assert.equal(sent[3].expectedRevision, 2);
+      assert.equal(sent[3].expectedRevision, 3);
       assert.equal((await stored("ui:uncertain")).document.title, "Newer local draft");
       await page.quiet();
     } finally { await context.close(); }
@@ -487,6 +492,11 @@ try {
       const saved = await stored(key);
       assert.deepEqual([saved.document.title, saved.document.fields.n, saved.document.fields.note.content], ["Draft title", 2, "# Draft note"]);
       assert.equal(await draftNote(page).count(), 0, "a saved draft is gone");
+      // Saving left no entry behind: one Back is the list the record was opened from.
+      await page.goBack();
+      await page.waitForFunction(() => location.hash === "#/browse");
+      await page.goForward();
+      await page.locator('[data-record="ready"]').waitFor();
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await page.locator('[data-record="editing"]').waitFor();
       assert.equal(await restoredNotice(page).count(), 0);
@@ -564,7 +574,90 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("a draft does not outlive the signed-in identity: when the account changes under an open page, the record offers no draft", async () => {
+  /** Holds the next put until the returned release is called. */
+  const holdPut = async (page) => {
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    await page.route("**/api/v1/put", async (route) => { await held; await route.continue(); }, { times: 1 });
+    return release;
+  };
+  const basedOn = (page, revision) => page.locator(".record-sub").getByText(`based on revision ${revision}`, { exact: true });
+
+  await check("a completing save ends only the draft it sent: later edits stay in the editor, now based on the saved revision, also after leaving and restoring", async () => {
+    const { context, page } = await open();
+    try {
+      const key = "ui:draft-generation";
+      const title = page.getByLabel("Title", { exact: true });
+      await page.goto(`${base}/${recordHash(key)}`);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      // Edited while the save is in flight, in the same editor.
+      await title.fill("Submitted first");
+      let release = await holdPut(page);
+      let sent = page.waitForRequest("**/api/v1/put");
+      await save(page).click();
+      await sent;
+      await title.fill("Edited while saving");
+      release();
+      await page.getByRole("status").filter({ hasText: "Saved as revision 2. Your later changes are kept and are now based on it." }).waitFor();
+      assert.equal(await basedOn(page, 2).count(), 1);
+      assert.match(page.url(), /\/edit$/, "the editor holding newer edits is not closed");
+      assert.equal(await title.inputValue(), "Edited while saving");
+      // Left while the next save is in flight, restored in a new editor and edited there.
+      release = await holdPut(page);
+      sent = page.waitForRequest("**/api/v1/put");
+      await save(page).click();
+      await sent;
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).getByRole("button", { name: "Continue editing", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await title.fill("Edited after restoring");
+      release();
+      await basedOn(page, 3).waitFor();
+      assert.match(page.url(), /\/edit$/, "a completion in an editor that was left does not close the current one");
+      assert.equal(await title.inputValue(), "Edited after restoring");
+      await save(page).click();
+      await page.getByText("Saved as revision 4", { exact: true }).waitFor();
+      assert.deepEqual(page.puts.map((request) => request.expectedRevision), [1, 2, 3], "each save builds on the previous one: no conflict with the reader's own saves");
+      assert.equal((await stored(key)).document.title, "Edited after restoring");
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("a save whose answer was lost, confirmed through the page's retry notice after the editor was left, ends its draft", async () => {
+    const { context, page } = await open();
+    try {
+      const key = "ui:draft-replay";
+      const title = page.getByLabel("Title", { exact: true });
+      await page.goto(`${base}/${recordHash(key)}`);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await title.fill("Committed, answer lost");
+      await page.route("**/api/v1/put", async (route) => {
+        assert.equal((await route.fetch()).status(), 200, "the failure must happen after the actual commit");
+        await route.abort("failed");
+      }, { times: 1 });
+      await save(page).click();
+      await page.getByRole("alert").filter({ hasText: "The outcome of your save is unknown" }).waitFor();
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).waitFor();
+      const notice = page.locator("main > .notice").filter({ hasText: "is pending or uncertain" });
+      await notice.getByRole("button", { name: "Retry original write", exact: true }).click();
+      await page.getByText(/Original write confirmed as revision 2/).waitFor();
+      assert.equal(await draftNote(page).count(), 0, "the confirmed draft is not offered again");
+      await page.getByRole("heading", { name: "Committed, answer lost", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await restoredNotice(page).count(), 0);
+      await title.fill("After the confirmed write");
+      await save(page).click();
+      await page.getByText("Saved as revision 3", { exact: true }).waitFor();
+      assert.deepEqual(page.puts.map((request) => request.expectedRevision), [1, 1, 2], "the replay repeats the original; the next save builds on it");
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("a draft survives a routine account invalidation and does not outlive the signed-in identity: signing out, or the account changing under an open page, leaves no draft", async () => {
     // Its own session: signing out ends the session on the server, which the shared sign-in of the other cases must not lose.
     const { context, page } = await open(DESKTOP, false);
     try {
@@ -574,6 +667,28 @@ try {
       await page.getByLabel("Username", { exact: true }).fill("op");
       await page.getByLabel("Password", { exact: true }).fill(password);
       await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await page.getByLabel("Title", { exact: true }).fill("Op's draft");
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).waitFor();
+      // A routine invalidation (hosts send it on reconnects; the account module re-reads its authority) changes no identity.
+      await page.evaluate(async () => {
+        document.dispatchEvent(new Event("account:invalidate"));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+      });
+      assert.equal(await draftNote(page).count(), 1, "the same identity keeps its draft");
+      // Signing out ends the identity's drafts, even when the same user's session comes back into this document (signing in
+      // here would reload the page): the shared session of the other cases, announced as the module does.
+      await page.getByRole("button", { name: "op", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
+      await page.getByLabel("Password", { exact: true }).waitFor();
+      await page.evaluate(() => { window.pageMarker = "same document"; });
+      await context.addCookies(storageState.cookies);
+      await page.evaluate((hash) => { location.hash = hash; document.dispatchEvent(new Event("account:changed")); }, recordHash(key));
+      await page.locator('[data-record="ready"]').waitFor();
+      assert.equal(await page.evaluate(() => window.pageMarker), "same document");
+      assert.equal(await anyDraftNote.count(), 0, "signing out ended the draft");
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await page.locator('[data-record="editing"]').waitFor();
       await page.getByLabel("Title", { exact: true }).fill("Op's draft");
@@ -634,5 +749,5 @@ try {
   });
 } finally { await cleanup(); }
 console.log(`# ${results.length} checks; ${results.filter((line) => line.startsWith("FAIL")).length} failures; 0 skipped`);
-assert.equal(results.length, 12);
+assert.equal(results.length, 14);
 process.exit(process.exitCode ?? 0);

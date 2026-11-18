@@ -115,8 +115,11 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const links = useRef<HTMLElement>(null);
   /** The latest revision shown, for actions that run after a reload (the saved toast's "View changes"). */
   const latestItem = useRef<Item | null>(null);
+  /** A change was announced while the editor was open: the record is reloaded once the editor closes. */
+  const stale = useRef(false);
 
   const reload = useCallback(async (refresh: boolean) => {
+    stale.current = false;
     if (!refresh) setLoad({ kind: "loading" });
     let item: Item;
     try {
@@ -143,9 +146,11 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
 
   useEffect(() => {
     // Only changes announced after the page opened; an open editor reports them itself and is not reloaded under.
-    if (live.version === openedAt.current || editing) return;
-    void reload(true);
+    if (live.version === openedAt.current) return;
+    if (editing) stale.current = true;
+    else void reload(true);
   }, [live.version]);
+  useEffect(() => { if (!editing && stale.current) void reload(true); }, [editing]);
 
   const ready = load.kind === "ready";
   useEffect(() => {
