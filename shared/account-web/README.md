@@ -231,8 +231,9 @@ reference copies in `docs/drafts/20261117-2130-dashboard-redesign/`.
 for the main ones) named like the mockup shots.
 
 Below 720 px (the shared `sm` breakpoint) the Access tokens and Users tables stack
-their rows: the first cell and the row actions share a line, the other cells
-follow two to a line under a caption with their column header; nothing is hidden and the document does not scroll
+their rows in document order, which is also the Tab order: the first cell on its
+own line, the other cells two to a line under a caption with their column
+header, the row actions last; nothing is hidden and the document does not scroll
 sideways (spec §1, §8 item 9). Every surface the module renders into breaks
 user-supplied strings anywhere (`overflow-wrap: anywhere`), so a token name,
 login or e-mail without a break opportunity never widens the page; table cells

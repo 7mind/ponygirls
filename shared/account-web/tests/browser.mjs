@@ -671,8 +671,8 @@ try {
 
   // Spec §8 item 9 at a phone width: no view scrolls sideways, every text (also user-supplied strings without a break
   // opportunity) is drawn inside the viewport and its clipping boxes, and the list tables keep every cell and row action
-  // inside the viewport (no column is dropped and there is no inner scroller, spec §1).
-  await run('390 px: no account view scrolls sideways or clips text; table cells, row actions and dialogs stay within the viewport', async ({ page, errors }) => {
+  // inside the viewport (no column is dropped and there is no inner scroller, spec §1). Tab follows the reading order.
+  await run('390 px: no account view scrolls sideways or clips text; table cells, row actions and dialogs stay within the viewport; Tab follows the reading order', async ({ page, errors }) => {
     const PHONE = { width: 390, height: 844 }, WIDE = { width: 1440, height: 900 };
     // Each scenario is driven into its state by the harness (with ?steps), on its own page: the states with a shown-once
     // value hold navigation away (beforeunload). The last one stays open for the 1440 checks.
@@ -709,6 +709,24 @@ try {
       }
       return cut;
     });
+    // The focus stops reached with Tab from the first label, in reading order (a later stop is lower, or on the same line
+    // further right).
+    const focusOrder = async (view, labels) => {
+      await view.getByRole('button', { name: labels[0], exact: true }).focus();
+      const stops = [];
+      for (const [index] of labels.entries()) {
+        if (index > 0) await view.keyboard.press('Tab');
+        stops.push(await view.evaluate(() => { const box = document.activeElement.getBoundingClientRect(); return { label: document.activeElement.getAttribute('aria-label'), x: box.left + box.width / 2, y: box.top + box.height / 2, h: box.height }; }));
+      }
+      assert.deepEqual(stops.map(stop => stop.label), labels);
+      for (const [index, stop] of stops.entries()) {
+        if (index === 0) continue;
+        const before = stops[index - 1], sameLine = Math.abs(stop.y - before.y) < Math.min(stop.h, before.h) / 2;
+        assert.ok(sameLine ? stop.x > before.x : stop.y > before.y, `${stop.label} comes after ${before.label} in reading order`);
+      }
+    };
+    const TOKEN_STOPS = ['Copy token ID of devbox-collector', 'Revoke devbox-collector', 'Copy token ID of ci-collector-02'];
+    const USER_STOPS = ['Revoke the invitation for carol', 'Actions for erin', 'Actions for grace'];
     let view = null;
     for (const name of VIEWS) {
       if (view !== null) await view.close({ runBeforeUnload: false });
@@ -730,14 +748,19 @@ try {
       }
       if (name === 'settings-tokens-secret') {
         assert.ok(await view.locator('table[data-list="tokens"] tbody tr').count() >= 2);
+        await focusOrder(view, TOKEN_STOPS);
+        await view.setViewportSize(WIDE);
+        await focusOrder(view, TOKEN_STOPS);
       }
     }
     for (const row of ['bob', 'erin']) assert.equal(await view.locator(`tr[data-row-id="${row}"]`).count(), 1, `${row}: a pending applicant and an ordinary user are listed`);
+    await focusOrder(view, USER_STOPS);
     // 1440 keeps the table form: one header row with every column side by side.
     await view.setViewportSize(WIDE);
     const heads = await view.locator('table[data-list="users"] thead th').evaluateAll(cells => cells.map(cell => [cell.getBoundingClientRect().top, cell.getBoundingClientRect().width > 0]));
     assert.equal(heads.length, 6);
     assert.deepEqual(heads, heads.map(() => [heads[0][0], true]));
+    await focusOrder(view, USER_STOPS);
     await view.close({ runBeforeUnload: false });
   });
 
