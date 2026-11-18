@@ -1,9 +1,10 @@
 import './styles.css';
 import { Anchored, dismissPopoverOnExternalFocus } from './Popover.tsx';
-import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { ThemeControl } from './ThemeControl.tsx';
 import type { ThemeController } from './theme.ts';
-import { ActivityCollectorSort, ActivityQuery, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type SessionInfo, type UserInfo } from './api.ts';
+import { ActivityCollectorSort, ActivityQuery, ArchiveSort, ArchiveSort_values, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type SessionInfo, type UserInfo } from './api.ts';
 import type { ChronicleConnection } from './client.ts';
 import { read } from './client.ts';
 import { useConnection, useResource } from './hooks.ts';
@@ -15,7 +16,7 @@ import type { ArchiveState } from './Archive.tsx';
 import { Dialog } from './Dialog.tsx';
 import { Conversation } from './Conversation.tsx';
 import { Icon } from './Icon.tsx';
-import { DEFAULT_ROUTE, HashRouter, RouteStateCache, RouteStateContext, formatRoute, parentRoute, routeSlot, sessionIdOf, sessionRoute, useRouteState, useRouter, viewRoute, type View } from './router.ts';
+import { DEFAULT_ROUTE, HashRouter, RouteParams, RouteStateCache, RouteStateContext, formatRoute, parentRoute, routeSlot, sessionIdOf, sessionRoute, useRouteState, useRouteSync, useRouter, viewRoute, viewRouteWith, type Route, type View } from './router.ts';
 import type { ManagerStats } from './transport/types.ts';
 import { ArchiveReadLane } from './archive-requests.ts';
 import { SessionFindReadGate } from './session-find.ts';
@@ -40,6 +41,11 @@ const MAIN_CONTENT_ID = 'main-content';
 const ARCHIVE_STATE = routeSlot<ArchiveState>('archive', emptyArchive);
 const ARCHIVE_DRAFT = routeSlot<string>('archive-draft', () => '');
 const ARCHIVE_INSTANCE = 'archive';
+const SEARCH_SUBMITTED = routeSlot<string | null>('search', () => null);
+const SEARCH_DRAFT = routeSlot<string>('search-draft', () => '');
+const SEARCH_INSTANCE = 'search';
+// Combobox focused by Ctrl/⌘ K in each view that has one (the views register the same shortcut; see App).
+const SHORTCUT_TARGETS: Readonly<Partial<Record<NavView, string>>> = { archive: 'Search conversations', search: 'Search conversations', activity: 'Search indexing job metadata' };
 // One collector page is enough to see stale collectors next to the owner-wide failure and lease counts.
 const ATTENTION_COLLECTOR_LIMIT = 50;
 const ACCOUNT_PROFILE_URL = '/api/account/v1/profile';
@@ -81,9 +87,46 @@ function UserMenu({ user, admin }: { user: UserInfo; admin: boolean }) {
     <button type="button" role="menuitem" className="menu-item" data-account-logout=""><Icon name="arrow-right" small={false}/>Sign out</button>
   </Anchored>;
 }
-function ArchiveView(props: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo }) {
+// Route parameters of the list views (spec §5): the submitted query and order, never the draft.
+const QUERY_PARAM = 'q', SORT_PARAM = 'sort', DIRECTION_PARAM = 'dir', RELEVANCE_PARAM = 'rel', RELEVANCE_OFF = '0';
+function archiveParams(state: ArchiveState): RouteParams {
+  const defaults = emptyArchive(), entries: [string, string][] = [];
+  if (state.submitted !== '') entries.push([QUERY_PARAM, state.submitted]);
+  if (state.sort !== defaults.sort) entries.push([SORT_PARAM, state.sort]);
+  if (state.direction !== defaults.direction) entries.push([DIRECTION_PARAM, state.direction]);
+  if (state.preferRelevance !== defaults.preferRelevance) entries.push([RELEVANCE_PARAM, RELEVANCE_OFF]);
+  return new RouteParams(entries);
+}
+// Unknown or malformed values fall back to the defaults; the URL is then rewritten from the state.
+function archiveFromParams(params: RouteParams): Pick<ArchiveState, 'submitted' | 'sort' | 'direction' | 'preferRelevance'> {
+  const defaults = emptyArchive(), sort = params.get(SORT_PARAM), direction = params.get(DIRECTION_PARAM);
+  return {
+    submitted: params.get(QUERY_PARAM) ?? defaults.submitted,
+    sort: ArchiveSort_values.find(value => value === sort) ?? defaults.sort,
+    direction: direction === SortDirection.Asc || direction === SortDirection.Desc ? direction : defaults.direction,
+    preferRelevance: params.get(RELEVANCE_PARAM) !== RELEVANCE_OFF,
+  };
+}
+function searchParams(submitted: string | null): RouteParams { return new RouteParams(submitted === null || submitted === '' ? [] : [[QUERY_PARAM, submitted]]); }
+// A hidden view keeps its state and its own subscriptions but is not re-rendered for the shell's updates (transport
+// statistics, other routes) until it is shown again, so retained views add no rendering work.
+const RetainedView = memo(function RetainedView({ render }: { active: boolean; render: () => ReactNode }) { return render(); }, (previous, next) => !previous.active && !next.active);
+interface ViewRouting { readonly active: boolean; readonly route: Route; readonly router: HashRouter }
+function ArchiveView({ routing, ...props }: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; routing: ViewRouting }) {
   const [archive, setArchive] = useRouteState(ARCHIVE_STATE, ARCHIVE_INSTANCE), [draft, setDraft] = useRouteState(ARCHIVE_DRAFT, ARCHIVE_INSTANCE);
+  const fromUrl = archiveParams({ ...archive, ...archiveFromParams(routing.route.params) }).toString(), fromState = archiveParams(archive).toString();
+  useRouteSync('archive', routing.active && routing.route.view === 'archive', fromUrl, fromState, () => {
+    const applied = archiveFromParams(routing.route.params);
+    props.requests.invalidate(); setArchive(value => ({ ...value, ...applied, selection: null })); setDraft(applied.submitted);
+  }, () => routing.router.navigate(viewRouteWith('archive', archiveParams(archive)), 'replace'));
   return <Archive {...props} draft={draft} setDraft={setDraft} archive={archive} setArchive={setArchive}/>;
+}
+function SearchView({ routing, ...props }: { connection: ChronicleConnection; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; routing: ViewRouting }) {
+  const [submitted, setSubmitted] = useRouteState(SEARCH_SUBMITTED, SEARCH_INSTANCE), [draft, setDraft] = useRouteState(SEARCH_DRAFT, SEARCH_INSTANCE);
+  const query = routing.route.params.get(QUERY_PARAM);
+  useRouteSync('search', routing.active, searchParams(query).toString(), searchParams(submitted).toString(), () => { setSubmitted(query); setDraft(query ?? ''); },
+    () => routing.router.navigate(viewRouteWith('search', searchParams(submitted)), 'replace'));
+  return <Search key={JSON.stringify([props.user.id, props.stats.generation, props.stats.activeId])} {...props} query={{ draft, setDraft, submitted, setSubmitted }}/>;
 }
 export function App({ connection, theme }: { connection: ChronicleConnection; theme: ThemeController }) {
   const stats = useConnection(connection);
@@ -103,6 +146,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   function resetOwner(owner: string | null) {
     archiveRequests.invalidate();
     if (scope.owner !== null && owner !== null) router.navigate(DEFAULT_ROUTE, 'replace');
+    router.forgetRoutePositions();
     setScope(newOwnerScope(owner));
   }
   const identity = useResource(connection, stats, 'identity', '', true, () => read(connection, new Operation_Whoami(), r => r instanceof Result_Whoami ? r.user : null));
@@ -151,14 +195,43 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     target.focus();
   }
   const current: NavView = route.view === 'session' ? 'archive' : route.view;
-  function mainView(user: UserInfo) {
-    switch (current) {
-      case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} findReads={findReads} stats={stats} user={user}/>;
-      case 'search': return <Search key={JSON.stringify([user.id, stats.generation, stats.activeId])} connection={connection} stats={stats} user={user} findReads={findReads}/>;
+  // Visited views stay mounted (hidden) for the owner, so their loaded lists, drafts, selection and scroll survive
+  // tab switches and Back/Forward (spec §5 rule 2); a new owner starts with none.
+  const [visited, setVisited] = useState<{ owner: string | null; views: ReadonlySet<NavView> }>({ owner: null, views: new Set() });
+  const mounted = visited.owner === scope.owner && visited.views.has(current) ? visited.views : new Set([...(visited.owner === scope.owner ? visited.views : []), current]);
+  useEffect(() => { if (mounted !== visited.views) setVisited({ owner: scope.owner, views: mounted }); });
+  // A hidden view must not keep a modal open: leaving a view cancels its dialogs as Escape would.
+  const panels = useRef(new Map<NavView, HTMLDivElement>()), shown = useRef<NavView>(current);
+  useLayoutEffect(() => {
+    const left = shown.current; shown.current = current;
+    if (left === current) return;
+    for (const dialog of panels.current.get(left)?.querySelectorAll('dialog[open]') ?? []) dialog.dispatchEvent(new Event('cancel', { cancelable: true }));
+  }, [current]);
+  // Every mounted view registers Ctrl/⌘ K for its own editor; the shown view's editor gets it.
+  useEffect(() => {
+    const shortcut = (event: KeyboardEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== 'k' || document.querySelector('dialog[open]') !== null) return;
+      event.stopImmediatePropagation();
+      const label = SHORTCUT_TARGETS[current], panel = panels.current.get(current);
+      const target = label === undefined || panel === undefined ? null : panel.querySelector<HTMLInputElement>(`input[role="combobox"][aria-label="${label}"]`);
+      if (target === null) return;
+      event.preventDefault(); target.focus(); target.select();
+    };
+    window.addEventListener('keydown', shortcut, true);
+    return () => window.removeEventListener('keydown', shortcut, true);
+  }, [current]);
+  function view(item: NavView, user: UserInfo) {
+    const routing: ViewRouting = { active: item === current, route, router };
+    switch (item) {
+      case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} findReads={findReads} stats={stats} user={user} routing={routing}/>;
+      case 'search': return <SearchView connection={connection} stats={stats} user={user} findReads={findReads} routing={routing}/>;
       case 'activity': return <Activity connection={connection} stats={stats} user={user} actions={actions}/>;
       case 'mcp': return <McpTester tester={tester}/>;
       case 'access': return <Access connection={connection} stats={stats} user={user} actions={actions}/>;
     }
+  }
+  function views(user: UserInfo) {
+    return NAV_ITEMS.filter(item => mounted.has(item.view)).map(item => <div key={`${scope.owner ?? ''}:${item.view}`} className="app-route" data-view={item.view} hidden={item.view !== current} ref={element => { if (element === null) panels.current.delete(item.view); else panels.current.set(item.view, element); }}><RetainedView active={item.view === current} render={() => view(item.view, user)}/></div>);
   }
   // Until the session becomes a routed page (UX-C3) a session route opens the dialog over its parent list.
   function sessionDialog(user: UserInfo) {
@@ -173,7 +246,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     <div id={MAIN_CONTENT_ID} className="app-views" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/><ReindexProgress progress={rebuild}/></div>
       {identity.error && stats.terminal !== 'unauthorized' && <div className="page shell-notice"><div className="notice notice-danger" role="alert">{identity.error}</div></div>}
       {renewal.error && <div className="page shell-notice"><div className="notice notice-danger" role="alert"><div>{renewal.error}. Your credentials have not been rejected. <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={renewal.retry}>Retry session renewal</button></div></div></div></div>}
-      {stats.terminal === 'unauthorized' ? <main data-account-auth=""/> : stats.terminal === 'update-required' ? <ShellState title="Dashboard update required" status="This dashboard version is no longer supported. Reload to update before checking your session." action="Reload dashboard" run={() => window.location.reload()}/> : identity.data === null ? <ShellState title={identity.error || stats.terminal !== null ? 'Session unavailable' : stats.activeId === null ? 'Reconnecting' : 'Checking session'} status={identity.error || stats.terminal !== null ? 'Session unavailable. Retry without entering credentials.' : stats.activeId === null ? 'Reconnecting and checking your existing session…' : 'Checking your existing session…'} action="Retry session" run={() => connection.retry()}/> : user === null ? <main className="page shell-state"><p className="muted" role="status">Preparing an account-scoped archive…</p></main> : <><div className="app-view" hidden={accountShown}>{mainView(user)}{sessionDialog(user)}</div><div data-account-outlet="" data-account-user-id={user.id} hidden/></>}</div>
+      {stats.terminal === 'unauthorized' ? <main data-account-auth=""/> : stats.terminal === 'update-required' ? <ShellState title="Dashboard update required" status="This dashboard version is no longer supported. Reload to update before checking your session." action="Reload dashboard" run={() => window.location.reload()}/> : identity.data === null ? <ShellState title={identity.error || stats.terminal !== null ? 'Session unavailable' : stats.activeId === null ? 'Reconnecting' : 'Checking session'} status={identity.error || stats.terminal !== null ? 'Session unavailable. Retry without entering credentials.' : stats.activeId === null ? 'Reconnecting and checking your existing session…' : 'Checking your existing session…'} action="Retry session" run={() => connection.retry()}/> : user === null ? <main className="page shell-state"><p className="muted" role="status">Preparing an account-scoped archive…</p></main> : <><div className="app-view" hidden={accountShown}>{views(user)}{sessionDialog(user)}</div><div data-account-outlet="" data-account-user-id={user.id} hidden/></>}</div>
   </div></RouteStateContext.Provider>;
 }
 function ShellState({ title, status, action, run }: { title: string; status: string; action: string; run: () => void }) {

@@ -24,7 +24,7 @@ async function sceneAt(sceneOrigin, waitForArchive, configure) {
   const page = await context.newPage(); page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
   const fixture = new ChronicleFixture(); if (configure) configure(fixture); await fixture.install(page);
   await page.goto(`${sceneOrigin}/tests-browser/harness.html`);
-  if (fixture.signedIn) await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
+  if (fixture.signedIn) { await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click(); await page.getByRole('main', { name: 'Archive', exact: true }).waitFor(); }
   if (waitForArchive) await archiveReady(page);
   return { context, page, fixture };
 }
@@ -231,7 +231,7 @@ try {
     assert.equal(await page.locator('.archive-context [role="status"]').textContent(), '1 conversations · 1 shown');
     await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
     await page.getByText(/This result uses up to 1000 authorized published chunks per distinct text operand/).waitFor();
-    assert.match(await page.locator('.expression-help-content').textContent(), /not a row limit.*total is exact under those bounded candidate sets/);
+    assert.match(await page.locator('.expression-help-content:visible').textContent(), /not a row limit.*total is exact under those bounded candidate sets/);
     await submitExpression(page, '(original source) mode:lexical');
     assert.equal(await page.locator('.archive-context [role="status"]').textContent(), '1 conversations · 1 shown');
     assert.equal(await page.getByText(/This result uses up to/).count(), 0);
@@ -266,7 +266,7 @@ try {
       const beforeReconnect = fixture.searchCount; fixture.restart();
       await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, beforeReconnect + 1);
       await page.locator('.conversation-intro h2').waitFor();
-      assert.equal(await page.locator('.search-form input').inputValue(), privateDraft, 'same-user reconnect preserves the unsubmitted expression draft');
+      assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), privateDraft, 'same-user reconnect preserves the unsubmitted expression draft');
       assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Archive).at(-1).operation.query.expression, privateQuery, 'same-user reconnect reissues the submitted expression, not its later draft');
     }
     const boundary = fixture.requests.length;
@@ -422,7 +422,7 @@ try {
   await waitForCalls(fixture, call => call.operation instanceof api.Operation_Archive, before + 1);
   await page.locator('.connection-widget[data-state="live"]').waitFor();
   await page.locator('.conversation-intro h2').waitFor();
-  assert.equal(await page.locator('.search-form input').inputValue(), '(original source) mode:hybrid');
+  assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), '(original source) mode:hybrid');
   const beforeRestore = fixture.searchCount;
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));

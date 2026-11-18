@@ -56,8 +56,10 @@ function SearchCard({ row, matches, open, sourceUnavailable, ...scope }: SearchS
     {unavailable !== null ? <ErrorNotice>{unavailable}. This result's source excerpts have been cleared. Submit a new search to recheck access; no HEAD fallback is used.</ErrorNotice> : matches.length === 0 ? <p>No positive source spans. Open the conversation to read its source.</p> : <SourceMatches {...scope} sessionId={row.head.id} matches={matches} open={landing => open(landing.view, landing)} fail={fail}/>}
   </article>;
 }
-export function Search({ connection, stats, user, findReads }: SearchScope & { findReads: SessionFindReadGate }) {
-  const [draft, setDraft] = useState(''), [submitted, setSubmitted] = useState<string | null>(null), [composing, setComposing] = useState(false);
+// The draft and the submitted expression are owned by the shell (per-route state, the submitted one in the URL).
+export interface SearchQueryState { draft: string; setDraft: (draft: string) => void; submitted: string | null; setSubmitted: (submitted: string | null) => void }
+export function Search({ connection, stats, user, findReads, query }: SearchScope & { findReads: SessionFindReadGate; query: SearchQueryState }) {
+  const { draft, setDraft, submitted, setSubmitted } = query, [composing, setComposing] = useState(false);
   const [cursors, setCursors] = useState<(string | undefined)[]>([undefined]), [pageIndex, setPageIndex] = useState(0), [epoch, setEpoch] = useState(0);
   const [selection, setSelection] = useState<Selection | null>(null), [related, setRelated] = useState<string | null>(null), [sourceFailure, setSourceFailure] = useState<string | null>(null);
   useEffect(() => connection.onInvalidate(() => { setSubmitted(null); close(); setPageIndex(0); setCursors([undefined]); setSourceFailure(null); }), [connection]);

@@ -112,7 +112,7 @@ try {
     const before = fixture.searchCount; await page.getByRole('combobox', { name: 'Search conversations' }).fill('A OR B mode:lexical'); await page.getByRole('button', { name: 'Add Project filter', exact: true }).click();
     await page.getByRole('alert').filter({ hasText: 'outer AND directive' }).waitFor(); assert.equal(fixture.searchCount, before, 'invalid global mode placement is not quietly repaired');
     await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
-    assert.match(await page.locator('.expression-help-content').innerText(), /NOT text/); assert.match(await page.locator('.expression-help-content').innerText(), /literal substring/); assert.match(await page.locator('.expression-help-content').innerText(), /not proof/);
+    assert.match(await page.locator('.expression-help-content:visible').innerText(), /NOT text/); assert.match(await page.locator('.expression-help-content:visible').innerText(), /literal substring/); assert.match(await page.locator('.expression-help-content:visible').innerText(), /not proof/);
     await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
     fixture.archiveFailure = 'Unknown field at character 1'; await search(page, 'unknown:value'); await page.getByRole('alert').filter({ hasText: 'Unknown field at character 1' }).waitFor(); assert.equal(await page.locator('.archive-row').count(), 0);
     fixture.archiveFailure = 'Semantic model unavailable'; await search(page, 'mode:semantic missing-model'); await page.getByRole('alert').filter({ hasText: 'Semantic model unavailable' }).waitFor(); assert.equal(await page.locator('.archive-row').count(), 0);
@@ -367,8 +367,9 @@ try {
     await archiveRead(page, fixture, () => search(page, 'original source'), 'Ordered by relevance');
     const manual = { expression: 'original source', sort: api.ArchiveSort.Title, direction: api.SortDirection.Asc, preferRelevance: false };
     assertArchiveQuery(await archiveRead(page, fixture, () => page.getByRole('button', { name: 'Sort by Conversation', exact: true }).click(), 'Ordered by Conversation · ascending'), manual);
-    const remount = await archiveRead(page, fixture, async () => { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); await page.getByRole('link', { name: 'Archive', exact: true }).click(); }, 'Ordered by Conversation · ascending');
-    assertArchiveQuery(remount, manual, 'tab remount keeps the parent-owned manual order');
+    // The Archive stays mounted across a tab round trip: its manual order is kept and nothing is read again.
+    const beforeTabs = archiveQueries(fixture).length; await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); await page.getByRole('link', { name: 'Archive', exact: true }).click(); await archiveOrder(page, 'Ordered by Conversation · ascending');
+    assert.equal(archiveQueries(fixture).length, beforeTabs, 'a tab round trip keeps the loaded Archive');
     assertArchiveQuery(await archiveRead(page, fixture, () => fixture.restart(), 'Ordered by Conversation · ascending'), manual, 'same-owner reconnect keeps the manual order');
     assert.equal(await relevanceControl(page).getAttribute('aria-pressed'), 'false');
     const nextUser = transition === 'owner' ? 'bob' : 'alice'; let boundary = fixture.requests.length;

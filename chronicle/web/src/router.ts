@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useReducer, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useEffect, useReducer, useSyncExternalStore } from 'react';
 import type { Dispatch, SetStateAction } from 'react';
 
 // Fragment routes of the dashboard (redesign spec §5): `#/<view>[/<segment>][?<query>]`.
@@ -23,6 +23,7 @@ export const NO_PARAMS = new RouteParams([]);
 
 export interface Route { readonly view: View; readonly segments: readonly string[]; readonly params: RouteParams }
 export function viewRoute(view: Exclude<View, 'session'>): Route { return { view, segments: [], params: NO_PARAMS }; }
+export function viewRouteWith(view: Exclude<View, 'session'>, params: RouteParams): Route { return { view, segments: [], params }; }
 export function sessionRoute(sessionId: string): Route {
   if (sessionId.length === 0) throw new Error('A session route needs a session id');
   return { view: 'session', segments: [sessionId], params: NO_PARAMS };
@@ -72,6 +73,9 @@ function historyIndex(state: unknown): number | null {
 }
 
 export type NavigationMode = 'push' | 'replace';
+type Arrival = NavigationMode | 'traversal';
+/** The scroll identity of a route: its view (and Activity section); null for a session, which overlays its list. */
+function scrollKey(route: Route): string | null { return route.view === 'session' ? null : [route.view, ...route.segments].join('/'); }
 export interface RouterSnapshot { readonly route: Route; readonly account: boolean }
 const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
 
@@ -79,14 +83,16 @@ const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'mousedown'] as co
  * Owns the fragment, the in-app history index and the document scroll position of every history entry.
  * Every history entry gets an index in `history.state`: an entry without one is new (a link click,
  * `location.hash`, the account module), an entry with one was reached by Back/Forward or reload.
- * New entries start at the top; traversed entries get their remembered `scrollY` back once their view has
- * rendered and the document is tall enough (rows may still be loading). The position is held while the
- * reloaded view settles (every document resize re-applies it) until the user scrolls, clicks or types.
+ * Traversed entries get their remembered `scrollY` back; a new entry gets the position its route had when it was
+ * last shown (views stay mounted per owner, see App), or the top. A position is applied once the view has rendered
+ * and the document is tall enough (rows may still be loading), and held while the view settles (every document
+ * resize re-applies it) until the user scrolls, clicks or types. Replacing an entry never scrolls.
  */
 export class HashRouter {
   private snapshot: RouterSnapshot;
   private index = 0;
   private readonly positions = new Map<number, number>();
+  private readonly routePositions = new Map<string, number>();
   // Scroll position held for a traversed entry (see the class comment).
   private pendingScroll: { readonly target: number; rendered: boolean } | null = null;
   private readonly listeners = new Set<() => void>();
@@ -102,16 +108,21 @@ export class HashRouter {
     const known = historyIndex(history.state);
     this.index = known ?? 0;
     if (known === null) this.stamp();
-    this.apply(false);
+    this.apply('push');
     const changed = () => {
       if (this.replacing) return;
       const index = historyIndex(history.state);
       const traversal = index !== null;
       this.index = index ?? this.index + 1;
       if (!traversal) this.stamp();
-      this.apply(traversal);
+      this.apply(traversal ? 'traversal' : 'push');
     };
-    const scrolled = () => { if (this.pendingScroll === null) this.positions.set(this.index, window.scrollY); };
+    const scrolled = () => {
+      if (this.pendingScroll !== null) return;
+      this.positions.set(this.index, window.scrollY);
+      const key = scrollKey(this.snapshot.route);
+      if (!this.snapshot.account && key !== null) this.routePositions.set(key, window.scrollY);
+    };
     const userScroll = () => { this.pendingScroll = null; };
     const resized = new ResizeObserver(() => this.restore());
     resized.observe(window.document.documentElement);
@@ -136,19 +147,25 @@ export class HashRouter {
     this.window.history.replaceState({ [HISTORY_INDEX_KEY]: this.index }, '', target);
     this.replacing = true;
     try { this.window.dispatchEvent(new HashChangeEvent('hashchange', { oldURL: previous, newURL: this.window.location.href })); } finally { this.replacing = false; }
-    this.apply(false);
+    this.apply('replace');
   }
+  /** Route positions belong to the mounted views of one owner; App forgets them when it drops those views. */
+  forgetRoutePositions(): void { this.routePositions.clear(); }
   /** In-page Back: the previous entry when it belongs to this page, otherwise the parent list. */
   back(parent: Route): void {
     if (this.index > 0) this.window.history.back(); else this.navigate(parent, 'replace');
   }
   private stamp(): void { this.window.history.replaceState({ [HISTORY_INDEX_KEY]: this.index }, ''); }
-  private apply(traversal: boolean): void {
+  private apply(arrival: Arrival): void {
     const fragment = parseFragment(this.window.location.hash);
     if (fragment.kind === 'account') { this.pendingScroll = null; void this.publish({ route: this.snapshot.route, account: true }); return; }
     if (fragment.kind !== 'route') { this.navigate(DEFAULT_ROUTE, 'replace'); return; }
-    this.pendingScroll = traversal ? { target: this.positions.get(this.index) ?? 0, rendered: false } : null;
-    if (!traversal) this.window.scrollTo(0, 0);
+    const key = scrollKey(fragment.route);
+    if (arrival !== 'replace' && key !== null) {
+      const target = arrival === 'traversal' ? this.positions.get(this.index) ?? this.routePositions.get(key) ?? 0 : this.routePositions.get(key) ?? 0;
+      this.pendingScroll = target === 0 ? null : { target, rendered: false };
+      if (target === 0) this.window.scrollTo(0, 0);
+    }
     if (!this.publish({ route: fragment.route, account: false })) this.window.requestAnimationFrame(() => this.rendered());
   }
   /** The view of the current route has committed; a pending restoration may now apply. */
@@ -163,6 +180,8 @@ export class HashRouter {
     const document = this.window.document.documentElement;
     if (document.scrollHeight - this.window.innerHeight < pending.target) return;
     this.positions.set(this.index, pending.target);
+    const key = scrollKey(this.snapshot.route);
+    if (key !== null) this.routePositions.set(key, pending.target);
     if (this.window.scrollY !== pending.target) this.window.scrollTo(0, pending.target);
   }
   /** True when the snapshot changed (the views render again and report `rendered()`). */
@@ -207,4 +226,25 @@ export function useRouteState<T>(slot: RouteSlot<T>, key: string): [T, Dispatch<
     cache.write(slot, key, next); rerender();
   }, [cache, slot, key]);
   return [cache.read(slot, key), update];
+}
+
+/**
+ * Keeps a view's submitted state (query, sort) and its route parameters equal while the view is shown. `fromUrl` and
+ * `fromState` are canonical parameter strings ('' for the defaults). A fragment that changed since this view last saw
+ * it (deep link, reload, Back/Forward) and carries parameters is applied to the state; otherwise the state rewrites
+ * the fragment (replace), so a plain nav link keeps the retained state. The last fragment seen is kept in the owner's
+ * route cache: a view remounted after a reconnect does not re-apply a fragment its state has since dropped.
+ * Drafts are not parameters.
+ */
+const SEEN_FRAGMENT = routeSlot<string | null>('route-sync', () => null);
+export function useRouteSync(view: View, active: boolean, fromUrl: string, fromState: string, applyUrl: () => void, writeUrl: () => void): void {
+  const cache = useContext(RouteStateContext);
+  if (cache === null) throw new Error('useRouteSync requires a RouteStateContext provider');
+  useEffect(() => {
+    if (!active) return;
+    const changed = fromUrl !== cache.read(SEEN_FRAGMENT, view);
+    cache.write(SEEN_FRAGMENT, view, fromUrl);
+    if (fromUrl === fromState) return;
+    if (changed && fromUrl !== '') applyUrl(); else writeUrl();
+  }, [cache, view, active, fromUrl, fromState]);
 }

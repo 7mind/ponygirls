@@ -1,11 +1,12 @@
 // Shell and router (redesign spec §3.1 shell, §5, §8 items 4, 7, 9): fragment routes, masthead layout,
 // in-app menus, no native dialogs and the shared account module in its degraded mode (five endpoints).
-// Behavioral-Active Blackbox / Good Communication: real React app, scripted Chronicle server (ChronicleFixture).
+// Behavioral-Active Blackbox / Good Communication: real React app, scripted Chronicle server (SearchFixture).
 import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture, api } from './fixture.mjs';
+import { api } from './fixture.mjs';
+import { SearchFixture } from './search-fixture.mjs';
 
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Provisioned browsers required; no downloads.');
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' });
@@ -17,8 +18,11 @@ const MASTHEAD_HEIGHT = 48, SCROLL_TOLERANCE = 2;
 const SECRET = 'synthetic-secret-shown-once';
 let cases = 0;
 
+// The production transport deadlines: the short-deadline harness reconnects under host load, which clears views by design.
+const PAGE = 'tests-browser/live-archive.html';
+const ARCHIVE_PAGE = 50, LOADED_BATCHES = 3, SEARCH_TEXT = 'mode:semantic source';
 async function scene(viewport, configure) {
-  const context = await browser.newContext({ viewport }), page = await context.newPage(), fixture = new ChronicleFixture(), errors = [], dialogs = [];
+  const context = await browser.newContext({ viewport }), page = await context.newPage(), fixture = new SearchFixture(), errors = [], dialogs = [];
   page.setDefaultTimeout(10_000);
   page.on('pageerror', error => errors.push(error.message));
   page.on('dialog', dialog => { dialogs.push(dialog.type()); void dialog.dismiss(); });
@@ -43,6 +47,22 @@ async function current(page) { return nav(page).locator('a[aria-current="page"]'
 async function signedIn(page) { await navLink(page, 'Search').waitFor(); }
 async function activityReady(page) { await page.getByRole('main', { name: 'Activity', exact: true }).waitFor(); await page.locator('.activity-job-row').first().waitFor(); }
 async function userMenu(page, login) { await page.getByRole('button', { name: login, exact: true }).click(); return page.getByRole('menu', { name: login, exact: true }); }
+const archiveRows = page => page.getByRole('table', { name: 'Conversations', exact: true }).locator('tbody tr');
+const archiveReads = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_Archive);
+const searchSummary = page => page.getByRole('main', { name: 'Search', exact: true }).getByRole('status').filter({ hasText: /matching conversations/ });
+async function loadArchiveRows(page, count) {
+  await archiveRows(page).first().waitFor();
+  while (await archiveRows(page).count() < count) {
+    const before = await archiveRows(page).count();
+    await page.getByRole('region', { name: 'Archive conversations', exact: true }).evaluate(element => element.scrollTo({ top: element.scrollHeight }));
+    await page.waitForFunction(before => document.querySelectorAll('table[aria-label="Conversations"] tbody tr').length > before, before);
+  }
+}
+const searchMain = page => page.getByRole('main', { name: 'Search', exact: true });
+async function submitSearch(page, text) {
+  await searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true }).fill(text);
+  await searchMain(page).getByRole('button', { name: 'Search', exact: true }).click(); await searchSummary(page).waitFor();
+}
 function innerScrollers(page) {
   return page.evaluate(() => [...document.querySelectorAll('body *')].filter(element => {
     const style = getComputedStyle(element);
@@ -54,7 +74,7 @@ try {
   await run('routes: default Search, links push, Back restores route, draft and document scroll; reload and deep links', { width: 1440, height: 900 }, fixture => {
     fixture.activityJobs = Array.from({ length: 120 }, (_, index) => fixture.jobAt(index));
   }, async ({ page, fixture }) => {
-    await page.goto(`${origin}/tests-browser/harness.html`); await signedIn(page);
+    await page.goto(`${origin}/${PAGE}`); await signedIn(page);
     assert.equal(await hash(page), '#/search'); assert.deepEqual(await current(page), ['Search']);
     await navLink(page, 'Archive').click(); await page.locator('.archive-row').first().waitFor();
     assert.equal(await hash(page), '#/archive');
@@ -75,21 +95,73 @@ try {
     await page.goForward(); await page.locator('.archive-row').first().waitFor();
     await page.reload(); await page.locator('.archive-row').first().waitFor(); assert.deepEqual(await current(page), ['Archive'], 'reload restores the route');
 
-    await page.goto(`${origin}/tests-browser/harness.html#/session/${fixture.archiveAt(0).head.id}`);
+    await page.goto(`${origin}/${PAGE}#/session/${fixture.archiveAt(0).head.id}`);
     const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true }); await dialog.waitFor(); await page.locator('.original-message').first().waitFor();
     await dialog.getByRole('button', { name: 'Close conversation', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
     assert.equal(await hash(page), '#/archive', 'a deep-linked session closes to its parent list');
     await page.evaluate(id => { location.hash = `#/session/${id}`; }, fixture.archiveAt(0).head.id); await dialog.waitFor();
     await dialog.getByRole('button', { name: 'Close conversation', exact: true }).click(); await dialog.waitFor({ state: 'detached' });
     assert.equal(await hash(page), '#/archive'); await page.goForward(); await dialog.waitFor();
-    await page.goto(`${origin}/tests-browser/harness.html#/no-such-view`); await signedIn(page);
+    await page.goto(`${origin}/${PAGE}#/no-such-view`); await signedIn(page);
     assert.equal(await hash(page), '#/search', 'an unknown fragment is replaced by the default route');
+  });
+
+  await run('route state: three Archive batches, a submitted Search and document scroll survive nav-link and Back/Forward round trips', { width: 1440, height: 900 }, fixture => {
+    fixture.archiveRowCount = 160; fixture.activityJobs = Array.from({ length: 120 }, (_, index) => fixture.jobAt(index));
+  }, async ({ page, fixture }) => {
+    await page.goto(`${origin}/${PAGE}#/archive`); await loadArchiveRows(page, ARCHIVE_PAGE * LOADED_BATCHES);
+    const rows = await archiveRows(page).count(), reads = archiveReads(fixture).length;
+    await navLink(page, 'Search').click(); await submitSearch(page, SEARCH_TEXT);
+    const summary = await searchSummary(page).innerText();
+    await navLink(page, 'Activity').click(); await activityReady(page);
+    await page.evaluate(() => window.scrollTo(0, 600)); await page.waitForFunction(() => scrollY === 600);
+    await navLink(page, 'Access').click(); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
+    assert.equal(await page.evaluate(() => scrollY), 0, 'a route shown for the first time starts at the top');
+    await navLink(page, 'Activity').click(); await activityReady(page);
+    await page.waitForFunction(tolerance => Math.abs(scrollY - 600) <= tolerance, SCROLL_TOLERANCE);
+    await navLink(page, 'Archive').click(); await archiveRows(page).first().waitFor();
+    assert.equal(await archiveRows(page).count(), rows, 'the loaded Archive batches survive a tab round trip');
+    assert.equal(archiveReads(fixture).length, reads, 'returning to the Archive reads nothing again');
+    await navLink(page, 'Search').click(); await searchSummary(page).waitFor();
+    assert.equal(await searchSummary(page).innerText(), summary, 'the submitted Search and its results survive a tab round trip');
+    assert.equal(await searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), SEARCH_TEXT);
+    for (let step = 0; step < 5; step++) await page.goBack();
+    assert.equal(await hash(page), `#/search?q=${encodeURIComponent(SEARCH_TEXT).replaceAll('%20', '+')}`);
+    await searchSummary(page).waitFor(); assert.equal(await searchSummary(page).innerText(), summary);
+    await page.goBack(); await archiveRows(page).first().waitFor(); assert.equal(await archiveRows(page).count(), rows, 'Back keeps the loaded batches');
+    await page.goForward(); await searchSummary(page).waitFor(); assert.equal(await searchSummary(page).innerText(), summary, 'Forward keeps the submitted Search');
+    assert.equal(archiveReads(fixture).length, reads);
+  });
+
+  await run('route parameters: filtered and sorted deep links, and reload after submitting, restore query and order', { width: 1440, height: 900 }, fixture => { fixture.archiveRowCount = 30; }, async ({ page, fixture }) => {
+    await page.goto(`${origin}/${PAGE}#/archive?q=${encodeURIComponent('project:"Project 1"')}&sort=Title&dir=Asc`);
+    await archiveRows(page).first().waitFor();
+    assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'project:"Project 1"');
+    assert.equal(await page.getByRole('columnheader', { name: /Conversation/ }).getAttribute('aria-sort'), 'ascending');
+    const query = archiveReads(fixture).at(-1).operation.query;
+    assert.deepEqual([query.expression, query.sort, query.direction, query.preferRelevance], ['project:"Project 1"', api.ArchiveSort.Title, api.SortDirection.Asc, true]);
+    await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('branch:"branch-2"');
+    await page.getByRole('button', { name: 'Search', exact: true }).click();
+    await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('q') === 'branch:"branch-2"');
+    await page.getByRole('button', { name: 'Sort by Last activity', exact: true }).click();
+    await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('sort') === null);
+    const submitted = await hash(page);
+    await page.reload(); await archiveRows(page).first().waitFor();
+    assert.equal(await hash(page), submitted, 'reload keeps the fragment');
+    assert.equal(await page.getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'branch:"branch-2"', 'reload restores the submitted query');
+    const reloaded = archiveReads(fixture).at(-1).operation.query;
+    assert.deepEqual([reloaded.expression, reloaded.sort, reloaded.direction, reloaded.preferRelevance], ['branch:"branch-2"', api.ArchiveSort.LastTimestamp, api.SortDirection.Desc, false]);
+    await page.goto(`${origin}/${PAGE}#/search?q=${encodeURIComponent(SEARCH_TEXT)}`);
+    await searchSummary(page).waitFor();
+    assert.equal(await searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), SEARCH_TEXT, 'a Search deep link submits its query');
+    await submitSearch(page, 'mode:semantic migration'); await page.reload(); await searchSummary(page).waitFor();
+    assert.equal(await searchMain(page).getByRole('combobox', { name: 'Search conversations', exact: true }).inputValue(), 'mode:semantic migration', 'reload restores the submitted Search');
   });
 
   for (const [width, height, theme] of [[1440, 900, 'light'], [1024, 700, 'dark'], [390, 844, 'light']]) {
     await run(`masthead ${width}×${height} ${theme}: one row, sticky, menus operable, no overflow`, { width, height }, fixture => { fixture.archiveRowCount = 60; }, async ({ page }) => {
       await page.emulateMedia({ colorScheme: theme });
-      await page.goto(`${origin}/tests-browser/harness.html#/access`); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
+      await page.goto(`${origin}/${PAGE}#/access`); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
       const masthead = page.getByRole('banner');
       assert.equal(Math.round((await masthead.boundingBox()).height), MASTHEAD_HEIGHT);
       for (const name of NAV) { const link = navLink(page, name); await link.scrollIntoViewIfNeeded(); assert.ok(await link.isVisible(), `${name} is reachable`); }
@@ -116,7 +188,7 @@ try {
   }
 
   await run('account degraded mode: sign in, Access tokens, mint, secret survives blur, acknowledge, revoke, sign out', { width: 1440, height: 900 }, fixture => { fixture.signedIn = false; }, async ({ page, fixture }) => {
-    await page.goto(`${origin}/tests-browser/harness.html#/activity`);
+    await page.goto(`${origin}/${PAGE}#/activity`);
     const auth = page.locator('main[data-account-auth]');
     await auth.getByRole('heading', { name: /^Sign in/ }).waitFor();
     await auth.getByLabel('Username', { exact: true }).fill('alice'); await auth.getByLabel('Password', { exact: true }).fill('synthetic-password');
