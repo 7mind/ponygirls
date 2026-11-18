@@ -24,8 +24,8 @@
 .sortline .expression-help>button:hover{text-decoration:underline}
 .expression-help-content p+p{margin-top:var(--space-2)}
 /* The query bar and shortcut row as one block (Search). Inside a legacy view (.dashboard-page, until it is rebuilt) the
- * legacy element rules for buttons and inputs are reverted to the shared components. */
-.dashboard-page .expression-editor:not(.metadata-editor) :where(button,input){all:revert-layer}
+ * legacy element rules for buttons and inputs are reverted to the shared components; the rules above, more specific, still apply. */
+:where(.dashboard-page) .expression-editor:where(:not(.metadata-editor)) :is(button,input){all:revert-layer}
 .expression-editor{display:flex;flex-direction:column;gap:var(--space-3);margin-bottom:var(--space-3)}
 .expression-editor .filterbar{padding:0}
 /* Activity's metadata editors (MetadataEditor.tsx) keep the legacy search line until their view is rebuilt (UX-C5). */
