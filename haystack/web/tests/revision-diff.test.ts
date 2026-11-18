@@ -42,6 +42,10 @@ test("comparing revisions reports metadata, description paragraphs, links and fi
   assert.deepEqual(comparison.fields.map((field) => [field.name, field.label, field.state]), [
     ["due", "string", "changed"], ["count", "number", "changed"], ["notes", "Markdown", "added"], ["gone", "boolean", "removed"],
   ]);
+  const due = comparison.fields[0]!.diff;
+  assert.deepEqual(due.kind === "lines" && due.lines, [
+    { kind: "del", text: "2026-11-24", mark: { start: 6, end: 10 } }, { kind: "add", text: "2026-12-01", mark: { start: 6, end: 10 } },
+  ], "single words are marked by characters");
   const count = comparison.fields[1]!.diff;
   assert.deepEqual(count.kind === "lines" && count.lines.map((line) => line.kind === "skip" ? "" : line.text), ["9007199254740993", "9007199254740995"]);
   assert.deepEqual(comparison.unchanged, ["title", "type", "status", "tags", "owner"]);

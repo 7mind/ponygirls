@@ -35,9 +35,13 @@ function editScript(a: readonly string[], b: readonly string[]): Change[] {
   return script;
 }
 
-/** Marks of a replaced line pair: the words between their common leading and trailing words. */
+/**
+ * Marks of a replaced line pair: the words between their common leading and trailing words; a pair of single words
+ * (a date, a number, an identifier) is compared by characters.
+ */
 function marks(before: string, after: string): [Mark | null, Mark | null] {
-  const a = before.split(WORDS), b = after.split(WORDS);
+  const single = !WORDS.test(before) && !WORDS.test(after);
+  const a = single ? [...before] : before.split(WORDS), b = single ? [...after] : after.split(WORDS);
   let prefix = 0;
   while (prefix < a.length && prefix < b.length && a[prefix] === b[prefix]) prefix++;
   let suffix = 0;
