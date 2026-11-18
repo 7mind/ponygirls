@@ -34,5 +34,3 @@
   .archive-table th{top:var(--masthead-h)}
   .archive-view .update-pill{top:calc(var(--masthead-h) + var(--space-6))}
 }
-.management-page .page-heading{margin-bottom:18px}.management-page .page-heading h1{font-size:31px;margin:6px 0 8px}.management-page .inline-form{padding:14px;gap:11px}.management-page .token-row{padding:13px 0}.management-page .group-card,.management-page .invitation{padding:15px;margin-top:12px}.management-page .section-description{margin:12px 0}.management-page .sharing-warning{padding:10px 12px;margin:12px 0}
-@media(max-width:640px){.management-page .page-heading h1{font-size:29px}.app-footer{margin:10px 12px 0}.health-hint{display:none}}

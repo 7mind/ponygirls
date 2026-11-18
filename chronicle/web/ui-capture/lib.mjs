@@ -167,8 +167,6 @@ export async function withScene({ rig, recorder, errors }, variant, { fixture, i
   try { return await body({ page, fixture, shot, variant, context }); } finally { await context.close(); }
 }
 export const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-export async function scrollTo(page, selector, top) { await page.locator(selector).evaluate((element, value) => { element.scrollTop = value; }, top); await page.waitForTimeout(300); }
-export async function scrollEnd(page, selector) { await page.locator(selector).evaluate(element => { element.scrollTop = element.scrollHeight; }); await page.waitForTimeout(400); }
 export async function rowCount(page, selector) { return page.locator(selector).count(); }
 
 export async function inspect(page, recorder, name) { const data = { ...await page.evaluate(inspectDom), audit: await page.evaluate(auditDom) }; await recorder.dump(name, data); return data; }

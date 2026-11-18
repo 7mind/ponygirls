@@ -4,7 +4,7 @@ import { memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, use
 import type { ReactNode } from 'react';
 import { ThemeControl } from './ThemeControl.tsx';
 import type { ThemeController } from './theme.ts';
-import { ActivityCollectorSort, ActivityQuery, ArchiveSort, ArchiveSort_values, ContentView, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type SessionInfo, type UserInfo } from './api.ts';
+import { ActivityCollectorSort, ActivityQuery, ArchiveSort_values, ContentView, Operation_Activity, Operation_Whoami, Result_Activity, Result_Whoami, Scope, SortDirection, type ActivityResult, type UserInfo } from './api.ts';
 import type { ChronicleConnection } from './client.ts';
 import { read } from './client.ts';
 import { useConnection, useResource } from './hooks.ts';
@@ -28,10 +28,7 @@ import { retainedActivityRoute } from './activity/state.ts';
 import { useMutations } from './mutations.ts';
 import { MutationNotice } from './MutationNotice.tsx';
 export function ErrorNotice({ children }: { children: React.ReactNode }) { return <div className="notice error" role="alert">{children}</div>; }
-export function Blank({ title, children }: { title: string; children: React.ReactNode }) { return <div className="blank"><span className="blank-icon" aria-hidden="true">⌁</span><h2>{title}</h2><p>{children}</p></div>; }
-export function Tags({ tags }: { tags: readonly string[] }) { return <span className="tags">{tags.map(tag => <span className="tag" key={tag}>{tag}</span>)}</span>; }
 export function formatDate(value: string | undefined): string { if (!value) return 'date unavailable'; const date = new Date(value); return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }); }
-export function SessionMeta({ session }: { session: SessionInfo }) { return <span className="meta"><span>{session.source.format}</span><span>{session.metadata.project ?? 'No project'}</span><span>{formatDate(session.metadata.startedAt)}</span></span>; }
 type NavView = Exclude<View, 'session'>;
 const NAV_ITEMS: readonly { readonly view: NavView; readonly label: string }[] = [
   { view: 'archive', label: 'Archive' }, { view: 'search', label: 'Search' }, { view: 'activity', label: 'Activity' }, { view: 'access', label: 'Access' }, { view: 'mcp', label: 'MCP' },
