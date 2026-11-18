@@ -58,26 +58,27 @@ class PersistentBrowserSessionTest extends munit.FunSuite {
     } yield () }.unsafeRunSync()
   }
 
-  test("BG GoodCommunication specified: migration promotes only live legacy sessions and never revives expired or deleted sessions") {
+  test("BG GoodCommunication specified: a deadline session from before migration 020 keeps its deadline, then is refused and deleted at start-up") {
     fixture(1,false).use { f => IO.blocking {
-      val live=Wire.secret(); val expired=Wire.secret(); val deleted=Wire.secret()
+      val live=Wire.secret(); val expired=Wire.secret()
+      def stored(secret: String): Option[Boolean] = f.services.database.transaction(c => Sql.one(c,"SELECT expires IS NOT NULL FROM ch_sessions WHERE hash=?",Wire.hash(secret))(_.getBoolean(1)))
       f.services.database.transaction { c =>
         Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=20")
         Sql.exec(c,"INSERT INTO ch_sessions(hash,owner,expires) VALUES(?,'a',clock_timestamp()+interval '1 hour')",Wire.hash(live))
         Sql.exec(c,"INSERT INTO ch_sessions(hash,owner,expires) VALUES(?,'a',clock_timestamp()-interval '1 second')",Wire.hash(expired))
-        Sql.exec(c,"INSERT INTO ch_sessions(hash,owner,expires) VALUES(?,'a',clock_timestamp()+interval '1 hour')",Wire.hash(deleted))
-        Sql.exec(c,"DELETE FROM ch_sessions WHERE hash=?",Wire.hash(deleted))
         Sql.exec(c,"ALTER TABLE ch_sessions ALTER COLUMN expires SET NOT NULL")
       }
       f.services.database.initialize()
+      assertEquals(f.services.database.transaction(c => Sql.one(c,"SELECT is_nullable FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='ch_sessions' AND column_name='expires'")(_.getString(1))),Some("YES"))
       val auth=new Auth(f.services.database,f.config)
       assertEquals(auth.browser(live).user.id,"a")
-      assert(f.services.database.transaction(c => Sql.one(c,"SELECT expires IS NULL FROM ch_sessions WHERE hash=?",Wire.hash(live))(_.getBoolean(1)).get))
-      List(expired,deleted).foreach(secret => assertEquals(intercept[DomainError](auth.browser(secret)).code,"unauthorized"))
+      assertEquals(stored(live),Some(true),"the deadline is kept, not converted")
+      assertEquals(intercept[DomainError](auth.browser(expired)).code,"unauthorized")
+      assertEquals(stored(expired),None)
       f.services.database.transaction(c => Sql.exec(c,"UPDATE ch_sessions SET expires=clock_timestamp()-interval '1 second' WHERE hash=?",Wire.hash(live)))
-      f.services.database.initialize()
       assertEquals(intercept[DomainError](auth.browser(live)).code,"unauthorized")
-      assertEquals(f.services.database.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_sessions")(_.getInt(1)).get),0)
+      f.services.database.initialize()
+      assertEquals(stored(live),None)
     }}.unsafeRunSync()
   }
 

@@ -1,15 +1,6 @@
 ALTER TABLE ch_sessions ALTER COLUMN expires DROP NOT NULL;
 
-DO $$
-BEGIN
-  IF NOT EXISTS(SELECT 1 FROM ch_schema_migrations WHERE version=20) THEN
-    LOCK TABLE ch_sessions IN ACCESS EXCLUSIVE MODE;
-    DELETE FROM ch_sessions WHERE expires<=clock_timestamp();
-    UPDATE ch_sessions SET expires=NULL WHERE expires>clock_timestamp();
-    INSERT INTO ch_schema_migrations VALUES(20);
-  END IF;
-END;
-$$;
+INSERT INTO ch_schema_migrations VALUES(20) ON CONFLICT DO NOTHING;
 
 -- Cookie refresh does not mutate authority. Explicitly imposing/reducing a
 -- deadline, changing the credential/owner or reviving an expired row does.
