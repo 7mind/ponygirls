@@ -6,6 +6,8 @@ chronicle.CodecFixtureTest
 chronicle.CollectorProgressDummyTest
 chronicle.ContextCoverageTest
 chronicle.CoreTest
+chronicle.DummyContextWorkerRecoveryTest
+chronicle.DummyPassageWorkerTest
 chronicle.DummyRebuildRetirementTest
 chronicle.DummyRunAuthorizationTest
 chronicle.ExpressionHintContextTest
@@ -26,3 +28,4 @@ chronicle.ProviderUsageTest
 chronicle.ReadSourcesTest
 chronicle.RecordedYoloProfileTest
 chronicle.RevisionSortAnchorTest
+chronicle.TimingDefaultsTest
