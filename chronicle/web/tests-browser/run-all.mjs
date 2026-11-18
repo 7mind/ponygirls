@@ -35,20 +35,29 @@ function poolSize() {
 }
 
 const children = new Set();
-function killGroup(child) { try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } }
+function killGroup(child) { if (child.pid === undefined) return; try { process.kill(-child.pid, 'SIGKILL'); } catch (error) { if (error.code !== 'ESRCH') throw error; } }
 
 function runScript(script, cacheRoot, timeoutMs) {
   return new Promise(resolve => {
     const started = Date.now(), chunks = [];
-    const child = spawn(process.execPath, [...NODE_ARGS, `tests-browser/${script}`], {
-      cwd: WEB_ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env, CHRONICLE_VITE_CACHE_DIR: join(cacheRoot, script) },
-    });
+    let child, timer, finished = false;
+    const finish = (status, detail) => {
+      if (finished) return;
+      finished = true; clearTimeout(timer);
+      if (child !== undefined) { children.delete(child); killGroup(child); }
+      resolve({ script, status, detail, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString('utf8') });
+    };
+    try {
+      child = spawn(process.execPath, [...NODE_ARGS, `tests-browser/${script}`], {
+        cwd: WEB_ROOT, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+        env: { ...process.env, CHRONICLE_VITE_CACHE_DIR: join(cacheRoot, script) },
+      });
+    } catch (error) { finish('FAIL', `spawn error: ${error.message}`); return; }
     children.add(child);
     let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; killGroup(child); }, timeoutMs);
-    child.stdout.on('data', chunk => chunks.push(chunk)); child.stderr.on('data', chunk => chunks.push(chunk));
-    const finish = (status, detail) => { clearTimeout(timer); children.delete(child); killGroup(child); resolve({ script, status, detail, seconds: (Date.now() - started) / 1000, output: Buffer.concat(chunks).toString('utf8') }); };
+    timer = setTimeout(() => { timedOut = true; killGroup(child); }, timeoutMs);
+    // Streams are absent when spawn fails with EMFILE/ENFILE; the 'error' event reports that failure.
+    for (const stream of [child.stdout, child.stderr]) if (stream !== null && stream !== undefined) stream.on('data', chunk => chunks.push(chunk));
     child.on('error', error => finish('FAIL', `spawn error: ${error.message}`));
     child.on('close', (code, signal) => timedOut ? finish('FAIL', `timed out after ${timeoutMs} ms`) : code === 0 ? finish('ok', '') : finish('FAIL', signal === null ? `exit ${code}` : `signal ${signal}`));
   });
