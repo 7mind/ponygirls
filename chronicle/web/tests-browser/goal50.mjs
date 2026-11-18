@@ -62,7 +62,6 @@ try {
     await input.dispatchEvent('compositionend'); await page.clock.runFor(220); await fixture.waitCall(api.Operation_ExpressionHints, before + 1);
     await input.fill('🦄'); await input.evaluate(element => { element.setSelectionRange(1, 1); element.dispatchEvent(new KeyboardEvent('keyup', { key: 'ArrowLeft', bubbles: true })); }); await page.clock.runFor(220); assert.ok(fixture.calls.filter(call => call.operation instanceof api.Operation_ExpressionHints).every(call => call.operation.query.expression !== '🦄' || call.operation.query.caretUtf16 !== 1)); await context.close();
   });
-  });
   await group('320px light/dark and zoom keep autocomplete surfaces inside viewport', async () => {
     for (const colorScheme of ['light', 'dark']) {
       const { context, page } = await scene(undefined, { width: 320, height: 844 }); await page.emulateMedia({ colorScheme }); const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await input.fill('p'); await page.clock.runFor(200); await page.getByRole('listbox').waitFor(); let bounds = await page.getByRole('listbox').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 320); await input.press('Escape'); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
