@@ -9,10 +9,10 @@
  * field error, throttling pauses the form for the server's rate window,
  * and a deleted or expired artifact replaces the card.
  * The password is never placed in URLs, storage, or logs, and the
- * field is always cleared after the attempt. Only the trusted shared icon
- * set is inserted as markup; no response text reaches the DOM.
+ * field is always cleared after the attempt. No response text reaches the
+ * DOM. Icons and the theme menu come from the content shell's chrome.js; this
+ * script works without it.
  */
-import { icon } from "./__manure/ui/icons.js";
 
 const WRONG_PASSWORD = 401;
 const THROTTLED = 429;
@@ -27,17 +27,12 @@ const throttled = document.getElementById("unlock-throttled");
 const show = document.getElementById("show-password");
 const submit = form.querySelector("button[type=submit]");
 
-function hydrateIcons(root) {
-  for (const slot of root.querySelectorAll("span[data-icon]")) {
-    const extra = [...slot.classList].filter((name) => name !== "icon");
-    slot.outerHTML = icon(slot.dataset.icon, ...extra);
-  }
-}
-
 function fieldError(message) {
-  error.replaceChildren();
-  error.insertAdjacentHTML("afterbegin", icon("alert", "icon-sm"));
-  error.append(message);
+  const glyph = document.createElement("span");
+  glyph.className = "icon icon-sm";
+  glyph.dataset.icon = "alert";
+  glyph.setAttribute("aria-hidden", "true");
+  error.replaceChildren(glyph, message);
   error.hidden = false;
   input.setAttribute("aria-invalid", "true");
 }
@@ -102,36 +97,3 @@ show.addEventListener("click", () => {
   show.setAttribute("aria-pressed", String(visible));
   show.lastChild.textContent = visible ? "Hide" : "Show";
 });
-
-function themeMenu() {
-  const control = document.querySelector("[data-theme-control]");
-  const root = document.documentElement;
-  // theme-init.js is the only writer of the theme attributes; without it there is nothing to choose.
-  if (!root.dataset.themeChoice) return;
-  control.hidden = false;
-  const button = control.querySelector("button[aria-haspopup]");
-  const menu = control.querySelector("[role=menu]");
-  const items = [...menu.querySelectorAll("[data-theme-set]")];
-  const close = (refocus) => { menu.hidden = true; button.setAttribute("aria-expanded", "false"); if (refocus) button.focus(); };
-  const sync = () => {
-    for (const item of items) item.setAttribute("aria-checked", String(item.dataset.themeSet === root.dataset.themeChoice));
-    button.replaceChildren();
-    button.insertAdjacentHTML("afterbegin", icon(root.dataset.theme === "dark" ? "moon" : "sun"));
-  };
-  button.addEventListener("click", () => {
-    menu.hidden = !menu.hidden;
-    button.setAttribute("aria-expanded", String(!menu.hidden));
-    if (!menu.hidden) (items.find((item) => item.getAttribute("aria-checked") === "true") || items[0]).focus();
-  });
-  for (const item of items) item.addEventListener("click", () => {
-    document.dispatchEvent(new CustomEvent("ui:theme-choice", { detail: item.dataset.themeSet }));
-    close(true);
-  });
-  document.addEventListener("click", (event) => { if (!menu.hidden && !control.contains(event.target)) close(false); });
-  control.addEventListener("keydown", (event) => { if (event.key === "Escape" && !menu.hidden) close(true); });
-  new MutationObserver(sync).observe(root, { attributes: true, attributeFilter: ["data-theme", "data-theme-choice"] });
-  sync();
-}
-
-hydrateIcons(document);
-themeMenu();

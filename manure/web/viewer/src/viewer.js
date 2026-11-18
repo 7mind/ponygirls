@@ -3,7 +3,6 @@ import DOMPurify from 'dompurify';
 import mermaid from 'mermaid';
 import * as pdfjs from 'pdfjs-dist/build/pdf.mjs';
 import { localUrl, artifactResourceUrl, markdownLinkUrl, boundedBytes, graphSource, diagramCount, TEXT_LIMIT } from './safety.js';
-import { hydrateIcons, iconSlot, copyText, toast } from './chrome.js';
 
 const meta = document.querySelector('#manure-viewer').dataset;
 const embedded = meta.embed === 'readme';
@@ -20,6 +19,21 @@ const PERCENT = 100;
 const CSS_PX_PER_PDF_POINT = 96 / 72;
 const PDF_ZOOMS = [['width', 'Fit width'], ['page', 'Fit page'], ['1', '100 %'], ['1.5', '150 %']];
 addEventListener('pagehide', () => { for (const url of urls) URL.revokeObjectURL(url); });
+// Page chrome (icons for span[data-icon], toasts, theme menu, local times) belongs to the content shell's
+// chrome.js; the viewer only emits placeholders and toast requests, and keeps working without it.
+function iconSlot(name, ...classes) {
+  const slot = document.createElement('span');
+  slot.className = ['icon', ...classes].join(' ');
+  slot.dataset.icon = name;
+  slot.setAttribute('aria-hidden', 'true');
+  return slot;
+}
+function toast(message) { document.dispatchEvent(new CustomEvent('manure:toast', { detail: message })); }
+async function copyText(text, success) {
+  if (!navigator.clipboard || !navigator.clipboard.writeText) throw new Error('Clipboard access is unavailable.');
+  await navigator.clipboard.writeText(text);
+  toast(success);
+}
 function element(tag, text, cls) { const el = document.createElement(tag); if (text) el.textContent = text; if (cls) el.className = cls; return el; }
 function errorText(error) { return error instanceof Error ? error.message : String(error); }
 function button(label, action, cls = 'btn') { const el = element('button', label, cls); el.type = 'button'; el.addEventListener('click', action); return el; }
@@ -69,7 +83,6 @@ function fail(error, target = content, source = null) {
   }
   notice.append(iconSlot('alert'), body);
   target.replaceChildren(...parts);
-  hydrateIcons(notice);
 }
 /** Page toolbar in place of the plain meta line: tool controls left, file facts right. */
 function tools(label, ...controls) {
@@ -77,7 +90,6 @@ function tools(label, ...controls) {
   toolbar.setAttribute('role', 'toolbar'); toolbar.setAttribute('aria-label', label);
   document.querySelector('#file-meta').classList.add('push');
   toolbar.prepend(...controls);
-  hydrateIcons(toolbar);
 }
 function segmented(label, options, select) {
   const group = element('div', null, 'segmented'); group.setAttribute('role', 'group'); group.setAttribute('aria-label', label);
@@ -85,18 +97,11 @@ function segmented(label, options, select) {
   group.append(...buttons);
   return { group, press: value => { for (const b of buttons) b.setAttribute('aria-pressed', String(b.dataset.value === value)); } };
 }
-function imageView(src, alt) {
-  const stage = element('div', null, 'stage');
-  const img = new Image(); img.alt = alt; img.src = src; img.className = 'stage-image is-fit';
-  img.addEventListener('error', () => fail(new Error('The image could not be decoded.')));
+/** − / % / + and Fit | Actual size for one image; `fitHeight` applies any height limit of Fit. */
+function zoomControls(img, fitHeight) {
   const percent = element('span', null, 'tool-value'); percent.setAttribute('aria-live', 'polite');
   const show = () => { if (img.naturalWidth) percent.textContent = `${Math.round(img.getBoundingClientRect().width / img.naturalWidth * PERCENT)} %`; };
   const width = value => { img.classList.remove('is-fit'); img.style.removeProperty('max-height'); img.style.setProperty('width', `${Math.max(1, value)}px`); show(); };
-  // Fit uses the height actually left under the sticky chrome, which wraps on narrow screens.
-  const fitHeight = () => {
-    const padding = parseFloat(getComputedStyle(stage).paddingTop) + parseFloat(getComputedStyle(stage).paddingBottom);
-    img.style.setProperty('max-height', `${Math.max(1, innerHeight - toolbar.getBoundingClientRect().bottom - padding)}px`);
-  };
   const fit = () => { img.classList.add('is-fit'); img.style.removeProperty('width'); fitHeight(); show(); };
   const mode = segmented('Image size', [['fit', 'Fit'], ['actual', 'Actual size']], value => {
     mode.press(value);
@@ -107,26 +112,43 @@ function imageView(src, alt) {
     mode.press(null);
     width(img.naturalWidth * Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, current * factor)));
   };
+  img.classList.add('is-fit');
   mode.press('fit');
-  img.addEventListener('load', () => {
-    document.querySelector('#file-facts').textContent = ` · ${img.naturalWidth} × ${img.naturalHeight}`;
-    show();
-  });
+  img.addEventListener('load', show);
   addEventListener('resize', () => { if (img.classList.contains('is-fit')) fitHeight(); show(); });
-  tools('Image zoom', textButton(MINUS_SIGN, 'Zoom out', () => zoom(1 / ZOOM_STEP)), percent, iconButton('plus', 'Zoom in', () => zoom(ZOOM_STEP)),
-    element('span', null, 'vr'), mode.group);
+  return [textButton(MINUS_SIGN, 'Zoom out', () => zoom(1 / ZOOM_STEP)), percent, iconButton('plus', 'Zoom in', () => zoom(ZOOM_STEP)),
+    element('span', null, 'vr'), mode.group];
+}
+function imageView(src, alt) {
+  const stage = element('div', null, 'stage');
+  const img = new Image(); img.alt = alt; img.src = src; img.className = 'stage-image';
+  img.addEventListener('error', () => fail(new Error('The image could not be decoded.')));
+  // Fit uses the height actually left under the sticky chrome, which wraps on narrow screens.
+  const fitHeight = () => {
+    const padding = parseFloat(getComputedStyle(stage).paddingTop) + parseFloat(getComputedStyle(stage).paddingBottom);
+    img.style.setProperty('max-height', `${Math.max(1, innerHeight - toolbar.getBoundingClientRect().bottom - padding)}px`);
+  };
+  img.addEventListener('load', () => { document.querySelector('#file-facts').textContent = ` · ${img.naturalWidth} × ${img.naturalHeight}`; });
+  tools('Image zoom', ...zoomControls(img, fitHeight));
   stage.append(img); content.append(stage);
   fitHeight();
+  return img;
+}
+/** A diagram inside Markdown: fitted to the column, with hover/focus zoom tools; zoom extends the document, not a box. */
+function inlineDiagram(src, alt, target) {
+  const img = new Image(); img.alt = alt; img.src = src;
+  img.addEventListener('error', () => fail(new Error('The diagram could not be decoded.'), target));
+  const controls = element('div', null, 'diagram-tools');
+  controls.setAttribute('role', 'toolbar'); controls.setAttribute('aria-label', 'Diagram zoom');
+  controls.append(...zoomControls(img, () => {}));
+  target.replaceChildren(controls, img);
   return img;
 }
 function svgImage(svg, target, alt, renderer) {
   if (svg.length > 8 * 1024 * 1024) throw new Error('Rendered diagram is too large.');
   const clean = DOMPurify.sanitize(svg, {USE_PROFILES:{svg:true, svgFilters:true}, FORBID_TAGS:['foreignObject','image','a','script','animate','set','animateTransform'], FORBID_ATTR:['href','xlink:href']});
   const url = URL.createObjectURL(new Blob([clean], {type:'image/svg+xml'})); urls.add(url);
-  if (target === content) { imageView(url, alt).dataset.renderer = renderer; return; }
-  const img = new Image(); img.alt = alt; img.src = url; img.dataset.renderer = renderer;
-  img.addEventListener('error', () => fail(new Error('The diagram could not be decoded.'), target));
-  target.replaceChildren(img);
+  (target === content ? imageView(url, alt) : inlineDiagram(url, alt, target)).dataset.renderer = renderer;
 }
 function graphviz(text) {
   return new Promise((resolve,reject) => {
@@ -324,13 +346,12 @@ async function markdown(text, target) {
   target.append(article);
   if (!embedded) document.querySelector('#meta-extra').textContent =
     `${counted(article.querySelectorAll('h1,h2,h3,h4,h5,h6').length, 'section')} · ${counted(lineCount(text), 'line')}`;
-  // Icons are decoration: the document renders even if the shared icon module cannot load.
-  hydrateIcons(article);
   scrollToFragment();
   const deadline = Date.now() + 30000;
   for (const code of graphs) {
     const kind = code.className.match(/language-(mermaid|mmd|dot|gv|graphviz)\b/)[1];
-    const target = element('figure',null,'diagram'); code.parentElement.replaceWith(target);
+    const target = element('figure',null,'diagram'); target.setAttribute('aria-label', `Diagram ${graphs.indexOf(code) + 1}`);
+    code.parentElement.replaceWith(target);
     try {
       if (Date.now() >= deadline) throw new Error('Markdown diagram rendering exceeded the 30 second document deadline.');
       await diagram(code.textContent, kind, target);
@@ -350,7 +371,6 @@ function archive() {
   card.append(iconSlot('archive'), element('h2', 'No preview for archives'),
     element('p', 'Download the original to open it locally, or fetch the whole artifact with the manure CLI.'), downloadLink('btn btn-primary'));
   content.append(card);
-  hydrateIcons(card);
 }
 async function fetchBytes(limit) {
   const controller = new AbortController();

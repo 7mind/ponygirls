@@ -10,11 +10,13 @@ Images (including SVG) are displayed only in browser image context. Source and o
 text files (`.py`, `.json`, `.csv`, `.log`, …) are shown as exact, line-numbered text;
 archives (`.zip`, `.tar`, `.gz`, …) get a card that offers the original download.
 
-The page chrome (bar, breadcrumb, meta line, theme menu, toasts) is built on the shared
-design system `shared/ui-web`, which the server serves on the content origin under
-`<mount>/__manure/ui/` (spec `docs/drafts/20261117-2130-dashboard-redesign-spec.md` §3.3).
-`src/chrome.js` holds the chrome shared with the server-rendered directory listing; the
-listing loads it as `chrome.js`, the viewer bundles it.
+The page chrome (bar, breadcrumb, meta line, theme menu, icons, toasts) belongs to the
+content shell, `manure/web/unlock` (configured as `unlock_shell_dir`): `content.css`,
+`chrome.js` and the shared design system `shared/ui-web` as `ui/`, served on the content
+origin under `<mount>/__manure/shell/` independently of the dashboard and the viewer
+(spec `docs/drafts/20261117-2130-dashboard-redesign-spec.md` §3.3). The viewer only emits
+`span[data-icon]` placeholders and `manure:toast` events; without a shell directory it
+still renders, without icons, toasts and the shared styles.
 
 ## Build and check
 
@@ -93,8 +95,8 @@ failure uses the same Show raw guidance as Copy raw.
 Directories without `index.html`/`index.htm` show an escaped, manifest-backed
 immediate-child listing: a table of Name, Type, Size and Open/Download, a breadcrumb,
 and a "Download all (CLI)" disclosure with the `manure fetch` command. The backend renders
-the page under a CSP that admits only Manure's reserved assets (`/__manure/ui/`,
-`/__manure/viewer/`). If an immediate regular `readme.md` file exists (case-insensitive)
+the page under a CSP that admits only the content shell (`/__manure/shell/`); without a
+shell directory the listing is a bare, unstyled table. If an immediate regular `readme.md` file exists (case-insensitive)
 and viewers are enabled, the page also loads the viewer and renders it beneath the table
 under the viewer CSP; the same Markdown metadata, local renderer and safety rules apply. Selection prefers
 `README.md`, then `readme.md`, then lexicographic order for other case variants. No iframe or
@@ -113,7 +115,8 @@ quotes, ampersands and angle brackets):
 - `__MANURE_DOWNLOAD_URL__`: original attachment download URL
 - `__MANURE_KIND__`: `markdown`, `image`, `pdf`, `mermaid`, `graphviz`, `text`, `archive`
 - `__MANURE_ASSET_BASE__`: reserved local asset route, without trailing slash
-- `__MANURE_UI_BASE__`: the shared design system route (`<mount>/__manure/ui`)
+- `__MANURE_SHELL_BASE__`: the content shell route (`<mount>/__manure/shell`); the template's
+  `<!--manure-shell-->…<!--/manure-shell-->` block is dropped when no shell directory is configured
 - `__MANURE_ROOT_URL__`: the artifact root (`<mount>/`), for the brand link and breadcrumb
 - `__MANURE_ARTIFACT_NAME__`, `__MANURE_SIZE__`, `__MANURE_TYPE__`: breadcrumb root and meta line
 
@@ -144,7 +147,6 @@ Allowlist exactly these outputs (no directory listing or arbitrary path serving)
 | --- | --- |
 | `index.html` | `text/html; charset=utf-8` (template only) |
 | `viewer.js` | `text/javascript; charset=utf-8` |
-| `chrome.js` | `text/javascript; charset=utf-8` |
 | `graphviz-worker.js` | `text/javascript; charset=utf-8` |
 | `pdf.worker.min.mjs` | `text/javascript; charset=utf-8` |
 | `pdf.renderer.min.mjs` | `text/javascript; charset=utf-8` |

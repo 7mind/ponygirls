@@ -7,14 +7,16 @@
 <link rel="icon" type="image/svg+xml" href="/__manure/viewer/favicon.svg">
 <!--
   External assets only (no inline script/style): the server serves the sibling
-  files from unlock_shell_dir and the shared design system under /__manure/ui/
-  while locked. The server prefixes absolute paths in path mode, including the
-  password entry page. No secrets, no item data, nothing to cache.
+  files from unlock_shell_dir while locked and the content shell (shared design
+  system and chrome.js, also from unlock_shell_dir) under /__manure/shell/.
+  The server prefixes absolute paths in path mode, including the password
+  entry page. No secrets, no item data, nothing to cache.
 -->
-<script src="/__manure/ui/theme-init.js"></script>
-<link rel="stylesheet" href="/__manure/ui/tokens.css">
-<link rel="stylesheet" href="/__manure/ui/components.css">
+<script src="/__manure/shell/ui/theme-init.js"></script>
+<link rel="stylesheet" href="/__manure/shell/ui/tokens.css">
+<link rel="stylesheet" href="/__manure/shell/ui/components.css">
 <link rel="stylesheet" href="/styles.css">
+<script type="module" src="/__manure/shell/chrome.js"></script>
 <script type="module" src="/unlock.js"></script>
 </head>
 <body class="on-canvas">

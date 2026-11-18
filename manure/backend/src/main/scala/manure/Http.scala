@@ -342,7 +342,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     if c.kind == "cookie" then accounts.logout(c.raw.getOrElse(throw DomainError("unauthorized")))
     else artifacts.logout(required(c))
   // Shared design system (shared/ui-web), copied into the dashboard directory as ui/ at packaging time;
-  // also served on the content origin under /__manure/ui/ for the viewer, listing and unlock pages.
+  // the content shell (unlock_shell_dir) carries its own ui/ copy for the content-origin pages.
   private val dashboardUiAssets = Set("ui/tokens.css","ui/components.css","ui/theme-init.js","ui/icons.js","ui/fonts/InterVariable.woff2")
   private def dashboardAsset(req: Request[IO]): Boolean =
     val path = req.uri.path.renderString
@@ -395,7 +395,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def asset(directory: Option[Path],name: String,ctx: Context,dashboard: Boolean): IO[Response[IO]] = IO.blocking {
     val root = directory.getOrElse(throw DomainError(if dashboard then "dashboard-disabled" else "not-found"))
     val generated = name.matches("current/(?:manure/api/)?[A-Za-z][A-Za-z0-9_]*\\.js")
-    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","common.js","detail.js","upload.js","upload.css","overlays.js","account.js","account-client.js","account.css")(name) || dashboard && generated || dashboardUiAssets(name), "not-found")
+    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","common.js","detail.js","upload.js","upload.css","overlays.js","account.js","account-client.js","account.css","chrome.js","content.css")(name) || dashboard && generated || dashboardUiAssets(name), "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 2097152, "not-found")
     var bytes = Files.readAllBytes(file)
@@ -516,7 +516,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     "<link rel=\"icon\" type=\"image/svg+xml\" href=\"" + ctx.mount + "/__manure/viewer/favicon.svg\">"
   private def viewerBytes(name: String): IO[Array[Byte]] = IO.blocking {
     val root = config.viewerDir.getOrElse(throw DomainError("not-found"))
-    Require(Set("index.html","viewer.js","chrome.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+    Require(Set("index.html","viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 16777216L, "not-found")
     // Bound the read too: a concurrently replaced asset cannot bypass the cap.
@@ -529,22 +529,32 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   }
   /** Viewer CSP; also used by directory listings that render a README with the viewer bundle. */
   private val viewerPolicy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
-  /** Listing CSP: only Manure's own static assets under the reserved prefix, never artifact content of the same origin. */
+  /** The content shell: page chrome and the shared design system of Manure's content-origin pages (viewer, listing,
+    * unlock), served from unlock_shell_dir under the reserved prefix, independently of the dashboard and the viewer.
+    * Without a shell directory these pages are the built-in unstyled versions, like the built-in unlock form. */
+  private val contentShell = Set("chrome.js","content.css") ++ dashboardUiAssets
+  private def shellBase(ctx: Context): String = ctx.mount + "/__manure/shell"
+  /** Listing CSP: only the content shell under the reserved prefix, never artifact content of the same origin. */
   private def listingPolicy(ctx: Context): String =
     val reserved = ctx.contentOrigin + ctx.mount + "/__manure/"
-    "default-src 'none'; script-src " + reserved + "ui/ " + reserved + "viewer/; style-src " + reserved + "ui/ " + reserved + "viewer/; font-src " +
-      reserved + "ui/fonts/; img-src " + reserved + "viewer/favicon.svg; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+    val shell = if config.unlockShellDir.isEmpty then "" else
+      "script-src " + reserved + "shell/; style-src " + reserved + "shell/; font-src " + reserved + "shell/ui/fonts/; "
+    "default-src 'none'; " + shell + "img-src " + reserved + "viewer/favicon.svg; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+  /** The template's content-shell links; dropped when there is no shell directory to serve them. */
+  private val shellLinks = "(?s)<!--manure-shell-->.*?<!--/manure-shell-->".r
   private def viewerShell(ctx: Context,a: Artifact,path: String): IO[Response[IO]] =
     val kind = viewerKind(path).getOrElse(throw DomainError("not-found"))
     val entry = a.manifest.find(e => !e.directory && e.path == path).getOrElse(throw DomainError("not-found"))
     viewerBytes("index.html").map { bytes =>
-      val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),"__MANURE_UI_BASE__" -> (ctx.mount + "/__manure/ui"),
+      val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),"__MANURE_SHELL_BASE__" -> shellBase(ctx),
         "__MANURE_ROOT_URL__" -> (ctx.mount + "/"),"__MANURE_ARTIFACT_NAME__" -> a.name,
         "__MANURE_CREATED_AT__" -> a.createdAt,"__MANURE_PATH__" -> path,"__MANURE_RAW_URL__" -> (ctx.mount + "/__manure/raw/" + encoded(path)),
         "__MANURE_DOWNLOAD_URL__" -> (ctx.mount + "/__manure/files/" + encoded(path) + "/content"),"__MANURE_KIND__" -> kind,
         "__MANURE_SIZE__" -> displaySize(entry.size),"__MANURE_TYPE__" -> fileType(path).label)
       // A single pass prevents filenames containing placeholder text from being re-expanded.
-      val html = "__MANURE_(?:ASSET_BASE|UI_BASE|ROOT_URL|ARTIFACT_NAME|CREATED_AT|PATH|RAW_URL|DOWNLOAD_URL|KIND|SIZE|TYPE)__".r.replaceAllIn(Exact.string(bytes),
+      val template = Exact.string(bytes)
+      val shell = if config.unlockShellDir.nonEmpty then template else shellLinks.replaceAllIn(template,"")
+      val html = "__MANURE_(?:ASSET_BASE|SHELL_BASE|ROOT_URL|ARTIFACT_NAME|CREATED_AT|PATH|RAW_URL|DOWNLOAD_URL|KIND|SIZE|TYPE)__".r.replaceAllIn(shell,
         m => java.util.regex.Matcher.quoteReplacement(htmlAttribute(values(m.matched))))
       Response[IO](Status.Ok).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Content-Security-Policy",viewerPolicy))
     }
@@ -619,17 +629,18 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       "<meta id=\"manure-viewer\" data-embed=\"readme\" data-kind=\"markdown\" data-path=\"" + text(file) + "\" data-raw-url=\"" +
         text(ctx.mount + "/__manure/raw/" + encoded(file)) + "\" data-download-url=\"" + text(ctx.mount + "/__manure/files/" + encoded(file) + "/content") + "\">"
     }
-    val script = if readme.nonEmpty then "viewer.js" else "chrome.js"
     val directFiles = children.count(!_._2)
     val destination = cliDestination.replaceAllIn(a.name,"-").stripPrefix("-").stripSuffix("-")
     val command = "manure fetch " + url(ctx,a.id) + " ./" + (if destination.isEmpty then "artifact" else destination) +
       (if a.visibility == Visibility.External then " --password-file ./password.txt" else "")
-    val ui = ctx.mount + "/__manure/ui"
+    val shell = shellBase(ctx)
+    val head = (if config.unlockShellDir.isEmpty then "" else
+      "<script src=\"" + shell + "/ui/theme-init.js\"></script><link rel=\"stylesheet\" href=\"" + shell + "/ui/tokens.css\"><link rel=\"stylesheet\" href=\"" +
+        shell + "/ui/components.css\"><link rel=\"stylesheet\" href=\"" + shell + "/content.css\"><script type=\"module\" src=\"" + shell + "/chrome.js\"></script>") +
+      (if readme.isEmpty then "" else "<link rel=\"stylesheet\" href=\"" + ctx.mount + "/__manure/viewer/styles.css\"><script type=\"module\" src=\"" +
+        ctx.mount + "/__manure/viewer/viewer.js\"></script>")
     val html = "<!doctype html><html lang=\"en\" data-app=\"manure\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
-      readmeMeta + "<title>" + text((if path.isEmpty then a.name else segments.last) + "/") + " · Manure</title>" + faviconLink(ctx) +
-      "<script src=\"" + ui + "/theme-init.js\"></script><link rel=\"stylesheet\" href=\"" + ui + "/tokens.css\"><link rel=\"stylesheet\" href=\"" + ui +
-      "/components.css\"><link rel=\"stylesheet\" href=\"" + ctx.mount + "/__manure/viewer/styles.css\"><script type=\"module\" src=\"" + ctx.mount +
-      "/__manure/viewer/" + script + "\"></script></head><body data-viewer data-page=\"directory\"><a class=\"skip-link\" href=\"#main\">Skip to content</a>" +
+      readmeMeta + "<title>" + text((if path.isEmpty then a.name else segments.last) + "/") + " · Manure</title>" + faviconLink(ctx) + head + "</head><body data-viewer data-page=\"directory\"><a class=\"skip-link\" href=\"#main\">Skip to content</a>" +
       "<header class=\"masthead viewer-bar\">" + link(directoryUrl(""),"<span class=\"brand-mark\">" + icon("box","") + "</span><span class=\"brand-name\">manure</span><small>viewer</small>",
         " class=\"brand\" aria-label=\"Artifact root\"") + "<span class=\"vr\"></span><nav class=\"crumbs crumbs-mono\" aria-label=\"Path\">" + crumbs +
       "</nav><div class=\"masthead-end\"><details class=\"anchor cli-fetch\"><summary class=\"btn\" aria-label=\"Download all (CLI)\">" + icon("terminal","") +
@@ -707,13 +718,14 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       }
     else if req.method == Method.GET && path == "/__manure/viewer/favicon.svg" then
       IO.pure(Response[IO](Status.Ok).withEntity(faviconSvg).putHeaders(raw("Content-Type","image/svg+xml")))
-    else if req.method == Method.GET && path.startsWith("/__manure/ui/") then
-      // The shared design system styles Manure's own content-origin pages, including the locked unlock page.
-      asset(config.dashboardDir,"ui/" + path.stripPrefix("/__manure/ui/"),ctx,false)
+    else if req.method == Method.GET && path.startsWith("/__manure/shell/") then
+      // Public like the favicon: the locked unlock page needs it, and it carries no artifact data.
+      val name = path.stripPrefix("/__manure/shell/")
+      IO(Require(contentShell(name), "not-found")) *> asset(config.unlockShellDir,name,ctx,false)
     else if req.method == Method.GET && path.startsWith("/__manure/viewer/") then
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { _ =>
         val name = path.stripPrefix("/__manure/viewer/")
-        Require(Set("viewer.js","chrome.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+        Require(Set("viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
         viewerBytes(name).map(bytes => Response[IO](Status.Ok).withEntity(bytes).putHeaders(raw("Content-Type",mime(name))))
       }
     else if req.method == Method.GET && path.startsWith("/__manure/raw/") then

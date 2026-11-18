@@ -1,34 +1,12 @@
-/* Manure viewer and directory listing on the content origin, on top of /ui/tokens.css + /ui/components.css (tokens only).
- * The document is the only vertical scroller: no max-height boxes, wide code wraps, zoomed images scroll the page. */
+/* Manure file viewer on top of the content shell (content.css) and the shared design system (tokens only).
+ * The document is the only vertical scroller: no max-height boxes, wide code wraps, oversized media extend the
+ * document to the right (start-aligned when wider than the column, so both edges stay reachable). */
 
-/* ── Bar, breadcrumb and meta line ───────────────────────────────────────── */
-.viewer-bar { gap: var(--space-4); }
-.viewer-bar .brand { flex: none; }
-.viewer-bar .masthead-end { padding-left: var(--space-4); flex: none; }
-.vr { width: 1px; height: 20px; background: var(--border-strong); margin: 0 var(--space-1); flex: none; }
-.crumbs { display: flex; align-items: center; gap: var(--space-1); min-width: 0; flex: 0 1 auto; overflow: hidden; font-size: var(--text-sm); color: var(--text-muted); white-space: nowrap; }
-.crumbs-mono { font-family: var(--font-mono); }
-.crumbs a { color: var(--text-muted); flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; }
-.crumbs a:hover { color: var(--accent); }
-.crumbs .crumb-sep { color: var(--text-faint); flex: none; }
-.crumbs .crumb-here { color: var(--text); font-weight: var(--weight-medium); overflow: hidden; text-overflow: ellipsis; }
-.viewer-meta { display: flex; align-items: center; gap: var(--space-2); min-height: 40px; padding: 0 var(--gutter); border-bottom: 1px solid var(--border); background: var(--bg-surface); color: var(--text-muted); font-size: var(--text-xs); white-space: nowrap; }
-.viewer-meta > span { overflow: hidden; text-overflow: ellipsis; }
-#meta-extra:empty { display: none; }
+/* ── Page toolbars ──────────────────────────────────────────────────────── */
 .viewer-tools { position: sticky; top: var(--masthead-h); z-index: var(--z-sticky); }
 .tool-value { min-width: 96px; text-align: center; color: var(--text); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
 .pdf-zoom { width: 132px; }
-span[data-icon] { display: inline-block; }
-summary.btn { list-style: none; cursor: pointer; }
-summary.btn::-webkit-details-marker { display: none; }
-.cli-fetch .popover { width: min(480px, calc(100vw - 2 * var(--gutter))); }
-.cli-fetch .code-block { overflow-wrap: anywhere; white-space: pre-wrap; }
 
-/* ── Content columns and states ──────────────────────────────────────────── */
-.viewer-doc { max-width: calc(var(--measure) + 2 * var(--gutter)); margin: 0 auto; padding: var(--space-6) var(--gutter) var(--space-7); }
-.viewer-wide { max-width: 1120px; margin: 0 auto; padding: var(--space-5) var(--gutter) var(--space-7); }
-.viewer-status { padding: var(--space-6) var(--gutter); text-align: center; color: var(--text-muted); font-size: var(--text-sm); }
-.viewer-status:empty { display: none; }
 #content > .notice { max-width: var(--measure); margin: var(--space-6) auto 0; }
 #content > .notice + .raw { max-width: var(--measure); margin: var(--space-4) auto 0; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-sunken); }
 #content > .empty { margin-top: var(--space-6); }
@@ -69,11 +47,16 @@ summary.btn::-webkit-details-marker { display: none; }
 .markdown-table { position: relative; scroll-margin-top: calc(var(--masthead-h) + var(--space-6)); }
 .table-controls { position: absolute; right: 0; bottom: 100%; display: flex; gap: var(--space-1); opacity: 0; }
 .markdown-table:is(:hover, :focus-within, :has(table:target)) > .table-controls { opacity: 1; }
-.diagram { display: flex; justify-content: center; padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-surface); }
-.diagram img { max-width: 100%; height: auto; }
+.diagram { position: relative; padding: var(--space-5); border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-surface); }
+.diagram img { display: block; margin: 0 auto; max-width: none; height: auto; }
+.diagram img.is-fit { max-width: 100%; }
+.diagram-tools { position: absolute; top: var(--space-1); right: var(--space-1); z-index: 1; display: flex; align-items: center; gap: var(--space-1); padding: var(--space-0); border-radius: var(--radius-md); background: var(--bg-surface); opacity: 0; }
+.diagram:is(:hover, :focus-within) > .diagram-tools { opacity: 1; }
+.diagram-tools .tool-value { min-width: 48px; }
 /* Graphviz draws black strokes on transparency: its diagrams keep the theme-invariant light ground in both themes. */
 .diagram img[data-renderer="graphviz"], .stage-image[data-renderer="graphviz"] { background: var(--qr-bg); }
 .diagram > .notice { width: 100%; }
+
 
 /* ── Raw source and text files (line numbers by CSS counter) ─────────────── */
 .raw { margin: 0; padding: var(--space-4) 0; font-family: var(--font-mono); font-size: var(--text-sm); line-height: var(--leading-prose); counter-reset: line; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
@@ -85,37 +68,19 @@ summary.btn::-webkit-details-marker { display: none; }
 .raw:focus-visible { box-shadow: var(--ring); }
 
 /* ── Image, diagram file and PDF stage: the page is the stage ────────────── */
-.stage { display: flex; flex-direction: column; align-items: center; min-height: calc(100dvh - var(--masthead-h) - 41px); padding: var(--space-5) var(--gutter) var(--space-7); background: var(--bg-canvas); }
-.stage-image { display: block; max-width: none; background: var(--bg-surface); box-shadow: var(--shadow-1); }
+.stage { display: block; min-height: calc(100dvh - var(--masthead-h) - 41px); padding: var(--space-5) var(--gutter) var(--space-7); background: var(--bg-canvas); }
+.stage-image { display: block; margin: 0 auto; max-width: none; background: var(--bg-surface); box-shadow: var(--shadow-1); }
 .stage-image.is-fit { max-width: 100%; }
-.stage-page { display: block; max-width: none; background: var(--bg-surface); border: 1px solid var(--border); box-shadow: var(--shadow-1); }
+.stage-page { display: block; margin: 0 auto; max-width: none; background: var(--bg-surface); border: 1px solid var(--border); box-shadow: var(--shadow-1); }
 /* "Fit width" fits the page to the reading column of the stage (816 px: a letter page at 100 %). */
 .stage-page[data-zoom="width"] { width: min(100%, 816px); }
 .stage-page[data-zoom="page"] { width: auto; max-width: 100%; max-height: calc(100dvh - var(--masthead-h) - 41px - 2 * var(--space-5)); }
-.stage > .notice { max-width: var(--measure); }
+.stage > .notice { max-width: var(--measure); margin: 0 auto; }
 
-/* ── Directory listing ───────────────────────────────────────────────────── */
-.listing-table .col-v-type { width: 190px; }
-.listing-table .col-v-size { width: 120px; }
-.listing-table .col-v-dl { width: 132px; }
-.path-cell { display: flex; align-items: center; gap: var(--space-2); min-width: 0; font-family: var(--font-mono); font-size: var(--text-sm); }
-.path-cell > .icon { color: var(--text-faint); }
-.path-cell.is-dir > .icon { color: var(--accent); }
-.path-cell a { overflow: hidden; text-overflow: ellipsis; color: var(--text); }
-.path-cell a:hover { color: var(--accent); }
-.section-head { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-6) 0 var(--space-4); padding-bottom: var(--space-2); border-bottom: 1px solid var(--border-strong); }
-.section-head h2 { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-md); font-weight: var(--weight-semibold); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .empty .btn { margin-top: var(--space-3); }
 .readme .viewer-doc { max-width: none; padding: 0; }
 
 @media (max-width: 720px) {
-  .viewer-bar { gap: var(--space-2); }
-  .viewer-bar .brand-name, .viewer-bar .brand small, .viewer-bar .vr { display: none; }
-  .viewer-meta { flex-wrap: wrap; white-space: normal; padding-top: var(--space-2); padding-bottom: var(--space-2); }
-  .viewer-bar .masthead-end { padding-left: 0; gap: var(--space-1); }
-  .viewer-bar .btn:not(.btn-icon) { width: var(--control-h); padding: 0; }
   .viewer-bar .segmented > button { padding: 0 var(--space-2); }
-  .listing-table .col-v-size { width: 88px; }
-  .listing-table .col-v-dl { width: 112px; }
   .tool-value { min-width: 0; }
 }
