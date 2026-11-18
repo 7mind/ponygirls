@@ -7,7 +7,7 @@
 // Time steps: every TOTP time step is usable once per account (design §4.2.3) and the server accepts {T-1, T, T+1}.
 // Codes are therefore taken in ascending steps from that window instead of waiting 30 s per code; set-up proofs of a
 // new key (signup, enrollment, reset) are independent of the account's previous steps. Only when the window holds no
-// unused step does the flow wait for the next step boundary, and it says so (`waits`).
+// unused step does the flow wait for the next step boundary; the result lists every such wait (`waits`).
 //
 // Failures report the step, the visible text of every page and the failed requests, with every password, key, code,
 // token and link of the run redacted.
@@ -75,7 +75,6 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
   async function waitForBoundary(purpose) {
     const ms = Math.ceil((STEP_SECONDS - (nowSeconds() % STEP_SECONDS)) * 1000) + 250;
     waits.push({ step: current, purpose, ms });
-    console.log(`# ${service}: waiting ${ms} ms for the next TOTP time step (${purpose}): the window {T-1, T, T+1} has no unused step left`);
     await new Promise(resolve => setTimeout(resolve, ms));
   }
   // The lowest usable step above the account's last accepted one, so later codes keep the most room.

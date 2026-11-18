@@ -49,7 +49,8 @@ try {
     browserType: chromium, launchOptions: { executablePath: process.env.HAYSTACK_CHROMIUM, args: ["--no-sandbox"] },
     evidenceDir: evidence === null ? null : path.resolve(evidence),
   });
-  console.log(`ok - accounts end to end against the real Haystack server (${result.durationMs} ms, ${result.waits.length} TOTP step waits)`);
+  for (const wait of result.waits) console.log(`# waited ${wait.ms} ms for the next TOTP time step (${wait.purpose}) in step ${wait.step}`);
+  console.log(`ok - accounts end to end against the real Haystack server (${result.durationMs} ms)`);
 } catch (error) {
   console.log("not ok - accounts end to end against the real Haystack server");
   console.error(error instanceof Error ? error.message : error);
