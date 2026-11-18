@@ -219,6 +219,9 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     }
     rejected()
     assertEquals(search.search("a",q.copy(mode=SearchMode.Lexical),None).total,1)
+    db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET profile='retired-policy-profile' WHERE owner='a'"))
+    val target=intercept[DomainError](a.ingest("a",Fixtures.snapshot()))
+    assertEquals((target.code,target.detail),("unavailable","index profile has no verified descriptor"))
     db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET profile='unresolved-retained' WHERE owner='a'"))
     assertEquals(new PostgresOwnerReindex(db).preview("a").targetProfile,catalog.preferred.profile)
     assertEquals(intercept[DomainError](a.ingest("a",Fixtures.snapshot())).code,"unavailable")
