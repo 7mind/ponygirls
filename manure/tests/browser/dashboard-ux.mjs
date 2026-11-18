@@ -88,7 +88,8 @@ const signOut = async (page) => {
 const search = async (page, text) => {
   await page.locator("#filter-text").fill(text);
   await page.locator("#filter-text").press("Enter");
-  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes(q) && / loaded|No matches/.test(document.querySelector("#list-status").textContent), text);
+  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes(q) &&
+    document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false" && / loaded|No matches/.test(document.querySelector("#list-status").textContent), text);
 };
 const recordSearch = async (page) => {
   await search(page, "ux-record-");

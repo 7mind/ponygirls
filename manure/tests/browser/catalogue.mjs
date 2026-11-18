@@ -54,13 +54,19 @@ const check = async (name, run) => {
   } finally { await context.close(); }
 };
 const rows = (page) => page.locator("#artifact-list > tr");
-const counterLoaded = (page) => page.waitForFunction(() => / loaded/.test(document.querySelector("#list-status").textContent));
-const rowCount = (page, n) => page.waitForFunction((count) => document.querySelectorAll("#artifact-list > tr").length === count, n);
+// Waits name what they waited for and what the page showed instead.
+const settled = async (page, what, wait) => {
+  try { await wait; }
+  catch (error) { throw new Error(`${what}: rows ${await page.evaluate(() => document.querySelectorAll("#artifact-list > tr").length)}, counter "${await page.locator("#list-status").textContent()}", hash ${await page.evaluate(() => location.hash)}: ${error.message.split("\n")[0]}`); }
+};
+const counterLoaded = (page) => settled(page, "counter loaded", page.waitForFunction(() => / loaded/.test(document.querySelector("#list-status").textContent)));
+const rowCount = (page, n) => settled(page, `${n} rows`, page.waitForFunction((count) => document.querySelectorAll("#artifact-list > tr").length === count, n));
 const toEnd = (page) => page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
 const search = async (page, text) => {
   await page.getByRole("combobox", { name: "Search artifacts" }).fill(text);
   await page.getByRole("combobox", { name: "Search artifacts" }).press("Enter");
-  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q, text);
+  await settled(page, "applied query", page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q &&
+    document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false", text));
   await counterLoaded(page);
 };
 const loadAll = async (page) => {
@@ -127,7 +133,7 @@ await check("Back from an artifact restores rows, scroll and focus; a view round
   const target = await page.evaluate(() => [...document.querySelectorAll("#artifact-list > tr")].find((row) => row.getBoundingClientRect().top > 200).dataset.artifactId);
   const calls = await page.evaluate(() => window.__shell.listCalls);
   await page.locator(`#artifact-list a[data-action=details][data-artifact-id="${target}"]`).click();
-  await page.waitForFunction((id) => document.querySelector("#detail-list").textContent.includes(id), target);
+  await settled(page, "detail shown", page.waitForFunction((id) => document.querySelector("#detail-list").textContent.includes(id), target));
   await page.goBack();
   await page.locator('[data-view="catalogue"]').waitFor({ state: "visible" });
   await rowCount(page, RECORDS);
@@ -143,7 +149,7 @@ await check("Back from an artifact restores rows, scroll and focus; a view round
   assert.equal(await page.evaluate(() => window.__shell.listCalls), calls, "the view round trip does not reload the list");
   await page.evaluate(() => window.scrollTo(0, 0));
   await page.getByRole("button", { name: "Sort by Name" }).click();
-  await page.waitForFunction(() => /sort:name/.test(new URLSearchParams(location.hash.split("?")[1]).get("query")));
+  await settled(page, "sorted route", page.waitForFunction(() => /sort:name/.test(new URLSearchParams(location.hash.split("?")[1]).get("query"))));
   await counterLoaded(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   await counterLoaded(page);

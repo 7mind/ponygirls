@@ -287,6 +287,8 @@ function expressionInput(input, list, change, compositionChange) {
     loadedKey = "";
     submittedKey = submitted ? JSON.stringify(next) : null;
     state = next;
+    // The rendered rows belong to the previous query until the route is handled.
+    $("catalogue-table").setAttribute("aria-busy", "true");
     updateControls();
     if (window.location.hash === hash) { handleRoute(); }
     else { window.location.hash = hash; }
@@ -630,6 +632,7 @@ function expressionInput(input, list, change, compositionChange) {
     }
     var count = retrieval ? searchPage === null ? 0 : searchPage.hits.length : summaries.length;
     var loading = pendingPage !== null && pendingReset;
+    $("catalogue-table").setAttribute("aria-busy", String(pendingPage !== null));
     var skeleton = $("skeleton-rows");
     skeleton.hidden = !loading;
     if (loading && skeleton.children.length === 0) {
@@ -691,6 +694,7 @@ function expressionInput(input, list, change, compositionChange) {
     var intent = { generation: ++listGeneration, epoch: ctx.sessionEpoch, cursor: reset ? null : nextCursor,
       reset: reset, value: Object.assign({}, state), limit: Math.min(PAGE_LIMIT, capabilities.max_list_limit) };
     pendingPage = intent.generation; pendingReset = reset; listError = false;
+    if (observer !== null) { observer.disconnect(); }
     clearNotice();
     if (reset) {
       summaries = []; searchPage = null; nextCursor = null;
