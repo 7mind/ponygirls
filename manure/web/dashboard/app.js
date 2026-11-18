@@ -297,6 +297,7 @@ function expressionInput(input, list, change, compositionChange) {
     state = next;
     // The rendered rows belong to the previous query until the route is handled.
     $("catalogue-table").setAttribute("aria-busy", "true");
+    if (next.mode === "catalogue") { setCounter("Loading artifacts…"); }
     updateControls();
     if (window.location.hash === hash) { handleRoute(); }
     else { window.location.hash = hash; }

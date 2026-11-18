@@ -187,7 +187,8 @@ await check("sort and access scope wait for a changed draft; the scope then appl
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical kind:dir owner:unsent-owner unsent draft");
   await page.locator("#filter-text").fill("ux-record-");
   await page.locator('[data-visibility-preset="external"]').click();
-  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external ux-record-" && document.querySelector("#list-status").textContent.includes("loaded"));
+  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external ux-record-" &&
+    document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false" && document.querySelector("#list-status").textContent.includes("loaded"));
   assert.equal(await page.locator("#filter-text").inputValue(),"access:external ux-record-");
   assert.equal(await page.locator('[data-visibility-preset="external"]').getAttribute("aria-pressed"), "true");
   assert.equal(await rows(page).evaluateAll((nodes) => nodes.length > 0 && nodes.every((node) => node.dataset.visibility === "external")), true);
