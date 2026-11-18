@@ -461,6 +461,29 @@ try {
       await button(page, 'Keep it visible').click();
       assert.equal(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET);
       assert.equal(logoutPosts(calls), 1);
+    } },
+    { pair: "sign-out answer pending × sign-in on the host's login page: the sign-in request waits for it", run: async (page, calls) => {
+      // The answer to /logout clears the session cookie; a sign-in answered before it would lose its new cookie. The
+      // login asks for a second factor here, so that the page stays (no reload) after the answers.
+      await page.evaluate(() => { window.__accountFake.state.login = 'totp'; });
+      await hold(page, 'POST /logout');
+      await button(page, 'Sign out').click();
+      await pendingCount(page, 1);
+      // The host shows its login page before that answer (Haystack: the server closes the live socket as it ends the session).
+      await page.evaluate(() => {
+        const mount = document.createElement('main');
+        mount.setAttribute('data-account-auth', '');
+        document.querySelector('[data-host-main]').remove();
+        document.querySelector('[data-account-outlet]').replaceWith(mount);
+      });
+      await page.getByLabel('Username', { exact: true }).fill('alice');
+      await page.getByLabel('Password', { exact: true }).fill(FAKE_PASSWORD);
+      await button(page, 'Sign in').click();
+      await page.getByText('Signing in…').or(page.getByText('Signing in as')).first().waitFor();
+      assert.equal(await page.evaluate(() => window.__accountFake.calls.filter(call => call.path === '/login').length), 0, 'no sign-in request before the sign-out has its answer');
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.getByText('Signing in as').waitFor();
+      assert.deepEqual(calls.filter(call => call.method === 'POST').map(call => call.path), ['/logout', '/login']);
     } }
   ];
   // Each row gets its own page: a row may end with a one-time value shown, whose beforeunload guard would hold a reload.

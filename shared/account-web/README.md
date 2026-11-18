@@ -34,6 +34,9 @@ its own. Both files and `account-client.js` are served next to each other
   read) the module drops the value, tears the account page down and dispatches
   `account:changed`; the host then revalidates its identity and shows its login
   view. A failed sign-out changes nothing and says so (in the dialog or a toast).
+  The answer to `/logout` clears the session cookie, so until every sign-out sent
+  has its answer the signed-out views send no request: a sign-in on a login view
+  the host shows earlier waits for it and keeps its new session cookie.
 - **Events.** In: `account:invalidate` means "authority may have changed" (a
   reconnect is enough). The module re-reads the account and tears nothing down
   meanwhile (see "Authority"). A host that signed out by itself dispatches
@@ -132,8 +135,8 @@ so there is no authority to lose while it is shown.
 
 Outcome of each pair of concurrent flows (W section write, N navigation,
 V `account:invalidate` → verify, S sign-out, O an owner-changed or 401 response
-of an authority read, D dispose/forced teardown, P the area's first profile read).
-Rows marked † are rows of the
+of an authority read, D dispose/forced teardown, P the area's first profile read,
+L a sign-in on the signed-out view). Rows marked † are rows of the
 table-driven browser case "sequencer interleavings"; ‡ are covered by the
 "section ownership" and invalidation cases; § by the case "the profile fallback
 replaces only the routed fragment, never a navigation still being delivered".
@@ -157,6 +160,7 @@ replaces only the routed fragment, never a navigation still being delivered".
 | S fails | nothing changes; with a shown secret the dialog reports the failure and "Keep it visible" keeps it † |
 | S × O | the sign-out preflight read must return the area's own owner: another owner (or 401) → no `POST /logout` for anyone; another owner → the area is lost with the notice † |
 | S × D | dispose aborts the sign-out preflight (area signal): no POST; a POST already sent is not aborted (its response clears the session cookie); the completion is bound to the area that started it and a replacement area is not touched |
+| S × L | the host shows its login view before the `/logout` answer: the sign-in request is sent only after that answer, so the answer cannot clear the new session cookie † |
 | background read × W | a read that returns while a write holds the slot (or a form/dialog/card is open) applies its data but does not rebuild the section; the re-render waits until the slot is free and the prompt closed † |
 | overlapping refreshes | per-resource generations: the newest list wins, an older snapshot arriving later is discarded † |
 | W preflight fails (transport) | the write stops with "connection lost", authority becomes `unverified` (Reveal/Copy/writes disabled) and recovers on re-verification † |

@@ -122,7 +122,8 @@ function classifyFailure(cause) {
 }
 
 function createCoordinator({ fetch, window, onSlotChange }) {
-  const state = { slot: null, epoch: 0 };
+  // `logouts` settles once every POST /logout sent so far has its answer or has failed.
+  const state = { slot: null, epoch: 0, logouts: Promise.resolve() };
   const nextEpoch = () => ++state.epoch;
   const isCurrent = epoch => epoch === state.epoch;
   const never = () => new Promise(() => {});
@@ -163,7 +164,9 @@ function createCoordinator({ fetch, window, onSlotChange }) {
     try {
       // Once sent, the sign-out is not aborted with the area (a host may leave the page as the server ends the
       // session, e.g. on its live socket): the response must still clear the session cookie.
-      const result = await endpoint('POST', '/logout', {}, account.user.actor, null);
+      const request = endpoint('POST', '/logout', {}, account.user.actor, null);
+      state.logouts = Promise.all([state.logouts, request.then(() => null, () => null)]);
+      const result = await request;
       if (result === null || result.ok !== true) throw new AccountResponseError();
     } catch (cause) {
       if (!alive()) return { outcome: 'cancelled', cause };
@@ -171,6 +174,14 @@ function createCoordinator({ fetch, window, onSlotChange }) {
     }
     nextEpoch(); // no authority read that started before the sign-out decides anything any more
     return { outcome: 'done', cause: null };
+  }
+
+  // The answer to a sign-out clears the session cookie, which the answers of sign-in, sign-up, recovery and enrollment
+  // set: the signed-out views send their requests only after every sign-out sent so far has its answer (a host may
+  // show its login page before that, e.g. when the server closes its live socket as it ends the session).
+  async function afterLogouts(resource, options) {
+    await state.logouts;
+    return fetch(resource, options);
   }
 
   // hooks: alive(), trusted(), holder() (the area's identity), setAuthority(state), lose(reason).
@@ -271,7 +282,7 @@ function createCoordinator({ fetch, window, onSlotChange }) {
       if (taken === null) return { outcome: 'held', cause: null };
       try { return await logout(null, null, () => true); } finally { freeSlot(taken); }
     },
-    authClient: signal => createAccountClient({ fetch, requestTimeoutMs: ACCOUNT_REQUEST_TIMEOUT_MS, signal })
+    authClient: signal => createAccountClient({ fetch: afterLogouts, requestTimeoutMs: ACCOUNT_REQUEST_TIMEOUT_MS, signal })
   };
 }
 
