@@ -10,7 +10,7 @@ function sharedAssets(): Plugin {
   const account = sharedRoot('ACCOUNT_WEB_ROOT', '../../shared/account-web/'), ui = sharedRoot('UI_WEB_ROOT', '../../shared/ui-web/');
   const file = (root: string, path: string, name: string, contentType: string): SharedAsset => ({ name, contentType, read: async () => readFileSync(join(root, path)) });
   const assets: readonly SharedAsset[] = [
-    file(account, 'account.js', 'account.js', 'text/javascript'), file(account, 'account.css', 'account.css', 'text/css'),
+    file(account, 'account.js', 'account.js', 'text/javascript'), file(account, 'account-client.js', 'account-client.js', 'text/javascript'), file(account, 'account.css', 'account.css', 'text/css'),
     file(ui, 'tokens.css', 'ui/tokens.css', 'text/css'), file(ui, 'components.css', 'ui/components.css', 'text/css'), file(ui, 'theme-init.js', 'ui/theme-init.js', 'text/javascript'),
     file(ui, 'fonts/InterVariable.woff2', 'ui/fonts/InterVariable.woff2', 'font/woff2'), file(ui, 'fonts/LICENSE.txt', 'ui/fonts/LICENSE.txt', 'text/plain'),
     { name: 'ui/icons.svg', contentType: 'image/svg+xml', read: async () => (await import(pathToFileURL(join(ui, 'icons.js')).href) as IconModule).iconSprite() },

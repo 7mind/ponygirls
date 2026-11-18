@@ -87,7 +87,7 @@ class StaticHttpTest extends munit.FunSuite {
       } yield () }
     }
   }
-  for(path <- List("/account.js","/account.css","/ui/tokens.css"); condition <- List("If-None-Match","If-Modified-Since","both")) {
+  for(path <- List("/account.js","/account-client.js","/account.css","/ui/tokens.css"); condition <- List("If-None-Match","If-Modified-Since","both")) {
     test(s"Blackbox-GoodCommunication: $path ignores stale $condition after equal-metadata shared asset replacement") {
       withRoutes { (app,dir) =>
         val oldAsset=if(path.endsWith(".js")) "document.body.dataset.account='old';" else ".account{color:#aaa}"

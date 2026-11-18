@@ -4,7 +4,7 @@ let
   hashes = import ./hashes.nix;
   accountWeb = lib.fileset.toSource {
     root = ../../../shared/account-web;
-    fileset = lib.fileset.unions [ ../../../shared/account-web/account.js ../../../shared/account-web/account.css ];
+    fileset = lib.fileset.unions [ ../../../shared/account-web/account.js ../../../shared/account-web/account-client.js ../../../shared/account-web/account.css ];
   };
   uiWeb = callPackage ../ui-web.nix { };
 in
