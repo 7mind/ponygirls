@@ -440,7 +440,7 @@ Unicode case-insensitive substring of name or artifact ID (`%` / `_` are
 not wildcards). Sort fields: `name`, `created_at`,
 `expires_at`, `total_bytes`, `file_count`, `visibility`, `state`, `kind`,
 `created_by_user`; direction: `asc` / `desc`. Never-expiring artifacts sort
-last either way; text uses the database collation (`C.UTF-8` in provider-created PostgreSQL clusters). Existing visibility,
+last either way; text sorts by UTF-8 bytes (the metadata columns are `bytea`), independent of the database locale. Existing visibility,
 state, and expiry filters combine with search.
 
 The presence of `q`, `sort_by`, or `direction` selects catalogue mode
@@ -522,7 +522,17 @@ and the viewer at `manure/web/viewer/`; the package copies them into
 `unlock` is absent. The NixOS and Home Manager modules set `dashboard_dir`,
 `unlock_shell_dir` and `viewer_dir` to those paths; a configured directory that does
 not exist makes `serve` refuse to start, and only an explicit `null` disables a shell
-(API-only dashboard, built-in minimal unlock form, no viewers).
+(API-only dashboard, built-in minimal unlock form, no viewers). In the OCI image (`.#oci-manure`) the
+directories are `/share/manure/web/{dashboard,unlock,viewer}`.
+
+**Upgrade requirement (startup-breaking for OCI configurations):** an image configuration written against the
+earlier contract names only `dashboard_dir` and `unlock_shell_dir`. Its `viewer_dir` defaulted to the relative
+`manure/web/viewer/dist`, i.e. `/data/manure/web/viewer/dist`, which the image does not contain, so formatted
+viewers answered 404. A server of this tree exits at startup with `stage=assets code=viewer-dir-missing` instead.
+Before rolling it out, add `"viewer_dir": "/share/manure/web/viewer"` (or `"viewer_dir": null` to disable formatted
+viewers on purpose; raw bytes are still served) to the mounted configuration. `check-config` does not look at the
+directories, so only a started `serve` shows the problem. A complete image configuration is in
+[backend/README.md](backend/README.md#oci-image-configuration-and-upgrade-requirement).
 
 ## Tests (what runs where — and what does not count)
 

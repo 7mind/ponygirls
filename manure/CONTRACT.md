@@ -281,6 +281,7 @@ Top-level keys are exactly (unknown keys → startup failure, fail closed):
 | `trusted_proxies` | list[str] | `["127.0.0.1/32", "::1/128"]` | CIDRs whose `X-Forwarded-Proto` is honored (§5.8). All other forwarded headers ignored. |
 | `dashboard_dir` | str\|null | package `manure/manure/web/dashboard` (repo fallback `manure/web/dashboard`, §11) | `null` = JSON API only (`dashboard-disabled`). |
 | `unlock_shell_dir` | str\|null | package `manure/manure/web/unlock` (repo fallback `manure/web/unlock`, §11) | `null` = built-in minimal unlock form (§5.4). |
+| `viewer_dir` | str\|null | repo fallback `manure/web/viewer/dist` (build first; installed packages and OCI images set `…/share/manure/web/viewer`) | `null` = no formatted viewers, raw bytes only (§7.3.1). |
 | `users` | list | `[]` (≥1 required, fail closed) | `{id,type:human\|agent,displayName?,enabled?,login?,passwordHashFile?,tokens:[{id,hashFile}]}`. Password fields are paired/human-only; see current account amendment. |
 | `storage_quota_bytes` | int | `21474836480` (20 GiB) | Cap enforced by atomic reservation (§6), not best-effort check. |
 | `chunk_bytes` | int | `1048576` | Server-dictated; 256 KiB–4 MiB enforced. |
