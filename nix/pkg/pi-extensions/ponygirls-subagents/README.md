@@ -347,7 +347,10 @@ gap; native child tools and provider requests continue independently.
 `/agents` opens a full-screen view of the tree: path (nested agents
 indented), profile and isolation, state, outcome, and model per row, with
 the selected agent's workdir, usage, open question, and result below. The
-list refreshes on its own. By default it shows only non-closed agents,
+model label includes the effective thinking level (for example,
+`claude-code/claude-sonnet-5-5:xhigh`), or `:unresolved` before confirmation.
+If the MODEL column is hidden, the label appears in the selected agent's details.
+The list refreshes on its own. By default it shows only non-closed agents,
 including idle and completed agents. Press `f` to show all retained agents
 (including closed ones), or press it again to hide closed agents. The toggle
 lasts while the pane is open, including visits to transcripts; reopening the
