@@ -22,7 +22,7 @@ restore of an older database copy needs that binary and these scripts. Two files
 | `sql/*/proposed-cleanup*.sql` | — | The schema clean-up the legacy-free binaries are proposed to apply; used to validate the runbook. Not applied by `run.sh`. |
 | `op.sh` (mode 755) | bash, `kubectl`, `python3`; `LR_*` settings incl. `LR_SYSTEM_IDENTIFIER` | **The operator wrapper for production** (plan 7): every remote command through one fail-closed gateway (own success marker as the last line, exit 0 alone is not success); before/after probes (pod identity, restart counts, system identifier, `FENCED since` banner); `identify`, `ready`, run.sh modes per target database, `drop` (strict ConfigMap parsing), `backup-haystack` (complete decode), `codec-check`, `check-legacy-free`. |
 | `sql/chronicle/worklist.sql`, `fence*.sql`, `unfence.sql` | — | `run.sh chronicle worklist` (job ids to retry); the database-side fence of the Chronicle role (plan 7.2). |
-| `test.sh` | `nix develop .#chronicle` | The fixture tests on owned throwaway PostgreSQL clusters: the two Scala suites, `test-drop-databases.sh`, `test-scripts.sh` (runs the real `op.sh` against a fake `kubectl`). Every test sources `test-guard.sh` first, which refuses any inherited input the scripts read (derived from the scripts by grep). |
+| `test.sh` | `nix develop .#chronicle` | Inner loop for the fixture tests (section Tests): the two Scala suites, `test-drop-databases.sh`, `test-scripts.sh` (runs the real `op.sh` against a fake `kubectl`), each on an owned throwaway PostgreSQL cluster. |
 
 No host, credential or deployment name is in these files. The operator supplies the connection: standard `PG*`
 environment variables, or a complete psql command line in `PSQL` (for example an exec into a database pod).
@@ -74,17 +74,27 @@ Behaviour that matters:
 
 ## Tests
 
+Where they run:
+
+- `chronicle.LegacyRetirementScriptsTest` (2 cases) runs in Chronicle's full suite (`chronicle/scripts/test-postgres.sh`,
+  Nix check `chronicle-backend-full`); `haystack.storage.LegacyRetirementScriptsTest` (3 cases) in Haystack's
+  (`haystack/scripts/test-postgres-scala.sh`, Nix check `haystack-jvm`). Both checks' filtered sources include this
+  directory and the retained `check-legacy-free.sql` they drive, so `scripts/verify chronicle | haystack | all` runs
+  them. They build databases holding every legacy shape with the repository's existing fixtures and the product's
+  own relocation and rebuild code, then drive the scripts. In the Chronicle suite the annotator and embedder are
+  scripted; claim, publication, rebuild, retirement and the worker are the product's code.
+- The shell fixture suites `test-drop-databases.sh` and `test-scripts.sh` (operator wrapper against a stand-in
+  `kubectl`, drop guard, shared predicates, test isolation) need PostgreSQL and are one on-demand check, not part
+  of verify: `nix build .#onDemand.legacy-retirement-scripts` (`nix/tests/legacy-retirement-scripts.nix`). Run it
+  when this directory or a retained `check-legacy-free.sql` changes.
+
+Inner loop (same suites outside the sandbox, one owned throwaway cluster each):
+
 ```sh
-nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh            # both
-nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh chronicle  # or haystack
+nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh            # all four
+nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh chronicle  # or haystack | drop | scripts
 ```
 
-`chronicle.LegacyRetirementScriptsTest` (2 cases) and `haystack.storage.LegacyRetirementScriptsTest` (3 cases) build
-databases holding every legacy shape with the repository's existing fixtures and the product's own relocation and
-rebuild code, then drive the scripts. In the Chronicle suite the annotator and embedder are scripted; claim,
-publication, rebuild, retirement and the worker are the product's code.
-
-The suites live in the services' test trees because they need the test fixtures, but they register their cases only
-when `LEGACY_RETIREMENT_SCRIPTS=1` is set, which `test.sh` does. The permanent full-suite runs (and the Nix checks,
-whose filtered sources do not contain `scripts/one-off`) compile them and run nothing from them. `test.sh` fails when
-a suite did not run its expected number of passing cases.
+`test.sh` fails when a Scala suite did not run its expected number of passing cases (sbt reports success for an
+empty `testOnly`). Every shell suite sources `test-guard.sh` first, which refuses any inherited input the scripts
+read (derived from the scripts by grep; every file and extraction stage is checked, a failure refuses).

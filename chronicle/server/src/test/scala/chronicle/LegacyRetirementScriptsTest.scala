@@ -167,11 +167,10 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
   private def pinned(s: Scratch,reader: String,session: UUID,view: ContentView): Either[String,Int] =
     try Right(s.archive.pageChunks(reader,session,0,10,Some(view)).chunks.size) catch { case error: DomainError => Left(error.code) }
   private def generationRow(s: Scratch,view: ContentView): String = s.one("SELECT md5(to_jsonb(g)::text) FROM ch_generations g WHERE id=?",view.generationId.get)(_.getString(1))
-  private val enabled=sys.env.get("LEGACY_RETIREMENT_SCRIPTS").contains("1")
 
-  // Opt-in (scripts/one-off/legacy-retirement/test.sh sets the variable): the Nix-filtered sources of the permanent
-  // full-suite checks do not contain scripts/one-off, and this one-off is not meant to join them.
-  if(enabled) test("legacy retirement: identity without the formats item, then formats by re-index and explicit retirement; pinned reads, refusals, idempotence, current-code reads, clean-up schema") { withScratch { s=>
+  // Part of the service's full suite (the suite check's source includes scripts/one-off/legacy-retirement and the
+  // retained check-legacy-free.sql); deleted together with the one-off scripts (that directory's README).
+  test("legacy retirement: identity without the formats item, then formats by re-index and explicit retirement; pinned reads, refusals, idempotence, current-code reads, clean-up schema") { withScratch { s=>
     val seeded=seed(s)
     def apply(arguments: String*): Ran = s.run((List("apply","--apply-irreversible","--confirm-database",s.name,"--backup-reference","fixture-backup")++arguments)*)
     // The current binary serves the legacy database before anything is migrated.
@@ -342,7 +341,7 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
 
   // R2 reproduction: accepted work of an unfinished run on a v1 profile that the product CLI never relocated (so no
   // checkpoint-namespace row exists). After the relocation the job keeps its run; the worker must not meet v1 hashes.
-  if(enabled) test("legacy retirement: an unfinished, unrelocated v1 run with accepted work resumes under the current worker") { withScratch { s=>
+  test("legacy retirement: an unfinished, unrelocated v1 run with accepted work resumes under the current worker") { withScratch { s=>
     import cats.effect.IO
     import cats.effect.unsafe.implicits.global
     val (spaceId,space,active,activeDescriptor)=legacyIdentity(s.config)

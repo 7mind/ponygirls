@@ -37,7 +37,7 @@ lr_guard_inputs() (
       rc=0; grep -qxF -- "$name" <<<"$assigned" || rc=$?
       case $rc in 0) ;; 1) printf '%s\n' "$name" ;; *) exit 1 ;; esac
     done <<<"$refs"
-  done | lr_guard_match -vE '^(BASH_SOURCE|BASH_REMATCH|LINENO|FUNCNAME|PIPESTATUS|RANDOM|SECONDS|IFS|OPTIND|OPTARG|REPLY|PWD|LR_GUARD_[A-Z_]*|lr_guard_[a-z_]*)$' | sort -u
+  done | lr_guard_match -vE '^(BASH|BASH_SOURCE|BASH_REMATCH|LINENO|FUNCNAME|PIPESTATUS|RANDOM|SECONDS|IFS|OPTIND|OPTARG|REPLY|PWD|LR_GUARD_[A-Z_]*|lr_guard_[a-z_]*)$' | sort -u
 )
 lr_guard_refused() { # 0 when the named variable must not be inherited
   case " $LR_GUARD_EXEMPT " in *" $1 "*) return 1 ;; esac

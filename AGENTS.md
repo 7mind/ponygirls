@@ -28,7 +28,8 @@ limitation: the Chromium suites fail intermittently under heavy host load; repor
 - On-demand checks are not part of verify. Run them when you change what they guard and report the result:
   `nix build .#onDemand.manure-vm` (Manure NixOS/HM modules, nginx/TLS edge, HM client wiring),
   `.#onDemand.manure-portable-root` (root authority and root binding), `.#onDemand.backend-coassembly`
-  (Baboon runtime, contract build settings); Chronicle indexing-recovery, CLI real-server and CUDA tests as
+  (Baboon runtime, contract build settings), `.#onDemand.legacy-retirement-scripts` (the shell suites of the one-off
+  `scripts/one-off/legacy-retirement`, see its README); Chronicle indexing-recovery, CLI real-server and CUDA tests as
   described in `chronicle/README.md`; the Haystack CLI real-server leg (`npm run test:real` in `haystack/cli`,
   with the server ELF and an owned database as `haystack/cli/tests/run-real.sh` requires).
 - Relevance evaluation: its unit tests are part of `verify chronicle`. A runner or transport change also needs

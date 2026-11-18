@@ -224,7 +224,7 @@ JSON
   *) echo "fake kubectl: unexpected $*" >&2; exit 9 ;;
 esac
 FAKE
-chmod +x "$base/bin/kubectl"
+sed -i "1s|^#!/usr/bin/env bash\$|#!$BASH|" "$base/bin/kubectl"; chmod +x "$base/bin/kubectl"   # absolute interpreter: build sandboxes have no /usr/bin/env
 # Fakes for the publication steps of backup-haystack (T4): mode mv-fail makes the rename fail; sha-drift makes the
 # checksum of the final file differ from the one recorded before the rename.
 cat >"$base/bin/mv" <<'FAKE'
@@ -238,7 +238,7 @@ real=$(PATH=${PATH#*:} command -v sha256sum)
 if [[ $(cat "$LR_FAKE_DIR/fake-mode") == sha-drift && $1 != *.partial ]]; then echo "0000000000000000000000000000000000000000000000000000000000000000  $1"; exit 0; fi
 exec "$real" "$@"
 FAKE
-chmod +x "$base/bin/mv" "$base/bin/sha256sum"
+sed -i "1s|^#!/usr/bin/env bash\$|#!$BASH|" "$base/bin/mv" "$base/bin/sha256sum"; chmod +x "$base/bin/mv" "$base/bin/sha256sum"   # absolute interpreter: build sandboxes have no /usr/bin/env
 sysid=$(q -d postgres -c 'SELECT system_identifier FROM pg_control_system()')
 q -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'chronicle') THEN CREATE ROLE chronicle LOGIN; END IF; END \$\$" >/dev/null
 q -d postgres -c 'CREATE DATABASE chronicle TEMPLATE chronicle_clean' >/dev/null

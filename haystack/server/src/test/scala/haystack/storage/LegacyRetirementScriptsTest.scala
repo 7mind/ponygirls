@@ -71,7 +71,6 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     DriverManager.getConnection(config.jdbcUrl.take(config.jdbcUrl.lastIndexOf('/') + 1) + database, properties)
   }.bracket(_ => body)(connection => IO.blocking(connection.close()))
 
-  private val enabled = sys.env.get("LEGACY_RETIREMENT_SCRIPTS").contains("1")
   /** Node-era rows exactly as MigrationsTest's cut-over case seeds them; TestSupport.Now precedes the cut-over marker. */
   private def seedNodeEra(db: JdbcDatabase, original: String, latest: String, oldId: String, oldFailureId: String): IO[Unit] = db.transaction { c =>
     Sql.update(c, "INSERT INTO items(project_id,item_id,revision,document,document_text,created_at,created_by,modified_at,modified_by) VALUES('p','legacy',2,?::jsonb,?,?,?,?,'bot')", latest, latest, Now, "alice", Later)
@@ -84,9 +83,9 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     ()
   }
 
-  // Opt-in (scripts/one-off/legacy-retirement/test.sh sets the variable): the Nix-filtered sources of the permanent
-  // full-suite checks do not contain scripts/one-off, and this one-off is not meant to join them.
-  if (enabled) test("legacy retirement: Node-era replay rows are counted, refused on failed preconditions, deleted once, and the current service keeps every acknowledged document") {
+  // Part of the service's full suite (the suite check's source includes scripts/one-off/legacy-retirement and the
+  // retained check-legacy-free.sql); deleted together with the one-off scripts (that directory's README).
+  test("legacy retirement: Node-era replay rows are counted, refused on failed preconditions, deleted once, and the current service keeps every acknowledged document") {
     val oldId = requestId(); val oldFailureId = requestId()
     val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
     val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
@@ -159,7 +158,7 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     } yield () })
   }
 
-  if (enabled) test("legacy retirement: the stored-document tolerance is decided by the real codec; invalid historical link targets and oversize documents block, omitted links pass") {
+  test("legacy retirement: the stored-document tolerance is decided by the real codec; invalid historical link targets and oversize documents block, omitted links pass") {
     val oldId = requestId(); val oldFailureId = requestId()
     val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
     val latest = doc("latest", "{\"unicode\":\"café 🐎\",\"decimal\":1.00e2}").replace("\"links\":[]", "\"links\":[[\"origin\",\"else:missing\"]]")
@@ -211,7 +210,7 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     } yield () })
   }
 
-  if (enabled) test("legacy retirement: the proposed clean-up schema (0007) passes the retained check; the one-off refuses afterwards; the current binary cannot start on it") {
+  test("legacy retirement: the proposed clean-up schema (0007) passes the retained check; the one-off refuses afterwards; the current binary cannot start on it") {
     run(emptyDatabase.use { db => for {
       _ <- Migrations.initialize(db, Activity)
       name <- database(db)

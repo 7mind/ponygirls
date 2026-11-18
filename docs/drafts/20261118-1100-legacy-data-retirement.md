@@ -108,7 +108,9 @@ Facts that decide the methods (observed):
    keeps `run_id` (`Database.scala:88`). A changed identity meets the old row and fails with `checkpoint identity
    mismatch` or `annotation attempt input identity mismatch`, both `internal`, which escape the worker
    (`Models.scala:212`). **Reproduced**: before the fix of R2 the new fixture failed at `IndexCheckpoints.scala:32`
-   inside `Worker.once`.
+   inside `Worker.once`. On `main` (`de43b916`, CH-FIX) an embedding part whose stored input differs (for example
+   one grouped under another `embeddingBatchSize`) is discarded for that window and recomputed, and a failed claim is
+   logged and retried; the migration's reset of unfinished v1 runs (R2) is still what removes v1-bound work.
 
 ### 2.2 C-I: model identity v1 (decided: relocate by SQL, no model)
 
@@ -239,7 +241,7 @@ after the identity apply). C-F can run later, or never; then inventory 6.2 stays
 
 | Question | Answer |
 |---|---|
-| Binary during the migration | The **current** integration binary (`ab3e8a87` line). It must have started once against the database (migrations 018–020 present; the configured v2 space registered). The script is bound to `ch_schema_migrations` = `2,3,6,8,9,14,17,20`. |
+| Binary during the migration | The binary built from `main` (`de43b916` or later; it contains CH-FIX, plan Q101). Its Chronicle and Haystack schema migrations are those of `ab3e8a87` (no migration was added on `main`); re-validated on the clone with that binary (LEG-LAND). It must have started once against the database (migrations 018–020 present; the configured v2 space registered). The script is bound to `ch_schema_migrations` = `2,3,6,8,9,14,17,20`. |
 | Quiescence | Step 1 of C-F needs the service running with workers. The SQL needs the workers stopped and no live lease; it refuses on a live lease and, by default, on any other client connection. Proposed: stop the service for the SQL. |
 | Can it run while the service is up? | Not recommended for Chronicle: part 3 holds `SHARE ROW EXCLUSIVE` on `ch_jobs` and `ch_owner_targets` (as the CLI does, `ModelIdentityMigration.scala:77`), so ingests and claims block. `--allow-active-connections` exists for `serve-standby` and tests. |
 | Idempotency | Every statement selects by the legacy predicate; a second run finds nothing. Asserted (database content identical after a second apply, for both items). |
@@ -865,15 +867,14 @@ scripts as subprocesses. Last run: 2 of 2 and 3 of 3 passed.
 | Idempotence | second apply of each item: all rows identical |
 | Current code reads the migrated data | start-up; `IndexProfiles.semantic` for three owners; semantic search; chunks and passages; rebuild status; retry of the Failed run; new ingest → claim → publish. Haystack: start-up, current/revision/history of the Node-era item, stale Node retry → `conflict`, current-format replay still replays |
 
-Not covered by fixtures: production volumes and timings; real descriptors; the real annotator; `drop-databases.sh`
-and `clone.sh` have no automated case (run by hand on a scratch cluster: refusals for a wrong OID, a connected
-database, the connected database itself; a successful drop; the clone cycle).
+Not covered by fixtures: production volumes and timings; real descriptors; the real annotator; `clone.sh` has
+no automated case (the clone cycle was run by hand; `drop-databases.sh` has its own suite, `test-drop-databases.sh`).
 
-The suites sit in the services' test trees (they need the fixtures) but register their cases only when
-`LEGACY_RETIREMENT_SCRIPTS=1` is set, which `test.sh` does: the permanent full suites and the Nix checks (whose
-filtered sources, `nix/pkg/chronicle/source.nix`, do not contain `scripts/one-off`) compile them and run nothing
-from them. `test.sh` fails unless each suite ran its expected number of passing cases. The full permanent suites
-were not run for this change (new files only).
+Where the tests run (LEG-LAND, on main `de43b916`): the two Scala suites are part of the services' full suites
+(`chronicle-backend-full`, `haystack-jvm`; their filtered sources in `nix/pkg/chronicle/source.nix` include
+`scripts/one-off/legacy-retirement` and the retained `check-legacy-free.sql`), so `scripts/verify` runs them. The
+shell fixture suites (`test-drop-databases.sh`, `test-scripts.sh`) are the on-demand check
+`nix build .#onDemand.legacy-retirement-scripts`. `test.sh` remains the inner loop (README of the scripts).
 
 ## 10. Remaining open questions
 

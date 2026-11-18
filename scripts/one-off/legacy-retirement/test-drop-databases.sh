@@ -67,7 +67,7 @@ cat >"$base/swap-psql" <<'SWAP'
 awk -v base="$LR_TEST_BASE" '/^[\\]echo DB[.]phase[|]between-rename-and-drop/ || /^[\\]echo DB[.]dropping[|]:name/ { printf "%c! sh %s/swap.sh\n", 92, base } { print }' | psql "$@"
 SWAP
 export LR_TEST_BASE=$base
-chmod +x "$base/swap-psql"
+sed -i "1s|^#!/usr/bin/env bash\$|#!$BASH|" "$base/swap-psql"; chmod +x "$base/swap-psql"   # absolute interpreter: build sandboxes have no /usr/bin/env
 copy=chronicle_nex249_import_20261105a; copy_oid=$(oid $copy)
 if ! grep -q lr_drop_ "$script"; then printf 'psql -X -q -c "ALTER DATABASE %s RENAME TO held_aside" -c "ALTER DATABASE haystack RENAME TO %s" 2>>%s/swap.err; echo ran >%s/swap.ran\n' "$copy" "$copy" "$base" "$base" >"$base/swap.sh"
 else printf 'psql -X -q -c "ALTER DATABASE lr_drop_%s RENAME TO held_aside" -c "ALTER DATABASE haystack RENAME TO lr_drop_%s" 2>>%s/swap.err; echo ran >%s/swap.ran\n' "$copy_oid" "$copy_oid" "$base" "$base" >"$base/swap.sh"; fi
@@ -95,7 +95,7 @@ if [[ $legacy_cli == f ]] && grep -q -- '--configured-databases' "$script"; then
 # ends the session (\q) where the script under test passes from the rename to the drop
 awk '/^[\\]echo DB[.]phase[|]between-rename-and-drop/ { printf "%cq\n", 92 } { print }' | psql "$@"
 CUT
-  chmod +x "$base/cut-psql"
+  sed -i "1s|^#!/usr/bin/env bash\$|#!$BASH|" "$base/cut-psql"; chmod +x "$base/cut-psql"   # absolute interpreter: build sandboxes have no /usr/bin/env
   PSQL=$base/cut-psql sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
   # precondition: the cut left this script's tombstone (otherwise the next command is a plain fresh drop)
   tomb=$(q -c "SELECT datname || ',' || datallowconn || ',' || coalesce(shobj_description(oid, 'pg_database'), '-') FROM pg_database WHERE oid = $o")

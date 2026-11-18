@@ -21,7 +21,6 @@ port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print
 "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base -c fsync=off -c synchronous_commit=off -c full_page_writes=off" -w start >/dev/null
 PGPASSWORD=$password "$POSTGRES_HOME/bin/psql" -X -q -v ON_ERROR_STOP=1 -h 127.0.0.1 -p "$port" -U postgres -d postgres \
   -c 'CREATE DATABASE chronicle' -c 'CREATE DATABASE haystack_scala_test' -c '\connect chronicle' -c 'CREATE EXTENSION vector' -c 'CREATE EXTENSION pg_trgm'
-export LEGACY_RETIREMENT_SCRIPTS=1   # the suites register their case only with this set
 status=0
 # A selection that ran no case must fail: sbt reports success for an empty testOnly.
 suite() {
