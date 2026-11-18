@@ -89,7 +89,9 @@ const OTHER_COLUMN = { min: 80, ideal: 140, max: 240 };
 const DEFAULT_COLUMNS: readonly ArchiveSort[] = [ArchiveSort.LastTimestamp, ArchiveSort.Title, ArchiveSort.Project, ArchiveSort.Branch, ArchiveSort.Status, ArchiveSort.MessageCount];
 const archiveColumns: readonly TableColumnSpec[] = columns.map(column => ({ id: column.sort, label: column.label, ...(COLUMN_WIDTHS[column.sort] ?? OTHER_COLUMN),
   grow: column.sort === ArchiveSort.Title, required: column.sort === ArchiveSort.Title, compact: DEFAULT_COLUMNS.includes(column.sort) }));
-const narrowArchiveColumns: readonly TableColumnSpec[] = archiveColumns.map(spec => ({ ...spec, compact: NARROW_DEFAULT_COLUMNS.includes(spec.id) }));
+// A 320 px viewport (the narrowest supported) holds the two default phone columns at their minimum widths.
+const NARROW_TITLE_MIN = 160;
+const narrowArchiveColumns: readonly TableColumnSpec[] = archiveColumns.map(spec => ({ ...spec, min: spec.id === ArchiveSort.Title ? NARROW_TITLE_MIN : spec.min, compact: NARROW_DEFAULT_COLUMNS.includes(spec.id) }));
 const columnLabel = (sort: ArchiveSort) => columns.find(column => column.sort === sort)!.label;
 const plural = (count: bigint, noun: string) => `${count.toLocaleString()} ${noun}${count === 1n ? '' : 's'}`;
 /**
