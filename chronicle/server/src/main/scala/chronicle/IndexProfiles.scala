@@ -5,7 +5,6 @@ import java.sql.Connection
 import java.nio.charset.StandardCharsets.UTF_8
 
 enum IndexPolicy { case ContextAwareProblemsV1 }
-enum ReadableIndexPolicy { case LegacyV4, ContiguousPassagesV1, ContextAwareProblemsV1 }
 type EmbeddingSpaceDescriptor = ponygirls.retrieval.EmbeddingSpace
 object EmbeddingSpaceDescriptor {
   def from(config: EmbeddingConfig): EmbeddingSpaceDescriptor =
@@ -61,6 +60,8 @@ object OwnerTargets {
 
 }
 object IndexProfiles {
+  /** Registry rows of retired policies stay in the database as inert labels of tombstones and old jobs; nothing reads them. */
+  private val executablePolicies: String = IndexPolicy.values.map(value=>s"'$value'").mkString(",")
   def register(c: Connection,profile: IndexProfile): Unit = {
     Sql.exec(c,"INSERT INTO ch_embedding_spaces(id,descriptor) VALUES(?,?::jsonb) ON CONFLICT DO NOTHING",profile.embedding.id,profile.embedding.json.noSpaces)
     Check(Sql.one(c,"SELECT descriptor=?::jsonb FROM ch_embedding_spaces WHERE id=?",profile.embedding.json.noSpaces,profile.embedding.id)(_.getBoolean(1)).contains(true),"config","immutable embedding space descriptor mismatch")
@@ -72,13 +73,11 @@ object IndexProfiles {
     catch { case _: ponygirls.retrieval.RetrievalError => throw DomainError("unavailable","embedding space descriptor is unverified") }
   }
   def registered(c: Connection,profile: String): String =
-    Sql.one(c,"SELECT p.embedding_space,e.descriptor FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE p.profile=? AND p.policy IN('LegacyV4','ContiguousPassagesV1','ContextAwareProblemsV1')",profile) { r =>
+    Sql.one(c,s"SELECT p.embedding_space,e.descriptor FROM ch_index_profiles p JOIN ch_embedding_spaces e ON e.id=p.embedding_space WHERE p.profile=? AND p.policy IN($executablePolicies)",profile) { r =>
       val id=r.getString(1); verifiedSpace(id,Sql.json(r,"descriptor")); id
     }.getOrElse(throw DomainError("unavailable","index profile has no verified descriptor"))
-  private def readSpaceSql(profileColumn: String): String = {
-    val policies=ReadableIndexPolicy.values.map(value=>s"'$value'").mkString(",")
-    s"SELECT compatible.embedding_space FROM ch_index_profiles compatible WHERE compatible.profile=$profileColumn AND compatible.policy IN($policies)"
-  }
+  private def readSpaceSql(profileColumn: String): String =
+    s"SELECT compatible.embedding_space FROM ch_index_profiles compatible WHERE compatible.profile=$profileColumn AND compatible.policy IN($executablePolicies)"
   def semantic(c: Connection,reader: String,visible: String,embedding: EmbeddingSpaceDescriptor): Unit = {
     OwnerTargets.read(c,reader,false)
     verifiedSpace(embedding.id,embedding.json)

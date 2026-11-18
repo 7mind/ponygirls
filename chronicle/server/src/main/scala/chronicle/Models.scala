@@ -212,10 +212,7 @@ final class Worker(archive: SessionArchive,problemAnnotator: ProblemPassageAnnot
     windows.report(0) *> loop(ProblemPassages.State.start(claim.sessionId,claim.runId),ProblemsPublication.empty,0)
   }
   private def process(claim: Claim): IO[Unit] = {
-    val work=IO.defer {
-      Check(profiles.resolve(claim.profile).policy==IndexPolicy.ContextAwareProblemsV1,"unavailable","index policy is retired; explicit rebuild required")
-      passages(claim)
-    }
+    val work=passages(claim)
     val renew=(IO.sleep(30.seconds) *> IO.blocking(Check(archive.renew(claim,leaseSeconds),"stale-claim","indexing claim is no longer current"))).foreverM
     IO.race(work,renew).void.handleErrorWith { failure =>
       val (stage,error)=failure match { case StagedFailure(stage,error) => (Some(stage),error); case error => (None,error) }

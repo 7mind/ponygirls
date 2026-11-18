@@ -212,6 +212,12 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
       Sql.exec(x,"UPDATE ch_generations SET profile='v1-space-profile' WHERE session_id=?",out.sessionId)
     }
     rejected()
+    // A retired policy's registry row on the configured space is an inert label, not a readable profile.
+    db.transaction { x =>
+      Sql.exec(x,"INSERT INTO ch_index_profiles SELECT 'retired-policy-profile',embedding_space,'ContiguousPassagesV1',descriptor FROM ch_index_profiles WHERE profile=? ON CONFLICT DO NOTHING",c.profile)
+      Sql.exec(x,"UPDATE ch_generations SET profile='retired-policy-profile' WHERE session_id=?",out.sessionId)
+    }
+    rejected()
     assertEquals(search.search("a",q.copy(mode=SearchMode.Lexical),None).total,1)
     db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET profile='unresolved-retained' WHERE owner='a'"))
     assertEquals(new PostgresOwnerReindex(db).preview("a").targetProfile,catalog.preferred.profile)
