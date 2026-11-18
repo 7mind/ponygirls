@@ -17,7 +17,7 @@ import scala.concurrent.duration.*
 class HttpTest extends munit.FunSuite {
   override val munitTimeout = 90.seconds
   private val SlowModelLiveness=_root_.chronicle.Http.SocketLiveness(10.seconds,300.millis,1.second,50.millis)
-  private val ShortLiveness=_root_.chronicle.Http.SocketLiveness(2.seconds,750.millis,750.millis,100.millis)
+  private val ShortLiveness=_root_.chronicle.Http.SocketLiveness(2.seconds,800.millis,800.millis,100.millis)
   private val SlowModelDelay=2500.millis
   private def withLiveness(c: Config,client: org.http4s.client.Client[IO],liveness: _root_.chronicle.Http.SocketLiveness): Module = {
     val production: Module=_root_.chronicle.plugins.ChroniclePlugin

@@ -259,7 +259,6 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     heartbeat <- Ref.of[IO,Option[(UUID,String,FiniteDuration)]](None)
     connectionId <- IO(UUID.randomUUID())
     opened <- IO.monotonic
-    nextPing <- Ref.of[IO,FiniteDuration](opened+liveness.pingEvery)
     close = (code: Int,failure: Option[ServerEnvelope]) => IO.uncancelable(_ => closed.set(true) *> cleanup.get.flatten *> ending.complete(Http.SocketClose(code,failure)).void)
     enqueue = (output: Http.SocketOutput) => closed.get.ifM(IO.unit,queue.tryOffer(output).flatMap { accepted =>
       if(accepted) IO.unit else close(retryableCloseCode,None)
@@ -333,7 +332,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
           else heartbeat.get.flatMap {
             case Some((_,_,deadline)) if now>deadline => close(retryableCloseCode,None)
             case Some(_) => IO.unit
-            case None => nextPing.get.flatMap(due => if(now>=due) { val id=UUID.randomUUID(); val nonce=Wire.secret(); nextPing.set(now+liveness.pingEvery) *> heartbeat.set(Some((id,nonce,now+liveness.pongWithin))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit)
+            case None => if(liveness.pingWindow(now-opened)) { val id=UUID.randomUUID(); val nonce=Wire.secret(); heartbeat.set(Some((id,nonce,now+liveness.pongWithin))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit
           }
         }
       }
@@ -387,7 +386,11 @@ object Http {
   def retryAfterSeconds(wait: java.time.Duration): Long = math.max(1L,wait.getSeconds+(if(wait.getNano>0) 1L else 0L))
   final case class WebRoot(path: Option[String])
   /** `hello` bounds the wait for Hello, a Ping is due every `pingEvery` and its Pong within `pongWithin`; the session is rechecked every `tick`. */
-  final case class SocketLiveness(hello: FiniteDuration,pingEvery: FiniteDuration,pongWithin: FiniteDuration,tick: FiniteDuration)
+  final case class SocketLiveness(hello: FiniteDuration,pingEvery: FiniteDuration,pongWithin: FiniteDuration,tick: FiniteDuration) {
+    require(tick.toNanos>0 && pingEvery.toNanos%tick.toNanos==0,"pingEvery must be a whole number of ticks")
+    /** A Ping is eligible during the tick-wide window that starts at each multiple of `pingEvery` after the connection opened. */
+    def pingWindow(sinceOpened: FiniteDuration): Boolean = sinceOpened.toNanos/tick.toNanos%(pingEvery.toNanos/tick.toNanos)==0
+  }
   object SocketLiveness {
     val production: SocketLiveness = SocketLiveness(10.seconds,20.seconds,10.seconds,1.second)
   }
