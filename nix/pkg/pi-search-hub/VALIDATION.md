@@ -125,7 +125,6 @@ was identified beyond existing resource-ownership/testing patterns.
 ```bash
 nix build .#pi-search-hub .#checks.x86_64-linux.pi-search-hub-eval \
   .#checks.x86_64-linux.subagents-policy-shape \
-  .#checks.x86_64-linux.dev-llm-module-boundary \
   .#checks.x86_64-linux.yolo-managed-config-eval \
   --no-link --print-out-paths -L
 ```

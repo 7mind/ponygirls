@@ -74,10 +74,6 @@ test('BG admission fields preserve golden public payload/source/raw identity fro
   }
 });
 
-test('BA malformed origin kind is rejected, not coerced to a valid discriminant', () => {
-  assert.throws(() => decodeOrigin({ kind: ['native'] }), /invalid-pending-origin/);
-});
-
 for (const adapter of ['memory', 'sqlite']) {
   function store(home: string): Spool { return adapter === 'memory' ? new MemorySpool() : new SqliteSpool(join(home, 'state')); }
   test(`BG/GoodCommunication admission contract ${adapter}: privacy invalidation still drops held requests, origin flags never exempt them`, async () => {

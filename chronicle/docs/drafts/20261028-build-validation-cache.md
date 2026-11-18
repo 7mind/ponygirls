@@ -1,6 +1,7 @@
 # Chronicle build and validation cache contract
 
-> **Superseded (2026-11-18)** by `docs/drafts/20261117-2140-test-overhaul-plan.md` (repository root).
+> **Superseded (2026-11-18)** by the "Validation" section of repository-root `AGENTS.md` and
+> `chronicle/README.md` "Verification" (design: `docs/drafts/20261117-2140-test-overhaul-plan.md`).
 > The receipt chain described here (`validation-report.py`, `validation-evidence.py`,
 > `share/chronicle/validation.json`, check `chronicle-validation`) was deleted; the package now
 > depends on the fast backend and protocol checks directly. Kept as history.

@@ -17,12 +17,12 @@ in pkgs.runCommand "haystack-native-complete-browser" {
   # Do not nest the service runner that owns a separate cluster. This wrapper
   # owns exactly the declared provider fixture; preview tests explicitly own
   # their additional disposable standalone-launcher fixture as characterized.
-  timeout --signal=TERM --kill-after=10s 575s \
+  # The serial legs took 150-172 s under host load 147-167; about 2x that.
+  timeout --signal=TERM --kill-after=10s 360s \
     ${fixtureTools}/bin/with-service-postgres \
     ${fixtureTools}/bin/with-browser-environment \
-    ${fixtureTools}/bin/validate-haystack-native browser \
-      ${native}/libexec/haystack-server ${native}/share/haystack/compiled-inputs.sha256 \
-      "$out" ${proxyFixture} || {
+    ${fixtureTools}/bin/validate-haystack-native \
+      ${native}/libexec/haystack-server "$out" ${proxyFixture} || {
         for log in "$out"/*.log; do [ ! -f "$log" ] || cat "$log"; done
         exit 1
       }

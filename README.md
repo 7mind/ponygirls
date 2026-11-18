@@ -146,10 +146,14 @@ The common sbt build and pinned dependency lock live at repository root:
 
 ```bash
 nix develop .#backend --command bash scripts/backend-sbt.sh 'chronicleServer/compile' 'haystackServer/compile' 'manureServer/compile'
-nix develop .#backend --command bash shared/service-runtime/scripts/test-postgres.sh
-nix build .#checks.x86_64-linux.shared-jvm
-nix build .#checks.x86_64-linux.manure-posix-acceptance .#checks.x86_64-linux.manure-direct-jni
+# Inner loop: the shared modules' suites on an owned PostgreSQL cluster, and the account web UI:
+nix develop .#chronicle --command shared/scripts/test.sh
+# Full verification of all three services and the cross-service checks (`scripts/verify <service>` for one):
+scripts/verify all
 ```
+
+What each level proves, and the on-demand checks, are in the "Validation" section of
+[`AGENTS.md`](AGENTS.md).
 
 Shared modules provide one compiled Baboon runtime, bounded JDBC transactions
 and credential reads, lossless JSON, model HTTP transport, and fenced

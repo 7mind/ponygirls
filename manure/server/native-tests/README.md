@@ -1,12 +1,13 @@
 # Linux JNI primitive checks
 
-Run from the repository root with the pinned development JDK/compiler:
+The `manure-direct-jni` check, a member of `scripts/verify manure`, runs this
+self-test against the production shared library. To run it directly, including the
+on-demand sanitizer build, use the repository root and the pinned shell, which
+supplies `JAVA_HOME` and the compiler (`CC` selects another one):
 
 ```sh
-JAVA_HOME=/path/to/pinned/jdk CC=/path/to/pinned/gcc \
-  manure/server/native-tests/run.sh
-JAVA_HOME=/path/to/pinned/jdk CC=/path/to/pinned/gcc \
-  SANITIZE=address,undefined manure/server/native-tests/run.sh
+nix develop .#chronicle --command manure/server/native-tests/run.sh
+nix develop .#chronicle --command env SANITIZE=address,undefined manure/server/native-tests/run.sh
 ```
 
 The runner compiles with strict warnings, checks the checked-in `javac -h`

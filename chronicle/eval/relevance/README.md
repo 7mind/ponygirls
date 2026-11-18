@@ -223,14 +223,16 @@ not all hits. Retrieval rank, source eligibility, tool use and answer/citation
 success remain separate metrics. Synthetic controls and passing transport tests
 alone do not establish real semantic relevance.
 
-Controlled local checks (no live provider/model calls):
+Controlled local checks (no live provider/model calls) run in `scripts/verify chronicle`
+(check `chronicle-eval`) and in the inner loop as `chronicle/scripts/test.sh eval`; directly:
 
 ```bash
 python3 -m unittest discover -s chronicle/eval/relevance/tests -v
 node --test chronicle/eval/relevance/tests/*.test.mjs
 ```
 
-Run controlled real-server acceptance separately before claiming native behavior.
+Controlled real-server acceptance and live-provider cases are on demand: run them
+before claiming native behavior or semantic quality.
 
 
 ### Offline recovery of captured runs

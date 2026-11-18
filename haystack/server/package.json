@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "build": "bash ../../scripts/backend-sbt.sh haystackServer/assembly",
-    "build:characterization": "tsc -p ../characterization/node/tsconfig.json",
     "typecheck": "bash ../../scripts/backend-sbt.sh haystackServer/compile",
     "start": "bash run.sh",
     "test": "bash ../scripts/test-postgres-scala.sh && bash ../scripts/test-current.sh"

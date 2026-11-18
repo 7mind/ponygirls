@@ -7,25 +7,16 @@ const fixture = JSON.parse(readFileSync(new URL('./data/recorded-agent-catalog.j
 const captured = fixture.catalog;
 const input = { agentModel: captured.model, agentRevision: captured.modelRevision,
   agentMaximumOutputTokens: captured.maximumOutputTokens, agentReasoningPolicy: captured.reasoningPolicy, catalogVariant: 'baseline' };
-const source = readFileSync(new URL('../agent_probe.mjs', import.meta.url), 'utf8');
-const begin = source.indexOf('  assert.equal(catalog.model, input.agentModel);');
-const end = source.indexOf('  for (const task of input.tasks)', begin);
-assert.ok(begin >= 0 && end > begin);
-const guard = new Function('assert', 'catalog', 'encodedCatalog', 'input', 'verifyCatalogV3', 'start', source.slice(begin, end) + '\nstart();');
-function beforeStart(catalog, bindings) {
-  let starts = 0;
-  guard(assert, catalog, catalog, bindings, verifyCatalogV3, () => { starts += 1; });
-  return starts;
-}
+const verify = (catalog, bindings) => verifyCatalogV3(catalog, bindings, bindings.catalogVariant);
 
-test('actual public catalog modelRevision and declared max metadata pass V3 pre-Start guards; high is rejected', () => {
+test('actual public catalog modelRevision and declared max metadata pass V3 catalog verification; high is rejected', () => {
   assert.equal(Object.hasOwn(captured, 'modelRevision'), true);
   assert.equal(Object.hasOwn(captured, 'revision'), false);
-  assert.equal(beforeStart(captured, input), 1);
+  assert.doesNotThrow(() => verify(captured, input));
   const high = structuredClone(captured); high.reasoningPolicy = 'high';
-  assert.throws(() => beforeStart(high, { ...input, agentReasoningPolicy: 'high' }));
+  assert.throws(() => verify(high, { ...input, agentReasoningPolicy: 'high' }));
 });
-test('missing, mismatched or mistyped actual agent metadata fails before Start', () => {
+test('missing, mismatched or mistyped actual agent metadata fails catalog verification', () => {
   for (const [field, values] of [
     ['modelRevision', [undefined, 'different-revision', 1017]],
     ['maximumOutputTokens', [undefined, 32768, '65536']],
@@ -33,11 +24,11 @@ test('missing, mismatched or mistyped actual agent metadata fails before Start',
   ]) {
     for (const value of values) {
       const catalog = structuredClone(captured); catalog[field] = value;
-      assert.throws(() => beforeStart(catalog, input), undefined, `${field}=${value} must be rejected before Start`);
+      assert.throws(() => verify(catalog, input), undefined, `${field}=${value} must be rejected`);
     }
   }
 });
-test('new expected agent bindings are required with exact types before Start', () => {
+test('new expected agent bindings are required with exact types', () => {
   for (const [field, values] of [
     ['agentRevision', [undefined, '', 1017]],
     ['agentMaximumOutputTokens', [undefined, 0, '65536']],
@@ -45,7 +36,7 @@ test('new expected agent bindings are required with exact types before Start', (
   ]) {
     for (const value of values) {
       const bindings = { ...input, [field]: value };
-      assert.throws(() => beforeStart(captured, bindings), undefined, `${field}=${value} must be rejected before Start`);
+      assert.throws(() => verify(captured, bindings), undefined, `${field}=${value} must be rejected`);
     }
   }
 });
