@@ -285,63 +285,6 @@ export const scenarios = [
   },
 
   {
-    name: "detail", title: "Record detail: fields, links, history, snapshots, not-found",
-    async run(env) {
-      const { rec } = env;
-      const h = heroes(env);
-      const { ctx, page } = await open(env);
-      const goItem = async (key) => { await page.goto(`${env.base}/#/item/${enc(key)}`); await page.locator(".detail-view > .page-heading h1").waitFor(); await page.waitForTimeout(700); };
-      await goItem(h.skill.key);
-      await rec.shot(page, "detail-skill", { desc: `Skill-draft record ${h.skill.key}: heading, provenance, description, metadata grid, long Markdown field rendered inline`, how: `open /#/item/${h.skill.key}`, expect: [".detail-view .fields-view"] });
-      await rec.shot(page, "detail-skill", { desc: "Full-page capture of the same record (single long page; no inner scroll region except <pre> blocks)", how: "fullPage screenshot", full: true });
-      await page.evaluate(() => window.scrollTo(0, 1400));
-      await page.waitForTimeout(200);
-      await rec.shot(page, "detail-skill-scrolled", { desc: "Mid-page scroll position: heading and Back button scrolled away, no sticky context", how: "window.scrollTo(0,1400)" });
-      await rec.dump(page, "detail-skill");
-      await page.locator(".field-source summary", { hasText: "Markdown source" }).click();
-      await page.evaluate(() => document.querySelector(".field-source[open]").scrollIntoView());
-      await page.waitForTimeout(300);
-      await rec.shot(page, "detail-skill-source-open", { desc: "'Markdown source' disclosure opened below the rendered Markdown (the same content twice)", how: "click the 'Markdown source' summary", expect: [".field-source[open] pre"] });
-
-      await goItem(h.todo.key);
-      await rec.shot(page, "detail-todo", { desc: `Todo ${h.todo.key} with human-attention=required, outgoing/incoming links and revision history`, how: `open /#/item/${h.todo.key}`, expect: [".relationship-columns", ".history-panel"] });
-      await rec.shot(page, "detail-todo", { desc: "Full-page capture: relationship columns, actions, history list with per-row View / Restore buttons", how: "fullPage screenshot", full: true });
-      await rec.dump(page, "detail-todo");
-      await page.locator(".history-panel li button", { hasText: "View" }).first().click();
-      await page.getByRole("heading", { name: /^Snapshot r/ }).waitFor();
-      await page.getByLabel("Compare with revision").selectOption({ index: 1 });
-      await page.getByRole("button", { name: "Compare", exact: true }).click();
-      await page.locator('section[aria-label="Snapshot B"]').waitFor();
-      await page.getByRole("heading", { name: /^Snapshot r/ }).scrollIntoViewIfNeeded();
-      await rec.shot(page, "detail-snapshot-compare", { desc: "Snapshot of an older revision plus 'Compare with revision' result: two FieldsView blocks stacked, no diff highlighting", how: "click View on the first history row, choose another revision, click Compare", expect: ['section[aria-label="Snapshot A"]'] });
-      await rec.shot(page, "detail-snapshot-compare", { desc: "Full page with snapshot and comparison appended below the history list", how: "fullPage screenshot", full: true });
-
-      await goItem(h.issue.key);
-      await rec.shot(page, "detail-github-issue", { desc: `GitHub issue record ${h.issue.key} (type-specific icon, fields incl. Markdown body)`, how: `open /#/item/${h.issue.key}`, expect: [".detail-view"] });
-      await goItem(h.fact.key);
-      await rec.shot(page, "detail-fact-code-json", { desc: `Fact ${h.fact.key} with code field (highlighted), JSON field with a >2^53 integer, Markdown evidence`, how: `open /#/item/${h.fact.key}`, expect: [".field-entry"] });
-      await rec.shot(page, "detail-fact-code-json", { desc: "Full page of the same record", how: "fullPage screenshot", full: true });
-      await goItem(h.archived.key);
-      await rec.shot(page, "detail-archived", { desc: `Archived record ${h.archived.key}: only the provenance line says '· archived'; no banner or visual de-emphasis`, how: `open /#/item/${h.archived.key}`, expect: [".record-provenance"] });
-      await page.goto(`${env.base}/#/item/${enc("ponygirls:does-not-exist")}`);
-      await page.getByText("Item not found or unreadable.").waitFor();
-      // Back button: does it return to the list state we came from?
-      await page.goto(`${env.base}/#/browse?q=archived%3Atrue`); await settle(page);
-      await page.locator(".records-panel").evaluate((el) => { el.scrollTop = 500; });
-      await page.locator(".record-open").nth(3).click();
-      await page.locator(".detail-view > .page-heading h1").waitFor();
-      await page.getByRole("button", { name: "Back", exact: true }).click();
-      await settle(page);
-      const backState = await page.evaluate(() => ({ hash: location.hash, panelScrollTop: document.querySelector(".records-panel")?.scrollTop, heading: document.querySelector("h1")?.textContent }));
-      rec.note(`Measured: from the Archive list (scrolled 500 px) open the 4th record and press the in-page Back button -> ${JSON.stringify(backState)}. The button always navigates to #/browse (App.tsx goBrowse), so the archive query, sort and scroll position are lost.`);
-      await rec.shot(page, "detail-back-lands-on-default-list", { desc: "Result of the in-page Back button after opening a record from the Archive tab: the default 'Records' list, not the Archive", how: "open /#/browse?q=archived:true, open a record, click Back", expect: [".records-panel tbody tr"] });
-      await page.goto(`${env.base}/#/item/${enc("ponygirls:does-not-exist")}`);
-      await page.getByText("Item not found or unreadable.").waitFor();
-      await rec.shot(page, "detail-not-found", { desc: "Missing record: bare status line and Back button, shell without heading", how: "open /#/item/ponygirls:does-not-exist", expect: ["[role=status]"] });
-      await ctx.close();
-    },
-  },
-  {
     name: "edit", title: "Record editing: typed fields editor, raw JSON, validation, conflict, pending write",
     async run(env) {
       const { rec } = env;
@@ -749,6 +692,85 @@ export const scenarios = [
       }
     },
   },
+  {
+    name: "record", title: "UX-H3 record page: header bar, notices, typed fields, links, metadata and history rail, snapshot, restore",
+    async run(env) {
+      const { rec } = env;
+      const h = heroes(env);
+      const hero = await recordHero(env);
+      const ready = async (page) => {
+        await page.locator('[data-record="ready"], [data-record="snapshot"]').waitFor();
+        await page.locator(".hist-row").first().waitFor(); await page.waitForTimeout(300);
+      };
+      // Opened from the Inbox list, as in the mockup: Back reads "Inbox" and the masthead keeps Inbox current.
+      const fromInbox = async (page) => {
+        await page.goto(`${env.base}/#/inbox?${new URLSearchParams({ q: `id:"${hero.key}"` })}`); await settle(page);
+        await page.locator(`[data-row-id="${hero.key}"]`).getByText(hero.title, { exact: true }).click();
+        await ready(page);
+      };
+      const file = (state, width, dark) => `haystack-detail${state === "" ? "" : `-${state}`}${dark ? "-dark" : ""}-${width}.png`;
+      for (const [viewport, width] of [[DESKTOP, 1440], [SMALL, 1024], [MOBILE, 390]]) for (const dark of [false, true]) {
+        if (width !== 1440 && dark) continue;
+        const { ctx, page } = await open(env, { viewport, dark });
+        await fromInbox(page);
+        await rec.shot(page, "record", { file: file("", width, dark), desc: "Record opened from Inbox: header bar, review notice, description, fields, rail", how: "Inbox filtered to the hero, click its row", expect: [".record-bar", ".rail"] });
+        if (width === 1440 && !dark) {
+          await rec.shot(page, "record-full", { file: file("full", width, false), desc: "Full page", how: "fullPage screenshot", full: true });
+          await page.evaluate(() => window.scrollTo(0, 700)); await page.waitForTimeout(200);
+          await rec.shot(page, "record-scrolled", { file: file("scrolled", width, false), desc: "Scrolled 700 px: header bar sticks, rail sticks", how: "scrollTo(0, 700)" });
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.getByRole("group", { name: "View of notes", exact: true }).getByRole("button", { name: "Source", exact: true }).click(); await page.waitForTimeout(200);
+          await rec.shot(page, "record-source", { file: file("source", width, false), desc: "Markdown field switched to Source", how: "Rendered | Source → Source" });
+          await page.getByRole("group", { name: "View of notes", exact: true }).getByRole("button", { name: "Rendered", exact: true }).click();
+          await page.getByRole("button", { name: "More actions", exact: true }).click();
+          await page.getByRole("menuitem", { name: "View raw JSON", exact: true }).click(); await page.waitForTimeout(200);
+          await rec.shot(page, "record-raw", { file: file("raw", width, false), desc: "Fields as raw JSON", how: "⋯ → View raw JSON", expect: ['[aria-label="Fields JSON"]'] });
+          await page.getByRole("button", { name: "Typed view", exact: true }).click();
+          await page.getByRole("button", { name: "View revision 3", exact: true }).click();
+          await page.getByRole("heading", { name: "Changes from revision 3 to revision 4", exact: true }).waitFor(); await page.waitForTimeout(300);
+          await rec.shot(page, "record-snapshot", { file: file("snapshot", width, false), desc: "Snapshot of revision 3 compared with the latest", how: "History → View revision 3", expect: ['[aria-label="Snapshot"]'] });
+          await rec.shot(page, "record-snapshot-full", { file: file("snapshot-full", width, false), desc: "Snapshot, full page", how: "fullPage screenshot", full: true });
+          await page.getByRole("region", { name: "Snapshot", exact: true }).getByRole("button", { name: "Restore as new revision", exact: true }).click();
+          await page.getByRole("dialog").waitFor(); await page.waitForTimeout(200);
+          await rec.shot(page, "record-restore-confirm", { file: file("restore-confirm", width, false), desc: "Restore confirmation (in-app dialog, Cancel focused)", how: "banner → Restore as new revision", expect: ["dialog[open]"] });
+          await page.keyboard.press("Escape");
+        }
+        await ctx.close();
+      }
+      {
+        const { ctx, page } = await open(env);
+        await page.route("**/api/v1/get", () => {}); // never answered: the loading state stays
+        await page.goto(`${env.base}/#/item/${enc(hero.key)}`);
+        await page.locator('[data-record="loading"]').waitFor(); await page.waitForTimeout(300);
+        await rec.shot(page, "record-loading", { file: file("loading", 1440, false), desc: "Loading state (get request held)", how: "route /api/v1/get without answering" });
+        await ctx.close();
+      }
+      {
+        const { ctx, page } = await open(env);
+        await page.goto(`${env.base}/#/item/${enc("ponygirls:does-not-exist")}`);
+        await page.locator('[data-record="missing"]').waitFor(); await page.waitForTimeout(300);
+        await rec.shot(page, "record-not-found", { file: file("not-found", 1440, false), desc: "Unknown key", how: "open /#/item/ponygirls:does-not-exist" });
+        await page.goto(`${env.base}/#/skills?${new URLSearchParams({ q: `id:"${h.skill.key}"` })}`); await settle(page);
+        await page.locator(`[data-row-id="${h.skill.key}"]`).getByText(h.skill.document.title, { exact: true }).click();
+        await ready(page);
+        await rec.shot(page, "record-skill", { file: file("skill", 1440, false), desc: "Skill draft opened from Skill drafts: info notice, long Markdown field", how: "Skill drafts filtered to the hero, click its row" });
+        await page.evaluate(() => window.scrollTo(0, 1400)); await page.waitForTimeout(200);
+        await rec.shot(page, "record-skill-scrolled", { file: file("skill-scrolled", 1440, false), desc: "Skill draft scrolled 1400 px", how: "scrollTo(0, 1400)" });
+        await page.goto(`${env.base}/#/item/${enc(h.archived.key)}`); await ready(page);
+        await rec.shot(page, "record-archived", { file: file("archived", 1440, false), desc: "Archived record: neutral notice and chip", how: `open /#/item/${h.archived.key}` });
+        await fromInbox(page);
+        await page.getByRole("note").getByRole("button", { name: "Clear attention", exact: true }).click();
+        await page.getByText(/^Attention cleared/).waitFor(); await ready(page);
+        await rec.shot(page, "record-cleared", { file: file("cleared", 1440, false), desc: "After Clear attention: toast, notice gone", how: "notice → Clear attention", expect: [".toast"] });
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
+        await page.getByLabel("Title", { exact: true }).fill(`${hero.title} (edited)`);
+        await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+        await page.getByText(/^Saved as revision/).waitFor(); await ready(page);
+        await rec.shot(page, "record-saved", { file: "haystack-edit-saved-1440.png", desc: "After saving in the editor: toast with View changes", how: "Edit → change the title → Save as new revision", expect: [".toast"] });
+        await ctx.close();
+      }
+    },
+  },
 ];
 
 import os from "node:os";
@@ -767,6 +789,33 @@ function heroes(env) {
     archived: take((d) => d.document.status === "archived" && d.document.links.length > 0),
     attention: take((d) => d.document["human-attention"] === "required" && d.document.type !== "skill-draft" && d.revisions === 1),
   };
+}
+/** The mockup's record (four revisions by three authors, Markdown and code fields, links both ways), written for the record scenario. */
+async function recordHero(env) {
+  const key = "ponygirls:todo-capture";
+  const title = "Rework session store before the next release";
+  const pony = env.corpus.filter((d) => d.key.startsWith("ponygirls:"));
+  const archived = pony.find((d) => d.document.status === "archived");
+  const live = pony.filter((d) => d.document.status === "actual");
+  const lorem = "The service validates every request at the boundary, records the attributed identity, and returns a typed fault for anything it cannot prove. Operators can inspect the effective configuration, replay a frozen payload, and compare revisions without leaving the dashboard.";
+  const notes = (renew) => `# Scope\n\nThe session store keeps one row per login and renews it ${renew}.\n\n## Acceptance\n\n- no renewal after \`expires_at\`\n- expiry is decided by the database clock\n- record the outcome in the [runbook](https://example.invalid/runbook)\n\n\`\`\`sql\nUPDATE sessions SET expires_at = now() + interval '30 min'\n WHERE id = $1 AND expires_at > now();\n\`\`\``;
+  const unit = "# systemd unit override used while testing\nsystemd.services.haystack.serviceConfig = {\n  Restart = \"on-failure\";\n  RestartSec = \"2s\";\n  Environment = [ \"SESSION_TTL=30min\" ];\n};";
+  const document = (revision) => ({
+    title, type: "todo", status: "actual", tags: ["docs", "session-store"],
+    description: revision === 4 ? `${lorem}\n\n(revision 4: clarified wording)` : lorem,
+    importance: revision === 4 ? "high" : "normal", "human-attention": revision === 4 ? "required" : "cleared",
+    links: [["supersedes", archived.key], ["motivated-by", live[0].key], ["relates-to", live[1].key]],
+    fields: { notes: { type: "md", content: notes(revision >= 4 ? "on every request. Renewal and expiry race under load; see `SessionStore.renew` and the **lease** column" : "every five minutes") },
+      checklist: ["reproduce", "fix", "verify"], due: revision >= 4 ? "2026-12-01" : "2026-11-24", owner: "codex-agent", unit: { type: "code", language: "nix", content: unit } },
+  });
+  for (const [revision, author] of [[1, "op"], [2, "alice"], [3, "claude-agent"], [4, "claude-agent"]])
+    await env.clients[author].put({ key, documentJson: JSON.stringify(document(revision)), expectedRevision: revision - 1, requestId: env.uuidv7() });
+  for (const [index, source] of live.slice(2, 7).entries()) {
+    const current = await env.clients.alice.get(source.key);
+    const body = JSON.parse(current.document.json);
+    await env.clients.alice.put({ key: source.key, documentJson: JSON.stringify({ ...body, links: [...body.links, [index % 2 ? "relates-to" : "blocked-by", key]] }), expectedRevision: current.revision, requestId: env.uuidv7() });
+  }
+  return { key, title };
 }
 async function bump(env, doc, patch) {
   const client = env.clients.alice;
