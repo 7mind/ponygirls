@@ -220,43 +220,143 @@ manure delete &lt;id&gt;</pre><button type="button" class="btn btn-sm btn-icon" 
 </div>
 </section>
 
-<section id="detail-section" aria-labelledby="detail-name" hidden>
-<button type="button" id="detail-back-button" class="back-button"><span aria-hidden="true">←</span> Back to artifacts</button>
-<div class="page-heading detail-heading">
-<div><p class="eyebrow">ARTIFACT DETAILS</p><h1 id="detail-name">Artifact</h1><p id="detail-subtitle">Metadata and content manifest.</p></div>
-<div class="detail-actions"><button type="button" id="copy-id-button">Copy ID</button><button type="button" id="copy-link-button">Copy content link</button></div>
+<section id="detail-section" data-view="artifact" data-state="loading" aria-labelledby="detail-name" hidden>
+<div id="detail-viewbar" class="viewbar viewbar-line">
+<a id="detail-back-button" class="btn btn-ghost" href="#/artifacts" aria-label="Back to artifacts" title="Back to the list at the position you left it"><span data-icon="arrow-left"></span><span class="hide-sm">Artifacts</span></a>
+<span class="vr hide-sm"></span>
+<span id="detail-kind" class="kind hide-sm" aria-hidden="true"></span>
+<h1 id="detail-name" class="head-name">Artifact</h1>
+<span class="skeleton sk-30" data-skeleton aria-hidden="true"></span>
+<button type="button" id="rename-button" class="btn btn-ghost btn-icon btn-sm" aria-label="Rename" title="Rename"><span data-icon="edit"></span></button>
+<form id="rename-form" class="rename" hidden>
+<input type="text" id="rename-input" class="input" aria-label="Artifact name" maxlength="256" autocomplete="off" spellcheck="false">
+<button type="submit" class="btn btn-primary">Save</button><button type="button" id="rename-cancel-button" class="btn btn-ghost">Cancel</button>
+</form>
+<span id="detail-access" class="hide-sm"></span>
+<span id="detail-state" class="hide-sm"></span>
+<span class="push"></span>
+<button type="button" id="copy-link-button" class="btn hide-sm" title="Copy the content link"><span data-icon="link"></span>Copy link</button>
+<button type="button" id="open-button" class="btn btn-primary" aria-label="Open artifact" title="Opens the content origin"><span data-icon="external"></span><span class="hide-sm">Open artifact</span></button>
+<div class="anchor">
+<button type="button" id="detail-more-button" class="btn btn-icon" aria-label="More actions" aria-haspopup="menu" aria-controls="detail-menu" aria-expanded="false"><span data-icon="more"></span></button>
+<div id="detail-menu" class="menu" role="menu" aria-label="Artifact actions" hidden>
+<button type="button" id="copy-id-button" class="menu-item" role="menuitem"><span data-icon="copy"></span>Copy ID</button>
+<button type="button" id="copy-fetch-button" class="menu-item" role="menuitem"><span data-icon="terminal"></span>Copy CLI download command</button>
+<button type="button" id="reload-button" class="menu-item" role="menuitem"><span data-icon="refresh"></span>Reload</button>
 </div>
-<p id="detail-status" class="detail-status" role="status"></p>
-<div id="rotate-output" class="password-reveal" role="region" aria-label="External password" hidden>
-<div><p class="eyebrow">KEEP PRIVATE</p><h2>External password</h2><p>Share it securely. Dismissing this panel clears it from this page; signed-in users can retrieve the current password again.</p></div>
-<p class="password-value"><code id="rotate-password"></code></p>
-<div class="reveal-actions"><button type="button" id="rotate-copy-button">Copy password</button><button type="button" id="rotate-dismiss-button" class="primary">Dismiss password</button></div>
 </div>
-<div class="detail-layout">
-<div class="detail-primary">
-<section class="detail-panel" aria-labelledby="detail-heading"><div class="panel-heading"><h2 id="detail-heading">Overview</h2><span class="muted">Artifact metadata</span></div><dl id="detail-list" class="metadata-list"></dl></section>
-<section class="detail-panel manifest-section" aria-labelledby="manifest-heading">
-<div class="panel-heading"><h2 id="manifest-heading">Content manifest</h2><span class="muted">Files &amp; directories</span></div>
-<div class="manifest-panel"><table><caption class="sr-only">Paths contained in this artifact</caption><thead><tr><th scope="col">Path</th><th scope="col">Kind</th><th scope="col" class="numeric-cell">Size</th><th scope="col">Download</th></tr></thead><tbody id="file-list"></tbody></table></div>
-<div class="manifest-footer"><p id="files-status" role="status">Loading file manifest…</p><button type="button" id="files-retry-button" hidden>Retry manifest</button></div>
+</div>
+
+<div id="detail-missing" class="page" hidden>
+<div class="empty detail-state">
+<h2 id="detail-missing-title"></h2>
+<p id="detail-missing-text"></p>
+<div class="row"><a id="detail-missing-back" class="btn btn-primary" href="#/artifacts"><span data-icon="arrow-left"></span>Back to artifacts</a><button type="button" id="detail-retry-button" class="btn">Retry</button><a id="detail-expired-link" class="btn" href="#/artifacts?query=expired%3Atrue">List expired artifacts</a></div>
+</div>
+</div>
+
+<div id="detail-page" class="page page-narrow">
+<div id="detail-notice" class="notice detail-notice" role="status" hidden><span data-icon="alert"></span><div class="grow"><div id="detail-status"></div><div id="detail-notice-actions" class="notice-actions" hidden><button type="button" id="detail-reload-action" class="btn btn-sm">Reload artifact</button></div></div><button type="button" id="detail-notice-close" class="btn btn-ghost btn-icon btn-sm" aria-label="Dismiss message"><span data-icon="x"></span></button></div>
+<div class="detail-grid">
+<section class="card area-overview" aria-labelledby="overview-heading">
+<div class="card-head"><h2 id="overview-heading">Overview</h2></div>
+<div class="card-body" data-skeleton aria-hidden="true"><span class="skeleton sk-60"></span><span class="skeleton sk-30"></span><span class="skeleton sk-60"></span><span class="skeleton sk-30"></span><span class="skeleton sk-60"></span></div>
+<div id="detail-list" class="card-body" data-loaded>
+<div class="dl-pair">
+<dl class="dl dl-meta">
+<dt>Kind</dt><dd id="meta-kind"></dd>
+<dt>Size</dt><dd id="meta-size" class="num"></dd>
+<dt>Files</dt><dd id="meta-files" class="num"></dd>
+<dt>Created by</dt><dd id="meta-owner"></dd>
+</dl>
+<dl class="dl dl-meta">
+<dt>Created</dt><dd id="meta-created"></dd>
+<dt>Expires</dt>
+<dd id="meta-expires-view"><span id="meta-expires"></span><button type="button" id="expiry-change-button" class="link-button small" aria-label="Change expiry">Change</button></dd>
+<dd id="meta-expires-edit" hidden>
+<form id="expiry-form" class="inline-edit">
+<select id="expiry-select" class="select" aria-label="Expires" aria-describedby="expiry-note">
+<option value="never">Never</option><option value="86400">In 1 day</option><option value="604800">In 7 days</option><option value="2592000">In 30 days</option><option value="custom">Custom date…</option>
+</select>
+<input type="datetime-local" id="expiry-custom" class="input" aria-label="Expiry date and time" aria-describedby="expiry-note" hidden>
+<button type="submit" class="btn btn-primary">Save</button><button type="button" id="expiry-cancel-button" class="btn btn-ghost">Cancel</button>
+</form>
+</dd>
+<dt id="expiry-note-term" hidden></dt><dd id="expiry-note" class="xs muted dd-note" hidden></dd>
+<dt>Hostname</dt><dd id="meta-hostname"></dd>
+<dt>Project path</dt><dd id="meta-project"></dd>
+<dd class="xs muted dd-span">Hostname and path are uploader-supplied, unverified.</dd>
+</dl>
+</div>
+<dl class="dl dl-meta meta-wide">
+<dt>ID</dt><dd><span id="meta-id" class="mono-val"></span><button type="button" id="meta-copy-id-button" class="btn btn-sm btn-ghost btn-icon" aria-label="Copy ID" title="Copy ID"><span data-icon="copy"></span></button></dd>
+<dt>Content URL</dt><dd><span id="meta-url" class="mono-val"></span><button type="button" id="meta-copy-link-button" class="btn btn-sm btn-ghost btn-icon" aria-label="Copy content link" title="Copy content link"><span data-icon="copy"></span></button></dd>
+<dt>Tags</dt><dd><span id="meta-tags" class="tag-list"></span><span class="xs muted sep">set at upload</span></dd>
+</dl>
+</div>
+</section>
+
+<section class="card area-content" aria-labelledby="content-heading">
+<div class="card-head">
+<h2 id="content-heading">Content <span id="content-summary" class="muted small"></span></h2>
+<div id="manifest-tools" class="content-head-tools">
+<div class="segmented" role="group" aria-label="Manifest layout"><button type="button" data-layout="tree" aria-pressed="true"><span data-icon="folder" data-icon-class="icon-sm"></span>Tree</button><button type="button" data-layout="flat" aria-pressed="false"><span data-icon="list" data-icon-class="icon-sm"></span>Flat list</button></div>
+<div class="filter-input"><span data-icon="filter"></span><input type="search" id="manifest-filter" class="input" aria-label="Filter paths" placeholder="Filter paths" autocomplete="off" spellcheck="false"></div>
+</div>
+</div>
+<div id="manifest-path" class="content-path"><nav id="manifest-crumbs" class="crumbs crumbs-mono grow" aria-label="Folder"></nav><span id="manifest-folder-summary" class="xs muted nowrap"></span></div>
+<div id="upload-pending" class="empty upload-pending" hidden><span data-icon="upload"></span><h3>Upload in progress</h3><p>Content, links and access changes become available when the upload is finished. The paths below are the declared manifest.</p></div>
+<div id="manifest-skeleton" class="card-body" aria-hidden="true"><span class="skeleton sk-60"></span><span class="skeleton sk-30"></span><span class="skeleton sk-60"></span></div>
+<table id="manifest-table" class="table table-inset" aria-label="Content manifest">
+<colgroup><col><col class="col-m-size"><col class="col-m-dl"></colgroup>
+<thead><tr><th scope="col">Path</th><th scope="col" class="col-num">Size</th><th scope="col" class="col-actions th-dl"><span class="hide-sm">Download</span></th></tr></thead>
+<tbody id="file-list" data-list="manifest"></tbody>
+</table>
+<div id="manifest-foot" class="list-foot" data-state="loading"><span id="files-status" role="status"></span><button type="button" id="files-retry-button" class="btn btn-sm" hidden>Retry</button></div>
+</section>
+
+<aside class="area-rail rail-sticky" aria-label="Access and deletion">
+<div class="rail-stack">
+<section class="card" aria-labelledby="access-heading">
+<div class="card-head"><h2 id="access-heading">Access &amp; sharing</h2><span id="access-unsaved" class="chip chip-warn" hidden>Unsaved change</span></div>
+<div class="card-body stack" data-skeleton aria-hidden="true"><span class="skeleton sk-60"></span><span class="skeleton sk-30"></span></div>
+<div class="card-body stack" data-loaded>
+<form id="access-form" class="stack">
+<div id="access-mode" class="segmented segmented-block" role="group" aria-label="Access mode">
+<button type="button" data-mode="internal" aria-pressed="false">Internal</button>
+<button type="button" data-mode="external" aria-pressed="false">External</button>
+<button type="button" data-mode="public" aria-pressed="false">Public</button>
+</div>
+<p id="access-description" class="small muted"></p>
+<div id="access-actions" class="row row-wrap">
+<button type="submit" id="access-save-button" class="btn" disabled>Save access mode</button>
+<button type="button" id="access-discard-button" class="btn btn-ghost" hidden>Discard</button>
+<span id="access-unchanged" class="xs muted">No changes</span>
+</div>
+</form>
+<div id="access-change-notice" class="notice notice-warn" hidden><span data-icon="alert"></span><div><div id="access-change-title" class="notice-title"></div><span id="access-change-text"></span></div></div>
+<div id="access-pending-notice" class="notice notice-neutral" hidden><span data-icon="info"></span><div>Access can be changed once the upload is ready.</div></div>
+<div id="access-notice" class="notice" hidden><span data-icon="alert"></span><div><div id="access-status" role="status" aria-live="polite"></div><div id="access-notice-actions" class="notice-actions" hidden><button type="button" id="access-refresh-button" class="btn btn-sm">Reload access status</button></div></div></div>
+<hr id="password-divider" class="divider" hidden>
+<div id="password-box" class="pw-box" data-revealed="false" hidden>
+<span id="password-label" class="label">External password</span>
+<div class="pw-value"><span id="password-mask" aria-hidden="true">••••••••••••••••••••••••</span><code id="external-password" data-secret="external-password" aria-labelledby="password-label"></code></div>
+<div class="row row-wrap">
+<button type="button" id="password-reveal-button" class="btn btn-sm" aria-label="Reveal password"><span data-icon="eye" data-icon-class="icon-sm"></span><span id="password-reveal-text">Reveal</span></button>
+<button type="button" id="password-copy-button" class="btn btn-sm" aria-label="Copy password"><span data-icon="copy" data-icon-class="icon-sm"></span>Copy</button>
+<button type="button" id="rotate-button" class="btn btn-sm" aria-label="Rotate password…"><span data-icon="refresh" data-icon-class="icon-sm"></span>Rotate…</button>
+</div>
+<p id="password-hint" class="xs muted"></p>
+</div>
+</div>
+</section>
+<section class="card card-danger" aria-labelledby="danger-heading" data-loaded>
+<div class="card-head"><h2 id="danger-heading">Danger zone</h2></div>
+<div class="card-body stack-sm"><p class="small muted">Deleting removes the artifact, its content and every link to it. This cannot be undone.</p><div><button type="button" id="delete-button" class="btn btn-danger-quiet"><span data-icon="trash"></span>Delete artifact…</button></div></div>
 </section>
 </div>
-<aside class="action-panels" aria-label="Artifact actions">
-<section class="detail-panel action-panel"><h2>Open content</h2><p id="content-note">Content opens at the configured artifact endpoint. Internal artifacts use a one-time access grant.</p><button type="button" id="open-button" class="primary">Open artifact</button></section>
-<section class="detail-panel action-panel"><h2>Access &amp; sharing</h2>
-<form id="access-form" class="access-form">
-<label for="access-mode">Access mode</label>
-<select id="access-mode" class="select" aria-describedby="access-description" disabled><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select>
-<p id="access-description">Access changes are available after the upload is ready.</p>
-<button type="submit" id="access-save-button" class="primary" disabled>Save access mode</button>
-<p id="access-status" role="status" aria-live="polite"></p>
-<button type="button" id="access-refresh-button" hidden>Reload access status</button>
-</form>
-<p>All configured users can change access for ready artifacts. Changes revoke existing content grants. Rotating an external password also replaces the current password.</p>
-<button type="button" id="get-password-button" hidden>Copy current password</button>
-<button type="button" id="rotate-button" hidden>Rotate external password</button></section>
-<section class="detail-panel action-panel danger-panel"><h2>Delete artifact</h2><p>Permanently remove this artifact and its content. This action cannot be undone.</p><button type="button" id="delete-button" class="danger">Delete artifact</button></section>
 </aside>
+</div>
 </div>
 </section>
 </main>

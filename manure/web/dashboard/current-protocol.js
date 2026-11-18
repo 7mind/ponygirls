@@ -149,6 +149,11 @@ export const access = (id,visibility) => [new p.Command_PatchArtifact(id,new p.A
   p.Visibility[visibility[0].toUpperCase()+visibility.slice(1)],new p.ExpiryChange_Keep())),p.Result_ArtifactPatched,r=>{
     const value=local(r.artifact);if(r.externalPassword !== null){value.external_password=r.externalPassword;}return value;
   }];
+export const rename = (id,name) => [new p.Command_PatchArtifact(id,new p.ArtifactPatch(name,null,new p.ExpiryChange_Keep())),
+  p.Result_ArtifactPatched,r=>local(r.artifact)];
+// seconds: from now (the server bounds it); null removes the expiry.
+export const expiry = (id,seconds) => [new p.Command_PatchArtifact(id,new p.ArtifactPatch(null,null,
+  seconds === null ? new p.ExpiryChange_Clear() : new p.ExpiryChange_Set(seconds))),p.Result_ArtifactPatched,r=>local(r.artifact)];
 export const rotate = id => [new p.Command_RotateExternalPassword(id),p.Result_PasswordRotated,r=>local(r)];
 export const externalPassword = id => [new p.Command_GetExternalPassword(id),p.Result_ExternalPasswordRetrieved,
   r=>({external_password:r.externalPassword === undefined ? null : r.externalPassword})];

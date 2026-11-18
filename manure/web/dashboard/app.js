@@ -121,7 +121,7 @@ function expressionInput(input, list, change, compositionChange) {
   var $ = ctx.$, setText = ctx.setText, element = ctx.element;
   var accountClient = createAccountClient({ fetch: fetch, requestTimeoutMs: ACCOUNT_REQUEST_TIMEOUT_MS, signal: null });
   var detail = createDetail(ctx, { readRoute: readRoute, routeHash: routeHash, renderList: renderList, invalidateCatalogue: invalidateCatalogue,
-    failVisible: failVisible, backToList: backToList, showCatalogue: function () { showView("catalogue"); }, suspendForDetail: suspendForDetail, detailFailed: detailFailed });
+    failVisible: failVisible, backToList: backToList, showCatalogue: function () { showView("catalogue"); }, suspendForDetail: suspendForDetail });
   var upload = createUpload(ctx, { showLoggedOut: showLoggedOut, reloadAfterUpload: reloadAfterUpload }, detail.copy);
   overlays.hydrateIcons(document);
   // Lists restore their own scroll position (restorePlace); the browser's would land on stale document heights.
@@ -379,7 +379,7 @@ function expressionInput(input, list, change, compositionChange) {
     }
     if (route.id !== null) {
       if (view === "catalogue" && restored === null) { leaveCatalogue(); } else { detailFromList = false; }
-      // The detail section replaces the list once the artifact has loaded (detail.js); other views close now.
+      // detail.js replaces the list with the artifact page (its loading state first); other views close now.
       view = "detail"; $("main").dataset.currentView = "detail"; markNav("artifacts");
       $("upload-section").hidden = true; $("cli-section").hidden = true;
       window.scrollTo(0, 0);
@@ -784,13 +784,6 @@ function expressionInput(input, list, change, compositionChange) {
       if (epoch === ctx.sessionEpoch && generation === listGeneration) { pendingPage = null; pendingReset = false; renderList(); watchList(); }
       pumpRead();
     });
-  }
-  function detailFailed() {
-    summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true; listCache.clear();
-    showView("catalogue");
-    renderList();
-    setCounter("Not loaded");
-    $("retry-list-button").hidden = false;
   }
   function reloadAfterUpload() {
     loadedKey = ""; listCache.clear();
