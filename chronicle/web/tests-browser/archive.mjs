@@ -364,6 +364,15 @@ try {
     await notice.getByRole('button', { name: 'Connection details', exact: true }).click();
     await page.getByRole('dialog', { name: 'Connection details', exact: true }).waitFor();
     await page.keyboard.press('Escape'); await page.getByRole('dialog', { name: 'Connection details', exact: true }).waitFor({ state: 'hidden' });
+    // The table layout outlives the error state: crossing the phone breakpoint and fitting columns keep working, and the
+    // width observation follows the viewport again after Retry.
+    await page.setViewportSize(PHONE); await notice.waitFor(); await chooseTableOption(page, 'Fit columns to content');
+    await page.setViewportSize(DESKTOP); await notice.waitFor(); await chooseTableOption(page, 'Fit columns to content');
+    assert.deepEqual(errors, [], 'no page error in the error state');
+    fixture.archiveFailure = null; fixture.archiveRows = undefined; fixture.archiveRowCount = 3;
+    await notice.getByRole('button', { name: 'Retry', exact: true }).click(); await rows(page).first().waitFor(); await idle(page);
+    for (const viewport of [LAPTOP, PHONE]) { await page.setViewportSize(viewport); await main(page).waitFor(); assert.equal(await horizontalOverflow(page), false, `${viewport.width}px: the table follows the viewport after Retry`); }
+    assert.equal(await table(page).locator('thead th').count(), 2);
     await context.close();
   });
 

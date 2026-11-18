@@ -186,8 +186,9 @@ export function Archive({ connection, requests, findReads, stats, user, draft, s
     </div>}/>
     {failed && <div className="page archive-notice"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">Conversations could not be loaded</div>{results.error} No fallback search was used.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={refreshArchive}>Retry</button><button type="button" className="btn btn-sm btn-ghost" onClick={showConnection}>Connection details</button></div></div></div></div>}
     {results.updateAvailable && <div className="update-pill"><button type="button" onClick={results.applyUpdates}><Icon name="arrow-up" small={true}/>Updates available · show latest</button></div>}
-    {!failed && <ScrollAnchor><div className="archive-table-frame" ref={table.container} data-scroll-container="">
-      <table className="table table-2line archive-table" ref={table.table} aria-label="Conversations" data-list="archive" aria-busy={results.loading || results.refreshing}>{colgroup}
+    {/* The frame and table stay mounted through a load error (hidden table): the column layout observes and measures them. */}
+    <ScrollAnchor><div className="archive-table-frame" ref={table.container} data-scroll-container="">
+      <table className="table table-2line archive-table" ref={table.table} aria-label="Conversations" data-list="archive" aria-busy={results.loading || results.refreshing} hidden={failed}>{colgroup}
         <thead><tr>{shownColumns.map(column => { const sorted = columnOrdered && archive.sort === column.sort; return <th key={column.sort} className={column.cell === 'col-mono' ? undefined : column.cell} data-column-id={column.sort} scope="col" aria-sort={sorted ? archive.direction === SortDirection.Asc ? 'ascending' : 'descending' : undefined}>
           <button type="button" className="th-sort" onClick={() => sortBy(column.sort)} aria-label={`Sort by ${column.label}`}>{column.label}</button><ColumnResize column={table.columns.find(item => item.spec.id === column.sort)!} layout={table}/>
         </th>; })}</tr></thead>
@@ -203,7 +204,7 @@ export function Archive({ connection, requests, findReads, stats, user, draft, s
         ? <div className="list-foot" data-list-state="append-error"><span role="alert">Could not load more conversations: {results.appendError}</span><button type="button" className="btn btn-sm" onClick={results.retryAppend}>Retry</button></div>
         : results.hasMore ? <div className="list-foot" ref={sentinel} data-list-state="more"><span className="spinner" aria-hidden="true"/>Loading {remaining.toLocaleString()} more…<span className="list-foot-count">({results.items.length.toLocaleString()} of {total!.toLocaleString()})</span></div>
         : <div className="list-foot list-end" data-list-state="end">End of list · {plural(total!, 'conversation')}</div>)}
-    </div></ScrollAnchor>}
+    </div></ScrollAnchor>
     {selected !== undefined && <div className="legacy-view"><Dialog title="Source conversation" close={close}><Conversation key={`${relatedSelection ?? selected.head.id}:${archive.selectionKey}`} connection={connection} stats={stats} user={user} sessionId={relatedSelection ?? selected.head.id} initialView={relatedSelection === null ? selected.matchedView ?? selected.publishedView ?? selected.head.view : undefined} archiveHead={relatedSelection === null ? selected : null} select={setRelatedSelection} refresh={refresh} findReads={findReads}/></Dialog></div>}
   </main>;
 }
