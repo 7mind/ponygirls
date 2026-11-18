@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { ChronicleFixture, api } from './fixture.mjs';
+import { ChronicleFixture, advanceClock, api, connectionConfig, pauseClock } from './fixture.mjs';
 import { Goal50Fixture } from './goal50-fixture.mjs';
 
 // Access (groups, memberships, invitations) and the MCP tester: behaviour, authorization fences and the document-scroll model.
@@ -138,6 +138,24 @@ try {
     await page.clock.runFor(MCP_POLL_MS * 5); assert.equal(await alert.isVisible(), true, 'an error never expires');
     assert.equal(await notifications(page).count(), 0); assert.equal(await page.getByLabel('Group name', { exact: true }).inputValue(), 'Denied group');
     assert.equal(await page.getByRole('button', { name: 'Create group', exact: true }).isEnabled(), true); assert.equal(calls(fixture, api.Operation_CreateGroup).length, 1);
+    await context.close();
+  });
+  await group('a group mutation whose reply is lost becomes an uncertain notice: Access stays locked, the receipt lookup and the confirmed-absent retry reuse the request id', async () => {
+    const fixture = new ChronicleFixture(), original = fixture.goal50Operation; let dropCreate = true;
+    fixture.goal50Operation = (operation, envelope, send, entry) => operation instanceof api.Operation_CreateGroup && dropCreate ? true : original?.(operation, envelope, send, entry) ?? false;
+    const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } }), page = await context.newPage();
+    await pauseClock(page);
+    await open(context, page, fixture, `${origin}/tests-browser/harness.html`, 'Access', 'Access management');
+    await page.getByRole('button', { name: 'New group', exact: true }).click(); await page.getByLabel('Group name', { exact: true }).fill('Lost acknowledgement'); await page.getByRole('button', { name: 'Create group', exact: true }).click();
+    await advanceClock(page, connectionConfig.requestTimeout - 1); assert.equal(await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).count(), 0, 'no uncertainty before the request deadline');
+    await advanceClock(page, 1); const uncertain = page.getByRole('region', { name: 'Uncertain mutation', exact: true }); await uncertain.waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Delete group…', exact: true }).first().isDisabled(), true, 'writes stay locked while the outcome is unknown');
+    assert.equal(await page.getByRole('button', { name: 'Invite', exact: true }).first().isDisabled(), true);
+    await uncertain.getByRole('button', { name: 'Look up receipt', exact: true }).click();
+    await page.getByText('No committed receipt was found. You may explicitly retry the same payload with the same request ID.', { exact: true }).waitFor();
+    dropCreate = false; await uncertain.getByRole('button', { name: 'Retry confirmed-absent request', exact: true }).click();
+    await page.getByRole('article', { name: 'Lost acknowledgement', exact: true }).waitFor(); await uncertain.waitFor({ state: 'detached' });
+    const sent = calls(fixture, api.Operation_CreateGroup); assert.equal(sent.length, 2); assert.equal(sent[0].requestId, sent[1].requestId, 'the retry reuses the original request id');
     await context.close();
   });
   await group('non-loopback insecure HTTP: group mutations carry UUID request ids without randomUUID', async () => {

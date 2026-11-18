@@ -6,7 +6,10 @@
 /* The shell's legacy rules (styles.css) still restyle every button, paragraph and notice inside .global-mutation-notices;
  * unlayered, they outrank the shared layer. Reverting to the shared layer here keeps notices on the design system. */
 .mutation-notices :is(.notice,h3,p,code,button){all:revert-layer}
-.mutation-notices .notice h3+p,.mutation-notices .notice p+p{margin-top:var(--space-2)}
+.mutation-notices :is(h3,p){margin:0}
+.mutation-notices .notice-title{font-size:var(--text-sm)}
+.mutation-notices .notice>div>*+*{margin-top:var(--space-1)}
+.mutation-notices .notice>div>.notice-actions{margin-top:var(--space-2)}
 .mutation-notices .notice>div{min-width:0;overflow-wrap:anywhere}
 .mutation-notices .notice-actions{flex-wrap:wrap}
 .mutation-notices code{overflow-wrap:anywhere}
