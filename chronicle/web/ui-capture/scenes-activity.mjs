@@ -1,90 +1,99 @@
-import { VARIANTS, withScene, gotoTab, activityReady, settle, inspect, scrollTo, scrollEnd } from './lib.mjs';
+// Activity (UX-C5, spec §3.1): the states of the mockup `chronicle-activity.html`, named like its shots
+// (`chronicle-activity-<state>[-dark]-<width>.png`, spec §8 item 10) so that each pairs with its mockup for `look`.
+import { PRIMARY, SECONDARY, PHONE, withScene, nav, settle, inspect } from './lib.mjs';
 import { seededFixture, api } from './seed.mjs';
 
-const COLLECTORS = '.activity-collector-scroll', JOBS = '.activity-job-scroll';
-async function activity(page) { await gotoTab(page, 'activity'); await activityReady(page); await settle(page, 600); }
-const editor = (page, name) => page.getByRole('region', { name: `${name} metadata search`, exact: true });
-async function filter(page, name, expression) {
-  const region = editor(page, name);
-  await region.getByRole('combobox', { name: `Search ${name.toLowerCase()} metadata`, exact: true }).fill(expression); await region.getByRole('button', { name: 'Filter', exact: true }).click(); await settle(page, 700);
+const variantOf = (viewport, scheme) => ({ viewport, scheme, suffix: '', deep: false });
+const named = (state, variant) => `chronicle-activity-${state}${variant.scheme === 'dark' ? '-dark' : ''}-${variant.viewport.tag}.png`;
+const main = page => page.getByRole('main', { name: 'Activity', exact: true });
+const section = (page, name) => main(page).getByRole('region', { name, exact: true });
+const tab = (page, name) => main(page).getByRole('navigation', { name: 'Activity sections', exact: true }).getByRole('link', { name: new RegExp(`^${name}`) });
+const rows = (page, list) => main(page).locator(`table[data-list="${list}"] tbody tr[data-row-id]`);
+const idle = (page, list) => main(page).locator(`table[data-list="${list}"][aria-busy="false"]`).waitFor();
+// Expressions the Overview and the cross-links apply (Overview.tsx, Collectors.tsx): the scripted server answers them.
+const FAILED = 'status:"failed"', RUNNING = 'status:"running"', COLLECTOR = 'ci-runner-02';
+function scripted(fixture) {
+  const ids = predicate => fixture.activityJobs.filter(predicate).map(item => item.job.id);
+  fixture.jobExpressions.set(FAILED, ids(item => item.job.state === api.JobState.Failed));
+  fixture.jobExpressions.set(RUNNING, ids(item => item.job.state === api.JobState.Running));
+  const collector = fixture.activityCollectors[2].collectorId;
+  fixture.jobExpressions.set(`collector:${JSON.stringify(collector)}`, ids(item => item.collectorId === collector));
+  fixture.jobExpressions.set(`(${FAILED}) AND collector:${JSON.stringify(collector)}`, ids(item => item.collectorId === collector && item.job.state === api.JobState.Failed));
+  fixture.jobExpressions.set(`(${FAILED}) AND collector:"laptop-a"`, []);
+  return collector;
 }
+async function overview(page) { await nav(page, 'activity').click(); await section(page, 'Overview').locator('.tile-value').first().waitFor(); await main(page).locator('[data-attention]').first().waitFor(); }
+async function list(page, name, listName) { await tab(page, name).click(); await section(page, name).waitFor(); await rows(page, listName).first().waitFor(); await idle(page, listName); }
+async function filterJobs(page, expression) {
+  await section(page, 'Jobs').getByRole('combobox', { name: 'Search indexing job metadata', exact: true }).fill(expression);
+  await section(page, 'Jobs').getByRole('button', { name: 'Filter', exact: true }).click();
+  await page.waitForFunction(value => new URLSearchParams(location.hash.split('?')[1]).get('q') === value, expression); await idle(page, 'activity-jobs');
+}
+const blur = page => page.evaluate(() => { document.activeElement.blur(); });
 
 export function registerActivity(scenario) {
-  for (const [key, variant] of Object.entries(VARIANTS)) {
-    scenario(`activity-${key}`, async ctx => {
-      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-        await activity(page);
-        await shot('activity', 'first-render', 'Activity tab as first rendered: heading actions, totals card, retry/rebuild actions, model-usage disclosure, then two bordered scroll regions', 'click nav "activity"');
-        await shot('activity', 'first-render', 'Activity, whole document (full-page capture): totals, collectors table and jobs table stacked', 'same, full-page', { full: true });
-        await inspect(page, ctx.recorder, `activity-${key}`);
-        if (!variant.deep) return;
-        // ---- scroll situations
-        await page.locator('.activity-collectors').scrollIntoViewIfNeeded(); await page.evaluate(() => scrollTo(0, document.querySelector('.activity-collectors').getBoundingClientRect().top + scrollY - 80)); await settle(page);
-        await shot('activity', 'page-scrolled-collectors', 'Page scrolled so the Collectors table fills the viewport (its inner height is clamp(240px,43vh,470px))', 'window.scrollTo to the collectors section');
-        await scrollTo(page, COLLECTORS, 400);
-        await shot('activity', 'collectors-inner-scrolled', 'Collectors table scrolled inside its own region while the page is also scrolled', 'scroll .activity-collector-scroll');
-        await page.evaluate(() => scrollTo(0, document.querySelector('.activity-jobs').getBoundingClientRect().top + scrollY - 60)); await settle(page);
-        await shot('activity', 'page-scrolled-jobs', 'Page scrolled to the Indexing jobs section', 'window.scrollTo to the jobs section');
-        for (let i = 0; i < 3; i++) await scrollEnd(page, JOBS);
-        await shot('activity', 'jobs-after-infinite-load', `Jobs table scrolled to the end repeatedly: ${await page.locator('.activity-job-row').count()} job rows loaded`, 'scrollTop=scrollHeight x3 on .activity-job-scroll');
-        await page.evaluate(() => scrollTo(0, 0)); await scrollTo(page, JOBS, 0);
-        const m = await page.evaluate(() => { const rect = sel => document.querySelector(sel).getBoundingClientRect(); return { viewportHeight: innerHeight, docHeight: document.documentElement.scrollHeight, collectors: { top: Math.round(rect('.activity-collector-scroll').top + scrollY), height: Math.round(rect('.activity-collector-scroll').height) }, jobs: { top: Math.round(rect('.activity-job-scroll').top + scrollY), height: Math.round(rect('.activity-job-scroll').height) } }; });
-        await ctx.recorder.dump('activity-geometry-1440x900', { ...m, note: 'measured via getBoundingClientRect at scrollY=0' });
-        // ---- popovers & panels
-        await page.getByRole('button', { name: 'About these snapshots' }).click(); await page.waitForTimeout(300);
-        await shot('activity', 'about-popover', 'About these snapshots popover (560 px wide, three dense paragraphs)', 'click "About these snapshots"'); await page.keyboard.press('Escape');
-        await page.getByText('Model usage and indexing settings').click(); await page.locator('.usage-table').waitFor(); await settle(page, 600);
-        await shot('activity', 'model-usage-open', 'Model usage and indexing settings disclosure expanded: purpose table with TPS and token sub-lines', 'click the "Model usage…" summary');
-        await shot('activity', 'model-usage-open', 'Same, full page', 'same, full-page', { full: true });
-        await page.getByText('Model usage and indexing settings').click();
-        await page.getByRole('button', { name: 'Retry all current failed indexing jobs' }).click(); await page.locator('.retry-failed-preview form').waitFor(); await settle(page, 400);
-        await shot('activity', 'retry-failed-preview', 'Retry-all-failed preview opened inline inside the totals card: counts table, confirmation checkbox, confirm / cancel', 'click "Retry all current failed"');
-        await page.getByRole('button', { name: 'Cancel retry preview' }).click();
-        await page.getByRole('button', { name: 'Rebuild archive index' }).click(); await page.locator('[aria-label="Archive rebuild preview"] form').waitFor(); await settle(page, 400);
-        await shot('activity', 'rebuild-preview', 'Rebuild-archive-index preview opened inline', 'click "Rebuild archive index"');
-        await page.getByRole('button', { name: /Cancel/ }).first().click().catch(() => null);
-        // ---- table controls and filters
-        await page.getByRole('button', { name: 'Collectors table options' }).click(); await page.waitForTimeout(300);
-        await shot('activity', 'collectors-table-options', 'Collectors table options popover', 'click the three-dot control in the Collectors table header'); await page.keyboard.press('Escape');
-        await page.locator('.activity-collector-row').first().getByRole('button', { name: /Details/ }).first().click().catch(() => null); await page.waitForTimeout(400);
-        await shot('activity', 'collector-details-popover', 'Collector row details popover (last report, per-run counters)', 'click Details in the first collector row'); await page.keyboard.press('Escape');
-        await page.locator('.activity-job-row').first().scrollIntoViewIfNeeded();
-        await page.locator('.activity-job-row').first().getByRole('button', { name: 'Details' }).click().catch(() => null); await page.waitForTimeout(400);
-        await shot('activity', 'job-details-popover', 'Job row details popover (revision metadata, lease, failure stage)', 'click Details in the first job row'); await page.keyboard.press('Escape');
-        await filter(page, 'Collector', 'freshness:stale');
-        await shot('activity', 'collectors-filtered-stale', 'Collectors filtered to stale reports', 'collector filter "freshness:stale"');
-        await filter(page, 'Indexing job', 'status:failed');
-        await page.getByRole('button', { name: 'History', exact: true }).click(); await settle(page, 800);
-        await page.locator('.activity-jobs').scrollIntoViewIfNeeded();
-        await shot('activity', 'jobs-history-failed', 'Jobs table filtered to failed jobs in History scope', 'job filter "status:failed" + scope History');
-        await page.getByRole('button', { name: 'Current', exact: true }).click(); await filter(page, 'Indexing job', '');
-        await page.locator('.activity-collector-row').first().getByRole('button').last().click().catch(() => null); await settle(page, 700);
-        await shot('activity', 'collector-selected', 'A collector selected from its row: jobs table scoped to it (collector note and filter box)', 'row action button of the first collector');
-        // ---- column chooser makes both tables wide
-        await page.evaluate(() => scrollTo(0, 0));
-        for (const name of ['Collectors', 'Indexing jobs']) { await page.getByRole('button', { name: `${name} table options` }).click(); const open = page.locator('.transient-popover:popover-open'); await open.getByText('Columns', { exact: true }).click(); await open.getByRole('button', { name: 'Show all columns' }).click(); await page.keyboard.press('Escape'); await page.waitForTimeout(300); }
-        await shot('activity', 'all-columns', 'All columns shown in both tables (collectors still filtered to stale reports from an earlier step): sticky first and Actions columns', 'both table options > Columns > Show all columns');
-        await inspect(page, ctx.recorder, 'activity-all-columns');
-        await page.locator(JOBS).evaluate(element => { element.scrollLeft = element.scrollWidth / 2; element.scrollTop = 300; });
-        await page.locator('.activity-jobs').scrollIntoViewIfNeeded(); await settle(page, 500);
-        await shot('activity', 'jobs-wide-scrolled', 'Wide jobs table scrolled diagonally inside its region', 'scrollLeft/scrollTop on .activity-job-scroll');
+  for (const [viewport, scheme] of [[PRIMARY, 'light'], [SECONDARY, 'light'], [PHONE, 'light'], [PRIMARY, 'dark']]) {
+    const variant = variantOf(viewport, scheme);
+    scenario(`activity-${scheme}-${viewport.tag}`, async ctx => {
+      await withScene(ctx, variant, { fixture: seededFixture(scripted) }, async ({ page, shot }) => {
+        await overview(page); await settle(page, 300);
+        await shot('activity', '', 'Activity Overview: tiles, needs attention, job totals, collectors and model usage', 'nav link Activity', { file: named('overview', variant) });
+        await inspect(page, ctx.recorder, `activity-overview-${scheme}-${viewport.tag}`);
+        await list(page, 'Jobs', 'activity-jobs'); await blur(page); await settle(page, 300);
+        await shot('activity', '', 'Jobs: scope, query bar, counter, shortcut row and the document table', 'sub-navigation Jobs', { file: named('jobs', variant) });
+        await inspect(page, ctx.recorder, `activity-jobs-${scheme}-${viewport.tag}`);
       });
     });
   }
   scenario('activity-states', async ctx => {
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.user = new api.UserInfo('alice', 'alice', [api.Scope.Ingest]); }) }, async ({ page, shot }) => {
-      await gotoTab(page, 'activity'); await page.locator('.notice.error').waitFor(); await settle(page, 400);
-      await shot('activity', 'no-read-scope', 'Activity for a user without Read scope: only an error notice', 'sign in as alice with scope Ingest only');
+    const variant = variantOf(PRIMARY, 'light');
+    await withScene(ctx, variant, { fixture: seededFixture(scripted) }, async ({ page, fixture, shot }) => {
+      const collector = fixture.activityCollectors[2].collectorId;
+      await overview(page);
+      await list(page, 'Collectors', 'activity-collectors'); await blur(page); await settle(page, 300);
+      await shot('activity', '', 'Collectors: one list in the document, freshness and current job counts per collector', 'sub-navigation Collectors', { file: named('collectors', variant) });
+      await section(page, 'Collectors').getByRole('button', { name: 'Stale', exact: true }).click(); await section(page, 'Collectors').getByRole('button', { name: 'Filter', exact: true }).click();
+      await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('q') === 'freshness:"stale"'); await idle(page, 'activity-collectors'); await blur(page); await settle(page, 300);
+      await shot('activity', '', 'Collectors filtered to stale reports by the Stale shortcut', 'shortcut Stale + Filter', { file: named('collectors-stale', variant) });
+      await section(page, 'Collectors').getByRole('button', { name: 'Clear Search collector metadata', exact: true }).click(); await idle(page, 'activity-collectors');
+      await rows(page, 'activity-collectors').nth(1).getByRole('button', { name: 'Details', exact: true }).click(); await main(page).locator('tr.row-detail').waitFor(); await settle(page, 300);
+      await shot('activity', '', 'A collector row expanded in place: last report, run counters, leases, Jobs of this collector', 'Details of the second collector', { file: named('collector-detail', variant) });
+      await list(page, 'Jobs', 'activity-jobs');
+      await page.evaluate(() => window.scrollTo(0, 1500)); await settle(page, 400);
+      await shot('activity', '', 'Jobs scrolled 1500 px: masthead, sub-navigation, view bar and table header stick', 'window.scrollTo(0, 1500)', { file: named('jobs-scrolled', variant) });
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await rows(page, 'activity-jobs').nth(2).getByRole('button', { name: 'Details', exact: true }).click(); await main(page).locator('tr.row-detail').waitFor(); await settle(page, 300);
+      await shot('activity', '', 'A job row expanded in place: error and stage, revision, windows, lease, collector link, metadata, actions', 'Details of the third job', { file: named('job-detail', variant) });
+      await rows(page, 'activity-jobs').nth(2).getByRole('button', { name: 'Details', exact: true }).click();
+      await filterJobs(page, FAILED); await blur(page); await settle(page, 300);
+      await shot('activity', '', 'Jobs filtered to failed current jobs', 'expression status:"failed"', { file: named('jobs-failed', variant) });
+      await page.evaluate(id => { location.hash = `#/activity/jobs?q=${encodeURIComponent(`collector:${JSON.stringify(id)}`)}`; }, collector); await section(page, 'Jobs').locator('.activity-chip').waitFor(); await idle(page, 'activity-jobs'); await settle(page, 300);
+      await shot('activity', '', 'Jobs of one collector: the collector restriction is a removable chip of the expression', 'a collector\'s Jobs link', { file: named('jobs-collector', variant) });
+      const last = fixture.activityJobs.findLastIndex(item => item.collectorId === collector);
+      fixture.activityJobs = fixture.activityJobs.map((item, index) => index === last ? item.with({ lastTimestamp: '2030-01-01T00:00:00Z' }) : item);
+      await main(page).getByRole('button', { name: 'Refresh snapshots', exact: true }).click(); await section(page, 'Jobs').getByRole('button', { name: 'Updated jobs · show latest', exact: true }).waitFor(); await page.mouse.move(700, 24); await blur(page); await settle(page, 300);
+      await shot('activity', '', 'A new snapshot reorders the list: the pill announces it, the rows stay until it is applied', 'change a job, Refresh snapshots', { file: named('jobs-updates', variant) });
+      await filterJobs(page, `(${FAILED}) AND collector:"laptop-a"`); await section(page, 'Jobs').locator('[data-list-state="empty"]').waitFor(); await blur(page); await settle(page, 300);
+      await shot('activity', '', 'No matching current jobs: Look in History and Clear filter', 'an unmatched expression', { file: named('empty', variant) });
+      await tab(page, 'Model usage').click(); await page.getByRole('table', { name: 'Completed model call usage', exact: true }).waitFor(); await settle(page, 300);
+      await shot('activity', '', 'Model usage: the measures per purpose and the indexing settings', 'sub-navigation Model usage', { file: named('usage', variant) });
+      await tab(page, 'Maintenance').click(); await section(page, 'Maintenance').waitFor(); await settle(page, 300);
+      await shot('activity', '', 'Maintenance: retry failed jobs and rebuild the archive index as cards with scope figures', 'sub-navigation Maintenance', { file: named('maintenance', variant) });
+      await section(page, 'Maintenance').getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).click();
+      const retry = page.getByRole('dialog', { name: /^Retry \d+ failed indexing jobs\?$/ }); await retry.getByRole('checkbox').waitFor(); await settle(page, 300);
+      await shot('activity', '', 'Retry preview dialog: exact populations and the confirmation checkbox, Cancel focused', 'Retry all current failed indexing jobs', { file: named('retry-confirm', variant) });
+      await retry.getByRole('button', { name: 'Cancel', exact: true }).click(); await retry.waitFor({ state: 'detached' });
+      await section(page, 'Maintenance').getByRole('button', { name: 'Rebuild archive index', exact: true }).click();
+      const rebuild = page.getByRole('dialog', { name: 'Rebuild the archive index?', exact: true }); await rebuild.getByRole('checkbox').waitFor(); await settle(page, 300);
+      await shot('activity', '', 'Rebuild preview dialog: captured HEADs, replacement jobs, current target and the confirmation checkbox', 'Rebuild archive index', { file: named('rebuild-confirm', variant) });
+      await rebuild.getByRole('button', { name: 'Cancel', exact: true }).click();
     });
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-      await activity(page);
-      fixture.activityFailure = 'Metadata expression is invalid at offset 12.'; await page.getByRole('button', { name: /Refresh snapshots/ }).click(); await page.locator('.notice.error').first().waitFor(); await settle(page, 500);
-      await shot('activity', 'error', 'Activity after the server starts rejecting both queries: error notices over empty tables', 'fixture returns Failure; click Refresh snapshots');
+    await withScene(ctx, variant, { fixture: seededFixture(scripted) }, async ({ page, fixture, shot }) => {
+      await page.evaluate(() => { location.hash = '#/activity/jobs'; }); await rows(page, 'activity-jobs').first().waitFor();
+      fixture.activityFailure = 'The server answered with an error (activity-unavailable). Nothing was changed.';
+      await main(page).getByRole('button', { name: 'Refresh snapshots', exact: true }).click(); await section(page, 'Jobs').getByRole('alert').waitFor(); await settle(page, 300);
+      await shot('activity', '', 'Load failure: inline danger notice with Retry instead of an empty table frame', 'the server fails Activity reads; Refresh snapshots', { file: named('error', variant) });
       fixture.activityFailure = null;
-    });
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.activityCollectors = []; f.activityJobs = []; f.jobs = []; }) }, async ({ page, shot }) => {
-      await gotoTab(page, 'activity'); await page.getByText('No matching collectors').waitFor(); await settle(page, 500);
-      await shot('activity', 'empty', 'Activity with no collectors or jobs: two "No matching …" blanks with the decorative glyph', 'fixture returns empty owner');
     });
   });
 }
