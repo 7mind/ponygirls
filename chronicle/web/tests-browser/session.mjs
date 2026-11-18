@@ -522,6 +522,9 @@ try {
     assert.ok(calls(fixture, api.Operation_LocateMessage).some(call => call.operation.messageId === 'm65'), 'off-page navigation uses the locator, not a source scan');
     await loadUntil(page, railPane(page), passageRows, 205); await page.getByText('End of outline · 205 passages', { exact: true }).waitFor();
     assert.deepEqual(calls(fixture, api.Operation_GetPassages).map(call => call.operation.offset), [0, 40, 80, 120, 160, 200]);
+    // The outline restarts at its first page after the reconnect; left scrolled to its end, the side pane would show that
+    // page's end and load the next pages by itself, racing the scroll-driven loading below by one page.
+    await railPane(page).evaluate(pane => pane.scrollTo({ top: 0, behavior: 'instant' }));
     fixture.restart(); await page.waitForFunction(count => document.querySelectorAll('[data-passage-id]').length === count, PASSAGE_PAGE);
     await loadUntil(page, railPane(page), passageRows, 200); await outlineRow(page, /Winning passage beyond the first hundred/).click(); await message(page, 'm65').locator('mark').waitFor();
   });
