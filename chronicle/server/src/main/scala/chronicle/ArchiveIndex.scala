@@ -222,7 +222,8 @@ final class PostgresArchiveIndex(db: Database,archive: PostgresArchive,config: C
     val matched=Option(r.getObject("matched_revision",classOf[java.lang.Integer])).map(revision => ContentView(revision.intValue,Option(r.getObject("matched_generation",classOf[UUID]))))
     val job=Option(r.getObject("job_id",classOf[UUID])).map(jobId => JobInfo(jobId,id,head.revision,JobState.parse(r.getString("job_state")).get,r.getInt("job_attempts"),Option(r.getString("job_error")),r.getInt("completed_windows"),Option(r.getObject("total_windows",classOf[java.lang.Integer])).map(_.intValue),Option(r.getString("failure_stage")).map(IndexingFailureStage.parse(_).getOrElse(throw DomainError("internal","invalid persisted failure stage")))))
     val tags=Sql.json(r,"tag_values").as[List[String]].getOrElse(throw DomainError("projection","invalid projected tags"))
-    val format=Option(r.getString("published_format")).map(value => PassageFormat.parse(value).getOrElse(throw DomainError("projection","invalid published passage format")))
+    val stored=Option(r.getString("published_format"))
+    val format=published.map(_ => if(stored.contains(PassageFormat.ContextAwareProblems.toString)) PassageFormat.ContextAwareProblems else throw DomainError("projection","published generation is not in the current passage format"))
     ArchiveRow(head,published,matched,Option(r.getString("last_timestamp")),r.getInt("message_count"),tags,job,format)
   }
   def browse(reader: String,query: ArchiveQuery,parsed: ParsedArchiveExpression,vectors: List[ArchiveVector]): ArchiveResult = db.transaction { c =>

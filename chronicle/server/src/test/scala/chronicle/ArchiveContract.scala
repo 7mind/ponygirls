@@ -123,7 +123,13 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   private val disabled=mutable.Set.empty[String]
   private val sharing=mutable.Set.empty[(String,String)]
   private def enabled(owner: String): Boolean = config.users.exists(u => u.id==owner && u.enabled) && !disabled(owner)
-  def clearFormat(generation: UUID): Unit = synchronized { generations(generation)=generations(generation).copy(format=None) }
+  def leftover(generation: UUID)(body: => Unit): Unit = {
+    def label(format: PassageFormat): Unit = synchronized { generations(generation)=generations(generation).copy(format=Some(format)) }
+    label(PassageFormat.LegacyAnnotations)
+    try body finally label(PassageFormat.ContextAwareProblems)
+  }
+  private def requireCurrentFormat(stored: Publication): Unit =
+    Check(stored.format.contains(PassageFormat.ContextAwareProblems),"unavailable","generation is not in the current passage format")
   def share(owner: String,reader: String): Unit = synchronized { sharing+=((owner,reader)); () }
   def revokeSharing(owner: String,reader: String): Unit = synchronized { sharing-=((owner,reader)); () }
   def setEnabled(owner: String,value: Boolean): Unit = synchronized { if(value) disabled-=owner else disabled+=owner; () }
@@ -241,15 +247,15 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     view.generationId match {
       case None => PassagesResult(view,PassageFormat.Unindexed,Nil,0,offset)
       case Some(generation) =>
-        val stored=generations(generation); val values=stored.problems.map(_.passages).getOrElse(Vector.empty)
-        PassagesResult(view,stored.format.getOrElse(throw DomainError("unavailable","generation passage provenance is unknown")),values.drop(offset).take(limit).map(ProblemsPublication.info).toList,values.size.toLong,offset)
+        val stored=generations(generation); requireCurrentFormat(stored); val values=stored.problems.map(_.passages).getOrElse(Vector.empty)
+        PassagesResult(view,PassageFormat.ContextAwareProblems,values.drop(offset).take(limit).map(ProblemsPublication.info).toList,values.size.toLong,offset)
     }
   }
   def passageSpans(reader: String,id: UUID,passageId: UUID,offset: Int,limit: Int,selector: Option[ContentView]): PassageSpansResult = synchronized {
     Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
     val generation=view.generationId.getOrElse(throw DomainError("invalid","passage spans require an indexed content view"))
     val stored=generations(generation)
-    Check(stored.format.nonEmpty,"unavailable","generation passage provenance is unknown")
+    requireCurrentFormat(stored)
     val publication=stored.problems.getOrElse(throw DomainError("not-found","passage not found"))
     val passage=publication.passages.find(_.id==passageId).getOrElse(throw DomainError("not-found","passage not found"))
     val spans=publication.spans.iterator.filter(_.passageOrdinal==passage.ordinal).drop(offset).take(limit).map { span =>

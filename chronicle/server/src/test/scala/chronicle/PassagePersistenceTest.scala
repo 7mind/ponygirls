@@ -14,7 +14,8 @@ trait PassagePersistenceFixture {
   def revoke(): Unit
   def disableReader(): Unit
   def purge(id: UUID): Unit
-  def clearFormat(generation: UUID): Unit
+  /** Runs `body` while the generation carries an old-format label without being retired (a leftover), then restores it. */
+  def leftover(generation: UUID)(body: => Unit): Unit
   def transition(owner: String): Unit
 }
 abstract class PassagePersistenceContract extends munit.FunSuite {
@@ -180,12 +181,14 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
     val expiring=f.archive.claim(f.catalog.knownProfiles,ClaimScope.Owner("a"),0).get
     assert(!f.archive.publishProblems(expiring,oneProblem(expiring))); assertEquals(f.archive.session("a",expired.sessionId).indexedRevision,None)
   }}
-  test("BG/GoodCommunication: unknown provenance is unavailable only to new passage reads, never silently relabeled") { withFixture { f =>
-    val (receipt,_,_,view)=publish(f,request(List("A🙂"))); val chunks=f.chunks("a",receipt.sessionId,view)
-    f.clearFormat(view.generationId.get)
-    assertEquals(intercept[DomainError](f.reader.passages("a",receipt.sessionId,0,100,Some(view))).code,"unavailable")
-    assertEquals(f.chunks("a",receipt.sessionId,view),chunks)
-    assertEquals(f.reader.passages("a",receipt.sessionId,0,100,Some(ContentView(1,None))).format,PassageFormat.Unindexed)
+  test("BG/GoodCommunication: a leftover generation in an old format that is not retired is unavailable to passage reads only, never relabeled") { withFixture { f =>
+    val (receipt,_,publication,view)=publish(f,request(List("A🙂"))); val chunks=f.chunks("a",receipt.sessionId,view)
+    f.leftover(view.generationId.get) {
+      assertEquals(intercept[DomainError](f.reader.passages("a",receipt.sessionId,0,100,Some(view))).code,"unavailable")
+      assertEquals(intercept[DomainError](f.reader.passageSpans("a",receipt.sessionId,publication.passages.head.id,0,100,Some(view))).code,"unavailable")
+      assertEquals(f.chunks("a",receipt.sessionId,view),chunks)
+      assertEquals(f.reader.passages("a",receipt.sessionId,0,100,Some(ContentView(1,None))).format,PassageFormat.Unindexed)
+    }
   }}
 }
 final class PassagePersistenceDummyTest extends PassagePersistenceContract {
@@ -200,7 +203,7 @@ final class PassagePersistenceDummyTest extends PassagePersistenceContract {
       def revoke(): Unit=value.revokeSharing("a","b")
       def disableReader(): Unit=value.setEnabled("b",false)
       def purge(id: UUID): Unit=value.purge(id)
-      def clearFormat(generation: UUID): Unit=value.clearFormat(generation)
+      def leftover(generation: UUID)(body: => Unit): Unit=value.leftover(generation)(body)
       def transition(owner: String): Unit={ val plan=value.preview(owner); value(owner,UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true); () }
     })
   }
@@ -217,7 +220,7 @@ final class PassagePersistencePostgresTest extends PassagePersistenceContract {
       def revoke(): Unit=db.transaction { c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id='b'",group); () }
       def disableReader(): Unit=db.transaction { c => Sql.exec(c,"UPDATE ch_users SET enabled=false WHERE id='b'"); () }
       def purge(id: UUID): Unit={ val auth=new Auth(db,config); val owner=auth.browser(auth.login(LoginRequest("a","synthetic"))._2); auth.mutate(owner,ClientEnvelope(UUID.randomUUID(),Operation.Purge(id))); () }
-      def clearFormat(generation: UUID): Unit=db.transaction { c => Sql.exec(c,"UPDATE ch_generations SET passage_format=NULL WHERE id=?",generation); () }
+      def leftover(generation: UUID)(body: => Unit): Unit=Fixtures.leftover(db,generation)(body)
       def transition(owner: String): Unit={ val plan=service.preview(owner); service(owner,UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true); () }
     })
   }

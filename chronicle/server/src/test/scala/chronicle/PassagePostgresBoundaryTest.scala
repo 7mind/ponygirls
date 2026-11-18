@@ -22,9 +22,9 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
   }
   List("ch_problem_passages","ch_problem_spans","ch_problem_pieces").foreach { table =>
     test(s"Effectual GoodCommunication: lease expiry during $table persistence rolls back every new artifact and preserves prior publication") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
-      val receipt=archive.ingest("a",request(List("A original"))); val legacy=claim(archive,catalog,300)
-      val old=Chunk(UUID.randomUUID(),receipt.sessionId,"retained legacy","old",List("old-tag"),Nil,0.0)
-      StoredPublicationFixtures.publish(db,legacy,List(IndexedChunk(old,vector)))
+      val receipt=archive.ingest("a",request(List("A original"))); val prior=claim(archive,catalog,300)
+      val old=Chunk(UUID.randomUUID(),receipt.sessionId,"prior publication","old",List("old-tag"),Nil,0.0)
+      TestPublications.stored(db,prior,List(IndexedChunk(old,vector)))
       val previous=archive.session("a",receipt.sessionId).view
       transition(db)
       db.transaction { c =>
@@ -37,7 +37,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
         assertEquals(census(db,receipt.sessionId),before)
         assertEquals(archive.session("a",receipt.sessionId).view,previous)
         assertEquals(archive.pageChunks("a",receipt.sessionId,0,100,Some(previous)).chunks,List(old))
-        assertEquals(archive.passages("a",receipt.sessionId,0,100,Some(previous)).format,PassageFormat.LegacyAnnotations)
+        assertEquals(archive.passages("a",receipt.sessionId,0,100,Some(previous)).format,PassageFormat.ContextAwareProblems)
       } finally db.transaction { c => Sql.exec(c,s"DROP TRIGGER ch_test_slow_problem ON $table"); Sql.exec(c,"DROP FUNCTION ch_test_slow_problem()") }
     }}
   }
@@ -77,7 +77,7 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
   test("Effectual GoodCommunication: migration restores schema but never infers lost historical format or invents passage extents") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
     val receipt=archive.ingest("a",request(List("A source"))); val current=claim(archive,catalog,300)
     val chunk=Chunk(UUID.randomUUID(),receipt.sessionId,"manual legacy","retained",Nil,Nil,0.0)
-    StoredPublicationFixtures.publish(db,current,List(IndexedChunk(chunk,vector)))
+    TestPublications.stored(db,current,List(IndexedChunk(chunk,vector)))
     val legacyView=archive.session("a",receipt.sessionId).view
     val opaque=UUID.randomUUID(); val p1=UUID.randomUUID()
     db.transaction { c =>

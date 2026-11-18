@@ -28,20 +28,21 @@ object PassageStorage {
       Sql.exec(c,"INSERT INTO ch_problem_pieces(generation,chunk_id,passage_ordinal,piece_ordinal) VALUES(?,?,?,?)",generation,link.chunkId,link.passageOrdinal,ordinal)
     }
   }
-  private def format(c: Connection,generation: UUID): (PassageFormat,Long) = Sql.one(c,"SELECT passage_format,passage_count FROM ch_generations WHERE id=?",generation) { row =>
-    val format=Option(row.getString(1)).flatMap(PassageFormat.parse).filter(_!=PassageFormat.Unindexed).getOrElse(throw DomainError("unavailable","generation passage provenance is unknown"))
-    (format,row.getLong(2))
+  /** The passage count of a generation in the current format; any other stored format is unavailable. */
+  private def currentPassageCount(c: Connection,generation: UUID): Long = Sql.one(c,"SELECT passage_format,passage_count FROM ch_generations WHERE id=?",generation) { row =>
+    Check(Option(row.getString(1)).contains(PassageFormat.ContextAwareProblems.toString),"unavailable","generation is not in the current passage format")
+    row.getLong(2)
   }.getOrElse(throw DomainError("not-found","content view not found"))
   def passages(c: Connection,view: ContentView,offset: Int,limit: Int): PassagesResult = view.generationId match {
     case None => PassagesResult(view,PassageFormat.Unindexed,Nil,0,offset)
     case Some(generation) =>
-      val (kind,total)=format(c,generation)
-      val rows=if(kind==PassageFormat.LegacyAnnotations) Nil else Sql.rows(c,"SELECT value FROM ch_problem_passages WHERE generation=? AND ordinal>=? ORDER BY ordinal LIMIT ?",generation,offset,limit)(r => Wire.decode(PassageInfo.codecJson,Sql.json(r,"value")))
-      PassagesResult(view,kind,rows,total,offset)
+      val total=currentPassageCount(c,generation)
+      val rows=Sql.rows(c,"SELECT value FROM ch_problem_passages WHERE generation=? AND ordinal>=? ORDER BY ordinal LIMIT ?",generation,offset,limit)(r => Wire.decode(PassageInfo.codecJson,Sql.json(r,"value")))
+      PassagesResult(view,PassageFormat.ContextAwareProblems,rows,total,offset)
   }
   def spans(c: Connection,view: ContentView,passageId: UUID,offset: Int,limit: Int): PassageSpansResult = {
     val generation=view.generationId.getOrElse(throw DomainError("invalid","passage spans require an indexed content view"))
-    format(c,generation)
+    currentPassageCount(c,generation)
     val total=Sql.one(c,"SELECT span_count FROM ch_problem_passages WHERE generation=? AND id=?",generation,passageId)(_.getLong(1)).getOrElse(throw DomainError("not-found","passage not found"))
     val values=Sql.rows(c,"SELECT message_id,message_position,start_byte,end_byte FROM ch_problem_spans WHERE generation=? AND passage_id=? AND ordinal>=? ORDER BY ordinal LIMIT ?",generation,passageId,offset.toLong,limit)(r => PassageSourceSpan(r.getString(1),r.getInt(2),r.getInt(3),r.getInt(4)))
     PassageSpansResult(view,passageId,values,total,offset)

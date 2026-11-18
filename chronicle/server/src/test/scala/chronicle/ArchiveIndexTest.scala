@@ -227,7 +227,7 @@ class ArchiveIndexTest extends munit.FunSuite {
       Sql.exec(c,"INSERT INTO ch_messages SELECT sid,1,0,'m0',?::jsonb FROM fixture",messageJson)
       Sql.exec(c,"INSERT INTO ch_archive_fragments SELECT sid,1,0,'needlealpha' FROM fixture")
       if(published) {
-        Sql.exec(c,"INSERT INTO ch_generations SELECT gid,sid,1,? FROM fixture",config.profile)
+        Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format) SELECT gid,sid,1,?,'ContextAwareProblems' FROM fixture",config.profile)
         Sql.exec(c,"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english','needlealpha'),'[1,0,0]'::vector,0 FROM fixture",chunk)
         Sql.exec(c,"INSERT INTO ch_search_chunks SELECT cid,gid,sid,1,?,to_tsvector('english','needlealpha'),'[1,0,0]'::vector FROM fixture",config.profile)
         Sql.exec(c,"UPDATE ch_sources s SET published=f.gid FROM fixture f WHERE s.id=f.sid")

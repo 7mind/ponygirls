@@ -61,8 +61,7 @@ class ReindexCohortTest extends munit.FunSuite {
     val secondPublication=publication(second,false)
     assert(archive.publishProblems(second,secondPublication)); val previous=archive.session("a",receipt.sessionId).view
     db.transaction { c =>
-      Sql.exec(c,"UPDATE ch_generations SET profile='obsolete-library-policy',passage_format='LegacyAnnotations' WHERE id=?",oldest.generationId.get)
-      Sql.exec(c,"UPDATE ch_generations SET profile='obsolete-library-policy',passage_format='ContiguousProblems' WHERE id=?",previous.generationId.get)
+      Sql.exec(c,"UPDATE ch_generations SET profile='obsolete-library-policy' WHERE id IN(?,?)",oldest.generationId.get,previous.generationId.get)
       Sql.exec(c,"UPDATE ch_owner_targets SET profile='unconfigured-policy' WHERE owner='a'")
     }
     val service=new PostgresOwnerReindex(db); val plan=service.preview("a"); val id=UUID.randomUUID()
@@ -152,7 +151,6 @@ class ReindexCohortTest extends munit.FunSuite {
     val original=Fixtures.snapshot(); val receipt=archive.ingest("a",original)
     val first=archive.claim(archive.knownProfiles,ClaimScope.Owner("a"),300).get
     assert(archive.publishProblems(first,publication(first,false))); val old=archive.session("a",receipt.sessionId).view
-    db.transaction(c => Sql.exec(c,"UPDATE ch_generations SET passage_format='LegacyAnnotations' WHERE id=?",old.generationId.get))
     val service=new PostgresOwnerReindex(db); val plan=service.preview("a"); val id=UUID.randomUUID()
     service("a",id,plan.targetProfile,plan.selectionHash,true)
     archive.ingest("a",original.copy(requestId=UUID.randomUUID(),expectedRevision=1))

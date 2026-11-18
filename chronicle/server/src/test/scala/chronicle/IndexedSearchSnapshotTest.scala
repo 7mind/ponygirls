@@ -67,7 +67,7 @@ class IndexedSearchSnapshotTest extends munit.FunSuite {
       Sql.exec(c,fixture)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT DISTINCT sid,'a',sid::text,1,gid FROM fixture ON CONFLICT DO NOTHING")
       Sql.exec(c,s"INSERT INTO ch_revisions SELECT $template,1,?::jsonb",snapshot)
-      Sql.exec(c,"INSERT INTO ch_generations SELECT DISTINCT gid,sid,1,? FROM fixture ON CONFLICT DO NOTHING",config.profile)
+      Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format) SELECT DISTINCT gid,sid,1,?,'ContextAwareProblems' FROM fixture ON CONFLICT DO NOTHING",config.profile)
       Sql.exec(c,s"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english','synthetic'),(SELECT array_agg(sin(i*d*0.031)+cos(i*d*0.017))::vector FROM generate_series(1,$dimensions)d),0 FROM fixture",chunk)
       Sql.exec(c,"INSERT INTO ch_search_chunks SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN fixture f ON f.cid=ch.id JOIN ch_generations g ON g.id=ch.generation")
     }

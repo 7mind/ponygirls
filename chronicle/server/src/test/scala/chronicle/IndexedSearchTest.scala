@@ -86,7 +86,7 @@ class IndexedSearchTest extends munit.FunSuite {
       Sql.exec(c,fixture)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT sid,owner,i::text,1,gid FROM fixture")
       Sql.exec(c,s"$revision WHERE $templates",snapshot)
-      Sql.exec(c,"INSERT INTO ch_generations SELECT gid,sid,1,? FROM fixture",config.profile)
+      Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format) SELECT gid,sid,1,?,'ContextAwareProblems' FROM fixture",config.profile)
       Sql.exec(c,s"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english',CASE WHEN i%61=0 THEN 'targetterm synthetic' ELSE 'commonterm synthetic' END),(SELECT array_agg(sin(i*d*0.031)+cos(i*d*0.017))::vector FROM generate_series(1,${config.embedding.dimensions})d),0 FROM fixture",chunk)
       Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=2")
       Sql.exec(c,s"DROP INDEX ch_search_hnsw_d${config.embedding.dimensions}")

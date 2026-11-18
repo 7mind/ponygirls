@@ -42,21 +42,22 @@ final class DashboardOperationsTest extends munit.FunSuite {
     assert(usage.samples.forall(sample => sample.inFlight==0 && sample.input.tokensPerSecond.isEmpty))
     assertEquals(c.providerCalls.get(),0)
   }}
-  test("Blackbox-GoodCommunication: passage pages require exact immutable views and preserve honest legacy source-only distinctions") { database { c =>
+  test("Blackbox-GoodCommunication: passage pages require exact immutable views; a retired generation with an old-format label answers indexed-view-retired") { database { c =>
     val source=c.archive.ingest("a",Fixtures.snapshot())
     val sourceView=ContentView(1,None)
     val unindexed=run(c,c.owner,Operation.GetPassages(source.sessionId,sourceView,0,40)).asInstanceOf[Result.Passages].result
     assertEquals(unindexed,PassagesResult(sourceView,PassageFormat.Unindexed,Nil,0L,0))
-    val claim=c.archive.claim(c.archive.knownProfiles,ClaimScope.Owner("a"),300).get
-    StoredPublicationFixtures.publish(c.db,claim,Nil)
-    val legacy=c.archive.session("a",source.sessionId).view
-    assertEquals(run(c,c.owner,Operation.GetPassages(source.sessionId,legacy,0,40)),Result.Passages(PassagesResult(legacy,PassageFormat.LegacyAnnotations,Nil,0L,0)))
+    // A tombstone as the legacy retirement leaves it: the row with its revision and its historical format and profile labels.
+    val tombstone=ContentView(1,Some(UUID.randomUUID()))
+    c.db.transaction(x => Sql.exec(x,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format,retired) VALUES(?,?,1,'retired-policy-profile','LegacyAnnotations',true)",tombstone.generationId.get,source.sessionId))
+    List(Operation.GetPassages(source.sessionId,tombstone,0,40),Operation.GetPassageSpans(source.sessionId,tombstone,UUID.randomUUID(),0,40),Operation.GetSession(source.sessionId,Some(tombstone))).foreach { operation =>
+      assertEquals(intercept[DomainError](run(c,c.owner,operation)).code,"indexed-view-retired")
+    }
     assertEquals(run(c,c.owner,Operation.GetPassages(source.sessionId,sourceView,0,40)),Result.Passages(unindexed))
     val missing=ContentView(1,Some(UUID.randomUUID()))
     assertEquals(intercept[DomainError](run(c,c.owner,Operation.GetPassages(source.sessionId,missing,0,40))).code,"not-found")
-    assertEquals(intercept[DomainError](run(c,c.owner,Operation.GetPassageSpans(source.sessionId,legacy,UUID.randomUUID(),0,40))).code,"not-found")
     val other=c.auth.browser(c.auth.login(LoginRequest("b","synthetic"))._2)
-    assertEquals(intercept[DomainError](run(c,other,Operation.GetPassages(source.sessionId,legacy,0,40))).code,"not-found")
+    assertEquals(intercept[DomainError](run(c,other,Operation.GetPassages(source.sessionId,tombstone,0,40))).code,"not-found")
     assertEquals(c.providerCalls.get(),0)
   }}
   test("Effectual-GoodCommunication: owner preview routes to browser-only current authorization without mutation or inference") { database { c =>

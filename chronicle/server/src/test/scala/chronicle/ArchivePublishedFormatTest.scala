@@ -39,7 +39,7 @@ class ArchivePublishedFormatTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](archive.passages("a",receipt.sessionId,0,100,Some(published))).code,"indexed-view-retired")
     assertEquals(archive.headSnapshot("a",receipt.sessionId),original)
   }}
-  test("Blackbox GoodCommunication: missing stored provenance stays unknown even for a known current profile and live ACL controls its visibility") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
+  test("Blackbox GoodCommunication: the published format is read from the stored generation, a leftover old-format label fails the projection, and live ACL controls its visibility") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
     val request=Fixtures.snapshot(); val receipt=archive.ingest("a",request)
     val index=new PostgresArchiveIndex(db,archive,config)
     val unindexed=browse(index,"a").rows.head
@@ -49,12 +49,10 @@ class ArchivePublishedFormatTest extends munit.FunSuite {
     val group=UUID.randomUUID()
     db.transaction { c => Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','synthetic')",group); Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b')",group,group) }
     assertEquals(browse(index,"b").rows.head.publishedFormat,Some(PassageFormat.ContextAwareProblems))
-    db.transaction(c => Sql.exec(c,"UPDATE ch_generations SET passage_format=NULL WHERE id=?",published.generationId.get))
-    val unknown=browse(index,"a").rows.head
-    assertEquals(unknown.publishedView,Some(published)); assertEquals(unknown.publishedFormat,None)
-    assertEquals(unknown.headJob.map(_.state),Some(JobState.Complete))
+    Fixtures.leftover(db,published.generationId.get)(assertEquals(intercept[DomainError](browse(index,"a")).code,"projection"))
     archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-    assertEquals(browse(index,"a").rows.head.publishedView,Some(published)); assertEquals(browse(index,"a").rows.head.publishedFormat,None)
+    val pending=browse(index,"a").rows.head
+    assertEquals(pending.publishedView,Some(published)); assertEquals(pending.publishedFormat,Some(PassageFormat.ContextAwareProblems))
     db.transaction(c => Sql.exec(c,"DELETE FROM ch_members WHERE group_id=? AND user_id='b'",group))
     assertEquals(browse(index,"b").total,0L)
     db.transaction { c => Sql.exec(c,"INSERT INTO ch_members VALUES(?,'b')",group); Sql.exec(c,"UPDATE ch_users SET enabled=false WHERE id='b'") }

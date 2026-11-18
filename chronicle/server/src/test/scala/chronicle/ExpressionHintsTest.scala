@@ -322,7 +322,7 @@ final class ExpressionHintsPostgresTest extends ExpressionHintsContract {
           head.revisions.foreach(revision(c,head.id,_))
           if(head.publishedTags.nonEmpty) {
             val generation=UUID.randomUUID()
-            Sql.exec(c,"INSERT INTO ch_generations VALUES(?,?,?,?)",generation,head.id,1,target)
+            Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format) VALUES(?,?,?,?,'ContextAwareProblems')",generation,head.id,1,target)
             Sql.exec(c,"UPDATE ch_sources SET published=? WHERE id=?",generation,head.id)
             head.publishedTags.foreach(tag => Sql.exec(c,"INSERT INTO ch_generation_tags VALUES(?,?)",generation,tag))
           }

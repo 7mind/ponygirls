@@ -25,7 +25,7 @@ class VersionedSearchTest extends munit.FunSuite {
       Sql.exec(c,s"CREATE TEMP TABLE fixture AS SELECT i,md5('vsource'||i)::uuid AS sid,md5('vgeneration'||i)::uuid AS gid,md5('vchunk'||i)::uuid AS cid FROM generate_series(1,$corpusSize)i")
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT sid,'a',i::text,1,gid FROM fixture")
       Sql.exec(c,"INSERT INTO ch_revisions SELECT sid,1,?::jsonb FROM fixture",snapshot)
-      Sql.exec(c,"INSERT INTO ch_generations SELECT gid,sid,1,? FROM fixture",config.profile)
+      Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile,passage_format) SELECT gid,sid,1,?,'ContextAwareProblems' FROM fixture",config.profile)
       Sql.exec(c,"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english','archive'),'[1,0,0]'::vector,0 FROM fixture",chunk)
       Sql.exec(c,"INSERT INTO ch_search_chunks SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN ch_generations g ON g.id=ch.generation")
       Sql.exec(c,"INSERT INTO ch_jobs(id,session_id,revision,profile,state) SELECT md5('vjob'||i)::uuid,sid,1,?,'Running' FROM fixture WHERE i=1",config.profile)
