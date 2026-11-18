@@ -76,13 +76,16 @@ Behaviour that matters:
 
 Where they run:
 
-- `chronicle.LegacyRetirementScriptsTest` (2 cases) runs in Chronicle's full suite (`chronicle/scripts/test-postgres.sh`,
-  Nix check `chronicle-backend-full`); `haystack.storage.LegacyRetirementScriptsTest` (3 cases) in Haystack's
+- `chronicle.LegacyRetirementScriptsTest` (4 cases) runs in Chronicle's full suite (`chronicle/scripts/test-postgres.sh`,
+  Nix check `chronicle-backend-full`); `haystack.storage.LegacyRetirementScriptsTest` (5 cases) in Haystack's
   (`haystack/scripts/test-postgres-scala.sh`, Nix check `haystack-jvm`). Both checks' filtered sources include this
   directory and the retained `check-legacy-free.sql` they drive, so `scripts/verify chronicle | haystack | all` runs
   them. They build databases holding every legacy shape with the repository's existing fixtures and the product's
   own relocation and rebuild code, then drive the scripts. In the Chronicle suite the annotator and embedder are
   scripted; claim, publication, rebuild, retirement and the worker are the product's code.
+  Their child processes (`run.sh`, `psql`) get an allow-listed environment (`PATH`, `LANG`, `LC_ALL`, `TMPDIR`) plus
+  the fixture's connection, never an inherited `PG*`/`PSQL`/`LR_*`/`KUBE*` setting, and a bounded wait that kills the
+  child and its descendants (`LegacyRetirementChild` in each suite; `test-guard.sh` does not run there).
 - The shell fixture suites `test-drop-databases.sh` and `test-scripts.sh` (operator wrapper against a stand-in
   `kubectl`, drop guard, shared predicates, test isolation) need PostgreSQL and are one on-demand check, not part
   of verify: `nix build .#onDemand.legacy-retirement-scripts` (`nix/tests/legacy-retirement-scripts.nix`). Run it

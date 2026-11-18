@@ -7,6 +7,8 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files, Path}
 import java.sql.DriverManager
 import java.util.Properties
+import java.util.concurrent.{TimeUnit, TimeoutException}
+import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 import TestSupport.*
 import LegacyStoredDocumentCheck.Verdict
@@ -22,36 +24,26 @@ class LegacyRetirementScriptsTest extends ContractSuite {
     def steps(key: String): Long = out.linesIterator.collect { case line if line.startsWith(s"LR.step.$key|") => line.drop(key.length + 9).toLong }.sum
   }
   private def database(db: JdbcDatabase): IO[String] = db.transaction(c => Sql.rows(c, "SELECT current_database()")(_.getString(1)).head)
-  private def script(database: String, arguments: String*): IO[Ran] = IO.blocking {
+  private def connection(database: String): Map[String, String] = {
     val config = databaseConfig
     val address = config.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_ != '/')
+    Map("PGHOST" -> address.takeWhile(_ != ':'), "PGPORT" -> address.dropWhile(_ != ':').drop(1), "PGUSER" -> config.user,
+      "PGPASSWORD" -> CredentialFile.read(config.passwordFile), "PGDATABASE" -> database)
+  }
+  // IO.interruptible: a cancelled or timed-out test interrupts the wait, and the helper kills the child.
+  private def script(database: String, arguments: String*): IO[Ran] = IO.interruptible {
     // The forked test JVM's working directory is the repository root or the project directory, depending on the build settings.
     val relative = Path.of("scripts", "one-off", "legacy-retirement", "run.sh")
     val located = Iterator.iterate(Path.of("").toAbsolutePath)(_.getParent).takeWhile(_ != null).map(_.resolve(relative)).find(Files.isRegularFile(_)).getOrElse(fail("legacy retirement driver is absent"))
-    val builder = new ProcessBuilder((List("sh", located.toString, "haystack") ++ arguments).asJava)
-    val env = builder.environment()
-    List("PGSERVICE", "PGOPTIONS", "PGSSLMODE").foreach(env.remove)
-    env.put("PGHOST", address.takeWhile(_ != ':')); env.put("PGPORT", address.dropWhile(_ != ':').drop(1)); env.put("PGUSER", config.user)
-    env.put("PGPASSWORD", CredentialFile.read(config.passwordFile)); env.put("PGDATABASE", database)
-    env.put("PSQL", Path.of(sys.env.getOrElse("POSTGRES_HOME", throw new IllegalStateException("POSTGRES_HOME required (nix develop .#chronicle)")), "bin", "psql").toString)
-    val out = Files.createTempFile("legacy-retirement-", ".out"); val err = Files.createTempFile("legacy-retirement-", ".err")
-    builder.redirectOutput(out.toFile).redirectError(err.toFile)
-    val exit = builder.start().waitFor()
-    try Ran(exit, Files.readString(out, UTF_8), Files.readString(err, UTF_8)) finally { Files.delete(out); Files.delete(err) }
+    val psql = Path.of(sys.env.getOrElse("POSTGRES_HOME", throw new IllegalStateException("POSTGRES_HOME required (nix develop .#chronicle)")), "bin", "psql").toString
+    val ran = LegacyRetirementChild.run(List("sh", located.toString, "haystack") ++ arguments, sys.env, connection(database) + ("PSQL" -> psql), LegacyRetirementChild.timeout)
+    Ran(ran.exit, ran.out, ran.err)
   }
-  private def psqlFile(database: String, file: Path): IO[Ran] = IO.blocking {
-    val config = databaseConfig
-    val address = config.jdbcUrl.stripPrefix("jdbc:postgresql://").takeWhile(_ != '/')
+  private def psqlFile(database: String, file: Path): IO[Ran] = IO.interruptible {
     val located = Iterator.iterate(Path.of("").toAbsolutePath)(_.getParent).takeWhile(_ != null).map(_.resolve(file)).find(Files.isRegularFile(_)).getOrElse(fail(s"missing SQL file $file"))
-    val builder = new ProcessBuilder(List(Path.of(sys.env("POSTGRES_HOME"), "bin", "psql").toString, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", located.toString).asJava)
-    val env = builder.environment()
-    List("PGSERVICE", "PGOPTIONS", "PGSSLMODE").foreach(env.remove)
-    env.put("PGHOST", address.takeWhile(_ != ':')); env.put("PGPORT", address.dropWhile(_ != ':').drop(1)); env.put("PGUSER", config.user)
-    env.put("PGPASSWORD", CredentialFile.read(config.passwordFile)); env.put("PGDATABASE", database)
-    val out = Files.createTempFile("legacy-retirement-", ".out"); val err = Files.createTempFile("legacy-retirement-", ".err")
-    builder.redirectOutput(out.toFile).redirectError(err.toFile)
-    val exit = builder.start().waitFor()
-    try Ran(exit, Files.readString(out, UTF_8), Files.readString(err, UTF_8)) finally { Files.delete(out); Files.delete(err) }
+    val ran = LegacyRetirementChild.run(List(Path.of(sys.env("POSTGRES_HOME"), "bin", "psql").toString, "-X", "-q", "-v", "ON_ERROR_STOP=1", "-f", located.toString),
+      sys.env, connection(database), LegacyRetirementChild.timeout)
+    Ran(ran.exit, ran.out, ran.err)
   }
   /** The codec check exactly as check-stored-documents.sh performs it: psql export, then the real decoder. */
   private def codecCheck(database: String, mutate: String => String = identity): IO[LegacyStoredDocumentCheck.Report] =
@@ -85,6 +77,21 @@ class LegacyRetirementScriptsTest extends ContractSuite {
 
   // Part of the service's full suite (the suite check's source includes scripts/one-off/legacy-retirement and the
   // retained check-legacy-free.sql); deleted together with the one-off scripts (that directory's README).
+  test("legacy retirement child: only allow-listed variables and the fixture's connection reach the scripts") {
+    val parent = Map("PATH" -> "/run/bin", "LANG" -> "C.UTF-8", "PGHOSTADDR" -> "203.0.113.7", "PGHOST" -> "production", "PGSERVICE" -> "prod",
+      "PGPASSFILE" -> "/p", "PSQL" -> "kubectl exec core-0 -- psql", "LR_CONTEXT" -> "tavily-lne", "KUBECONFIG" -> "/k", "HOME" -> "/home/operator")
+    assertEquals(LegacyRetirementChild.environment(parent, Map("PGHOST" -> "127.0.0.1", "PSQL" -> "/fixture/psql")),
+      Map("PATH" -> "/run/bin", "LANG" -> "C.UTF-8", "PGHOST" -> "127.0.0.1", "PSQL" -> "/fixture/psql"))
+  }
+  test("legacy retirement child: a child that outlives its bound is killed with its descendants") {
+    val pidFile = Files.createTempFile("legacy-retirement-", ".pid")
+    try {
+      val started = System.nanoTime()
+      intercept[TimeoutException](LegacyRetirementChild.run(List("sh", "-c", s"sleep 60 & echo $$! > $pidFile; wait"), sys.env, Map.empty, 1.second))
+      assert((System.nanoTime() - started).nanos < 30.seconds, "the bounded wait did not return")
+      assert(!LegacyRetirementChild.running(Files.readString(pidFile).trim.toLong), "the descendant still runs")
+    } finally Files.delete(pidFile)
+  }
   test("legacy retirement: Node-era replay rows are counted, refused on failed preconditions, deleted once, and the current service keeps every acknowledged document") {
     val oldId = requestId(); val oldFailureId = requestId()
     val original = doc("original", "{\"n\":9007199254740993,\"decimal\":0.10}")
@@ -233,5 +240,40 @@ class LegacyRetirementScriptsTest extends ContractSuite {
       startup <- Migrations.initialize(db, Activity).attempt
       _ = assert(startup.left.exists { case fault: Fault => fault.code == "config"; case _ => false }, startup.toString)
     } yield () })
+  }
+}
+
+/** The child processes of the one-off scripts. Environment: an allow-list of tool locations and locale plus the
+  * fixture's connection, so no inherited PGHOSTADDR, PGSERVICE, PSQL, LR_* or KUBE* setting can redirect them (the
+  * shell suites' test-guard.sh is not involved here). Wait: bounded; on timeout or interruption the child and its
+  * descendants are killed and reaped.
+  */
+private[storage] object LegacyRetirementChild {
+  val inherited: Set[String] = Set("PATH", "LANG", "LC_ALL", "TMPDIR")
+  /** Longest legitimate run.sh session in the fixture (seconds); below ContractSuite's munitTimeout. */
+  val timeout: FiniteDuration = 45.seconds
+  final case class Result(exit: Int, out: String, err: String)
+  def environment(parent: Map[String, String], fixture: Map[String, String]): Map[String, String] =
+    parent.filter(entry => inherited.contains(entry._1)) ++ fixture
+  def run(command: List[String], parent: Map[String, String], fixture: Map[String, String], limit: FiniteDuration): Result = {
+    val builder = new ProcessBuilder(command.asJava)
+    val env = builder.environment(); env.clear(); env.putAll(environment(parent, fixture).asJava)
+    val out = Files.createTempFile("legacy-retirement-", ".out"); val err = Files.createTempFile("legacy-retirement-", ".err")
+    builder.redirectOutput(out.toFile).redirectError(err.toFile)
+    try {
+      val process = builder.start()
+      try {
+        if (!process.waitFor(limit.toMillis, TimeUnit.MILLISECONDS)) throw new TimeoutException(s"${command.head} did not finish within $limit")
+        Result(process.exitValue(), Files.readString(out, UTF_8), Files.readString(err, UTF_8))
+      } finally if (process.isAlive) { // timeout or interruption: the child's descendants (psql) first, then the child
+        process.descendants().forEach(child => { child.destroyForcibly(); () })
+        process.destroyForcibly(); process.waitFor()
+      }
+    } finally { Files.delete(out); Files.delete(err) }
+  }
+  /** Linux: a process that is gone or a zombie no longer runs. */
+  def running(pid: Long): Boolean = {
+    val stat = Path.of("/proc", pid.toString, "stat")
+    try !Files.readString(stat).split("\\) ").lift(1).exists(_.startsWith("Z")) catch { case _: java.nio.file.NoSuchFileException => false }
   }
 }

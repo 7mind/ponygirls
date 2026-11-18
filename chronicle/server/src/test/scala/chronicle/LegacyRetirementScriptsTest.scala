@@ -6,6 +6,7 @@ import java.nio.charset.StandardCharsets.UTF_8
 import java.nio.file.{Files,Path}
 import java.sql.DriverManager
 import java.util.{Properties,UUID}
+import java.util.concurrent.{TimeUnit,TimeoutException}
 import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
@@ -29,27 +30,17 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     def runIn(database: String,arguments: String*): Ran = {
       val script=Path.of("..","scripts","one-off","legacy-retirement","run.sh").toAbsolutePath.normalize()
       Check(Files.isRegularFile(script),"test","legacy retirement driver is absent")
-      val builder=new ProcessBuilder((List("sh",script.toString,"chronicle")++arguments).asJava)
-      val env=builder.environment()
-      List("PGSERVICE","PGOPTIONS","PGSSLMODE").foreach(env.remove)
-      env.put("PGHOST",host); env.put("PGPORT",port); env.put("PGUSER",config.databaseUser); env.put("PGPASSWORD",Fixtures.databasePassword); env.put("PGDATABASE",database)
-      env.put("PSQL",Path.of(sys.env.getOrElse("POSTGRES_HOME",throw DomainError("test","POSTGRES_HOME required (nix develop .#chronicle)")),"bin","psql").toString)
-      val out=Files.createTempFile("legacy-retirement-",".out"); val err=Files.createTempFile("legacy-retirement-",".err")
-      builder.redirectOutput(out.toFile).redirectError(err.toFile)
-      val exit=builder.start().waitFor()
-      try Ran(exit,Files.readString(out,UTF_8),Files.readString(err,UTF_8)) finally { Files.delete(out); Files.delete(err) }
+      val psql=Path.of(sys.env.getOrElse("POSTGRES_HOME",throw DomainError("test","POSTGRES_HOME required (nix develop .#chronicle)")),"bin","psql").toString
+      val ran=LegacyRetirementChild.run(List("sh",script.toString,"chronicle")++arguments,sys.env,connection(database)+("PSQL"->psql),LegacyRetirementChild.timeout)
+      Ran(ran.exit,ran.out,ran.err)
     }
+    private def connection(database: String): Map[String,String] =
+      Map("PGHOST"->host,"PGPORT"->port,"PGUSER"->config.databaseUser,"PGPASSWORD"->Fixtures.databasePassword,"PGDATABASE"->database)
     /** A plain psql file against the scratch database (the retained check, the proposed clean-up schema). */
     def psql(file: Path): Ran = {
       Check(Files.isRegularFile(file),"test",s"missing SQL file $file")
-      val builder=new ProcessBuilder(List(Path.of(sys.env("POSTGRES_HOME"),"bin","psql").toString,"-X","-q","-v","ON_ERROR_STOP=1","-f",file.toString).asJava)
-      val env=builder.environment()
-      List("PGSERVICE","PGOPTIONS","PGSSLMODE").foreach(env.remove)
-      env.put("PGHOST",host); env.put("PGPORT",port); env.put("PGUSER",config.databaseUser); env.put("PGPASSWORD",Fixtures.databasePassword); env.put("PGDATABASE",name)
-      val out=Files.createTempFile("legacy-retirement-",".out"); val err=Files.createTempFile("legacy-retirement-",".err")
-      builder.redirectOutput(out.toFile).redirectError(err.toFile)
-      val exit=builder.start().waitFor()
-      try Ran(exit,Files.readString(out,UTF_8),Files.readString(err,UTF_8)) finally { Files.delete(out); Files.delete(err) }
+      val ran=LegacyRetirementChild.run(List(Path.of(sys.env("POSTGRES_HOME"),"bin","psql").toString,"-X","-q","-v","ON_ERROR_STOP=1","-f",file.toString),sys.env,connection(name),LegacyRetirementChild.timeout)
+      Ran(ran.exit,ran.out,ran.err)
     }
     def one[A](sql: String,args: Sql.Param*)(read: java.sql.ResultSet=>A): A = db.transaction(c=>Sql.one(c,sql,args*)(read).get)
     def count(sql: String,args: Sql.Param*): Long = one(sql,args*)(_.getLong(1))
@@ -170,6 +161,21 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
 
   // Part of the service's full suite (the suite check's source includes scripts/one-off/legacy-retirement and the
   // retained check-legacy-free.sql); deleted together with the one-off scripts (that directory's README).
+  test("legacy retirement child: only allow-listed variables and the fixture's connection reach the scripts") {
+    val parent=Map("PATH"->"/run/bin","LANG"->"C.UTF-8","PGHOSTADDR"->"203.0.113.7","PGHOST"->"production","PGSERVICE"->"prod","PGPASSFILE"->"/p",
+      "PSQL"->"kubectl exec core-0 -- psql","LR_CONTEXT"->"tavily-lne","KUBECONFIG"->"/k","HOME"->"/home/operator")
+    assertEquals(LegacyRetirementChild.environment(parent,Map("PGHOST"->"127.0.0.1","PSQL"->"/fixture/psql")),
+      Map("PATH"->"/run/bin","LANG"->"C.UTF-8","PGHOST"->"127.0.0.1","PSQL"->"/fixture/psql"))
+  }
+  test("legacy retirement child: a child that outlives its bound is killed with its descendants") {
+    val pidFile=Files.createTempFile("legacy-retirement-",".pid")
+    try {
+      val started=System.nanoTime()
+      intercept[TimeoutException](LegacyRetirementChild.run(List("sh","-c",s"sleep 60 & echo $$! > $pidFile; wait"),sys.env,Map.empty,1.second))
+      assert((System.nanoTime()-started).nanos<30.seconds,"the bounded wait did not return")
+      assert(!LegacyRetirementChild.running(Files.readString(pidFile).trim.toLong),"the descendant still runs")
+    } finally Files.delete(pidFile)
+  }
   test("legacy retirement: identity without the formats item, then formats by re-index and explicit retirement; pinned reads, refusals, idempotence, current-code reads, clean-up schema") { withScratch { s=>
     val seeded=seed(s)
     def apply(arguments: String*): Ran = s.run((List("apply","--apply-irreversible","--confirm-database",s.name,"--backup-reference","fixture-backup")++arguments)*)
@@ -379,4 +385,39 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     assertEquals(s.one("SELECT state FROM ch_jobs WHERE id=?",receipt.jobId)(_.getString(1)),"Complete")
     assertEquals(semanticTotal(s,"a","resumed"),1)
   }}
+}
+
+/** The child processes of the one-off scripts. Environment: an allow-list of tool locations and locale plus the
+  * fixture's connection, so no inherited PGHOSTADDR, PGSERVICE, PSQL, LR_* or KUBE* setting can redirect them (the
+  * shell suites' test-guard.sh is not involved here). Wait: bounded; on timeout or interruption the child and its
+  * descendants are killed and reaped.
+  */
+private[chronicle] object LegacyRetirementChild {
+  val inherited: Set[String]=Set("PATH","LANG","LC_ALL","TMPDIR")
+  /** Longest legitimate run.sh session in the fixture (seconds); below the suite's munitTimeout. */
+  val timeout: FiniteDuration=2.minutes
+  final case class Result(exit: Int,out: String,err: String)
+  def environment(parent: Map[String,String],fixture: Map[String,String]): Map[String,String] =
+    parent.filter(entry => inherited.contains(entry._1))++fixture
+  def run(command: List[String],parent: Map[String,String],fixture: Map[String,String],limit: FiniteDuration): Result = {
+    val builder=new ProcessBuilder(command.asJava)
+    val env=builder.environment(); env.clear(); env.putAll(environment(parent,fixture).asJava)
+    val out=Files.createTempFile("legacy-retirement-",".out"); val err=Files.createTempFile("legacy-retirement-",".err")
+    builder.redirectOutput(out.toFile).redirectError(err.toFile)
+    try {
+      val process=builder.start()
+      try {
+        if(!process.waitFor(limit.toMillis,TimeUnit.MILLISECONDS)) throw new TimeoutException(s"${command.head} did not finish within $limit")
+        Result(process.exitValue(),Files.readString(out,UTF_8),Files.readString(err,UTF_8))
+      } finally if(process.isAlive) {   // timeout or interruption: the child's descendants (psql) first, then the child
+        process.descendants().forEach(child => { child.destroyForcibly(); () })
+        process.destroyForcibly(); process.waitFor()
+      }
+    } finally { Files.delete(out); Files.delete(err) }
+  }
+  /** Linux: a process that is gone or a zombie no longer runs. */
+  def running(pid: Long): Boolean = {
+    val stat=Path.of("/proc",pid.toString,"stat")
+    try !Files.readString(stat).split("\\) ").lift(1).exists(_.startsWith("Z")) catch { case _: java.nio.file.NoSuchFileException => false }
+  }
 }
