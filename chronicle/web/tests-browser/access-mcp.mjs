@@ -272,9 +272,19 @@ try {
     await prompt(page).fill('Do not admit another cost'); assert.equal(await runButton(page).count(), 0, 'no Run while the original run is unresolved');
     assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 1); await context.close();
   });
-  await group('cancellation that loses authority erases the trace at once, without waiting for a Read', async () => {
-    const { context, page, fixture } = await mcpScene(stayRunning);
-    await run(page, 'Synthetic cancellation authority'); await runState(page, 'Running').waitFor(); await traceItems(page).first().waitFor();
+  await group('cancelling a completed run asks the server to erase its retained trace and erases it here', async () => {
+    const { context, page, fixture } = await mcpScene();
+    await run(page, 'Complete, then erase the retained trace'); await finalResponse(page).waitFor();
+    const original = calls(fixture, api.Operation_StartMcpTest)[0].operation;
+    assert.equal(await runButton(page).count(), 1, 'Run stays the prompt action once the run is terminal');
+    await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await runState(page, 'Cancelled').waitFor();
+    const cancels = calls(fixture, api.Operation_CancelMcpTest); assert.equal(cancels.length, 1); assert.equal(cancels[0].operation.runId, original.runId); assert.equal(cancels[0].operation.instanceId, original.instanceId);
+    assert.equal(await traceItems(page).count(), 0); assert.equal(await page.getByRole('button', { name: 'Request cancellation', exact: true }).count(), 0, 'nothing left to erase');
+    assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 1); await context.close();
+  });
+  for (const terminal of [true, false]) await group(`cancellation that loses authority erases the trace at once, without waiting for a Read (${terminal ? 'completed' : 'running'} run)`, async () => {
+    const { context, page, fixture } = await mcpScene(terminal ? undefined : stayRunning);
+    await run(page, 'Synthetic cancellation authority'); await (terminal ? finalResponse(page) : traceItems(page).first()).waitFor();
     fixture.mcpHoldReads = true; fixture.cancelAuthorityLost = true;
     await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await runState(page, 'AuthorizationLost').waitFor();
     assert.equal(await traceItems(page).count(), 0); await context.close();
@@ -303,11 +313,13 @@ try {
     fixture.mcpHoldReads = false; for (const reply of fixture.mcpPending.splice(0)) reply();
     await runState(page, 'Complete').waitFor(); assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 1); await context.close();
   });
-  await group('a pending cancellation cannot overlap a new cost-bearing run admission', async () => {
-    const { context, page, fixture } = await mcpScene(stayRunning);
-    await run(page, 'Running before cancellation'); await runState(page, 'Running').waitFor();
+  for (const terminal of [true, false]) await group(`a pending cancellation cannot overlap a new cost-bearing run admission (${terminal ? 'completed' : 'running'} run)`, async () => {
+    const { context, page, fixture } = await mcpScene(terminal ? undefined : stayRunning);
+    await run(page, 'Before cancellation'); await (terminal ? finalResponse(page) : runState(page, 'Running')).waitFor();
     fixture.holdCancels = true; await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await fixture.waitCall(api.Operation_CancelMcpTest, 1);
-    await prompt(page).fill('No new admission while old Cancel is pending'); assert.equal(await runButton(page).count(), 0); assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 1);
+    await prompt(page).fill('No new admission while old Cancel is pending');
+    if (terminal) assert.equal(await runButton(page).isDisabled(), true); else assert.equal(await runButton(page).count(), 0);
+    assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 1);
     fixture.cancelPending.shift()(new api.Result_Error(new api.Failure('mcp-run-not-found', 'Original cancel outcome unknown')));
     await runState(page, 'Uncertain').waitFor(); assert.equal(calls(fixture, api.Operation_StartMcpTest).length, 1); await context.close();
   });

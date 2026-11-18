@@ -160,7 +160,7 @@ export function McpTester({ tester }: { tester: McpTesterState }) {
   const [acknowledged, setAcknowledged] = useState(false), promptId = useId();
   useEffect(() => setAcknowledged(false), [tester.handle?.runId, tester.state]);
   const catalog = tester.catalog, handle = tester.handle, state = tester.state ?? 'Uncertain';
-  const running = handle !== null && active(handle.state), blocked = tester.starting || tester.cancelling || !tester.connected || running;
+  const running = handle !== null && active(handle.state), retained = handle !== null && (handle.state === McpTestState.Complete || handle.state === McpTestState.Failed), blocked = tester.starting || tester.cancelling || !tester.connected || running;
   let bytes: number | null = null; try { bytes = scalarUtf8Bytes(tester.prompt); } catch { /* Invalid scalar input is explained at the boundary below. */ }
   const rows = traceRows(traceItems(tester.events));
   return <main className="page page-narrow stack-lg mcp-page" aria-label="MCP tester">
@@ -199,6 +199,7 @@ export function McpTester({ tester }: { tester: McpTesterState }) {
         {handle !== null && <section className="card" aria-label="MCP run controls">
           <div className="card-head"><h2>Run</h2><span className={`status ${STATUS_CLASS[state]}`} data-run-state={state}>{state}</span>
             <button type="button" className="btn btn-sm" disabled={tester.starting || !tester.connected} onClick={tester.retryRead}>Read original run</button>
+            {retained && <button type="button" className="btn btn-sm btn-danger-quiet" disabled={tester.cancelling || tester.starting || !tester.connected} title="Also erases the trace the server retains for this run" onClick={() => void tester.cancel()}>{tester.cancelling ? 'Requesting cancel…' : 'Request cancellation'}</button>}
             <button type="button" className="btn btn-sm btn-ghost" disabled={tester.starting || tester.cancelling || (running && !acknowledged)} onClick={() => tester.clear(acknowledged)}>Clear run and trace</button>
             <Anchored className="" buttonClassName="btn btn-sm btn-ghost btn-icon" buttonState={undefined} ariaLabel="Run identifiers" describedBy={undefined} panel="dialog" panelClassName="popover mcp-popover" panelLabel={undefined} label={<Glyph name="more"/>}>
               <dl className="dl dl-stack xs"><dt>Original instance</dt><dd className="mono">{handle.instanceId}</dd><dt>Run</dt><dd className="mono">{handle.runId}</dd>{tester.observedAt !== null && <><dt>Observed</dt><dd>{tester.observedAt}</dd></>}</dl>
@@ -206,6 +207,7 @@ export function McpTester({ tester }: { tester: McpTesterState }) {
           </div>
           <div className="card-body stack-sm">
             {running && <p className="xs muted">Cancellation cannot guarantee that the provider stopped or incurred no cost.</p>}
+            {retained && <p className="xs muted">The server keeps this trace until it expires; Request cancellation erases it now. Clear run and trace only removes it from this page.</p>}
             {running && <label className="check"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)}/>I acknowledge that this run may still be active or have incurred cost. Clearing loses its controls; a new Run may incur additional cost.</label>}
             <section className="mcp-trace stack-sm" aria-label="MCP test trace" aria-live="polite"><Trace rows={rows}/></section>
             {running && <div className="list-foot"><span className="spinner" aria-hidden="true"/>Waiting for the model…</div>}
