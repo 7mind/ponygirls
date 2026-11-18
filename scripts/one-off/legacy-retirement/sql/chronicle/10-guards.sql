@@ -5,7 +5,8 @@ SET client_min_messages = warning;
 SELECT set_config('lr.mode', :'mode', false), set_config('lr.confirm_database', :'confirm_database', false),
        set_config('lr.expect_plan', :'expect_plan', false), set_config('lr.allow_connections', :'allow_connections', false),
        set_config('lr.skip_formats', :'skip_formats', false), set_config('lr.retire_history', :'retire_history', false),
-       set_config('lr.confirm_retire_history', :'confirm_retire_history', false), set_config('lr.batch_size', :'batch_size', false) \gset lr_ignored_
+       set_config('lr.confirm_retire_history', :'confirm_retire_history', false), set_config('lr.batch_size', :'batch_size', false),
+       set_config('lr.retire_published', :'retire_published', false), set_config('lr.confirm_retire_published', :'confirm_retire_published', false) \gset lr_ignored_
 SELECT pg_try_advisory_lock(hashtextextended('legacy-retirement', 0)) AS lr_locked \gset
 \if :lr_locked
 \else
@@ -69,17 +70,24 @@ BEGIN
          OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
     ), grouped AS (SELECT format, state, count(*) AS c FROM old_format GROUP BY format, state)
     SELECT coalesce(string_agg(format || '/' || state || '=' || c, ', ' ORDER BY format, state), 'none') INTO breakdown FROM grouped;
-    -- A published generation in a retired format cannot be converted or retired by SQL: it needs the product re-index.
+    -- A published generation in a retired format cannot be converted by SQL. Either the product re-indexes the source,
+    -- or (owner decision Q106) --retire-published retires it the product's way and unpublishes it: the source then
+    -- reads like a never-indexed one until it is re-indexed. Never the default; the count must be confirmed.
     SELECT count(*) INTO n FROM ch_sources s JOIN ch_generations g ON g.id = s.published
     WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
        OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1');
-    IF n > 0 THEN
-      RAISE EXCEPTION 'legacy-retirement refused: % source(s) are still published in a retired output format (%); re-index them with the product first (LR.reindex_worklist in preflight), or pass --skip-formats to leave the formats item alone', n, breakdown;
+    IF current_setting('lr.retire_published') <> 't' THEN
+      IF n > 0 THEN
+        RAISE EXCEPTION 'legacy-retirement refused: % source(s) are still published in a retired output format (%); re-index them with the product first (LR.reindex_worklist in preflight), or retire those publications explicitly with --retire-published --confirm-retire-published % (owner decision Q106: the sources stay unindexed until re-indexed; listed as LR.retire_published in preflight), or pass --skip-formats to leave the formats item alone', n, breakdown, n;
+      END IF;
+    ELSIF current_setting('lr.confirm_retire_published') IS DISTINCT FROM n::text THEN
+      RAISE EXCEPTION 'legacy-retirement refused: --confirm-retire-published must be the number of published generations to retire (found %: %)', n, breakdown;
     END IF;
     -- Unpublished, not retired: a readable pinned view of an earlier revision. Never removed by default.
     SELECT count(*) INTO n FROM ch_generations g
     WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
-       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'));
+       OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
+      AND NOT EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id);
     IF current_setting('lr.retire_history') <> 't' THEN
       IF n > 0 THEN
         RAISE EXCEPTION 'legacy-retirement refused: % historical generation(s) in a retired output format are not retired and remain readable as pinned views (%). Nothing is removed by default: pass --skip-formats, or retire them explicitly with --retire-history --confirm-retire-history %', n, breakdown, n;
@@ -94,5 +102,6 @@ END $$;
 \else
 \echo LR.guards|passed-dry-run
 \endif
+\set lr_more_published :lr_retire_published
 \set lr_more_history :lr_retire_history
 \set lr_more_unfinished t

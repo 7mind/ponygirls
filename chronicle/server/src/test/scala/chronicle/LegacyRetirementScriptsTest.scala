@@ -347,6 +347,85 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
 
   // R2 reproduction: accepted work of an unfinished run on a v1 profile that the product CLI never relocated (so no
   // checkpoint-namespace row exists). After the relocation the job keeps its run; the worker must not meet v1 hashes.
+  test("legacy retirement: published old-format generations retired with tombstones and no re-index (Q106); the current product reads, searches and re-indexes such sources") { withScratch { s=>
+    val seeded=seed(s)
+    def apply(arguments: String*): Ran = s.run((List("apply","--apply-irreversible","--confirm-database",s.name,"--backup-reference","fixture-backup")++arguments)*)
+    val retiredSources=List(seeded.legacyAnnotations,seeded.contiguous)
+    val searchA=semanticTotal(s,"a","x"); val searchC=semanticTotal(s,"c","x")
+    // preflight and worklist name the affected sources (source, owner, published generation, format, revision)
+    val preflight=s.run("preflight"); assertEquals(preflight.exit,0,preflight.err)
+    assertEquals(preflight.count("LR.generations.old_format.published"),2L); assertEquals(preflight.count("LR.generations.old_format.history"),1L)
+    val worklist=s.run("worklist"); assertEquals(worklist.exit,0,worklist.err)
+    List(preflight,worklist).foreach { listing=>
+      List(seeded.legacyAnnotations->seeded.legacyAnnotationsPin,seeded.contiguous->seeded.contiguousPin).foreach { (id,pin)=>
+        assert(listing.out.linesIterator.exists(_.startsWith(s"LR.retire_published|$id|b|${pin.generationId.get}|")),listing.out)
+      }
+      assertEquals(listing.out.linesIterator.count(_.startsWith("LR.retire_published|")),2)
+    }
+    // Without the switch: refused, and the refusal says what to do. Wrong count: refused. Usage errors: nothing sent.
+    val history=List("--retire-history","--confirm-retire-history","1")
+    val untouched=s.everything()
+    val without=s.run((List("dry-run","--allow-active-connections")++history)*)
+    assertEquals(without.exit,3,without.out); assert(without.err.contains("still published in a retired output format"),without.err)
+    assert(without.err.contains("--retire-published --confirm-retire-published 2"),without.err)
+    val wrong=s.run((List("dry-run","--allow-active-connections","--retire-published","--confirm-retire-published","1")++history)*)
+    assertEquals(wrong.exit,3); assert(wrong.err.contains("--confirm-retire-published must be the number of published generations to retire (found 2"),wrong.err)
+    assertEquals(s.run("dry-run","--retire-published").exit,2); assertEquals(s.run("dry-run","--confirm-retire-published","2").exit,2)
+    assertEquals(s.run("dry-run","--skip-formats","--retire-published","--confirm-retire-published","2").exit,2)
+    val both=List("--retire-published","--confirm-retire-published","2")++history
+    val dry=s.run((List("dry-run","--allow-active-connections")++both)*); assertEquals(dry.exit,0,dry.err)
+    assertEquals(dry.steps("published_generations_retired"),2L); assertEquals(dry.steps("published_sources_unindexed"),2L); assertEquals(dry.steps("history_generations_retired"),1L)
+    assertEquals(dry.value("LR.result"),"dry-run-rolled-back"); assertEquals(s.everything(),untouched)
+    // A run cut after one batch (one batch of one per kind): the committed batch stays, the run is refused at the end,
+    // and the re-run with the counts of a new preflight completes.
+    val cut=apply((List("--expect-plan",s.plan(),"--batch-size","1","--max-batches","1")++both)*)
+    assertEquals(cut.exit,3,cut.out); assertEquals(cut.steps("published_generations_retired"),1L)
+    val remaining=s.run("preflight"); assertEquals(remaining.count("LR.generations.old_format.published"),1L); assertEquals(remaining.count("LR.generations.old_format.history"),0L)
+    val done=apply("--expect-plan",remaining.value("LR.plan"),"--retire-published","--confirm-retire-published","1"); assertEquals(done.exit,0,done.err+done.out)
+    assertEquals(done.value("LR.result"),"applied"); assertEquals(done.steps("published_generations_retired"),1L)
+    val verified=s.run("verify"); assertEquals(verified.exit,0,verified.out+verified.err); assertEquals(verified.value("LR.result"),"verify-zero")
+    assert(verified.out.linesIterator.filter(_.startsWith("LP.")).forall(_.endsWith("|0")),verified.out)
+    // The product's tombstone state: the generation rows stay (retired, same format), their derived and search rows are
+    // gone, the source has no published generation (the product's never-indexed state); nothing else of the source changed.
+    List(seeded.legacyAnnotationsPin,seeded.contiguousPin).foreach { pin=>
+      val generation=pin.generationId.get
+      assertEquals(s.count("SELECT count(*) FROM ch_generations WHERE id=? AND retired",generation),1L)
+      List("ch_chunks","ch_search_chunks","ch_generation_tags","ch_problem_passages","ch_problem_spans","ch_context_spans").foreach(table=>assertEquals(s.count(s"SELECT count(*) FROM $table WHERE generation=?",generation),0L,table))
+    }
+    retiredSources.foreach { id=>
+      assertEquals(s.count("SELECT count(*) FROM ch_sources WHERE id=? AND published IS NULL AND NOT tombstone",id),1L)
+      assertEquals(s.count("SELECT count(*) FROM ch_search_chunks WHERE session_id=?",id),0L)
+    }
+    assertEquals(s.count("SELECT count(*) FROM ch_generations"),untouched.count(_.startsWith("ch_generations ")).toLong)
+    assertEquals(s.count("SELECT count(*) FROM ch_jobs"),untouched.count(_.startsWith("ch_jobs ")).toLong)
+    // The current product: a pinned link answers indexed-view-retired; the source reads like a never-indexed one
+    // (transcript and messages readable, no chunks, passages Unindexed); search has nothing from it, others unchanged.
+    s.db.initialize()
+    s.db.transaction { c=>List("a","b","c").foreach(reader=>IndexProfiles.semantic(c,reader,s.archive.visible,s.catalog.preferred.embedding)) }
+    assertEquals(pinned(s,"b",seeded.legacyAnnotations,seeded.legacyAnnotationsPin),Left("indexed-view-retired")); assertEquals(pinned(s,"b",seeded.contiguous,seeded.contiguousPin),Left("indexed-view-retired"))
+    retiredSources.foreach { id=>
+      val session=s.archive.readSession("b",id,None)
+      assertEquals(session.chunks,Nil); assertEquals(session.session.view.generationId,None)
+      assert(s.archive.messages("b",id,0,10,None).total>0)
+      assertEquals(s.archive.raw("b",id,None).revision,1)
+      assertEquals(s.archive.passages("b",id,0,10,None).format,PassageFormat.Unindexed)
+    }
+    assertEquals((semanticTotal(s,"a","x"),semanticTotal(s,"b","x"),semanticTotal(s,"c","x")),(searchA,0,searchC))
+    // A second apply finds nothing and changes nothing.
+    val settled=s.everything()
+    val again=apply("--expect-plan",s.plan(),"--retire-published","--confirm-retire-published","0"); assertEquals(again.exit,0,again.err+again.out)
+    assertEquals(again.steps("published_generations_retired"),0L); assertEquals(s.everything(),settled)
+    // Re-index afterwards through the product ("Rebuild archive index"; scripted models): both sources publish again
+    // in the current format; the retired pins stay retired.
+    val rebuild=new PostgresOwnerReindex(s.db); val request=UUID.randomUUID(); val preview=rebuild.preview("b")
+    assertEquals(rebuild("b",request,preview.targetProfile,preview.selectionHash,true).queued,2L)
+    List.fill(2)(()).foreach { _=>val claim=claimOf(s,"b"); assert(s.archive.publish(claim,chunks(claim,"current problem after retirement"))) }
+    assertEquals(rebuild.status("b",request).complete,2L)
+    retiredSources.foreach(id=>assertEquals(s.archive.passages("b",id,0,10,None).format,PassageFormat.ContextAwareProblems))
+    assertEquals(semanticTotal(s,"b","x"),2)
+    assertEquals(pinned(s,"b",seeded.legacyAnnotations,seeded.legacyAnnotationsPin),Left("indexed-view-retired"))
+    assertEquals(s.run("verify").exit,0)
+  }}
   test("legacy retirement: an unfinished, unrelocated v1 run with accepted work resumes under the current worker") { withScratch { s=>
     import cats.effect.IO
     import cats.effect.unsafe.implicits.global

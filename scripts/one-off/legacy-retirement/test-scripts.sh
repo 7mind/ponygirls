@@ -56,6 +56,13 @@ PSQL=$base/fake-psql $R haystack dry-run --allow-active-connections --emit >"$ba
 if PSQL=$base/fake-psql $R chronicle apply --apply-irreversible --confirm-database chronicle --expect-plan 1 --backup-reference none-owner-decision-Q102 --emit >"$base/out" 2>&1 \
    && grep -q 'LR.backup|none (owner decision Q102)' "$base/out"; then ok q102-chronicle-literal-recorded; else ko q102-chronicle-literal-recorded; fi
 refused_without_session q102-haystack-requires-backup $R haystack apply --apply-irreversible --confirm-database haystack --expect-plan 1 --backup-reference none-owner-decision-Q102
+# --- Q106: retiring published old-format generations is a separate, counted, Chronicle-only switch -----------------
+refused_without_session q106-switch-needs-count $R chronicle dry-run --retire-published
+refused_without_session q106-count-needs-switch $R chronicle dry-run --confirm-retire-published 12
+refused_without_session q106-count-is-a-number $R chronicle dry-run --retire-published --confirm-retire-published twelve
+refused_without_session q106-count-newline $R chronicle dry-run --retire-published --confirm-retire-published "12${nl}13"
+refused_without_session q106-not-with-skip-formats $R chronicle dry-run --skip-formats --retire-published --confirm-retire-published 12
+refused_without_session q106-chronicle-only $R haystack dry-run --retire-published --confirm-retire-published 12
 for alias in none no-backup NONE skip n/a none-owner-decision none-owner-decision-q102; do
   refused_without_session "q102-no-other-shortcut-$alias" $R chronicle apply --apply-irreversible --confirm-database chronicle --expect-plan 1 --backup-reference "$alias"
 done

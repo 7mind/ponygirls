@@ -15,9 +15,17 @@ LEFT JOIN ch_jobs j ON j.session_id = s.id AND j.revision = s.revision AND j.pro
 WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
    OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
 ORDER BY s.owner, s.id;
+-- The publications --retire-published would retire (owner decision Q106): source, owner, published generation,
+-- its format and revision. Identifiers only.
+SELECT 'LR.retire_published', s.id, s.owner, g.id, coalesce(g.passage_format, '<null>'), g.revision
+FROM ch_sources s JOIN ch_generations g ON g.id = s.published
+WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
+   OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
+ORDER BY s.owner, s.id;
 SELECT 'LR.reindex_jobs', count(*) FROM ch_sources s JOIN ch_generations g ON g.id = s.published
 WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
    OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'));
 ROLLBACK;
 \echo LR.columns|job_id|source_id|owner_id|source_revision|published_revision|owner_state|format|job_state|job_error
+\echo LR.columns.retire_published|source_id|owner_id|published_generation_id|format|published_revision
 \echo LR.result|worklist-complete

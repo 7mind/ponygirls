@@ -18,6 +18,13 @@ SELECT 'LR.old_format', coalesce(g.passage_format, '<null>'),
 FROM ch_generations g
 WHERE g.passage_format IS DISTINCT FROM 'ContextAwareProblems' OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1')
 GROUP BY 2, 3 ORDER BY 2, 3;
+-- The publications --retire-published would retire (owner decision Q106): source, owner, published generation,
+-- its format and revision. Identifiers only.
+SELECT 'LR.retire_published', s.id, s.owner, g.id, coalesce(g.passage_format, '<null>'), g.revision
+FROM ch_sources s JOIN ch_generations g ON g.id = s.published
+WHERE NOT g.retired AND (g.passage_format IS DISTINCT FROM 'ContextAwareProblems'
+   OR g.profile IN (SELECT profile FROM ch_index_profiles WHERE policy IS DISTINCT FROM 'ContextAwareProblemsV1'))
+ORDER BY s.owner, s.id;
 -- Worklist for the product re-index: published generations in a retired format, by owner state and by the state of
 -- the head job on the owner's target profile. Counts and safe codes only.
 SELECT 'LR.reindex_worklist', CASE WHEN u.enabled THEN 'owner-enabled' ELSE 'owner-disabled' END,

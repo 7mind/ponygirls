@@ -45,6 +45,11 @@
 #   --retire-history             chronicle: retire non-retired historical generations of the old formats, the way a
 #                                rebuild retires them (tombstone stays, derived rows go). Never the default.
 #   --confirm-retire-history N   the number of generations --retire-history will retire (from preflight)
+#   --retire-published           chronicle (owner decision Q106): retire the PUBLISHED generations of the old formats
+#                                the same way (tombstone stays, derived and search rows go) and unpublish them: each
+#                                source then reads like a never-indexed one until it is re-indexed. Never the default.
+#   --confirm-retire-published N the number of published generations --retire-published will retire (from preflight,
+#                                generations.old_format.published; the sources are listed as LR.retire_published)
 #   --allow-active-connections   do not refuse when other clients are connected to the database
 #   --batch-size N               rows per batch transaction (default 50)
 #   --max-batches N              batches per kind in one run (default 200); a longer backlog needs another run
@@ -75,7 +80,7 @@ case $target:$mode in
 esac
 
 confirm_database=''; expect_plan=''; acknowledged=f; allow_connections=f; emit=f; backup_reference=''
-skip_formats=f; retire_history=f; confirm_retire_history=''; terminate_name=''; role=''
+skip_formats=f; retire_history=f; confirm_retire_history=''; retire_published=f; confirm_retire_published=''; terminate_name=''; role=''
 batch_size=50; max_batches=200; lock_timeout=5s; statement_timeout=''
 while [ $# -gt 0 ]; do
   case $1 in
@@ -86,6 +91,8 @@ while [ $# -gt 0 ]; do
     --skip-formats) skip_formats=t; shift ;;
     --retire-history) retire_history=t; shift ;;
     --confirm-retire-history) [ $# -ge 2 ] || usage; confirm_retire_history=$2; shift 2 ;;
+    --retire-published) retire_published=t; shift ;;
+    --confirm-retire-published) [ $# -ge 2 ] || usage; confirm_retire_published=$2; shift 2 ;;
     --allow-active-connections) allow_connections=t; shift ;;
     --batch-size) [ $# -ge 2 ] || usage; batch_size=$2; shift 2 ;;
     --max-batches) [ $# -ge 2 ] || usage; max_batches=$2; shift 2 ;;
@@ -132,6 +139,7 @@ elif printf '%s' "$backup_reference" | LC_ALL=C grep -Eqi '^(none|no|skip|n/?a|n
   fail "--backup-reference '$backup_reference' reads like 'no backup': name a backup, or (chronicle only) $no_backup_literal"
 fi
 [ -z "$confirm_retire_history" ] || matches "$confirm_retire_history" '[0-9]{1,9}' || fail '--confirm-retire-history must be a number'
+[ -z "$confirm_retire_published" ] || matches "$confirm_retire_published" '[0-9]{1,9}' || fail '--confirm-retire-published must be a number'
 # I1: Chronicle is migrated offline. Its apply never runs beside connected clients (the guards and part 3 re-check).
 if [ "$target" = chronicle ] && [ "$mode" = apply ] && [ "$allow_connections" = t ]; then
   fail '--allow-active-connections is not available for the chronicle apply: stop or fence the service first'
@@ -150,9 +158,15 @@ fi
 application_name="lr:$target:$mode:$(date -u +%H%M%S)-$$"
 idle_timeout=120s
 if [ "$target" != chronicle ]; then
-  [ "$skip_formats$retire_history" = ff ] && [ -z "$confirm_retire_history" ] || fail '--skip-formats and --retire-history apply to chronicle only'
+  [ "$skip_formats$retire_history$retire_published" = fff ] && [ -z "$confirm_retire_history$confirm_retire_published" ] || fail '--skip-formats, --retire-history and --retire-published apply to chronicle only'
 fi
 [ "$skip_formats$retire_history" != tt ] || fail '--skip-formats and --retire-history exclude each other'
+[ "$skip_formats$retire_published" != tt ] || fail '--skip-formats and --retire-published exclude each other'
+if [ "$retire_published" = t ]; then
+  [ -n "$confirm_retire_published" ] || fail '--retire-published requires --confirm-retire-published N (the count preflight reports as generations.old_format.published)'
+else
+  [ -z "$confirm_retire_published" ] || fail '--confirm-retire-published requires --retire-published'
+fi
 if [ "$retire_history" = t ]; then
   [ -n "$confirm_retire_history" ] || fail '--retire-history requires --confirm-retire-history N (the count preflight reports as generations.old_format.history)'
 else
@@ -189,10 +203,11 @@ compose() {
   printf "SET idle_in_transaction_session_timeout = '%s';\nSET idle_session_timeout = '%s';\n" "$idle_timeout" "$idle_timeout"
   printf "\\\\set mode '%s'\n\\\\set confirm_database '%s'\n\\\\set expect_plan '%s'\n\\\\set allow_connections '%s'\n" "$mode" "$confirm_database" "$expect_plan" "$allow_connections"
   printf "\\\\set backup_reference '%s'\n\\\\set skip_formats '%s'\n\\\\set retire_history '%s'\n\\\\set confirm_retire_history '%s'\n" "${backup_reference:--}" "$skip_formats" "$retire_history" "$confirm_retire_history"
+  printf "\\\\set retire_published '%s'\n\\\\set confirm_retire_published '%s'\n" "$retire_published" "$confirm_retire_published"
   printf "\\\\set batch_size %s\n\\\\set lock_timeout '%s'\n\\\\set statement_timeout '%s'\n" "$batch_size" "$lock_timeout" "$statement_timeout"
   if [ "$mode" = apply ]; then flag lr_apply t; flag lr_dry_run f; else flag lr_apply f; flag lr_dry_run t; fi
   if [ "$mode" = apply ] && [ "$backup_reference" = "$no_backup_literal" ]; then printf '%s\n' '\echo LR.backup|none (owner decision Q102)'; fi
-  flag lr_skip_formats "$skip_formats"; flag lr_retire_history "$retire_history"
+  flag lr_skip_formats "$skip_formats"; flag lr_retire_history "$retire_history"; flag lr_retire_published "$retire_published"
   printf '\\echo LR.tool|legacy-retirement %s %s\n' "$target" "$mode"
   case $mode in
     preflight) fragment preflight.sql ;;
@@ -213,7 +228,7 @@ compose() {
     dry-run|apply)
       fragment 10-guards.sql
       case $target in
-        chronicle) repeat 20-batch-retire-history.sql; repeat 21-batch-unfinished-runs.sql; fragment 30-identity.sql ;;
+        chronicle) repeat 19-batch-retire-published.sql; repeat 20-batch-retire-history.sql; repeat 21-batch-unfinished-runs.sql; fragment 30-identity.sql ;;
         haystack) repeat 20-batch-replay.sql; fragment 30-finish.sql ;;
       esac ;;
   esac
