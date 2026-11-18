@@ -44,5 +44,9 @@ timeout --signal=TERM --kill-after=10s "$deadline" node --import ./scripts/regis
   --test-reporter=junit --test-reporter-destination="$report/transport.xml" \
   server/tests-current/*.test.mjs || status=$?
 python3 "$root/scripts/junit-gate.py" --counts "$report/counts.json" "$report" || status=1
+# node --test reports a test file that defines no test as one passing case named after the file.
+if grep -q '<testcase name="server/tests-current/[^"]*\.test\.mjs"' "$report/transport.xml"; then
+  echo 'a test file defined no test' >&2; status=1
+fi
 echo "Transport report: $report"
 exit "$status"
