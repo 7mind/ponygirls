@@ -137,8 +137,11 @@ export interface Comparison {
   readonly unchanged: readonly string[];
 }
 
-const fieldName = (name: string | null) => name === null ? "Value" : name;
-const linkLines = (item: Item) => item.document.links.map(([relation, target]) => `${relation} ${target}`).join("\n");
+/** How a root value (fields that are not an object, or one typed node) is named in a comparison; identity stays null. */
+export const ROOT_FIELD = "(root value)";
+const fieldName = (name: string | null) => name === null ? ROOT_FIELD : name;
+// One exact JSON line per link and the tags as a JSON array: values containing separators stay distinct.
+const linkLines = (item: Item) => item.document.links.map((link) => JSON.stringify(link)).join("\n");
 
 /** Differences from the older to the newer revision of one record. */
 export function compareRevisions(older: Item, newer: Item): Comparison {
@@ -146,7 +149,7 @@ export function compareRevisions(older: Item, newer: Item): Comparison {
   const metadata: ValueChange[] = [];
   const scalar = (item: Item): ReadonlyArray<[string, string]> => [
     ["title", item.document.title], ["type", item.document.type], ["status", item.document.status],
-    ["importance", item.document.importance], ["human-attention", item.document.humanAttention], ["tags", item.document.tags.join(", ")],
+    ["importance", item.document.importance], ["human-attention", item.document.humanAttention], ["tags", JSON.stringify(item.document.tags)],
   ];
   const after = scalar(newer);
   scalar(older).forEach(([name, before], index) => {
@@ -158,11 +161,13 @@ export function compareRevisions(older: Item, newer: Item): Comparison {
   if (description === null) unchanged.push("description");
   const links = linkLines(older) === linkLines(newer) ? null : diffText(linkLines(older), linkLines(newer), "lines");
   if (links === null) unchanged.push("links");
-  const beforeFields = new Map(parseFields(older.document.fieldsJson).map((field) => [fieldName(field.name), field.value]));
-  const afterFields = new Map(parseFields(newer.document.fieldsJson).map((field) => [fieldName(field.name), field.value]));
+  // Keyed by field identity: a root value (null) never matches a field, whatever its display name.
+  const beforeFields = new Map(parseFields(older.document.fieldsJson).map((field) => [field.name, field.value]));
+  const afterFields = new Map(parseFields(newer.document.fieldsJson).map((field) => [field.name, field.value]));
   const fields: FieldChange[] = [];
-  for (const name of new Set([...afterFields.keys(), ...beforeFields.keys()])) {
-    const before = beforeFields.get(name), value = afterFields.get(name);
+  for (const key of new Set([...afterFields.keys(), ...beforeFields.keys()])) {
+    const name = fieldName(key);
+    const before = beforeFields.get(key), value = afterFields.get(key);
     const text = (field: FieldValue | undefined) => field === undefined ? "" : fieldText(field);
     const label = before === undefined ? fieldLabel(value!) : value === undefined || fieldLabel(before) === fieldLabel(value) ? fieldLabel(before) : `${fieldLabel(before)} → ${fieldLabel(value)}`;
     if (before !== undefined && value !== undefined && fieldLabel(before) === fieldLabel(value) && fieldText(before) === fieldText(value)) { unchanged.push(name); continue; }

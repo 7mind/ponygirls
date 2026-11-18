@@ -1,7 +1,7 @@
 // Behavioral-Active-Blackbox-Atomic; revision comparison of the record page (snapshot/compare, restore dialog).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { changedParts, compareRevisions, diffText, DIFF_CELL_LIMIT } from "../src/revision-diff.ts";
+import { changedParts, compareRevisions, diffText, DIFF_CELL_LIMIT, ROOT_FIELD } from "../src/revision-diff.ts";
 import type { Item } from "../src/api.ts";
 
 const revision = (revision: number, document: Partial<Item["document"]>): Item => ({
@@ -38,7 +38,7 @@ test("comparing revisions reports metadata, description paragraphs, links and fi
     { name: "human-attention", before: "cleared", after: "required" },
   ]);
   assert.deepEqual(comparison.description?.kind === "lines" && comparison.description.lines.map((line) => line.kind), ["same", "del", "add"]);
-  assert.deepEqual(comparison.links?.kind === "lines" && comparison.links.lines, [{ kind: "add", text: "relates-to p:other", mark: null }]);
+  assert.deepEqual(comparison.links?.kind === "lines" && comparison.links.lines, [{ kind: "add", text: '["relates-to","p:other"]', mark: null }]);
   assert.deepEqual(comparison.fields.map((field) => [field.name, field.label, field.state]), [
     ["due", "string", "changed"], ["count", "number", "changed"], ["notes", "Markdown", "added"], ["gone", "boolean", "removed"],
   ]);
@@ -57,4 +57,15 @@ test("a diff whose changed region exceeds the cell limit is reported as too larg
   const before = Array.from({ length: side }, (_, i) => `a${i}`).join("\n");
   const after = Array.from({ length: side }, (_, i) => `b${i}`).join("\n");
   assert.deepEqual(diffText(before, after, "lines"), { kind: "too-large", beforeLines: side, afterLines: side });
+});
+
+test("values that only display alike are different: tags, links with separators, a root value and a field named Value", () => {
+  const older = revision(1, { tags: ["a, b"], links: [["relates to", "p:x"]], fieldsJson: '"x"' });
+  const newer = revision(2, { tags: ["a", "b"], links: [["relates", "to p:x"]], fieldsJson: '{"Value":"x"}' });
+  const comparison = compareRevisions(older, newer);
+  assert.deepEqual(comparison.metadata, [{ name: "tags", before: '["a, b"]', after: '["a","b"]' }]);
+  assert.deepEqual(comparison.links?.kind === "lines" && comparison.links.lines.map((line) => line.kind === "skip" ? "" : `${line.kind} ${line.text}`),
+    ['del ["relates to","p:x"]', 'add ["relates","to p:x"]']);
+  assert.deepEqual(comparison.fields.map((field) => [field.name, field.state]), [["Value", "added"], [ROOT_FIELD, "removed"]]);
+  assert.deepEqual(changedParts(comparison), ["tags", "links", "Value", ROOT_FIELD], "the restore confirmation names every difference");
 });
