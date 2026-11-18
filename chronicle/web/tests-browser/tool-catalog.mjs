@@ -14,14 +14,16 @@ const address = server.httpServer.address();
 if (address === null || typeof address === 'string') throw new Error('Missing synthetic origin');
 const origin = `http://127.0.0.1:${address.port}`, browser = await chromium.launch({ headless: true }), errors = [];
 const MIN_TEXT_CONTRAST = 4.5;
+// A cold dev-server page load can take seconds on a loaded host; only first-render waits get this longer limit.
+const PAGE_LOAD_TIMEOUT_MS = 30_000;
 async function scene(viewport) {
   const context = await browser.newContext({ viewport }), page = await context.newPage(), fixture = new Goal50Fixture();
   const catalog = fixture.catalog.bind(fixture);
   fixture.catalog = () => catalog().with({ tools: toolCatalogFixture.map(tool => new api.McpToolDefinition(tool.name, tool.description, JSON.stringify(tool.inputSchema))) });
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
   await page.clock.install(); await fixture.install(page); await page.goto(`${origin}/tests-browser/goal50.html`);
-  await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'MCP', exact: true }).click();
-  await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor();
+  await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'MCP', exact: true }).click({ timeout: PAGE_LOAD_TIMEOUT_MS });
+  await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor({ timeout: PAGE_LOAD_TIMEOUT_MS });
   return { context, page, fixture };
 }
 async function group(name, body) { await body(); console.log(`PASS browser tool-catalog: ${name}`); }
@@ -29,7 +31,7 @@ async function harness(viewport, theme) {
   const context = await browser.newContext({ viewport, colorScheme: theme }), page = await context.newPage();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message));
   await context.addInitScript(theme => { document.addEventListener('DOMContentLoaded', () => { document.documentElement.dataset.theme = theme; }); }, theme);
-  await page.goto(`${origin}/tests-browser/catalog.html`); await page.getByRole('group', { name: 'MCP tools', exact: true }).waitFor();
+  await page.goto(`${origin}/tests-browser/catalog.html`); await page.getByRole('group', { name: 'MCP tools', exact: true }).waitFor({ timeout: PAGE_LOAD_TIMEOUT_MS });
   return { context, page };
 }
 const toolRow = (page, name) => page.getByRole('group', { name: 'MCP tools', exact: true }).getByRole('button', { name, exact: true });

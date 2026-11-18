@@ -16,11 +16,13 @@ const origin = `http://127.0.0.1:${address.port}`, MCP_POLL_MS = 2_000, CLOCK_PA
 const browser = await chromium.launch({ headless: true, args: ['--host-resolver-rules=MAP chronicle.test 127.0.0.1', '--no-proxy-server'] }), errors = [];
 const nativeDialogs = [];
 const REQUEST_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// A cold dev-server page load can take seconds on a loaded host; only first-render waits get this longer limit.
+const PAGE_LOAD_TIMEOUT_MS = 30_000;
 const nav = page => page.getByRole('navigation', { name: 'Main navigation', exact: true });
 async function open(context, page, fixture, url, view, name) {
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); page.on('dialog', dialog => { nativeDialogs.push(dialog.message()); void dialog.dismiss(); });
   await fixture.install(page); await page.goto(url);
-  await nav(page).getByRole('link', { name: view, exact: true }).click(); await page.getByRole('main', { name, exact: true }).waitFor();
+  await nav(page).getByRole('link', { name: view, exact: true }).click({ timeout: PAGE_LOAD_TIMEOUT_MS }); await page.getByRole('main', { name, exact: true }).waitFor({ timeout: PAGE_LOAD_TIMEOUT_MS });
   return { context, page, fixture };
 }
 async function accessScene(viewport, originUrl = origin, fixture = new ChronicleFixture()) {
@@ -37,7 +39,7 @@ async function mcpPage(configure, viewport) {
 }
 async function mcpScene(configure, viewport = { width: 1440, height: 1000 }) {
   const scene = await mcpPage(configure, viewport);
-  await scene.page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor();
+  await scene.page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor({ timeout: PAGE_LOAD_TIMEOUT_MS });
   return scene;
 }
 async function group(name, body) { await body(); console.log(`PASS browser access-mcp: ${name}`); }
@@ -45,7 +47,7 @@ async function group(name, body) { await body(); console.log(`PASS browser acces
 async function notificationScene(width = 1280, colorScheme = 'light') {
   const context = await browser.newContext({ viewport: { width, height: 900 }, colorScheme }), page = await context.newPage();
   page.setDefaultTimeout(10_000); page.on('pageerror', error => errors.push(error.message)); await page.clock.install();
-  await page.goto(`${origin}/tests-browser/notifications.html`); await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor();
+  await page.goto(`${origin}/tests-browser/notifications.html`); await page.getByRole('heading', { name: 'Notification fixture', exact: true }).waitFor({ timeout: PAGE_LOAD_TIMEOUT_MS });
   return { context, page };
 }
 async function succeed(page) { await page.getByRole('button', { name: 'Retry job', exact: true }).click(); await page.getByRole('button', { name: 'Return success', exact: true }).click(); }
