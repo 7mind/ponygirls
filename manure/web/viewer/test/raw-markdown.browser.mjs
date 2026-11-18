@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { serveUi, UI_BASE } from './shared-ui.mjs';
+import { serveShell, SHELL_BASE, UNTIL } from './shared-ui.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -15,12 +15,12 @@ for (const scenario of ['markdown', 'render-failure', 'image']) {
     assert.ok(process.env.CHROMIUM_BIN, 'set CHROMIUM_BIN');
     const text = scenario === 'render-failure' ? '```mermaid\na-->b\n```\n'.repeat(33) : '# Héllo\r\n\r\n> quote\r\n- item\r\n\tindent\r\n```html\r\n<script>window.uploadExecuted=true</script>\r\n```\r\n<img src="https://example.invalid/unwanted">\r\n';
     const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
-    const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_UI_BASE__', UI_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', scenario === 'image' ? 'image' : 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+    const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_SHELL_BASE__', SHELL_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', scenario === 'image' ? 'image' : 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
     const probe = `const check = (value, message) => { if (!value) throw new Error(message); };
-      const timer = setInterval(async () => {
-        if (document.querySelector('#status').textContent) return;
-        clearInterval(timer);
+      ${UNTIL}
+      (async () => {
         try {
+          await until(() => !document.querySelector('#status').textContent, 'preview did not finish loading');
           const copy = document.querySelector('#copy-raw');
           const modes = document.querySelector('[role=group][aria-label="Markdown view"]');
           if (${JSON.stringify(scenario)} === 'image') {
@@ -39,18 +39,19 @@ for (const scenario of ['markdown', 'render-failure', 'image']) {
             rendered.click();
             check(!panels[0].hidden && panels[1].hidden, 'switch returns to the rendered view');
             const toast = () => document.querySelector('#toasts').textContent;
+            const press = () => { document.querySelector('#toasts').replaceChildren(); copy.click(); };
             let copied;
             Object.defineProperty(navigator, 'clipboard', {configurable:true,value:{writeText:async text => {copied=text;}}});
-            copy.click(); await new Promise(resolve => setTimeout(resolve, 0));
+            press();
+            await until(() => toast() === 'Raw Markdown copied.', 'success feedback');
             check(copied === ${JSON.stringify(text)}, 'copy must preserve raw text');
-            check(toast() === 'Raw Markdown copied.', 'success feedback');
             navigator.clipboard.writeText = async () => {throw new Error('denied');};
-            copy.click(); await new Promise(resolve => setTimeout(resolve, 0));
-            check(toast().includes('Could not copy'), 'denial feedback');
-            check(!copy.disabled, 'copy can retry');
+            press();
+            await until(() => toast().includes('Could not copy'), 'denial feedback');
+            await until(() => !copy.disabled, 'copy can retry');
             Object.defineProperty(navigator, 'clipboard', {value:undefined});
-            copy.click(); await new Promise(resolve => setTimeout(resolve, 0));
-            check(toast().includes('Raw'), 'manual copy guidance');
+            press();
+            await until(() => toast().includes('in Raw'), 'manual copy guidance');
             raw.click();
             check(!panels[1].hidden && panels[1].textContent === ${JSON.stringify(text)}, 'raw survives copy failure');
             check(!window.uploadExecuted, 'uploaded scripts never execute');
@@ -59,14 +60,14 @@ for (const scenario of ['markdown', 'render-failure', 'image']) {
           check(document.querySelector('#download').getAttribute('href').endsWith('/download'), 'download retained');
           document.body.dataset.result = 'passed';
         } catch(error) { document.body.dataset.result = error.message; }
-      }, 50);`;
+      })();`;
     let fetches = 0;
     const server = createServer(async (req, res) => {
       try {
         if (req.url === '/') { res.setHeader('content-type', 'text/html'); res.end(html); }
         else if (req.url === '/probe.js') { res.setHeader('content-type', 'text/javascript'); res.end(probe); }
         else if (req.url === '/__manure/raw/readme.md') { fetches++; res.end(text); }
-        else if (await serveUi(req, res)) { /* shared design system */ }
+        else if (await serveShell(req, res)) { /* shared design system */ }
       else if (/^\/assets\/[\w.-]+$/.test(req.url)) {
           res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
           res.end(await readFile(new URL(`../dist/${req.url.split('/').pop()}`, import.meta.url)));

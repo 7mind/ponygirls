@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { serveUi, UI_BASE } from './shared-ui.mjs';
+import { serveShell, SHELL_BASE, UNTIL } from './shared-ui.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -17,16 +17,12 @@ test('Markdown heading permalinks support direct URLs, clicks and history', asyn
     '## Repeat\n\n### Repeat\n\n#### Repeat-1\n\n##### !!!\n\n###### Café 東京\n' + filler + '## Reserved\n\n## Content\n' + filler + '<h2 id="custom">Authored ID</h2>\n\n[Custom jump](#custom)\n' + filler +
     '## Hello world heading text\n\n<h2 aria-label="Authored section">Visible section</h2>\n\n<h2><img alt="Image section"></h2>\n\n<h2 id="self-topic" aria-labelledby="self-topic">Self title</h2>\n\n<h2 aria-label="">Empty label title</h2>\n';
   const probe = `
-    const delay = () => new Promise(resolve => setTimeout(resolve, 50));
+    ${UNTIL}
     const check = (ok, message) => { if (!ok) throw new Error(message); };
+    const hashChange = change => new Promise(resolve => { addEventListener('hashchange', resolve, {once:true}); change(); });
     try {
-      let article;
-      for (let i = 0; i < 100; i++) {
-        article = document.querySelector('article.markdown');
-        if (article && document.querySelector('#status').textContent === '') break;
-        await delay();
-      }
-      check(article, 'Markdown did not render');
+      await until(() => document.querySelector('article.markdown') && document.querySelector('#status').textContent === '', 'Markdown did not render');
+      const article = document.querySelector('article.markdown');
       const headings = [...article.querySelectorAll('h1,h2,h3,h4,h5,h6')];
       const expected = ['hello-world','repeat','repeat-1','repeat-1-1','section','café-東京','reserved-1','content-1','custom','hello-world-heading-text','visible-section','section-1','self-topic','empty-label-title'];
       check(JSON.stringify(headings.map(h => h.id)) === JSON.stringify(expected), 'missing or incorrect heading IDs: ' + headings.map(h => h.id));
@@ -45,30 +41,26 @@ test('Markdown heading permalinks support direct URLs, clicks and history', asyn
       check(headings[0].querySelector('em').textContent === 'world', 'inline formatting lost');
       // Headings scroll to just below the sticky viewer bar (their scroll-margin-top).
       const aligned = heading => Math.abs(heading.getBoundingClientRect().top - parseFloat(getComputedStyle(heading).scrollMarginTop)) < 3;
-      if (location.hash.includes('%ZZ')) {
+      const malformed = location.hash.includes('%ZZ');
+      if (malformed) {
         check(!document.querySelector('[role="alert"]'), 'malformed fragment prevented rendering');
       } else {
-        check(aligned(headings[5]), 'initial encoded fragment did not scroll after fetch');
+        await until(() => aligned(headings[5]), 'initial encoded fragment did not scroll after fetch');
       }
-      headings[2].querySelector('a.heading-anchor').click();
-      await delay();
-      check(location.hash === '#repeat-1' && aligned(headings[2]), 'permalink click did not navigate');
-      history.back();
-      await delay(); await delay();
-      if (!location.hash.includes('%ZZ')) check(aligned(headings[5]), 'history back did not restore section');
-      article.querySelector('a[href="#repeat-1"]').click();
-      await delay();
-      check(aligned(headings[2]), 'authored fragment link did not navigate');
-      article.querySelector('a[href="#custom"]').click();
-      await delay();
-      check(aligned(headings[8]), 'existing authored heading ID stopped resolving');
-      location.hash = '#unknown';
-      await delay();
+      await hashChange(() => headings[2].querySelector('a.heading-anchor').click());
+      await until(() => location.hash === '#repeat-1' && aligned(headings[2]), 'permalink click did not navigate');
+      await hashChange(() => history.back());
+      if (!malformed) await until(() => aligned(headings[5]), 'history back did not restore section');
+      await hashChange(() => article.querySelector('a[href="#repeat-1"]').click());
+      await until(() => aligned(headings[2]), 'authored fragment link did not navigate');
+      await hashChange(() => article.querySelector('a[href="#custom"]').click());
+      await until(() => aligned(headings[8]), 'existing authored heading ID stopped resolving');
+      await hashChange(() => { location.hash = '#unknown'; });
       check(!document.querySelector('[role="alert"]'), 'unknown fragment prevented rendering');
       document.body.dataset.result = 'pass';
     } catch (error) { document.body.dataset.result = error.message; }
   `;
-  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_UI_BASE__', UI_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_SHELL_BASE__', SHELL_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
   const server = createServer(async (req, res) => {
     try {
       if (req.url === '/') {
@@ -77,7 +69,7 @@ test('Markdown heading permalinks support direct URLs, clicks and history', asyn
         res.end(html);
       } else if (req.url === '/probe.js') { res.setHeader('content-type', 'text/javascript'); res.end(probe); }
       else if (req.url === '/__manure/raw/readme.md') { setTimeout(() => res.end(markdown), 100); }
-      else if (await serveUi(req, res)) { /* shared design system */ }
+      else if (await serveShell(req, res)) { /* shared design system */ }
       else if (/^\/assets\/[\w.-]+$/.test(req.url)) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         res.end(await readFile(new URL(`../dist/${req.url.split('/').pop()}`, import.meta.url)));

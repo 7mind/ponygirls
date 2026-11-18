@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { serveUi, UI_BASE } from './shared-ui.mjs';
+import { serveShell, SHELL_BASE } from './shared-ui.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -14,7 +14,7 @@ test('rendered Markdown retains sibling artifact hyperlinks without requesting s
   const current = '/view/11111111111111111111111111111111';
   const sibling = '/view/22222222222222222222222222222222';
   const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
-  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_UI_BASE__', UI_BASE).replaceAll('__MANURE_PATH__', 'docs/readme.md')
+  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_SHELL_BASE__', SHELL_BASE).replaceAll('__MANURE_PATH__', 'docs/readme.md')
     .replaceAll('__MANURE_RAW_URL__', `${current}/__manure/raw/docs/readme.md`).replaceAll('__MANURE_DOWNLOAD_URL__', '/download')
     .replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
   const paths = [sibling, sibling + '/', sibling + '#7-limits', sibling + '/docs/guide.md#topic'];
@@ -63,7 +63,7 @@ test('rendered Markdown retains sibling artifact hyperlinks without requesting s
           `[Relative escape](../../22222222222222222222222222222222/guide.md)\n\n` +
           `[Reserved sibling](${sibling}/__manure/logout)\n\n[Management sibling](${sibling}/api/users)\n\n` +
           '[Arbitrary sibling](/view/other/guide.md)\n\n' + `![Sibling image](${sibling}/image.png)\n`);
-      } else if (await serveUi(req, res)) { /* shared design system */ }
+      } else if (await serveShell(req, res)) { /* shared design system */ }
       else if (/^\/assets\/[\w.-]+$/.test(req.url)) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         res.end(await readFile(new URL(`../dist/${req.url.split('/').pop()}`, import.meta.url)));

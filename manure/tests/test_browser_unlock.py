@@ -341,6 +341,36 @@ class UnlockFlows:
         self.assertNotIn(password, files.body.decode())
 
 
+class ContentShellWithoutDashboardOrViewerCase(unittest.TestCase):
+    """UX-M4: the unlock card and the directory listing get their presentation from the
+    content shell (unlock_shell_dir), not from the dashboard or the viewer."""
+
+    def test_unlock_card_and_listing_styled_and_functional_without_dashboard_and_viewer(self):
+        fix = bf.start_server(suffix_mode="sibling", config_overrides={"dashboard_dir": None, "viewer_dir": None})
+        self.addCleanup(fix.close)
+        external = bf.upload_fixture(fix, name="shell-external", kind="dir", visibility="external", files={"index.html": INDEX_HTML})
+        listing = bf.upload_fixture(fix, name="shell-listing", kind="dir", visibility="public", files={"docs/notes.txt": b"notes"})
+        styled = ('() => getComputedStyle(document.querySelector("{card}")).borderRadius !== "0px"'
+                  ' && document.querySelectorAll("svg.icon").length > 0'
+                  ' && !document.querySelector("[data-theme-control]").hidden')
+        out = bf.run_steps([
+            {"op": "goto", "url": bf.content_url_for(fix, external["artifact_id"])},
+            {"op": "waitForEval", "fn": styled.replace("{card}", ".auth-card")},
+            {"op": "fill", "selector": "#password-input", "value": bf.canonical_secret()},
+            {"op": "click", "selector": "#unlock-form button[type=submit]"},
+            {"op": "waitForText", "selector": "#unlock-error", "contains": "password is not correct"},
+            {"op": "goto", "url": bf.content_url_for(fix, listing["artifact_id"]) + "/"},
+            {"op": "waitForEval", "fn": styled.replace("{card}", ".card")},
+            {"op": "eval", "fn": '() => performance.getEntriesByType("resource").map(e => new URL(e.name).pathname)'
+                                 '.filter(p => p.includes("/__manure/viewer/") && !p.endsWith("/favicon.svg")).length'},
+        ])
+        results = [r for r in out if r.get("op") not in ("pageerrors", "dialogs", "requests", "console")]
+        self.assertTrue(all(r.get("ok") for r in results), [r for r in results if not r.get("ok")])
+        self.assertEqual([r for r in out if r.get("op") == "eval"][0]["value"], 0, "no viewer asset is requested")
+        pageerrors = [r for r in out if r.get("op") == "pageerrors"]
+        self.assertFalse(pageerrors and pageerrors[0].get("errors"), pageerrors)
+
+
 class UnlockSiblingCase(UnlockFlows, unittest.TestCase):
     suffix_mode = "sibling"
 

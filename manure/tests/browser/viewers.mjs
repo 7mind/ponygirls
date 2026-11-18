@@ -164,6 +164,22 @@ const fetchBytes = async (page, url) => page.evaluate(async (url) => {
   return { status: response.status, type: response.headers.get("content-type"),
     disposition: response.headers.get("content-disposition"), bytes: [...new Uint8Array(await response.arrayBuffer())] };
 }, url);
+/** Oversized media extend the document: the element's left edge has a reachable (non-negative) document coordinate
+ * and, scrolled to the end, its right and bottom edges are inside the viewport. */
+const bothEdgesReachable = async (page, selector) => {
+  const box = await page.locator(selector).first().evaluate((el) => {
+    scrollTo(0, 0);
+    const start = el.getBoundingClientRect();
+    scrollTo(document.scrollingElement.scrollWidth, document.scrollingElement.scrollHeight);
+    const end = el.getBoundingClientRect();
+    const result = { left: start.left, width: start.width, viewport: innerWidth,
+      rightVisible: end.right <= innerWidth + 1, bottomVisible: end.bottom <= innerHeight + 1 };
+    scrollTo(0, 0);
+    return result;
+  });
+  assert.ok(box.width > box.viewport, `the fixture must be wider than the viewport: ${JSON.stringify(box)}`);
+  assert.ok(box.left >= 0 && box.rightVisible && box.bottomVisible, `both edges must be reachable: ${JSON.stringify(box)}`);
+};
 const rawEqual = async (page, key, name = filename(key)) => {
   const response = await fetchBytes(page, rawURL(key, name));
   assert.equal(response.status, 200);
@@ -310,6 +326,9 @@ await check("SVG and PNG decode safely and support visible Fit and Zoom changes"
   assert.ok(fit.width <= 1000 && fit.height <= 800, "fit image stays inside viewport");
   await page.getByRole("button", { name: /zoom in/i }).click();
   await page.waitForFunction((width) => document.querySelector("main img").getBoundingClientRect().width > width, fit.width);
+  // The 1600 px PNG at actual size is wider than the page: both of its edges must be reachable by document scrolling.
+  await page.getByRole("button", { name: "Actual size", exact: true }).click();
+  await bothEdgesReachable(page, "main img");
 }, true);
 
 const canvasSnapshot = async (page) => {
@@ -384,15 +403,25 @@ await check("no-index directory browsing renders README and safely navigates nes
   await downloadEqual(page, "browse", "original.bin");
 }, true);
 
-await check("invalid and oversized Graphviz sources fail visibly within a bounded time", async (page) => {
+await check("invalid and oversized Graphviz sources fail visibly; a stalled renderer fails at its 10 s deadline", async (page, context) => {
   for (const key of ["malformed", "graph-limit", "oversized"]) {
-    const started = Date.now();
     await open(page, key);
     await page.getByRole("alert").filter({ hasText: /error|fail|invalid|large|limit|unable|unavailable/i }).waitFor();
-    assert.ok(Date.now() - started < 20000, "render failure must be bounded");
     assert.equal(await page.locator("main img").evaluateAll((images) => images.some((image) => image.naturalWidth > 0)), false);
     await downloadEqual(page, key);
   }
+  // The renderer worker never loads (its script request is held), so only the viewer's deadline can end the
+  // render; the page clock drives that deadline instead of elapsed time.
+  let workerRequested;
+  const requested = new Promise((resolve) => { workerRequested = resolve; });
+  await context.route("**/__manure/viewer/graphviz-worker.js", () => workerRequested());
+  await page.clock.install();
+  await open(page, "dot");
+  await requested;
+  assert.equal(await page.getByRole("alert").count(), 0, "no failure before the deadline");
+  await page.clock.runFor(10000);
+  await page.getByRole("alert").filter({ hasText: "Diagram rendering exceeded the 10 second deadline." }).waitFor();
+  await downloadEqual(page, "dot");
 }, false);
 
 await check("external raw and assets deny locked/revoked grants; unlock permits real nested rendering", async (page) => {
@@ -404,14 +433,14 @@ await check("external raw and assets deny locked/revoked grants; unlock permits 
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
   await favicon(page, key);
   const protectedURLs = [rawURL(key, name), rawURL(key, "assets/picture.png"), downloadURL(key, name),
-    ...["viewer.js", "chrome.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
+    ...["viewer.js", "styles.css", "graphviz-worker.js", "pdf.worker.min.mjs", "pdf.renderer.min.mjs"]
       .map((asset) => root(key) + "/__manure/viewer/" + asset)];
   for (const url of protectedURLs) {
     const denied = await fetchBytes(page, url);
     assert.ok(denied.status >= 400, "locked raw/assets/download must not bypass authorization");
   }
-  // The shared design system styles the locked page itself; it is public and carries no artifact data.
-  assert.equal((await fetchBytes(page, root(key) + "/__manure/ui/tokens.css")).status, 200);
+  // The content shell styles the locked page itself; it is public and carries no artifact data.
+  for (const asset of ["ui/tokens.css", "content.css", "chrome.js"]) assert.equal((await fetchBytes(page, root(key) + "/__manure/shell/" + asset)).status, 200, asset);
   await page.locator("#password-input").fill(record(key).external_password);
   await page.locator("#unlock-form button[type=submit]").click();
   // Unlock may return the original directory root; navigate explicitly after
@@ -469,6 +498,19 @@ await check("viewer pages scroll only the document under sticky chrome; section 
   await page.getByRole("button", { name: "Raw", exact: true }).click();
   assert.equal(await page.getByLabel("Raw Markdown", { exact: true }).textContent(), expected("markdown").toString("utf8"));
   await page.getByRole("button", { name: "Rendered", exact: true }).click();
+  // Embedded diagrams keep Zoom, Actual size and Fit; zooming widens the document, never an inner box.
+  const diagram = page.getByRole("figure", { name: "Diagram 1", exact: true });
+  const picture = diagram.getByRole("img", { name: "Rendered diagram", exact: true });
+  const fitted = (await picture.boundingBox()).width;
+  await diagram.getByRole("button", { name: "Zoom in", exact: true }).focus();
+  assert.equal(await diagram.getByRole("toolbar", { name: "Diagram zoom", exact: true }).evaluate((el) => getComputedStyle(el).opacity), "1", "diagram tools appear on keyboard focus");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(({ fitted }) => document.querySelector("figure.diagram img").getBoundingClientRect().width > fitted, { fitted });
+  await diagram.getByRole("button", { name: "Actual size", exact: true }).click();
+  assert.equal(await picture.evaluate((img) => Math.round(img.getBoundingClientRect().width) === img.naturalWidth), true, "actual size shows natural pixels");
+  assert.deepEqual(await scrollers(page), [], "a zoomed diagram adds no inner scroller");
+  await diagram.getByRole("button", { name: "Fit", exact: true }).click();
+  assert.ok((await picture.boundingBox()).width <= (await diagram.boundingBox()).width, "Fit returns the diagram to the column");
   await page.getByRole("button", { name: "Theme", exact: true }).click();
   await page.getByRole("menuitemradio", { name: "Dark", exact: true }).click();
   await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
@@ -479,6 +521,11 @@ await check("viewer pages scroll only the document under sticky chrome; section 
   await canvasSnapshot(page);
   assert.deepEqual(await scrollers(page), []);
   assert.equal(await scrolledChrome(page, '[role="toolbar"]'), 48, "the PDF toolbar sticks under the bar");
+  // At 150 % the page is wider than a narrow window: both edges must stay reachable by document scrolling.
+  await page.setViewportSize({ width: 500, height: 500 });
+  await page.getByRole("combobox", { name: "Zoom", exact: true }).selectOption("1.5");
+  await bothEdgesReachable(page, "main canvas");
+  await page.setViewportSize({ width: 1000, height: 800 });
   await page.goto(root("browse") + "/", { waitUntil: "domcontentloaded" });
   const cli = page.getByRole("group").filter({ has: page.getByText("Download all (CLI)…") });
   await page.getByText("Download all (CLI)…", { exact: true }).click();

@@ -935,18 +935,19 @@ final class HttpSuite extends FunSuite:
     yield ()
   }}
 
-  // Specified (UX-M4): the listing is styled only by Manure's own reserved assets - the shared design system and the
-  // viewer sheet - under a policy that admits nothing else of the content origin, which also serves uploaded files.
-  test("directory listing links the shared design system under a CSP limited to Manure's reserved assets") { run { (f,_) =>
-    val source = java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"))
+  // Specified (UX-M4): the listing is styled only by the content shell (unlock_shell_dir: the shared design system,
+  // content.css, chrome.js), under a policy that admits nothing else of the content origin, which also serves uploaded
+  // files. The shell does not depend on the dashboard or the viewer being enabled; without a shell the page is bare.
+  test("directory listing uses the content shell under a reserved-asset CSP, independent of dashboard and viewer") { run { (f,_) =>
     val files = Vector("docs/notes.txt" -> "plain", "docs/a\"<b>.py" -> "print(1)")
-    val stylesheets = Vector("/__manure/ui/tokens.css","/__manure/ui/components.css","/__manure/viewer/styles.css")
+    val shellAssets = Vector("/__manure/shell/ui/tokens.css","/__manure/shell/ui/components.css","/__manure/shell/content.css")
     def value(r: org.http4s.Response[IO],name: String) = r.headers.headers.find(_.name == CIString(name)).map(_.value).getOrElse("")
     for
-      dashboard <- IO.blocking {
-        val directory = f.rootPath.resolve("listing-dashboard")
+      shell <- IO.blocking {
+        val directory = f.rootPath.resolve("content-shell")
         java.nio.file.Files.createDirectories(directory.resolve("ui"))
-        Vector("tokens.css","components.css").foreach(name => java.nio.file.Files.writeString(directory.resolve("ui").resolve(name),":root {}"))
+        Vector("ui/tokens.css","ui/components.css","content.css").foreach(name => java.nio.file.Files.writeString(directory.resolve(name),":root {}"))
+        java.nio.file.Files.writeString(directory.resolve("chrome.js"),"export {};")
         java.nio.file.Files.writeString(directory.resolve("ui/README.md"),"not a served asset")
         directory
       }
@@ -955,7 +956,9 @@ final class HttpSuite extends FunSuite:
       _ <- files.traverse_ { (p,b) => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,Exact.utf8(b),SecretCodec.sha256(Exact.utf8(b))) }
       _ <- f.artifacts.finish(f.identity,a.artifact.id)
       _ <- Vector("path","subdomain").traverse_ { mode =>
-        val h = app(f,_.copy(viewerDir=Some(source.resolve("manure/web/viewer")),dashboardDir=Some(dashboard),contentMode=mode,contentSuffix="localhost"))
+        // Neither the dashboard nor the viewer is enabled: the listing still gets its whole presentation.
+        val h = app(f,_.copy(viewerDir=None,dashboardDir=None,unlockShellDir=Some(shell),contentMode=mode,contentSuffix="localhost"))
+        val bare = app(f,_.copy(unlockShellDir=None,contentMode=mode,contentSuffix="localhost"))
         val mount = if mode == "path" then s"/view/${a.artifact.id}" else ""
         val host = if mode == "path" then "127.0.0.1:47329" else a.artifact.id + ".localhost:47329"
         def req(path: String) = request(Method.GET,mount + path).putHeaders(Header.Raw(CIString("Host"),host))
@@ -965,27 +968,37 @@ final class HttpSuite extends FunSuite:
           html <- listing.as[String]
           _ <- IO {
             assertEquals(listing.status.code,200)
-            stylesheets.foreach(css => assert(html.contains("<link rel=\"stylesheet\" href=\"" + mount + css + "\">"),s"$mode listing lacks $css"))
+            shellAssets.foreach(css => assert(html.contains("<link rel=\"stylesheet\" href=\"" + mount + css + "\">"),s"$mode listing lacks $css"))
+            assert(html.contains("<script type=\"module\" src=\"" + mount + "/__manure/shell/chrome.js\"></script>"))
+            assert(!html.contains("/__manure/viewer/styles.css") && !html.contains("/__manure/viewer/viewer.js"),"no viewer assets without a README")
             val policy = value(listing,"Content-Security-Policy").split(";").map(_.trim).toVector
             assertEquals(policy.find(_.startsWith("default-src ")),Some("default-src 'none'"))
-            assertEquals(policy.find(_.startsWith("style-src ")),Some(s"style-src ${reserved}ui/ ${reserved}viewer/"))
-            assertEquals(policy.find(_.startsWith("script-src ")),Some(s"script-src ${reserved}ui/ ${reserved}viewer/"))
+            assertEquals(policy.find(_.startsWith("style-src ")),Some(s"style-src ${reserved}shell/"))
+            assertEquals(policy.find(_.startsWith("script-src ")),Some(s"script-src ${reserved}shell/"))
             assert(!policy.exists(d => d.contains("'self'") || d.contains("unsafe")),policy)
             assert(html.contains("a&quot;&lt;b&gt;.py") && !html.contains("a\"<b>.py"),"listing names are escaped")
           }
-          _ <- stylesheets.traverse_ { css => h.app.run(req(css)).flatMap(r => IO {
-            assertEquals(r.status.code,200,css)
-            assertEquals(value(r,"Content-Type"),"text/css; charset=utf-8")
-          })}
-          hidden <- h.app.run(req("/__manure/ui/README.md"))
+          _ <- (shellAssets :+ "/__manure/shell/chrome.js").traverse_ { asset => h.app.run(req(asset)).flatMap(r => IO(assertEquals(r.status.code,200,asset))) }
+          hidden <- h.app.run(req("/__manure/shell/ui/README.md"))
           _ <- IO(assertEquals(hidden.status.code,404))
+          plain <- bare.app.run(req("/docs/"))
+          plainHtml <- plain.as[String]
+          missing <- bare.app.run(req("/__manure/shell/content.css"))
+          _ <- IO {
+            assertEquals(plain.status.code,200)
+            assert(plainHtml.contains("aria-label=\"Directory contents\""))
+            assert(!plainHtml.contains("/__manure/shell/") && !plainHtml.contains("<script"),"without a shell the listing references no shell asset")
+            assert(!value(plain,"Content-Security-Policy").contains("script-src"))
+            assertEquals(missing.status.code,404)
+          }
         yield ()
       }
     yield ()
   }}
   // Regression (UX-M4): source files downloaded instead of previewing; archives stay downloads behind an explicit card.
   test("file artifacts negotiate a text preview for source files, an archive card, and raw bytes for HTML") { run { (f,_) =>
-    val h = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))))
+    val viewer = Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))
+    val h = app(f,_.copy(viewerDir=viewer))
     Vector("summarise.py" -> Some("text"),"bundle.zip" -> Some("archive"),"page.html" -> None).traverse_ { (name,kind) =>
       val bytes = Exact.utf8("payload of " + name)
       for
@@ -994,10 +1007,15 @@ final class HttpSuite extends FunSuite:
         _ <- f.artifacts.finish(f.identity,a.artifact.id)
         response <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/").putHeaders(Header.Raw(CIString("Accept"),"text/html")))
         body <- response.as[String]
+        unshelled <- app(f,_.copy(viewerDir=viewer,unlockShellDir=None)).app.run(request(Method.GET,s"/view/${a.artifact.id}/").putHeaders(Header.Raw(CIString("Accept"),"text/html")))
+        unshelledBody <- unshelled.as[String]
         _ <- IO {
           assertEquals(response.status.code,200)
           kind match
-            case Some(value) => assert(body.contains("data-kind=\"" + value + "\""),name)
+            case Some(value) =>
+              assert(body.contains("data-kind=\"" + value + "\""),name)
+              assert(body.contains("href=\"/view/" + a.artifact.id + "/__manure/shell/content.css\""),"viewer links the content shell")
+              assert(unshelledBody.contains("data-kind=\"" + value + "\"") && !unshelledBody.contains("__manure/shell"),"no shell links without a shell directory")
             case None => assertEquals(body,Exact.string(bytes))
         }
       yield ()

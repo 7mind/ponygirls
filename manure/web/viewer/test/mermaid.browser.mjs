@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { serveUi, UI_BASE } from './shared-ui.mjs';
+import { serveShell, SHELL_BASE } from './shared-ui.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -23,7 +23,7 @@ test('real Mermaid labels survive sanitization as SVG text', async () => {
       document.body.dataset.foreignObjects = svg.querySelectorAll('foreignObject').length;
     }, 50);
   `;
-  const html = template.replaceAll('__MANURE_ASSET_BASE__','/assets').replaceAll('__MANURE_UI_BASE__', UI_BASE).replaceAll('__MANURE_PATH__','readme.md').replaceAll('__MANURE_RAW_URL__','/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__','/__manure/files/readme.md/content').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__','markdown').replace('</body>','<script type="module" src="/probe.js"></script></body>');
+  const html = template.replaceAll('__MANURE_ASSET_BASE__','/assets').replaceAll('__MANURE_SHELL_BASE__', SHELL_BASE).replaceAll('__MANURE_PATH__','readme.md').replaceAll('__MANURE_RAW_URL__','/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__','/__manure/files/readme.md/content').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__','markdown').replace('</body>','<script type="module" src="/probe.js"></script></body>');
   const server = createServer(async (req,res) => {
     try {
       if (req.url === '/') {
@@ -33,7 +33,7 @@ test('real Mermaid labels survive sanitization as SVG text', async () => {
       }
       else if (req.url === '/probe.js') {res.setHeader('content-type','text/javascript'); res.end(probe);}
       else if (req.url === '/__manure/raw/readme.md') {res.end('```mermaid\nflowchart LR\n Start --> Finish\n```');}
-      else if (await serveUi(req, res)) { /* shared design system */ }
+      else if (await serveShell(req, res)) { /* shared design system */ }
       else if (/^\/assets\/[\w.-]+$/.test(req.url)) {
         res.setHeader('content-type',req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         res.end(await readFile(new URL(`../dist/${req.url.split('/').pop()}`,import.meta.url)));

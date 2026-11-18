@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { serveUi, UI_BASE } from './shared-ui.mjs';
+import { serveShell, SHELL_BASE, UNTIL } from './shared-ui.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -17,12 +17,15 @@ test('section and table controls copy original source and navigate stable fragme
   const wide = '| ' + Array(30).fill('Column').join(' | ') + ' |\r\n| ' + Array(30).fill('---').join(' | ') + ' |\r\n| ' + Array(30).fill('Value').join(' | ') + ' |\r\n';
   const text = '<script>window.uploadExecuted=true</script>\r\n<img src="https://example.invalid/blocked" onerror="window.uploadExecuted=true">\r\n<div id="table-1"></div>\r\n\r\n' + parent + '# Next\r\n\r\n' + table + '\r\n<h2 id="authored">HTML section</h2>\r\n\r\n<table id="custom-table"><tr><th>HTML</th></tr><tr><td>Raw</td></tr></table>\r\n\r\n' + 'Tail paragraph.\r\n\r\n'.repeat(60) + wide;
   const template = await readFile(new URL('../dist/index.html', import.meta.url), 'utf8');
-  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_UI_BASE__', UI_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_SHELL_BASE__', SHELL_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
   const probe = `
     const check = (ok, message) => { if (!ok) throw new Error(message); };
-    const delay = () => new Promise(resolve => setTimeout(resolve, 50));
+    ${UNTIL}
+    const hashChange = change => new Promise(resolve => { addEventListener('hashchange', resolve, {once:true}); change(); });
+    const toastText = () => document.querySelector('#toasts').textContent;
+    const clearToasts = () => document.querySelector('#toasts').replaceChildren();
     try {
-      for (let i = 0; i < 100 && document.querySelector('#status').textContent; i++) await delay();
+      await until(() => document.querySelector('article.markdown') && !document.querySelector('#status').textContent, 'preview did not render');
       const article = document.querySelector('article.markdown');
       check(article && !article.querySelector('[role=alert]'), 'preview did not render');
       check(!window.uploadExecuted && !article.querySelector('script,img[src]'), 'uploaded scripts and remote resources remain inert');
@@ -36,15 +39,16 @@ test('section and table controls copy original source and navigate stable fragme
       check(new Set([...document.querySelectorAll('[id]')].map(node => node.id)).size === document.querySelectorAll('[id]').length, 'duplicate IDs');
       // Tables scroll to just below the sticky viewer bar (their scroll-margin-top).
       const aligned = wrapper => Math.abs(wrapper.getBoundingClientRect().top - parseFloat(getComputedStyle(wrapper).scrollMarginTop)) < 3;
-      check(aligned(wrappers[2]), 'initial table fragment did not scroll its table and controls into view');
+      await until(() => aligned(wrappers[2]), 'initial table fragment did not scroll its table and controls into view');
       let copied;
       Object.defineProperty(navigator, 'clipboard', {configurable:true, value:{writeText:async value => {copied=value;}}});
       const copy = async (button, expected) => {
         check(button && button.type === 'button' && button.getAttribute('aria-label'), 'accessible copy button');
-        button.focus(); button.click(); await delay();
+        copied = undefined; clearToasts();
+        button.focus(); button.click();
+        await until(() => copied !== undefined && toastText().includes('copied'), 'no copy with success feedback');
         check(copied === expected, 'wrong raw copy: ' + JSON.stringify(copied) + ' expected ' + JSON.stringify(expected));
         check(!button.disabled, 'copy remains retryable');
-        check(document.querySelector('#toasts').textContent.includes('copied'), 'success feedback');
       };
       await copy(copies[0], ${JSON.stringify(parent)});
       await copy(copies[2], ${JSON.stringify(nested)});
@@ -56,16 +60,16 @@ test('section and table controls copy original source and navigate stable fragme
         const link = wrappers[i].querySelector('a.table-anchor');
         check(link && link.getAttribute('aria-label') && link.hash === '#' + encodeURIComponent(tables[i].id), 'accessible table link');
       }
-      wrappers[0].querySelector('a.table-anchor').click(); await delay();
-      check(location.hash === '#table-1-1' && aligned(wrappers[0]), 'table link navigation');
-      history.back(); await delay(); await delay();
-      check(location.hash === '#table-3' && aligned(wrappers[2]), 'table history navigation');
+      await hashChange(() => wrappers[0].querySelector('a.table-anchor').click());
+      await until(() => location.hash === '#table-1-1' && aligned(wrappers[0]), 'table link navigation');
+      await hashChange(() => history.back());
+      await until(() => location.hash === '#table-3' && aligned(wrappers[2]), 'table history navigation');
       navigator.clipboard.writeText = async () => {throw new Error('denied');};
-      copies[0].click(); await delay();
-      check(document.querySelector('#toasts').textContent.includes('Could not copy') && !copies[0].disabled, 'denied clipboard feedback and retry');
+      clearToasts(); copies[0].click();
+      await until(() => toastText().includes('Could not copy') && !copies[0].disabled, 'denied clipboard feedback and retry');
       Object.defineProperty(navigator, 'clipboard', {value:undefined});
-      wrappers[0].querySelector('button.copy-table').click(); await delay();
-      check(document.querySelector('#toasts').textContent.includes('Raw'), 'unavailable clipboard guidance');
+      clearToasts(); wrappers[0].querySelector('button.copy-table').click();
+      await until(() => toastText().includes('in Raw'), 'unavailable clipboard guidance');
       check(headings[0].querySelector('em').textContent === 'title', 'heading formatting retained');
       document.body.dataset.result = 'pass';
     } catch (error) { document.body.dataset.result = error.message; }
@@ -75,7 +79,7 @@ test('section and table controls copy original source and navigate stable fragme
       if (req.url === '/') { res.setHeader('content-type', 'text/html'); res.setHeader('content-security-policy', "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; connect-src 'self' blob:; worker-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'"); res.end(html); }
       else if (req.url === '/probe.js') { res.setHeader('content-type', 'text/javascript'); res.end(probe); }
       else if (req.url === '/__manure/raw/readme.md') res.end(text);
-      else if (await serveUi(req, res)) { /* shared design system */ }
+      else if (await serveShell(req, res)) { /* shared design system */ }
       else if (/^\/assets\/[\w.-]+$/.test(req.url)) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         res.end(await readFile(new URL(`../dist/${req.url.split('/').pop()}`, import.meta.url)));
