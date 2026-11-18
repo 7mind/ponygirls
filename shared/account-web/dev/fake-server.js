@@ -53,9 +53,11 @@ export function baseFixture(app) {
       { id: 'enrollment-0002', username: 'ivan', kind: 'reset', createdBy: 'alice', createdAt: iso(-19 * HOUR_MS), expiresAt: iso(5 * HOUR_MS) }
     ],
     // Behaviour switches used by scenarios: login 'ok' | 'totp' | 'pending' | 'rejected' | 'rate-limited';
-    // recover 'ok' | 'rejected' | 'weak' | 'rate-limited'; account 'ok' | 'loading' | 'error'; mint 'ok' | 'lost'.
-    // hold: '<METHOD> <path>' whose reply waits until window.__accountFake.state.release() (deferred responses).
-    login: 'ok', recover: 'ok', account: 'ok', mint: 'ok', hold: null, release: null,
+    // recover 'ok' | 'rejected' | 'weak' | 'rate-limited'; account 'ok' | 'loading' | 'error' | 'down' (network
+    // failure of GET /); mint 'ok' | 'lost'; logout 'ok' | 'fail'.
+    // hold: '<METHOD> <path>': matching requests wait in `pending` (oldest first) until release() / releaseAt(i);
+    // each reply is computed when it is released. The hold is cleared when the last pending request is released.
+    login: 'ok', recover: 'ok', account: 'ok', mint: 'ok', logout: 'ok', hold: null, pending: [],
     enrollment: { code: FAKE_ENROLLMENT_CODE, username: 'carol', kind: 'invite', expiresAt: iso(23 * HOUR_MS) },
     nextToken: 31
   };
@@ -116,6 +118,7 @@ export function createFakeAccountServer(fixture, onCall) {
     if (!signedIn()) return failure(401, 'unauthorized', {});
     if (path === '' && method === 'GET') {
       if (state.account === 'loading') return new Promise(() => {});
+      if (state.account === 'down') throw new TypeError('Failed to fetch');
       if (state.account === 'error') return failure(500, 'unavailable', {});
       return json(200, { user: state.user, tokens: state.tokens, scopes: state.scopes }, {});
     }
@@ -124,7 +127,7 @@ export function createFakeAccountServer(fixture, onCall) {
     if (method === 'GET' && path === '/admin/enrollments') return state.profile === null ? failure(404, 'not-found', {}) : json(200, { enrollments: state.enrollments }, {});
     if (method !== 'POST') return failure(404, 'not-found', {});
     if (!actorOk(call)) return failure(409, 'conflict', {});
-    if (path === '/logout') { state.signedIn = false; return ok(); }
+    if (path === '/logout') { if (state.logout === 'fail') return failure(500, 'unavailable', {}); state.signedIn = false; return ok(); }
     if (path === '/tokens') {
       if (state.mint === 'lost') { state.tokens.push({ id: tokenId(state.nextToken++), name: body.name, source: 'issued', createdAt: iso(0), revoked: false, scopes: body.scopes }); throw new TypeError('Failed to fetch'); }
       const token = { id: tokenId(state.nextToken++), name: body.name, source: 'issued', createdAt: iso(0), revoked: false, scopes: body.scopes };
@@ -162,14 +165,19 @@ export function createFakeAccountServer(fixture, onCall) {
     return failure(404, 'not-found', {});
   }
 
+  function releaseAt(index) {
+    const [entry] = state.pending.splice(index, 1);
+    if (state.pending.length === 0) state.hold = null;
+    entry.resolve(Promise.resolve().then(() => handle(entry.call)));
+  }
+  state.releaseAt = releaseAt;
+  state.release = () => releaseAt(0);
   async function fetch(resource, options) {
     const url = new URL(String(resource), 'http://harness');
     if (!url.pathname.startsWith(API)) throw new Error(`The account harness only answers ${API}: ${url.pathname}`);
     const call = { method: options.method, path: url.pathname.slice(API.length), body: options.body === undefined ? null : JSON.parse(options.body), actor: options.headers['X-Account-Actor'] ?? null };
     calls.push(call); onCall(call);
-    if (state.hold !== null && `${call.method} ${call.path}` === state.hold) {
-      return new Promise(resolve => { state.release = () => { state.hold = null; state.release = null; resolve(Promise.resolve().then(() => handle(call))); }; });
-    }
+    if (state.hold !== null && `${call.method} ${call.path}` === state.hold) return new Promise(resolve => { state.pending.push({ call, resolve }); });
     return handle(call);
   }
   return { fetch, calls, state };

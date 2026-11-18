@@ -74,6 +74,7 @@ const labelled = text => {
   return label.htmlFor === '' ? label.querySelector('input') : document.getElementById(label.htmlFor);
 };
 const driver = {
+  fake,
   wait: selector => until(() => document.querySelector(selector), selector),
   async click(text) {
     const target = await until(() => named(text) ?? (labelled(text) ?? null), text);

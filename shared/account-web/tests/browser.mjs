@@ -179,7 +179,7 @@ try {
     await page.evaluate(hold => { window.__accountFake.state.hold = hold; }, row.hold);
     const before = submits(calls, row);
     await button(page, row.submit).click();
-    await page.waitForFunction(() => window.__accountFake.state.release !== null);
+    await page.waitForFunction(() => window.__accountFake.state.pending.length > 0);
     const prompts = await page.locator(row.prompt).count();
     for (const name of row.blocked) {
       const control = named(page, name).or(page.getByRole('checkbox', { name: new RegExp(`^${name}`) })).first();
@@ -230,7 +230,7 @@ try {
     const reads = () => calls.filter(call => call.method === 'GET' && call.path === '').length;
     const before = reads();
     await page.evaluate(() => { window.__accountFake.state.hold = 'GET '; document.dispatchEvent(new Event('account:invalidate')); });
-    await page.waitForFunction(() => window.__accountFake.state.release !== null);
+    await page.waitForFunction(() => window.__accountFake.state.pending.length > 0);
     assert.equal(reads(), before + 1, 'authority is re-read before anything else happens');
     assert.equal(await page.locator('[data-account-secret]').isVisible(), true, 'nothing is torn down while the read is in flight');
     await page.evaluate(() => window.__accountFake.state.release());
@@ -281,6 +281,132 @@ try {
     await page.getByText('Sign in again to continue.').waitFor();
     assert.deepEqual(calls.filter(post('/logout')).map(call => call.actor), ['actor-alice']);
     assert.equal(await page.evaluate(() => window.__changed), true);
+  });
+
+  // Interleavings of the sequencer (README "Interleavings"): each row starts two asynchronous flows against
+  // deferred responses and checks the outcome the table states.
+  const mintShown = async page => { await FLOWS[0].open(page); await button(page, 'Create token').click(); await page.locator('[data-account-secret]').waitFor(); };
+  const hold = (page, key) => page.evaluate(value => { window.__accountFake.state.hold = value; }, key);
+  const pendingCount = (page, count) => page.waitForFunction(n => window.__accountFake.state.pending.length === n, count);
+  const invalidate = (page, detail) => page.evaluate(value => document.dispatchEvent(value === null ? new Event('account:invalidate') : new CustomEvent('account:invalidate', { detail: value })), detail);
+  const secretValue = page => page.getByLabel('One-time token secret', { exact: true });
+  const tokenPosts = calls => calls.filter(post('/tokens')).length, logoutPosts = calls => calls.filter(post('/logout')).length;
+  const holdToast = async page => { await page.getByText(HOLD_PREFIX).first().waitFor(); };
+  const PAIRS = [
+    { pair: 'sign-out held × mint attempt and navigation', run: async (page, calls) => {
+      await hold(page, 'GET ');
+      await button(page, 'Sign out').click();
+      await pendingCount(page, 1);
+      assert.equal(await button(page, 'New token').isDisabled(), true);
+      await button(page, 'New token').evaluate(node => node.click());
+      await leaveTo(page, '#account/profile', true);
+      await holdToast(page);
+      assert.equal(await page.evaluate(() => location.hash), '#account/tokens');
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.getByText('Sign in again to continue.').waitFor();
+      assert.deepEqual([tokenPosts(calls), logoutPosts(calls)], [0, 1]);
+    } },
+    { pair: 'mint held × sign-out attempt', run: async (page, calls) => {
+      await FLOWS[0].open(page); await hold(page, 'POST /tokens'); await button(page, 'Create token').click();
+      await pendingCount(page, 1);
+      await button(page, 'Sign out').click();
+      await holdToast(page);
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.locator('[data-account-secret]').waitFor();
+      assert.deepEqual([tokenPosts(calls), logoutPosts(calls)], [1, 0]);
+    } },
+    { pair: 'mint held × invalidate (same owner)', run: async (page, calls) => {
+      await FLOWS[0].open(page); await hold(page, 'POST /tokens'); await button(page, 'Create token').click();
+      await pendingCount(page, 1);
+      await invalidate(page, null);
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.locator('[data-account-secret]').waitFor();
+      assert.equal(await button(page, 'Reveal').isDisabled(), false);
+      assert.equal(tokenPosts(calls), 1);
+    } },
+    { pair: 'sign-out × sign-out (double click)', run: async (page, calls) => {
+      await hold(page, 'POST /logout');
+      await button(page, 'Sign out').click();
+      await pendingCount(page, 1);
+      await button(page, 'Sign out').click();
+      await holdToast(page);
+      await page.evaluate(() => window.__accountFake.state.release());
+      await page.getByText('Sign in again to continue.').waitFor();
+      assert.equal(logoutPosts(calls), 1);
+    } },
+    { pair: 'invalidate × invalidate: a stale 401 after a newer success is discarded', run: async page => {
+      await mintShown(page);
+      await hold(page, 'GET ');
+      await invalidate(page, null); await pendingCount(page, 1);
+      await invalidate(page, null); await pendingCount(page, 2);
+      await page.evaluate(() => window.__accountFake.state.releaseAt(1));
+      await settle(page);
+      await page.evaluate(() => { window.__accountFake.state.signedIn = false; window.__accountFake.state.release(); });
+      await settle(page);
+      assert.equal(await secretValue(page).isVisible(), true, 'the older 401 does not tear down');
+      assert.equal(await page.getByText('You were signed out').count(), 0);
+      assert.equal(await button(page, 'Reveal').isDisabled(), false);
+    } },
+    { pair: 'invalidate × invalidate: a stale success after a newer 401 cannot revive the area', run: async page => {
+      await mintShown(page);
+      await hold(page, 'GET ');
+      await invalidate(page, null); await pendingCount(page, 1);
+      await page.evaluate(() => { window.__accountFake.state.signedIn = false; });
+      await invalidate(page, null); await pendingCount(page, 2);
+      await page.evaluate(() => window.__accountFake.state.releaseAt(1));
+      await page.getByText('The secret of token “laptop-cli” is no longer available').waitFor();
+      await page.evaluate(() => { window.__accountFake.state.signedIn = true; window.__accountFake.state.release(); });
+      await settle(page);
+      assert.equal(await page.locator('[data-account-secret]').count(), 0);
+      assert.equal(await page.getByText('You were signed out').isVisible(), true);
+    } },
+    { pair: 'invalidate × transport failure: values masked, Reveal/Copy/writes disabled until reconnect', run: async page => {
+      await mintShown(page);
+      await button(page, 'Reveal').click();
+      assert.equal(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET);
+      await page.evaluate(() => { window.__accountFake.state.account = 'down'; });
+      await invalidate(page, null);
+      await page.locator('[data-account-unverified]').waitFor();
+      assert.notEqual(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET, 're-masked');
+      for (const name of ['Reveal', 'Copy secret', 'New token']) assert.equal(await button(page, name).isDisabled(), true, `${name} disabled`);
+      await page.evaluate(() => { window.__accountFake.state.account = 'ok'; window.dispatchEvent(new Event('online')); });
+      await page.locator('[data-account-unverified]').waitFor({ state: 'detached' });
+      await button(page, 'Reveal').click();
+      assert.equal(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET, 'the value was kept');
+    } },
+    { pair: "invalidate with reason 'signed-out': scrubbed at once, no read", run: async (page, calls) => {
+      await mintShown(page);
+      const reads = calls.filter(call => call.method === 'GET' && call.path === '').length;
+      await invalidate(page, { reason: 'signed-out' });
+      assert.equal(await page.locator('[data-account-secret]').count(), 0);
+      await page.getByText('The secret of token “laptop-cli” is no longer available').waitFor();
+      assert.equal(calls.filter(call => call.method === 'GET' && call.path === '').length, reads);
+    } },
+    { pair: 'failed sign-out × shown secret: nothing changes', run: async (page, calls) => {
+      await page.evaluate(() => { window.__accountFake.state.logout = 'fail'; });
+      await mintShown(page);
+      await button(page, 'Reveal').click();
+      await button(page, 'Sign out').click();
+      await button(page, 'Yes, I have saved it').click();
+      await dialog(page, 'Hide the secret for good?').getByText('Sign-out failed').waitFor();
+      await button(page, 'Keep it visible').click();
+      assert.equal(await secretValue(page).inputValue(), FAKE_TOKEN_SECRET);
+      assert.equal(logoutPosts(calls), 1);
+    } }
+  ];
+  // Each row gets its own page: a row may end with a one-time value shown, whose beforeunload guard would hold a reload.
+  await run('sequencer interleavings: one write-or-sign-out slot, newest authority read decides', async ({ page, calls, errors }) => {
+    for (const row of PAIRS) {
+      const rowPage = await page.context().newPage();
+      rowPage.setDefaultTimeout(STEP_TIMEOUT_MS);
+      rowPage.on('pageerror', error => errors.push(error.message));
+      rowPage.on('dialog', native => { errors.push(`native ${native.type()} dialog`); void native.dismiss(); });
+      await rowPage.exposeFunction('__accountCall', call => { calls.push(call); });
+      await load(rowPage, FLOWS[0]);
+      try { await row.run(rowPage, calls); } catch (cause) { cause.message = `${row.pair}: ${cause.message}`; throw cause; }
+      await rowPage.close({ runBeforeUnload: false });
+      calls.length = 0;
+    }
   });
 
   await run('a one-time value arriving for an inactive section is reported and shown in its own section', async ({ page, errors, calls }) => {

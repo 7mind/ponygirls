@@ -232,7 +232,10 @@ export function installAccountUI({ document, window, fetch }) {
       const values = Object.fromEntries(inputs.map(item => [item.input.name, item.input.value]));
       for (const item of inputs) item.input.value = '';
       let failure;
-      try { failure = await run(values); } finally { busy = false; if (dialog.isConnected) setBusy(form, false); }
+      try { failure = await run(values); } finally {
+        busy = false;
+        if (dialog.isConnected) { setBusy(form, false); dialog.dispatchEvent(new window.Event('account:settled')); }
+      }
       if (failure === null) close();
       else if (dialog.isConnected) { error.replaceChildren(icon('alert'), h('div', {}, failure)); error.hidden = false; (inputs.length > 0 ? inputs[0].input : cancelButton).focus(); }
     });
@@ -615,6 +618,31 @@ export function installAccountUI({ document, window, fetch }) {
   }
 
   // ------------------------------------------------------------------------------------------
+  // The sequencer: every state-changing asynchronous step of the signed-in area goes through it.
+  // (i) One exclusive slot for {section write | sign-out}: while it is occupied, every other write entry point
+  //     and sign-out are disabled or held (busy rule) and navigation is held (mayLeave).
+  // (ii) A monotonic authority epoch: each authority read (account or profile read, write preflight) takes a new
+  //     epoch at start; its verdict (verified, unverified, lost) counts only while it is still the newest, and
+  //     every completion is also bound to the area instance that started it.
+  const sequencer = { slot: null, epoch: 0 };
+  const nextEpoch = () => ++sequencer.epoch;
+  const isCurrent = epoch => epoch === sequencer.epoch;
+  function slotChanged() { if (area !== null) area.applyBusy(); }
+  // Takes the slot or returns null; a write re-enters a slot its own area already holds for a write.
+  function takeSlot(kind, owner) {
+    const slot = sequencer.slot;
+    if (slot !== null) return slot.kind === 'write' && kind === 'write' && slot.area === owner ? { nested: true } : null;
+    const taken = { kind, area: owner, nested: false };
+    sequencer.slot = taken; slotChanged();
+    return taken;
+  }
+  function freeSlot(taken) {
+    if (taken.nested || sequencer.slot !== taken) return;
+    sequencer.slot = null; slotChanged();
+  }
+  class AccountStop extends Error { constructor() { super('Account read did not confirm the owner'); } }
+
+  // ------------------------------------------------------------------------------------------
   // Signed-in account area rendered into [data-account-outlet]: section navigation + one section per route.
 
   function createArea(outlet, owner) {
@@ -622,8 +650,9 @@ export function installAccountUI({ document, window, fetch }) {
     const client = createAccountClient({ fetch, requestTimeoutMs: ACCOUNT_REQUEST_TIMEOUT_MS, signal: controller.signal });
     const root = h('div', { class: 'account' });
     const nav = h('nav', { class: 'account-nav', 'aria-label': 'Account sections' });
-    const holder = h('div', { class: 'account-main' });
-    root.append(nav, holder);
+    const holder = h('div', {});
+    const connection = h('div', { hidden: true });
+    root.append(nav, h('div', { class: 'account-main stack' }, connection, holder));
     const dialogs = new Set(), menus = new Set(); // overlays owned by the current section, closed by leave()/dispose()
     const self = {
       alive: true, section: null, hash: null,
@@ -631,10 +660,17 @@ export function installAccountUI({ document, window, fetch }) {
       tokenView: { mode: 'idle', busy: false, formUi: null, secret: null, secretUi: null, highlight: null, showRevoked: false, filter: '', notice: null },
       usersView: { filter: 'all', query: '', mode: 'idle', formUi: null, link: null, linkUi: null, notice: null },
       tokensUi: null, usersUi: null, pendingLink: null,
-      inFlight: 0 // section-owned write requests (act, mint, revoke); leaving the section waits for them
+      // Authority: 'verified' | 'verifying' | 'unverified' ('lost' tears the area down). `trusted` changes only on
+      // verified/unverified, so 'verifying' keeps the capabilities as they were.
+      authority: 'verified', trusted: true, accountEpoch: 0
     };
-    const stale = { outlet, owner };
-    const dialog = spec => { const opened = openDialog(spec); dialogs.add(opened); opened.element.addEventListener('close', () => dialogs.delete(opened)); return opened; };
+    // A dialog is section-owned; its confirm button is a write entry point (busy rule, authority).
+    const dialog = spec => {
+      const opened = openDialog(spec); dialogs.add(opened); opened.element.addEventListener('close', () => dialogs.delete(opened));
+      if (spec.write) entry(opened.element.querySelector('button[type="submit"]'), false);
+      opened.element.addEventListener('account:settled', applyBusy);
+      return opened;
+    };
     const profileData = () => (self.profile.phase === 'ready' ? self.profile.data : null);
     const policyData = () => (self.policy.phase === 'ready' ? self.policy.data : null);
     const accountData = () => (self.account.phase === 'ready' ? self.account.data : null);
@@ -647,10 +683,59 @@ export function installAccountUI({ document, window, fetch }) {
       if (account.user.id !== owner) throw new AccountOwnerChangedError();
       return account;
     }
-    // True when the caller must stop: the owner changed (the area is torn down) or the area is gone.
-    function failed(cause) {
-      if (cause instanceof AccountOwnerChangedError) { ownerChanged(stale); return true; }
-      return !self.alive;
+    // One authority read of GET /: { epoch, outcome: 'same' | 'changed' | 'signed-out' | 'unknown', account, cause }.
+    async function readAuthority() {
+      const epoch = nextEpoch();
+      try { return { epoch, outcome: 'same', account: await readAccount(), cause: null }; } catch (cause) {
+        if (cause instanceof AccountOwnerChangedError) return { epoch, outcome: 'changed', account: null, cause };
+        if (cause instanceof AccountApiError && cause.status === 401) return { epoch, outcome: 'signed-out', account: null, cause };
+        return { epoch, outcome: 'unknown', account: null, cause };
+      }
+    }
+    // Applies a read: its data if it is newer than the data shown, its verdict only if it is still the newest read.
+    // `transport` says what a transport failure means here: 'unverified' for re-reads, 'ignore' for the first load.
+    function settle(read, transport) {
+      if (!self.alive) return 'stale';
+      if (read.outcome === 'same' && read.epoch > self.accountEpoch) {
+        self.accountEpoch = read.epoch; self.account = { phase: 'ready', data: read.account };
+        renderNav(); if (self.tokensUi !== null) self.tokensUi.renderRows();
+      }
+      if (!isCurrent(read.epoch)) return 'stale';
+      if (read.outcome === 'same') { setAuthority('verified'); return 'same'; }
+      if (read.outcome === 'unknown') { if (transport === 'unverified') setAuthority('unverified'); return 'unknown'; }
+      lose(read.outcome);
+      return 'lost';
+    }
+    // Reads the account for a write (preflight / follow-up); anything but a confirmed owner stops the write.
+    async function readForWrite() {
+      const read = await readAuthority();
+      settle(read, 'ignore');
+      if (read.outcome !== 'same' || !self.alive) throw new AccountStop();
+      return read.account;
+    }
+    function lose(reason) { forceTeardown(api, reason); }
+    function setAuthority(state) {
+      self.authority = state;
+      if (state === 'verified') self.trusted = true;
+      if (state === 'unverified') {
+        self.trusted = false;
+        if (self.tokenView.secret !== null) self.tokenView.secret.revealed = false;
+      }
+      renderConnection(); applyBusy();
+    }
+    function renderConnection() {
+      connection.hidden = self.trusted;
+      if (self.trusted) { connection.replaceChildren(); return; }
+      connection.replaceChildren(h('div', { class: 'notice notice-warn', role: 'alert', 'data-account-unverified': true }, icon('alert'),
+        h('div', { class: 'grow' }, h('div', { class: 'notice-title' }, 'Connection lost — reconnect to continue'),
+          'The account could not be confirmed. One-time values are kept but hidden, and changes are paused until it is confirmed again.',
+          h('div', { class: 'notice-actions' }, h('button', { class: 'btn btn-sm', type: 'button', disabled: self.authority === 'verifying', onclick: () => void verify() }, icon('refresh'), self.authority === 'verifying' ? 'Reconnecting…' : 'Retry')))));
+    }
+    // account:invalidate, window focus, 'online' and Retry: re-read authority; nothing is torn down meanwhile.
+    async function verify() {
+      if (!self.alive) return;
+      self.authority = 'verifying'; renderConnection();
+      settle(await readAuthority(), 'unverified');
     }
 
     function available(section) {
@@ -694,21 +779,33 @@ export function installAccountUI({ document, window, fetch }) {
     }
     // Busy rule: while the section has a write in flight, every control that would start another write or
     // discard the submitted form is disabled. Such controls are created through entry(); one counter drives them.
+    const writable = () => sequencer.slot === null && self.trusted;
     function entry(node, ownDisabled) {
       node.dataset.accountEntry = ownDisabled ? 'disabled' : 'enabled';
-      node.disabled = ownDisabled || self.inFlight > 0;
+      node.disabled = ownDisabled || !writable();
       return node;
     }
+    // Reveal and Copy of one-time values follow the authority only (not the slot).
+    function sensitive(node) { node.dataset.accountSensitive = ''; node.disabled = !self.trusted; return node; }
     function applyBusy() {
-      holder.setAttribute('aria-busy', String(self.inFlight > 0));
-      for (const node of holder.querySelectorAll('[data-account-entry]')) node.disabled = node.dataset.accountEntry === 'disabled' || self.inFlight > 0;
-    }
-    async function held(work) {
-      self.inFlight++; applyBusy();
-      try { return await work(); } finally {
-        self.inFlight--;
-        if (self.alive) applyBusy();
+      if (!self.alive) return;
+      holder.setAttribute('aria-busy', String(sequencer.slot !== null));
+      for (const scope of [holder, ...[...dialogs].map(opened => opened.element)]) {
+        for (const node of scope.querySelectorAll('[data-account-entry]')) node.disabled = node.dataset.accountEntry === 'disabled' || !writable();
+        for (const node of scope.querySelectorAll('[data-account-sensitive]')) node.disabled = !self.trusted;
       }
+      if (self.tokenView.secretUi !== null) self.tokenView.secretUi.update();
+      if (self.usersView.linkUi !== null) self.usersView.linkUi.update();
+    }
+    // A section write occupies the sequencer slot; every write entry point is disabled while it is occupied or
+    // while authority is unverified, so a refused start is an invariant violation.
+    async function held(work) {
+      const taken = takeSlot('write', api);
+      if (taken === null || (!taken.nested && !self.trusted)) {
+        if (taken !== null) freeSlot(taken);
+        throw new Error('Account: a write started while the slot is occupied or authority is unverified');
+      }
+      try { return await work(); } finally { freeSlot(taken); }
     }
     function closeOverlays() {
       for (const close of [...menus]) close();
@@ -723,22 +820,6 @@ export function installAccountUI({ document, window, fetch }) {
       if (self.usersView.link !== null) lost.push({ kind: self.usersView.link.kind, name: self.usersView.link.name, uncertain: false });
       else if (self.pendingLink !== null) lost.push({ ...self.pendingLink, uncertain: true });
       return lost;
-    }
-    // account:invalidate: re-read authority before anything is torn down. 'same' keeps every panel, dialog and
-    // request; 'changed' and 'signed-out' are a forced teardown; 'unknown' (service unreachable) keeps everything.
-    async function verify() {
-      try {
-        const account = await readAccount();
-        if (!self.alive) return 'same';
-        self.account = { phase: 'ready', data: account };
-        renderNav();
-        if (self.tokensUi !== null) self.tokensUi.renderRows();
-        return 'same';
-      } catch (cause) {
-        if (cause instanceof AccountOwnerChangedError) return 'changed';
-        if (cause instanceof AccountApiError && cause.status === 401) return 'signed-out';
-        return 'unknown';
-      }
     }
     function renderSection() {
       const build = { profile: profileSection, password: passwordSection, 'two-factor': twoFactorSection, tokens: tokensSection, users: usersSection }[self.section];
@@ -771,17 +852,26 @@ export function installAccountUI({ document, window, fetch }) {
 
     function loadAccount() {
       self.account = { phase: 'loading' };
-      readAccount().then(account => { self.account = { phase: 'ready', data: account }; }, cause => {
-        if (failed(cause)) return;
-        self.account = { phase: 'failed', error: cause };
-      }).then(() => { if (!self.alive) return; renderNav(); if (self.tokensUi !== null) self.tokensUi.renderAll(); });
+      readAuthority().then(read => {
+        settle(read, 'ignore');
+        if (!self.alive) return;
+        // The list state is data: a failed first load shows as failed even when a newer read owns the verdict.
+        if (read.outcome !== 'same' && self.account.phase !== 'ready') self.account = { phase: 'failed', error: read.cause };
+        renderNav(); if (self.tokensUi !== null) self.tokensUi.renderAll();
+      });
     }
+    // The profile read is an authority read too: an owner mismatch or 401 counts only while it is the newest read.
     function loadProfile() {
+      const epoch = nextEpoch();
       client.profile().then(profile => {
         if (profile.user.id !== owner) throw new AccountOwnerChangedError();
-        self.profile = { phase: 'ready', data: profile };
+        if (self.alive) self.profile = { phase: 'ready', data: profile };
       }).catch(cause => {
-        if (failed(cause)) return;
+        if (!self.alive) return;
+        if (cause instanceof AccountOwnerChangedError || (cause instanceof AccountApiError && cause.status === 401)) {
+          if (isCurrent(epoch)) lose(cause instanceof AccountOwnerChangedError ? 'changed' : 'signed-out');
+          if (!self.alive) return;
+        }
         self.profile = cause instanceof AccountApiError && cause.status === 404 ? { phase: 'absent' } : { phase: 'failed', error: cause };
       }).then(() => {
         if (!self.alive) return;
@@ -807,12 +897,17 @@ export function installAccountUI({ document, window, fetch }) {
     }
 
     // Runs one ACCOUNT_ACTIONS entry: { ok, result } or { ok: false, text (null when torn down), error }.
+    // The client's fresh profile read before the POST is an authority read: its verdict needs the newest epoch.
     function act(action, target, input, proofText) { return held(() => actNow(action, target, input, proofText)); }
     async function actNow(action, target, input, proofText) {
+      const epoch = nextEpoch();
       const final = await runAction(client, actionStart(action, target), owner, input, () => {});
+      if (!self.alive) return { ok: false, text: null, error: null };
       if (final.phase === 'done') return { ok: true, result: final.result };
-      if (final.phase === 'owner-changed') { ownerChanged(stale); return { ok: false, text: null, error: null }; }
-      if (final.phase === 'unauthorized') return { ok: false, text: SESSION_TEXT, error: null };
+      if (final.phase === 'owner-changed' || final.phase === 'unauthorized') {
+        if (isCurrent(epoch)) lose(final.phase === 'owner-changed' ? 'changed' : 'signed-out');
+        return { ok: false, text: self.alive ? SESSION_TEXT : null, error: null };
+      }
       const error = final.error;
       const text = error.code === 'proof-rejected' ? proofText
         : error.code === 'forbidden' ? 'This action is not permitted for the current account.'
@@ -832,8 +927,8 @@ export function installAccountUI({ document, window, fetch }) {
       const email = profile.manage.email
         ? field({ label: 'E-mail', input: input({ name: 'email', type: 'email', autocomplete: 'email', value: profile.email ?? '' }), hint: 'For administrators to reach you. Not verified, not used for sign-in or recovery.', id: nextId('email') })
         : null;
-      const save = h('button', { class: 'btn btn-primary', type: 'submit', disabled: true }, 'Save e-mail');
-      if (email !== null) email.input.addEventListener('input', () => { save.disabled = email.input.value.trim() === (profile.email ?? ''); });
+      const save = entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Save e-mail'), true);
+      if (email !== null) email.input.addEventListener('input', () => { entry(save, email.input.value.trim() === (profile.email ?? '')); });
       const form = h('form', { class: 'card-body account-form', novalidate: true },
         field({ label: 'Username', input: input({ value: profile.user.login, readonly: true }), hint: 'Your sign-in name. It never changes.', id: nextId('username') }).node,
         email === null ? null : email.node,
@@ -847,7 +942,7 @@ export function installAccountUI({ document, window, fetch }) {
         setBusy(form, true);
         const outcome = await act('change-email', null, { email: email.input.value.trim() }, null);
         if (!alive()) return;
-        setBusy(form, false);
+        setBusy(form, false); applyBusy();
         email.setError(outcome.ok ? null : outcome.text);
         if (outcome.ok) { toast('E-mail saved'); reloadProfile(); }
       });
@@ -868,7 +963,7 @@ export function installAccountUI({ document, window, fetch }) {
       const next = field({ label: 'New password', input: input({ name: 'newPassword', type: 'password', autocomplete: 'new-password' }), hint: policy === null ? 'Must differ from the username and e-mail.' : passwordHint(policy.password.minLength), id: nextId('new-password') });
       const status = h('div', { role: 'status' });
       const form = h('form', { class: 'card-body account-form', novalidate: true }, current.node, next.node, status,
-        h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Change password')));
+        h('div', { class: 'form-actions' }, entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Change password'), false)));
       form.addEventListener('submit', async event => {
         event.preventDefault();
         const values = { currentPassword: current.input.value, newPassword: next.input.value };
@@ -876,7 +971,7 @@ export function installAccountUI({ document, window, fetch }) {
         setBusy(form, true); status.replaceChildren();
         const outcome = await act('change-password', null, values, 'Your current password was not accepted.');
         if (!alive()) return;
-        setBusy(form, false);
+        setBusy(form, false); applyBusy();
         const code = outcome.ok ? null : errorCode(outcome);
         current.setError(code === 'proof-rejected' ? outcome.text : null);
         next.setError(code === 'weak-password' ? outcome.text : null);
@@ -913,7 +1008,7 @@ export function installAccountUI({ document, window, fetch }) {
           h('div', { class: 'card-head' }, h('h2', {}, 'Replace authenticator'), h('span', { class: 'xs muted' }, 'for a new phone or a lost device')),
           h('div', { class: 'card-body account-form' }, password.node, old === null ? null : old.node,
             h('ol', { class: 'steps' }, h('li', {}, setup.node), h('li', {}, code.node)), status,
-            h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Replace authenticator'),
+            h('div', { class: 'form-actions' }, entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Replace authenticator'), false),
               h('button', { class: 'btn', type: 'button', onclick: closeReplace }, 'Cancel'))));
         form.addEventListener('submit', async event => {
           event.preventDefault();
@@ -922,7 +1017,7 @@ export function installAccountUI({ document, window, fetch }) {
           setBusy(form, true); status.replaceChildren();
           const outcome = await act('replace-totp', null, values, 'The current password or authenticator code was not accepted.');
           if (!alive()) return;
-          setBusy(form, false);
+          setBusy(form, false); applyBusy();
           if (outcome.ok) { toast('Authenticator replaced'); reloadProfile(); return; }
           const mismatch = errorCode(outcome) === 'totp-mismatch';
           code.setError(mismatch ? outcome.text : null);
@@ -936,7 +1031,7 @@ export function installAccountUI({ document, window, fetch }) {
           ? [h('p', {}, 'From now on signing in needs your password and a 6-digit code. Enter a current code to prove the authenticator works — this prevents locking yourself out. Your other browser sessions are signed out. Turning it off later also asks for a code.'),
             h('p', {}, policy !== null && policy.reset ? 'If you lose the authenticator, only an administrator can reset your credentials.' : 'If you lose the authenticator, it cannot be replaced: this server offers no administrator reset.')]
           : [h('p', {}, 'Signing in will need only your password. The authenticator is still used to recover a forgotten password. Enter a current code to confirm.')];
-        dialog({ title: enable ? 'Require a code at every sign-in?' : 'Stop requiring a code at sign-in?', body, fields: [{ name: 'totp', label: 'Authenticator code', type: 'code', hint: null }],
+        dialog({ write: true, title: enable ? 'Require a code at every sign-in?' : 'Stop requiring a code at sign-in?', body, fields: [{ name: 'totp', label: 'Authenticator code', type: 'code', hint: null }],
           confirm: enable ? 'Require codes' : 'Stop requiring codes', danger: false, cancel: 'Cancel', extra: [],
           run: async values => {
             const outcome = await act('set-totp-required', null, { required: enable, totp: values.totp.trim() }, 'That code did not match. Enter the code your authenticator shows right now.');
@@ -1053,7 +1148,7 @@ export function installAccountUI({ document, window, fetch }) {
         let selected = scopes.includes('api') ? ['api'] : [scopes.includes('Ingest') ? 'Ingest' : scopes[0]];
         const headId = nextId('token-form');
         const name = field({ label: 'Name', input: input({ name: 'name', maxlength: TOKEN_NAME_MAX, autocomplete: 'off', spellcheck: false }), hint: 'Shown in this list and in server logs. Pick something that tells you where it is used.', id: nextId('token-name') });
-        const submit = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create token');
+        const submit = entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create token'), false);
         const checks = scopes.includes('api') ? [] : scopes.map(scope => h('input', { type: 'checkbox', value: scope, checked: selected.includes(scope) }));
         const permissions = scopes.includes('api')
           ? h('p', { class: 'small' }, h('strong', {}, 'Full API access'), h('span', { class: 'muted' }, ' — every operation of this service for your account. Keep access tokens private.'))
@@ -1066,7 +1161,7 @@ export function installAccountUI({ document, window, fetch }) {
           if (check.value === 'Read' && !check.checked) chosen.delete('Raw');
           selected = scopes.filter(scope => chosen.has(scope));
           for (const other of checks) other.checked = selected.includes(other.value);
-          submit.disabled = selected.length === 0;
+          entry(submit, selected.length === 0);
         });
         const error = h('div', { role: 'alert', hidden: true });
         const form = h('form', { class: 'card', novalidate: true, 'aria-labelledby': headId, 'data-account-token-form': true },
@@ -1093,48 +1188,48 @@ export function installAccountUI({ document, window, fetch }) {
         const intent = { name, known: false, refreshed: false };
         let sent = false;
         try {
-          const before = await readAccount();
+          const before = await readForWrite();
           // Once the POST is sent, any failure can follow a committed issuance (README: token creation recovery).
           uncertainMints.set(owner, intent); sent = true;
           const result = await legacyRequest('POST', '/tokens', { name, scopes }, before.user.actor);
           if (result === null || typeof result.secret !== 'string' || result.secret.length === 0 || !validToken(result.token) || result.token.source !== 'issued') throw new AccountResponseError();
           if (!self.alive || uncertainMints.get(owner) !== intent) return;
           intent.known = true;
-          const account = await readAccount();
+          const account = await readForWrite();
           if (!self.alive || uncertainMints.get(owner) !== intent) return;
           if (!account.tokens.some(token => token.id === result.token.id && !token.revoked && token.source === 'issued')) throw new AccountResponseError();
           uncertainMints.delete(owner);
-          self.account = { phase: 'ready', data: account };
           view.busy = false; view.mode = 'secret'; view.formUi = null; view.highlight = result.token.id;
           view.secret = { token: result.token, value: result.secret, revealed: false, seen: false, copied: false };
           view.secretUi = secretPanel(view.secret);
           deliver('tokens'); view.secretUi.focus();
         } catch (cause) {
-          if (failed(cause)) return;
+          if (!self.alive) return;
           view.busy = false;
           if (sent && uncertainMints.get(owner) === intent) {
             view.mode = 'idle'; view.formUi = null;
             view.notice = cause instanceof AccountApiError && cause.status === 401 ? notice('danger', 'alert', null, SESSION_TEXT) : null;
             renderSlot();
-          } else { setBusy(form.node, false); form.showError(legacyMessage(cause)); }
+          } else { setBusy(form.node, false); applyBusy(); form.showError(legacyMessage(cause)); }
         }
       }
       function secretPanel(secret) {
         const value = input({ readonly: true, 'aria-label': 'One-time token secret', spellcheck: false, autocomplete: 'off', 'data-account-secret-value': true });
-        const reveal = h('button', { class: 'btn btn-lg', type: 'button', 'aria-pressed': 'false' }, icon('eye'), 'Reveal');
-        const copy = h('button', { class: 'btn btn-primary btn-lg', type: 'button' }, icon('copy'), 'Copy secret');
+        const reveal = sensitive(h('button', { class: 'btn btn-lg', type: 'button', 'aria-pressed': 'false' }, icon('eye'), 'Reveal'));
+        const copy = sensitive(h('button', { class: 'btn btn-primary btn-lg', type: 'button' }, icon('copy'), 'Copy secret'));
         const chip = h('span', {});
         const status = h('span', { class: 'muted', role: 'status' }, 'This panel stays until you confirm. Leaving this page asks first.');
         const saved = h('button', { class: 'btn push', type: 'button' }, 'I have saved it');
         function update() {
-          value.value = secret.revealed ? secret.value : maskedSecret(secret.value);
+          value.value = secret.revealed && self.trusted ? secret.value : maskedSecret(secret.value);
           reveal.setAttribute('aria-pressed', String(secret.revealed));
           chip.className = secret.copied ? 'chip chip-ok' : 'chip chip-outline';
           chip.replaceChildren(...(secret.copied ? [icon('check', true), 'Copied'] : ['Not copied yet']));
           saved.disabled = !(secret.copied || secret.seen);
         }
-        reveal.addEventListener('click', () => { secret.revealed = !secret.revealed; secret.seen = true; update(); });
+        reveal.addEventListener('click', () => { if (!self.trusted) return; secret.revealed = !secret.revealed; secret.seen = true; update(); });
         copy.addEventListener('click', async () => {
+          if (!self.trusted) return;
           const copied = await copyText(secret.value);
           if (view.secret !== secret) return;
           if (copied) { secret.copied = true; toast('Secret copied to clipboard'); }
@@ -1148,21 +1243,17 @@ export function installAccountUI({ document, window, fetch }) {
           h('div', { class: 'secret-value' }, value, reveal, copy),
           h('div', { class: 'secret-foot' }, chip, status, saved));
         update();
-        return { node, focus: () => copy.focus() };
+        return { node, update, focus: () => copy.focus() };
       }
       async function refreshTokens() {
         if (view.busy) return;
         view.busy = true; view.notice = null; renderSlot();
-        try {
-          const account = await readAccount();
-          if (!self.alive) return;
-          self.account = { phase: 'ready', data: account };
-          const intent = uncertainMints.get(owner);
-          if (intent !== undefined) intent.refreshed = true;
-        } catch (cause) {
-          if (failed(cause)) return;
-          view.notice = notice('danger', 'alert', 'The token list could not be refreshed', legacyMessage(cause));
-        }
+        const read = await readAuthority();
+        const verdict = settle(read, 'unverified');
+        if (!self.alive) return;
+        const intent = uncertainMints.get(owner);
+        if (read.outcome === 'same' && intent !== undefined) intent.refreshed = true;
+        if (verdict === 'unknown') view.notice = notice('danger', 'alert', 'The token list could not be refreshed', legacyMessage(read.cause));
         view.busy = false; renderNav(); renderAll();
       }
       function confirmRevoke(token) {
@@ -1170,20 +1261,20 @@ export function installAccountUI({ document, window, fetch }) {
           body: [h('p', {}, 'Clients using this token lose access immediately. This cannot be undone; create a new token to restore access.'),
             h('dl', { class: 'dl' }, h('dt', {}, 'Permissions'), h('dd', {}, token.scopes.join(', ')), h('dt', {}, 'Created'), h('dd', {}, dateNode(token.createdAt, DATE_FORMAT)),
               h('dt', {}, 'Token ID'), h('dd', { class: 'mono' }, token.id))],
+          write: true,
           run: () => held(async () => {
             let sent = false;
             try {
-              const before = await readAccount();
+              const before = await readForWrite();
               sent = true;
               const result = await legacyRequest('POST', `/tokens/${encodeURIComponent(token.id)}/revoke`, {}, before.user.actor);
               if (result === null || result.ok !== true) throw new AccountResponseError();
-              const account = await readAccount();
+              await readForWrite();
               if (!self.alive) return null;
-              self.account = { phase: 'ready', data: account };
               renderNav(); renderAll(); toast(`Token “${token.name}” revoked`);
               return null;
             } catch (cause) {
-              if (failed(cause)) return null;
+              if (!self.alive) return null;
               return sent ? `Revocation could not be confirmed. Refresh the token list before retrying. ${legacyMessage(cause)}` : legacyMessage(cause);
             }
           }) });
@@ -1337,7 +1428,7 @@ export function installAccountUI({ document, window, fetch }) {
       }
       function openApplication(user) {
         const name = nameOf(user);
-        dialog({ title: `Application of “${name}”`, confirm: 'Approve', danger: false, cancel: 'Cancel', fields: [],
+        dialog({ write: true, title: `Application of “${name}”`, confirm: 'Approve', danger: false, cancel: 'Cancel', fields: [],
           extra: [{ label: 'Reject application…', class: 'btn btn-danger-quiet', onclick: () => confirmReject(user) }],
           body: [h('p', {}, `Approving lets ${name} sign in immediately with the rights of a regular user. Rejecting removes the application and frees the username.`),
             h('dl', { class: 'dl' }, h('dt', {}, 'Username'), h('dd', {}, name, ' ', h('span', { class: 'muted' }, '(chosen by the applicant)')),
@@ -1349,13 +1440,13 @@ export function installAccountUI({ document, window, fetch }) {
       }
       function confirmReject(user) {
         const name = nameOf(user);
-        dialog({ title: `Reject the application of “${name}”?`, confirm: 'Reject and remove', danger: true, cancel: 'Cancel', fields: [], extra: [],
+        dialog({ write: true, title: `Reject the application of “${name}”?`, confirm: 'Reject and remove', danger: true, cancel: 'Cancel', fields: [], extra: [],
           body: [h('p', {}, `The application is removed: ${name} cannot sign in, and the username becomes available again. Nothing else is affected — a pending account never held data or access. This cannot be undone; the person can apply again.`)],
           run: async () => afterAction(await act('reject-user', user.id, null, null), `Application of ${name} rejected`) });
       }
       function confirmEnabled(user, enabled) {
         const name = nameOf(user);
-        dialog({ title: enabled ? `Enable “${name}”?` : `Disable “${name}”?`, confirm: enabled ? 'Enable account' : 'Disable account', danger: !enabled, cancel: 'Cancel', fields: [], extra: [],
+        dialog({ write: true, title: enabled ? `Enable “${name}”?` : `Disable “${name}”?`, confirm: enabled ? 'Enable account' : 'Disable account', danger: !enabled, cancel: 'Cancel', fields: [], extra: [],
           body: [h('p', {}, enabled
             ? `${name} can sign in again with the existing password and authenticator, and the access tokens issued before work again.`
             : `${name} is signed out everywhere and can no longer sign in or recover the password. Issued access tokens stop working. A pending reset link is revoked. Data stays attributed to ${name}; the username is never reused. You can enable the account again later.`)],
@@ -1363,7 +1454,7 @@ export function installAccountUI({ document, window, fetch }) {
       }
       function confirmAdmin(user) {
         const name = nameOf(user), grant = !user.admin;
-        dialog({ title: grant ? `Make “${name}” an administrator?` : `Remove administrator rights from “${name}”?`, confirm: grant ? 'Grant admin' : 'Revoke admin', danger: !grant, cancel: 'Cancel', fields: [PROOF_FIELD], extra: [],
+        dialog({ write: true, title: grant ? `Make “${name}” an administrator?` : `Remove administrator rights from “${name}”?`, confirm: grant ? 'Grant admin' : 'Revoke admin', danger: !grant, cancel: 'Cancel', fields: [PROOF_FIELD], extra: [],
           body: [h('p', {}, grant
             ? 'Administrators can enroll, approve, disable and reset users and grant or revoke this role. Accounts from server configuration cannot be changed here.'
             : `${name} keeps a regular account and loses access to user management.`)],
@@ -1371,7 +1462,7 @@ export function installAccountUI({ document, window, fetch }) {
       }
       function confirmReset(user) {
         const name = nameOf(user);
-        dialog({ title: `Reset credentials of “${name}”?`, confirm: 'Create reset link', danger: false, cancel: 'Cancel', fields: [PROOF_FIELD], extra: [],
+        dialog({ write: true, title: `Reset credentials of “${name}”?`, confirm: 'Create reset link', danger: false, cancel: 'Cancel', fields: [PROOF_FIELD], extra: [],
           body: [h('p', {}, `You get a one-time link that lets ${name} choose a new password and set up a new authenticator. The current credentials keep working until the link is used. API tokens, e-mail and role are kept.`)],
           run: async values => {
             // The link is delivered inside the counted request, so no navigation can slip in before it is shown.
@@ -1387,13 +1478,13 @@ export function installAccountUI({ document, window, fetch }) {
           } });
       }
       function confirmRevokeInvite(enrollment) {
-        dialog({ title: `Revoke the invitation for “${enrollment.username}”?`, confirm: 'Revoke link', danger: true, cancel: 'Cancel', fields: [], extra: [],
+        dialog({ write: true, title: `Revoke the invitation for “${enrollment.username}”?`, confirm: 'Revoke link', danger: true, cancel: 'Cancel', fields: [], extra: [],
           body: [h('p', {}, 'The link stops working immediately and the username becomes available again. You can create a new invitation later.')],
           run: async () => afterAction(await act('revoke-enrollment', enrollment.id, null, null), `Invitation for ${enrollment.username} revoked`) });
       }
       function confirmRevokeReset(user, enrollment) {
         const name = nameOf(user);
-        dialog({ title: `Revoke the reset link for “${name}”?`, confirm: 'Revoke link', danger: true, cancel: 'Cancel', fields: [], extra: [],
+        dialog({ write: true, title: `Revoke the reset link for “${name}”?`, confirm: 'Revoke link', danger: true, cancel: 'Cancel', fields: [], extra: [],
           body: [h('p', {}, `The link stops working immediately. ${name}'s current password and authenticator keep working; nothing else changes. You can create a new reset link later.`)],
           run: async () => afterAction(await act('revoke-enrollment', enrollment.id, null, null), `Reset link for ${name} revoked`) });
       }
@@ -1405,7 +1496,7 @@ export function installAccountUI({ document, window, fetch }) {
         const form = h('form', { class: 'card', novalidate: true, 'aria-labelledby': headId, 'data-account-enroll-form': true },
           h('div', { class: 'card-head' }, h('h2', { id: headId }, 'Enroll a user'), h('span', { class: 'xs muted' }, 'creates a one-time invitation link')),
           h('div', { class: 'card-body account-form' }, username.node, status,
-            h('div', { class: 'form-actions' }, h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create invitation link'),
+            h('div', { class: 'form-actions' }, entry(h('button', { class: 'btn btn-primary', type: 'submit' }, 'Create invitation link'), false),
               h('button', { class: 'btn', type: 'button', onclick: () => { view.mode = 'idle'; view.formUi = null; renderAll(); } }, 'Cancel'))));
         form.addEventListener('submit', async event => {
           event.preventDefault();
@@ -1419,7 +1510,7 @@ export function installAccountUI({ document, window, fetch }) {
             return result;
           }).finally(() => { self.pendingLink = null; });
           if (!alive()) return;
-          setBusy(form, false);
+          setBusy(form, false); applyBusy();
           if (outcome.ok) { void loadAdmin(); return; }
           const code = errorCode(outcome);
           if (code === 'username-unavailable') username.setError(`“${value}” is not available. Choose another username.`);
@@ -1435,17 +1526,20 @@ export function installAccountUI({ document, window, fetch }) {
         deliver('users'); view.linkUi.focus();
       }
       function linkPanel(link) {
-        const value = input({ readonly: true, value: link.url, 'aria-label': 'One-time link', spellcheck: false, 'data-account-link-value': true });
+        const value = input({ readonly: true, 'aria-label': 'One-time link', spellcheck: false, 'data-account-link-value': true });
         const chipNode = h('span', { class: 'chip chip-outline' }, 'Not copied yet');
         const status = h('span', { class: 'muted', role: 'status' }, 'This panel stays until you confirm.');
         const sent = h('button', { class: 'btn push', type: 'button', disabled: true, onclick: () => askLeave(null) }, 'I have sent it');
-        const copy = h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: async () => {
+        const copy = sensitive(h('button', { class: 'btn btn-primary btn-lg', type: 'button', onclick: async () => {
+          if (!self.trusted) return;
           const copied = await copyText(link.url);
           if (view.link !== link) return;
           if (copied) { chipNode.className = 'chip chip-ok'; chipNode.replaceChildren(icon('check', true), 'Copied'); toast('Link copied to clipboard'); }
           else { status.textContent = 'Clipboard unavailable. Select the link and copy it manually.'; value.focus(); value.select(); }
           sent.disabled = false;
-        } }, icon('copy'), 'Copy link');
+        } }, icon('copy'), 'Copy link'));
+        // While authority is unverified the link is masked like a token secret.
+        const update = () => { value.value = self.trusted ? link.url : maskedSecret(link.url); };
         const node = h('div', { class: 'secret', role: 'alert', 'data-account-link': true },
           h('div', { class: 'secret-title' }, icon('link'), link.kind === 'invite' ? `Invitation link for “${link.name}” — shown once` : `Credential reset link for “${link.name}” — shown once`),
           h('p', { class: 'small' }, ...(link.kind === 'invite'
@@ -1453,7 +1547,8 @@ export function installAccountUI({ document, window, fetch }) {
             : [`Send it over a channel you trust. ${link.name}'s current password keeps working until the link is used. It works once and expires `, h('strong', {}, dateNode(link.expiresAt, DATE_TIME_FORMAT)), '. If you suspect compromise, disable the account instead.'])),
           h('div', { class: 'secret-value' }, value, copy),
           h('div', { class: 'secret-foot' }, chipNode, status, sent));
-        return { node, focus: () => copy.focus() };
+        update();
+        return { node, update, focus: () => copy.focus() };
       }
       self.usersUi = { renderAll };
       renderAll();
@@ -1468,35 +1563,26 @@ export function installAccountUI({ document, window, fetch }) {
       if (self.tokensUi !== null) self.tokensUi.renderAll();
       if (self.usersUi !== null) self.usersUi.renderAll();
     }
-    // `then` runs after the user confirms (navigation that was held back), or null for the panel's own button.
-    function askLeave(then) {
+    function guardDialog(run) {
       const secret = self.tokenView.mode === 'secret';
       const name = secret ? self.tokenView.secret.token.name : self.usersView.link.name;
       dialog({ title: secret ? 'Hide the secret for good?' : 'Hide the link for good?', confirm: secret ? 'Yes, I have saved it' : 'Yes, I have sent it', danger: false, cancel: 'Keep it visible', fields: [], extra: [],
         body: [h('p', {}, ...(secret
           ? ['After this, the secret of ', h('strong', {}, name), ' cannot be shown again. Continue only if it is stored in your client or password manager.']
           : ['After this, the link for ', h('strong', {}, name), ' cannot be shown again. Continue only if you have sent it.']))],
-        run: async () => { dropGuarded(); if (then !== null) then(); return null; } });
+        run });
     }
+    // `then` runs after the user confirms (navigation that was held back), or null for the panel's own button.
+    function askLeave(then) { guardDialog(async () => { dropGuarded(); if (then !== null) then(); return null; }); }
+    // Sign-out with a one-time value shown: the confirmation only starts sign-out; the value is dropped after
+    // /logout succeeded (by the sign-out completion), and a failure leaves everything as it was.
+    function confirmSignOut(signOut) { guardDialog(signOut); }
 
-    // Window focus: re-read the account silently; only the token rows may change, never the secret panel.
-    async function revalidate() {
-      if (self.tokenView.busy) return;
-      try {
-        const account = await readAccount();
-        if (!self.alive) return;
-        self.account = { phase: 'ready', data: account };
-        renderNav();
-        if (self.tokensUi !== null) self.tokensUi.renderRows();
-      } catch (cause) { failed(cause); }
-    }
-
-    loadAccount(); loadProfile(); loadPolicy();
-    return {
-      outlet, owner, open, leave, guarded, askLeave, revalidate,
-      holding: () => self.inFlight > 0, verify, lostValues,
+    const api = {
+      outlet, owner, open, leave, guarded, askLeave, confirmSignOut, dropGuarded, verify, lostValues, applyBusy,
       dispose() {
         self.alive = false; controller.abort();
+        if (sequencer.slot !== null && sequencer.slot.area === api) { sequencer.slot = null; }
         closeOverlays();
         for (const value of lostValues()) {
           if (value.kind === 'token' && !uncertainMints.has(owner)) uncertainMints.set(owner, { name: value.name, known: true, refreshed: false });
@@ -1505,6 +1591,8 @@ export function installAccountUI({ document, window, fetch }) {
         root.remove();
       }
     };
+    loadAccount(); loadProfile(); loadPolicy();
+    return api;
   }
 
   // ------------------------------------------------------------------------------------------
@@ -1515,10 +1603,12 @@ export function installAccountUI({ document, window, fetch }) {
 
   // Forced teardown after authority was lost ('changed': another account, 'signed-out': no session) or given up
   // ('logged-out', after the guard). Lost shown-once values are listed in the outlet and kept per owner.
-  function forceTeardown(stale, reason) {
-    if (area === null || area.owner !== stale.owner || area.outlet !== stale.outlet) return;
-    const lost = area.lostValues();
+  // Bound to the area instance: a completion for an area that is already gone does nothing.
+  function forceTeardown(target, reason) {
+    if (area === null || area !== target) return;
+    const lost = target.lostValues();
     teardownArea();
+    const stale = { outlet: target.outlet, owner: target.owner };
     blocked = stale;
     const title = { changed: 'The signed-in account changed', 'signed-out': 'You were signed out', 'logged-out': 'Signed out' }[reason];
     stale.outlet.replaceChildren(h('div', { class: 'account', 'data-view': 'account-ended' }, notice(reason === 'logged-out' ? 'neutral' : 'warn', 'alert', title,
@@ -1526,7 +1616,6 @@ export function installAccountUI({ document, window, fetch }) {
       lost.length === 0 ? null : h('ul', { class: 'stack-sm' }, ...lost.map(value => h('li', { 'data-account-lost': true }, lostText(value)))))));
     document.dispatchEvent(new window.Event('account:changed'));
   }
-  const ownerChanged = stale => forceTeardown(stale, 'changed');
   function teardownArea() { if (area !== null) { area.dispose(); area = null; } }
   function showOutlet(outlet) {
     if (display !== null && display.outlet === outlet) return;
@@ -1554,7 +1643,7 @@ export function installAccountUI({ document, window, fetch }) {
     if (routedHash === null || target === routedHash) return true;
     const areaLive = area !== null && display !== null && display.outlet.isConnected;
     const authLive = auth !== null && auth.mount.isConnected;
-    if ((areaLive && area.holding()) || (authLive && authInFlight > 0)) { toast(HOLD_TEXT); return false; }
+    if ((areaLive && sequencer.slot !== null) || (authLive && authInFlight > 0)) { toast(HOLD_TEXT); return false; }
     if (areaLive && area.guarded()) { area.askLeave(() => navigate(target)); return false; }
     return true;
   }
@@ -1609,21 +1698,27 @@ export function installAccountUI({ document, window, fetch }) {
     if (!(event.target instanceof window.HTMLFormElement) || !event.target.matches('[data-account-login]')) return;
     event.preventDefault(); void submitCredentials(event.target);
   }
-  // account:invalidate can be a routine reconnect: authority is re-read first and nothing is torn down meanwhile.
-  async function onInvalidate() {
-    const current = area;
-    if (current === null) { route(); return; }
-    const verdict = await current.verify();
-    if (area !== current || verdict === 'same' || verdict === 'unknown') return;
-    forceTeardown({ outlet: current.outlet, owner: current.owner }, verdict);
+  // account:invalidate: authority may have changed. `detail.reason === 'signed-out'` is authoritative (a host that
+  // signed out by itself): lost at once, no read. Otherwise the area re-reads; nothing is torn down meanwhile.
+  function onInvalidate(event) {
+    const target = area;
+    if (target === null) { route(); return; }
+    const detail = event instanceof window.CustomEvent ? event.detail : null;
+    if (detail !== null && typeof detail === 'object' && detail.reason === 'signed-out') { nextEpoch(); forceTeardown(target, 'signed-out'); return; }
+    void target.verify();
   }
-  // [data-account-logout]: voluntary sign-out passes the same guard as navigation, then POST /logout.
+  function reconnect() { if (area !== null) void area.verify(); }
+  // [data-account-logout]: single-flight through the sequencer slot; with a one-time value shown it asks first.
   function requestLogout() {
-    if (area !== null && area.holding()) { toast(HOLD_TEXT); return; }
-    if (area !== null && area.guarded()) { area.askLeave(() => void signOut()); return; }
-    void signOut();
+    if (sequencer.slot !== null) { toast(HOLD_TEXT); return; }
+    const target = area;
+    if (target !== null && target.guarded()) { target.confirmSignOut(() => signOut(target)); return; }
+    void signOut(target).then(failure => { if (failure !== null) toast(failure); });
   }
-  async function signOut() {
+  // Resolves to null after a completed sign-out or to the failure text; a failure changes nothing.
+  async function signOut(target) {
+    const taken = takeSlot('sign-out', target);
+    if (taken === null) return HOLD_TEXT;
     const signal = new window.AbortController().signal;
     try {
       const account = await existingEndpoint('GET', '', null, null, signal);
@@ -1631,24 +1726,25 @@ export function installAccountUI({ document, window, fetch }) {
       const result = await existingEndpoint('POST', '/logout', {}, account.user.actor, signal);
       if (result === null || result.ok !== true) throw new AccountResponseError();
     } catch (cause) {
-      if (!(cause instanceof AccountApiError && cause.status === 401)) { toast(`Sign-out failed. ${legacyMessage(cause)}`); return; }
-    }
-    if (area !== null) forceTeardown({ outlet: area.outlet, owner: area.owner }, 'logged-out');
+      if (!(cause instanceof AccountApiError && cause.status === 401)) return `Sign-out failed. ${legacyMessage(cause)}`;
+    } finally { freeSlot(taken); }
+    nextEpoch(); // no authority read that started before the sign-out may decide anything any more
+    if (target !== null && area === target) { target.dropGuarded(); forceTeardown(target, 'logged-out'); }
     else document.dispatchEvent(new window.Event('account:changed'));
+    return null;
   }
-  function onFocus() { if (area !== null && display !== null) void area.revalidate(); }
-  function onBeforeUnload(event) { if (area !== null && (area.guarded() || area.holding())) { event.preventDefault(); event.returnValue = ''; } }
+  function onBeforeUnload(event) { if (sequencer.slot !== null || (area !== null && area.guarded())) { event.preventDefault(); event.returnValue = ''; } }
   const observer = new window.MutationObserver(() => route());
   observer.observe(document, { subtree: true, childList: true, attributes: true, attributeFilter: ['data-account-user-id'] });
   document.addEventListener('click', onClick); document.addEventListener('submit', onSubmit); document.addEventListener('account:invalidate', onInvalidate);
-  window.addEventListener('hashchange', route); window.addEventListener('focus', onFocus);
+  window.addEventListener('hashchange', route); window.addEventListener('focus', reconnect); window.addEventListener('online', reconnect);
   window.addEventListener('pagehide', teardownArea); window.addEventListener('pageshow', route); window.addEventListener('beforeunload', onBeforeUnload);
   route();
   return {
     dispose() {
       observer.disconnect(); teardownArea(); if (auth !== null) auth.dispose();
       document.removeEventListener('click', onClick); document.removeEventListener('submit', onSubmit); document.removeEventListener('account:invalidate', onInvalidate);
-      window.removeEventListener('hashchange', route); window.removeEventListener('focus', onFocus);
+      window.removeEventListener('hashchange', route); window.removeEventListener('focus', reconnect); window.removeEventListener('online', reconnect);
       window.removeEventListener('pagehide', teardownArea); window.removeEventListener('pageshow', route); window.removeEventListener('beforeunload', onBeforeUnload);
       uncertainMints.clear();
     }

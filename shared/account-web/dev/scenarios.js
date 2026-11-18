@@ -55,6 +55,7 @@ export const SCENARIOS = new Map([
   settings('tokens-secret', { hash: TOKENS, steps: mintToken, ready: '[data-account-secret]' }),
   settings('tokens-copied', { hash: TOKENS, steps: async d => { await mintToken(d); await d.click('Reveal'); await d.click('Copy secret'); }, ready: '[data-account-secret] .chip-ok' }),
   settings('tokens-leave', { hash: TOKENS, steps: async d => { await mintToken(d); await d.click('Reveal'); await d.click('I have saved it'); }, ready: 'dialog[open]' }),
+  settings('tokens-unverified', { hash: TOKENS, steps: async d => { await mintToken(d); d.fake.state.account = 'down'; document.dispatchEvent(new Event('account:invalidate')); }, ready: '[data-account-unverified]' }),
   settings('tokens-revoke', { hash: TOKENS, steps: async d => { await d.wait(TOKEN_ROWS); await d.click('Revoke ci-collector-02'); }, ready: 'dialog[open]' }),
   settings('tokens-long', { hash: TOKENS, fixture: f => { for (let k = 1; k <= 26; k++) f.tokens.push({ ...f.tokens[2], id: `00000000-0000-4000-8000-${String(300040 + k).padStart(12, '0')}`, name: `laptop-cli-${k}`, scopes: f.app === 'chronicle' ? (k % 3 ? ['Ingest'] : ['Read', 'Raw']) : ['api'] }); }, ready: TOKEN_ROWS }),
   settings('tokens-uncertain', { hash: TOKENS, fixture: f => { f.mint = 'lost'; }, steps: async d => { await newToken(d, 'lost-reply-token'); await d.click('Create token'); }, ready: '[data-account-uncertain]' }),

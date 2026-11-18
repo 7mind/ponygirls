@@ -26,19 +26,21 @@ its own. Both files and `account-client.js` are served next to each other
 - **Triggers.** Any `[data-account-settings]` element opens `#account/profile`;
   `data-account-settings="tokens"` (or another section name) opens that section.
   Plain links to `#account/<section>` work as well.
-- **Sign-out.** Mark the sign-out control `[data-account-logout]`. The module
-  runs the leave guard (a pending request holds, an unacknowledged secret or
-  link asks first), then `POST /api/account/v1/logout` with the actor from a fresh
-  read, tears the account page down and dispatches `account:changed`; the host
-  then revalidates its identity and shows its login view. A failed sign-out
-  leaves everything in place and says so in a toast.
+- **Sign-out.** Mark the sign-out control `[data-account-logout]`. Sign-out is
+  single-flight and shares the one write slot with section writes: while either
+  runs, the other (and a second sign-out click) is held with a toast. With an
+  unacknowledged secret or link shown it asks first; the confirmation only starts
+  sign-out. After `POST /api/account/v1/logout` succeeded (actor from a fresh
+  read) the module drops the value, tears the account page down and dispatches
+  `account:changed`; the host then revalidates its identity and shows its login
+  view. A failed sign-out changes nothing and says so (in the dialog or a toast).
 - **Events.** In: `account:invalidate` means "authority may have changed" (a
-  reconnect is enough). The module re-reads the account first and tears nothing
-  down meanwhile: the same owner keeps every panel, dialog and request; another
-  owner or no session forces a teardown whose notice lists every one-time value
-  that was lost ("revoke and re-issue"); an unreachable service keeps
-  everything. A host that signs out by itself and then dispatches the event gets
-  the forced path with that notice. Out: `account:changed` after a response
+  reconnect is enough). The module re-reads the account and tears nothing down
+  meanwhile (see "Authority"). A host that signed out by itself dispatches
+  `new CustomEvent('account:invalidate', { detail: { reason: 'signed-out' } })`:
+  that is authoritative, the area is torn down at once without a read, with the
+  lost-value notice. A plain `account:invalidate` after such a sign-out also ends
+  there once the re-read answers 401, or in `unverified` while it cannot. Out: `account:changed` after a response
   belongs to another account than `data-account-user-id`, after a forced
   teardown and after sign-out (the host revalidates its identity and updates the
   attribute or shows its login view); `account:route` with `detail.section`
@@ -75,10 +77,60 @@ DOM observer or `pageshow` — passes through one function, `mayLeave()`:
   document listeners removed) and their input discarded before the next view
   renders; a forced teardown and `dispose()` do the same.
 
-Busy rule: while a view has a write in flight, every control of that view that
-would start another write or discard the submitted form (New token, Enroll user,
-Replace authenticator…, the require-code switch, row actions and menus, the
-form's own buttons) is disabled; one counter drives all of them.
+Busy rule: while the sequencer slot is occupied (a section write or sign-out) or
+authority is not verified, every control that would start another write or
+discard the submitted form (New token, Enroll user, Replace authenticator…, the
+require-code switch, row actions and menus, form submit and dialog confirm
+buttons) is disabled; one function (`applyBusy()`) drives all of them.
+
+## Sequencer and authority
+
+All state-changing asynchronous work of the signed-in area goes through one
+sequencer:
+
+- **One exclusive slot** for {section write | sign-out}. While it is occupied,
+  other write entry points and sign-out are disabled or held, and leaving the
+  view is held.
+- **A monotonic authority epoch.** Every authority read (`GET /` re-reads, the
+  profile read, write preflights and follow-ups, the client's fresh profile read
+  before a mutation) takes a new epoch when it starts. Its data is applied only if
+  it is newer than the data shown; its verdict counts only while it is still the
+  newest read. Every completion is bound to the area instance that started it.
+
+Authority is explicit: `verified` → `verifying` (a re-read is in flight: nothing
+is torn down, capabilities stay as they were) → `verified` again, `unverified`
+(the re-read failed for transport reasons: one-time values are kept but
+re-masked, Reveal, Copy and every write entry point are disabled behind
+"Connection lost — reconnect to continue"; re-verification on `online`, window
+focus, the next `account:invalidate` and Retry) or `lost` (401 or another owner:
+forced teardown; the notice lists the lost values by name, never their content).
+
+## Interleavings
+
+Outcome of each pair of concurrent flows (W section write, N navigation,
+V `account:invalidate` → verify, S sign-out, O an owner-changed or 401 response
+of an authority read, D dispose/forced teardown). Rows marked † are rows of the
+table-driven browser case "sequencer interleavings"; ‡ are covered by the
+"section ownership" and invalidation cases.
+
+| Pair | Outcome |
+|---|---|
+| W × W | second write's entry points disabled (one slot); exactly one request ‡ |
+| W × N | navigation held with a toast; the result lands in the active section ‡ |
+| W × V | both run; the newer read decides authority; same owner → the write completes and its value is shown † |
+| W × S | sign-out held with a toast while the write runs † |
+| S × W | write entry points disabled and navigation held while sign-out runs † |
+| W × O | owner change or 401 from the newest read → forced teardown; the write's late completion is bound to the dead area and does nothing; a possibly created value is listed as lost |
+| W × D | requests aborted, slot released; late completions do nothing; possibly created values recorded as lost |
+| N × V | navigation is allowed (a read is not a write); the verdict applies to the area whatever section is shown |
+| V × V | the newest read decides: a stale 401 after a newer success is discarded †, a stale success after a newer 401 cannot revive the area † |
+| V fails (transport) | `unverified`: masked, Reveal/Copy/writes disabled; `online` re-verifies and re-enables † |
+| V with `reason: 'signed-out'` | `lost` at once, no read † |
+| V × S | a successful sign-out starts a new epoch, so no read that started earlier decides anything; the area is torn down by the sign-out |
+| S × S | second click held; one `/logout` request † |
+| S fails | nothing changes; with a shown secret the dialog reports the failure and "Keep it visible" keeps it † |
+| S × O / S × D | the sign-out completion is bound to the area that started it; a replacement area is not touched |
+| O × D | one teardown; the second does nothing (bound to the area instance) |
 
 A shown-once value is delivered only into its owning section. If it ever arrives
 while another section is shown (impossible through the routes above), the
@@ -103,6 +155,7 @@ the value instead of rendering into detached DOM.
 | Same-section repeated replacement (authenticator, link, token) | a second card/form/link while one is pending | — | re-opening controls disabled; exactly one request | the first result only |
 | `account:invalidate`, same owner | any | — | nothing torn down while the account is re-read | panels, dialogs and requests kept |
 | `account:invalidate`, other owner or signed out | any | forced teardown | forced teardown after the read | outlet notice lists every lost secret or link: revoke and re-issue |
+| `account:invalidate`, re-read fails | any | kept | kept | `unverified`: values masked, Reveal/Copy/writes disabled until re-verified |
 | Sign-out via `[data-account-logout]` | — | allowed | held | guard asks for an unacknowledged secret or link first |
 
 ## Token creation recovery
