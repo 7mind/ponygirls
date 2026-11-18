@@ -355,13 +355,14 @@ try {
   await check("late answers for a record that was left change nothing on the record opened next", async () => {
     const { context, page } = await open();
     try {
-      const left = "ui:late-a";
+      const left = "ui:late-a", next = "ui:late-b";
+      /** Requests whose answers are held, with what they asked. */
       const held = [];
       let heldChanged = () => {};
-      /** Holds the answers of requests about `left` until `release`. */
       const hold = (about) => async (route) => {
-        if (!about(route.request().postDataJSON())) { await route.fallback(); return; }
-        const gate = new Promise((resolve) => { held.push(resolve); });
+        const body = route.request().postDataJSON();
+        if (!about(body)) { await route.fallback(); return; }
+        const gate = new Promise((resolve) => { held.push({ body, resolve }); });
         heldChanged();
         const response = await route.fetch();
         await gate;
@@ -373,46 +374,50 @@ try {
         heldChanged = () => { if (held.length >= count) { clearTimeout(timer); resolve(); } };
         heldChanged();
       });
-      const release = async () => {
+      const about = (key) => (body) => JSON.stringify(body).includes(key);
+      /** Answers the held requests about `key`, and lets the page apply whatever it would. */
+      const release = async (key) => {
+        const releasing = held.filter((entry) => about(key)(entry.body));
         const finished = new Promise((resolve, reject) => {
-          let pending = held.length;
-          const timer = setTimeout(() => reject(new Error("the held answers did not arrive")), WAIT_MS);
+          let pending = releasing.length;
+          const timer = setTimeout(() => reject(new Error(`the held answers about ${key} did not arrive`)), WAIT_MS);
           const finish = (request) => {
-            if (!/\/api\/v1\/(get|history|search)$/.test(request.url()) || !JSON.stringify(request.postDataJSON()).includes(left) || --pending > 0) return;
+            if (!/\/api\/v1\/(get|history|search)$/.test(request.url()) || !about(key)(request.postDataJSON()) || --pending > 0) return;
             clearTimeout(timer); page.off("requestfinished", finish); resolve();
           };
           page.on("requestfinished", finish);
         });
-        for (const resolve of held.splice(0)) resolve();
+        for (const entry of releasing) { held.splice(held.indexOf(entry), 1); entry.resolve(); }
         await finished;
-        // The answers are in the page: let it apply whatever it would.
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       };
+      const visit = (key) => page.evaluate((hash) => { location.hash = hash; }, `#/item/${encodeURIComponent(key)}`);
       const arrived = async () => {
         assert.equal(await page.getByRole("heading", { level: 1 }).textContent(), "Arrived at");
         assert.equal(await page.locator(".record-sub").getByText("Revision 1", { exact: true }).count(), 1);
         assert.equal(await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).count(), 1);
         assert.equal(await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).count(), 1);
       };
-      // Its history and incoming links answer after the next record is shown.
-      await page.route("**/api/v1/history", hold((body) => body.key === left));
-      await page.route("**/api/v1/search", hold((body) => body.query.includes(left)));
+      // The history and incoming links of the record left answer after the next record is shown.
+      await page.route("**/api/v1/history", hold(about(left)));
+      await page.route("**/api/v1/search", hold(about(left)));
       await record(page, left);
-      await page.evaluate((key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }, "ui:late-b");
+      await visit(next);
       await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
       await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).waitFor();
       await holding(2);
-      await release();
+      await release(left);
       await arrived();
-      // Its record answers after the next record is shown.
-      await page.route("**/api/v1/get", hold((body) => body.key === left));
-      await page.evaluate((key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }, left);
+      // The record left answers while the next one is still being read.
+      await page.route("**/api/v1/get", hold((body) => body.key === left || body.key === next));
+      await visit(left);
       await page.locator('[data-record="loading"]').waitFor();
-      await page.evaluate((key) => { location.hash = `#/item/${encodeURIComponent(key)}`; }, "ui:late-b");
+      await visit(next);
+      await holding(2);
+      await release(left);
+      await release(next);
       await page.getByRole("heading", { name: "Arrived at", exact: true }).waitFor();
       await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
-      await holding(1);
-      await release();
       await arrived();
       await page.quiet();
     } finally {
