@@ -30,9 +30,9 @@ const NETNS_PREFIX = ['unshare', '--user', '--map-root-user', '--net', '--', 'sh
 // Registration: add the entry file name here. Longest scripts first, so the pool's tail is short.
 const SCRIPTS = [
   'rebuild.mjs', 'run.mjs', 'goal50.mjs', 'ux.mjs', 'activity-tables.mjs', 'refresh-regression.mjs', 'theme-retry.mjs',
-  'filter-table-ux.mjs', 'live-archive.mjs', 'shell.mjs', 'tool-catalog.mjs', 'history-find.mjs',
+  'filter-table-ux.mjs', 'archive.mjs', 'shell.mjs', 'tool-catalog.mjs', 'history-find.mjs',
   'persistent-login.mjs', 'search-serp.mjs', 'transcript.mjs', 'usage-presentation.mjs', 'source-filters.mjs', 'prior-error-regression.mjs',
-  'ui-controls.mjs',
+  'ui-controls.mjs', 'access-mcp.mjs',
 ];
 
 function positiveInteger(name, value) {
