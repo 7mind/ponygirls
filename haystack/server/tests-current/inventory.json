@@ -28,8 +28,6 @@
   "exact opted-in authority alone selects plain cookie, other authorities remain Secure",
   "mixed-authority live sessions select only the current cookie and reject cross-authority Origin",
   "allowed but mismatched Origin/Host cannot read or log in; absent opt-in cannot downgrade",
-  "occupied listeners and children without their own fresh readiness marker receive zero fixture probes",
-  "configured fixture provision failures are bounded sanitized cleaned and never fall back to app CREATEDB",
   "production Main handles SIGTERM with clean resource drain and exit0",
   "controlled provider uses approved corpus only, durable worker publication and explicit outage without write coupling",
   "password browser sessions survive process restart, remain independent, and copied logout cookies fail",
@@ -39,5 +37,8 @@
   "disabled and removed account credentials are durably invalidated rather than resurrected on re-enable",
   "password replacement invalidates existing sessions and unavailable config is not reported as bad credentials",
   "cross-process logout is revalidated at live delivery and closes before any private changed frame",
-  "fixed account assets serve same-size timestamp-preserving updates while hashed bundles retain 304"
+  "fixed account assets serve same-size timestamp-preserving updates while hashed bundles retain 304",
+  "a foreign listener on the fixture port receives zero probes and the fixture refuses to start",
+  "a child without its own fresh readiness marker receives zero probes, even after a ready predecessor",
+  "database descriptors that are not loopback or that carry credentials are refused"
 ]

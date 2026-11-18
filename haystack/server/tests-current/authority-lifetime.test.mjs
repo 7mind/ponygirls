@@ -1,12 +1,17 @@
-import {it} from 'node:test';
+import {it,before,after} from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import {once} from 'node:events';
 import WebSocket from 'ws';
 import {fixture,api,encode,decode,document,rid,sleep} from './fixture.mjs';
 
+// One server and database for the file; the heartbeat case revokes its own user carol.
+let f;
+before(async()=>{f=await fixture({},async()=>{},{humans:['alice','carol']});});
+after(async()=>{await f?.stop();});
+
 it('revocation while a real HTTP body is held denies dispatch without a committed item or replay',async()=>{
- const f=await fixture();let request;
+ let request;
  try{
   const users=f.config.auth.users;const key='authority:body-held';const id=rid();
   const body=Buffer.from(JSON.stringify(encode(api.PutRequest,new api.PutRequest(key,new api.DocumentPayload(document()),0,id))));
@@ -21,11 +26,11 @@ it('revocation while a real HTTP body is held denies dispatch without a committe
   const missing=await f.call('/api/v1/get',encode(api.GetRequest,new api.GetRequest(key,undefined)),{token:f.tokens.bot});assert.equal(missing.status,404);
   const history=await f.call('/api/v1/history',encode(api.HistoryRequest,new api.HistoryRequest(key)),{token:f.tokens.bot});assert.deepEqual(decode(api.HistoryResult,await history.json()).revisions,[]);
   await f.reload(auth=>{auth.users=users;});const retry=await f.put(key,document(),0,id,f.tokens.alice);assert.equal(retry.status,200);assert.equal(decode(api.PutResult,await retry.json()).replayed,false,'unaccepted held request must not persist a replay');
- }finally{request?.destroy();await f.stop();}
+ }finally{request?.destroy();}
 });
 
 it('failed real live handshakes and normal socket close release all per-token capacity',async()=>{
- const f=await fixture();let socket;
+ let socket;
  try{
   const login=await f.login();assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
   for(let i=0;i<16;i++){const failed=await f.call('/api/v1/live',undefined,{method:'GET',headers:{Origin:f.base,Cookie:cookie}});assert.equal(failed.status,426);assert.equal(failed.headers.get('cache-control'),'no-store');}
@@ -38,18 +43,18 @@ it('failed real live handshakes and normal socket close release all per-token ca
    const value=decode(api.LiveFrame,JSON.parse(String((await message)[0])));assert.equal(value.kind,'pong');assert.equal(value.nonce,'lifetime-'+i);
    const closed=once(socket,'close');socket.close();await closed;
   }
- }finally{socket?.terminate();await f.stop();}
+ }finally{socket?.terminate();}
 });
 
 it('healthy automatic protocol pongs keep a socket live across two real30second heartbeat intervals while an idle revoked session closes4401 at its first',{timeout:85000},async()=>{
- const f=await fixture({},async config=>{const alice=config.auth.users.find(user=>user.id==='alice');config.auth.users.push({...alice,id:'carol',displayName:'Carol',login:'carol',tokens:[]});});let socket;let idle;
+ let socket;let idle;
  try{
   const login=await f.login();assert.equal(login.status,200);const cookie=login.headers.get('set-cookie').split(';')[0];
   const pings=[];let secondPing;const second=new Promise(resolve=>{secondPing=resolve;});
   socket=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,Cookie:cookie}});socket.on('error',()=>{});socket.on('ping',bytes=>{pings.push(bytes.toString('hex'));if(pings.length===2)secondPing();});await once(socket,'open');
   const started=Date.now();
   const twoBeats=Promise.race([second,once(socket,'close').then(([code])=>{throw new Error('healthy ponging peer was closed: '+code);}),sleep(62000).then(()=>{throw new Error('two protocol heartbeat deadline exceeded');})]);twoBeats.catch(()=>{});
-  const carol=await f.call('/api/account/v1/login',{login:'carol',password:f.passwords.alice},{headers:{Origin:f.base}});assert.equal(carol.status,200);
+  const carol=await f.login({},'carol');
   idle=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,Cookie:carol.headers.get('set-cookie').split(';')[0]}});idle.on('error',()=>{});await once(idle,'open');const closed=once(idle,'close');
   // HTTP101/open can precede allocation of the upgraded stream resource.
   // Prove admission while still authorized, then leave the connection idle;
@@ -60,5 +65,5 @@ it('healthy automatic protocol pongs keep a socket live across two real30second 
   await twoBeats;
   assert.ok(Date.now()-started>=59000,'real production30second interval must not be shortened for tests');assert.equal(socket.readyState,WebSocket.OPEN);assert.notEqual(pings[0],pings[1]);assert.ok(pings.every(nonce=>nonce.length===16));
   const response=once(socket,'message');socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'after-two-intervals',123,undefined))));const value=decode(api.LiveFrame,JSON.parse(String((await response)[0])));assert.equal(value.kind,'pong');assert.equal(value.nonce,'after-two-intervals');
- }finally{idle?.terminate();socket?.terminate();await f.stop();}
+ }finally{idle?.terminate();socket?.terminate();}
 });

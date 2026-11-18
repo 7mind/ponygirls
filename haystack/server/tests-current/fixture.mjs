@@ -9,7 +9,7 @@ import {mkdtemp,readFile,writeFile,rename} from 'node:fs/promises';
 import {spawn,execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {once} from 'node:events';
-import {randomBytes,createHash,pbkdf2Sync} from 'node:crypto';
+import {randomBytes,createHash,pbkdf2} from 'node:crypto';
 import {fileURLToPath} from 'node:url';
 import * as api from '../../generated/typescript/haystack/api/index.ts';
 import {BaboonCodecContext} from '../../generated/typescript/BaboonSharedRuntime.ts';
@@ -21,16 +21,30 @@ export const rid=()=>{const bytes=randomBytes(16);let stamp=BigInt(Date.now());f
 export const document=(over={})=>JSON.stringify({title:'t',description:'d',fields:{},type:'fact',status:'actual',importance:'low','human-attention':'cleared',links:[],tags:[],...over});
 export const encode=(Type,value)=>Type.jsonCodec().encode(context,value);
 export const decode=(Type,value)=>Type.jsonCodec().decode(context,value);
-export function passwordHash(value){const salt=randomBytes(16);const rounds=600000;return `pbkdf2-sha256$${rounds}$${salt.toString('base64')}$${pbkdf2Sync(value,salt,rounds,32,'sha256').toString('base64')}`;}
+export async function passwordHash(value){const salt=randomBytes(16);const rounds=600000;return `pbkdf2-sha256$${rounds}$${salt.toString('base64')}$${(await promisify(pbkdf2)(value,salt,rounds,32,'sha256')).toString('base64')}`;}
+// One production-strength PBKDF2 derivation per process: every fixture human shares this password.
+const fixturePassword=randomBytes(24).toString('base64url');
+const fixturePasswordHash=passwordHash(fixturePassword);
+export const ReadinessMs=15000;
+export function ownedDescriptor(provisioned,databaseName){
+  if(!provisioned||typeof provisioned!=='object'||Array.isArray(provisioned)||Object.keys(provisioned).sort().join(',')!=='jdbcUrl,passwordFile,user')throw new Error('invalid fixture database descriptor');
+  for(const key of ['jdbcUrl','passwordFile','user'])if(typeof provisioned[key]!=='string'||!provisioned[key].length)throw new Error('invalid fixture database descriptor');
+  if(!provisioned.jdbcUrl.startsWith('jdbc:postgresql://'))throw new Error('invalid fixture database descriptor');
+  const target=new URL(provisioned.jdbcUrl.slice(5));
+  if(!['127.0.0.1','localhost','[::1]'].includes(target.hostname)||target.pathname!=='/'+databaseName||target.username||target.password||target.search||target.hash||!path.isAbsolute(provisioned.passwordFile))throw new Error('invalid fixture database descriptor');
+  return provisioned;
+}
 export async function freePort(){const server=net.createServer();await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));const port=server.address().port;await new Promise(resolve=>server.close(resolve));return port;}
-export async function fixture(overrides={},configure=async()=>{}){
+// humans: password users, each with its own token and hash file. serverCommand
+// and a restart's readiness deadline are injected only by fixture-safety tests.
+export async function fixture(overrides={},configure=async()=>{},{humans=['alice'],serverCommand=process.env.HAYSTACK_SERVER_COMMAND}={}){
   assert.equal(process.env.HAYSTACK_OWNED_TEST_DB,'1','run scripts/test-current.sh with its owned PostgreSQL; no arbitrary data reads');
-  assert.ok(process.env.HAYSTACK_SERVER_COMMAND,'explicit JVM/native command required');
+  assert.ok(serverCommand,'explicit JVM/native command required');
   const dir=await mkdtemp(path.join(os.tmpdir(),'haystack-current-'));
-  const tokens={alice:randomBytes(32).toString('base64url'),bot:randomBytes(32).toString('base64url')};
+  const tokens=Object.fromEntries([...humans,'bot'].map(name=>[name,randomBytes(32).toString('base64url')]));
   for(const [name,token] of Object.entries(tokens))await writeFile(path.join(dir,name+'.sha'),createHash('sha256').update(token,'ascii').digest('hex')+'\n',{mode:0o600});
-  const passwords={alice:randomBytes(24).toString('base64url')};
-  await writeFile(path.join(dir,'alice.password'),passwordHash(passwords.alice)+'\n',{mode:0o600});
+  const passwords=Object.fromEntries(humans.map(name=>[name,fixturePassword]));
+  for(const name of humans)await writeFile(path.join(dir,name+'.password'),await fixturePasswordHash+'\n',{mode:0o600});
   const port=await freePort();const base=`http://127.0.0.1:${port}`;
   const config=JSON.parse(await readFile(path.join(root,'haystack/docs/scala-config.example.json'),'utf8'));
   Object.assign(config,{listenPort:port,webRoot:null,authReloadMs:100});
@@ -45,12 +59,8 @@ export async function fixture(overrides={},configure=async()=>{}){
   if(helper){
     dropDatabase=async()=>{if(dropped)return;const response=await invokeHelper(['--drop',databaseName]);if(!response||typeof response!=='object'||Array.isArray(response)||Object.keys(response).length)throw new Error('invalid owned fixture cleanup response');dropped=true;};
     try{
-      const provisioned=await invokeHelper([databaseName]);
-      if(!provisioned||typeof provisioned!=='object'||Array.isArray(provisioned)||Object.keys(provisioned).sort().join(',')!=='jdbcUrl,passwordFile,user')throw new Error('invalid fixture database descriptor');
-      for(const key of ['jdbcUrl','passwordFile','user'])if(typeof provisioned[key]!=='string'||!provisioned[key].length)throw new Error('invalid fixture database descriptor');
-      if(!provisioned.jdbcUrl.startsWith('jdbc:postgresql://'))throw new Error('invalid fixture database descriptor');
-      const target=new URL(provisioned.jdbcUrl.slice(5));
-      if(!['127.0.0.1','localhost','[::1]'].includes(target.hostname)||target.pathname!=='/'+databaseName||target.username||target.password||target.search||target.hash||!path.isAbsolute(provisioned.passwordFile)||(await readFile(provisioned.passwordFile)).length===0)throw new Error('invalid fixture database descriptor');
+      const provisioned=ownedDescriptor(await invokeHelper([databaseName]),databaseName);
+      if((await readFile(provisioned.passwordFile)).length===0)throw new Error('invalid fixture database descriptor');
       database=provisioned;
     }catch{let clean=true;try{await dropDatabase();}catch{clean=false;}throw new Error(clean?'owned fixture provisioning failed; no runtime-identity fallback':'owned fixture provisioning and cleanup failed; no runtime-identity fallback');}
   }else{
@@ -65,7 +75,7 @@ export async function fixture(overrides={},configure=async()=>{}){
   }
   Object.assign(config.database,database);
   Object.assign(config.auth,{cookieSecure:false,allowedHosts:['127.0.0.1','localhost','haystack.test'],allowedOrigins:[base,'http://allowed.test'],insecureHttpOrigins:[],rateLimit:{windowMs:60000,max:10000},users:[
-    {id:'alice',type:'human',displayName:'Alice',login:'alice',passwordHashFile:path.join(dir,'alice.password'),enabled:true,tokens:[{id:'browser',hashFile:path.join(dir,'alice.sha')}]},
+    ...humans.map(name=>({id:name,type:'human',displayName:name[0].toUpperCase()+name.slice(1),login:name,passwordHashFile:path.join(dir,name+'.password'),enabled:true,tokens:[{id:'browser',hashFile:path.join(dir,name+'.sha')}]})),
     {id:'bot',type:'agent',displayName:'Bot',enabled:true,tokens:[{id:'default',hashFile:path.join(dir,'bot.sha')}]},
   ],...overrides});
   Object.assign(config.retrieval,{approvedFieldPrefixes:['']});
@@ -73,19 +83,19 @@ export async function fixture(overrides={},configure=async()=>{}){
   const configPath=path.join(dir,'config.json');
   const save=async()=>{await writeFile(configPath+'.tmp',JSON.stringify(config),{mode:0o600});await rename(configPath+'.tmp',configPath);};
   try{await save();}catch(error){await dropDatabase();throw error;}let processHandle;let output='';let errors='';
-  const start=async()=>{
+  const start=async readinessMs=>{
     // A free-port observation is not a reservation. Never ask another process
     // for health or send it synthetic credentials if the bind was lost.
     await new Promise((resolve,reject)=>{const check=net.createServer();check.once('error',()=>reject(new Error('fixture listen port unavailable; refusing probes')));check.listen(port,'127.0.0.1',()=>check.close(error=>error?reject(error):resolve()));});
     let currentOutput='';let ownReady=false;
-    processHandle=spawn('/bin/sh',['-c','exec '+process.env.HAYSTACK_SERVER_COMMAND+' serve "$1"','haystack-test',configPath],{cwd:root,stdio:['ignore','pipe','pipe']});
+    processHandle=spawn('/bin/sh',['-c','exec '+serverCommand+' serve "$1"','haystack-test',configPath],{cwd:root,stdio:['ignore','pipe','pipe']});
     processHandle.stdout.on('data',bytes=>{output+=bytes;currentOutput=(currentOutput+bytes.toString()).slice(-16384);ownReady ||= currentOutput.split(/\r?\n/u).includes('haystack: ready');});processHandle.stderr.on('data',bytes=>{errors+=bytes;});
-    const deadline=Date.now()+15000;let ready=false;
+    const deadline=Date.now()+readinessMs;let ready=false;
     while(Date.now()<deadline){if(processHandle.exitCode!==null||processHandle.signalCode!==null)throw new Error('server exited before readiness: '+output);if(ownReady){try{const r=await fetch(base+'/api/v1/health',{headers:{Connection:'close'}});await r.text();if(r.ok&&processHandle.exitCode===null&&processHandle.signalCode===null){ready=true;break;}}catch{}}await sleep(50);}
     assert.ok(ready,'server readiness deadline');
   };
   const stop=async()=>{if(!processHandle)return [0,null];if(processHandle.exitCode!==null||processHandle.signalCode!==null)return [processHandle.exitCode,processHandle.signalCode];const exited=once(processHandle,'exit');processHandle.kill('SIGTERM');const timeout=setTimeout(()=>processHandle.kill('SIGKILL'),3000);const result=await exited;clearTimeout(timeout);return result;};
-  try{await start();}catch(error){await stop();await dropDatabase();throw error;}
+  try{await start(ReadinessMs);}catch(error){await stop();await dropDatabase();throw error;}
   const call=async(route,value,options={})=>{
     const headers={'Content-Type':'application/json','X-Haystack-Version':'1.0.0',...(options.token?{Authorization:'Bearer '+options.token}:{}),...options.headers};
     const body=value===undefined?undefined:typeof value==='string'?value:JSON.stringify(value);
@@ -95,10 +105,10 @@ export async function fixture(overrides={},configure=async()=>{}){
     });
     return fetch(base+route,{method:options.method??'POST',headers,...(body===undefined?{}:{body})});
   };
-  const login=async(headers={})=>{
-    const response=await call('/api/account/v1/login',{login:'alice',password:passwords.alice},{headers:{Origin:base,...headers}});
+  const login=async(headers={},name='alice')=>{
+    const response=await call('/api/account/v1/login',{login:name,password:passwords[name]},{headers:{Origin:base,...headers}});
     assert.equal(response.status,200);return response;
   };
   const put=(key,doc=document(),expected=0,id=rid(),token=tokens.bot)=>call('/api/v1/put',encode(api.PutRequest,new api.PutRequest(key,new api.DocumentPayload(doc),expected,id)),{token});
-  return {dir,port,base,tokens,passwords,login,config,configPath,call,put,async stop(){const result=await stop();await dropDatabase();return result;},start,async restart(){await stop();await start();},async reload(change){change(config.auth);await save();await sleep(250);},async save(){await save();await sleep(250);},logs:()=>output.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),output:()=>output+'\n'+errors};
+  return {dir,port,base,tokens,passwords,login,config,configPath,call,put,async stop(){const result=await stop();await dropDatabase();return result;},async restart(readinessMs=ReadinessMs){await stop();await start(readinessMs);},async reload(change){change(config.auth);await save();await sleep(250);},async save(){await save();await sleep(250);},logs:()=>output.split('\n').flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}}),output:()=>output+'\n'+errors};
 }
