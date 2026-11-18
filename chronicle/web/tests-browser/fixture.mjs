@@ -16,24 +16,25 @@ const FIXTURE_WAIT_MS = 10_000;
 const PAUSED_CLOCK_INSTALL = Date.parse('2030-01-01T00:00:00Z'), PAUSED_CLOCK_LEAD_MS = 1000;
 /** Installs a paused page clock before the page loads: page timers then fire only when the scenario advances the clock. */
 export async function pauseClock(page) { await page.clock.install({ time: PAUSED_CLOCK_INSTALL }); await page.clock.pauseAt(PAUSED_CLOCK_INSTALL + PAUSED_CLOCK_LEAD_MS); }
-/** Longest page-clock jump that the connection's timer-pause check (transport/manager.ts tick) still treats as on-time timers. */
-const ON_TIME_CLOCK_STEP_MS = connectionConfig.tickInterval + connectionConfig.pauseThreshold;
+// One transport tick per step: the timer-pause check (transport/manager.ts tick) then sees on-time ticks, also on a running
+// page clock, where the real time between steps adds to every step.
+const CLOCK_STEP_MS = connectionConfig.tickInterval;
 /**
- * Advances an installed page clock by `millis` in on-time steps: every timer due in a step fires once at its end, and the
- * page handles socket messages between steps. A single jump would itself be a timer pause and reconnect the page.
+ * Advances an installed page clock by `millis` in steps of one tick: every timer due in a step fires once at its end, and the
+ * page handles socket messages between steps. A single long jump would itself be a timer pause and reconnect the page.
  */
 export async function advanceClock(page, millis) {
-  for (let advanced = 0; advanced < millis;) { const step = Math.min(ON_TIME_CLOCK_STEP_MS, millis - advanced); await page.clock.fastForward(step); advanced += step; }
+  for (let advanced = 0; advanced < millis;) { const step = Math.min(CLOCK_STEP_MS, millis - advanced); await page.clock.fastForward(step); advanced += step; }
 }
 /** As `advanceClock`, until `condition()` holds; fails once `limitMillis` have passed without it. */
 export async function advanceClockUntil(page, condition, limitMillis, message) {
-  for (let advanced = 0; !(await condition()); advanced += ON_TIME_CLOCK_STEP_MS) {
+  for (let advanced = 0; !(await condition()); advanced += CLOCK_STEP_MS) {
     if (advanced >= limitMillis) throw new Error(`${message} within ${limitMillis} ms of page time`);
-    await page.clock.fastForward(ON_TIME_CLOCK_STEP_MS);
+    await page.clock.fastForward(CLOCK_STEP_MS);
   }
 }
 /** Upper bound of page time from a lost connection to 'stopped' under `config`: every attempt waits its longest back-off and both connect deadlines, each up to one clock step late. */
-export function retryBudgetMillis(config) { return config.maxAttempts * (config.retryCap + 2 * config.connectTimeout + 3 * ON_TIME_CLOCK_STEP_MS); }
+export function retryBudgetMillis(config) { return config.maxAttempts * (config.retryCap + 2 * config.connectTimeout + 3 * CLOCK_STEP_MS); }
 const ID = { session: '00000000-0000-4000-8000-000000000001', chunk: '00000000-0000-4000-8000-000000000002', token: '00000000-0000-4000-8000-000000000003', group: '00000000-0000-4000-8000-000000000004', invitation: '00000000-0000-4000-8000-000000000005', job: '00000000-0000-4000-8000-000000000006', otherGroup: '00000000-0000-4000-8000-000000000007' };
 function ordered(rows, value, id, direction) {
   return [...rows].sort((left, right) => {
