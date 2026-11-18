@@ -18,8 +18,10 @@ class DashboardUXTests(unittest.TestCase):
         cls.node = bf.node_bin()
         cls.firefox = os.environ.get("MANURE_FIREFOX_BIN", "")
         cls.browser = cls.firefox or bf.chromium_bin()
+        # Viewers off: content opens as raw bytes whether or not a built viewer exists in this checkout
+        # (the default viewer_dir is relative and absent in the Nix test source, where previews would 404).
         cls.fix = bf.start_server(suffix_mode="separate",
-                                  config_overrides={"rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000})
+                                  config_overrides={"rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000, "viewer_dir": None})
         cls.expired = bf.upload_fixture(cls.fix, name="ux-expired", kind="file", visibility="internal", files={"old.txt": b"expired"}, expires_in_s=60)["artifact_id"]
         cls.records = []
         for index in range(65):
