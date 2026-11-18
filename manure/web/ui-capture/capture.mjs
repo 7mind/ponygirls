@@ -682,6 +682,12 @@ SCENES.viewer = async () => {
     if (vp === VP.d && scheme === "light") {
       await page.getByRole("button", { name: "Raw", exact: true }).click();
       await stateShot(page, "manure-viewer-raw-1440", "Markdown viewer, Raw: numbered source with light highlighting", "click Raw");
+      await page.getByRole("button", { name: "Rendered", exact: true }).click();
+      const diagram = page.getByRole("figure", { name: "Diagram 1", exact: true });
+      await diagram.scrollIntoViewIfNeeded();
+      await diagram.getByRole("button", { name: "Actual size", exact: true }).focus();
+      await page.keyboard.press("Enter");
+      await stateShot(page, "manure-viewer-diagram-actual-1440", "Embedded Mermaid diagram at actual size, zoom tools shown on focus", "focus the figure's Actual size, press Enter");
     }
     await page.context().close();
     const listing = await open("browse_dir", "", { vp, scheme });
