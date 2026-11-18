@@ -16,11 +16,11 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
 
 - `/decisions` or **⌃⌥D** opens the project's pending inbox (⌃ = Control, ⌥ = Alt).
 - `/decisions Q12` opens a particular question, including answered history.
-- The **📥 N+M · ⌃⌥D** badge counts unanswered questions from this
-  session and all other sessions in the same project. It lives on the editor's
-  bottom-left border and shows the inbox shortcut. In fullscreen mode it is
-  clickable. When the border is too narrow it shrinks to `?N+M`, in the same order.
-  Both counters include zero; the badge disappears when both are zero.
+- The **📥 N** badge counts unanswered questions in the project, from this
+  session and all others. The number is in the warning colour when this session
+  is waiting for one of them and muted when only other sessions are. It lives on
+  the editor's bottom-left border; in fullscreen mode it is clickable. A narrow
+  border shows `📥N`. The badge disappears when nothing is pending.
 - The inbox frame shows `pending N` / `all` tabs and the repository name (the
   directory owning the Git common directory, so worktrees show the main repository).
   Questions originating in the active session carry a `[this session]` marker in
@@ -35,10 +35,10 @@ pi -e ./nix/pkg/pi-extensions/ponygirls-decisions
   explicitly, never by merely moving the selection. Escape cancels an edit.
   Saving the final pending answer automatically closes the pane. Editing history
   or dismissing a question keeps it open.
-- **↑/↓** selects; **⏎** expands detail; **⇞/⇟** scrolls; **⇥** toggles
+- **↑/↓** selects; **⏎** expands detail; **PgUp/PgDn** scrolls; **tab** toggles
   pending/history. **a/e** edits an answer, **o** or **1–9** stages an option,
-  **d** stages dismissal, **u** stages reopening. **⌃S** saves; **⎋** cancels.
-  A stale edit keeps its draft; **⌃R** explicitly adopts the latest revision.
+  **d** stages dismissal, **u** stages reopening. **^S** (Control+S) saves; **esc** cancels.
+  A stale edit keeps its draft; **^R** explicitly adopts the latest revision.
 - History retains answered and dismissed questions. Answers can be revised;
   reopening withdraws the previous answer and makes the question pending again.
 

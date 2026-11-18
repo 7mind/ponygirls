@@ -4,17 +4,18 @@ import {
   PanelLayout,
   type PanelParts,
   fit,
+  formatCompact,
   fractionState,
   frameRule,
   frameTitle,
-  type KeyHint,
+  HINT,
   keyHints,
   stateColor,
   type UiTheme,
   usageBar,
 } from "@ponygirls/pi-ui";
 import type { GoalRecord, GoalStatus } from "./goal.ts";
-import { formatDuration, formatTokens, GOAL_STATUS_LOOK } from "./presentation.ts";
+import { formatDuration, GOAL_STATUS_LOOK } from "./presentation.ts";
 
 /** A /goal subcommand the pane can run. */
 export type GoalPaneAction = "pause" | "resume" | "edit" | "clear";
@@ -46,7 +47,6 @@ const PAUSE: PaneKey = { key: "p", action: "pause", label: "pause" };
 const RESUME: PaneKey = { key: "r", action: "resume", label: "resume" };
 const EDIT: PaneKey = { key: "e", action: "edit", label: "edit objective" };
 const CLEAR: PaneKey = { key: "c", action: "clear", label: "clear" };
-const CLOSE_HINT: KeyHint = { key: "esc", action: "close" };
 
 /** Keys offered per status: only transitions the /goal subcommands accept without extra arguments. */
 const STATUS_KEYS: Readonly<Record<GoalStatus, readonly PaneKey[]>> = {
@@ -111,13 +111,13 @@ export class GoalPane extends PanelLayout implements Component {
     const s = this.theme;
     if (!loaded.ok || loaded.value.goal === null) {
       const body = loaded.ok
-        ? s.fg("muted", "no goal — /goal <objective> sets one")
+        ? s.fg("muted", "No goal. /goal <objective> sets one.")
         : s.fg("error", `goal state unreadable: ${loaded.error}`);
       const lines = [
-        frameTitle(s, width, { title: "Goal", right: loaded.ok ? s.fg("dim", `rev ${loaded.value.revision}`) : undefined }, "none").line,
+        frameTitle(s, width, { title: "Goal" }, "none").line,
         `${INDENT}${body}`,
         frameRule(s, width),
-        ...keyHints(s, width, [CLOSE_HINT]).lines,
+        ...keyHints(s, width, [HINT.close]).lines,
       ].map((line) => truncateToWidth(line, width, "…"));
       return { header: lines.slice(0, 1), body: lines.slice(1, 2), footer: lines.slice(2) };
     }
@@ -129,16 +129,17 @@ export class GoalPane extends PanelLayout implements Component {
       .split("\n")
       .flatMap((line) => wrapTextWithAnsi(line, Math.max(1, width - INDENT.length)))
       .map((line) => `${INDENT}${s.fg("text", line)}`);
-    const hints = [...STATUS_KEYS[goal.status].map((k) => ({ key: k.key, action: k.label })), CLOSE_HINT];
+    const hints = [...STATUS_KEYS[goal.status].map((k) => ({ key: k.key, action: k.label })), HINT.close];
     const footer = [frameRule(s, width), ...keyHints(s, width, hints).lines];
     const lines = [
-      frameTitle(s, width, { title: "Goal", right: `${chip} ${s.fg("dim", `rev ${loaded.value.revision}`)}` }, "none").line,
+      frameTitle(s, width, { title: "Goal", right: chip }, "none").line,
       ...objective,
       "",
       this.row("tokens", this.budget(goal)),
       this.row("time", s.fg("text", formatDuration(goal.timeUsedSeconds))),
       this.row("created", this.when(goal.createdAt, now)),
       this.row("updated", this.when(goal.updatedAt, now)),
+      `${INDENT}${s.fg("dim", `revision ${loaded.value.revision}`)}`,
     ].map((line) => truncateToWidth(line, width, "…"));
     return { header: lines.slice(0, 1), body: lines.slice(1), footer };
   }
@@ -173,11 +174,11 @@ export class GoalPane extends PanelLayout implements Component {
 
   private budget(goal: GoalRecord): string {
     const s = this.theme;
-    if (goal.tokenBudget === null) return `${s.fg("text", formatTokens(goal.tokensUsed))}${s.fg("muted", " · no cap")}`;
+    if (goal.tokenBudget === null) return `${s.fg("text", formatCompact(goal.tokensUsed))}${s.fg("muted", " · no cap")}`;
     const fraction = goal.tokensUsed / goal.tokenBudget;
     const bar = usageBar(s, fraction, BUDGET_BAR_WIDTH, fractionState(fraction));
     const percent = Math.round(fraction * PERCENT);
-    return `${s.fg("text", `${formatTokens(goal.tokensUsed)} / ${formatTokens(goal.tokenBudget)}`)}  ${bar} ${s.fg("muted", `${percent}%`)}`;
+    return `${s.fg("text", `${formatCompact(goal.tokensUsed)} / ${formatCompact(goal.tokenBudget)}`)}  ${bar} ${s.fg("muted", `${percent}%`)}`;
   }
 
   private when(iso: string, nowMs: number): string {

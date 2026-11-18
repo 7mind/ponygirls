@@ -1,13 +1,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync, existsSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, rmSync, statSync, existsSync, readdirSync, readFileSync, realpathSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { DaemonLock, SqliteSpool } from '../src/spool.ts';
-import type { CollectorReport } from '../src/domain.ts';
+import { randomUUID } from 'node:crypto';
+import { DaemonLock, SqliteSpool, type Pending } from '../src/spool.ts';
+import { hash, type CollectorReport } from '../src/domain.ts';
 
 const cli = fileURLToPath(new URL('../src/cli.js', import.meta.url));
 
@@ -17,6 +18,167 @@ function invoke(home: string, configHome: string | undefined, argv: string[], cw
   else env.XDG_CONFIG_HOME = configHome;
   return spawnSync(process.execPath, [cli, ...argv], { encoding: 'utf8', env, cwd });
 }
+
+const HELP = `chronicle-collector — uploads local Claude, Codex and Pi session histories to Chronicle
+
+Usage: chronicle-collector [--config PATH] [COMMAND] [--json]
+
+Commands:
+  (none)              run as a daemon, scanning every poll interval
+  --once              scan and upload once, then exit (1 on failure or leftovers)
+  --status            show the last scan, the queue and diagnostics
+  --pause             stop collecting; queued uploads are kept
+  --resume            continue collecting
+  --exclude PATH      stop collecting from a directory
+  --unexclude PATH    collect from it again
+  --exclusions        list excluded directories
+  --retry REQUEST_ID  retry a stopped upload on the next scan
+  --drop REQUEST_ID   discard a queued upload; its source is not collected again
+
+--once, --retry and --drop need the daemon stopped.
+
+Options:
+  --config PATH       absolute path of the configuration
+                      (default: $XDG_CONFIG_HOME/chronicle/collector.json)
+  --json              machine-readable output instead of text (not for --once
+                      or the daemon, which always print JSON)
+  -h, --help          show this help
+`;
+const usageError = (message: string): string => `chronicle-collector: ${message}\nTry 'chronicle-collector --help'.\n`;
+const REQUEST_ID = '00000000-0000-4000-8000-000000000001';
+const enabledConfig = (dir: string, state: string) => ({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), stateDir: state, discoverNative: false, discoverYolo: false });
+
+test('GoodCommunication CLI help goes to stdout with exit 0 before configuration, state or other arguments are examined', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-help-'));
+  try {
+    for (const argv of [['--help'], ['-h'], ['--status', '--help'], ['-h', '--once', '--json'], ['--config', 'relative.json', '-h'], ['--unexpected', '--help'], ['--retry', '--help']]) {
+      const result = invoke(join(dir, 'home'), undefined, argv, dir);
+      assert.equal(result.stdout, HELP, argv.join(' ')); assert.equal(result.stderr, ''); assert.equal(result.status, 0);
+    }
+    assert.deepEqual(readdirSync(dir), []);
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication README quotes the help exactly as the CLI prints it', () => {
+  // Compiled tests live in dist/collector/test; the README stays beside package.json.
+  const readme = readFileSync(new URL('../../../README.md', import.meta.url), 'utf8');
+  assert.ok(readme.includes('```text\n' + HELP + '```\n'));
+});
+
+test('GoodCommunication CLI usage errors exit 2 with a sentence naming the argument, never JSON, before configuration or state', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-usage-'));
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'config.json'), selected = ['--config', config];
+    writeFileSync(config, JSON.stringify(enabledConfig(dir, state)));
+    const cases: [string[], string][] = [
+      [[...selected, '--unexpected'], "unknown argument '--unexpected'"],
+      [[...selected, 'stray'], "unknown argument 'stray'"],
+      [[...selected, '--status', '\u001b[2Jforged'], "unknown argument '\\u001b[2Jforged'"],
+      [['--status', '--config'], '--config needs a path'],
+      [['--config', 'relative.json', '--status'], "--config needs an absolute path, got 'relative.json'"],
+      [[...selected, ...selected], '--config given twice'],
+      [[...selected, '--status', '--json', '--json'], '--json given twice'],
+      [[...selected, '--status', '--once'], '--status and --once cannot be combined; give one command'],
+      [[...selected, '--pause', '--pause'], '--pause given twice'],
+      [[...selected, '--retry'], '--retry needs a request id'],
+      [[...selected, '--drop'], '--drop needs a request id'],
+      [[...selected, '--retry', 'nonsense'], "--retry needs a request id as --status prints it, got 'nonsense'"],
+      [[...selected, '--drop', REQUEST_ID.slice(1)], `--drop needs a request id as --status prints it, got '${REQUEST_ID.slice(1)}'`],
+      [[...selected, '--exclude'], '--exclude needs a path'],
+      [[...selected, '--unexclude', ''], '--unexclude needs a path'],
+      [[...selected, '--json'], '--json needs a command; the daemon always prints JSON'],
+      [[...selected, '--once', '--json'], '--json cannot be combined with --once, which always prints JSON'],
+    ];
+    for (const [argv, message] of cases) {
+      const result = invoke(join(dir, 'home'), undefined, argv, dir);
+      assert.equal(result.stderr, usageError(message), argv.join(' ')); assert.equal(result.status, 2); assert.equal(result.stdout, '');
+      assert.equal(existsSync(state), false);
+    }
+    const relativeHome = invoke('relative-home', undefined, ['--status'], dir);
+    assert.equal(relativeHome.stderr, usageError("the default configuration path 'relative-home/.config/chronicle/collector.json' is not absolute; give --config PATH"));
+    assert.equal(relativeHome.status, 2); assert.equal(relativeHome.stdout, '');
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication control commands answer with a sentence by default and the control state with --json', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'chronicle-control-text-')));
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'config.json'), project = join(dir, 'project'), other = join(dir, 'other'), nested = join(other, 'nested');
+    mkdirSync(project); writeFileSync(config, JSON.stringify(enabledConfig(dir, state)));
+    const answer = (...argv: string[]): string => {
+      const result = invoke(dir, undefined, ['--config', config, ...argv], project);
+      assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, ''); return result.stdout;
+    };
+    assert.equal(answer('--exclusions'), 'No excluded directories.\n');
+    assert.equal(answer('--pause'), 'Collection paused. Queued uploads are kept; --resume continues.\n');
+    assert.deepEqual(JSON.parse(answer('--pause', '--json')) as unknown, { paused: true, exclusions: [] });
+    assert.equal(answer('--resume'), 'Collection resumed.\n');
+    assert.deepEqual(JSON.parse(answer('--json', '--resume')) as unknown, { paused: false, exclusions: [] });
+    assert.equal(answer('--exclude', '.'), `Excluded ${project}.\n`);
+    assert.equal(answer('--exclude', `${other}/gone/..`), `Excluded ${other}.\n`);
+    assert.equal(answer('--exclusions'), `${other}\n${project}\n`);
+    assert.deepEqual(JSON.parse(answer('--exclusions', '--json')) as unknown, { paused: false, exclusions: [other, project] });
+    assert.equal(answer('--unexclude', nested), `Still excluded: ${nested} is under ${other}.\n`);
+    mkdirSync(other); symlinkSync(other, join(dir, 'link'));
+    assert.equal(answer('--unexclude', join(dir, 'link', 'nested')), `Still excluded: ${join(dir, 'link', 'nested')} is under ${other}.\n`);
+    assert.equal(answer('--exclusions'), `${other}\n${project}\n`);
+    assert.equal(answer('--unexclude', '.'), `No longer excluded: ${project}.\n`);
+    assert.deepEqual(JSON.parse(answer('--unexclude', other, '--json')) as unknown, { paused: false, exclusions: [] });
+    assert.deepEqual(JSON.parse(answer('--exclude', project, '--json')) as unknown, { paused: false, exclusions: [project] });
+    assert.equal(answer('--unexclude', project), `No longer excluded: ${project}.\n`);
+    const forged = join(dir, 'line\nExcluded /forged.');
+    assert.equal(answer('--exclude', forged), `Excluded ${join(dir, 'line\\u000aExcluded /forged.')}.\n`);
+    assert.equal(answer('--exclusions'), `${join(dir, 'line\\u000aExcluded /forged.')}\n`);
+    assert.equal(answer('--unexclude', forged), `No longer excluded: ${join(dir, 'line\\u000aExcluded /forged.')}.\n`);
+    assert.equal(answer('--exclusions'), 'No excluded directories.\n');
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication retry and drop answer with the human status by default and the JSON snapshot with --json', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-queue-text-'));
+  try {
+    const state = join(dir, 'state'), config = join(dir, 'config.json');
+    writeFileSync(config, JSON.stringify(enabledConfig(dir, state)));
+    const stopped = (sourceKey: string): Pending => ({ requestId: randomUUID(), sourceKey, sourceDigest: hash(sourceKey), payload: 'synthetic', payloadDigest: hash('synthetic'), expectedRevision: 0, policyDigest: 'policy', attempts: 8, nextAt: 0, status: 'stopped', error: 'synthetic-stop' });
+    const entries = ['first', 'second', 'third', 'fourth'].map(stopped);
+    const spool = new SqliteSpool(state);
+    try { for (const entry of entries) spool.enqueue(entry, { kind: 'explicit' }, null); } finally { spool.close(); }
+    const answer = (...argv: string[]): string => {
+      const result = invoke(dir, undefined, ['--config', config, ...argv], dir);
+      assert.equal(result.status, 0, result.stderr); assert.equal(result.stderr, ''); return result.stdout;
+    };
+    const [first, second, third, fourth] = entries.map(entry => entry.requestId) as [string, string, string, string];
+    const retried = answer('--retry', first);
+    assert.match(retried, /^Chronicle collector: enabled/); assert.ok(retried.includes(`  ${first}: pending · attempts: 0 · next attempt: due · source: first\n`));
+    assert.ok(retried.includes(`  ${second}: stopped · attempts: 8 · source: second\n`));
+    const retriedJson = JSON.parse(answer('--retry', second, '--json')) as { queue: { requestId: string; status: string; attempts: number }[] };
+    assert.deepEqual(retriedJson.queue.filter(entry => entry.status === 'pending' && entry.attempts === 0).map(entry => entry.requestId).sort(), [first, second].sort());
+    const dropped = answer('--drop', third);
+    assert.match(dropped, /^Chronicle collector: enabled/); assert.ok(dropped.includes(`Dropped: 1\n  ${third}: operator-drop · source: third\n`)); assert.ok(!dropped.includes(`  ${third}: stopped`));
+    const droppedJson = JSON.parse(answer('--json', '--drop', fourth)) as { queue: { requestId: string }[]; dropped: { requestId: string; reason: string }[] };
+    assert.deepEqual(droppedJson.queue.map(entry => entry.requestId).sort(), [first, second].sort());
+    assert.deepEqual(droppedJson.dropped.map(entry => [entry.requestId, entry.reason]).sort(), [[third, 'operator-drop'], [fourth, 'operator-drop']].sort());
+  } finally { rmSync(dir, { recursive: true }); }
+});
+
+test('GoodCommunication disabled configuration answers in text by default wherever a text form exists', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'chronicle-disabled-text-'));
+  try {
+    const config = join(dir, 'config.json'), state = join(dir, 'state');
+    writeFileSync(config, JSON.stringify({ enabled: false, stateDir: state }));
+    for (const command of [['--exclusions'], ['--retry', REQUEST_ID], ['--drop', REQUEST_ID]]) {
+      const human = invoke(dir, undefined, ['--config', config, ...command], dir);
+      assert.equal(human.status, 0, human.stderr); assert.equal(human.stdout, 'Chronicle collector: disabled\n');
+      const json = invoke(dir, undefined, ['--config', config, ...command, '--json'], dir);
+      assert.equal(json.status, 0, json.stderr); assert.deepEqual(JSON.parse(json.stdout) as unknown, { enabled: false });
+    }
+    for (const command of [[], ['--once']]) {
+      const result = invoke(dir, undefined, ['--config', config, ...command], dir);
+      assert.equal(result.status, 0, result.stderr); assert.deepEqual(JSON.parse(result.stdout) as unknown, { enabled: false });
+    }
+    assert.equal(existsSync(state), false);
+  } finally { rmSync(dir, { recursive: true }); }
+});
 
 for (const [name, configHome] of [['unset', undefined], ['empty', ''], ['relative', 'relative-config']] as const) {
   test(`GoodCommunication CLI uses the home default when XDG_CONFIG_HOME is ${name}`, () => {
@@ -86,7 +248,7 @@ test('GoodCommunication CLI never uses default config to recover malformed expli
     mkdirSync(directory, { recursive: true }); writeFileSync(join(directory, 'collector.json'), JSON.stringify({ enabled: false }));
     for (const argv of [['--config'], ['--config', 'relative.json', '--status'], ['--config', join(directory, 'collector.json'), '--config', join(directory, 'collector.json')], ['--unexpected']]) {
       const result = invoke(home, configHome, argv, dir);
-      assert.equal(result.status, 1); assert.equal(result.stdout, '');
+      assert.equal(result.status, 2); assert.equal(result.stdout, '');
     }
   } finally { rmSync(dir, { recursive: true }); }
 });
@@ -190,14 +352,14 @@ test('GoodCommunication fresh human status reports unknown scan and acknowledgem
   } finally { rmSync(dir, { recursive: true }); }
 });
 
-test('GoodCommunication JSON selection is status-only and duplicate flags fail before state creation', () => {
+test('GoodCommunication JSON selection is refused for the daemon and --once, and duplicate flags fail before state creation', () => {
   const dir = mkdtempSync(join(tmpdir(), 'chronicle-status-flags-'));
   try {
     const config = join(dir, 'config.json'), state = join(dir, 'state');
     writeFileSync(config, JSON.stringify({ enabled: false, stateDir: state }));
     for (const argv of [['--json'], ['--once', '--json'], ['--status', '--json', '--json']]) {
       const result = invoke(dir, undefined, ['--config', config, ...argv], dir);
-      assert.equal(result.status, 1); assert.equal(result.stdout, ''); assert.equal(existsSync(state), false);
+      assert.equal(result.status, 2); assert.equal(result.stdout, ''); assert.equal(existsSync(state), false);
     }
   } finally { rmSync(dir, { recursive: true }); }
 });
@@ -210,7 +372,7 @@ test('Behavioral GoodCommunication CLI controls and status bypass held daemon lo
     writeFileSync(config, JSON.stringify({ enabled: true, endpoint: 'http://127.0.0.1:9', tokenFile: join(dir, 'missing-token'), redactions: { secretFiles: [join(dir, 'missing-secret')] }, stateDir: state, discoverNative: false, discoverYolo: false }));
     lock = new DaemonLock(state);
     const call = (...args: string[]) => invoke(dir, undefined, ['--config', config, ...args], dir);
-    for (const args of [['--pause'], ['--exclude', '.'], ['--exclusions'], ['--status', '--json']]) {
+    for (const args of [['--pause', '--json'], ['--exclude', '.', '--json'], ['--exclusions', '--json'], ['--status', '--json']]) {
       const result = call(...args); assert.equal(result.status, 0, result.stderr);
       const value = JSON.parse(result.stdout) as { paused?: boolean; controls?: { paused: boolean; exclusions: string[] } };
       assert.equal(value.controls?.paused ?? value.paused, true);

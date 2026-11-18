@@ -14,29 +14,22 @@
  * the distribution between chart and table. The chart stacks each bucket's
  * input/cacheRead/cacheWrite token shares: accent input, warning cacheWrite
  * (newly written cache, billed at a premium), success cacheRead (cheap reread).
+ * This file owns the pane's state, keys and loading; ./ponygirls-usage-state.ts
+ * renders it, so the whole screen is testable without the Pi runtime.
  *
  * Wire-up: listed in nix/hm/pi.nix `programs.pi.settings.extensions`.
  */
 
-import { CancellableLoader, matchesKey, parseKey, truncateToWidth, visibleWidth, type Component, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
+import { CancellableLoader, matchesKey, parseKey, type Component, type TUI, type TuiMouseEvent, type TuiMouseEventResult } from "@earendil-works/pi-tui";
 import type { ExtensionAPI, Theme } from "@earendil-works/pi-coding-agent";
-import { frameRule, frameTitle, keyHints, type KeyHint } from "@ponygirls/pi-ui";
+import { formatCount } from "@ponygirls/pi-ui";
 
-import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget, scrollPosition, visibleRange } from "./scroll-state.ts";
+import { DEFAULT_VIEWPORT_BUDGET, WHEEL_LINES, VIEWPORT_BUDGET_STEP, clampScrollTop, clampViewportBudget } from "./scroll-state.ts";
 import { collectUsageData, TAB_ORDER, type CollectProgress, type TabName, type UsageData } from "./ponygirls-usage-data.ts";
-import { buildInputDistribution, buildUsageRows, INPUT_DIST_COMPONENTS, measureUsageTable, renderInputDistChart, renderInputDistTable, renderUsageTable, usageTotalsRow, USAGE_TAB_DEFAULT_MODE, USAGE_TAB_LABELS, type InputDistComponentKey, type InputDistPalette, type InputDistStyle, type UsageTableLayout, type UsageTableMode, type UsageView } from "./ponygirls-usage-state.ts";
+import { renderUsagePane, USAGE_TAB_DEFAULT_MODE, type InputDistStyle, type UsageTableMode, type UsageView } from "./ponygirls-usage-state.ts";
 
 /** View chrome around the scrollable content: frame title with tabs, rule, one key-hint line. */
 const USAGE_CHROME_LINES = 3;
-
-const USAGE_TITLE = "Usage";
-const PERIOD_HINT: KeyHint = { key: "⇥/←→", action: "period" };
-const SCROLL_HINTS: readonly KeyHint[] = [
-	{ key: "↑↓/j/k", action: "scroll" },
-	{ key: "PgUp/PgDn", action: "page" },
-	{ key: "+-", action: "size" },
-	{ key: "q", action: "close" },
-];
 
 /** Half the terminal height for content, less the view chrome. */
 function defaultBudget(rows: number | undefined): number {
@@ -56,12 +49,6 @@ function formatSinceDate(ms: number): string {
 	return d.toLocaleDateString(undefined, opts);
 }
 
-function fitLine(line: string, width: number): string {
-	const clipped = truncateToWidth(line, width);
-	const gap = width - visibleWidth(clipped);
-	return gap > 0 ? clipped + " ".repeat(gap) : clipped;
-}
-
 class UsageTableView implements Component {
 	private tab: TabName = "allTime";
 	private modes: Record<TabName, UsageTableMode> = { ...USAGE_TAB_DEFAULT_MODE };
@@ -73,7 +60,6 @@ class UsageTableView implements Component {
 	private budgetTouched = false;
 	/** Content lines from the last render; the data is fixed for the view lifetime. */
 	private lineCount = 0;
-	private readonly layout: UsageTableLayout;
 
 	constructor(
 		private readonly theme: Theme,
@@ -81,15 +67,7 @@ class UsageTableView implements Component {
 		private readonly data: UsageData,
 		private readonly onClose: () => void,
 		private readonly requestRender: () => void,
-	) {
-		// One layout for all tabs and both modes: columns keep the same width
-		// when switching. Measured over the widest shape (per-model rows).
-		const tabs = TAB_ORDER.map((name) => data[name]);
-		this.layout = measureUsageTable(
-			tabs.flatMap((stats) => buildUsageRows(stats, "models")),
-			usageTotalsRow(data.allTime.totals),
-		);
-	}
+	) {}
 
 	private effectiveBudget(): number {
 		return this.budgetTouched ? this.budget : defaultBudget(this.tui.terminal?.rows);
@@ -98,75 +76,15 @@ class UsageTableView implements Component {
 	invalidate(): void {}
 
 	render(width: number): string[] {
-		const content: string[] = this.view === "table" ? this.tableContent(width) : this.distContent(width);
-		this.lineCount = content.length;
-		const budget = this.effectiveBudget();
-		this.scrollTop = clampScrollTop(this.scrollTop, this.lineCount, budget);
-		const { start, end } = visibleRange(this.lineCount, this.scrollTop, budget);
-		const right = this.lineCount > budget ? this.theme.fg("dim", scrollPosition(this.lineCount, start, end)) : undefined;
-		const tabs = { labels: TAB_ORDER.map((name) => USAGE_TAB_LABELS[name]), active: TAB_ORDER.indexOf(this.tab) };
-		return [
-			frameTitle(this.theme, width, { title: USAGE_TITLE, tabs, right }, "none").line,
-			...content.slice(start, end).map((line) => fitLine(line, width)),
-			frameRule(this.theme, width),
-			...keyHints(this.theme, width, this.hints()).lines,
-		];
-	}
-
-	private hints(): KeyHint[] {
-		if (this.view === "dist") {
-			return [PERIOD_HINT, { key: "v", action: "table" }, { key: "c", action: this.distStyle === "chart" ? "chart" : "table" }, ...SCROLL_HINTS];
-		}
-		return [
-			PERIOD_HINT,
-			{ key: "m", action: this.modes[this.tab] === "models" ? "per-model" : "aggregates" },
-			{ key: "v", action: "distribution" },
-			...SCROLL_HINTS,
-		];
-	}
-
-	private tableContent(width: number): string[] {
-		const stats = this.data[this.tab];
-		const rows = buildUsageRows(stats, this.modes[this.tab]!);
-		const table = renderUsageTable(rows, usageTotalsRow(stats.totals), this.theme, { layout: this.layout });
-		return [...table.header, ...table.rows, ...table.totals];
-	}
-
-	private distContent(width: number): string[] {
-		const bins = buildInputDistribution(this.data[this.tab].inputSizes);
-		const subtitle = this.theme.fg("dim", "Input size per assistant message (ctx tokens, all models)");
-		if (this.distStyle === "table") {
-			const rendered = renderInputDistTable(bins, this.theme);
-			const content: string[] = [subtitle, "", ...rendered.header, ...rendered.rows];
-			if (rendered.totals.length > 0) content.push("", ...rendered.totals.map((line) => this.theme.bold(line)));
-			return content;
-	}
-		const rendered = renderInputDistChart(bins, width, this.distPalette());
-		if (rendered.totals.length === 0) return [subtitle, "", ...rendered.header];
-		const content: string[] = [subtitle, "", this.distLegend(), ...rendered.rows];
-		content.push("", ...rendered.totals.map((line) => this.theme.bold(line)));
-		return content;
-	}
-
-	/** Stacked-segment colors; empty segments stay empty (no stray escapes). */
-	private distPalette(): InputDistPalette {
-		const paint = (color: "accent" | "success" | "warning", bar: string): string =>
-			bar === "" ? "" : this.theme.fg(color, bar);
-		return {
-			input: (bar) => paint("accent", bar),
-			cacheRead: (bar) => paint("success", bar),
-			cacheWrite: (bar) => paint("warning", bar),
-		};
-	}
-
-	private distLegend(): string {
-		const palette = this.distPalette();
-		const swatch: Record<InputDistComponentKey, string> = {
-			input: palette.input("█"),
-			cacheRead: palette.cacheRead("█"),
-			cacheWrite: palette.cacheWrite("█"),
-		};
-		return INPUT_DIST_COMPONENTS.map((component) => `${swatch[component.key]} ${this.theme.fg("dim", component.label)}`).join("  ");
+		const pane = renderUsagePane(
+			this.theme,
+			width,
+			this.data[this.tab],
+			{ tab: this.tab, mode: this.modes[this.tab], view: this.view, distStyle: this.distStyle, scrollTop: this.scrollTop, budget: this.effectiveBudget() },
+		);
+		this.lineCount = pane.lineCount;
+		this.scrollTop = pane.scrollTop;
+		return pane.lines;
 	}
 
 	handleInput(data: string): void {
@@ -258,7 +176,7 @@ class UsageTableView implements Component {
 
 export default function (pi: ExtensionAPI): void {
 	pi.registerCommand("usage", {
-		description: "Usage by provider and model per period, plus input-size distribution (scrollable)",
+		description: "Usage and cost by provider and model",
 		handler: async (_args, ctx) => {
 			if (ctx.mode !== "tui") {
 				ctx.ui.notify("/usage needs the interactive UI", "warning");
@@ -281,7 +199,7 @@ export default function (pi: ExtensionAPI): void {
 				loader.onAbort = () => finish(null);
 				const onProgress = (p: CollectProgress): void => {
 					if (finished || p.filesToParse === 0) return;
-					const files = `${p.filesParsed.toLocaleString()}/${p.filesToParse.toLocaleString()} files`;
+					const files = `${formatCount(p.filesParsed)}/${formatCount(p.filesToParse)} files`;
 					if (p.mode === "update") {
 						const since = p.sinceMs !== null ? ` since ${formatSinceDate(p.sinceMs)}` : "";
 						loader.setMessage(`Updating your usage history${since}… (${files})`);

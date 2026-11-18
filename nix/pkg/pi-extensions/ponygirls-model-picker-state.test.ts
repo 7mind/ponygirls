@@ -491,13 +491,14 @@ test("hitAt matches the half-open column range on the right line", () => {
 	assert.equal(hitAt(hits, 5, 0), undefined);
 });
 
-test("pickerVisibleRows takes two thirds of the terminal, less the dialog chrome", () => {
-	assert.equal(pickerVisibleRows(undefined), 10);
-	assert.equal(pickerVisibleRows(Number.NaN), 10);
-	assert.equal(pickerVisibleRows(30), 12);
-	assert.equal(pickerVisibleRows(24), 8);
-	assert.equal(pickerVisibleRows(90), 30);
-	assert.equal(pickerVisibleRows(9), 5);
+test("picker list shrinks with the terminal or wrapped hints so the footer fits", () => {
+	assert.equal(pickerVisibleRows(undefined, 2), 10);
+	assert.equal(pickerVisibleRows(Number.NaN, 2), 10);
+	assert.equal(pickerVisibleRows(40, 3), 20);
+	assert.equal(pickerVisibleRows(24, 3), 9);
+	assert.equal(pickerVisibleRows(24, 5), 7);
+	assert.equal(pickerVisibleRows(90, 2), 30);
+	assert.equal(pickerVisibleRows(12, 3), 1);
 });
 
 // --- effort picker: what pi-ai sends per level -------------------------------
@@ -846,14 +847,14 @@ test("action hints keep the key-hint style and stay clickable after the indent",
 	const hints = actionHints(
 		TAGGED,
 		60,
-		[[{ key: "⏎", action: "select", command: "choose" }, { key: "⎋", action: "close", command: "close" }]],
+		[[{ key: "⏎", action: "select", command: "choose" }, { key: "esc", action: "close", command: "close" }]],
 		2,
 	);
-	assert.equal(plain(hints.lines[0]!), "  ⏎ select  ⎋ close");
+	assert.equal(plain(hints.lines[0]!), "  ⏎ select  esc close");
 	assert.ok(hints.lines[0]!.includes(`${fgCode("muted")}select`));
 	assert.deepEqual(hints.hits, [
 		{ line: 0, start: 2, end: 10, action: "choose" },
-		{ line: 0, start: 12, end: 19, action: "close" },
+		{ line: 0, start: 12, end: 21, action: "close" },
 	]);
 });
 

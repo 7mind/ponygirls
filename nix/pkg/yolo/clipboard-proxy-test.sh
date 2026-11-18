@@ -147,6 +147,40 @@ assert_last_argv() {
   fi
 }
 
+# --- Startup announcement: the broker names its socket only with --trace (what
+# `yolo --trace` passes). Readiness is the socket itself, never this line; a
+# served request proves that the accept loop, which starts after the line, ran.
+ANNOUNCE_STATE="$WORKDIR/announce-state"
+mkdir -p "$ANNOUNCE_STATE"
+printf 'announce-buffer' > "$ANNOUNCE_STATE/buffer"
+# broker_startup_stderr NAME [broker flags...]: stderr of a broker that served one request.
+broker_startup_stderr() {
+  local name="$1" pid
+  shift
+  FAKE_TMUX_STATE="$ANNOUNCE_STATE" "$PROXY" broker \
+    --listen "$WORKDIR/$name.sock" \
+    --tmux-socket /tmp/does-not-need-to-exist.sock \
+    --tmux "$FAKE_TMUX" "$@" 2> "$WORKDIR/$name.err" &
+  pid=$!
+  for _ in $(seq 1 50); do
+    [[ -S "$WORKDIR/$name.sock" ]] && break
+    sleep 0.05
+  done
+  YOLO_CLIPBOARD_SOCK="$WORKDIR/$name.sock" "$PROXY" client get > "$WORKDIR/$name.out" 2>/dev/null
+  kill "$pid" 2>/dev/null
+  wait "$pid" 2>/dev/null
+  cat "$WORKDIR/$name.err"
+}
+assert_eq "broker prints nothing on startup by default" "" "$(broker_startup_stderr quiet)"
+assert_eq "silent broker served its request" "announce-buffer" "$(cat "$WORKDIR/quiet.out")"
+assert_eq "broker --trace announces its socket" \
+  "yolo-clipboard-proxy broker: listening on $WORKDIR/traced.sock (tmux socket /tmp/does-not-need-to-exist.sock)" \
+  "$(broker_startup_stderr traced --trace)"
+assert_eq "announcing broker served its request" "announce-buffer" "$(cat "$WORKDIR/traced.out")"
+ERR="$("$PROXY" broker --listen "$WORKDIR/unconfigured.sock" 2>&1)"
+assert_fail "broker without a tmux socket fails" "$?"
+assert_contains "broker errors are printed without --trace" "$ERR" "--tmux-socket is required"
+
 SOCK_DIR="$WORKDIR/clip"
 mkdir -p "$SOCK_DIR"
 chmod 700 "$SOCK_DIR"

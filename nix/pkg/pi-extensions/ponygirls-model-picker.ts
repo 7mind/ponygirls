@@ -20,8 +20,9 @@
  * own stable id, sort position, and selection time. Legacy string entries
  * ("provider/id") read as bare entries with no pinned effort. The Favourites
  * tab lists entries most recently selected first and edits their efforts one
- * entry at a time; the All models tab aggregates one row per model and shows
- * no efforts. A missing catalog entry is kept
+ * entry at a time. The All tab aggregates one row per model with no effort
+ * labels and hides older generations; Ctrl+A toggles them for this dialog.
+ * A missing catalog entry is kept
  * in the file and omitted from the list until it exists again. Choosing a
  * favourite applies its pinned effort (when still supported by the model);
  * a bare entry changes only the model. Choosing while a turn is running
@@ -38,8 +39,9 @@ import { getSupportedThinkingLevels, type Model, type ModelThinkingLevel } from 
 import type { ExtensionAPI, ExtensionContext, Theme } from "@earendil-works/pi-coding-agent";
 import type { Component, SizeValue, TUI, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import { Input, matchesKey, parseKey, visibleWidth } from "@earendil-works/pi-tui";
-import { MARKER_WIDTH, fit, frameTitle, hintAt, type RenderedTitle, type Span } from "@ponygirls/pi-ui";
+import { KEY, MARKER_WIDTH, ctrlKey, fit, frameTitle, hintAt, type RenderedTitle, type Span } from "@ponygirls/pi-ui";
 
+import { latestModelGenerations } from "./model-generations.ts";
 import { effortRows, isThinkingLevel, thinkingApi, type EffortCompat, type EffortModel, type EffortRow, type ThinkingBudgets, type ThinkingLevelName } from "./ponygirls-model-picker-effort.ts";
 import {
 	EFFORT_TITLE,
@@ -70,6 +72,8 @@ import {
 	OUTLINE_INSET_X,
 	outlineContentPoint,
 	parsePickerState,
+	PICKER_FALLBACK_ROWS,
+	PICKER_HEIGHT_PERCENT,
 	pickerVisibleRows,
 	recordSelection,
 	removeFavouriteEntry,
@@ -89,7 +93,11 @@ const THINKING_SHORTCUT = "ctrl+shift+e";
 const CONTROLS_WIDGET_KEY = "model-picker-controls";
 /** Cycle the selected favourite's pinned effort through the model's native levels. */
 const EFFORT_CYCLE_SHORTCUT = "ctrl+e";
-const EFFORT_CYCLE_GLYPH = "⌃E";
+const EFFORT_CYCLE_GLYPH = ctrlKey("e");
+const OLDER_MODELS_SHORTCUT = "ctrl+a";
+const OLDER_MODELS_GLYPH = ctrlKey("a");
+/** Columns of the page hint's key label that page up (`PgUp` of `PgUp/PgDn`). */
+const PAGE_UP_LABEL_WIDTH = KEY.page.indexOf("/");
 /** Keycap glyphs for the controls (⌃ ctrl, ⇧ shift). */
 const MODEL_SHORTCUT_GLYPH = "⌃⇧M";
 const THINKING_SHORTCUT_GLYPH = "⌃⇧E";
@@ -125,25 +133,25 @@ function hasPending(): boolean {
 	return pending.model !== undefined || pending.effort !== undefined;
 }
 
-type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page" | "close";
+type PickerAction = "choose" | "favourite" | "cycle" | "switch" | "page" | "close" | "toggle-older";
 
 const MODEL_HINTS: readonly (readonly ActionHint<PickerAction>[])[] = [
 	[
-		{ key: "⏎", action: "select", command: "choose" },
-		{ key: "␣/right-click", action: "favourite", command: "favourite" },
+		{ key: KEY.enter, action: "select", command: "choose" },
+		{ key: KEY.space, action: "favourite", command: "favourite" },
 		{ key: EFFORT_CYCLE_GLYPH, action: "cycle effort", command: "cycle" },
 	],
 	[
-		{ key: "⇥", action: "switch tab", command: "switch" },
-		{ key: "⇞⇟", action: "page", command: "page" },
-		{ key: "⎋", action: "close", command: "close" },
+		{ key: KEY.tab, action: "switch tab", command: "switch" },
+		{ key: KEY.page, action: "page", command: "page" },
+		{ key: KEY.esc, action: "close", command: "close" },
 	],
 ];
 
 const EFFORT_HINTS: readonly (readonly ActionHint<PickerAction>[])[] = [
 	[
-		{ key: "⏎", action: "select", command: "choose" },
-		{ key: "⎋", action: "close", command: "close" },
+		{ key: KEY.enter, action: "select", command: "choose" },
+		{ key: KEY.esc, action: "close", command: "close" },
 	],
 ];
 
@@ -353,10 +361,14 @@ class ControlsBorder implements Component {
 
 class ModelPicker implements BoxedBody {
 	private tab: ModelTab = "favourites";
+	private showOlder = false;
+	private readonly allRows: ModelRef[];
+	private readonly latestRows: ModelRef[];
 	private readonly filter: Input;
 	private selected = 0;
 	private hintHits: Hit[] = [];
 	private listStart = FILTER_LINE + 1;
+	private listSize = PICKER_FALLBACK_ROWS;
 
 	constructor(
 		private readonly theme: Theme,
@@ -366,8 +378,10 @@ class ModelPicker implements BoxedBody {
 		private readonly onFavourites: (next: PickerState) => void,
 		private readonly onChoose: (model: FavouriteModel) => void,
 		private readonly onCancel: () => void,
-		private readonly visibleRows: number,
+		private readonly terminalRows: () => number | undefined,
 	) {
+		this.allRows = allModels(models);
+		this.latestRows = latestModelGenerations(this.allRows);
 		this.filter = new Input({
 			prompt: theme.fg("dim", "filter "),
 			placeholder: "type to search",
@@ -384,8 +398,15 @@ class ModelPicker implements BoxedBody {
 
 	private visible(): FavouriteModel[] {
 		const base: readonly FavouriteModel[] =
-			this.tab === "favourites" ? favouriteModels(this.models, this.state) : allModels(this.models);
+			this.tab === "favourites" ? favouriteModels(this.models, this.state) : this.showOlder ? this.allRows : this.latestRows;
 		return filterModels(base, this.filter.getValue());
+	}
+
+	private toggleOlder(): void {
+		if (this.tab !== "all") return;
+		const previous = this.visible()[this.selected];
+		this.showOlder = !this.showOlder;
+		this.selected = previous === undefined ? 0 : Math.max(0, this.visible().indexOf(previous));
 	}
 
 	title(width: number): RenderedTitle {
@@ -409,7 +430,11 @@ class ModelPicker implements BoxedBody {
 		if (this.selected >= rows.length) this.selected = Math.max(0, rows.length - 1);
 		const lines = [bodyLine(this.filter.render(Math.max(1, width - MARKER_WIDTH))[0] ?? "", width)];
 		this.listStart = lines.length;
-		const size = this.visibleRows;
+		const actions: readonly (readonly ActionHint<PickerAction>[])[] = this.tab === "all"
+			? [...MODEL_HINTS, [{ key: OLDER_MODELS_GLYPH, action: this.showOlder ? "hide older models" : "show older models", command: "toggle-older" }]]
+			: MODEL_HINTS;
+		const hints = actionHints(this.theme, width, actions, MARKER_WIDTH);
+		const size = this.listSize = pickerVisibleRows(this.terminalRows(), hints.lines.length);
 		const start = windowStart(this.selected, rows.length, size);
 		const shown = rows.slice(start, start + size);
 		// Scrollbar rail when the list overflows; the thumb tracks the window.
@@ -421,7 +446,7 @@ class ModelPicker implements BoxedBody {
 			if (!model) {
 				lines.push(
 					index === 0
-						? bodyLine(this.theme.fg("dim", this.tab === "favourites" ? "no favourites — ⇥ to All models, ␣ to mark" : "no match"), width)
+						? bodyLine(this.theme.fg("dim", this.tab === "favourites" ? `no favourites — ${KEY.tab} to All models, ${KEY.space} to mark` : "no match"), width)
 						: "",
 				);
 				continue;
@@ -440,7 +465,6 @@ class ModelPicker implements BoxedBody {
 			const rowWidth = Math.max(MARKER_WIDTH, width - 1);
 			lines.push(fit(modelRow(this.theme, rowWidth, view, absolute === this.selected), rowWidth) + rail);
 		}
-		const hints = actionHints(this.theme, width, MODEL_HINTS, MARKER_WIDTH);
 		this.hintHits = hints.hits.map((hit) => ({ ...hit, line: hit.line + lines.length }));
 		lines.push(...hints.lines);
 		return lines;
@@ -455,8 +479,8 @@ class ModelPicker implements BoxedBody {
 		const hint = hitAt(this.hintHits, event.x, event.y);
 		if (hint) {
 			if (event.button !== "left") return { handled: true };
-			// "⇞⇟ page": the ⇞ column pages up, the rest of the hint pages down.
-			if (hint.action === "page") this.move(event.x === hint.start ? -this.visibleRows : this.visibleRows);
+			// "PgUp/PgDn page": the PgUp columns page up, the rest of the hint pages down.
+			if (hint.action === "page") this.move(event.x < hint.start + PAGE_UP_LABEL_WIDTH ? -this.listSize : this.listSize);
 			else this.activate(hint.action as PickerAction);
 			return { handled: true };
 		}
@@ -466,9 +490,10 @@ class ModelPicker implements BoxedBody {
 		// default two-column prompt, and ours is wider.
 		if (event.y === FILTER_LINE) return { handled: true };
 		const row = event.y - this.listStart;
-		if (row < 0 || row >= this.visibleRows) return { handled: true };
+		const size = this.listSize;
+		if (row < 0 || row >= size) return { handled: true };
 		const rows = this.visible();
-		const start = windowStart(this.selected, rows.length, this.visibleRows);
+		const start = windowStart(this.selected, rows.length, size);
 		const model = rows[start + row];
 		if (!model) return { handled: true };
 		if (event.button === "right" || event.x < MARKER_WIDTH + FAVOURITE_CELL_WIDTH) {
@@ -497,11 +522,11 @@ class ModelPicker implements BoxedBody {
 			return;
 		}
 		if (matchesKey(data, "pageUp")) {
-			this.move(-this.visibleRows);
+			this.move(-this.listSize);
 			return;
 		}
 		if (matchesKey(data, "pageDown")) {
-			this.move(this.visibleRows);
+			this.move(this.listSize);
 			return;
 		}
 		if (matchesKey(data, "enter")) {
@@ -514,6 +539,10 @@ class ModelPicker implements BoxedBody {
 		}
 		if (matchesKey(data, EFFORT_CYCLE_SHORTCUT)) {
 			this.cycle();
+			return;
+		}
+		if (matchesKey(data, OLDER_MODELS_SHORTCUT)) {
+			this.toggleOlder();
 			return;
 		}
 		if (matchesKey(data, "backspace") || matchesKey(data, "delete")) {
@@ -595,7 +624,10 @@ class ModelPicker implements BoxedBody {
 				this.switchTab();
 				break;
 			case "page":
-				this.move(this.visibleRows);
+				this.move(this.listSize);
+				break;
+			case "toggle-older":
+				this.toggleOlder();
 				break;
 			case "close":
 				this.onCancel();
@@ -852,7 +884,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 		const model = models.find((item) => modelKey(item) === key);
 		return thinkingLevels(model);
 	};
-	const chosen = await dialog<FavouriteModel>("model", ctx, "66%", "66%", (kind) => open(pi, kind), (tui, theme, done) =>
+	const chosen = await dialog<FavouriteModel>("model", ctx, "66%", `${PICKER_HEIGHT_PERCENT}%`, (kind) => open(pi, kind), (tui, theme, done) =>
 		new Boxed(
 			new ModelPicker(
 				theme,
@@ -862,7 +894,7 @@ async function openModelPicker(pi: ExtensionAPI, ctx: ExtensionContext): Promise
 				save,
 				(model) => done(model),
 				() => done(undefined),
-				pickerVisibleRows(tui.terminal?.rows),
+				() => tui.terminal.rows,
 			),
 			theme,
 		),
@@ -971,14 +1003,14 @@ export default function (pi: ExtensionAPI): void {
 		},
 	});
 	pi.registerCommand("pick-model", {
-		description: "Pick a model (favourites tab first; space marks a favourite, ctrl+e cycles its effort; queued when a turn is running)",
+		description: "Pick a model, mark favourites, pin their effort",
 		handler: async (_args, ctx) => {
 			latestCtx = ctx;
 			await withPicker(ctx, () => openModelPicker(pi, ctx));
 		},
 	});
 	pi.registerCommand("pick-thinking", {
-		description: "Pick the effort / thinking level (queued when a turn is running)",
+		description: "Pick the effort / thinking level",
 		handler: async (_args, ctx) => {
 			latestCtx = ctx;
 			await withPicker(ctx, () => openThinkingPicker(pi, ctx));

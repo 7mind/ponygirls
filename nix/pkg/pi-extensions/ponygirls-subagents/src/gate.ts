@@ -13,6 +13,7 @@
  */
 
 import { createHash, randomUUID } from "node:crypto";
+import type { ModelIdentity } from "../../model-generations.ts";
 import { err } from "./errors.ts";
 import { BASH_DEFAULT_TIMEOUT_MS, BASH_MAX_TIMEOUT_MS, MAX_COMMAND_BYTES } from "./tools.ts";
 import type { RunStore } from "./store.ts";
@@ -175,6 +176,7 @@ interface GateTaskState {
 export interface GateHost {
   activePolicy: SupervisorPolicy;
   runStore: RunStore;
+  assertLatestModel(model: ModelIdentity): void;
   startReviewerExecution(reviewerId: AgentId, input: { taskRunId: TaskRunId; reviewId: string; candidateId: string; prompt: string }): void;
   startRepairExecution(mainAgentId: AgentId, taskRunId: TaskRunId, criticism: string): void;
   createReviewerPanel(mainAgentId: AgentId, taskRunId: TaskRunId, spec: NormalizedGateSpec): AgentId[];
@@ -402,6 +404,7 @@ export class GateController {
   validateSpec(input: GateSpecInput, mode: "gate" | "review" = "gate"): NormalizedGateSpec {
     const normalized = normalizeGateSpec(input, this.host.activePolicy, mode);
     if (!normalized.ok) throw normalized.error;
+    for (const reviewer of normalized.spec.reviewers) this.host.assertLatestModel(reviewer.model);
     return normalized.spec;
   }
 
@@ -879,16 +882,17 @@ export class GateController {
     if (!task.candidate || !this.host.workspaceMatches(task.agentId, task.candidate)) {
       throw err("CONFLICT", "recorded candidate no longer matches; cannot resume");
     }
+    const pending = task.review.members.filter((m) => m.status === "interrupted");
+    for (const member of pending) this.host.assertLatestModel(task.spec.reviewers[member.reviewerIndex]!.model);
     task.review.status = "running";
     task.review.decisionUsed = false;
-    const pending = task.review.members.filter((m) => m.status === "interrupted");
     for (const member of pending) member.status = "running";
     this.host.setTaskPhase(task.agentId, taskRunId, "reviewing");
     this.startMembers(task, pending.map((m) => m.reviewerId), task.evidence.filter((e) => e.round === task.roundsAdmitted));
   }
 
-  /** `spec` null reviews under the prior run's own specification (revalidated against current policy). */
-  retryReview(priorTaskRunId: TaskRunId, candidateId: string, spec: GateSpecInput | null, commandId: string): TaskRunId {
+  /** Review again using the specification already validated against current policy. */
+  retryReview(priorTaskRunId: TaskRunId, candidateId: string, spec: NormalizedGateSpec, commandId: string): TaskRunId {
     this.dedupCommand(commandId, "retry_review", priorTaskRunId);
     const prior = this.tasks.get(priorTaskRunId);
     if (!prior || !prior.terminal) throw err("NOT_FOUND", `no terminal run ${priorTaskRunId}`);
@@ -899,15 +903,13 @@ export class GateController {
     if (!this.host.workspaceMatches(prior.agentId, prior.candidate)) {
       throw err("CONFLICT", "candidate no longer matches current workspace; submit current work as a new task");
     }
-    const normalized = normalizeGateSpec(spec ?? prior.spec, this.host.activePolicy);
-    if (!normalized.ok) throw normalized.error;
     const taskRunId = randomUUID();
-    const sameReviewers = JSON.stringify(normalized.spec.reviewers) === JSON.stringify(prior.spec.reviewers);
-    const reviewerIds = sameReviewers ? [...prior.reviewerIds] : this.host.createReviewerPanel(prior.agentId, taskRunId, normalized.spec);
+    const sameReviewers = JSON.stringify(spec.reviewers) === JSON.stringify(prior.spec.reviewers);
+    const reviewerIds = sameReviewers ? [...prior.reviewerIds] : this.host.createReviewerPanel(prior.agentId, taskRunId, spec);
     this.host.runStore.append("gate.registered", {
       agentId: prior.agentId,
       taskRunId,
-      spec: normalized.spec,
+      spec,
       taskText: prior.taskText.slice(0, 65536),
       linkedFrom: priorTaskRunId,
       reviewerId: reviewerIds[0]!,
@@ -917,7 +919,7 @@ export class GateController {
       agentId: prior.agentId,
       taskRunId,
       taskText: prior.taskText,
-      spec: normalized.spec,
+      spec,
       roundsAdmitted: 0,
       reviewerId: reviewerIds[0]!,
       reviewerIds,

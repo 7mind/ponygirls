@@ -4,29 +4,53 @@
  */
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { compactChip, CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, borderBadge, borderBadgeCompact, CustomViewToggle } from "@ponygirls/pi-ui";
 import { Value } from "typebox/value";
 import { Activation, readRuntimeConfig } from "./src/activation.ts";
 import { NoticeDispatcher, SessionFileReceipts, connectBackend, systemTimers, type ReceiptSource } from "./src/delivery.ts";
 import { BgTaskError, COMPLETION_CUSTOM_TYPE, CompletionDetailsSchema, MAX_LIST_ITEMS, SIGNAL_NAMES, STATUS_CUSTOM_TYPE, type SessionId, type SignalName, type TaskRecord } from "./src/protocol.ts";
-import { BG_STATUS_KEY, bgStatusLine, countRunning } from "./src/status.ts";
+import { BG_STATUS_KEY, bgBadge, countRunning } from "./src/status.ts";
 import type { TaskBackend } from "./src/backend.ts";
 import { createBgTaskTool, taskLine } from "./src/tool.ts";
-import { OneLine, bgTaskRenderers, completionLine, statusLine, type StatusNoticeKind } from "./src/transcript.ts";
-import { BgInspector, renderCompletion } from "./src/ui.ts";
+import { OneLine, RECOVERED_TEXT, bgTaskRenderers, completionLine, isNoSessionNotice, statusLine, unavailableText, type StatusNoticeKind } from "./src/transcript.ts";
+import { BgInspector, NO_TASKS_TEXT, renderCompletion } from "./src/ui.ts";
 
-interface Bound {
+/** What the session has been told about its status backend. */
+export interface StatusEpisode {
+  /** Last status-backend error, or null when reachable (outage episode state). */
+  statusError: string | null;
+  /** An `unavailable` notice of the current episode started a turn, so its `recovered` notice does too. */
+  statusTurn: boolean;
+  /** The notice that this session has no file was shown; it is not repeated. */
+  noSessionShown: boolean;
+}
+
+/** A failed status refresh. */
+export interface StatusFailure {
+  error: string;
+  /** NO_PERSISTENT_SESSION: a property of the session, not an outage. */
+  noSession: boolean;
+  /** The last successful refresh saw an unfinished task: the model may be waiting for it. */
+  taskRunning: boolean;
+}
+
+/** A status notice for the transcript, and whether the model is given a turn to act on it. */
+export interface StatusNotice {
+  status: StatusNoticeKind;
+  text: string;
+  triggerTurn: boolean;
+}
+
+interface Bound extends StatusEpisode {
   activation: Activation;
   dispatcher: NoticeDispatcher;
   ctx: ExtensionContext;
   view: CustomViewToggle;
   statusTimer: ReturnType<typeof setTimeout> | null;
-  /** Last status-backend error, or null when reachable (outage episode state). */
-  statusError: string | null;
   /** Retained records from the last status refresh, by id, for transcript lines. */
   tasks: ReadonlyMap<string, TaskRecord>;
-  /** Submit a model-visible status follow-up (also shown in the chat). */
-  submitNotice: (status: "unavailable" | "recovered", text: string) => void;
+  /** Show a status notice in the chat; it is in the model's context from the next turn on. */
+  submitNotice: (notice: StatusNotice) => void;
 }
 
 /** Throttle for border badge refreshes on rapid task changes. */
@@ -44,24 +68,20 @@ async function readStatusTasks(backend: TaskBackend): Promise<TaskRecord[]> {
   return seen;
 }
 
-/** Glyph of the short border form. */
-const BADGE_GLYPH = "🛠️";
-
 /** Publish (or clear) the bottom-left badge; a click opens the /bg inspector. */
 function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {
   const ui = entry.ctx.ui;
-  const line = bgStatusLine(tasks);
-  if (line === null) {
+  const badge = bgBadge(tasks);
+  if (badge === null) {
     ui.setWidget(BG_STATUS_KEY, undefined);
     return;
   }
-  const label = ui.theme.bg("selectedBg", ` ${line} `);
-  const running = countRunning(tasks);
   ui.setWidget(
     BG_STATUS_KEY,
-    () => ({
-      render: () => [label],
-      renderCompact: () => compactChip(ui.theme, BADGE_GLYPH, "running", String(running)),
+    // Styled when drawn, through the theme pi hands over: a theme switch restyles the badge.
+    (_tui, theme) => ({
+      render: (width) => [borderBadge(theme, badge, width)],
+      renderCompact: (width) => borderBadgeCompact(theme, badge, width),
       invalidate: () => {},
       handleMouse: (event) => {
         if (event.type !== "click" || event.button !== "left") return undefined;
@@ -69,28 +89,35 @@ function publishBadge(entry: Bound, tasks: readonly TaskRecord[]): void {
         return { handled: true };
       },
     }),
-    { placement: "borderBottomLeft" },
+    { placement: "borderBottomLeft", order: BORDER_ORDER.tasks },
   );
 }
 
 /**
- * Advance a status-backend outage episode. Returns the follow-up notice to
- * submit when an episode boundary is crossed (first failure, recovery), or
- * null when the state did not change. Exported for unit tests.
+ * Advance a status-backend outage episode after a refresh (`failure` null:
+ * it succeeded). Returns the notice to submit when an episode boundary is
+ * crossed (first failure, recovery), or null when the state did not change.
+ * A notice starts a turn only while a task is known to be running, and a
+ * recovery only if a notice of its outage did. A session without a file is
+ * told so once, outside any episode. Exported for unit tests.
  */
-export function advanceStatusEpisode(
-  episode: { statusError: string | null },
-  failed: boolean,
-  error: string,
-): { status: "unavailable" | "recovered"; text: string } | null {
-  if (!failed) {
+export function advanceStatusEpisode(episode: StatusEpisode, failure: StatusFailure | null): StatusNotice | null {
+  if (failure === null) {
     if (episode.statusError === null) return null;
+    const triggerTurn = episode.statusTurn;
     episode.statusError = null;
-    return { status: "recovered", text: "bg-tasks: status backend reachable again." };
+    episode.statusTurn = false;
+    return { status: "recovered", text: RECOVERED_TEXT, triggerTurn };
   }
-  if (episode.statusError === error) return null;
-  episode.statusError = error;
-  return { status: "unavailable", text: `bg-tasks: status backend unreachable (${error}); the badge keeps its last state.` };
+  if (failure.noSession) {
+    if (episode.noSessionShown) return null;
+    episode.noSessionShown = true;
+    return { status: "unavailable", text: unavailableText(failure.error), triggerTurn: false };
+  }
+  if (episode.statusError === failure.error) return null;
+  episode.statusError = failure.error;
+  episode.statusTurn ||= failure.taskRunning;
+  return { status: "unavailable", text: unavailableText(failure.error), triggerTurn: failure.taskRunning };
 }
 
 async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<void> {
@@ -107,23 +134,27 @@ async function refreshStatus(entry: Bound, isCurrent: () => boolean): Promise<vo
     // never be repaired by a later refresh until something else changes.
     if (!isCurrent()) return;
     try {
-      const notice = advanceStatusEpisode(entry, true, errorText(error));
-      if (notice) entry.submitNotice(notice.status, notice.text);
+      const notice = advanceStatusEpisode(entry, {
+        error: errorText(error),
+        noSession: error instanceof BgTaskError && error.code === "NO_PERSISTENT_SESSION",
+        taskRunning: countRunning([...entry.tasks.values()]) > 0,
+      });
+      if (notice) entry.submitNotice(notice);
     } catch {
       // Stale UI after session replacement/reload: nothing to do.
     }
     return;
   }
   if (!isCurrent()) return;
-  const notice = advanceStatusEpisode(entry, false, "");
-  if (notice && isCurrent()) entry.submitNotice(notice.status, notice.text);
+  const notice = advanceStatusEpisode(entry, null);
+  if (notice && isCurrent()) entry.submitNotice(notice);
   entry.tasks = new Map(tasks.map((task) => [task.id, task]));
   try {
     publishBadge(entry, tasks);
   } catch {
-    // Badge rendering failed (e.g. the theme is not initialized in a headless
-    // runtime): not a backend outage, so outside the episode above — a later
-    // refresh retries.
+    // Publishing the badge failed (e.g. the UI is stale after a session
+    // replacement or reload): not a backend outage, so outside the episode
+    // above — a later refresh retries.
   }
 }
 
@@ -145,7 +176,7 @@ const openBgInspector = async (ctx: ExtensionContext, b: Bound, action: "open" |
     const backend = await b.activation.backend();
     const page = await backend.list(null, null, MAX_LIST_ITEMS);
     const lines = page.items.map((t) => taskLine(t, b.dispatcher.localState(t), Date.now()));
-    ctx.ui.notify(lines.length ? lines.join("\n") : "No retained background tasks in this session.", "info");
+    ctx.ui.notify(lines.length ? lines.join("\n") : NO_TASKS_TEXT, "info");
     return;
   }
   await b.view[action](ctx.ui, (tui, theme, _kb, done) => {
@@ -213,12 +244,16 @@ export default function bgTasks(pi: ExtensionAPI): void {
       });
       if (self.value) scheduleStatus(self.value, () => bound === self.value);
     });
+    // After a reload, a session without a file finds its notice in its own transcript.
+    const noSessionShown = !sessionFile && ctx.sessionManager.getEntries().some((entry) =>
+      entry.type === "custom_message" && entry.customType === STATUS_CUSTOM_TYPE && isNoSessionNotice(messageText(entry.content)));
     self.value = {
-      activation, dispatcher, ctx, view: new CustomViewToggle(), statusTimer: null, statusError: null, tasks: new Map(),
-      submitNotice: (status, text) =>
+      activation, dispatcher, ctx, view: new CustomViewToggle(), statusTimer: null, statusError: null, statusTurn: false, noSessionShown, tasks: new Map(),
+      // Without a turn pi appends the notice to the transcript: at once when idle, after the current turn otherwise.
+      submitNotice: (notice) =>
         pi.sendMessage(
-          { customType: STATUS_CUSTOM_TYPE, content: text, display: true, details: { status } },
-          { deliverAs: "followUp", triggerTurn: true },
+          { customType: STATUS_CUSTOM_TYPE, content: notice.text, display: true, details: { status: notice.status } },
+          { deliverAs: "followUp", triggerTurn: notice.triggerTurn },
         ),
     };
     bound = self.value;
@@ -256,11 +291,11 @@ export default function bgTasks(pi: ExtensionAPI): void {
     const status = statusKind(message.details);
     if (options.expanded || status === null) return undefined;
     const text = messageText(message.content);
-    return new OneLine(() => statusLine(status, text, theme), 1);
+    return new OneLine((width) => statusLine(status, text, theme, width), 1);
   });
 
   pi.registerCommand("bg", {
-    description: "Inspect background tasks: list, live/retained terminal output, terminate, signal, mute, clear",
+    description: "Background tasks: output, terminate, signal",
     handler: (_args, ctx) => openBgInspector(ctx, current(), "open"),
   });
 

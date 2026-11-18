@@ -6,10 +6,11 @@ import { join } from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Component, TuiMouseEvent, TuiMouseEventResult } from "@earendil-works/pi-tui";
 import extension from "./index.ts";
+import { CG_HELP } from "./commands.ts";
 
 type Badge = Component & { handleMouse(event: TuiMouseEvent): TuiMouseEventResult | undefined };
 // Specified Behavioral-Active / Blackbox-Group: real extension, scripted UI boundary.
-test("badge toggles last-checked status without enabling Codegraph, and closes by keyboard or shutdown", async (t) => {
+test("the badge opens the status pane without enabling Codegraph, /cg opens the same pane, and it closes by keyboard or shutdown", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "cg-badge-"));
   const disabled = process.env.SMIND_CODEGRAPH_DISABLED;
   process.env.SMIND_CODEGRAPH_DISABLED = "1";
@@ -18,15 +19,18 @@ test("badge toggles last-checked status without enabling Codegraph, and closes b
     await rm(cwd, { recursive: true, force: true });
   });
   const handlers = new Map<string, (event: unknown, ctx: ExtensionContext) => unknown>();
+  let cg: ((args: string, ctx: ExtensionContext) => Promise<void>) | undefined;
   extension({ on: (name: string, handler: (event: unknown, ctx: ExtensionContext) => unknown) => handlers.set(name, handler),
-    registerCommand() {}, events: { on() {} } } as unknown as ExtensionAPI);
+    registerCommand(_name: string, command: { handler(args: string, ctx: ExtensionContext): Promise<void> }) { cg = command.handler; },
+    events: { on() {} } } as unknown as ExtensionAPI);
   let badge: Badge | undefined;
   const views: Array<{ component: Component; closed: boolean }> = [];
   const theme = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text };
   type PanelFactory = (tui: { terminal: { rows: number }; requestRender(): void }, activeTheme: typeof theme,
     keys: { matches(data: string, action: string): boolean }, done: () => void) => Component | Promise<Component>;
+  const notices: string[] = [];
   const ctx = { cwd, mode: "tui", hasUI: true, ui: {
-    notify() {},
+    notify(text: string) { notices.push(text); },
     setWidget(_key: string, factory: ((tui: object, activeTheme: typeof theme) => Badge) | undefined) { badge = factory === undefined ? undefined : factory({}, theme); },
     custom(factory: PanelFactory, options: { retainEditorBorders: boolean }): Promise<void> {
       assert.equal(options.retainEditorBorders, true);
@@ -48,9 +52,16 @@ test("badge toggles last-checked status without enabling Codegraph, and closes b
   assert.equal(badge!.handleMouse(click)?.handled, true);
   await new Promise(setImmediate);
   assert.equal(views.length, 1);
-  assert.match(views[0]!.component.render(100).join("\n"), /Codegraph inventory.*last checks/);
-  assert.match(views[0]!.component.render(100).join("\n"), /0 scopes/);
-  assert.match(badge!.render(80)[0]!, /🕸️ skipped/, "read-only status must not enable routing");
+  const screen = (view: number) => views[view]!.component.render(100).map((line) => line.trimEnd()).join("\n");
+  assert.match(screen(0), /^── Codegraph ─+\nNo checkouts listed\. \/cg discover PATH finds them;/, "the badge opens the status pane");
+  assert.match(screen(0), /^d details  esc close$/m);
+  views[0]!.component.handleInput!("d");
+  assert.match(screen(0), /Codegraph inventory.*last checks/, "the complete text report stays one key away");
+  assert.match(screen(0), /0 scopes/);
+  assert.match(screen(0), /^↑↓ scroll  PgUp\/PgDn page  d table  esc close$/m);
+  views[0]!.component.handleInput!("d");
+  assert.doesNotMatch(screen(0), /Codegraph inventory/);
+  assert.match(badge!.render(80)[0]!, /🕸️ off/, "read-only status must not enable routing");
   badge!.handleMouse(click); await new Promise(setImmediate);
   assert.equal(views[0]!.closed, true);
   badge!.handleMouse(click); await new Promise(setImmediate);
@@ -64,4 +75,35 @@ test("badge toggles last-checked status without enabling Codegraph, and closes b
   await handlers.get("session_start")!({}, ctx);
   oldBadge.handleMouse(click); await new Promise(setImmediate);
   assert.equal(views.length, 3, "old-session badge callbacks remain revoked after restart");
+
+  // `/cg` and `/cg status` open the same pane; clients without the TUI read the text report; help is asked for by name.
+  const opened = async (): Promise<void> => {
+    const count = views.length;
+    for (let n = 0; n < 500 && (views.length === count || views.at(-1)!.component === undefined); n++) await new Promise((wait) => setTimeout(wait, 10));
+    assert.equal(views.length, count + 1);
+  };
+  for (const args of ["", "status", "status --all", `status ${JSON.stringify(cwd)}`]) {
+    const shown = cg!(args, ctx);
+    if (args.endsWith('"')) {
+      // A directory that is no checkout is refused before any pane opens.
+      await shown;
+      assert.match(notices.at(-1)!, /No Git checkout or opted-in workspace at /, args);
+      continue;
+    }
+    await opened();
+    assert.match(screen(views.length - 1), /^── Codegraph ─+\nNo checkouts listed\./, JSON.stringify(args));
+    views.at(-1)!.component.handleInput!("\u001b");
+    await shown;
+    assert.equal(views.at(-1)!.closed, true);
+  }
+  const panes = views.length;
+  const reports = notices.length;
+  await cg!("help", ctx);
+  assert.equal(notices.at(-1), CG_HELP);
+  for (const args of ["", "status"]) {
+    await cg!(args, { ...ctx, mode: "rpc" } as ExtensionContext);
+    assert.match(notices.at(-1)!, /^Codegraph inventory — last checks, not live watcher health; logical bytes \(WAL\/SHM included\):\nAggregate total 0 bytes; 0 scopes\nNo projects\./, JSON.stringify(args));
+  }
+  assert.equal(notices.length, reports + 3);
+  assert.equal(views.length, panes, "no pane outside the TUI, and none for help");
 });

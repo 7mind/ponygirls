@@ -47,6 +47,7 @@ genuine limitations.
 - `src/worker.ts` — SDK worker process (native child session, proxy tools)
 - `src/worker-launch.ts` — supervisor-side transport (fork, handshake, guard)
 - `src/parent-models.ts` — selected parent provider metadata and private request-auth bridge
+- `src/backend-contract.ts`, `src/backends.ts` — provider-neutral backend registration, revocable sessions, trusted worker adapters and usage ownership
 - `src/gate.ts` — optional validation gate controller + decision schema
 - `src/ui.ts` — border badge, headless projection, the `/agents` screen
   (tree inspector, transcript view with chat)
@@ -64,7 +65,7 @@ stricter.
 
 | `isolation` | Tool jobs | Workspace | Policy file |
 |---|---|---|---|
-| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base); readers read in place; or the Git work tree named by `workspace_path` | not needed (`workspace_path`: `workspaceRoots`) |
+| `worktree` (default) | host, as the user, with pi's environment and network | a writer gets its own Git worktree of the owner's checkout (same project-relative directory, committed base), or of the source selected by `repo_path`; readers read in place; or the Git work tree named by `workspace_path` | not needed (`workspace_path`: `workspaceRoots`) |
 | `none` | host | the owner's working directory; writers edit it in place | not needed |
 | `sandbox` | bubblewrap view, no network | a registered repository (`repo_id`); writers get their own worktree | required |
 
@@ -82,6 +83,29 @@ yourself (`git -C <workdir> diff`). A dirty checkout needs `base_commit`
 "none"`. Under host isolation, `reader` is a tool list, not a boundary: its
 `read` reaches anything the user can. Two `none` writers in one directory
 are not locked against each other.
+
+### A repository below your working directory
+
+A governing session started in a non-Git directory can select a descendant
+repository as the source of a fresh managed writer worktree:
+
+```text
+spawn_agent(task_name="impl", profile="writer", repo_path="/home/user/projects/myrepo", message="...")
+```
+
+`repo_path` must be an absolute path to the top-level directory of a Git
+work tree with a commit. After resolving symlinks, it must equal or lie
+beneath the governing session's working directory and must not overlap the
+supervisor's storage or managed worktree pools. It selects the source, not
+an in-place workspace: the child, gate checks, and reviewers use the newly
+allocated worktree. A dirty source still requires `base_commit`, resolved
+in that source repository; uncommitted source changes are not copied.
+
+Only the governing session may select it, only for `worktree` writers.
+Readers, `none`, `sandbox`, and combinations with `repo_id` or
+`workspace_path` are refused. No repository registration or `workspaceRoots`
+grant is needed. Omitting `repo_path` preserves the usual owner-directory
+selection, including refusal of a worktree writer from a non-Git directory.
 
 ### A workspace you prepared
 
@@ -137,6 +161,7 @@ for `sandbox` children and sets nesting, model, gate, and capacity limits
     }
   ],
   "allowedModels": [{ "provider": "zai", "id": "glm-5.3" }],
+  "latestModelsOnly": true,
   "gateBypassAllowed": false,
   "gateMaxRoundsCeiling": 3,
   "allowedTools": ["mcp__codegraph__codegraph_explore"],
@@ -231,15 +256,29 @@ session (reported at start and by every subagent tool).
 `workspace_path` is accepted; a list that is not absolute paths is an
 error.
 
-Children inherit the governing session's current model and thinking level;
-`model` on `spawn_agent` overrides it only with an `allowedModels` entry
-(`"allowedModels": null` allows every model instead of listing them).
-Every reviewer model must also be allowlisted (or run under `null`). A dispatch reserves one agent identity plus one per reviewer before creating anything; reviewers share the normal runnable/resident limits and can drain a panel even with one slot.
+Children inherit their owner's selected model and thinking level.
+Explicit overrides and reviewer models must be in `allowedModels` (or the
+allowlist must be disabled with `"allowedModels": null`). Independently,
+`latestModelsOnly` (default `true`) rejects older generations for inherited
+and explicit models, reviewers, and reused agents. A model is older only if
+the governing registry has an available, strictly newer version of the same
+recognized family and serving variant on that provider route. Unrecognized
+IDs and floating aliases are not retired. No model is switched automatically.
+
+To permit older generations in Home Manager, set
+`smind.hm.dev.llm.pi.subagentsLatestModelsOnly = false;`. If you maintain
+`subagents-policy.json` yourself, set `"latestModelsOnly": false` instead.
+The explicit model allowlist still applies.
+
+A dispatch reserves one agent identity plus one per reviewer before creating
+anything; reviewers share the normal runnable/resident limits and can drain a
+panel even with one slot.
 The whole file is declarative in home-manager — setting any of these
 manages `subagents-policy.json` complete, so partial files are never
 half-clobbered:
-`smind.hm.dev.llm.pi.subagentsAllowAllModels` (allow every model, wins on
-conflict), `...AllowedModels`, `...MaxDepth` (1–2), `...Nesting` (needs
+`smind.hm.dev.llm.pi.subagentsAllowAllModels` (disable the explicit allowlist;
+takes precedence over `...AllowedModels`), `...AllowedModels`,
+`...LatestModelsOnly` (default true), `...MaxDepth` (1–2), `...Nesting` (needs
 depth 2), `...Repos` (`repoId`, `checkoutPath`, optional `readRoots`,
 `allowWriters`), `...GateBypassAllowed`, `...GateMaxRoundsCeiling`
 (`null` for unlimited), `...AllowedTools` (explicit full-name allowlist for
@@ -254,14 +293,29 @@ ordering above is asserted at evaluation).
 
 Built-in and declarative `models.json` providers retain live access to the
 approved `~/.pi/agent/auth.json` through `PI_SUBAGENTS_HOST_AGENT_DIR`;
-`auth.json` is never copied and is hidden from sandboxed tool views.
+`auth.json` is never copied and is hidden from sandboxed tool views. Stock
+workers load Pi's saved `models-store.json` from that directory even when
+`models.json` is absent; they do not fetch the model catalogue at launch.
 For a parent extension's legacy registration using a stock SDK API, only the
 selected model's public metadata is transferred. The parent resolves fresh
 request credentials and headers over private, generation-fenced IPC; workers
 use an empty in-memory credential store, not inherited environment variables.
-Native extension providers and custom streaming functions fail explicitly.
-Parent request hooks are not replayed, so their sampling/payload overrides
-are not inherited. No parent extensions or unrelated registrations are loaded.
+Native extension providers and legacy custom streaming functions cannot be
+transferred by the stock path. An independently loaded backend may claim a model
+through `src/backend-contract.ts`. No claimant preserves the stock behavior;
+exactly one claimant supplies an explicit trusted worker module and bounded JSON
+initialization; multiple claimants fail with a visible conflict. Binding failure
+never falls back. Workers do not discover parent or workspace extensions.
+
+The versioned request/offer handshake uses `pi.events`, not shared module state.
+Registration rejects duplicate identities and returns an owner-specific unregister
+handle. Core fences requests, binds receipt sinks to immutable dispatched identities,
+and captures usage ownership per generation. Stock worker accounting remains the
+default; authoritative backend receipts use the existing durable accounting and
+recovery holds. Backend request payloads remain opaque under the 256 KiB envelope
+limit. See the separately installed `pi-claude-code-subagents` package for the
+optional Claude Code backend; loading the original provider alone does not enable it.
+
 Workers import pi's built
 package tree from `PI_SUBAGENTS_SDK_ROOT`, which the home-manager pi wrapper
 sets to the exact pi derivation (`nix/hm/pi.nix`); without it spawning fails
@@ -269,9 +323,12 @@ explicitly.
 
 Pi `/reload` rebinds the new extension runtime to the existing process-local
 supervisor instead of terminating workers. Active child conversations and
-provider requests continue, completion notices emitted during reload are
-retained, and subsequent provider requests use the current `auth.json` or the
-current parent model registry. Thus switching the authenticated account for the
+portable provider requests continue, and completion notices emitted during
+reload are retained. Backend registrations are revoked synchronously, old sessions
+are joined, and retained workers use current registrations before new backend
+requests. Removing a backend makes retained requests visibly unavailable. Subsequent
+stock requests use the current `auth.json` or parent model registry; public
+metadata changes require a worker reload. Thus switching the authenticated account for the
 same provider does not replace the child identity or transcript. An account
 that cannot access the selected model fails on the next request; credentials
 and models are never silently substituted. An unattached reload handoff expires
@@ -310,9 +367,13 @@ the reviewer's own conversation inside a `┃` gate frame, headed
 while the review runs); the gate's repair requests are labeled. A
 reviewer's row shows the reviews it ran. Each review is a fresh
 conversation (never resumed); its file is kept for the transcript.
-The badge (`👥 3 · running 1 · questions 1`; compact `👥3`) shows on the editor's
-bottom-left border, next to the background-tasks and goal badges. Clicking
-it opens `/agents`.
+The badge shows on the editor's bottom-left border, next to the
+background-tasks and goal badges, while the tree has at least one agent:
+`👥`, the number of agents, then the live ones behind the list's state glyphs
+(`👥 3 ●1 ?1` is three agents, one running and one asking; `○` counts the
+queued ones). Its colour follows the tree: an agent is asking, work is running
+or queued, or everything is settled. On a narrow border it is the number
+alone, with `?` while an agent is asking (`👥3?`). Clicking it opens `/agents`.
 
 ## Child tools
 

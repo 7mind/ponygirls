@@ -1,10 +1,18 @@
 #!/usr/bin/env bash
+# llm-sandbox - bubblewrap with simplified path whitelisting (see --help). It
+# runs on its own; yolo.sh drives it through the same options.
+#
+# Errors and refusals aside, a launch prints nothing of its own. With --trace
+# the exec of bwrap (preceded, under LLM_SANDBOX_NET_HELPER, by the signal reset
+# in the same subshell) is echoed to stderr with a timestamp, so a slow launch
+# step stands out. yolo passes --trace for `yolo --trace` / YOLO_TRACE=1.
 set -euo pipefail
 
 BIND_SPECS=()
 ENVS=()
 CONFINE_SOCKET=""
 COWBOY_RIDE=0
+TRACE=0
 
 show_help() {
   cat <<EOF
@@ -25,6 +33,8 @@ Options:
                          sandbox: omit binds of the socket itself and mask
                          its projected destination under every covering bind
   --env VAR=VALUE     Set environment variable inside sandbox
+  --trace          Echo the exec of bwrap to stderr with a timestamp before the
+                   sandbox starts (off by default)
   --help           Show this help
 
 Environment:
@@ -57,6 +67,10 @@ while [[ $# -gt 0 ]]; do
       ENVS+=("$2")
       shift 2
       ;;
+    --trace)
+      TRACE=1
+      shift
+      ;;
     --help)
       show_help
       ;;
@@ -75,6 +89,15 @@ if [[ $# -eq 0 ]]; then
   echo "Error: No command specified" >&2
   exit 1
 fi
+
+# Called right before each exec of bwrap: with --trace, what follows is echoed
+# to stderr behind a timestamp.
+trace_launch() {
+  if [[ $TRACE -eq 1 ]]; then
+    PS4='+ ${EPOCHREALTIME} '
+    set -x
+  fi
+}
 
 if [[ $COWBOY_RIDE -eq 1 ]]; then
   if [[ -n "$CONFINE_SOCKET" ]]; then
@@ -244,6 +267,7 @@ for env in "${ENVS[@]}"; do
 done
 
 if [[ $COWBOY_RIDE -eq 1 ]]; then
+  trace_launch
   exec bwrap "${BWRAP_ARGS[@]}" -- "$@"
 fi
 
@@ -384,9 +408,8 @@ fi
 # the directory that was actually bound.
 BWRAP_ARGS+=(--setenv SMIND_EXCHANGE_DIR "$USER_EXCHANGE")
 
-PS4='+ ${EPOCHREALTIME} '
 if [[ -z "${LLM_SANDBOX_NET_HELPER:-}" ]]; then
-  set -x
+  trace_launch
   exec bwrap "${BWRAP_ARGS[@]}" "$@"
 fi
 
@@ -398,7 +421,7 @@ fi
 # ignored if this script was started with them ignored).
 _net_fifos="$(mktemp -d)"
 mkfifo "$_net_fifos/info" "$_net_fifos/block"
-set -x
+trace_launch
 (
   trap - INT QUIT
   exec bwrap "${BWRAP_ARGS[@]}" --unshare-net --info-fd 3 --block-fd 4 "$@" \

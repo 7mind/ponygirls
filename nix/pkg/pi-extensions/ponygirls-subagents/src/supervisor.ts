@@ -17,10 +17,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { newerModelIn, type ModelIdentity } from "../../model-generations.ts";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
-import { err } from "./errors.ts";
+import { err, type SubagentsError } from "./errors.ts";
 import { historyPath, nativeHistoryId, openRegisteredHistoryFile, publicHistorySource, readRegisteredHistoryPage, reconstructedHistoryPrefix, type HistoryFeed, type RegisteredHistorySource } from "./history.ts";
 import type { Api, Model } from "@earendil-works/pi-ai";
+import { BackendSlot, type BackendRegistry } from "./backends.ts";
 import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
 import { EMPTY_INSTRUCTIONS, instructionHash, parseSelection, selectInstructions } from "./instructions.ts";
@@ -74,6 +76,7 @@ export interface SpawnParams {
   /** Omitted: DEFAULT_ISOLATION. */
   isolation?: Isolation;
   repoId?: string | null;
+  repoPath?: string | null;
   baseCommit?: string | null;
   /**
    * A directory the caller prepared and owns (the top level of a git work
@@ -227,6 +230,7 @@ export interface WorkerPort {
   setPrepareRequestHandler?(h: (payload: ToolPrepareRequest, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => Promise<ToolPrepareResponse>): void;
   setTicketReleaseHandler?(h: (payload: { tickets: string[] }, envelope?: { taskRunId?: string | null; executionGeneration?: number | null }) => void): void;
   setProviderAdmissionRequestHandler?(h: (payload: ProviderAdmissionPayload, envelope: IpcEnvelope) => Promise<ProviderAdmissionResponse>): void;
+  setBackendRequestHandler?(h: (payload: unknown, envelope: IpcEnvelope) => Promise<unknown>, dispose: () => void): void;
   /** Abrupt process exit (crash, kill): the run it carried is lost. */
   setExitHandler(h: (info: { code: number | null; signal: string | null }) => void): void;
 }
@@ -268,6 +272,7 @@ interface ActiveRun {
 interface AgentRuntime {
   record: AgentRecord;
   parentModel: Model<Api> | null;
+  backend: BackendSlot | null;
   worker: WorkerPort | null;
   runnableLease: LeaseTicket | null;
   residentLease: LeaseTicket | null;
@@ -347,7 +352,10 @@ export interface SupervisorOptions {
   policy: SupervisorPolicy;
   /** The governing session at the current call: what top-level children start from. */
   governor: () => GovernorContext;
+  /** Available chat models in the governing registry, independent of cycling scope. */
+  availableModels?: () => readonly ModelIdentity[];
   parentModels?: ParentModels;
+  backends?: () => BackendRegistry;
   /** Admission capacity (index.ts passes the policy file's validated limits); depth comes from policy.maxDepth only. */
   schedulerLimits?: Partial<SchedulerLimits>;
   executors?: ToolExecutors;
@@ -404,6 +412,7 @@ function newRuntime(record: AgentRecord): AgentRuntime {
   return {
     record,
     parentModel: null,
+    backend: null,
     worker: null,
     runnableLease: null,
     residentLease: null,
@@ -447,6 +456,9 @@ function escapeRegExp(text: string): string {
 }
 
 export class Supervisor implements GateHost {
+  private readonly backendSessions = new Map<WorkerPort, BackendSlot>();
+  private readonly backendClosures = new Set<Promise<void>>();
+  private readonly parentUsageRuns = new Set<string>();
   readonly rootId: string;
   readonly rootDir: string;
   private store: RunStore;
@@ -1124,6 +1136,14 @@ export class Supervisor implements GateHost {
    * state is preserved; runs left active are reconciled by recover() on the
    * next attach, like any other lost run.
    */
+  refreshBackendAuthority(): void {
+    for (const service of this.backendSessions.values()) {
+      const closing = service.refreshAuthority();
+      this.backendClosures.add(closing);
+      void closing.then(() => this.backendClosures.delete(closing), (e: unknown) => this.reportFailure(e));
+    }
+  }
+
   async shutdown(): Promise<void> {
     this.suspended = true;
     // Retire broker journal ownership up front: detached late paths from
@@ -1154,6 +1174,9 @@ export class Supervisor implements GateHost {
         // handle/lease available for a subsequent cleanup attempt.
         attempt(() => { if (rt.runnableLease) this.scheduler.release(rt.runnableLease); rt.runnableLease = null; });
         attempt(() => { if (rt.residentLease) this.scheduler.release(rt.residentLease); rt.residentLease = null; });
+      }
+      for (const closing of this.backendClosures) {
+        try { await closing; } catch (e) { failures.push(e); }
       }
       if (!this.disposed) attempt(() => {
         // A failed close MUST retain ownership. Earlier cleanup failures
@@ -1472,6 +1495,12 @@ export class Supervisor implements GateHost {
       if (!ISOLATION_LEVELS.includes(isolation)) throw err("INVALID", "isolation must be none/worktree/sandbox");
       if (params.baseCommit && (isolation === "none" || params.profile === "reader")) throw err("INVALID", "base_commit applies to worktree and sandbox writers");
       const workspacePath = params.workspacePath ?? null;
+      const repoPath = params.repoPath ?? null;
+      if (repoPath !== null) {
+        if (parentRt) throw err("FORBIDDEN", "only the governing session selects a source repository with repo_path");
+        if (params.profile !== "writer" || isolation !== "worktree") throw err("INVALID", "repo_path requires a managed worktree writer");
+        if (params.repoId != null || workspacePath !== null) throw err("INVALID", "repo_path cannot be combined with repo_id or workspace_path");
+      }
       if (workspacePath !== null) {
         if (parentRt) throw err("FORBIDDEN", "only the governing session assigns a prepared workspace");
         if (isolation !== "worktree") throw err("INVALID", "workspace_path needs isolation worktree: the prepared directory is the child's worktree, not the owner's directory or a sandbox view");
@@ -1497,7 +1526,8 @@ export class Supervisor implements GateHost {
         throw err("CONFLICT", "owner workspace is locked for review; writers excluded until review ends");
       }
       const model = this.resolveChildModel(parentRt, params.model ?? null);
-      if (this.opts.parentModels !== undefined) this.opts.parentModels.describe(model);
+      this.assertLatestModel(model);
+      if (this.opts.parentModels !== undefined) { if (this.opts.backends === undefined || this.opts.backends().select(model) === null) this.opts.parentModels.describe(model); }
       const gateSpec = params.gate ? this.gate.validateSpec(params.gate) : params.review ? this.gate.validateSpec(params.review, "review") : null;
       if (gateSpec) assertGateFits(gateSpec, params.profile === "writer");
       const path = PathRegistry.childPath(parentRt ? parentRt.record.path : "/root", params.taskName);
@@ -1505,10 +1535,11 @@ export class Supervisor implements GateHost {
       const reg = params.repoId ? this.policy.repos.find((r) => r.repoId === params.repoId) : undefined;
       if (params.repoId && !reg) throw err("POLICY_DENIED", `repository ${params.repoId} not registered`);
       const instructions = selectInstructions(parentRt ? parentRt.record.instructions : governor!.instructions, params.skills ?? null, params.contextFiles ?? null);
-      // Host-isolated children start from their owner's working directory.
       const ownerWorkdir = parentRt ? parentRt.record.allocation.workdir : governor!.cwd;
       const prepared = workspacePath !== null ? this.prepareWorkspace(workspacePath, ownerWorkdir) : null;
-      const checkout = prepared === null && isolation !== "sandbox" && params.profile === "writer" ? this.workspace.describeCheckout(ownerWorkdir) : null;
+      const selectedCheckout = repoPath !== null ? this.selectSourceRepository(repoPath, ownerWorkdir) : null;
+      const sourceWorkdir = selectedCheckout !== null ? selectedCheckout.workTree : ownerWorkdir;
+      const checkout = selectedCheckout ?? (prepared === null && isolation !== "sandbox" && params.profile === "writer" ? this.workspace.describeCheckout(ownerWorkdir) : null);
       if (prepared === null && isolation === "worktree" && params.profile === "writer" && !checkout) {
         throw err("WORKSPACE_UNAVAILABLE", `worktree isolation needs a git checkout with a commit at ${ownerWorkdir}`);
       }
@@ -1541,7 +1572,7 @@ export class Supervisor implements GateHost {
         }
         // Bind the concrete workspace after grant intersection. A nested
         // writer gets its own worktree; parent mounts are never an allowlist.
-        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
+        const allocation = this.bindWorkspace(agentId, params.profile, isolation, { ownerWorkdir, sourceWorkdir, checkout, prepared, reg: reg ?? null, baseCommit: params.baseCommit ?? null, instructions });
         this.paths.reserve(path);
         const taskRunId = randomUUID();
         const record: AgentRecord = {
@@ -1629,10 +1660,40 @@ export class Supervisor implements GateHost {
     return { ...inherited };
   }
 
+  private olderModelDenial(model: ModelIdentity): SubagentsError | undefined {
+    if (!this.policy.latestModelsOnly || this.opts.availableModels === undefined) return undefined;
+    const newer = newerModelIn(this.opts.availableModels())(model);
+    if (newer === undefined) return undefined;
+    return err("POLICY_DENIED", `model ${model.provider}/${model.id} is an older generation; use ${newer.provider}/${newer.id} or another model allowed by root policy`);
+  }
+
+  assertLatestModel(model: ModelIdentity): void {
+    const denial = this.olderModelDenial(model);
+    if (denial !== undefined) throw denial;
+  }
+
   private agentTmp(agentId: AgentId): string {
     const dir = join(this.rootDir, "tmp", agentId);
     mkdirSync(dir, { recursive: true });
     return dir;
+  }
+
+  private selectSourceRepository(path: string, ownerWorkdir: string): CheckoutInfo {
+    if (!isAbsolute(path) || path.includes("\0")) throw err("INVALID", "repo_path must be an absolute path without NUL characters");
+    const resolved = realDirectory(path);
+    if (resolved === null) throw err("WORKSPACE_UNAVAILABLE", `repo_path ${path} is not an existing directory`);
+    const owner = realDirectory(ownerWorkdir);
+    if (owner === null) throw err("WORKSPACE_UNAVAILABLE", `governing directory ${ownerWorkdir} is not an existing directory`);
+    if (!pathWithin(resolved, owner)) throw err("POLICY_DENIED", `repo_path ${resolved} is outside the governing directory ${owner}`);
+    const storageRoots = [this.rootDir, ...(this.opts.hostAgentDir ? [this.opts.hostAgentDir] : []), ...this.pooledHideRoots()];
+    for (const root of storageRoots) {
+      const storage = realDirectory(root);
+      if (storage !== null && (pathWithin(resolved, storage) || pathWithin(storage, resolved))) throw err("POLICY_DENIED", `repo_path ${resolved} overlaps the supervisor's storage`);
+    }
+    const checkout = this.workspace.describeCheckout(resolved);
+    if (checkout === null) throw err("WORKSPACE_UNAVAILABLE", `repo_path ${resolved} is not a git work tree with a commit`);
+    if (realDirectory(checkout.workTree) !== resolved) throw err("WORKSPACE_UNAVAILABLE", `repo_path ${resolved} is not the top-level directory of its git work tree (${checkout.workTree})`);
+    return { ...checkout, workTree: resolved };
   }
 
   /**
@@ -1678,8 +1739,6 @@ export class Supervisor implements GateHost {
    * - a prepared workspace: the caller's directory as verified, edited in
    *   place by writers; nothing is allocated;
    * - none: the owner's working directory, edited in place by writers;
-   * - worktree: a writer gets its own worktree of the owner's checkout (the
-   *   project-relative directory is kept); readers read in place;
    * - sandbox: the registered repository's read roots, plus a worktree for
    *   writers; selected skills' directories are readable in the view.
    */
@@ -1687,7 +1746,7 @@ export class Supervisor implements GateHost {
     agentId: AgentId,
     profile: "reader" | "writer",
     isolation: Isolation,
-    from: { ownerWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet },
+    from: { ownerWorkdir: string; sourceWorkdir: string; checkout: CheckoutInfo | null; prepared: PreparedWorkspace | null; reg: RegisteredRepo | null; baseCommit: string | null; instructions: InstructionSet },
   ): WorkspaceAllocation {
     const tmpDir = this.agentTmp(agentId);
     // The pool namespace new worktree allocations land under, carried from
@@ -1716,10 +1775,10 @@ export class Supervisor implements GateHost {
     }
     const checkout = from.checkout!;
     const wt = this.allocateWorktree(basename(checkout.workTree), checkout.workTree, from.baseCommit, ", or use isolation none to edit the checkout in place");
-    const workdir = join(wt.worktreePath, relative(checkout.workTree, from.ownerWorkdir));
+    const workdir = join(wt.worktreePath, relative(checkout.workTree, from.sourceWorkdir));
     if (!existsSync(workdir)) {
       this.workspace.releaseAllocation(wt, { prune: true });
-      throw err("CONFLICT", `working directory ${relative(checkout.workTree, from.ownerWorkdir)} does not exist at the worktree's base commit`);
+      throw err("CONFLICT", `working directory ${relative(checkout.workTree, from.sourceWorkdir)} does not exist at the worktree's base commit`);
     }
     return { kind: "writer", workdir, readRoots: [], writableRoot: wt.worktreePath, git: { workTree: wt.worktreePath, gitDir: wt.gitDir, baseCommit: wt.baseCommit }, repoId: null, tmpDir, external: false, ...birthPool(wt) };
   }
@@ -2468,12 +2527,38 @@ export class Supervisor implements GateHost {
   private async launchWorker(rt: AgentRuntime): Promise<WorkerPort> {
     const model = rt.record.model;
     rt.parentModel = null;
-    if (this.opts.parentModels !== undefined && model !== null) {
+    rt.backend = null;
+    const backend = model !== null && this.opts.backends !== undefined ? this.opts.backends().select(model) : null;
+    if (backend === null && this.opts.parentModels !== undefined && model !== null) {
       const descriptor = this.opts.parentModels.describe(model);
       if (descriptor !== null) rt.parentModel = parseParentModel(descriptor, model);
     }
     const worker = this.makeWorker(rt.record.id);
     rt.worker = worker;
+    if (backend !== null) {
+      if (model === null || this.opts.backends === undefined || worker.setBackendRequestHandler === undefined) throw err("MODEL_UNAVAILABLE", "backend service boundary unavailable");
+      const admitted = model;
+      const payload = { reason: "backend", provider: admitted.provider, modelId: admitted.id, thinkingLevel: admitted.thinkingLevel ?? "off" };
+      const service = new BackendSlot(backend, this.opts.backends, {
+        model: admitted, cwd: this.workdirOf(rt),
+        reportFailure: (error) => this.reportFailure(error),
+        assertOwner: (envelope) => {
+          const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
+          if (!admission.ok) throw err("POLICY_DENIED", admission.error!);
+        },
+        receipt: (envelope, receiptId, usage) => {
+          return this.commitLateReceipt(rt, { agentId: rt.record.id, taskRunId: envelope.taskRunId!, generation: envelope.executionGeneration!, receiptId, usage }, true);
+        },
+      });
+      rt.backend = service;
+      this.backendSessions.set(worker, service);
+      worker.setBackendRequestHandler((frame, envelope) => service.handle(frame, envelope), () => {
+        this.backendSessions.delete(worker);
+        const closing = service.dispose();
+        this.backendClosures.add(closing);
+        void closing.then(() => this.backendClosures.delete(closing), (e: unknown) => this.reportFailure(e));
+      });
+    }
     rt.record.residency = "loaded";
     worker.setEventHandler((event) => {
       this.detached(() => {
@@ -2526,6 +2611,7 @@ export class Supervisor implements GateHost {
   }
 
   private initPayload(rt: AgentRuntime, taskText: string | null, workdir: string): Record<string, unknown> {
+    this.captureUsageOwnership(rt);
     const tools = this.childTools(rt);
     // Preserved parent schemas/descriptions for external proxies (no generic catchall).
     const externalDefs = this.externalDefinitions(
@@ -2538,6 +2624,7 @@ export class Supervisor implements GateHost {
       instructions: rt.record.instructions,
       model: rt.record.model,
       ...(rt.parentModel !== null ? { providerModel: rt.parentModel } : {}),
+      ...(rt.backend !== null ? { providerBackend: rt.backend.worker } : {}),
       taskRunId: rt.record.currentTaskRunId,
       executionGeneration: rt.record.executionGeneration,
       workdir,
@@ -2880,20 +2967,28 @@ export class Supervisor implements GateHost {
    * parking, no auto-resume on healed storage, nothing swallowed).
    */
   private async onProviderAdmission(rt: AgentRuntime, worker: WorkerPort, payload: ProviderAdmissionPayload, envelope: IpcEnvelope): Promise<ProviderAdmissionResponse> {
-    const admission = this.checkProviderAdmission(rt, worker, payload, envelope);
-    if (!admission.ok || rt.parentModel === null || payload.reason !== "auth") return admission;
+    const check = (): ProviderAdmissionResponse => {
+      const owned = this.checkProviderAdmission(rt, worker, payload, envelope);
+      if (!owned.ok) return owned;
+      // Both stock and native workers ask before a new request. Backend
+      // transport frames may belong to a request that has already started.
+      const denial = this.olderModelDenial({ provider: payload.provider, id: payload.modelId });
+      return denial === undefined ? owned : { ok: false, code: denial.code, error: denial.message };
+    };
+    const admission = check();
+    if (!admission.ok || rt.parentModel === null || rt.backend !== null || payload.reason !== "auth") return admission;
     const source = this.opts.parentModels;
     if (source === undefined) return { ok: false, code: "MODEL_UNAVAILABLE", error: "parent model authentication source is unavailable" };
     try {
       const result = await source.resolveAuth(rt.parentModel);
       // Auth can refresh asynchronously; close/recovery/reuse must fence the reply too.
-      const current = this.checkProviderAdmission(rt, worker, payload, envelope);
+      const current = check();
       if (!current.ok) return current;
       if (!result.ok) return { ok: false, code: "MODEL_UNAVAILABLE", error: "governing provider authentication is unavailable" };
       const { ok: _ok, ...auth } = result;
       return { ok: true, auth: parseProviderRequestAuth(auth) };
     } catch {
-      const current = this.checkProviderAdmission(rt, worker, payload, envelope);
+      const current = check();
       return current.ok ? { ok: false, code: "MODEL_UNAVAILABLE", error: "governing provider authentication failed" } : current;
     }
   }
@@ -3106,6 +3201,7 @@ export class Supervisor implements GateHost {
       case "spawn_agent":
         // Not offered to children; an argument sent anyway is refused, not dropped.
         if (args["workspace_path"] !== undefined) throw err("FORBIDDEN", "only the governing session assigns a prepared workspace");
+        if (args["repo_path"] !== undefined) throw err("FORBIDDEN", "only the governing session selects a source repository with repo_path");
         if (args["gate"] !== undefined || args["review"] !== undefined) throw err("FORBIDDEN", "only the governing session configures reviews");
         return this.spawn(caller, {
           taskName: str("task_name"),
@@ -3213,7 +3309,7 @@ export class Supervisor implements GateHost {
       : run.interruptRequested
         ? "interrupted"
         : status === "succeeded" || status === "interrupted" ? status : "failed";
-    const accounted = this.accountUsage(rt, usage ?? { unknown: true });
+    const accounted = this.accountWorkerUsage(rt, run, usage ?? { unknown: true });
     this.publish("usage.reported", { agentId: record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
     this.store.append("generation.settled", {
       agentId: record.id,
@@ -3332,6 +3428,7 @@ export class Supervisor implements GateHost {
     if (typeof usage !== "object" || usage === null || typeof lateAgentId !== "string" || typeof lateTaskRunId !== "string" || typeof lateGeneration !== "number" || typeof receiptId !== "string" || receiptId.length === 0) {
       throw err("INVALID", `malformed late usage receipt: ${JSON.stringify(detail ?? null).slice(0, 160)}`);
     }
+    if (this.parentUsageRuns.has(`${lateAgentId}:${lateTaskRunId}:${lateGeneration}`)) return;
     this.commitLateReceipt(rt, { agentId: lateAgentId, taskRunId: lateTaskRunId, generation: lateGeneration, receiptId, usage: usage as UsageDetail }, true);
   }
 
@@ -3421,7 +3518,7 @@ export class Supervisor implements GateHost {
       this.reportFailure(e);
       return false;
     }
-    const body = { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, ...accounted, late: true };
+    const body = { agentId: info.agentId, taskRunId: info.taskRunId, generation: info.generation, receiptId: info.receiptId, ...accounted, late: true, ...(info.usage.sourceModel === undefined ? {} : { sourceModel: info.usage.sourceModel }) };
     try {
       this.store.append("usage.reported", body);
     } catch (e) {
@@ -3445,6 +3542,16 @@ export class Supervisor implements GateHost {
       }
     }
     return true;
+  }
+
+  private captureUsageOwnership(rt: AgentRuntime): void {
+    if (rt.backend !== null && rt.backend.usageOwnership === "parent") this.parentUsageRuns.add(`${rt.record.id}:${rt.record.currentTaskRunId}:${rt.record.executionGeneration}`);
+  }
+
+  private accountWorkerUsage(rt: AgentRuntime, run: ActiveRun, usage: UsageDetail): ReturnType<Supervisor["accountUsage"]> {
+    return this.parentUsageRuns.has(`${rt.record.id}:${run.taskRunId}:${run.generation}`)
+      ? this.normalizeLateUsage({ input: 0, output: 0, cost: null, unknown: false })
+      : this.accountUsage(rt, usage);
   }
 
   private accountUsage(rt: AgentRuntime | null, usage: UsageDetail): { input: number; output: number; cacheRead: number; cacheWrite: number; reasoning: number | null; cost: number | null; unknown: boolean } {
@@ -3573,6 +3680,7 @@ export class Supervisor implements GateHost {
     record.detail = "task dispatched";
     const run: ActiveRun = { taskRunId: next.id, generation: record.executionGeneration, interruptRequested: false };
     rt.activeRun = run;
+    this.captureUsageOwnership(rt);
     const message = this.messages.get(next.messageId);
     if (message) message.generation = run.generation;
     record.lastEventSeq = this.publishGenerationStarted(rt, next.id, run.generation, {}).seq;
@@ -3692,6 +3800,8 @@ export class Supervisor implements GateHost {
       }
       if (rt && opts.model !== undefined) this.checkControl(caller, rt.record);
       const model = opts.model === undefined ? null : this.validateReuseModel(rt, opts.model);
+      const selected = model ?? rt?.record.model;
+      if (mode === "task" && selected != null) this.assertLatestModel(selected);
       const messageId = randomUUID();
       const taskRunId = mode === "task" ? randomUUID() : (rt?.record.currentTaskRunId ?? null);
       const deadlineAt = opts.requestReply === true ? new Date(Date.now() + this.questionTtlMs).toISOString() : undefined;
@@ -4277,6 +4387,7 @@ export class Supervisor implements GateHost {
   private async interruptSubtree(rt: AgentRuntime): Promise<void> {
     const record = rt.record;
     if (rt.activeRun) rt.activeRun.interruptRequested = true;
+    if (rt.worker !== null) this.backendSessions.get(rt.worker)?.cancel();
     this.publish("agent.interrupted", { agentId: record.id, taskRunId: rt.activeRun?.taskRunId ?? record.currentTaskRunId });
     this.cancelCallerWaits(record.id);
     rt.leaseWaitCancel?.();
@@ -4389,7 +4500,7 @@ export class Supervisor implements GateHost {
       const run = rt.activeRun;
       this.pendingSettle.set(run.taskRunId, { agentId: rt.record.id, outcome: "interrupted", error: "closed; the worker did not confirm its interrupt and was stopped" });
       rt.activeRun = null;
-      const accounted = this.accountUsage(rt, { ...(rt.usageSnapshot ?? {}), unknown: true });
+      const accounted = this.accountWorkerUsage(rt, run, { ...(rt.usageSnapshot ?? {}), unknown: true });
       rt.usageSnapshot = null;
       this.publish("usage.reported", { agentId: rt.record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
       this.publish("generation.settled", { agentId: rt.record.id, taskRunId: run.taskRunId, generation: run.generation, outcome: "interrupted", cause: "CLOSED" });
@@ -4897,6 +5008,7 @@ export class Supervisor implements GateHost {
       if (rt.activeRun) throw err("CONFLICT", "agent has an unfinished run");
       const resumeHold = this.admissionHoldError();
       if (resumeHold !== null) throw resumeHold;
+      if (rt.record.model !== null) this.assertLatestModel(rt.record.model);
       rt.held = false;
       // Move it to the front: the explicit choice dispatches first.
       rt.queue = [queued, ...rt.queue.filter((q) => q !== queued)];
@@ -4929,9 +5041,11 @@ export class Supervisor implements GateHost {
         case "resume_review":
           this.gate.resumeReview(action.taskRunId, action.reviewId, commandId);
           return { taskRunId: action.taskRunId };
-        case "retry_review":
-          assertGateFits(this.gate.validateSpec(action.gate ?? state.spec), main.record.allocation.writableRoot !== null);
-          return { taskRunId: this.gate.retryReview(action.taskRunId, action.candidateId, action.gate, commandId) };
+        case "retry_review": {
+          const spec = this.gate.validateSpec(action.gate ?? state.spec);
+          assertGateFits(spec, main.record.allocation.writableRoot !== null);
+          return { taskRunId: this.gate.retryReview(action.taskRunId, action.candidateId, spec, commandId) };
+        }
         case "bypass":
           return { taskRunId: this.gate.bypass(action.taskRunId, action.candidateId, action.reason, commandId) };
         case "set_limits":
@@ -5178,7 +5292,7 @@ export class Supervisor implements GateHost {
     // A reviewer stopped right after its decision reported its usage with
     // that tool call; anything else unreported is unknown.
     const decided = this.gate.inspectFor(rt.record.id) === "decided";
-    const accounted = this.accountUsage(rt, usage ?? (rt.usageSnapshot && decided ? rt.usageSnapshot : { ...(rt.usageSnapshot ?? {}), unknown: true }));
+    const accounted = this.accountWorkerUsage(rt, run, usage ?? (rt.usageSnapshot && decided ? rt.usageSnapshot : { ...(rt.usageSnapshot ?? {}), unknown: true }));
     rt.usageSnapshot = null;
     this.publish("usage.reported", { agentId: rt.record.id, taskRunId: run.taskRunId, generation: run.generation, ...accounted });
     if (!decided && this.gate.inspectFor(rt.record.id) === "undecided") this.gate.executionFailed(rt.record.id, why);
@@ -5260,6 +5374,7 @@ export class Supervisor implements GateHost {
     rt.record.detail = `repair generation ${generation}`;
     const run: ActiveRun = { taskRunId, generation, interruptRequested: false };
     rt.activeRun = run;
+    this.captureUsageOwnership(rt);
     this.publishGenerationStarted(rt, taskRunId, generation, { repair: true, commandId: this.gate.inspect(taskRunId)?.repairCommandId ?? null });
     this.deliverRun(rt, run, { mode: "repair", text: criticism });
   }
@@ -5473,6 +5588,7 @@ function retainedFromRecord(body: Record<string, unknown>): RetainedText {
 
 /** Usage as a worker reports it, or as the journal recorded it; `input` includes the cache tokens. */
 interface UsageDetail {
+  sourceModel?: { provider: string; id: string; api: string };
   input?: number;
   output?: number;
   cacheRead?: number;

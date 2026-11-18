@@ -81,12 +81,14 @@ for (const adapter of ["memory", "filesystem"]) {
     const { store, reopen } = fixture(t);
     assert.equal(store.read(), true);
     const pi = new PiHarness(store);
-    assert.match(await pi.command("status"), /Fast mode: ON \(persistent\)/);
-    assert.match(await pi.command("off"), /Fast mode: OFF \(persistent\)/);
+    assert.equal(await pi.command("status"), adapter === "memory"
+      ? "Fast mode on (global) · next request: priority (openai/gpt-test)\nProvider-reported tier: not observed yet in this session"
+      : "Fast mode on (default) · next request: priority (openai/gpt-test)\nProvider-reported tier: not observed yet in this session");
+    assert.match(await pi.command("off"), /^Fast mode off \(global\) · next request: standard \(openai\/gpt-test\)\n/);
     const restarted = new PiHarness(reopen());
-    assert.match(await restarted.command(""), /Fast mode: OFF/);
+    assert.match(await restarted.command(""), /^Fast mode off \(global\) · /);
     assert.equal(restarted.request({}).service_tier, "default");
-    assert.match(await restarted.command("on"), /Fast mode: ON/);
+    assert.match(await restarted.command("on"), /^Fast mode on \(global\) · next request: priority /);
     assert.equal(new PiHarness(reopen()).request({}).service_tier, "priority");
     assert.equal(pi.request({}).service_tier, "priority");
   });
@@ -113,8 +115,9 @@ for (const adapter of ["memory", "filesystem"]) {
     for (const provider of ["anthropic", "xiaomi-token-plan-ams", "openrouter"]) {
       pi.model.provider = provider;
       assert.equal(pi.request({ service_tier: "auto" }), undefined);
-      assert.match(await pi.command("status"), /Next request: unchanged .*not an OpenAI provider/);
-      assert.match(await pi.command("status"), /no OpenAI request observed/);
+      const status = await pi.command("status");
+      assert.match(status, new RegExp(`^Fast mode on \\(\\w+\\) · next request: not an OpenAI model \\(${provider}/gpt-test\\)\n`));
+      assert.match(status, /\nProvider-reported tier: not observed yet in this session$/);
     }
   });
 
@@ -125,28 +128,32 @@ for (const adapter of ["memory", "filesystem"]) {
     assert.equal(await pi.command("toggle"), "Usage: /fast [on|off|status|settings] or global|project|session on|off|inherit");
     assert.equal(pi.notifications.at(-1).type, "warning");
     assert.equal(store.read(), false);
-    assert.match(await pi.command(" ON "), /Fast mode: ON/);
+    assert.match(await pi.command(" ON "), /^Fast mode on \(global\)/);
   });
 
   test(`${adapter}: priority request is not proof of priority response`, async (t) => {
     const { store } = fixture(t);
     const pi = new PiHarness(store);
+    const reported = async () => (await pi.command("status")).split("\n")[1];
     pi.request({});
-    assert.match(await pi.command("status"), /Requested tier: priority\nOpenAI-reported tier: not reported; unverified/);
+    assert.equal(await reported(), "Provider-reported tier: not reported (openai/gpt-test, asked for priority, no HTTP status yet)");
     pi.emit("provider_stream_event", {
       provider: "openai", model: "gpt-test",
       data: { type: "response.created", response: { service_tier: "priority" } },
     });
-    assert.match(await pi.command("status"), /not reported; unverified/);
+    assert.match(await reported(), /^Provider-reported tier: not reported \(/);
     pi.response("default");
-    assert.match(await pi.command("status"), /Requested tier: priority\nOpenAI-reported tier: default\nHTTP status: 200/);
+    assert.equal(await reported(), "Provider-reported tier: standard (openai/gpt-test, asked for priority, HTTP 200)");
     pi.request({});
-    assert.match(await pi.command("status"), /not reported; unverified/);
+    assert.match(await reported(), /^Provider-reported tier: not reported \(/);
     pi.response("priority");
-    assert.match(await pi.command("status"), /OpenAI-reported tier: priority/);
-    assert.match(await pi.command("off"), /Next request: default/);
-    assert.match(await pi.command("status"), /Requested tier: priority\nOpenAI-reported tier: priority/);
-    assert.match(await new PiHarness(store).command("status"), /unverified; no OpenAI request observed/);
+    assert.equal(await reported(), "Provider-reported tier: priority (openai/gpt-test, asked for priority, HTTP 200)");
+    assert.match(await pi.command("off"), / · next request: standard \(openai\/gpt-test\)\n/);
+    assert.equal(await reported(), "Provider-reported tier: priority (openai/gpt-test, asked for priority, HTTP 200)", "the last request, not the new setting");
+    pi.request({});
+    pi.response("flex");
+    assert.equal(await reported(), "Provider-reported tier: flex (openai/gpt-test, asked for standard, HTTP 200)", "an unfamiliar tier is shown as reported");
+    assert.match(await new PiHarness(store).command("status"), /\nProvider-reported tier: not observed yet in this session$/);
   });
 
   test(`${adapter}: chat stream tiers, missing tiers, and mismatched models`, async (t) => {
@@ -158,17 +165,17 @@ for (const adapter of ["memory", "filesystem"]) {
         provider, model, data: { type: "response.completed", response: { service_tier: "priority" } },
       });
     }
-    assert.match(await pi.command("status"), /not reported; unverified/);
+    assert.match(await pi.command("status"), /\nProvider-reported tier: not reported \(openai\/gpt-test, asked for priority, no HTTP status yet\)$/);
     pi.emit("provider_stream_event", {
       provider: "openai", model: "gpt-test",
       data: { object: "chat.completion.chunk", service_tier: "default" },
     });
-    assert.match(await pi.command("status"), /OpenAI-reported tier: default/);
+    assert.match(await pi.command("status"), /\nProvider-reported tier: standard \(/);
     pi.request({});
     pi.response(undefined);
-    assert.match(await pi.command("status"), /not reported; unverified/);
+    assert.match(await pi.command("status"), /\nProvider-reported tier: not reported \(openai\/gpt-test, asked for priority, HTTP 200\)$/);
     pi.emit("after_provider_response", { status: 429 });
-    assert.match(await pi.command("status"), /HTTP status: 429/);
+    assert.match(await pi.command("status"), /\nProvider-reported tier: not reported \(openai\/gpt-test, asked for priority, HTTP 429\)$/);
   });
 
   test(`${adapter}: invalid payloads and missing model fail explicitly`, async (t) => {
@@ -179,7 +186,7 @@ for (const adapter of ["memory", "filesystem"]) {
     }
     pi.context.model = undefined;
     assert.throws(() => pi.request({}), /requires a selected model/);
-    assert.match(await pi.command("status"), /no model selected/);
+    assert.equal(await pi.command("status"), `Fast mode on (${adapter === "memory" ? "global" : "default"}) · next request: no model selected\nProvider-reported tier: not observed yet in this session`);
   });
 }
 
@@ -212,8 +219,8 @@ test("host: Pi loads the factory and persists /fast in the configured agent dire
     const command = extension.commands.get("fast");
     assert.ok(command, "The factory must register /fast");
     await command.handler(action, context);
-    assert.match(notifications.at(-1), /Fast mode: OFF \(persistent\)/);
-    assert.ok(notifications.at(-1).includes(join(agentDir, PREFERENCE_FILENAME)));
+    assert.equal(notifications.at(-1), "Fast mode off (global) · next request: standard (openai-codex/gpt-test)\n" +
+      "Provider-reported tier: not observed yet in this session", "two lines, no file paths");
   }
   assert.deepEqual(JSON.parse(readFileSync(join(agentDir, PREFERENCE_FILENAME), "utf8")), { enabled: false });
 });
@@ -232,20 +239,23 @@ test("/fast completes legacy actions and scoped settings controls", () => {
 test("scoped precedence and reset preserve legacy global /fast on and off", async t => {
   const dir = temporaryDirectory(t), store = new FilePreferenceStore(join(dir, "agent", PREFERENCE_FILENAME));
   const pi = new PiHarness(store); pi.context.cwd = dir; pi.context.isProjectTrusted = () => true;
-  await pi.command("off"); assert.equal(store.read(), false);
-  await pi.command("project on"); assert.equal(pi.request({}).service_tier, "priority");
-  await pi.command("session off"); assert.equal(pi.request({}).service_tier, "default");
-  await pi.command("on"); assert.equal(store.read(), true); assert.equal(pi.request({}).service_tier, "default");
-  await pi.command("session inherit"); assert.equal(pi.request({}).service_tier, "priority");
-  await pi.command("project off"); assert.equal(pi.request({}).service_tier, "default");
-  await pi.command("project inherit"); assert.equal(pi.request({}).service_tier, "priority");
-  await pi.command("global inherit"); assert.deepEqual(store.readOverrides(), {}); assert.equal(store.read(), true);
+  const setting = async args => (await pi.command(args)).split(" · ")[0];
+  assert.equal(await setting("off"), "Fast mode off (global)"); assert.equal(store.read(), false);
+  assert.equal(await setting("project on"), "Fast mode on (project)"); assert.equal(pi.request({}).service_tier, "priority");
+  assert.equal(await setting("session off"), "Fast mode off (session)"); assert.equal(pi.request({}).service_tier, "default");
+  assert.equal(await setting("on"), "Fast mode off (session)"); assert.equal(store.read(), true); assert.equal(pi.request({}).service_tier, "default");
+  assert.equal(await setting("session inherit"), "Fast mode on (project)"); assert.equal(pi.request({}).service_tier, "priority");
+  assert.equal(await setting("project off"), "Fast mode off (project)"); assert.equal(pi.request({}).service_tier, "default");
+  assert.equal(await setting("project inherit"), "Fast mode on (global)"); assert.equal(pi.request({}).service_tier, "priority");
+  assert.equal(await setting("global inherit"), "Fast mode on (default)"); assert.deepEqual(store.readOverrides(), {}); assert.equal(store.read(), true);
+  assert.doesNotMatch(await pi.command("status"), /openai-fast\.json/, "status names no file");
 });
 
 test("untrusted project state is ignored, and settings in RPC neither write nor send inference", async t => {
   const dir = temporaryDirectory(t); mkdirSync(join(dir, ".pi")); writeFileSync(join(dir, ".pi", PREFERENCE_FILENAME), "malformed");
   const store = new FilePreferenceStore(join(dir, "agent", PREFERENCE_FILENAME)), pi = new PiHarness(store); pi.context.cwd = dir;
   assert.equal(pi.request({}).service_tier, "priority");
+  assert.match(await pi.command("status"), /^Fast mode on \(default\) · next request: priority \(openai\/gpt-test\)\n/, "the ignored project file does not become the source");
   await assert.rejects(pi.command("project on"), /trusted project/);
   assert.match(await pi.command("settings"), /requires interactive TUI/);
   assert.deepEqual(store.readOverrides(), {});
@@ -263,7 +273,7 @@ test("filesystem: invalid state fails instead of silently enabling priority; com
     await assert.rejects(pi.command("status"));
     assert.throws(() => pi.request({}));
   }
-  assert.match(await pi.command("off"), /Fast mode: OFF/);
+  assert.match(await pi.command("off"), /^Fast mode off \(global/);
   assert.deepEqual(JSON.parse(readFileSync(path, "utf8")), { enabled: false });
   assert.equal(statSync(path).mode & 0o777, 0o600);
   assert.deepEqual(readdirSync(directory), [PREFERENCE_FILENAME]);

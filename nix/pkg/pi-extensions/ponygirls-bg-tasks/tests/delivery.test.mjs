@@ -9,6 +9,7 @@ import { contextLabels, createRuntime, customEntries, deferred, recordingUi, scr
 
 const EXTENSION = resolve(import.meta.dirname, "../index.ts");
 const TYPE = "bg-task-completion";
+const STATUS_TYPE = "bg-task-status";
 const SETTLE_QUIET_MS = 1200;
 
 const spawnCall = (id, command, notify = true, label = id) => ({ type: "toolCall", id, name: "bg_task", arguments: { action: "spawn", label, command, cwd: "/", notify } });
@@ -572,4 +573,32 @@ test("an action missing its required fields fails the tool call with the fields 
   const result = f.rt.session.sessionManager.getEntries().find((e) => e.type === "message" && e.message.role === "toolResult");
   assert.equal(result.message.isError, true);
   assert.match(result.message.content.map((p) => p.text).join(""), /INVALID_REQUEST.*spawn.*(cwd|notify)/s);
+});
+
+// Defect A: `pi --no-session` with no input ran a model turn about the status notice.
+test("a session without a file shows one status notice, starts no model turn, and has it in context for the next one", async (t) => {
+  const dir = tempDir(t, "bg-no-session-");
+  const f = await setup(t, (r) => text(`reply ${r.index}`), { dir, sessionManager: sdk.SessionManager.inMemory(dir) });
+  const session = f.rt.session;
+  assert.equal(session.sessionManager.getSessionFile(), undefined);
+  await waitFor(() => customEntries(session, STATUS_TYPE).length > 0, { message: "the status notice" });
+  await quiet();
+  await session.waitForIdle();
+  assert.equal(f.model.requests.length, 0, "the notice started no model turn");
+  const [notice, ...more] = customEntries(session, STATUS_TYPE);
+  assert.deepEqual(more, [], "shown once");
+  assert.equal(notice.display, true);
+  assert.match(notice.content, /NO_PERSISTENT_SESSION/);
+  await session.prompt("go");
+  await session.waitForIdle();
+  await quiet();
+  assert.equal(f.model.requests.length, 1, "only the user's own turn");
+  assert.match(contextLabels(f.model.requests[0]).join("\n"), /NO_PERSISTENT_SESSION[^\n]*\nuser:go$/, "the notice precedes the prompt in the model's context");
+  assert.equal(customEntries(session, STATUS_TYPE).length, 1);
+  await session.reload();
+  await quiet();
+  await f.rt.session.waitForIdle();
+  assert.equal(customEntries(f.rt.session, STATUS_TYPE).length, 1, "a reload does not repeat the notice");
+  assert.equal(f.model.requests.length, 1);
+  assert.deepEqual(f.rt.errors, []);
 });

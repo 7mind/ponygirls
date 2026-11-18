@@ -1,10 +1,10 @@
 import { renderLayoutFrame } from "@earendil-works/pi-tui/dist/layout.js";
 import assert from "node:assert/strict";
 import test from "node:test";
-import { VStack, visibleWidth } from "@earendil-works/pi-tui";
-import { AgentInspector, AgentsScreen, TranscriptView, badgeLine, badgeState, chatModeFor, compactBadge, countTree, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
-import { PLAIN_STYLE } from "../src/display.ts";
-import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
+import { BoundedVStack, VStack, visibleWidth } from "@earendil-works/pi-tui";
+import { AgentInspector, AgentsScreen, TranscriptView, agentsBadge, chatModeFor, countTree, phaseOf, renderHeadless, sanitizeDisplay, widgetLine, type AgentDetails, type AgentsScreenDeps, type ChatMode, type InspectorAction, type TranscriptDeps } from "../src/ui.ts";
+import { PLAIN_STYLE, homeRelative, type UiStyle } from "../src/display.ts";
+import { PLAIN_THEME, borderBadge, borderBadgeCompact, type UiTheme } from "@ponygirls/pi-ui";
 import type { AgentView, TranscriptSource } from "../src/supervisor.ts";
 
 const UP = "\x1b[A";
@@ -39,6 +39,8 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
   };
 }
 
+const HOME = "/home/u";
+
 function inspector(views: AgentView[], opts: { details?: AgentDetails; rows?: number; theme?: UiTheme } = {}): { ui: AgentInspector; actions: InspectorAction[]; closed: () => boolean } {
   const actions: InspectorAction[] = [];
   let closed = false;
@@ -49,6 +51,7 @@ function inspector(views: AgentView[], opts: { details?: AgentDetails; rows?: nu
     onClose: () => { closed = true; },
     rows: () => opts.rows ?? 40,
     theme: opts.theme ?? PLAIN_THEME,
+    home: HOME,
   });
   return { ui, actions, closed: () => closed };
 }
@@ -61,12 +64,10 @@ test("hostile ANSI/OSC output is sanitized", () => {
   assert.equal(clean, "hellored");
 });
 
-test("the footer status names the total and only nonzero states", () => {
+test("the headless summary names the total and only nonzero states", () => {
   const views = [view(), view({ id: "a-2", path: "/root/b", observed: "queued", pendingIntent: "queued" })];
   assert.equal(widgetLine(views), "agents 2 · running 1 · queued 1");
   assert.equal(widgetLine([view({ observed: "settled", pendingIntent: "settled" })]), "agents 1");
-  assert.equal(badgeLine(views), "👥 2 · ⚙️ 1 · ⏳ 1");
-  assert.equal(badgeLine([view({ pendingIntent: "awaiting parent reply" })]), "👥 1 · ⚙️ 1 · ❓ 1");
   assert.deepEqual(countTree(views), { running: 1, queued: 1, parked: 0, questions: 0 });
 });
 
@@ -82,8 +83,8 @@ test("the inspector shows the selected agent's details and opens its transcript 
   const { ui, actions, closed } = inspector(views, { details: { result: "RESULT TEXT", question: "which file?" } });
   ui.handleInput(DOWN);
   const screen = ui.render(100).join("\n");
-  for (const needle of ["/root/b", "writer · worktree", "passed", "workdir /wt/b", "gated task task-b", "question: which file?", "RESULT TEXT"]) {
-    assert.ok(screen.includes(needle), `missing ${needle}:\n${screen}`);
+  for (const needle of [/\/root\/b/, /writer · worktree/, /✓ passed/, /^ {2}workdir +\/wt\/b$/m, /^ {2}gate +task task-b$/m, /^ {2}question +which file\?$/m, /^ {2}result +RESULT TEXT$/m]) {
+    assert.match(screen, needle);
   }
   ui.handleInput(ENTER);
   ui.handleInput("i");
@@ -117,7 +118,7 @@ test("the inspector defaults to non-closed agents and toggles all retained agent
   const { ui, actions } = inspector([closed, idle]);
   assert.equal(ui.selectedId(), "idle");
   assert.doesNotMatch(ui.render(120).join("\n"), /\/root\/closed/);
-  assert.match(ui.render(120).join("\n"), /f show all/);
+  assert.match(ui.render(120).join("\n"), /f show closed/);
   ui.handleInput("f");
   assert.equal(ui.selectedId(), "idle");
   assert.match(ui.render(120).join("\n"), /\/root\/closed/);
@@ -139,7 +140,7 @@ test("the inspector defaults to non-closed agents and toggles all retained agent
   assert.equal(ui.selectedId(), "idle");
   ui.handleInput("f");
   ui.refreshViews([closed, idle, view({ id: "new-closed", desiredLifecycle: "closed", pendingIntent: "closed" })]);
-  assert.match(ui.render(120)[0]!, /agents 3/);
+  assert.match(ui.render(120)[0]!, /^── Subagents · 3 /);
 });
 
 test("closed agents stay hidden when a storage failure overrides their display intent", () => {
@@ -188,7 +189,7 @@ function transcriptView(over: Partial<TranscriptDeps> & { file?: () => { version
   let reads = 0;
   let back = false;
   const file = over.file ?? (() => ({ version: "1", text: session(["hello"]) }));
-  const ui = new TranscriptView({
+  const deps: TranscriptDeps = {
     view: () => view(),
     source: () => ({ sessionFile: "/s.jsonl", reviews: [], streaming: null, messages: new Map() }),
     question: () => null,
@@ -203,7 +204,8 @@ function transcriptView(over: Partial<TranscriptDeps> & { file?: () => { version
     style: PLAIN_STYLE,
     theme: PLAIN_THEME,
     ...over,
-  });
+  };
+  const ui = new TranscriptView(deps, { home: HOME, paneRows: deps.rows });
   return { ui, sent, reads: () => reads, back: () => back };
 }
 
@@ -368,52 +370,73 @@ test("the inspector is framed: title with counts, dim column header, aligned cel
   assert.equal(lines.length, 30);
   assert.ok(lines.every((l) => visibleWidth(l) <= 140));
   const plain = lines.map((l) => tags(l).replace(/<[^>]*>/g, ""));
-  assert.match(plain[0]!, /^── Subagents · agents 3 · running 1 ─+──$/);
-  assert.match(tags(lines[1]!), /^<dim> {2}AGENT +KIND +STATE +OUTCOME +MODEL<\/>$/);
+  assert.match(plain[0]!, /^── Subagents · 3 ─+ 1 running · 2 settled ──$/);
+  assert.match(tags(lines[0]!), /<accent>1 running<\/><dim> · <\/><muted>2 settled<\/>/, "counts carry their state's colour");
+  assert.match(tags(lines[1]!), /^<dim> {2}AGENT +KIND +STATE +MODEL +TOKENS<\/>$/);
   const column = (header: string): number => plain[1]!.indexOf(header);
   for (const row of plain.slice(2, 5)) {
     assert.equal(row.indexOf(row.includes("writer") ? "writer" : "reader"), column("KIND"), row);
   }
-  assert.equal(plain[3]!.indexOf("running"), column("STATE"));
-  assert.equal(plain[4]!.indexOf("✖ failed"), column("OUTCOME"));
+  assert.equal(plain[2]!.indexOf("✓ succeeded"), column("STATE"));
+  assert.equal(plain[3]!.indexOf("● running"), column("STATE"));
+  assert.equal(plain[4]!.indexOf("✖ failed"), column("STATE"));
   assert.equal(plain[4]!.indexOf("kimi-k3"), column("MODEL"));
+  assert.equal(plain[4]!.indexOf("1 in · 2 out"), column("TOKENS"));
   assert.ok(plain[4]!.startsWith("    /root/b/fix"), "nested agents are indented");
-  assert.ok(plain[3]!.includes("—"), "no outcome yet is a dash");
   assert.match(plain[5]!, /^─+$/, "a rule separates the list from the details");
-  assert.ok(plain.some((l) => /^kind reader · none {2}model p\/m {2}state settled {2}outcome ✓ succeeded/.test(l)));
-  assert.match(tags(lines.find((l) => tags(l).includes("model"))!), /<muted>kind<\/> reader/, "detail labels are muted");
+  assert.equal(plain[6], "  id       a-1 · generation 1");
+  assert.equal(plain[7], "  workdir  /proj");
+  assert.match(tags(lines[6]!), /^ {2}<muted>id {5}<\/> {2}a-1/, "detail keys are muted");
   assert.match(plain[28]!, /^─+$/);
-  assert.match(plain[29]!, /^f show all {2}↑↓ select {2}⏎ transcript {2}m note {2}t task {2}i interrupt {2}c close {2}a answer {2}g gate {2}r refresh {2}esc close$/);
+  assert.equal(plain[29], "↑↓ select  ⏎ transcript  t new task  m note  c close agent  f show closed  esc close");
 });
 
 test("the selected row spans the width, keeps state and outcome colours, and uses muted rather than dim", () => {
-  const views = [view({ openQuestion: { messageId: "q", to: "governor", text: "?", deadlineAt: "" }, pendingIntent: "awaiting parent reply", observed: "awaiting_parent" }), view({ id: "a-2", path: "/root/b", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" })];
+  const unused = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost: null, unknown: false };
+  const views = [view({ openQuestion: { messageId: "q", to: "governor", text: "?", deadlineAt: "" }, pendingIntent: "awaiting parent reply", observed: "awaiting_parent", usage: unused }), view({ id: "a-2", path: "/root/b", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" })];
   const { ui } = inspector(views, { rows: 30, theme: TAG_THEME });
   const first = ui.render(100)[2]!;
   assert.equal(visibleWidth(first), 100, "full-width selection band");
   assert.match(tags(first), /^<bg:selectedBg><accent>▌<\/> <bold>/);
-  assert.match(tags(first), /<warning>awaiting parent reply<\/>/);
-  assert.match(tags(first), /<muted>—<\/>/);
+  assert.match(tags(first), /<warning>\? awaiting parent reply<\/>/);
+  assert.match(tags(first), /<muted>·<\/>/, "no tokens yet is a quiet dot");
   assert.doesNotMatch(tags(first), /<dim>/);
   ui.handleInput(DOWN);
   const lines = ui.render(100);
-  assert.match(tags(lines[2]!), /^ {2}.*<dim>—<\/>/, "unselected rows may use dim");
+  assert.match(tags(lines[2]!), /^ {2}.*<dim>·<\/>/, "unselected rows may use dim");
   assert.match(tags(lines[3]!), /<success>✓ succeeded<\/>/);
 });
 
 test("the inspector shows its scroll position in the title when the list overflows", () => {
   const views = Array.from({ length: 12 }, (_, i) => view({ id: `a-${i}`, path: `/root/a${i}` }));
   const { ui } = inspector(views, { rows: 24 });
-  assert.match(ui.render(90)[0]!, /── 1–4 of 12 ──$/);
+  assert.match(ui.render(90)[0]!, /^── Subagents · 1–4 of 12 ─+ 12 running ──$/);
 });
 
-test("the border short form is the agent glyph in the tree's state colour and the total", () => {
-  const settled = view({ observed: "settled", pendingIntent: "settled" });
-  assert.equal(badgeState([settled]), "settled");
-  assert.equal(badgeState([settled, view({ id: "a-2", observed: "queued", pendingIntent: "queued" })]), "running");
-  assert.equal(badgeState([view(), view({ id: "a-2", openQuestion: { messageId: "q", to: "/root/a", text: "?", deadlineAt: "" } })]), "attention");
-  assert.equal(compactBadge(PLAIN_THEME, [settled, settled]), " 👥2 ");
-  assert.equal(tags(compactBadge(TAG_THEME, [view()])), "<bg:toolPendingBg> <accent>👥</><text>1</> </>");
+test("the border badge is the agent count, then the live agents by the pane's glyphs, in the tree's state colour", () => {
+  const settled = (id: string): AgentView => view({ id, observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" });
+  const running = (id: string): AgentView => view({ id });
+  const starting = (id: string): AgentView => view({ id, observed: "starting", pendingIntent: "starting" });
+  const queued = (id: string): AgentView => view({ id, observed: "queued", pendingIntent: "queued" });
+  const asking = (id: string): AgentView => view({ id, observed: "awaiting_parent", pendingIntent: "awaiting parent reply", openQuestion: { messageId: "q", to: "governor", text: "?", deadlineAt: "" } });
+  const quiet = [settled("a"), settled("b"), settled("c")];
+  const busy = [running("a"), settled("b"), starting("c")];
+  const waiting = [running("a"), asking("b"), settled("c")];
+  const all = [queued("a"), asking("b"), queued("c"), running("d")];
+  assert.deepEqual(agentsBadge(quiet), { glyph: "👥", state: "settled", label: "3", compact: "3" });
+  assert.deepEqual(agentsBadge(busy), { glyph: "👥", state: "running", label: "3 ●2", compact: "3" });
+  assert.deepEqual(agentsBadge(waiting), { glyph: "👥", state: "attention", label: "3 ●1 ?1", compact: "3?" });
+  assert.deepEqual(agentsBadge(all), { glyph: "👥", state: "attention", label: "4 ●1 ○2 ?1", compact: "4?" });
+  assert.deepEqual(agentsBadge([queued("a"), settled("b")]), { glyph: "👥", state: "running", label: "2 ○1", compact: "2" });
+  // An agent is counted once: a question it asked while running makes it asking, as in the pane.
+  assert.equal(agentsBadge([view({ openQuestion: { messageId: "q", to: "/root/a", text: "?", deadlineAt: "" } })]).label, "1 ?1");
+  // Through the kit: no background chip, the glyph unstyled, the label in the state's colour.
+  assert.equal(tags(borderBadge(TAG_THEME, agentsBadge(quiet), 80)), " 👥 <muted>3</> ");
+  assert.equal(tags(borderBadge(TAG_THEME, agentsBadge(busy), 80)), " 👥 <accent>3 ●2</> ");
+  assert.equal(tags(borderBadge(TAG_THEME, agentsBadge(waiting), 80)), " 👥 <warning>3 ●1 ?1</> ");
+  assert.equal(tags(borderBadgeCompact(TAG_THEME, agentsBadge(waiting), 80)), "👥<warning>3?</>");
+  assert.equal(tags(borderBadgeCompact(TAG_THEME, agentsBadge(busy), 80)), "👥<accent>3</>");
+  assert.equal(borderBadge(PLAIN_THEME, agentsBadge(all), 80), " 👥 4 ●1 ○2 ?1 ");
 });
 
 test("the transcript is framed with the agent path, kind and model, and its state and outcome on the right", () => {
@@ -424,8 +447,8 @@ test("the transcript is framed with the agent path, kind and model, and its stat
   assert.match(title.replace(/<[^>]*>/g, ""), /^── \/root\/a · reader · none · p\/m ─+ settled · ✖ failed ──$/);
   assert.match(title, /<error>✖ failed<\/>/);
   assert.match(tags(lines[1]!), /^<muted>workdir<\/> \/proj/);
-  assert.equal(tags(lines.at(-1)!).replace(/<[^>]*>/g, ""), "⏎ send a new task  ↑↓ PgUp PgDn scroll  esc back to the list");
-  assert.match(tags(lines.at(-1)!), /^<text>⏎<\/> <muted>send a new task<\/>/);
+  assert.equal(tags(lines.at(-1)!).replace(/<[^>]*>/g, ""), "⏎ send task  ↑↓ scroll  PgUp/PgDn page  esc back");
+  assert.match(tags(lines.at(-1)!), /^<text>⏎<\/> <muted>send task<\/>/);
   const narrow = ui.render(40);
   assert.equal(narrow.length, 24, "wrapped hints shrink the viewport, not the frame");
   assert.ok(narrow.every((l) => visibleWidth(l) <= 40));
@@ -466,4 +489,307 @@ test("an auto-basis inspector grows with its available height", () => {
   const short = ui.bodyScroll.viewportHeight;
   renderLayoutFrame(root, 100, 24, () => {});
   assert.ok(ui.bodyScroll.viewportHeight > short);
+});
+
+// ---- /agents pane rework: one STATE column, TOKENS, key/value details, state-dependent hints ----
+
+const WIDTHS = [60, 80, 100, 120, 170];
+const usage = (inputTokens: number, outputTokens: number, cost: number | null = null): AgentView["usage"] => ({ inputTokens, outputTokens, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: null, cost, unknown: false });
+/** Lines as the terminal shows them: no SGR sequences (truncation appends resets), no trailing blanks. */
+const text = (lines: string[]): string[] => lines.map((l) => l.replace(/\x1b\[[0-9;]*m/g, "").trimEnd());
+const hintLine = (lines: string[]): string => text(lines).slice(lines.findLastIndex((l) => /^─+$/.test(l)) + 1).join("  ");
+
+/** The agent of the specification's capture: settled, succeeded, 8.8k tokens in. */
+const demo = view({
+  id: "7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24", path: "/root/demo-reader", isolation: "worktree", workdir: `${HOME}/work/flakes/ponygirls`,
+  model: "openai-codex/gpt-6.1-sol", observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded", usage: usage(8800, 5),
+});
+
+const question = "Which of the two candidate files should I change: the legacy adapter under compat/, which every caller still imports, or the new facade, which only the tests use so far? I would rather not touch both.";
+
+/** One agent in every state the list distinguishes, with long values in every field. */
+const crowd: AgentView[] = [
+  view({ id: "11111111-1111-4111-8111-111111111111", path: "/root/orchestrator", profile: "writer", isolation: "worktree", workdir: `${HOME}/work/flakes/ponygirls/.worktrees/wt-ponygirls-orchestrator`, model: "anthropic/claude-opus-4-20250514", pendingIntent: "tool bash running", usage: usage(115173, 4210, 1.2345) }),
+  view({ id: "22222222-2222-4222-8222-222222222222", path: "/root/orchestrator/implement-the-feature-with-a-long-name/verify-and-fix-regressions", parentId: "11111111-1111-4111-8111-111111111111", depth: 3, observed: "awaiting_parent", pendingIntent: "awaiting parent reply", openQuestion: { messageId: "q1", to: "governor", text: question, deadlineAt: "" }, usage: usage(52000, 900) }),
+  view({ id: "33333333-3333-4333-8333-333333333333", path: "/root/queued", observed: "queued", pendingIntent: "queued: waiting for runnable capacity; wait for running work to settle", usage: usage(0, 0) }),
+  view({ id: "44444444-4444-4444-8444-444444444444", path: "/root/gated", profile: "writer", isolation: "sandbox", observed: "settled", pendingIntent: "settled", taskOutcome: "review_limit_reached", gateTaskRunId: "task-run-0001", workdir: "/srv/checkouts/a-directory-name-without-any-space-that-is-longer-than-a-narrow-terminal-line/repo", usage: { ...usage(2400000, 31000), unknown: true } }),
+  view({ id: "55555555-5555-4555-8555-555555555555", path: "/root/gated-review", observed: "settled", pendingIntent: "settled", managedGateFor: "task-run-0001", model: "zai/glm-5.3", usage: usage(900, 40) }),
+  view({ id: "66666666-6666-4666-8666-666666666666", path: "/root/closed", observed: "settled", desiredLifecycle: "closed", pendingIntent: "closed", taskOutcome: "failed" }),
+];
+const crowdDetails: AgentDetails = { result: Array.from({ length: 9 }, (_, i) => `result line ${i}: ${"word ".repeat(30).trim()}`).join("\n"), question };
+
+function crowdAt(selected: number, width: number): { lines: string[]; ui: AgentInspector } {
+  const { ui } = inspector(crowd, { details: crowdDetails, rows: 60 });
+  ui.handleInput("f");
+  for (let i = 0; i < selected; i++) ui.handleInput(DOWN);
+  return { lines: text(ui.render(width)), ui };
+}
+
+test("target screen at 120 columns: one settled agent", () => {
+  const { ui } = inspector([demo], { details: { result: "pong", question: null }, rows: 12 });
+  const lines = ui.render(120);
+  assert.ok(lines.every((l) => visibleWidth(l) <= 120));
+  assert.equal(visibleWidth(lines[0]!), 120);
+  assert.match(lines[0]!, /^── Subagents · 1 ─+ 1 settled ──$/);
+  assert.deepEqual(text(lines).slice(1), [
+    "  AGENT              KIND               STATE        MODEL                     TOKENS",
+    "▌ /root/demo-reader  reader · worktree  ✓ succeeded  openai-codex/gpt-6.1-sol  8.8k in · 5 out",
+    "─".repeat(120),
+    "  id       7c1d4e9a-2b6f-4a35-8e0c-1f9b3d5a7e24 · generation 1",
+    "  workdir  ~/work/flakes/ponygirls",
+    "  result   pong",
+    "",
+    "",
+    "",
+    "─".repeat(120),
+    "↑↓ select  ⏎ transcript  t new task  m note  c close agent  f show closed  esc close",
+  ]);
+});
+
+test("no rendered line exceeds the terminal and no detail value is cut with an ellipsis", () => {
+  for (const width of WIDTHS) {
+    for (let selected = 0; selected < crowd.length; selected++) {
+      const { lines } = crowdAt(selected, width);
+      for (const line of lines) assert.ok(visibleWidth(line) <= width, `${width} columns, agent ${selected}: ${visibleWidth(line)} > ${width}: ${line}`);
+      const details = lines.slice(lines.findIndex((l) => /^─+$/.test(l)) + 1, lines.findLastIndex((l) => /^─+$/.test(l)));
+      for (const line of details) assert.doesNotMatch(line, /…$/, `${width} columns, agent ${selected}: ${line}`);
+    }
+    const empty = inspector([], { rows: 12 }).ui.render(width);
+    assert.ok(empty.every((l) => visibleWidth(l) <= width), `${width} columns, empty list`);
+  }
+});
+
+test("the selected agent's facts survive every width: id, generation, tokens, cost, workdir, gate, question", () => {
+  const flat = (lines: string[]): string => lines.map((l) => l.trim()).join(" ").replace(/\s+/g, " ");
+  for (const width of WIDTHS) {
+    const running = flat(crowdAt(0, width).lines);
+    for (const needle of ["11111111-1111-4111-8111-111111111111 · generation 1", "writer · worktree", "anthropic/claude-opus-4-20250514", "115k in · 4.21k out", "cost $1.2345", "tool bash running"]) {
+      assert.ok(running.includes(needle), `${width} columns: missing ${needle}:\n${crowdAt(0, width).lines.join("\n")}`);
+    }
+    assert.ok(running.replace(/ /g, "").includes("~/work/flakes/ponygirls/.worktrees/wt-ponygirls-orchestrator"), `${width} columns: workdir relative to home`);
+    const asking = flat(crowdAt(1, width).lines);
+    assert.ok(asking.includes(`question ${question}`), `${width} columns: the whole question, wrapped:\n${crowdAt(1, width).lines.join("\n")}`);
+    const gated = flat(crowdAt(3, width).lines);
+    for (const needle of ["⚠ review_limit_reached", "gate task task-run-0001", "cost unknown", "2.4M in · 31k out"]) assert.ok(gated.includes(needle), `${width} columns: missing ${needle}`);
+    assert.ok(gated.replace(/ /g, "").includes("/srv/checkouts/a-directory-name-without-any-space-that-is-longer-than-a-narrow-terminal-line/repo"), `${width} columns: a path outside home stays absolute and whole`);
+    assert.ok(flat(crowdAt(4, width).lines).includes("gate reviews task task-run-0001"), `${width} columns: reviewer's gate`);
+    assert.ok(flat(crowdAt(5, width).lines).includes("state closed"), `${width} columns: a closed agent says so`);
+  }
+});
+
+test("narrowing drops TOKENS, then MODEL, then KIND, names them, and never drops AGENT or STATE", () => {
+  const headersAt = (width: number): string[] => crowdAt(0, width).lines[1]!.trim().split(/ {2,}/);
+  const seen: string[] = [];
+  for (let width = 170; width >= 40; width--) {
+    const headers = headersAt(width).join(" ");
+    if (seen.at(-1) !== headers) seen.push(headers);
+  }
+  assert.deepEqual(seen, ["AGENT KIND STATE MODEL TOKENS", "AGENT KIND STATE MODEL", "AGENT KIND STATE", "AGENT STATE"]);
+  assert.deepEqual(headersAt(170), ["AGENT", "KIND", "STATE", "MODEL", "TOKENS"]);
+  assert.ok(!crowdAt(0, 170).lines.some((l) => l.includes("hidden at this width")));
+  const narrow = crowdAt(0, 60);
+  assert.deepEqual(headersAt(60), ["AGENT", "STATE"]);
+  assert.ok(narrow.lines.includes("  hidden at this width: KIND, MODEL, TOKENS"), narrow.lines.join("\n"));
+  const dim = inspector(crowd, { rows: 60, theme: TAG_THEME }).ui.render(60).map(tags).find((l) => l.includes("hidden at this width"));
+  assert.equal(dim, "<dim>  hidden at this width: KIND, MODEL, TOKENS</>");
+  for (const width of WIDTHS) {
+    const rows = crowdAt(0, width).lines.slice(2, 2 + crowd.length);
+    for (const [i, state] of ["● tool bash running", "? awaiting parent reply", "○ queued", "⚠ review_limit_reached", "— settled", "✖ failed"].entries()) {
+      assert.ok(rows[i]!.includes(state), `${width} columns: row ${i} shows its state whole: ${rows[i]}`);
+    }
+  }
+});
+
+test("an over-long agent path is shortened in the middle and spelled out in the details", () => {
+  const long = crowd[1]!.path;
+  for (const width of WIDTHS) {
+    const { lines } = crowdAt(1, width);
+    const row = lines[3]!;
+    assert.match(row, /^▌ +\/root\/orch\S*…\S*regressions {2}/, `${width} columns: head and leaf stay: ${row}`);
+    assert.ok(!row.includes(long));
+    assert.ok(lines.map((l) => l.trim()).join("").replace(/ /g, "").includes(`path${long}`), `${width} columns: the details carry the whole path`);
+  }
+  const short = crowdAt(0, 120).lines;
+  assert.ok(short[2]!.startsWith("▌ /root/orchestrator  "));
+  assert.ok(!short.some((l) => /^ {2}path /.test(l)), "a path the row shows whole is not repeated");
+});
+
+test("one STATE column: a settled agent shows its outcome, a live agent its state with a glyph in the state's colour", () => {
+  const { ui } = inspector(crowd, { rows: 60, theme: TAG_THEME });
+  ui.handleInput("f");
+  const lines = ui.render(170).map(tags);
+  assert.doesNotMatch(lines[1]!, /OUTCOME/);
+  assert.match(lines[2]!, /<accent>● tool bash running<\/>/);
+  assert.match(lines[3]!, /<warning>\? awaiting parent reply<\/>/);
+  assert.match(lines[4]!, /<muted>○ queued<\/>/);
+  assert.match(lines[5]!, /<warning>⚠ review_limit_reached<\/>/);
+  assert.match(lines[6]!, /<muted>— settled<\/>/);
+  assert.match(lines[7]!, /<error>✖ failed<\/>/);
+  assert.deepEqual(crowd.map(phaseOf), ["running", "asking", "queued", "settled", "settled", "settled"]);
+  // What the row abbreviates or replaces is spelled out below it.
+  ui.handleInput(DOWN);
+  ui.handleInput(DOWN);
+  assert.ok(ui.render(170).map(tags).some((l) => /^ {2}<muted>state *<\/> {2}<muted>queued: waiting for runnable capacity; wait for running work to settle<\/>$/.test(l)));
+});
+
+test("the title counts agents by state in a fixed order and omits zeros", () => {
+  const settled = (id: string): AgentView => view({ id, observed: "settled", pendingIntent: "settled", taskOutcome: "succeeded" });
+  const asking = view({ id: "q", observed: "awaiting_parent", pendingIntent: "awaiting parent reply", openQuestion: { messageId: "m", to: "governor", text: "?", deadlineAt: "" } });
+  const queued = view({ id: "w", observed: "queued", pendingIntent: "queued" });
+  const title = (views: AgentView[]): string => inspector(views).ui.render(120)[0]!;
+  assert.match(title([settled("s1"), view(), asking, settled("s2"), view({ id: "r2", observed: "starting", pendingIntent: "starting" }), settled("s3")]), /^── Subagents · 6 ─+ 2 running · 1 asking · 3 settled ──$/);
+  assert.match(title([queued, settled("s1"), asking, view()]), /^── Subagents · 4 ─+ 1 running · 1 queued · 1 asking · 1 settled ──$/);
+  assert.match(title([]), /^── Subagents · 0 ─+$/);
+  assert.equal(phaseOf(view({ observed: "awaiting_parent", pendingIntent: "awaiting parent reply" })), "asking", "waiting for a reply, whoever was asked");
+  assert.equal(phaseOf(view({ observed: "lost", pendingIntent: "lost" })), "settled");
+  // Too narrow for every count: the name and the total stay whole, the last counts go.
+  const narrow = inspector([queued, settled("s1"), asking, view()]).ui.render(60)[0]!;
+  assert.match(narrow, /^── Subagents · 4 ─+ 1 running · 1 queued · 1 asking ──$/);
+  assert.equal(visibleWidth(narrow), 60);
+});
+
+test("hints name only what applies to the selected agent in its state", () => {
+  const hintsFor = (v: AgentView): string => hintLine(inspector([v]).ui.render(170));
+  assert.equal(hintsFor(demo), "↑↓ select  ⏎ transcript  t new task  m note  c close agent  f show closed  esc close");
+  assert.equal(hintsFor(view()), "↑↓ select  ⏎ transcript  i interrupt  t new task  m note  c close agent  f show closed  esc close");
+  assert.equal(hintsFor(crowd[1]!), "↑↓ select  ⏎ transcript  a answer  i interrupt  t new task  m note  c close agent  f show closed  esc close");
+  assert.equal(hintsFor(crowd[2]!), "↑↓ select  ⏎ transcript  i interrupt  t new task  m note  c close agent  f show closed  esc close");
+  assert.equal(hintsFor(crowd[3]!), "↑↓ select  ⏎ transcript  t new task  m note  g gate  c close agent  f show closed  esc close");
+  assert.equal(hintsFor(crowd[4]!), "↑↓ select  ⏎ transcript  g gate  c close agent  f show closed  esc close", "a gate reviewer takes no notes or tasks");
+  const closed = inspector([crowd[5]!]);
+  assert.equal(hintLine(closed.ui.render(170)), "f show closed  esc close", "only closed agents: nothing is listed until they are shown");
+  closed.ui.handleInput("f");
+  assert.equal(hintLine(closed.ui.render(170)), "↑↓ select  ⏎ transcript  f hide closed  esc close");
+  for (const width of WIDTHS) {
+    for (const v of crowd) assert.doesNotMatch(hintsFor(v) + inspector([v]).ui.render(width).join("\n"), /refresh|show all/);
+  }
+});
+
+test("keys that are no longer advertised stay bound", () => {
+  const views = [demo];
+  const { ui, actions } = inspector(views);
+  for (const key of ["i", "a", "g", "c", "m", "t"]) ui.handleInput(key);
+  assert.deepEqual(actions.map((a) => a.kind), ["interrupt", "answer", "retry_review", "close", "message", "task"]);
+  views.push(view({ id: "late" }));
+  ui.handleInput("r");
+  ui.handleInput(DOWN);
+  assert.equal(ui.selectedId(), "late", "r still refreshes the list");
+});
+
+test("an empty list says how agents appear and offers only esc", () => {
+  for (const width of WIDTHS) {
+    const lines = text(inspector([], { rows: 12 }).ui.render(width));
+    assert.match(lines[0]!, /^── Subagents · 0 ─+$/);
+    assert.equal(lines.slice(1).filter((l) => l !== "" && !/^─+$/.test(l)).map((l) => l.trim()).join(" "), "No subagents yet. The model starts them with spawn_agent. esc close", `${width} columns`);
+    assert.equal(hintLine(lines), "esc close");
+  }
+  const tagged = inspector([], { rows: 12, theme: TAG_THEME }).ui.render(120).map(tags);
+  assert.equal(tagged[1], "<muted>  No subagents yet. The model starts them with spawn_agent.</>");
+  // Agents exist, all closed and hidden: the way to them is the one key offered besides esc.
+  const hidden = text(inspector([crowd[5]!], { rows: 12 }).ui.render(120));
+  assert.equal(hidden[1], "  No active subagents. f shows the closed ones.");
+  assert.equal(hintLine(hidden), "f show closed  esc close");
+});
+
+test("paths under the home directory are shown relative to it", () => {
+  assert.equal(homeRelative("/home/u/work/x", "/home/u"), "~/work/x");
+  assert.equal(homeRelative("/home/u", "/home/u"), "~");
+  assert.equal(homeRelative("/home/user2/x", "/home/u"), "/home/user2/x");
+  assert.equal(homeRelative("/srv/x", "/home/u"), "/srv/x");
+  assert.equal(homeRelative("/srv/x", "/"), "/srv/x");
+});
+
+const TAG_STYLE: UiStyle = { ...PLAIN_STYLE, muted: (s) => mark("muted", s), accent: (s) => mark("accent", s) };
+
+test("a transcript that has not arrived says so instead of showing an empty body", () => {
+  const named = (): TranscriptSource => ({ sessionFile: "/not-written-yet.jsonl", reviews: [], streaming: null, messages: new Map() });
+  let written = false;
+  const reader = { version: () => (written ? "1" : null), read: () => session(["first answer"]) };
+  for (const width of WIDTHS) {
+    written = false;
+    const { ui } = transcriptView({ source: named, reader, style: TAG_STYLE });
+    const lines = ui.render(width);
+    assert.equal(lines.length, 24);
+    assert.ok(lines.every((l) => visibleWidth(l) <= width));
+    const body = lines.slice(3, lines.findLastIndex((l) => /^─+$/.test(l))).filter((l) => l !== "").map(tags);
+    assert.deepEqual(body, ["<muted>loading transcript…</>"], `${width} columns`);
+    written = true;
+    assert.equal(ui.refresh(), true);
+    const loaded = ui.render(width).map(tags);
+    assert.ok(loaded.some((l) => l.includes("first answer")) && !loaded.some((l) => l.includes("loading transcript")));
+  }
+  // A settled agent's missing session is not on its way.
+  const settled = transcriptView({ view: () => view({ observed: "settled", pendingIntent: "settled" }), source: named, reader: { version: () => null, read: () => "" } });
+  assert.ok(settled.ui.render(80).some((l) => l.includes("(empty conversation)")) && !settled.ui.render(80).some((l) => l.includes("loading transcript")));
+});
+
+test("the transcript footer: send, scroll, page, back", () => {
+  const footer = (over: Partial<TranscriptDeps>): string => transcriptView(over).ui.render(170).at(-1)!;
+  assert.equal(footer({ view: () => view({ observed: "settled", pendingIntent: "settled" }) }), "⏎ send task  ↑↓ scroll  PgUp/PgDn page  esc back");
+  assert.equal(footer({}), "⏎ steer the running task  ↑↓ scroll  PgUp/PgDn page  esc back");
+  assert.equal(footer({ question: () => ({ messageId: "q", text: "?" }) }), "⏎ answer its question  ↑↓ scroll  PgUp/PgDn page  esc back");
+  for (const width of WIDTHS) assert.ok(transcriptView().ui.render(width).every((l) => visibleWidth(l) <= width));
+});
+
+function screenOf(views: AgentView[], rows: number, sessionText: string): AgentsScreen {
+  const deps: AgentsScreenDeps = {
+    list: () => views,
+    describe: () => ({ result: "pong", question: null }),
+    transcript: (id, back) => ({
+      view: () => views.find((v) => v.id === id) ?? null,
+      source: () => ({ sessionFile: "/s.jsonl", reviews: [], streaming: null, messages: new Map() }),
+      question: () => null,
+      send: async () => "ok",
+      back,
+      requestRender: () => {},
+      rows: () => rows,
+      reader: { version: () => "1", read: () => sessionText },
+      style: PLAIN_STYLE,
+      theme: PLAIN_THEME,
+    }),
+    onAction: () => {},
+    onClose: () => {},
+    requestRender: () => {},
+    rows: () => rows,
+    theme: PLAIN_THEME,
+  };
+  return new AgentsScreen(deps);
+}
+
+// Regression: the first frame after ⏎ was laid out for the terminal's height, not the pane's, and showed an empty body.
+test("a transcript opened from the list shows its conversation in the first frame", () => {
+  const TERMINAL_ROWS = 30;
+  /** The pane as pi hosts it, drawing `paneRows` rows of a taller terminal. */
+  const hosts: Record<string, (screen: AgentsScreen, paneRows: number) => (width: number) => string[]> = {
+    // Regular mode: the pane replaces the editor and gets the terminal less the footer and the widgets below.
+    "bounded editor slot": (screen, paneRows) => {
+      const host = new BoundedVStack({ getMaxHeight: () => paneRows, requestRender: () => {} });
+      host.addChild(screen);
+      return (width) => host.render(width);
+    },
+    // Fullscreen mode: an auto-sized slot between the chat and the status rows.
+    "auto-sized slot": (screen, paneRows) => {
+      const root = new VStack([
+        { component: { render: () => ["chat"], invalidate() {} }, basis: 0, grow: 1 },
+        { component: screen, grow: 0 },
+        { component: { render: () => Array.from({ length: TERMINAL_ROWS - paneRows }, () => "status"), invalidate() {} }, shrink: 0 },
+      ]);
+      return (width) => renderLayoutFrame(root, width, TERMINAL_ROWS, () => {}).lines.slice(0, paneRows);
+    },
+  };
+  for (const [name, mount] of Object.entries(hosts)) {
+    for (const paneRows of [26, 18, 29]) {
+      for (const width of WIDTHS) {
+        const screen = screenOf([demo], TERMINAL_ROWS, session(["pong"]));
+        const draw = mount(screen, paneRows);
+        draw(width);
+        screen.handleInput(ENTER);
+        const first = text(draw(width));
+        assert.equal(first.length, paneRows);
+        const rule = first.findLastIndex((l) => /^─+$/.test(l));
+        assert.equal(first[rule - 1], "pong", `${name}, ${width}×${paneRows}: the newest line sits on the rule above the chat line:\n${first.join("\n")}`);
+        assert.deepEqual(text(draw(width)), first, `${name}, ${width}×${paneRows}: the follow-up frame changes nothing`);
+      }
+    }
+  }
 });

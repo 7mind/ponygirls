@@ -27,6 +27,7 @@ function fixture() {
     find: (provider: string, id: string) => provider === model.provider && id === model.id ? model : undefined,
     getRegisteredProviderConfig: () => state.registration,
     getRegisteredNativeProvider: () => undefined,
+    streamSimple: () => { throw new Error("unused fixture stream"); },
     getApiKeyAndHeaders: (...args: Parameters<ModelRegistry["getApiKeyAndHeaders"]>) => state.resolve(...args),
   };
   return { model, selected, state, registry, source: new GoverningModels(() => registry) };
@@ -52,7 +53,7 @@ test("custom extension streams and absent selected models fail without falling b
   assert.throws(() => f.source.describe(f.selected), { code: "MODEL_UNAVAILABLE" });
 });
 
-test("native providers are rejected instead of silently losing their implementation", () => {
+test("unmarked native providers are rejected instead of silently losing their implementation", () => {
   const f = fixture();
   const native = parentModelProvider(f.model, { stream() { throw new Error("unused"); }, streamSimple() { throw new Error("unused"); } }, async () => ({ apiKey: SECRET }));
   const source = new GoverningModels(() => ({ ...f.registry, getRegisteredNativeProvider: () => native }));

@@ -47,6 +47,14 @@ const FAST_ACTIONS: readonly ArgumentChoice[] = [
   ...["global", "project", "session"].map(token => ({ token, label: token, description: "on|off|inherit in this scope", continues: true })),
 ];
 function isOpenAI(provider: string): boolean { return provider === "openai" || provider === "openai-codex"; }
+/** OpenAI's `default` tier reads `standard`, so it is not taken for the setting's source `default`; other tiers as reported. */
+function tierName(tier: string): string { return tier === "default" ? "standard" : tier; }
+/** `/fast status`, line 2: what the provider said about the last request this session sent. */
+function reportedTier(request: RequestObservation | undefined): string {
+  if (!request) return "Provider-reported tier: not observed yet in this session";
+  const http = request.httpStatus === undefined ? "no HTTP status yet" : `HTTP ${request.httpStatus}`;
+  return `Provider-reported tier: ${request.reportedTier === undefined ? "not reported" : tierName(request.reportedTier)} (${request.provider}/${request.model}, asked for ${tierName(request.requestedTier)}, ${http})`;
+}
 
 export function registerFastMode(pi: ExtensionAPI, preferences: FastPreferenceStore): void {
   const configuration = new SharedScopedToggleConfiguration(pi, {
@@ -56,7 +64,7 @@ export function registerFastMode(pi: ExtensionAPI, preferences: FastPreferenceSt
   let settings = new ScopedSettingsView();
   let lastRequest: RequestObservation | undefined;
   pi.registerCommand("fast", {
-    description: "OpenAI priority processing: on|off (global), settings, status, or global|project|session on|off|inherit",
+    description: "OpenAI priority processing: on/off, status, settings",
     getArgumentCompletions: prefix => completeArgument(prefix, previous => {
       if (previous.length === 0) return FAST_ACTIONS;
       if (previous.length === 1 && ["global", "project", "session"].includes(previous[0].toLowerCase())) return ["on", "off", "inherit"].map(token => ({ token, label: token, description: "scoped preference", continues: false }));
@@ -90,16 +98,10 @@ export function registerFastMode(pi: ExtensionAPI, preferences: FastPreferenceSt
       const snapshot = configuration.read(ctx);
       const enabled = snapshot.values.enabled;
       const model = ctx.model;
-      const nextRequest = model && isOpenAI(model.provider)
-        ? `${enabled ? "priority" : "default"} (${model.provider}/${model.id})`
-        : `unchanged (${model ? `${model.provider}/${model.id}; not an OpenAI provider` : "no model selected"})`;
-      const observation = lastRequest
-        ? `Last OpenAI request (this runtime): ${lastRequest.provider}/${lastRequest.model}\n` +
-          `Requested tier: ${lastRequest.requestedTier}\n` +
-          `OpenAI-reported tier: ${lastRequest.reportedTier === undefined ? "not reported; unverified" : lastRequest.reportedTier}\n` +
-          `HTTP status: ${lastRequest.httpStatus === undefined ? "not observed" : lastRequest.httpStatus}`
-        : "OpenAI-reported tier: unverified; no OpenAI request observed in this runtime";
-      ctx.ui.notify(`Fast mode: ${enabled ? "ON" : "OFF"} (persistent)\nEffective source: ${snapshot.sources.enabled}\nNext request: ${nextRequest}\n${observation}\nPreference file: ${preferences.path}\nProject file: ${snapshot.targets.project}${snapshot.projectTrusted ? "" : " (ignored: untrusted)"}`, "info");
+      const nextRequest = !model ? "no model selected"
+        : isOpenAI(model.provider) ? `${tierName(enabled ? "priority" : "default")} (${model.provider}/${model.id})`
+        : `not an OpenAI model (${model.provider}/${model.id})`;
+      ctx.ui.notify(`Fast mode ${enabled ? "on" : "off"} (${snapshot.sources.enabled}) · next request: ${nextRequest}\n${reportedTier(lastRequest)}`, "info");
     },
   });
   pi.on("session_start", () => { settings.dispose(); settings = new ScopedSettingsView(); });

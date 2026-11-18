@@ -186,20 +186,20 @@ test("saving from detail returns to the remaining pending list and preserves his
   assert.equal(history.closed(), true);
 });
 
-test("shortcut hints and notices use key symbols across interaction modes", () => {
+test("shortcut hints and notices use the shared key vocabulary across interaction modes", () => {
   const h = open();
   const check = (expected: RegExp) => {
     assert.match(h.screen(), expected);
-    assert.doesNotMatch(h.screen(), /\b(?:ctrl|alt|esc|Tab)\b/i);
+    assert.doesNotMatch(h.screen(), /[⎋⇥⌃⇞⇟␣]|\b(?:ctrl|alt|Ctrl|Alt|Esc|Tab)\b/);
   };
-  check(/⎋ close/);
-  h.press(ENTER); check(/⎋ inbox/);
-  h.press("a"); check(/⌃S save[\s\S]*⌃R reload/);
-  h.setRecords([decision(1, { revision: 2 })]); check(/⌃R adopts latest/);
-  h.press(REBASE); check(/Review before ⌃S/);
-  h.press(ESC, "o", ENTER); check(/⌃S saves/);
-  h.press(ESC, "d"); check(/⌃S confirm dismiss/);
-  h.press(ESC, "d", SAVE); check(/⇥ shows history/);
+  check(/esc close/);
+  h.press(ENTER); check(/esc back/);
+  h.press("a"); check(/\^S save[\s\S]*\^R reload/);
+  h.setRecords([decision(1, { revision: 2 })]); check(/\^R adopts latest/);
+  h.press(REBASE); check(/Review before \^S/);
+  h.press(ESC, "o", ENTER); check(/\^S saves/);
+  h.press(ESC, "d"); check(/\^S confirm dismiss/);
+  h.press(ESC, "d", SAVE); check(/tab shows history/);
 });
 
 test("narrow inbox retains the full answer/dismiss/reopen keyboard hint", () => {
@@ -387,7 +387,7 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
   assert.match(lines.join("\n"), /\nContext\n {2}Useful context\.\s*\nOptions\n {2}1\. First option\s*\n {2}2\. Second option\s*\nRecommendation\n {2}Prefer the second option\./);
   const rule = lines.findLastIndex((line) => /^─+$/.test(line));
   assert.deepEqual(lines.slice(rule + 1), [
-    "↑↓ select  ⏎ detail  ⇥ pending/all  ⇞⇟ scroll detail  ⎋ close",
+    "↑↓ select  ⏎ detail  tab pending/all  PgUp/PgDn scroll detail  esc close",
     "a/e answer  1–9/o options  d dismiss  u reopen",
   ]);
   assert.ok(raw[rule + 1]!.includes(fgCode("muted") + "select"), "hint actions are muted");
@@ -399,7 +399,7 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
   h.press("d");
   const confirm = h.pane.render(width).map(plain);
   assert.match(confirm.join("\n"), /\nQ1\s+\? pending\nDismiss this decision\?\n {2}Question 1\?/);
-  assert.equal(confirm.at(-1), "⌃S confirm dismiss  ⎋ cancel");
+  assert.equal(confirm.at(-1), "^S confirm dismiss  esc cancel");
   h.press(ESC);
   h.press("r");
   const notice = h.pane.render(width);
@@ -410,7 +410,7 @@ test("framed inbox: tabs and repository name in the title rule, status glyphs, f
 test("allocated decisions layout retains close hints", () => {
   const h = open([decision(1, { context: "line\n".repeat(50) })]);
   const frame = renderLayoutFrame(h.pane, 100, 18, () => {});
-  assert.match(plain(frame.lines.join("\n")), /⎋ close/);
+  assert.match(plain(frame.lines.join("\n")), /esc close/);
 });
 
 test("wide intrinsic previews preserve decisions detail scroll and root resize regrows the body", () => {

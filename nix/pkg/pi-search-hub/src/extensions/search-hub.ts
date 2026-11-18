@@ -273,7 +273,7 @@ export default function (pi: ExtensionAPI) {
 	// -----------------------------------------------------------------------
 
 	pi.registerCommand("search-setup", {
-		description: "Configure search backends interactively",
+		description: "Configure search backends",
 		handler: async (_args, ctx) => {
 			if (!ctx.hasUI) {
 				ctx.ui.notify("/search-setup requires interactive mode", "error");
@@ -653,7 +653,7 @@ export default function (pi: ExtensionAPI) {
 	}
 
 	pi.registerCommand("search-status", {
-		description: "Show which search backends are configured and active",
+		description: "Search backends: configured and active",
 		handler: async (_args, ctx) => {
 			refreshConfig(ctx.cwd);
 
@@ -749,7 +749,7 @@ export default function (pi: ExtensionAPI) {
 	});
 	pi.on("session_shutdown", () => pane.dispose());
 	pi.registerCommand("websearch", {
-		description: "Web/paper source statistics, fetchers, and interactive tests for both search profiles",
+		description: "Search sources: statistics, fetchers, test searches",
 		handler: async (_args, ctx) => {
 			await service.refresh(ctx, undefined);
 			papers.refresh(config);

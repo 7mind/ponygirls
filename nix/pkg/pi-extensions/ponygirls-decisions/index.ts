@@ -2,8 +2,8 @@ import { join } from "node:path";
 import { Type } from "typebox";
 import { defineTool, getAgentDir, CONFIG_DIR_NAME, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { FileTogglePreferenceStore, FileProjectTogglePreferenceStore, SharedScopedToggleConfiguration, ScopedSettingsController, scopedBooleanField, parseScopedToggleCommand, parseToggleCommand, sessionEnabledData, type ScopedToggleSnapshot, type ToggleDefaults, type TogglePreferenceStore } from "@ponygirls/pi-settings";
-import { Box, Text, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { completeArgument, compactChip, CustomViewToggle, ScopedSettingsView } from "@ponygirls/pi-ui";
+import { Box, Text } from "@earendil-works/pi-tui";
+import { BORDER_ORDER, borderBadge, borderBadgeCompact, completeArgument, CustomViewToggle, ScopedSettingsView, type BorderBadge } from "@ponygirls/pi-ui";
 import { projectDisplayName, resolveProject } from "./src/project.ts";
 import { DECISION_LIMITS, SqliteDecisionStore, type Decision, type DecisionStore } from "./src/store.ts";
 import { DecisionsPane } from "./src/pane.ts";
@@ -17,7 +17,7 @@ const BADGE_GLYPH = "📥";
 const PAGE_SIZE = 10;
 const MAX_PAGE_SIZE = 50;
 const PANE_CHROME_ROWS = 4;
-const INBOX_SHORTCUT = { key: "ctrl+alt+d", label: "⌃⌥D" } as const;
+const INBOX_SHORTCUT_KEY = "ctrl+alt+d";
 export const SESSION_SETTING_TYPE = "ponygirls.decisions.setting";
 export const PREFERENCE_FILENAME = "decisions.json";
 
@@ -177,17 +177,17 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
           if (b.badge.requestRender !== null) b.badge.requestRender();
         } else {
           const badge: BadgeRegistration = { here, other, active: true, requestRender: null };
+          // One number: questions waiting in this project. Its colour says whether
+          // this session is among those waiting (warning) or only others are (muted).
+          const look = (): BorderBadge => {
+            const waiting = String(badge.here + badge.other);
+            return { glyph: BADGE_GLYPH, state: badge.here > 0 ? "attention" : "settled", label: waiting, compact: waiting };
+          };
           b.ctx.ui.setWidget(STATUS_KEY, (tui, theme) => {
             badge.requestRender = () => tui.requestRender();
             return {
-              render: (width) => [truncateToWidth(theme.bg("customMessageBg", theme.fg("warning", ` ${BADGE_GLYPH} ${badge.here}+${badge.other} · ${INBOX_SHORTCUT.label} `)), width)],
-              renderCompact: (width) => {
-                const counts = `${badge.here}+${badge.other}`;
-                const padded = compactChip(theme, BADGE_GLYPH, "attention", counts);
-                if (visibleWidth(padded) <= width) return padded;
-                const label = visibleWidth(`${BADGE_GLYPH}${counts}`) <= width ? counts : "…";
-                return truncateToWidth(theme.bg("toolPendingBg", `${theme.fg("warning", BADGE_GLYPH)}${theme.fg("text", label)}`), width);
-              },
+              render: (width) => [borderBadge(theme, look(), width)],
+              renderCompact: (width) => borderBadgeCompact(theme, look(), width),
               invalidate() {},
               dispose() {
                 badge.active = false;
@@ -199,7 +199,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
                 return { handled: true };
               },
             };
-          }, { placement: "borderBottomLeft" });
+          }, { placement: "borderBottomLeft", order: BORDER_ORDER.decisions });
           b.badge = badge;
         }
       }
@@ -426,7 +426,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
     return box;
   });
   pi.registerCommand("decisions", {
-    description: "Decision inbox: [Qn] | answer Qn <text> | dismiss Qn | reopen Qn; automation: settings|on|off|inherit|default on|default off|status; project|session|global on|off|inherit",
+    description: "Decision inbox: read, answer, dismiss, reopen; settings",
     getArgumentCompletions: (prefix) => {
       const toggles = completeArgument(prefix, (previous) => {
         const choice = (token: string, description: string, continues: boolean) => ({ token, label: token, description, continues });
@@ -493,7 +493,7 @@ export function registerDecisions(pi: ExtensionAPI, deps: DecisionsDependencies)
       }
     },
   });
-  pi.registerShortcut(INBOX_SHORTCUT.key, { description: "Open decisions inbox", handler: async (ctx) => { await openPane(active(ctx), null, "open"); } });
+  pi.registerShortcut(INBOX_SHORTCUT_KEY, { description: "Open decisions inbox", handler: async (ctx) => { await openPane(active(ctx), null, "open"); } });
 }
 
 export default function decisionsExtension(pi: ExtensionAPI): void {

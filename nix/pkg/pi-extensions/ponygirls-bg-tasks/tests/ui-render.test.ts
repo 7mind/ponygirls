@@ -4,17 +4,21 @@ import assert from "node:assert/strict";
 import test, { type TestContext } from "node:test";
 import { VStack, visibleWidth } from "@earendil-works/pi-tui";
 import { PLAIN_THEME, type UiTheme } from "@ponygirls/pi-ui";
-import { formatSize, informativeReason, shortTaskId } from "../src/present.ts";
+import { formatSize, informativeReason, shortTaskId, shownReason } from "../src/present.ts";
 import type { CompletionDetails, SessionId, TaskId, TaskRecord } from "../src/protocol.ts";
-import { collapsedCall, collapsedResult, completionLine, expandedCall, resultText, statusLine, type TranscriptTheme } from "../src/transcript.ts";
-import { BgInspector, type ViewerDeps } from "../src/ui.ts";
+import { OneLine, collapsedCall, collapsedResult, completionLine, expandedCall, resultText, statusLine, type TranscriptTheme } from "../src/transcript.ts";
+import { runBgTask, type ToolHost } from "../src/tool.ts";
+import { BgInspector, renderCompletion, type ViewerDeps } from "../src/ui.ts";
 import { defer, eventually } from "./fixtures.ts";
 import { MemoryTaskBackend } from "./memory-backend.ts";
 
 const ENTER = "\r";
 const DOWN = "\x1b[B";
 const PAGE_UP = "\x1b[5~";
+const END = "\x1b[F";
 const WIDTH = 120;
+/** Widths every pane and transcript line must fit. */
+const WIDTHS = [60, 80, 100, 120, 170] as const;
 
 /** Zero-width styling (256-colour SGR indexed by token) that `tags` turns into `<color>text</>`, `[bg …]`, `*bold*`. */
 const TOKENS: readonly string[] = ["text", "muted", "dim", "accent", "border", "success", "warning", "error", "toolTitle", "toolOutput", "selectedBg", "toolPendingBg"];
@@ -31,6 +35,8 @@ function tags(line: string): string {
     .replace(/\x1b\[39m/g, "</>").replace(/\x1b\[49m/g, "]").replace(/\x1b\[1m|\x1b\[22m/g, "*");
 }
 const PLAIN_TRANSCRIPT: TranscriptTheme = { fg: (_color, s) => s, bold: (s) => s };
+/** Styling the kit emits even with an unstyled theme (a reset around its ellipsis). */
+const SGR = /\x1b\[[0-9;]*m/g;
 
 async function inspector(t: TestContext, backend: MemoryTaskBackend, theme: UiTheme, rows = 30): Promise<BgInspector> {
   const deps: ViewerDeps = {
@@ -51,6 +57,13 @@ async function inspector(t: TestContext, backend: MemoryTaskBackend, theme: UiTh
   return view;
 }
 
+/** An inspector showing the detail view of the selected (newest) task. */
+async function opened(t: TestContext, backend: MemoryTaskBackend, theme: UiTheme): Promise<BgInspector> {
+  const view = await inspector(t, backend, theme);
+  await press(view, ENTER);
+  return view;
+}
+
 async function settled(backend: MemoryTaskBackend, id: TaskId): Promise<TaskRecord> {
   return eventually(async () => {
     const task = await backend.get(id);
@@ -68,6 +81,18 @@ async function press(view: BgInspector, ...keys: string[]): Promise<void> {
     view.handleInput(key);
     await view.idle();
   }
+}
+
+/** The key-hint lines: from the footer rule to the closing `esc` hint (a message line may follow). */
+function hints(view: BgInspector, width = WIDTH): string[] {
+  const lines = view.render(width);
+  const last = lines.findLastIndex((line) => /(^| {2})esc (close|back)$/.test(line));
+  assert.notEqual(last, -1, `no esc hint at ${width}: ${lines.join("\n")}`);
+  return lines.slice(lines.lastIndexOf("─".repeat(width)) + 1, last + 1);
+}
+
+function assertFits(lines: readonly string[], width: number, what: string): void {
+  for (const line of lines) assert.ok(visibleWidth(line) <= width, `${what} at ${width}: ${visibleWidth(line)} columns: ${line}`);
 }
 
 test("D5: the list does not repeat the exit evidence as a reason", async (t) => {
@@ -101,7 +126,7 @@ test("list: frame title, dim column header, aligned cells, hints, exact widths",
   const view = await inspector(t, backend, PLAIN_THEME);
   const lines = view.render(WIDTH);
   for (const line of lines) assert.ok(visibleWidth(line) <= WIDTH, `line wider than ${WIDTH}: ${line}`);
-  assert.match(lines[0]!, /^── Background tasks · 3 retained · 1 running ─+ ● live ──$/);
+  assert.match(lines[0]!, /^── Background tasks · 3 ─+ 1 running · ● live ──$/);
   assert.equal(visibleWidth(lines[0]!), WIDTH);
   const header = lines[1]!;
   assert.match(header, /^ {2}TASK +LABEL +STATE +TIME +EXIT +NOTICE +LOG$/);
@@ -117,7 +142,7 @@ test("list: frame title, dim column header, aligned cells, hints, exact widths",
     for (const row of rows) assert.notEqual(row[column], " ", `${name} cell is aligned in: ${row}`);
   }
   assert.equal(lines[5], "─".repeat(WIDTH));
-  assert.equal(lines[6], "↑↓ select  ⏎ open  t terminate  s signal  m mute  c clear  r refresh  q close");
+  assert.equal(lines[6], "↑↓ select  ⏎ open  t terminate  s signal  m mute notice  esc close");
   assert.equal(lines.length, 7);
 });
 
@@ -144,15 +169,148 @@ test("list: state glyph colours, non-zero exit in error, full-width selection wi
 
 test("list: informative reasons stay, the message line stays, more history is marked", async (t) => {
   const backend = new MemoryTaskBackend("ui-render" as SessionId);
-  const task = await backend.spawn({ label: "victim", command: "sleep 30", cwd: "/", notify: false });
-  await backend.terminate(task.id);
+  await backend.spawn({ label: "victim", command: "sleep 30", cwd: "/", notify: false });
+  // A reason the shown state does not already say (a terminated task's reason is its state).
+  await backend.shutdown("quit");
   const view = await inspector(t, backend, PLAIN_THEME);
   await press(view, "m");
   const lines = view.render(WIDTH);
-  assert.match(lines[2]!, /✖ failed +\d+s +SIGTERM terminated/);
+  assert.match(lines[2]!, /✖ failed +\d+s +\? session_shutdown/);
   assert.equal(lines.at(-1), "completion notices on for bgt-mem0001");
   const empty = await inspector(t, new MemoryTaskBackend("ui-empty" as SessionId), PLAIN_THEME);
-  assert.match(empty.render(WIDTH).join("\n"), /0 retained · 0 running[\s\S]*No retained tasks in this session\./);
+  assert.match(empty.render(WIDTH).join("\n"), /No background tasks in this session\. The model starts them with bg_task\./);
+});
+
+// Defect C: a task ended with `t` was listed as `✖ failed  …  SIGTERM terminated` in red.
+test("a task ended with terminate reads terminated and settled; other failures stay failed", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  await finishedTask(backend, "tests", "echo FAIL; exit 3");
+  const killed = await backend.spawn({ label: "oom", command: "sleep 30", cwd: "/", notify: false });
+  backend.kill(killed.id, "SIGKILL");
+  const stopped = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: false });
+  await backend.terminate(stopped.id);
+  const view = await inspector(t, backend, PLAIN_THEME);
+  const lines = view.render(WIDTH);
+  assert.match(lines[2]!, /^▌ mem0… +sleeper +■ terminated +\d+s +SIGTERM +off +0 B *$/, "EXIT stays factual");
+  assert.match(lines[3]!, /^ {2}mem0… +oom +✖ failed +\d+s +SIGKILL +off +0 B$/, "a signal nobody here sent is a failure");
+  assert.match(lines[4]!, /^ {2}mem0… +tests +✖ failed +\d+s +3 +off +6 B$/);
+  assert.doesNotMatch(lines.join("\n"), /SIGTERM terminated/);
+
+  const tagged = await inspector(t, backend, TAG);
+  const [, , terminatedRow, killedRow] = tagged.render(WIDTH).map(tags);
+  assert.match(terminatedRow!, /<muted>■ terminated<\/>/);
+  assert.match(terminatedRow!, /<muted>SIGTERM<\/>/, "the expected signal of a requested stop is not an error");
+  assert.match(killedRow!, /<error>✖ failed<\/>/);
+  assert.match(killedRow!, /<error>SIGKILL<\/>/);
+
+  await press(view, ENTER);
+  const title = view.render(WIDTH)[0]!;
+  assert.match(title, /· sleeper · killed by SIGTERM · notice off · 0 B ─+ ■ terminated · finished ──$/);
+  assert.match(tags((await opened(t, backend, TAG)).render(WIDTH)[0]!), /<muted>■ terminated<\/><dim> · <\/><muted>finished<\/>/);
+});
+
+test("terminating from the pane reports and lists the task as terminated", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: false });
+  const view = await inspector(t, backend, PLAIN_THEME);
+  assert.match(view.render(WIDTH)[2]!, /● running/);
+  await press(view, "t");
+  const lines = view.render(WIDTH);
+  assert.match(lines[2]!, /■ terminated +\d+s +SIGTERM/);
+  assert.equal(lines.at(-1), "bgt-mem0001: terminated, killed by SIGTERM");
+});
+
+test("list: the title counts tasks, and running ones only when there are any", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  await finishedTask(backend, "lint", "echo ok; exit 0");
+  await finishedTask(backend, "tests", "echo FAIL; exit 3");
+  const view = await inspector(t, backend, TAG);
+  assert.match(view.render(WIDTH).map(tags)[0]!, /\*<text>Background tasks<\/>\*<dim> · 2<\/><border> ─+<\/> <success>●<\/><dim> live<\/> <border>──<\/>$/);
+  await backend.spawn({ label: "build", command: "sleep 30", cwd: "/", notify: true });
+  await backend.spawn({ label: "serve", command: "sleep 30", cwd: "/", notify: true });
+  await view.refresh();
+  assert.match(view.render(WIDTH).map(tags)[0]!, /<dim> · 4<\/><border> ─+<\/> <accent>2 running<\/><dim> · <\/><success>●<\/><dim> live<\/> <border>──<\/>$/);
+});
+
+test("list hints follow the selected task; keys no longer advertised stay bound", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const lint = await finishedTask(backend, "lint", "echo ok; exit 0");
+  const build = await backend.spawn({ label: "build", command: "sleep 30", cwd: "/", notify: true });
+  const view = await inspector(t, backend, PLAIN_THEME);
+  assert.deepEqual(hints(view), ["↑↓ select  ⏎ open  t terminate  s signal  m mute notice  esc close"]);
+  await press(view, "m");
+  assert.deepEqual(hints(view), ["↑↓ select  ⏎ open  t terminate  s signal  m unmute notice  esc close"]);
+  await press(view, DOWN);
+  assert.deepEqual(hints(view), ["↑↓ select  ⏎ open  c clear  esc close"], "a finished task can only be cleared");
+  // `m` on a finished task and `r` are not advertised, and still work.
+  assert.equal((await backend.get(lint.id)).notify, false);
+  await press(view, "m");
+  assert.equal((await backend.get(lint.id)).notify, true);
+  backend.append(build.id, "12345");
+  await press(view, "r");
+  assert.match(view.render(WIDTH)[2]!, /build .* 5 B$/);
+});
+
+test("empty list: one sentence that says where tasks come from, and only esc", async (t) => {
+  const empty = await inspector(t, new MemoryTaskBackend("ui-empty" as SessionId), PLAIN_THEME);
+  assert.deepEqual(empty.render(WIDTH), [
+    `── Background tasks ${"─".repeat(WIDTH - 30)} ● live ──`,
+    "  No background tasks in this session. The model starts them with bg_task.",
+    "─".repeat(WIDTH),
+    "esc close",
+  ]);
+  for (const width of WIDTHS) {
+    const lines = empty.render(width);
+    assertFits(lines, width, "empty list");
+    assert.equal(lines.slice(1, -2).map((line) => line.trim()).join(" "), "No background tasks in this session. The model starts them with bg_task.", `wrapped, not cut, at ${width}`);
+    assert.equal(lines.at(-1), "esc close");
+  }
+});
+
+/** A list with every kind of row: completed, failed, terminated, and a running task with a long label. */
+async function mixedBackend(): Promise<MemoryTaskBackend> {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  await finishedTask(backend, "lint", "echo lint ok; exit 0");
+  await finishedTask(backend, "tests", "echo FAIL; exit 3");
+  const stopped = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: false });
+  await backend.terminate(stopped.id);
+  await backend.spawn({ label: "a much longer build label", command: "sleep 30", cwd: "/", notify: true });
+  return backend;
+}
+
+test("list: every line fits 60 to 170 columns; columns are hidden whole and named, never clipped", async (t) => {
+  const view = await inspector(t, await mixedBackend(), PLAIN_THEME);
+  for (const width of WIDTHS) {
+    const lines = view.render(width);
+    assertFits(lines, width, "list");
+    assert.equal(visibleWidth(lines[0]!), width);
+    assert.match(lines[0]!, /^── Background tasks · 4 ─+ 1 running · ● live ──$/);
+    const rows = lines.slice(2, 6);
+    assert.match(rows[0]!, /^▌ mem0… +a much longer build lab… +● running/, `identity and state at ${width}`);
+    assert.match(rows[1]!, /^ {2}mem0… +sleeper +■ terminated/, `identity and state at ${width}`);
+    for (const row of rows) assert.doesNotMatch(row, /…\s*$/, `no cell is cut at the row end at ${width}: ${row}`);
+    assert.equal(hints(view, width).join("  "), "↑↓ select  ⏎ open  t terminate  s signal  m mute notice  esc close", `hints wrap, never cut, at ${width}`);
+  }
+  const narrow = view.render(60);
+  assert.match(narrow[1]!, /^ {2}TASK +LABEL +STATE +EXIT$/);
+  assert.match(narrow[3]!, /^ {2}mem0… +sleeper +■ terminated +SIGTERM$/);
+  assert.equal(narrow[6], "  hidden at this width: Time, Notice, Log");
+  assert.equal(narrow[7], "─".repeat(60));
+  for (const width of [80, 100, 120, 170]) {
+    const lines = view.render(width);
+    assert.match(lines[1]!, /^ {2}TASK +LABEL +STATE +TIME +EXIT +NOTICE +LOG$/);
+    assert.doesNotMatch(lines.join("\n"), /hidden at this width/);
+  }
+});
+
+test("list: when even task, label and state do not fit, the label gives way and the state stays whole", async (t) => {
+  const view = await inspector(t, await mixedBackend(), PLAIN_THEME);
+  const lines = view.render(40);
+  assertFits(lines, 40, "list");
+  assert.match(lines[1]!, /^ {2}TASK +LABEL +STATE$/);
+  assert.match(lines[2]!, /^▌ mem0… +a much longer bu… +● running *$/);
+  assert.match(lines[3]!, /^ {2}mem0… +sleeper +■ terminated$/);
+  assert.deepEqual(lines.slice(6, 9), ["  hidden at this width: Time, Exit,", "  Notice, Log", "─".repeat(40)], "the note wraps between words");
 });
 
 test("detail: frame title with state and view mode, log between rules, hints", async (t) => {
@@ -165,20 +323,66 @@ test("detail: frame title with state and view mode, log between rules, hints", a
   assert.match(lines[0]!, new RegExp(`^── ${task.id} · build · notice on · \\d+ B ─+ ● running · following ──$`));
   assert.equal(visibleWidth(lines[0]!), WIDTH);
   assert.equal(lines.at(-2), "─".repeat(WIDTH));
-  assert.equal(lines.at(-1), "↑ PgUp scroll  f End follow  t terminate  s signal  m mute  c clear  esc back");
+  assert.equal(lines.at(-1), "↑↓ scroll  PgUp/PgDn page  t terminate  s signal  m mute notice  esc back");
   assert.equal(lines.at(-3), "line-40");
   await press(view, PAGE_UP);
   lines = view.render(WIDTH);
   assert.match(lines[0]!, /● running · paused ──$/);
   assert.doesNotMatch(lines.join("\n"), /line-40/);
+  assert.equal(lines.at(-1), "↑↓ scroll  PgUp/PgDn page  f follow  t terminate  s signal  m mute notice  esc back", "follow is offered only away from the end");
   await press(view, "f");
+  assert.equal(view.render(WIDTH).at(-1), "↑↓ scroll  PgUp/PgDn page  t terminate  s signal  m mute notice  esc back");
   backend.finish(task.id, 3, "FAIL\r\n");
   await view.refresh();
   lines = view.render(WIDTH);
   assert.match(lines[0]!, /· build · exit 3 · notice pending · \d+ B ─+ ✖ failed · finished ──$/);
-  assert.equal(lines.at(-1), "↑ PgUp scroll  f End end of log  t terminate  s signal  m mute  c clear  esc back");
+  assert.equal(lines.at(-1), "↑↓ scroll  PgUp/PgDn page  c clear  esc back");
   await press(view, PAGE_UP);
-  assert.match(view.render(WIDTH)[0]!, /✖ failed · scrolled back ──$/);
+  lines = view.render(WIDTH);
+  assert.match(lines[0]!, /✖ failed · scrolled back ──$/);
+  assert.equal(lines.at(-1), "↑↓ scroll  PgUp/PgDn page  f follow  c clear  esc back");
+  // End is no longer advertised and still returns to the end.
+  await press(view, END);
+  assert.match(view.render(WIDTH)[0]!, /✖ failed · finished ──$/);
+});
+
+test("detail: the title keeps whole facts only; the label is the last to give way", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const stopped = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: false });
+  await backend.terminate(stopped.id);
+  const view = await opened(t, backend, PLAIN_THEME);
+  const title = (width: number): string => view.render(width)[0]!.replace(SGR, "");
+  assert.match(title(100), /^── bgt-mem0001 · sleeper · killed by SIGTERM · notice off · 0 B ─+ ■ terminated · finished ──$/);
+  assert.match(title(90), /^── bgt-mem0001 · sleeper · killed by SIGTERM · notice off ─+ ■ terminated · finished ──$/);
+  assert.match(title(80), /^── bgt-mem0001 · sleeper · killed by SIGTERM ─+ ■ terminated · finished ──$/);
+  assert.match(title(60), /^── bgt-mem0001 · sleeper ─+ ■ terminated · finished ──$/);
+  assert.match(title(50), /^── bgt-mem0001 · s\w*… ─+ ■ terminated · finished ──$/, "only the label is ever shortened");
+  for (const width of [50, ...WIDTHS]) assert.equal(visibleWidth(view.render(width)[0]!), width);
+  const tagged = await opened(t, backend, TAG);
+  assert.match(tags(tagged.render(80)[0]!), /<dim> · sleeper · killed by SIGTERM<\/><border> ─+<\/> <muted>■ terminated<\/>/);
+});
+
+test("detail: every line fits 60 to 170 columns in each view mode", async (t) => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const task = await backend.spawn({ label: "a much longer build label", command: "sleep 30", cwd: "/", notify: false });
+  for (let i = 1; i <= 40; i++) backend.append(task.id, `line-${i} ${"word ".repeat(40)}\r\n`);
+  const view = await inspector(t, backend, PLAIN_THEME);
+  await press(view, ENTER);
+  const everyWidth = (what: string, expected: string) => {
+    for (const width of WIDTHS) {
+      const lines = view.render(width);
+      assertFits(lines, width, what);
+      assert.equal(visibleWidth(lines[0]!), width);
+      assert.equal(hints(view, width).join("  "), expected, `${what} hints wrap, never cut, at ${width}`);
+    }
+  };
+  everyWidth("following", "↑↓ scroll  PgUp/PgDn page  t terminate  s signal  m unmute notice  esc back");
+  await press(view, PAGE_UP);
+  everyWidth("paused", "↑↓ scroll  PgUp/PgDn page  f follow  t terminate  s signal  m unmute notice  esc back");
+  await backend.terminate(task.id);
+  await view.refresh();
+  everyWidth("scrolled back", "↑↓ scroll  PgUp/PgDn page  f follow  c clear  esc back");
+  assert.match(view.render(170)[0]!, /■ terminated · scrolled back ──$/);
 });
 
 test("formatSize, short ids and redundant reasons", () => {
@@ -194,6 +398,11 @@ test("formatSize, short ids and redundant reasons", () => {
   assert.equal(informativeReason("signaled", { kind: "signal", signal: "SIGKILL" }), null);
   assert.equal(informativeReason("terminated", { kind: "signal", signal: "SIGTERM" }), "terminated");
   assert.equal(informativeReason("supervisor_lost", null), "supervisor_lost");
+  // What the pane and the transcript lines both show: not the reason the shown state already is.
+  assert.equal(shownReason({ state: "failed", reason: "terminated", exit: { kind: "signal", signal: "SIGTERM" } }), null);
+  assert.equal(shownReason({ state: "failed", reason: "signaled", exit: { kind: "signal", signal: "SIGKILL" } }), null);
+  assert.equal(shownReason({ state: "failed", reason: "session_shutdown", exit: null }), "session_shutdown");
+  assert.equal(shownReason({ state: "dead", reason: "supervisor_lost", exit: null }), "supervisor_lost");
 });
 
 function details(events: CompletionDetails["events"]): CompletionDetails {
@@ -216,10 +425,99 @@ test("completion notice: one line from the retained record, or from the notice a
   assert.equal(many, "⚙ bg 4 tasks finished ✓ 1 completed · ✖ 2 failed · ⚠ 1 dead · /bg to inspect");
 });
 
-test("status notice: one line without the extension prefix", () => {
-  assert.equal(statusLine("unavailable", "bg-tasks: status backend unreachable (boom); the badge keeps its last state.", PLAIN_TRANSCRIPT),
-    "⚙ bg status backend unreachable (boom); the badge keeps its last state.");
-  assert.match(tags(statusLine("recovered", "bg-tasks: status backend reachable again.", TAG)), /^<success>⚙ bg<\/> <text>status backend reachable again\.<\/>$/);
+// The transcript still said `✖ failed · killed by SIGTERM · terminated`, in red, for a task stopped on request.
+test("completion notice: a task ended by terminate reads terminated and settled, as in the pane", async () => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const sleeper = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: true });
+  const stopped = await backend.terminate(sleeper.id);
+  const event = { taskId: stopped.id, eventId: "e1", state: "failed" as const, reason: "terminated" as const, logPath: "/x/terminal.log" };
+  const now = Date.now();
+  assert.match(completionLine(details([event]), () => stopped, now, PLAIN_TRANSCRIPT), /^⚙ bg sleeper ■ terminated · killed by SIGTERM · \d+s · log 0 B · \/bg to inspect$/);
+  assert.match(tags(completionLine(details([event]), () => stopped, now, TAG)), /^<accent>⚙ bg<\/> <text>sleeper<\/> <muted>■ terminated · killed by SIGTERM<\/><dim> · \d+s · log 0 B · \/bg to inspect<\/>$/);
+  assert.equal(completionLine(details([event]), () => undefined, now, PLAIN_TRANSCRIPT), "⚙ bg mem0… ■ terminated · /bg to inspect");
+  assert.equal(tags(completionLine(details([event]), () => undefined, now, TAG)), "<accent>⚙ bg</> <text>mem0…</> <muted>■ terminated</><dim> · /bg to inspect</>");
+
+  // A signal nobody here sent: the task failed on its own.
+  const oom = await backend.spawn({ label: "oom", command: "sleep 30", cwd: "/", notify: true });
+  backend.kill(oom.id, "SIGKILL");
+  const killed = await backend.get(oom.id);
+  const killedEvent = { ...event, taskId: killed.id, eventId: "e2", reason: "signaled" as const };
+  assert.match(tags(completionLine(details([killedEvent]), () => killed, now, TAG)), /^<accent>⚙ bg<\/> <text>oom<\/> <error>✖ failed · killed by SIGKILL<\/><dim> · /);
+
+  const failed = { ...event, eventId: "e3", reason: "exit_nonzero" as const };
+  const completed = { ...event, eventId: "e4", state: "completed" as const, reason: "exit" as const };
+  const many = details([event, failed, { ...event, eventId: "e5" }, completed]);
+  assert.equal(completionLine(many, () => undefined, now, PLAIN_TRANSCRIPT), "⚙ bg 4 tasks finished ✓ 1 completed · ■ 2 terminated · ✖ 1 failed · /bg to inspect");
+  assert.match(tags(completionLine(many, () => undefined, now, TAG)), /<success>✓ 1 completed<\/><dim> · <\/><muted>■ 2 terminated<\/><dim> · <\/><error>✖ 1 failed<\/>/);
+
+  // Expanded, the notice is what it was.
+  assert.deepEqual(renderCompletion(details([event]), "", PLAIN_THEME), ["Background task finished", "  bgt-mem0001  failed  terminated  log /x/terminal.log (until cleared)"]);
+
+  for (const notice of [details([event]), many]) {
+    for (const width of WIDTHS) assertFits(new OneLine(() => completionLine(notice, () => stopped, now, PLAIN_TRANSCRIPT), 1).render(width), width, "completion notice");
+  }
+});
+
+// `bg_task terminate … → ✖ failed · killed by SIGTERM` for the stop the call itself asked for.
+test("bg_task terminate collapsed: a requested stop reads terminated; a task that had already ended keeps its state", async () => {
+  const backend = new MemoryTaskBackend("ui-render" as SessionId);
+  const host: ToolHost = { backend: async () => backend, sessionId: () => "ui-render" as SessionId, noticeState: () => null, noticeForgotten: () => {} };
+  const terminate = async (id: TaskId, theme: TranscriptTheme): Promise<{ line: string; text: string }> => {
+    const output = await runBgTask(host, { action: "terminate", id }, undefined);
+    const content = [{ type: "text", text: output.text }];
+    return { line: collapsedResult({ action: "terminate", id }, { content, details: output.details }, false, theme), text: resultText(content) };
+  };
+  const sleeper = await backend.spawn({ label: "sleeper", command: "sleep 30", cwd: "/", notify: false });
+  const stopped = await terminate(sleeper.id, PLAIN_TRANSCRIPT);
+  assert.equal(stopped.line, "bg_task terminate mem0… → ■ terminated · killed by SIGTERM");
+  assert.equal(stopped.text, "bgt-mem0001 finished: failed (terminated), killed by SIGTERM. Its log is retained until cleared.", "expanded, the tool's own text is unchanged");
+  assert.match(tags((await terminate(sleeper.id, TAG)).line), /<toolOutput> → <\/><muted>■ terminated<\/><toolOutput> · killed by SIGTERM<\/>$/);
+
+  const tests = await finishedTask(backend, "tests", "echo FAIL; exit 3");
+  assert.equal((await terminate(tests.id, PLAIN_TRANSCRIPT)).line, "bg_task terminate mem0… → ✖ failed · exit 3");
+  assert.match(tags((await terminate(tests.id, TAG)).line), /<error>✖ failed<\/><toolOutput> · exit 3<\/>$/);
+  const lint = await finishedTask(backend, "lint", "echo ok; exit 0");
+  assert.equal((await terminate(lint.id, PLAIN_TRANSCRIPT)).line, "bg_task terminate mem0… → ✓ completed · exit 0");
+  for (const width of WIDTHS) assertFits(new OneLine(() => stopped.line, 0).render(width), width, "terminate result");
+});
+
+const unavailable = (error: string): string => `bg-tasks: status backend unreachable (${error}); the badge keeps its last state.`;
+const NO_SESSION_NOTICE = unavailable("NO_PERSISTENT_SESSION: background tasks need a persistent session file (not --no-session)");
+const RECOVERED_NOTICE = "bg-tasks: status backend reachable again.";
+
+test("status notice: what happened in plain words, without the extension prefix or the error code", () => {
+  assert.equal(statusLine("unavailable", NO_SESSION_NOTICE, PLAIN_TRANSCRIPT, WIDTH), "⚙ background tasks are off: this session is not saved (--no-session)");
+  assert.equal(statusLine("unavailable", unavailable("boom"), PLAIN_TRANSCRIPT, WIDTH), "⚙ background task status unavailable: boom");
+  assert.equal(statusLine("unavailable", unavailable("SUPERVISOR_LOST: the task supervisor connection closed"), PLAIN_TRANSCRIPT, WIDTH),
+    "⚙ background task status unavailable: the task supervisor connection closed");
+  assert.equal(statusLine("unavailable", unavailable("line one\n  line (two)"), PLAIN_TRANSCRIPT, WIDTH), "⚙ background task status unavailable: line one line (two)");
+  assert.equal(statusLine("unavailable", "bg-tasks: something else", PLAIN_TRANSCRIPT, WIDTH), "⚙ background task status unavailable: something else", "text of another shape is shown as the reason");
+  assert.equal(statusLine("recovered", RECOVERED_NOTICE, PLAIN_TRANSCRIPT, WIDTH), "⚙ background task status is back");
+  assert.equal(tags(statusLine("unavailable", NO_SESSION_NOTICE, TAG, WIDTH)), "<muted>⚙</> <text>background tasks are off: this session is not saved (--no-session)</>", "off by choice: settled, not a warning");
+  assert.equal(tags(statusLine("unavailable", unavailable("boom"), TAG, WIDTH)), "<warning>⚙</> <text>background task status unavailable: boom</>");
+  assert.equal(tags(statusLine("recovered", RECOVERED_NOTICE, TAG, WIDTH)), "<success>⚙</> <text>background task status is back</>");
+});
+
+// Defect B: at 120 columns the collapsed line ended `…(not --no-se...`.
+test("status notice: one line at 60 to 170 columns, shortened only between words", () => {
+  const long = unavailable("STORE_CORRUPT: the task registry of this session cannot be read because its metadata is damaged beyond what recovery repairs; restore tasks.json from a copy or clear the sidecar directory before starting background tasks again");
+  const notices: Array<["unavailable" | "recovered", string]> = [["unavailable", NO_SESSION_NOTICE], ["unavailable", long], ["recovered", RECOVERED_NOTICE]];
+  for (const [status, content] of notices) {
+    const full = statusLine(status, content, PLAIN_TRANSCRIPT, 1000);
+    for (const width of [20, 40, ...WIDTHS]) {
+      const line = statusLine(status, content, PLAIN_TRANSCRIPT, width);
+      assert.ok(visibleWidth(line) <= width, `${width}: ${line}`);
+      assert.doesNotMatch(line, /\n/);
+      if (line === full) continue;
+      assert.ok(line.endsWith("…"), `${width}: ${line}`);
+      assert.ok(full.startsWith(`${line.slice(0, -1)} `), `cut inside a word at ${width}: ${line}`);
+    }
+  }
+  assert.equal(statusLine("unavailable", NO_SESSION_NOTICE, PLAIN_TRANSCRIPT, 60), "⚙ background tasks are off: this session is not saved…");
+  assert.equal(statusLine("unavailable", long, PLAIN_TRANSCRIPT, 60), "⚙ background task status unavailable: the task registry of…");
+  assert.equal(statusLine("unavailable", long, PLAIN_TRANSCRIPT, 170),
+    "⚙ background task status unavailable: the task registry of this session cannot be read because its metadata is damaged beyond what recovery repairs; restore tasks.json…");
+  assert.equal(tags(statusLine("unavailable", long, TAG, 60)), "<warning>⚙</> <text>background task status unavailable: the task registry of…</>");
 });
 
 test("bg_task collapsed: the call alone, then call and outcome on one line", () => {
@@ -264,7 +562,7 @@ test("allocated background-task layout retains action hints", async (t) => {
   for (let i = 0; i < 30; i++) await backend.spawn({ label: `task-${i}`, command: "sleep 30", cwd: "/", notify: false });
   const pane = await inspector(t, backend, PLAIN_THEME, 24);
   const frame = renderLayoutFrame(pane, 100, 18, () => {});
-  assert.match(frame.lines.join("\n"), /refresh/);
+  assert.match(frame.lines.join("\n"), /t terminate {2}s signal/);
 });
 
 test("background-task pagination regrows under an auto-basis editor", async (t) => {

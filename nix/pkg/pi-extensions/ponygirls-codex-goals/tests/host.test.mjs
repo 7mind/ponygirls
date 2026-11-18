@@ -11,7 +11,11 @@ const sdk = await import(pathToFileURL(join(root, "dist/index.js")));
 const { createAssistantMessageEventStream } = await import(pathToFileURL(join(root, "node_modules/@earendil-works/pi-ai/dist/utils/event-stream.js")));
 const { CustomMessageComponent } = await import(pathToFileURL(join(root, "dist/modes/interactive/components/custom-message.js")));
 const { CustomEntryComponent } = await import(pathToFileURL(join(root, "dist/modes/interactive/components/custom-entry.js")));
+const { ToolExecutionComponent } = await import(pathToFileURL(join(root, "dist/modes/interactive/components/tool-execution.js")));
 const { initTheme } = await import(pathToFileURL(join(root, "dist/modes/interactive/theme/theme.js")));
+const { visibleWidth } = await import(pathToFileURL(join(root, "node_modules/@earendil-works/pi-tui/dist/index.js")));
+const { buildTranscript, loadTranscriptHost } = await import("./host-transcript.mjs");
+const transcriptHost = await loadTranscriptHost(root);
 const extensionPath = resolve(import.meta.dirname, "../index.ts");
 const plain = (text) => text.replace(/\x1b\[[0-9;]*m/g, "");
 const usage = { input: 2, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
@@ -124,8 +128,10 @@ test("host: slash kickoff and three executions keep full instructions and answer
   assert.ok(commits.length > 0);
   const commitRenderer = extension.entryRenderers.get("codex-goal-commit");
   for (const e of commits) {
+    // A revision is bookkeeping: collapsed it has no component, so pi adds neither a line nor its spacer.
     const component = new CustomEntryComponent(e, commitRenderer);
-    assert.match(plain(component.render(160).join("\n")), new RegExp(`^ {2}· goal rev ${e.data.revision} committed`, "m"));
+    assert.equal(component.hasContent(), false);
+    assert.deepEqual(component.render(160), []);
     component.setExpanded(true);
     assert.ok(component.render(160).join("\n").includes(`[codex-goal-commit] ${JSON.stringify(e.data)}`));
   }
@@ -141,6 +147,133 @@ test("host: slash kickoff and three executions keep full instructions and answer
   assert.deepEqual(f.errors, []);
 });
 
+const isCommit = (entry) => entry.type === "custom" && entry.customType === "codex-goal-commit";
+const drawn = (lines) => lines.filter((line) => line !== "");
+const TRANSCRIPT_WIDTHS = [60, 80, 100, 120, 170];
+
+/** A goal tool's row as pi draws it: the styled rows of the call and its result in pi's tool box. */
+function toolRow(definition, call, result, expanded, width) {
+  const component = new ToolExecutionComponent(call.name, call.id, call.arguments, {}, definition, { requestRender() {} }, "/");
+  component.updateResult(result);
+  component.setExpanded(expanded);
+  return component.render(width);
+}
+
+function toolExchange(f, toolCallId) {
+  const messages = f.manager.getEntries().filter((e) => e.type === "message").map((e) => e.message);
+  const call = messages.flatMap((m) => (m.role === "assistant" ? m.content : [])).find((part) => part.type === "toolCall" && part.id === toolCallId);
+  const result = messages.find((m) => m.role === "toolResult" && m.toolCallId === toolCallId);
+  assert.ok(call && result, `tool exchange ${toolCallId}`);
+  const definition = f.loader.getExtensions().extensions[0].tools.get(call.name).definition;
+  return { call, result, definition, generic: { ...definition, renderCall: undefined, renderResult: undefined } };
+}
+
+test("host: the collapsed transcript has one line per goal event; revisions add no row", async (t) => {
+  const objective = "Say the word ok, then immediately mark this goal complete with update_goal.";
+  const f = await fixture(t, [
+    [{ type: "toolCall", id: "get", name: "get_goal", arguments: {} }],
+    [{ type: "text", text: "ok" }, { type: "toolCall", id: "done", name: "update_goal", arguments: { status: "complete" } }],
+    "Complete.",
+  ]);
+  await f.session.prompt(`/goal ${objective}`);
+  await f.session.prompt(objective);
+  await f.session.waitForIdle();
+  assert.equal(f.envelope().goal.status, "complete");
+  const commits = f.manager.getEntries().filter(isCommit);
+  assert.ok(commits.length >= 3, "create, complete and settled usage each commit a revision");
+
+  const collapsed = buildTranscript(transcriptHost, f.session, false);
+  const lines = collapsed.lines(120);
+  assert.deepEqual(drawn(lines).map((line) => line.replace(/ · \d+ lines.*$/, " · N lines").replace(/\d+ tokens · \d+s$/, "N tokens · Ns")), [
+    ` ${objective}`,
+    ` ◎ goal · kickoff · active · “${objective}” · N lines`,
+    " get_goal → active · N tokens · Ns",
+    " ok",
+    " update_goal complete",
+    " Complete.",
+  ]);
+  // No line and no spacer: the rows are those of the same transcript without the commit entries.
+  const withoutCommits = buildTranscript(transcriptHost, f.session, false, (entry) => !isCommit(entry));
+  assert.deepEqual(lines, withoutCommits.lines(120));
+  for (const width of TRANSCRIPT_WIDTHS) {
+    const rows = collapsed.rows(width);
+    for (const row of rows) assert.ok(visibleWidth(row) <= width, `row too wide at ${width}: ${plain(row)}`);
+    const text = drawn(collapsed.lines(width));
+    assert.equal(text.filter((line) => /^ get_goal → active · \d+ tokens · \d+s$/.test(line)).length, 1, `get_goal row at ${width}`);
+    assert.equal(text.filter((line) => line === " update_goal complete").length, 1, `update_goal row at ${width}`);
+    assert.equal(text.filter((line) => /goal rev|codex-goal-commit/.test(line)).length, 0);
+  }
+
+  // Built expanded, every persisted entry is drawn in full, as before.
+  const expanded = buildTranscript(transcriptHost, f.session, true);
+  const full = expanded.lines(400).join("\n");
+  for (const e of commits) assert.ok(full.includes(`[codex-goal-commit] ${JSON.stringify(e.data)}`));
+  assert.ok(full.includes("[codex-goal:kickoff "));
+  // Collapsing takes the revisions' rows away again and expanding returns them. One spacer stays:
+  // pi gave it to the user message, which was not the first row while the first revision was drawn.
+  expanded.setExpanded(false);
+  assert.deepEqual(expanded.lines(120), ["", ...lines]);
+  expanded.setExpanded(true);
+  assert.equal(expanded.lines(400).join("\n"), full);
+
+  // The cost of drawing no row: pi leaves an entry without a component out of the transcript it
+  // builds, so expanding afterwards cannot draw it. If this fails, pi retains such entries now and
+  // the README's statement about commit metadata needs updating.
+  collapsed.setExpanded(true);
+  assert.ok(!collapsed.lines(400).join("\n").includes("[codex-goal-commit]"));
+  assert.deepEqual(f.errors, []);
+});
+
+test("host: expanded goal tool rows are pi's generic rendering; a rejected call keeps its full text collapsed", async (t) => {
+  const f = await fixture(t, [
+    [{ type: "toolCall", id: "get", name: "get_goal", arguments: {} }],
+    [{ type: "toolCall", id: "again", name: "create_goal", arguments: { objective: "a second\n\tgoal \x1b[31mred\x1b[0m", token_budget: 40000 } }],
+    complete,
+    "final report",
+  ]);
+  await f.session.prompt("/goal generic host objective");
+  await f.session.prompt("Start the recorded goal");
+  await f.session.waitForIdle();
+  assert.equal(f.envelope().goal.status, "complete");
+  initTheme("dark");
+  for (const id of ["get", "again", "complete"]) {
+    const { call, result, definition, generic } = toolExchange(f, id);
+    for (const width of TRANSCRIPT_WIDTHS) {
+      assert.deepEqual(toolRow(definition, call, result, true, width), toolRow(generic, call, result, true, width), `${call.name} expanded at ${width}`);
+    }
+  }
+  // While a call runs there is no outcome yet: the row is the call alone.
+  const running = new ToolExecutionComponent("update_goal", "running", { status: "complete" }, {}, toolExchange(f, "complete").definition, { requestRender() {} }, "/");
+  assert.deepEqual(drawn(running.render(120).map((row) => plain(row).trim())), ["update_goal complete"]);
+  const rejected = toolExchange(f, "again");
+  assert.equal(rejected.result.isError, true);
+  const text = rejected.result.content.map((part) => part.text).join("\n");
+  assert.match(text, /^create_goal rejected: /);
+  for (const width of TRANSCRIPT_WIDTHS) {
+    const rows = toolRow(rejected.definition, rejected.call, rejected.result, false, width);
+    for (const row of rows) assert.ok(visibleWidth(row) <= width);
+    const [call, ...error] = drawn(rows.map((row) => plain(row).trim()));
+    assert.equal(call, "create_goal cap 40k · “a second goal \\x1b[31mred\\x1b[0m”");
+    assert.equal(error.join(" "), text, `the whole error at ${width}`);
+  }
+  assert.deepEqual(f.errors, []);
+});
+
+test("host: a clear is one transcript line; built expanded both of its entries show their text", async (t) => {
+  const f = await fixture(t, []);
+  await f.session.prompt("/goal generic objective");
+  await f.session.prompt("/goal clear");
+  assert.equal(f.envelope().goal, null);
+  const tombstone = f.manager.getEntries().filter(isCommit).at(-1);
+  assert.equal(tombstone.data.tombstone, true);
+  for (const width of TRANSCRIPT_WIDTHS) {
+    assert.deepEqual(drawn(buildTranscript(transcriptHost, f.session, false).lines(width)), [" 🎯 goal cleared"]);
+  }
+  const full = buildTranscript(transcriptHost, f.session, true).lines(400).join("\n");
+  assert.ok(full.includes(`[codex-goal-commit] ${JSON.stringify(tombstone.data)}`));
+  assert.ok(full.includes("Goal cleared. Transcript entries retained."));
+});
+
 test("host: lifecycle notices render their actual text", async (t) => {
   const f = await fixture(t, []);
   await f.session.prompt("/goal generic objective");
@@ -152,7 +285,7 @@ test("host: lifecycle notices render their actual text", async (t) => {
   initTheme("dark");
   const renderer = f.loader.getExtensions().extensions[0].entryRenderers.get("codex-goal-notice");
   const component = new CustomEntryComponent(notice, renderer);
-  assert.match(plain(component.render(100).join("\n")), new RegExp(`◉ goal paused · rev ${notice.data.revision} · .* · /goal resume`));
+  assert.match(plain(component.render(100).join("\n")), new RegExp(`◉ goal paused · .* · /goal resume`));
   component.setExpanded(true);
   assert.match(component.render(100).join("\n"), new RegExp(`Goal paused \\(${notice.data.goalId}\\)\\.`));
 });

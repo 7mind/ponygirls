@@ -495,13 +495,15 @@ OUT="$(run_yolo --bind "../remap-rw/../remap-rw,/opt/x" cmd true)"
 assert_contains "--bind canonicalizes a relative source" "$OUT" \
   $'--bind\n'"$REMAP_RW,/opt/x"
 
-# Unlike --ro/--rw, an explicit remap never disappears silently.
-for _bad in "$WORKDIR/missing,/opt/x" "$REMAP_RW" "$REMAP_RW,relative/dst" \
-    "$REMAP_RW,~/.config/tether" ",/opt/x"; do
+# Unlike --ro/--rw, an explicit remap never disappears silently. A malformed
+# spec is a usage error (exit 2); a source missing on the host is not (exit 1).
+for _case in "1|$WORKDIR/missing,/opt/x" "2|$REMAP_RW" "2|$REMAP_RW,relative/dst" \
+    "2|$REMAP_RW,~/.config/tether" "1|,/opt/x"; do
+  _bad="${_case#*|}"
   for _flag in --bind --ro-bind; do
     OUT="$(run_yolo "$_flag" "$_bad" cmd true)"
     STATUS=$?
-    assert_eq "$_flag $_bad is refused" "1" "$STATUS"
+    assert_eq "$_flag $_bad is refused" "${_case%%|*}" "$STATUS"
     assert_not_contains "$_flag $_bad never reaches the sandbox" "$OUT" "SMIND_SANDBOXED=1"
   done
 done
@@ -566,19 +568,19 @@ assert_contains "missing source credentials are named" "$OUT" \
 
 OUT="$(run_yolo --profile work --auth-override codex:work cmd true)"
 STATUS=$?
-assert_eq "auth override from the launched profile itself is refused" "1" "$STATUS"
+assert_eq "auth override from the launched profile itself is refused" "2" "$STATUS"
 
 OUT="$(run_yolo --profile foo --auth-override gemini:work cmd true)"
 STATUS=$?
-assert_eq "auth override for an unsupported agent is refused" "1" "$STATUS"
+assert_eq "auth override for an unsupported agent is refused" "2" "$STATUS"
 
 OUT="$(run_yolo --profile foo --auth-override codex:work --auth-override codex:other cmd true)"
 STATUS=$?
-assert_eq "two auth overrides for one agent are refused" "1" "$STATUS"
+assert_eq "two auth overrides for one agent are refused" "2" "$STATUS"
 
 OUT="$(run_yolo --profile foo --auth-override codex:../x cmd true)"
 STATUS=$?
-assert_eq "auth override with an invalid profile name is refused" "1" "$STATUS"
+assert_eq "auth override with an invalid profile name is refused" "2" "$STATUS"
 
 # bwrap creates an empty mountpoint file when the launched profile has no
 # credentials of its own; yolo removes it on exit so the profile is not left
@@ -666,7 +668,7 @@ OUT="$(cd "$FAKE_HOME" && HOME="$FAKE_HOME" YOLO_LLM_SANDBOX=x YOLO_SANDBOX_ENTR
 assert_eq "list profiles works from \$HOME" $'foo\nwork\nzeta' "$OUT"
 OUT="$(run_yolo --list-profiles claude)"
 STATUS=$?
-assert_eq "list profiles rejects a trailing subcommand" "1" "$STATUS"
+assert_eq "list profiles rejects a trailing subcommand" "2" "$STATUS"
 
 BACKUP_ROOT="$FAKE_HOME/.local/share/yolo/deleted-profiles"
 OUT="$(run_yolo --delete-profile zeta </dev/null)"
@@ -709,14 +711,14 @@ BACKUPS=("$BACKUP_ROOT"/zeta-*)
 assert_eq "purge makes no backup" "1" "${#BACKUPS[@]}"
 OUT="$(run_yolo --purge cmd true)"
 STATUS=$?
-assert_eq "--purge without --delete-profile is refused" "1" "$STATUS"
+assert_eq "--purge without --delete-profile is refused" "2" "$STATUS"
 OUT="$(printf 'y\n' | run_yolo --delete-profile zeta)"
 STATUS=$?
 assert_eq "deleting a missing profile is refused" "1" "$STATUS"
 assert_contains "missing profile deletion names the profile" "$OUT" "profile 'zeta' does not exist"
 OUT="$(printf 'y\n' | run_yolo --delete-profile ..)"
 STATUS=$?
-assert_eq "deleting an invalid profile name is refused" "1" "$STATUS"
+assert_eq "deleting an invalid profile name is refused" "2" "$STATUS"
 TESTS_RUN=$((TESTS_RUN + 1))
 if [[ ! -d "$FAKE_HOME/.config/yolo/foo" ]]; then
   echo "FAIL: invalid profile name deletion leaves siblings intact"
@@ -724,7 +726,7 @@ if [[ ! -d "$FAKE_HOME/.config/yolo/foo" ]]; then
 fi
 OUT="$(run_yolo --delete-profile)"
 STATUS=$?
-assert_eq "delete profile without a name is refused" "1" "$STATUS"
+assert_eq "delete profile without a name is refused" "2" "$STATUS"
 
 # --copy-sessions AGENT:SRC:DST copies session files into DST without
 # overwriting anything DST already has.
@@ -780,21 +782,23 @@ assert_eq "pi session copy copies sessions" "x" "$(cat "$CS_DST/pi/home/agent/se
 OUT="$(run_yolo --copy-sessions pi:cs-src:cs-dst)"
 assert_contains "repeated session copy copies nothing new" "$OUT" "copied 0 file(s), kept 1 already in 'cs-dst'"
 
-for _bad in "gemini:cs-src:cs-dst" "codex:cs-src" "codex:cs-src:cs-src" "codex:cs-src:missing" \
-    "codex:missing:cs-dst" "codex:../x:cs-dst"; do
+# A malformed spec is a usage error (exit 2); a profile missing on the host is not (exit 1).
+for _case in "2|gemini:cs-src:cs-dst" "2|codex:cs-src" "2|codex:cs-src:cs-src" "1|codex:cs-src:missing" \
+    "1|codex:missing:cs-dst" "2|codex:../x:cs-dst"; do
+  _bad="${_case#*|}"
   OUT="$(run_yolo --copy-sessions "$_bad")"
   STATUS=$?
-  assert_eq "--copy-sessions $_bad is refused" "1" "$STATUS"
+  assert_eq "--copy-sessions $_bad is refused" "${_case%%|*}" "$STATUS"
 done
 OUT="$(run_yolo --copy-sessions codex:cs-src:cs-dst cmd true)"
 STATUS=$?
-assert_eq "--copy-sessions rejects a trailing subcommand" "1" "$STATUS"
+assert_eq "--copy-sessions rejects a trailing subcommand" "2" "$STATUS"
 rm -rf "$CS_SRC" "$CS_DST"
 
 OUT="$(run_yolo --work cmd true)"
 STATUS=$?
-assert_eq "retired --work alias is an unknown flag" "1" "$STATUS"
-assert_contains "retired --work alias reports an unknown flag" "$OUT" "Unknown flag: --work"
+assert_eq "retired --work alias is an unknown flag" "2" "$STATUS"
+assert_contains "retired --work alias reports an unknown flag" "$OUT" "yolo: unknown flag '--work'"
 
 # Specified runtime credential modes: private literal transport and RO file mode.
 unset HAYSTACK_TOKEN HAYSTACK_TOKEN_FILE MANURE_TOKEN MANURE_TOKEN_FILE
@@ -884,6 +888,282 @@ assert_eq "named marker overrides CLI env" YOLO_NAMED_PROFILE=1 \
 OUT="$(YOLO_NAMED_PROFILE=1 run_yolo --env YOLO_NAMED_PROFILE=1 cmd true)"
 assert_eq "default marker overrides ambient and CLI env" YOLO_NAMED_PROFILE=0 \
   "$(printf '%s\n' "$OUT" | grep '^YOLO_NAMED_PROFILE=' | tail -1)"
+
+# Command-line conventions: a usage error exits 2 as `yolo: <what is wrong>`
+# plus the help pointer, before any launch side effect. A recording clipboard
+# broker behind a live tmux socket and an absent VM state directory stand for
+# those side effects; the first launch below proves both detectors fire.
+USAGE_TMUX_SOCKET="$WORKDIR/usage-tmux.sock"
+bind_unix_socket "$USAGE_TMUX_SOCKET"
+USAGE_BROKER_LOG="$WORKDIR/usage-broker.log"
+USAGE_VM_DIR="$WORKDIR/usage-vm-state"
+printf '%s\n' "#!$_bash_path" "printf '%s\n' \"\$*\" >> '$USAGE_BROKER_LOG'" 'exit 1' > "$FAKE_BIN/record-broker"
+chmod +x "$FAKE_BIN/record-broker"
+USAGE_CWD="$PROJECT_DIR"
+# `timeout`: a flag loop that never consumes its argument must fail, not hang.
+run_usage_yolo_streams() {
+  cd "$USAGE_CWD" &&
+    HOME="$FAKE_HOME" \
+    XDG_RUNTIME_DIR="$FAKE_XDG" \
+    TMUX="$USAGE_TMUX_SOCKET,1,0" \
+    YOLO_CLIPBOARD_PROXY="$FAKE_BIN/record-broker" \
+    YOLO_VM_STATE_DIR="$USAGE_VM_DIR" \
+    YOLO_LLM_SANDBOX="$FAKE_BIN/record-sandbox" \
+    YOLO_SANDBOX_ENTRYPOINT="$(command -v true)" \
+    YOLO_NIX_LD="$(command -v true)" \
+    YOLO_JQ="$(command -v jq)" \
+    YOLO_TASKSET="$(command -v taskset)" \
+    YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
+    timeout 20 bash "$SCRIPT" "$@"
+}
+run_usage_yolo() { run_usage_yolo_streams "$@" 2>&1; }
+launch_side_effects() {
+  local _seen=""
+  [[ -e "$USAGE_BROKER_LOG" ]] && _seen+="broker "
+  [[ -e "$USAGE_VM_DIR" ]] && _seen+="vm-state-dir "
+  [[ -e "$FAKE_HOME/.config/yolo/usage-fresh" ]] && _seen+="profile-dir "
+  rm -rf "$USAGE_BROKER_LOG" "$USAGE_VM_DIR" "$FAKE_HOME/.config/yolo/usage-fresh"
+  printf '%s' "$_seen"
+}
+TRY_HELP="Try 'yolo --help'."
+USAGE_BLOCK='Usage:
+  yolo [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
+  yolo --list-profiles
+  yolo --delete-profile NAME [--purge]
+  yolo --copy-sessions AGENT:SRC:DST'
+assert_usage_error() {
+  local desc="$1" message="$2" out status
+  shift 2
+  out="$(run_usage_yolo "$@")"
+  status=$?
+  assert_eq "$desc exits 2" "2" "$status"
+  assert_eq "$desc prints only the problem and the help pointer" "yolo: $message"$'\n'"$TRY_HELP" "$out"
+  assert_eq "$desc has no launch side effect" "" "$(launch_side_effects)"
+}
+
+OUT="$(run_usage_yolo --profile usage-fresh cmd true)"
+assert_eq "side-effect control launch succeeds" "0" "$?"
+assert_eq "side-effect control launch starts the broker and creates directories" \
+  "broker vm-state-dir profile-dir " "$(launch_side_effects)"
+
+assert_usage_error "an unknown command" \
+  "unknown command 'bogus' (expected claude, codex, pi, shell or cmd)" bogus
+assert_usage_error "an unknown command after flags" \
+  "unknown command 'bogus' (expected claude, codex, pi, shell or cmd)" --profile usage-fresh bogus --help
+assert_usage_error "cmd without a program" "cmd requires a program to run" --profile usage-fresh cmd
+assert_usage_error "an unknown flag" "unknown flag '--work'" --work cmd true
+for _flag in --profile -p --delete-profile; do
+  assert_usage_error "$_flag without a value" "$_flag requires a profile name" "$_flag"
+done
+assert_usage_error "--profile with an empty value" "--profile requires a profile name" --profile "" cmd true
+assert_usage_error "--copy-sessions without a value" "--copy-sessions requires AGENT:SRC:DST" --copy-sessions
+assert_usage_error "--auth-override without a value" "--auth-override requires AGENT:PROFILE" --auth-override
+for _flag in --ro --rw; do
+  assert_usage_error "$_flag without a value" "$_flag requires a path" "$_flag"
+done
+for _flag in --bind --ro-bind; do
+  assert_usage_error "$_flag without a value" "$_flag requires SRC,DST" "$_flag"
+  assert_usage_error "$_flag without a destination" "$_flag expects SRC,DST (got '$REMAP_RW')" \
+    "$_flag" "$REMAP_RW" cmd true
+  assert_usage_error "$_flag with a relative destination" \
+    "$_flag destination 'relative/dst' must be an absolute sandbox path ('~' is not expanded)" \
+    "$_flag" "$REMAP_RW,relative/dst" cmd true
+done
+assert_usage_error "--env without a value" "--env requires KEY=VAL" --env
+assert_usage_error "--mem-limit without a value" "--mem-limit requires SIZE or 'none'" --mem-limit
+assert_usage_error "--cpu-limit without a value" "--cpu-limit requires N or 'none'" --cpu-limit
+assert_usage_error "--mem-limit=0" \
+  "--mem-limit=0 would fail every allocation; use 'none' to remove the limit" --mem-limit=0 cmd true
+assert_usage_error "--mem-limit with an unknown unit" \
+  "--mem-limit expects SIZE (KiB, or a K/M/G/T suffix, e.g. 8G) or 'none' (got '12X')" --mem-limit 12X cmd true
+assert_usage_error "--cpu-limit with a non-number" \
+  "--cpu-limit expects a positive hardware-thread count or 'none' (got 'zero')" --cpu-limit=zero cmd true
+assert_usage_error "an invalid profile name" \
+  "invalid profile name '../x' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" --profile ../x cmd true
+assert_usage_error "an invalid profile name to delete" \
+  "invalid profile name '..' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" --delete-profile ..
+assert_usage_error "--purge without --delete-profile" "--purge only applies to --delete-profile" --purge cmd true
+assert_usage_error "a subcommand after --list-profiles" \
+  "--list-profiles/--delete-profile/--copy-sessions take no subcommand (got 'claude')" --list-profiles claude
+assert_usage_error "--copy-sessions with an unknown agent" \
+  "--copy-sessions expects AGENT:SRC:DST with AGENT one of claude, codex, pi (got 'gemini:work:foo')" \
+  --copy-sessions gemini:work:foo
+assert_usage_error "--copy-sessions without a destination" \
+  "--copy-sessions expects AGENT:SRC:DST (got 'codex:work')" --copy-sessions codex:work
+assert_usage_error "--copy-sessions with an invalid profile name" \
+  "invalid profile name '../x' in --copy-sessions codex:../x:foo" --copy-sessions codex:../x:foo
+assert_usage_error "--copy-sessions onto the same profile" \
+  "--copy-sessions codex:work:work copies a profile onto itself" --copy-sessions codex:work:work
+assert_usage_error "--auth-override with an unknown agent" \
+  "--auth-override expects AGENT:PROFILE with AGENT one of claude, codex, pi (got 'gemini:work')" \
+  --profile foo --auth-override gemini:work cmd true
+assert_usage_error "--auth-override with an invalid profile name" \
+  "invalid profile name '../x' in --auth-override codex:../x" --profile foo --auth-override codex:../x cmd true
+assert_usage_error "--auth-override naming the launched profile" \
+  "--auth-override codex:work names the launched profile itself" --profile work --auth-override codex:work cmd true
+assert_usage_error "two --auth-override for one agent" \
+  "more than one --auth-override for codex" \
+  --profile foo --auth-override codex:work --auth-override codex:other cmd true
+
+# No command at all: the usage block instead of the full help, on stderr.
+OUT="$(run_usage_yolo)"
+assert_eq "no arguments exits 2" "2" "$?"
+assert_eq "no arguments prints the short usage" "$USAGE_BLOCK"$'\n'"$TRY_HELP" "$OUT"
+assert_eq "no arguments has no launch side effect" "" "$(launch_side_effects)"
+assert_eq "the short usage goes to stderr" "" "$(run_usage_yolo_streams 2>/dev/null)"
+OUT="$(run_usage_yolo --profile usage-fresh)"
+assert_eq "flags without a command exit 2" "2" "$?"
+assert_eq "flags without a command print the short usage" "$USAGE_BLOCK"$'\n'"$TRY_HELP" "$OUT"
+assert_eq "flags without a command have no launch side effect" "" "$(launch_side_effects)"
+
+# The command is checked before the $HOME guard, which itself is unchanged.
+USAGE_CWD="$FAKE_HOME"
+assert_usage_error "an unknown command from \$HOME" \
+  "unknown command 'bogus' (expected claude, codex, pi, shell or cmd)" bogus
+OUT="$(run_usage_yolo cmd true)"
+assert_eq "a valid command from \$HOME is still refused" "1" "$?"
+assert_contains "the \$HOME refusal keeps its message" "$OUT" "Error: refusing to run yolo from \$HOME ("
+assert_not_contains "the \$HOME refusal never reaches the sandbox" "$OUT" "SMIND_SANDBOXED=1"
+assert_eq "the \$HOME refusal has no launch side effect" "" "$(launch_side_effects)"
+USAGE_CWD="$PROJECT_DIR"
+
+# Host-state failures are not usage errors: they keep `Error:` and exit 1.
+OUT="$(run_usage_yolo --delete-profile usage-fresh)"
+assert_eq "a missing profile stays a runtime failure" "1" "$?"
+assert_eq "a missing profile keeps its message" \
+  "Error: profile 'usage-fresh' does not exist ($FAKE_HOME/.config/yolo/usage-fresh)" "$OUT"
+
+# --help is unchanged: full help on stdout, exit 0, without launching anything.
+HELP_OUT="$(run_usage_yolo_streams --help 2>/dev/null)"
+assert_eq "--help exits 0" "0" "$?"
+assert_eq "--help prints nothing to stderr" "" "$(run_usage_yolo_streams --help 2>&1 >/dev/null)"
+assert_contains "--help opens with the tool description" "$HELP_OUT" \
+  "yolo — LLM tool launcher inside the llm-sandbox (bubblewrap) sandbox."$'\n\n'"$USAGE_BLOCK"$'\n\n'"Flags (must precede the subcommand):"
+assert_contains "--help keeps the closing paragraph" "$HELP_OUT" "declarative session/secret variables to pass them explicitly."
+assert_eq "-h prints the same help" "$HELP_OUT" "$(run_usage_yolo_streams -h 2>/dev/null)"
+assert_eq "--help has no launch side effect" "" "$(launch_side_effects)"
+
+# Launch trace: off by default. `--trace` (or YOLO_TRACE=1) hands the switch to
+# the sandbox layer, to the entrypoint only when one runs (nothing else would
+# drop the variable from the tool's environment), and to the clipboard broker.
+unset YOLO_TRACE # the caller's own setting must not decide these cases
+# The options the sandbox layer received, without the command after `--`.
+sandbox_options() { awk '$0 == "--" { exit } { print }' <<< "$1"; }
+option_count() { sandbox_options "$1" | grep -cx -- "$2"; }
+assert_trace_switches() {
+  local desc="$1" out="$2" sandbox_layer="$3" entrypoint="$4"
+  assert_eq "$desc: --trace for the sandbox layer" "$sandbox_layer" "$(option_count "$out" --trace)"
+  assert_eq "$desc: YOLO_SANDBOX_TRACE for the entrypoint" "$entrypoint" "$(option_count "$out" YOLO_SANDBOX_TRACE=1)"
+}
+TRACE_HOOKS='[{"command":"true trace-hook-marker","tags":[]}]'
+TRACE_SECRET="$WORKDIR/trace-secret"
+printf 'trace-secret-value\n' > "$TRACE_SECRET"
+
+assert_trace_switches "default launch" "$(run_yolo cmd true)" 0 0
+assert_trace_switches "--trace without an entrypoint" "$(run_yolo --trace cmd true)" 1 0
+assert_trace_switches "YOLO_TRACE=1 without an entrypoint" "$(YOLO_TRACE=1 run_yolo cmd true)" 1 0
+assert_trace_switches "YOLO_TRACE=0" "$(YOLO_TRACE=0 run_yolo cmd true)" 0 0
+assert_trace_switches "empty YOLO_TRACE" "$(YOLO_TRACE='' run_yolo cmd true)" 0 0
+OUT="$(run_yolo cmd true --trace)"
+assert_trace_switches "--trace after the command" "$OUT" 0 0
+assert_contains "--trace after the command belongs to the command" "$OUT" $'\n--\ntrue\n--trace'
+assert_trace_switches "sandbox hooks without --trace" "$(YOLO_CMD_HOOKS_JSON="$TRACE_HOOKS" run_yolo cmd true)" 0 0
+OUT="$(YOLO_CMD_HOOKS_JSON="$TRACE_HOOKS" run_yolo --trace cmd true)"
+assert_trace_switches "sandbox hooks with --trace" "$OUT" 1 1
+assert_contains "the entrypoint switch travels like its other inputs" "$OUT" $'--env\nYOLO_SANDBOX_TRACE=1\n'
+assert_trace_switches "secrets with YOLO_TRACE=1" \
+  "$(YOLO_TRACE=1 YOLO_SECRET_VARS="TRACE_TEST_SECRET=$TRACE_SECRET" run_yolo cmd true)" 1 1
+assert_trace_switches "--cowboy-ride" "$(run_yolo --cowboy-ride cmd true)" 0 0
+assert_trace_switches "--cowboy-ride --trace" "$(run_yolo --cowboy-ride --trace cmd true)" 1 0
+
+# The clipboard broker announces its socket only under the same switch.
+run_usage_yolo cmd true >/dev/null
+assert_eq "default launch starts the broker without --trace" "0" "$(grep -c -- '--trace' "$USAGE_BROKER_LOG")"
+launch_side_effects >/dev/null
+run_usage_yolo --trace cmd true >/dev/null
+assert_contains "--trace reaches the broker" "$(cat "$USAGE_BROKER_LOG")" "--tmux-socket $USAGE_TMUX_SOCKET"
+assert_eq "--trace reaches the broker as its own flag" "1" "$(grep -c -- ' --trace$' "$USAGE_BROKER_LOG")"
+launch_side_effects >/dev/null
+
+HELP_OUT="$(run_yolo --help)"
+assert_contains "--help documents --trace" "$HELP_OUT" $'\n      --trace  '
+assert_contains "--help names the environment form" "$HELP_OUT" "YOLO_TRACE=1"
+
+# End to end through the real sandbox layer and the real entrypoint. bwrap is a
+# stand-in without a mount namespace: it applies --clearenv/--setenv, maps a
+# value naming a bind destination back to its host source, and execs the command.
+E2E_BIN="$WORKDIR/e2e-bin"
+mkdir -p "$E2E_BIN"
+cat > "$E2E_BIN/bwrap" <<EOF
+#!$_bash_path
+declare -A bound=()
+pairs=()
+while [[ \$# -gt 0 ]]; do
+  case "\$1" in
+    --setenv) pairs+=("\$2" "\$3"); shift 3 ;;
+    --bind|--ro-bind|--dev-bind) bound["\$3"]="\$2"; shift 3 ;;
+    --symlink) shift 3 ;;
+    --dir|--dev|--proc|--tmpfs) shift 2 ;;
+    --clearenv|--unshare-all|--share-net|--die-with-parent) shift ;;
+    --) shift; break ;;
+    -*) echo "bwrap stand-in: unexpected option \$1" >&2; exit 64 ;;
+    *) break ;;
+  esac
+done
+assignments=()
+for ((i = 0; i < \${#pairs[@]}; i += 2)); do
+  value="\${pairs[i + 1]}"
+  [[ -n "\$value" && -n "\${bound[\$value]+x}" ]] && value="\${bound[\$value]}"
+  assignments+=("\${pairs[i]}=\$value")
+done
+exec env -i "\${assignments[@]}" "\$@"
+EOF
+printf '%s\n' "#!$_bash_path" "exec '$_bash_path' '$SCRIPT_DIR/llm-sandbox.sh' \"\$@\"" > "$E2E_BIN/llm-sandbox"
+printf '%s\n' "#!$_bash_path" "exec '$_bash_path' '$SCRIPT_DIR/sandbox-entrypoint.sh' \"\$@\"" > "$E2E_BIN/entrypoint"
+chmod +x "$E2E_BIN/bwrap" "$E2E_BIN/llm-sandbox" "$E2E_BIN/entrypoint"
+# The tool reports whether either trace variable reached its environment.
+E2E_TOOL="$WORKDIR/e2e-tool.sh"
+printf '%s\n' 'printf "tool-output %s %s\n" "${YOLO_SANDBOX_TRACE-unset}" "${YOLO_TRACE-unset}"' > "$E2E_TOOL"
+# run_e2e_yolo STDERR_FILE [yolo flags...]: launches the tool behind a sandbox hook.
+run_e2e_yolo() {
+  local stderr_file="$1"
+  shift
+  cd "$PROJECT_DIR" &&
+    HOME="$FAKE_HOME" \
+    XDG_RUNTIME_DIR="$FAKE_XDG" \
+    PATH="$E2E_BIN:$PATH" \
+    YOLO_CMD_HOOKS_JSON='[{"command":"true e2e-hook-marker","tags":[]}]' \
+    YOLO_LLM_SANDBOX="$E2E_BIN/llm-sandbox" \
+    YOLO_SANDBOX_ENTRYPOINT="$E2E_BIN/entrypoint" \
+    YOLO_NIX_LD="$(command -v true)" \
+    YOLO_JQ="$(command -v jq)" \
+    YOLO_TASKSET="$(command -v taskset)" \
+    YOLO_CUSTOM_PROMPT="$SCRIPT_DIR/custom-prompt.sh" \
+    bash "$SCRIPT" "$@" cmd "$_bash_path" "$E2E_TOOL" 2> "$stderr_file"
+}
+e2e_trace_shape() { sed -E 's/^(\++) [0-9]+[.,][0-9]+ /\1 T /' "$1"; }
+
+OUT="$(run_e2e_yolo "$WORKDIR/e2e.default")"
+assert_eq "default launch succeeds end to end" "0" "$?"
+assert_eq "default launch shows only the tool's output" "tool-output unset unset" "$OUT"
+assert_eq "default launch prints nothing of its own" "" "$(cat "$WORKDIR/e2e.default")"
+
+for _how in flag environment; do
+  if [[ "$_how" == flag ]]; then
+    OUT="$(run_e2e_yolo "$WORKDIR/e2e.$_how" --trace)"
+  else
+    OUT="$(YOLO_TRACE=1 run_e2e_yolo "$WORKDIR/e2e.$_how")"
+  fi
+  assert_eq "traced launch ($_how) succeeds end to end" "0" "$?"
+  assert_eq "traced launch ($_how) hides both switches from the tool" "tool-output unset unset" "$OUT"
+  E2E_TRACE="$(e2e_trace_shape "$WORKDIR/e2e.$_how")"
+  assert_eq "traced launch ($_how) prints the host exec and the four in-sandbox lines" "5" "$(grep -c '' <<< "$E2E_TRACE")"
+  assert_contains "traced launch ($_how) starts with the timestamped exec of bwrap" \
+    "$(head -n 1 <<< "$E2E_TRACE")" "+ T exec bwrap --unshare-all --share-net --die-with-parent --clearenv "
+  assert_contains "traced launch ($_how) traces the hook command" "$E2E_TRACE" $'\n++ T true e2e-hook-marker\n'
+  assert_eq "traced launch ($_how) ends with the final exec" \
+    "+ T exec $_bash_path $E2E_TOOL" "$(tail -n 1 <<< "$E2E_TRACE")"
+done
 
 if [[ $FAILURES -ne 0 ]]; then
   echo "$FAILURES of $TESTS_RUN tests failed"

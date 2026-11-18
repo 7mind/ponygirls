@@ -1,9 +1,96 @@
 import { resolve } from "node:path";
 import { CodegraphSession } from "./runtime.ts";
 import type { Action, Boundary, State } from "./runtime.ts";
-import type { Catalog, Project } from "./projects.ts";
+import type { Catalog, IndexSize, Project } from "./projects.ts";
 
 const INVENTORY_CHARACTER_LIMIT = 12_000;
+/** A scope not prepared because its last attempt found the index locked by another process. */
+const BUSY_ELSEWHERE = "busy elsewhere";
+/** `ROOT: N files, M symbols…` and `ROOT: no indexable files (N files, M symbols)`, as the session words a concluded check. */
+const CHECKED_COUNTS = /^(?:no indexable files \()?(\d+) files, (\d+) symbols/;
+
+/** One recorded moment: when, and the text kept for it. */
+export interface Recorded {
+  at: string;
+  detail: string;
+}
+
+export type MeasuredSize = { ok: true; value: IndexSize } | { ok: false; error: string };
+
+/** One indexed scope as `/cg status` reports it. */
+export interface ScopeStatus {
+  root: string;
+  kind: Project["kind"];
+  commonDir: string | null;
+  /** The scope queries use when they name none. */
+  isDefault: boolean;
+  phase: State["phase"];
+  /** The last attempt was refused because another process held the index lock; `phase` is what was known before it. */
+  busyElsewhere: Recorded | null;
+  lastCheck: { at: string; state: State } | null;
+  /** Kept until a later check succeeds. */
+  lastFailure: Recorded | null;
+  /** Files and symbols counted by the last check, when it concluded with a usable or empty index. */
+  counts: { files: number; symbols: number } | null;
+  size: MeasuredSize;
+}
+
+export interface StatusSnapshot {
+  discoveryError: string | null;
+  /** Outcome per root of the last `--all` operation. */
+  lastBatch: readonly string[];
+  scopes: readonly ScopeStatus[];
+}
+
+export type ScopeState = State["phase"] | typeof BUSY_ELSEWHERE;
+
+/** Nothing is known about the scope's index yet: the next query that targets it prepares it. */
+function unprepared(phase: State["phase"]): boolean {
+  return phase === "idle" || phase === "skipped";
+}
+
+/**
+ * How the scope is doing. A refused attempt leaves what was known before it
+ * (a verified index, a failure) in place; only a scope that was not prepared
+ * yet is `busy elsewhere`.
+ */
+export function scopeState(scope: Pick<ScopeStatus, "phase" | "busyElsewhere">): ScopeState {
+  return scope.busyElsewhere !== null && unprepared(scope.phase) ? BUSY_ELSEWHERE : scope.phase;
+}
+
+function checkedCounts(root: string, check: ScopeStatus["lastCheck"]): ScopeStatus["counts"] {
+  if (check === null || (check.state.phase !== "ready" && check.state.phase !== "empty")) return null;
+  const prefix = `${root}: `;
+  const counts = check.state.detail.startsWith(prefix) ? CHECKED_COUNTS.exec(check.state.detail.slice(prefix.length)) : null;
+  if (counts === null) throw new Error(`Unrecognized Codegraph check result at ${root}: ${check.state.detail}`);
+  return { files: Number(counts[1]), symbols: Number(counts[2]) };
+}
+
+/** The complete text report: non-TUI clients and the pane's details view. */
+export function reportText(status: StatusSnapshot): string {
+  let total = 0;
+  let partial = false;
+  const lines = ["Codegraph inventory — last checks, not live watcher health; logical bytes (WAL/SHM included):"];
+  if (status.discoveryError !== null) lines.push(`Discovery failed: ${status.discoveryError}`);
+  if (status.lastBatch.length > 0) lines.push(`Last batch:\n${status.lastBatch.join("\n")}`);
+  for (const scope of status.scopes) {
+    const { lastCheck, lastFailure, busyElsewhere, size } = scope;
+    lines.push(`${scope.isDefault ? "* " : "  "}${JSON.stringify(scope.root)} [${scope.kind}] ${scopeState(scope)}`);
+    lines.push(`  commonDir: ${JSON.stringify(scope.commonDir)}; last check: ${lastCheck === null ? "never" : `${lastCheck.at} ${lastCheck.state.phase}: ${lastCheck.state.detail}`}`);
+    if (busyElsewhere !== null) lines.push(`  ${BUSY_ELSEWHERE}: ${busyElsewhere.at}: ${busyElsewhere.detail}`);
+    if (lastFailure !== null && lastCheck !== null && lastCheck.state.phase !== "error") {
+      lines.push(`  last failure: ${lastFailure.at}: ${lastFailure.detail}`);
+    }
+    if (size.ok) {
+      total += size.value.totalBytes;
+      partial ||= size.value.partial;
+      lines.push(`  database ${size.value.databaseBytes} bytes; total ${size.value.totalBytes} bytes${size.value.partial ? ` (partial: ${size.value.detail})` : ""}`);
+    } else { partial = true; lines.push(`  size unavailable: ${size.error}`); }
+  }
+  lines.push(`Aggregate total ${total} bytes${partial ? " (partial)" : ""}; ${status.scopes.length} scopes`);
+  if (status.scopes.length === 0) lines.push("No projects. /cg discover PATH or /cg init --workspace PATH");
+  return lines.join("\n");
+}
 
 interface OperationToken {
   cancellation: number;
@@ -15,7 +102,9 @@ interface ProjectEntry {
   session: CodegraphSession;
   lastCheck: { at: string; state: State } | null;
   /** Kept until a later check succeeds, so one-line failure notices never lose their detail. */
-  lastFailure: { at: string; detail: string } | null;
+  lastFailure: Recorded | null;
+  /** The refusal of the last attempt, until the next attempt starts. */
+  busyElsewhere: Recorded | null;
 }
 
 export class CodegraphWorkspace {
@@ -96,11 +185,16 @@ export class CodegraphWorkspace {
     };
     const entry: ProjectEntry = { project, session: new CodegraphSession(boundary, project.root, (state) => {
       const at = this.now();
-      if (state.phase !== "working" && state.phase !== "idle") entry.lastCheck = { at, state };
-      if (state.phase === "error") entry.lastFailure = { at, detail: state.detail };
-      else if (state.phase === "ready" || state.phase === "empty") entry.lastFailure = null;
+      const refusal = entry.session.busyElsewhere;
+      entry.busyElsewhere = refusal === null ? null : { at, detail: refusal };
+      // A refused attempt checked nothing: the last check and failure stand.
+      if (refusal === null) {
+        if (state.phase !== "working" && state.phase !== "idle") entry.lastCheck = { at, state };
+        if (state.phase === "error") entry.lastFailure = { at, detail: state.detail };
+        else if (state.phase === "ready" || state.phase === "empty") entry.lastFailure = null;
+      }
       this.publish();
-    }), lastCheck: null, lastFailure: null };
+    }), lastCheck: null, lastFailure: null, busyElsewhere: null };
     this.entries.set(project.root, entry);
     return entry;
   }
@@ -183,12 +277,15 @@ export class CodegraphWorkspace {
     this.guard(token, null);
     const entry = await this.target(path === undefined ? null : path);
     this.guard(token, entry.project.root);
-    if (entry.session.state.phase === "idle" || entry.session.state.phase === "skipped") await entry.session.start("sync");
+    if (unprepared(entry.session.state.phase)) await entry.session.start("sync");
     else await entry.session.wait();
     this.guard(token, entry.project.root);
     if (this.entries.get(entry.project.root) !== entry) throw new Error("Project inventory changed during preparation; retry with an explicit projectPath");
     if (entry.session.state.phase !== "ready") {
-      throw new Error(`Codegraph index unavailable at ${entry.project.root}; run /cg sync PATH or /cg reindex PATH. ${entry.session.state.detail}`);
+      // Still unprepared after a refused attempt: the next query tries again.
+      throw new Error(entry.busyElsewhere !== null && unprepared(entry.session.state.phase)
+        ? `Codegraph index busy at ${entry.project.root}: another process holds the index lock; retry shortly. ${entry.busyElsewhere.detail}`
+        : `Codegraph index unavailable at ${entry.project.root}; run /cg sync PATH or /cg reindex PATH. ${entry.session.state.detail}`);
     }
     return entry.project.root;
   }
@@ -240,7 +337,7 @@ export class CodegraphWorkspace {
           continue;
         }
         await this.run(entry, action);
-        this.lastBatch.push(`${entry.project.root}: ${entry.session.state.phase}`);
+        this.lastBatch.push(`${entry.project.root}: ${entry.busyElsewhere === null ? entry.session.state.phase : BUSY_ELSEWHERE}`);
       }
     } finally { if (this.batch === batch) this.batch = null; }
   }
@@ -260,32 +357,27 @@ export class CodegraphWorkspace {
     }
     this.publish();
   }
-  async report(path: string | null): Promise<string> {
+  /** Last-checked status of one scope, or of the whole inventory. Probes nothing but index sizes. */
+  async snapshot(path: string | null): Promise<StatusSnapshot> {
     await this.initial;
     this.assertOpen();
     const entries = path === null ? [...this.entries.values()] : [await this.target(path)];
-    let total = 0;
-    let partial = false;
-    const lines = ["Codegraph inventory — last checks, not live watcher health; logical bytes (WAL/SHM included):"];
-    if (this.discoveryError !== null) lines.push(`Discovery failed: ${this.discoveryError}`);
-    if (this.lastBatch.length > 0) lines.push(`Last batch:\n${this.lastBatch.join("\n")}`);
+    const scopes: ScopeStatus[] = [];
     for (const entry of entries) {
       const { root, kind, commonDir } = entry.project;
-      lines.push(`${root === this.defaultRoot() ? "* " : "  "}${JSON.stringify(root)} [${kind}] ${entry.session.state.phase}`);
-      lines.push(`  commonDir: ${JSON.stringify(commonDir)}; last check: ${entry.lastCheck === null ? "never" : `${entry.lastCheck.at} ${entry.lastCheck.state.phase}: ${entry.lastCheck.state.detail}`}`);
-      if (entry.lastFailure !== null && entry.lastCheck !== null && entry.lastCheck.state.phase !== "error") {
-        lines.push(`  last failure: ${entry.lastFailure.at}: ${entry.lastFailure.detail}`);
-      }
-      try {
-        const size = await this.catalog.size(root);
-        total += size.totalBytes;
-        partial ||= size.partial;
-        lines.push(`  database ${size.databaseBytes} bytes; total ${size.totalBytes} bytes${size.partial ? ` (partial: ${size.detail})` : ""}`);
-      } catch (error) { partial = true; lines.push(`  size unavailable: ${String(error)}`); }
+      // What is known is read before the size is measured, so one scope's facts belong to one moment.
+      const known = { root, kind, commonDir, isDefault: root === this.defaultRoot(), phase: entry.session.state.phase,
+        busyElsewhere: entry.busyElsewhere, lastCheck: entry.lastCheck, lastFailure: entry.lastFailure,
+        counts: checkedCounts(root, entry.lastCheck) };
+      let size: MeasuredSize;
+      try { size = { ok: true, value: await this.catalog.size(root) }; }
+      catch (error) { size = { ok: false, error: String(error) }; }
+      scopes.push({ ...known, size });
     }
-    lines.push(`Aggregate total ${total} bytes${partial ? " (partial)" : ""}; ${entries.length} scopes`);
-    if (entries.length === 0) lines.push("No projects. /cg discover PATH or /cg init --workspace PATH");
-    return lines.join("\n");
+    return { discoveryError: this.discoveryError, lastBatch: [...this.lastBatch], scopes };
+  }
+  async report(path: string | null): Promise<string> {
+    return reportText(await this.snapshot(path));
   }
   async inventory(): Promise<string> {
     await this.initial;

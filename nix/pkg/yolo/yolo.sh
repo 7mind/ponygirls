@@ -36,6 +36,7 @@
 #   YOLO_CLIPBOARD_SHIM_DIR  - directory containing a `tmux` symlink to the proxy (prepended to
 #                              sandbox PATH so agent load-buffer/save-buffer calls hit the shim)
 #   YOLO_TMUX                - absolute path to host tmux (broker invokes this with fixed argv)
+#   YOLO_TRACE               - 1 prints the launch trace, like --trace (caller's environment)
 
 : "${YOLO_LLM_SANDBOX:?must be set}"
 : "${YOLO_SANDBOX_ENTRYPOINT:?must be set}"
@@ -70,6 +71,13 @@ UNSAFE_SHARE_HOME=0
 # Validated into MEM_LIMIT/CPU_LIMIT after argument parsing.
 MEM_LIMIT_SPEC=""
 CPU_LIMIT_SPEC=""
+# Launch trace, off by default: `--trace` or YOLO_TRACE=1 makes each layer echo
+# its launch steps to stderr with a timestamp (llm-sandbox its `exec bwrap`
+# line, the in-sandbox entrypoint its hook commands and final exec) and the
+# clipboard broker announce its socket. Without it a launch prints only its
+# warnings and errors before the tool's output.
+TRACE=0
+[[ "${YOLO_TRACE:-}" == "1" ]] && TRACE=1
 # Feature suppression: --disable=TAG (repeatable, comma-separated) drops every
 # device bind (extraDevicePaths), prompt fragment (promptExtensions) and host
 # pre-start hook (hooks.pre-start.host) carrying TAG. Audio is tagged "audio"
@@ -96,15 +104,23 @@ ADHOC_BIND_ARGS=()
 # profile's, so the session keeps its own state but authenticates as PROFILE.
 AUTH_OVERRIDES=()
 
-print_help() {
+print_usage() {
   cat <<'EOF'
-yolo — LLM tool launcher inside the llm-sandbox (bubblewrap) sandbox.
-
 Usage:
   yolo [FLAGS...] <claude|codex|pi|shell|cmd> [args...]
   yolo --list-profiles
   yolo --delete-profile NAME [--purge]
   yolo --copy-sessions AGENT:SRC:DST
+EOF
+}
+
+print_help() {
+  cat <<'EOF'
+yolo — LLM tool launcher inside the llm-sandbox (bubblewrap) sandbox.
+
+EOF
+  print_usage
+  cat <<'EOF'
 
 Flags (must precede the subcommand):
       --cowboy-ride      No security isolation: preserve host filesystem,
@@ -159,6 +175,8 @@ Flags (must precede the subcommand):
                          the pin (default: 1/4 of hardware threads).
       --unsafe-share-home  Allow running with $PWD == $HOME (binds all of $HOME
                          read-write; refused by default).
+      --trace            Print timestamped launch steps to stderr: the exec bwrap
+                         line, pre-start hooks, final exec. Same as YOLO_TRACE=1.
   -h, --help             Show this help and exit.
 
 Profile management (no subcommand; runs outside the sandbox):
@@ -194,6 +212,14 @@ declarative session/secret variables to pass them explicitly.
 EOF
 }
 
+# The command line itself is wrong (as opposed to the host state it refers to):
+# say what, point at the help, exit 2.
+usage_error() {
+  echo "yolo: $1" >&2
+  echo "Try 'yolo --help'." >&2
+  exit 2
+}
+
 # `--bind SRC,DST` / `--ro-bind SRC,DST`: validate and queue an ad-hoc remap.
 # Unlike --ro/--rw, a missing SRC is fatal — a remap that silently disappears
 # would let the sandboxed tool fall back to (and write into) whatever else is at
@@ -203,7 +229,7 @@ EOF
 add_adhoc_remap() {
   local _flag="$1" _spec="$2" _src _dst _src_real
   if [[ "$_spec" != *,* ]]; then
-    echo "Error: $_flag expects SRC,DST (got '$_spec')" >&2; exit 1
+    usage_error "$_flag expects SRC,DST (got '$_spec')"
   fi
   _src="${_spec%%,*}"
   _dst="${_spec#*,}"
@@ -211,7 +237,7 @@ add_adhoc_remap() {
     echo "Error: $_flag source '$_src' does not exist on the host" >&2; exit 1
   fi
   if [[ "$_dst" != /* ]]; then
-    echo "Error: $_flag destination '$_dst' must be an absolute sandbox path ('~' is not expanded)" >&2; exit 1
+    usage_error "$_flag destination '$_dst' must be an absolute sandbox path ('~' is not expanded)"
   fi
   _src_real="$(realpath -- "$_src")" || {
     echo "Error: $_flag cannot canonicalize source '$_src'" >&2; exit 1
@@ -226,25 +252,25 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --profile|-p)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires a profile name" >&2; exit 1
+        usage_error "$1 requires a profile name"
       fi
       PROFILE="$2"; shift 2 ;;
     --cowboy-ride) COWBOY_RIDE=1; shift ;;
     --list-profiles) PROFILE_ACTION="list"; shift ;;
     --delete-profile)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires a profile name" >&2; exit 1
+        usage_error "$1 requires a profile name"
       fi
       PROFILE_ACTION="delete"; DELETE_PROFILE_NAME="$2"; shift 2 ;;
     --purge) PURGE_PROFILE=1; shift ;;
     --copy-sessions)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires AGENT:SRC:DST" >&2; exit 1
+        usage_error "$1 requires AGENT:SRC:DST"
       fi
       PROFILE_ACTION="copy-sessions"; COPY_SESSIONS_SPEC="$2"; shift 2 ;;
     --auth-override)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires AGENT:PROFILE" >&2; exit 1
+        usage_error "$1 requires AGENT:PROFILE"
       fi
       AUTH_OVERRIDES+=("$2"); shift 2 ;;
     --disable=*)
@@ -257,35 +283,40 @@ while [[ $# -gt 0 ]]; do
       shift ;;
     --ro)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires a path" >&2; exit 1
+        usage_error "$1 requires a path"
       fi
       ADHOC_BIND_ARGS+=(--ro "$2"); shift 2 ;;
     --rw)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires a path" >&2; exit 1
+        usage_error "$1 requires a path"
       fi
       ADHOC_BIND_ARGS+=(--rw "$2"); shift 2 ;;
     --bind|--ro-bind)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: $1 requires SRC,DST" >&2; exit 1
+        usage_error "$1 requires SRC,DST"
       fi
       add_adhoc_remap "$1" "$2"; shift 2 ;;
     --mem-limit=*) MEM_LIMIT_SPEC="${1#*=}"; shift ;;
     --mem-limit)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: --mem-limit requires SIZE or 'none'" >&2; exit 1
+        usage_error "--mem-limit requires SIZE or 'none'"
       fi
       MEM_LIMIT_SPEC="$2"; shift 2 ;;
     --cpu-limit=*) CPU_LIMIT_SPEC="${1#*=}"; shift ;;
     --cpu-limit)
       if [[ $# -lt 2 || -z "$2" ]]; then
-        echo "Error: --cpu-limit requires N or 'none'" >&2; exit 1
+        usage_error "--cpu-limit requires N or 'none'"
       fi
       CPU_LIMIT_SPEC="$2"; shift 2 ;;
     --unsafe-share-home) UNSAFE_SHARE_HOME=1; shift ;;
-    --env) ENV_ARGS+=(--env "$2"); shift 2 ;;
+    --trace) TRACE=1; shift ;;
+    --env)
+      if [[ $# -lt 2 || -z "$2" ]]; then
+        usage_error "$1 requires KEY=VAL"
+      fi
+      ENV_ARGS+=(--env "$2"); shift 2 ;;
     -h|--help) print_help; exit 0 ;;
-    -*) echo "Unknown flag: $1" >&2; echo "Try 'yolo --help'." >&2; exit 1 ;;
+    -*) usage_error "unknown flag '$1'" ;;
     *) break ;;
   esac
 done
@@ -331,8 +362,7 @@ valid_profile_name() {
   [[ "$1" =~ ^[A-Za-z0-9._-]+$ && "$1" != "." && "$1" != ".." ]]
 }
 if [[ -n "$PROFILE" ]] && ! valid_profile_name "$PROFILE"; then
-  echo "Error: invalid profile name '$PROFILE' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
-  exit 1
+  usage_error "invalid profile name '$PROFILE' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')"
 fi
 
 # Validate the resource-limit specs into MEM_LIMIT (KiB) / CPU_LIMIT (thread
@@ -352,8 +382,7 @@ parse_mem_limit() {
   if [[ "$_spec" =~ ^([0-9]+)([KkMmGgTt])?$ ]]; then
     _n="${BASH_REMATCH[1]}"
     if (( 10#$_n == 0 )); then
-      echo "Error: --mem-limit=0 would fail every allocation; use 'none' to remove the limit" >&2
-      exit 1
+      usage_error "--mem-limit=0 would fail every allocation; use 'none' to remove the limit"
     fi
     case "${BASH_REMATCH[2]}" in
       M|m) _mult=1024 ;;
@@ -363,16 +392,14 @@ parse_mem_limit() {
     MEM_LIMIT=$((10#$_n * _mult))
     return
   fi
-  echo "Error: --mem-limit expects SIZE (KiB, or a K/M/G/T suffix, e.g. 8G) or 'none' (got '$_spec')" >&2
-  exit 1
+  usage_error "--mem-limit expects SIZE (KiB, or a K/M/G/T suffix, e.g. 8G) or 'none' (got '$_spec')"
 }
 
 parse_cpu_limit() {
   local _spec="$1"
   if [[ "$_spec" == "none" ]]; then CPU_LIMIT="none"; return; fi
   if [[ "$_spec" =~ ^[1-9][0-9]*$ ]]; then CPU_LIMIT="$_spec"; return; fi
-  echo "Error: --cpu-limit expects a positive hardware-thread count or 'none' (got '$_spec')" >&2
-  exit 1
+  usage_error "--cpu-limit expects a positive hardware-thread count or 'none' (got '$_spec')"
 }
 
 [[ -n "$MEM_LIMIT_SPEC" ]] && parse_mem_limit "$MEM_LIMIT_SPEC"
@@ -396,8 +423,7 @@ list_profiles() {
 delete_profile() {
   local _name="$1" _dir _backup _reply
   if ! valid_profile_name "$_name"; then
-    echo "Error: invalid profile name '$_name' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')" >&2
-    exit 1
+    usage_error "invalid profile name '$_name' (allowed: letters, digits, '.', '_', '-'; not '.' or '..')"
   fi
   _dir="$PROFILES_ROOT/$_name"
   if [[ ! -d "$_dir" ]]; then
@@ -488,16 +514,14 @@ copy_sessions() {
   IFS=: read -r _agent _src _dst _extra <<< "$_spec"
   case "$_agent" in
     claude|codex|pi) ;;
-    *) echo "Error: --copy-sessions expects AGENT:SRC:DST with AGENT one of claude, codex, pi (got '$_spec')" >&2; exit 1 ;;
+    *) usage_error "--copy-sessions expects AGENT:SRC:DST with AGENT one of claude, codex, pi (got '$_spec')" ;;
   esac
   if [[ -z "$_dst" || -n "$_extra" ]]; then
-    echo "Error: --copy-sessions expects AGENT:SRC:DST (got '$_spec')" >&2
-    exit 1
+    usage_error "--copy-sessions expects AGENT:SRC:DST (got '$_spec')"
   fi
   for _name in "$_src" "$_dst"; do
     if ! valid_profile_name "$_name"; then
-      echo "Error: invalid profile name '$_name' in --copy-sessions $_spec" >&2
-      exit 1
+      usage_error "invalid profile name '$_name' in --copy-sessions $_spec"
     fi
     if [[ ! -d "$PROFILES_ROOT/$_name" ]]; then
       echo "Error: profile '$_name' does not exist ($PROFILES_ROOT/$_name)" >&2
@@ -505,8 +529,7 @@ copy_sessions() {
     fi
   done
   if [[ "$_src" == "$_dst" ]]; then
-    echo "Error: --copy-sessions $_spec copies a profile onto itself" >&2
-    exit 1
+    usage_error "--copy-sessions $_spec copies a profile onto itself"
   fi
   _src_home="$(agent_home "$_src" "$_agent")"
   _dst_home="$(agent_home "$_dst" "$_agent")"
@@ -528,13 +551,11 @@ copy_sessions() {
 # Profile management touches only ~/.config/yolo on the host, so it runs before
 # the $HOME guard and never reaches the sandbox.
 if [[ $PURGE_PROFILE -eq 1 && "$PROFILE_ACTION" != "delete" ]]; then
-  echo "Error: --purge only applies to --delete-profile" >&2
-  exit 1
+  usage_error "--purge only applies to --delete-profile"
 fi
 if [[ -n "$PROFILE_ACTION" ]]; then
   if [[ $# -gt 0 ]]; then
-    echo "Error: --list-profiles/--delete-profile/--copy-sessions take no subcommand (got '$1')" >&2
-    exit 1
+    usage_error "--list-profiles/--delete-profile/--copy-sessions take no subcommand (got '$1')"
   fi
   case "$PROFILE_ACTION" in
     list) list_profiles ;;
@@ -543,6 +564,24 @@ if [[ -n "$PROFILE_ACTION" ]]; then
   esac
   exit 0
 fi
+
+# The subcommand is checked here, ahead of the $HOME guard, the resource limits
+# and every launch side effect (clipboard broker, profile and state
+# directories), so a mistyped command changes nothing on the host.
+if [[ $# -eq 0 ]]; then
+  print_usage >&2
+  echo "Try 'yolo --help'." >&2
+  exit 2
+fi
+case "$1" in
+  claude|codex|pi|shell) ;;
+  cmd)
+    if [[ $# -lt 2 ]]; then
+      usage_error "cmd requires a program to run"
+    fi
+    ;;
+  *) usage_error "unknown command '$1' (expected claude, codex, pi, shell or cmd)" ;;
+esac
 
 # Fail-safe: refuse to run with the working directory equal to $HOME. BASE_ARGS
 # binds $PWD read-write into the sandbox, so launching from the home directory
@@ -663,20 +702,16 @@ for _override in "${AUTH_OVERRIDES[@]}"; do
   _agent="${_override%%:*}"
   _src_profile="${_override#*:}"
   if [[ "$_override" != *:* ]] || ! _cred_file="$(agent_credentials_file "$_agent")"; then
-    echo "Error: --auth-override expects AGENT:PROFILE with AGENT one of claude, codex, pi (got '$_override')" >&2
-    exit 1
+    usage_error "--auth-override expects AGENT:PROFILE with AGENT one of claude, codex, pi (got '$_override')"
   fi
   if ! valid_profile_name "$_src_profile"; then
-    echo "Error: invalid profile name '$_src_profile' in --auth-override $_override" >&2
-    exit 1
+    usage_error "invalid profile name '$_src_profile' in --auth-override $_override"
   fi
   if [[ "$_src_profile" == "$PROFILE" ]]; then
-    echo "Error: --auth-override $_override names the launched profile itself" >&2
-    exit 1
+    usage_error "--auth-override $_override names the launched profile itself"
   fi
   if [[ "$_auth_agents_seen" == *" $_agent "* ]]; then
-    echo "Error: more than one --auth-override for $_agent" >&2
-    exit 1
+    usage_error "more than one --auth-override for $_agent"
   fi
   _auth_agents_seen+="$_agent "
   _src="${PROFILES_ROOT}/${_src_profile}/${_agent}/home/${_cred_file}"
@@ -711,11 +746,6 @@ clear_reshare_leftovers() {
     [[ -L "$base/$leaf" ]] && rm -f "$base/$leaf"
   done
 }
-
-if [[ $# -eq 0 ]]; then
-  print_help >&2
-  exit 1
-fi
 
 SUBCMD="$1"; shift
 CMD_ARGS=("$@")
@@ -784,10 +814,13 @@ if [[ -n "${TMUX:-}" ]]; then
       chmod 700 "$CLIP_PROXY_DIR"
       _clip_sock="${CLIP_PROXY_DIR}/sock"
       _tmux_bin="${YOLO_TMUX:-tmux}"
+      # The broker announces its socket only under the launch trace.
+      _clip_trace_args=()
+      [[ $TRACE -eq 1 ]] && _clip_trace_args=(--trace)
       "${YOLO_CLIPBOARD_PROXY}" broker \
         --listen "$_clip_sock" \
         --tmux-socket "$_tmux_sock" \
-        --tmux "$_tmux_bin" &
+        --tmux "$_tmux_bin" "${_clip_trace_args[@]}" &
       CLIP_BROKER_PID=$!
       # Readiness requires BOTH a live child and a successful connection to
       # the freshly created socket (a connect+close probe speaking no
@@ -1530,16 +1563,13 @@ case "$SUBCMD" in
     ;;
 
   cmd)
-    if [[ ${#CMD_ARGS[@]} -eq 0 ]]; then
-      echo "Usage: yolo [flags...] cmd <program> [args...]" >&2; exit 1
-    fi
     add_all_agent_binds
     EXEC_CMD=("${CMD_ARGS[@]}")
     ;;
 
   *)
-    echo "Unknown tool: $SUBCMD" >&2
-    echo "Supported: claude, codex, pi, shell, cmd" >&2
+    # Unreachable while this list matches the subcommand check after the flags.
+    echo "yolo: internal error: no launch defined for command '$SUBCMD'" >&2
     exit 1
     ;;
 esac
@@ -1550,6 +1580,16 @@ if [[ -n "${YOLO_TMUX_CONTEXT_HELPER:-}" ]]; then
     _window_context=null
   fi
   BASE_ARGS+=(--env "SMIND_TMUX_WINDOW_CONTEXT=$_window_context")
+fi
+
+# Launch trace switches for the two layers below this one. The entrypoint's is
+# an environment variable like its other inputs, and is added only on the
+# launch that runs the entrypoint: the entrypoint is what removes it from the
+# tool's environment again.
+ENTRYPOINT_TRACE_ARGS=()
+if [[ $TRACE -eq 1 ]]; then
+  BASE_ARGS+=(--trace)
+  ENTRYPOINT_TRACE_ARGS=(--env "YOLO_SANDBOX_TRACE=1")
 fi
 
 # The sandbox clears inherited variables, including YOLO_* orchestration
@@ -1601,6 +1641,7 @@ if [[ -n "$SECRET_TMPFILE" || -n "$SANDBOX_HOOKS_TMPFILE" || -n "$SSH_CONFIG_TMP
     # the sandboxed TUI (regression: "stdin is not a terminal").
     "$_yolo_sandbox" \
       "${BASE_ARGS[@]}" \
+      "${ENTRYPOINT_TRACE_ARGS[@]}" \
       "${EXTRA_ARGS[@]}" \
       "${EXTRA_PATH_ARGS[@]}" \
       "${ADHOC_BIND_ARGS[@]}" \

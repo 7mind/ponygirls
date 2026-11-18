@@ -27,9 +27,28 @@
   the inherited project/global pair again, without changing enablement.
 - `/context-archive default thresholds HIGH LOW` — change the global default pair.
   Sessions with an explicit pair keep it.
-- `/context-archive status` — show effective ON/OFF and its source, effective
-  watermarks and their independent source, global defaults, branch archive count,
-  Pi context tokens/capacity, last boundary result and global defaults path.
+- `/context-archive` or `/context-archive status` — in the TUI, open the status
+  pane; a click on the **🗃️** badge opens the same pane:
+
+  ```text
+  ── Context archive ───────────────────────────────── on · global default ──
+    State       on (global default) · nothing archived on this branch yet
+    Context     0 / 500k tokens
+    Thresholds  archive at 70% (350k) → release to 50% (250k) · defaults
+    Settings    ~/.pi/agent/context-archive.json · project .pi/context-archive.json
+  ───────────────────────────────────────────────────────────────────────────
+  ↑↓ scroll  d details  esc close
+  ```
+
+  The title's right side and `State` read `on`/`off` and the scope that decides
+  it (`global default`, `project override`, `session override`); a settings fault
+  reads `attention` with the reason. `Context` is Pi's usage against the model's
+  capacity; `Thresholds` shows the effective pair, its token amounts and its own
+  source. `d` switches to the complete status text: effective ON/OFF and its
+  source, the watermarks in tokens, the global default pair, the branch archive
+  count, the last boundary result, the effective sources and the full settings
+  paths. Outside the TUI (print/RPC) that complete text is printed as a
+  notification, as it is after every command that changes a setting.
 
 Thresholds are decimal percentages; require `0 <= LOW < HIGH <= 100`.
 The initial global pair is **70 / 50**.

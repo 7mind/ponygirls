@@ -1,15 +1,22 @@
 /**
- * ponygirls-tokemon — the quota table (tokemon's layout): one row group per
- * account, its windows stacked inside the cells, sorted by (provider, login).
- * Rows without quota windows (other than rate-limited ones) are hidden
- * unless asked for and counted in the caption. On a narrow terminal the
- * provider's locations go first, then Status wraps (each window's cells stay
- * level with its status), then Plan, Provider, and Status are hidden, in
- * that order; the caption names what was hidden.
+ * ponygirls-tokemon — the quota table (tokemon's layout): a header line, then
+ * one line per quota window, accounts sorted by (provider, login); an
+ * account's further windows leave its first cells blank. Rows without quota
+ * windows (other than rate-limited ones) are hidden unless asked for and
+ * counted in the caption.
+ *
+ * On a narrow terminal the provider's locations go first, then Status
+ * shortens to its state with one qualifier, then columns are hidden: Src,
+ * Plan, Login, Resets, Usage. Provider, Window, Used / limit and Status say
+ * which row this is and how it is doing: they are never hidden, only cut
+ * cell by cell with an ellipsis when even they do not fit. The caption names
+ * the hidden columns. The `tokemon` CLI (nix/pkg/tokemon, render.py) follows
+ * the same rules.
  */
 
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { formatResets, formatUsedLimit, hiddenCaption, isShownByDefault, rateLimitedStatus, sortResults, usageBar, windowState, type WindowState } from "./format.ts";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { columnCells, type Column } from "@ponygirls/pi-ui";
+import { formatResets, formatUsedLimit, hiddenCaption, isShownByDefault, rateLimitedStatus, retryQualifier, sortResults, usageBar, usedPercent, windowState, type WindowState } from "./format.ts";
 import type { QuotaWindow } from "./quota.ts";
 import { staleLabel } from "./freshness.ts";
 import type { QueryResult } from "./service.ts";
@@ -35,13 +42,50 @@ export interface TableOptions {
 
 export interface RenderedTable {
   lines: string[];
+  /** What the table leaves out: stale rows without their marker, hidden rows, hidden columns. */
+  notes: string[];
+  /** The notes on one line, or null without any. */
   caption: string | null;
 }
+
+/** Joins the notes under the table, and a state with its qualifiers. */
+export const NOTE_SEPARATOR = " · ";
 
 /** One line of a cell and how to style it. */
 interface CellLine {
   text: string;
   style: (s: string) => string;
+}
+
+/** One wording of a status, and whether it shows the row's stale marker. */
+interface StatusText {
+  text: string;
+  stale: boolean;
+}
+
+/** A row's status: one line, never wrapped. */
+interface StatusLine {
+  /** Fullest first; the first that fits the column is shown, the last is cut when none does. */
+  forms: StatusText[];
+  /** Cells the column must offer before another column is hidden for it. */
+  need: number;
+  /** Cells the column must offer before any cell is cut. */
+  least: number;
+  style: (s: string) => string;
+}
+
+/** The lines of one account: its cells by column, Status apart because its wording depends on the width left. */
+interface RowGroup {
+  cells: CellLine[][];
+  status: StatusLine[];
+  stale: boolean;
+}
+
+/** Column widths in cells, and the widths Status can settle for. */
+interface Measured {
+  groups: RowGroup[];
+  natural: number[];
+  status: { full: number; need: number; least: number };
 }
 
 type Align = "left" | "right";
@@ -56,16 +100,13 @@ const COLUMNS: ReadonlyArray<{ header: string; align: Align }> = [
   { header: "Resets", align: "right" },
   { header: "Status", align: "left" },
 ];
-/** Optional columns in drop order: descriptive first; Status carries ok/low/EXHAUSTED and errors, so it goes last. */
-const DROP_ORDER = ["Plan", "Provider", "Status"];
+/** Columns hidden on a narrow terminal, first to last. The others say which row this is and how it is doing. */
+const HIDE_ORDER = ["Src", "Plan", "Login", "Resets", "Usage"];
+/** Which quota and its numbers: cut before who it is and how it is doing. */
+const CUT_FIRST = ["Window", "Used / limit"];
 const STATUS_COLUMN = COLUMNS.length - 1;
-/** Columns with one line per window, kept level with that window's (possibly wrapped) status. */
-const WINDOW_COLUMNS = ["Window", "Used / limit", "Usage", "Resets"].map((header) => COLUMNS.findIndex((c) => c.header === header));
-const BLANK: CellLine = { text: "", style: same };
+const HEADER_WIDTHS = COLUMNS.map((column) => visibleWidth(column.header));
 const GAP = 2;
-const MIN_STATUS_WIDTH = 12;
-/** Status narrows to its longest word, so it wraps between words; only words longer than this are split. */
-const MAX_STATUS_WORD = 24;
 
 function stateStyle(style: TableStyle, state: WindowState): (s: string) => string {
   if (state === "EXHAUSTED") return (s) => style.error(style.bold(s));
@@ -80,108 +121,154 @@ export function styleBar(style: TableStyle, state: WindowState, bar: string): st
   return bar.replace(/█+/g, (run) => fill(run)).replace(/░+/g, (run) => style.dim(run));
 }
 
-/** Per-window status lines; a row's note is shown once, on its first line. */
-function statusLines(result: QueryResult, windows: Array<QuotaWindow | null>, now: Date, style: TableStyle): CellLine[] {
-  if (result.rateLimited) return windows.map(() => ({ text: rateLimitedStatus(result.retryAt, now), style: style.warning }));
-  if (result.error !== null) return windows.map(() => ({ text: result.error!, style: (s) => style.error(style.bold(s)) }));
+/**
+ * A status from its parts. `states` are the state's own wordings, fullest
+ * first (`low 98%`, `low`). `firm` qualifiers say when to look again or how
+ * far to trust the row (the retry time, the stale marker): a column is hidden
+ * to keep the first of them. `loose` ones (a provider's note) show only in
+ * spare width. `full` is everything known, shown where it fits whole.
+ */
+function statusLine(states: StatusText[], firm: StatusText[], loose: StatusText[], full: StatusText, style: (s: string) => string): StatusLine {
+  const state = states[0]!;
+  const qualify = (qualifier: StatusText): StatusText => ({ text: `${state.text}${NOTE_SEPARATOR}${qualifier.text}`, stale: state.stale || qualifier.stale });
+  const forms = [full, ...firm.map(qualify), ...loose.map(qualify), ...states].filter((form, index, all) => all.findIndex((other) => other.text === form.text) === index);
+  return { forms, need: visibleWidth(firm.length > 0 ? qualify(firm[0]!).text : state.text), least: visibleWidth(states.at(-1)!.text), style };
+}
+
+const plain = (text: string): StatusText => ({ text, stale: false });
+
+/** An error, or a provider's note standing for the state, claims no width: it takes the cells left over and is cut where they end. */
+const unclaimed = (line: StatusLine): StatusLine => ({ ...line, need: 0, least: 0 });
+
+/** Per-window status lines; a row's qualifiers are shown once, on its first line. */
+function statusLines(result: QueryResult, windows: Array<QuotaWindow | null>, now: Date, style: TableStyle): StatusLine[] {
+  if (result.rateLimited) {
+    const retry = retryQualifier(result.retryAt, now);
+    return windows.map(() => statusLine([plain("rate limited")], retry === null ? [] : [plain(retry)], [], plain(rateLimitedStatus(result.retryAt, now)), style.warning));
+  }
+  if (result.error !== null) return windows.map(() => unclaimed(statusLine([plain(result.error!)], [], [], plain(result.error!), (s) => style.error(style.bold(s)))));
   const stale = staleLabel(result, now);
-  const note = [result.snapshot?.note, stale].filter((s): s is string => typeof s === "string").join(" · ") || null;
+  const note = result.snapshot?.note ?? null;
+  const staleText: StatusText[] = stale === null ? [] : [{ text: stale, stale: true }];
+  const noteText: StatusText[] = note === null ? [] : [plain(note)];
+  const everything = (parts: StatusText[]): StatusText => ({ text: parts.map((part) => part.text).join(NOTE_SEPARATOR), stale: stale !== null });
   return windows.map((window, index) => {
-    if (window === null) return note !== null ? { text: index === 0 ? note : "—", style: style.dim } : { text: "ok", style: style.success };
+    if (window === null) {
+      // No quota windows: the provider's note, else the stale marker, stands for the state.
+      const [state, ...rest] = [...noteText, ...staleText];
+      if (state === undefined) return statusLine([plain("ok")], [], [], plain("ok"), style.success);
+      return unclaimed(statusLine([state], rest, [], everything([state, ...rest]), style.dim));
+    }
     const state = windowState(window);
-    return { text: index === 0 && note !== null ? `${state} · ${note}` : state, style: stale === null ? stateStyle(style, state) : style.warning };
+    const percent = usedPercent(window);
+    const states = percent === null ? [plain(state)] : [plain(`${state} ${percent}%`), plain(state)];
+    const lineStyle = stale === null ? stateStyle(style, state) : style.warning;
+    if (index > 0) return statusLine(states, [], [], states[0]!, lineStyle);
+    return statusLine(states, staleText, noteText, everything([states[0]!, ...noteText, ...staleText]), lineStyle);
   });
 }
 
-function rowCells(result: QueryResult, now: Date, compact: boolean, style: TableStyle): CellLine[][] {
+function rowGroup(result: QueryResult, now: Date, compact: boolean, style: TableStyle): RowGroup {
   const t = result.target;
   const windows: Array<QuotaWindow | null> = result.snapshot && result.snapshot.windows.length > 0 ? result.snapshot.windows : [null];
   const perWindow = (f: (w: QuotaWindow) => string): CellLine[] => windows.map((w) => ({ text: w ? f(w) : "—", style: same }));
   const provider: CellLine[] = [{ text: t.provider, style: (s) => style.provider(t.provider, s) }];
   if (!compact) provider.push(...t.label.split(", ").map((label) => ({ text: label, style: style.dim })));
-  return [
-    provider,
-    [{ text: t.origin, style: same }],
-    [{ text: result.snapshot?.identity ?? "", style: same }],
-    [{ text: result.snapshot?.plan ?? "", style: same }],
-    perWindow((w) => w.name),
-    perWindow(formatUsedLimit),
-    windows.map((w) => (w ? { text: usageBar(w), style: (bar: string) => styleBar(style, windowState(w), bar) } : { text: "—", style: same })),
-    perWindow((w) => formatResets(w, now)),
-    statusLines(result, windows, now, style),
-  ];
+  return {
+    cells: [
+      provider,
+      [{ text: t.origin, style: same }],
+      [{ text: result.snapshot?.identity ?? "", style: same }],
+      [{ text: result.snapshot?.plan ?? "", style: same }],
+      perWindow((w) => w.name),
+      perWindow(formatUsedLimit),
+      windows.map((w) => (w ? { text: usageBar(w), style: (bar: string) => styleBar(style, windowState(w), bar) } : { text: "—", style: same })),
+      perWindow((w) => formatResets(w, now)),
+    ],
+    status: statusLines(result, windows, now, style),
+    stale: staleLabel(result, now) !== null,
+  };
 }
 
-/** Wrap each window's status to `width`, padding that window's other cells with blank lines. */
-function wrapStatus(group: CellLine[][], width: number): CellLine[][] {
-  const wrapped = group.map((cells) => [...cells]);
-  for (const i of [...WINDOW_COLUMNS, STATUS_COLUMN]) wrapped[i] = [];
-  for (const [w, status] of group[STATUS_COLUMN]!.entries()) {
-    const lines = wrapTextWithAnsi(status.text, width);
-    wrapped[STATUS_COLUMN]!.push(...lines.map((text) => ({ text, style: status.style })));
-    for (const i of WINDOW_COLUMNS) wrapped[i]!.push(group[i]![w]!, ...lines.slice(1).map(() => BLANK));
+/** With `wholeStatus` (the view of invalid rows, read for its errors) columns are hidden for the full wording of each status, not for its short one. */
+function measure(groups: RowGroup[], wholeStatus: boolean): Measured {
+  const statuses = groups.flatMap((group) => group.status);
+  const widest = (pick: (line: StatusLine) => number): number => Math.max(HEADER_WIDTHS[STATUS_COLUMN]!, ...statuses.map(pick));
+  const full = widest((line) => visibleWidth(line.forms[0]!.text));
+  return {
+    groups,
+    natural: HEADER_WIDTHS.slice(0, STATUS_COLUMN).map((header, i) => Math.max(header, ...groups.flatMap((group) => group.cells[i]!.map((line) => visibleWidth(line.text))))),
+    status: { full, need: wholeStatus ? full : widest((line) => line.need), least: widest((line) => line.least) },
+  };
+}
+
+function tableWidth(visible: number[], widths: number[]): number {
+  return visible.reduce((sum, i) => sum + widths[i]!, 0) + GAP * (visible.length - 1);
+}
+
+/** Take cells from the widest of `columns` still above its floor (the leftmost of equals) until the visible columns fit. */
+function shrink(columns: number[], visible: number[], widths: number[], floors: number[], width: number): void {
+  for (let excess = tableWidth(visible, widths) - width; excess > 0; excess--) {
+    const candidates = columns.filter((i) => widths[i]! > floors[i]!);
+    if (candidates.length === 0) return;
+    const widest = candidates.reduce((a, b) => (widths[b]! > widths[a]! ? b : a));
+    widths[widest]!--;
   }
-  return wrapped;
 }
 
-function pad(text: string, width: number, align: Align): string {
-  const fill = " ".repeat(Math.max(0, width - visibleWidth(text)));
-  return align === "right" ? fill + text : text + fill;
+/** The visible columns and every column's width for `width` terminal cells (null: no limit). */
+function arrange(measured: Measured, width: number | null): { visible: number[]; widths: number[] } {
+  const { natural, status } = measured;
+  let visible = COLUMNS.map((_, i) => i);
+  const withStatus = (statusWidth: number): number[] => [...natural, statusWidth];
+  if (width === null || tableWidth(visible, withStatus(status.full)) <= width) return { visible, widths: withStatus(status.full) };
+  for (const name of HIDE_ORDER) {
+    if (tableWidth(visible, withStatus(status.need)) <= width) break;
+    visible = visible.filter((i) => COLUMNS[i]!.header !== name);
+  }
+  // Status takes the cells left over; each line shows its fullest wording that fits them.
+  const spare = width - tableWidth(visible, withStatus(0));
+  if (spare >= status.least) return { visible, widths: withStatus(Math.min(spare, status.full)) };
+  // Nothing left to hide: cut the quota's details first, then names and states, and headers last.
+  const widths = withStatus(status.least);
+  shrink(visible.filter((i) => CUT_FIRST.includes(COLUMNS[i]!.header)), visible, widths, HEADER_WIDTHS, width);
+  shrink(visible, visible, widths, HEADER_WIDTHS, width);
+  shrink(visible, visible, widths, widths.map(() => 1), width);
+  return { visible, widths };
 }
 
 export function buildTable(results: QueryResult[], now: Date, options: TableOptions, style: TableStyle): RenderedTable {
   const shown = options.showInvalid ? results : results.filter(isShownByDefault);
   const hidden = options.showInvalid ? [] : results.filter((r) => !isShownByDefault(r));
   const ordered = sortResults(shown);
-  let compact = false;
-  let groups = ordered.map((r) => rowCells(r, now, compact, style));
-  let visible = COLUMNS.map((_, i) => i);
-  const dropped: string[] = [];
-  const naturalWidths = (): number[] => COLUMNS.map((c, i) => Math.max(visibleWidth(c.header), ...groups.map((g) => Math.max(...g[i]!.map((l) => visibleWidth(l.text))))));
-  let widths = naturalWidths();
-  const total = (): number => visible.reduce((sum, i) => sum + widths[i]!, 0) + GAP * (visible.length - 1);
-  while (options.width !== null && total() > options.width) {
-    if (!compact) {
-      compact = true;
-      groups = ordered.map((r) => rowCells(r, now, compact, style));
-      widths = naturalWidths();
-      continue;
-    }
-    // Wrap Status into whatever width is left before hiding a column.
-    if (visible.includes(STATUS_COLUMN)) {
-      const statusWidth = options.width - (total() - widths[STATUS_COLUMN]!);
-      const longestWord = Math.max(0, ...groups.flatMap((g) => g[STATUS_COLUMN]!.flatMap((l) => l.text.split(/\s+/).map(visibleWidth))));
-      if (statusWidth >= Math.min(Math.max(longestWord, MIN_STATUS_WIDTH), MAX_STATUS_WORD)) {
-        widths[STATUS_COLUMN] = statusWidth;
-        groups = groups.map((g) => wrapStatus(g, statusWidth));
-        break;
-      }
-    }
-    const next = DROP_ORDER.find((name) => !dropped.includes(name) && visible.some((i) => COLUMNS[i]!.header === name));
-    if (next === undefined) break;
-    dropped.push(next);
-    visible = visible.filter((i) => COLUMNS[i]!.header !== next);
-  }
+  const all = COLUMNS.map((_, i) => i);
+  let measured = measure(ordered.map((r) => rowGroup(r, now, false, style)), options.showInvalid);
+  // The provider's locations go first: anything else that does not fit hides them.
+  if (options.width !== null && tableWidth(all, [...measured.natural, measured.status.full]) > options.width) measured = measure(ordered.map((r) => rowGroup(r, now, true, style)), options.showInvalid);
+  const { visible, widths } = arrange(measured, options.width);
 
-  const width = options.width ?? total();
-  const line = (cells: string[]): string => truncateToWidth(cells.join(" ".repeat(GAP)).trimEnd(), width, "…");
-  const rule = style.dim("─".repeat(Math.min(width, total())));
-  const lines = [line(visible.map((i) => style.bold(pad(COLUMNS[i]!.header, widths[i]!, COLUMNS[i]!.align)))), rule];
-  for (const [index, group] of groups.entries()) {
-    if (index > 0) lines.push(rule);
-    const height = Math.max(...visible.map((i) => group[i]!.length));
+  const columns: Column[] = visible.map((i) => ({ header: COLUMNS[i]!.header, width: widths[i]!, align: COLUMNS[i]!.align }));
+  const line = (cells: string[]): string => (options.width === null ? columnCells(columns, cells, GAP) : truncateToWidth(columnCells(columns, cells, GAP), options.width, "…"));
+  const lines = [style.dim(line(columns.map((column) => column.header)))];
+  let staleUnmarked = 0;
+  for (const group of measured.groups) {
+    const statusWidth = widths[STATUS_COLUMN]!;
+    const status = group.status.map((s) => ({ shown: s.forms.find((form) => visibleWidth(form.text) <= statusWidth) ?? s.forms.at(-1)!, style: s.style }));
+    if (group.stale && !status[0]!.shown.stale) staleUnmarked++;
+    const cells: CellLine[][] = [...group.cells, status.map((s) => ({ text: s.shown.text, style: s.style }))];
+    const height = Math.max(...visible.map((i) => cells[i]!.length));
     for (let row = 0; row < height; row++) {
       lines.push(line(visible.map((i) => {
-        const cell = group[i]![row];
-        const text = cell ? truncateToWidth(cell.text, widths[i]!, "…") : "";
-        return cell ? pad(cell.style(text), widths[i]!, COLUMNS[i]!.align) : pad("", widths[i]!, COLUMNS[i]!.align);
+        const cell = cells[i]![row];
+        return cell ? cell.style(truncateToWidth(cell.text, widths[i]!, "…")) : "";
       })));
     }
   }
-  const staleRows = ordered.filter((result) => staleLabel(result, now) !== null).length;
-  const notes = [dropped.includes("Status") && staleRows > 0 ? `⚠ ${staleRows} stale quota row(s)` : null, hiddenCaption(hidden)];
-  if (compact && !dropped.includes("Provider")) notes.push("provider locations hidden");
-  if (dropped.length > 0) notes.push(`columns hidden: ${dropped.join(", ")}`);
-  const caption = notes.filter((n): n is string => n !== null).join(" · ") || null;
-  return { lines, caption };
+  const dropped = COLUMNS.filter((_, i) => !visible.includes(i)).map((column) => column.header);
+  const notes = [
+    staleUnmarked > 0 ? `⚠ ${staleUnmarked} stale quota row(s)` : null,
+    hiddenCaption(hidden),
+    dropped.length > 0 ? `hidden at this width: ${dropped.join(", ")}` : null,
+  ].filter((note): note is string => note !== null);
+  return { lines, notes, caption: notes.join(NOTE_SEPARATOR) || null };
 }

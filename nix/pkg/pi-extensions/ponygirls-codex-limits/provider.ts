@@ -4,6 +4,12 @@ import type { CodexCatalog, CodexLimit } from "./catalog.ts";
 
 const PROVIDER_ID = "openai-codex";
 const OFFICIAL_BASE_URL = "https://chatgpt.com/backend-api";
+// Codex's bundled catalog covers rollout gaps in the authenticated catalog.
+// https://github.com/openai/codex/blob/6c0cee502d215e5df2dd9a303cf2e252229c9e12/codex-rs/models-manager/models.json
+const BUNDLED_LIMITS: readonly CodexLimit[] = [
+  { slug: "gpt-6.2-astra", contextWindow: 872000 },
+  { slug: "gpt-6.2-sol", contextWindow: 872000 },
+];
 
 export interface MaximumContextProvider {
   readonly providerId: string;
@@ -42,12 +48,14 @@ export function maximumContextProvider(base: Provider, catalog: CodexCatalog): M
           throw new Error("Codex discovery is disabled for a nonstandard provider endpoint");
         }
         const discovered = await catalog.load(credential, context.signal);
+        const bundled = BUNDLED_LIMITS.filter((entry) => !discovered.some((item) => item.slug === entry.slug && item.contextWindow !== undefined));
         await context.publish({ update: () => {
-          limits = discovered;
+          limits = [...discovered, ...bundled];
           credentialScope = scope;
           pendingRefresh = false;
           const count = base.getModels().filter((model) => discovered.some((item) => item.slug === model.id && item.contextWindow !== undefined)).length;
-          status = `Live context limits applied to ${count} catalog models. Output limits retained from Pi's catalog (Codex discovery exposes no output maximum).`;
+          const fallback = bundled.length === 0 ? "" : ` Bundled Codex fallback limits loaded for ${bundled.map((entry) => entry.slug).join(", ")}.`;
+          status = `Live context limits applied to ${count} catalog models.${fallback} Output limits retained from Pi's catalog (Codex discovery exposes no output maximum).`;
         } });
       } catch (error) {
         await context.publish({ update: () => {

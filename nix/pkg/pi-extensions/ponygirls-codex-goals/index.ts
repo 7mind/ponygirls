@@ -12,7 +12,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { defineTool, keyText, SessionManager } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
-import { CustomViewToggle } from "@ponygirls/pi-ui";
+import { BORDER_ORDER, borderBadge, borderBadgeCompact, CustomViewToggle } from "@ponygirls/pi-ui";
 
 import {
   blockRecord,
@@ -46,11 +46,14 @@ import {
   type SidecarEnvelope,
 } from "./src/store.ts";
 import { handleCreateGoal, handleGetGoal, handleUpdateGoal } from "./src/tools.ts";
-import { GOAL_STATUS_KEY, goalCompactBadge, goalStatusLine } from "./src/status.ts";
+import { GOAL_STATUS_KEY, goalBadge } from "./src/status.ts";
+import { renderGoalCall, renderGoalResult } from "./src/tool-lines.ts";
 import {
   BannerLine,
-  commitSummary,
+  CLEARED_NOTICE_TEXT,
+  clearedSummary,
   instructionSummary,
+  isClearedNotice,
   isCommitMeta,
   isPauseNotice,
   messageText,
@@ -132,19 +135,17 @@ function notifyOutsideTranscript(ctx: ExtensionContext, message: string): void {
 function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["ui"], openPane: () => void): void {
   try {
     const loaded = binding.store.load();
-    const goal = loaded.ok ? loaded.value.goal : null;
-    const line = goalStatusLine(goal);
-    if (goal === null || line === null) {
+    const badge = goalBadge(loaded.ok ? loaded.value.goal : null);
+    if (badge === null) {
       ui.setWidget(GOAL_STATUS_KEY, undefined);
       return;
     }
-    const label = ui.theme.bg("customMessageBg", ` ${line} `);
-    const compact = goalCompactBadge(ui.theme, goal.status);
+    const theme = ui.theme;
     ui.setWidget(
       GOAL_STATUS_KEY,
       () => ({
-        render: () => [label],
-        renderCompact: () => compact,
+        render: (width) => [borderBadge(theme, badge, width)],
+        renderCompact: (width) => borderBadgeCompact(theme, badge, width),
         invalidate: () => {},
         handleMouse: (event) => {
           if (event.type !== "click" || event.button !== "left") return undefined;
@@ -152,7 +153,7 @@ function refreshGoalStatus(binding: { store: GoalStore }, ui: ExtensionContext["
           return { handled: true };
         },
       }),
-      { placement: "borderBottomLeft" },
+      { placement: "borderBottomLeft", order: BORDER_ORDER.goal },
     );
   } catch {
     try {
@@ -474,6 +475,8 @@ export default function (pi: ExtensionAPI): void {
         token_budget: Type.Optional(Type.Integer({ minimum: 1, description: "Spending cap, only when requested" })),
       }),
       executionMode: "sequential",
+      renderCall: (args, theme, context) => renderGoalCall(TOOL_CREATE, args, theme, context),
+      renderResult: (result, options, theme, context) => renderGoalResult(TOOL_CREATE, result, options, theme, context),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         const binding = bindingFor(ctx);
         if (!binding) {
@@ -510,6 +513,8 @@ export default function (pi: ExtensionAPI): void {
       label: "Get goal",
       description: GET_DESCRIPTION,
       parameters: Type.Object({}),
+      renderCall: (args, theme, context) => renderGoalCall(TOOL_GET, args, theme, context),
+      renderResult: (result, options, theme, context) => renderGoalResult(TOOL_GET, result, options, theme, context),
       async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
         const binding = bindingFor(ctx);
         if (!binding) {
@@ -539,6 +544,8 @@ export default function (pi: ExtensionAPI): void {
         status: Type.Union([Type.Literal("complete"), Type.Literal("blocked")]),
       }),
       executionMode: "sequential",
+      renderCall: (args, theme, context) => renderGoalCall(TOOL_UPDATE, args, theme, context),
+      renderResult: (result, options, theme, context) => renderGoalResult(TOOL_UPDATE, result, options, theme, context),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         const binding = bindingFor(ctx);
         if (!binding) {
@@ -637,16 +644,17 @@ export default function (pi: ExtensionAPI): void {
         return;
       }
       const envelope = loadEnvelope(binding);
+      // The pane is the status; elsewhere the status is recorded and notified.
+      if (ctx.mode === "tui" && ctx.hasUI) {
+        await openGoalPane(binding, ctx, "open");
+        return;
+      }
       try {
         pi.appendEntry(GOAL_NOTICE_TYPE, { text: formatStatus(envelope.goal, envelope.revision), at: clk.nowIso() });
       } catch {
         // non-fatal
       }
-      if (ctx.mode === "tui" && ctx.hasUI) {
-        await openGoalPane(binding, ctx, "open");
-      } else {
-        ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
-      }
+      ctx.ui.notify(formatStatus(envelope.goal, envelope.revision), "info");
       return;
     }
 
@@ -686,8 +694,8 @@ export default function (pi: ExtensionAPI): void {
           revision: committed.value.revision,
           tombstone: true,
         });
-        appendEvidence(binding, GOAL_NOTICE_TYPE, { text: "Goal cleared. Transcript entries retained.", at: clk.nowIso() });
-        notifyOutsideTranscript(ctx, "Goal cleared. Transcript entries retained.");
+        appendEvidence(binding, GOAL_NOTICE_TYPE, { text: CLEARED_NOTICE_TEXT, at: clk.nowIso() });
+        notifyOutsideTranscript(ctx, CLEARED_NOTICE_TEXT);
         publishGoalStatus(binding, ctx);
       } catch (err) {
         safeNotify(ctx, `/goal clear failed: ${(err as Error).message}`, "error");
@@ -983,7 +991,7 @@ export default function (pi: ExtensionAPI): void {
   }
 
   pi.registerCommand(COMMAND_GOAL, {
-    description: "Manage the session goal: /goal, /goal <objective>, /goal edit|pause|resume|clear",
+    description: "Session goal: set, pause, resume, edit, clear",
     getArgumentCompletions: completeGoalArguments,
     handler: async (args: string, ctx) => {
       const parsed = parseGoalCommand(args);
@@ -1593,13 +1601,21 @@ export default function (pi: ExtensionAPI): void {
     const line = instructionSummary(theme, messageText(message.content), keyText(EXPAND_KEYBINDING));
     return line === null ? undefined : new BannerLine(theme, line, options.outputPad);
   });
+  // An entry renderer that returns no component adds no row. Pi then leaves the
+  // entry out of the transcript it is building, so a later expand does not draw
+  // it either; it is drawn when the transcript is built expanded.
   pi.registerEntryRenderer(GOAL_NOTICE_TYPE, (entry, options, theme) => {
     const data = entry.data as NoticeData;
-    if (!options.expanded && isPauseNotice(data)) return new BannerLine(theme, pauseNoticeSummary(theme, data), NOTICE_BANNER_PADDING);
+    if (!options.expanded) {
+      if (isPauseNotice(data)) return new BannerLine(theme, pauseNoticeSummary(theme, data), NOTICE_BANNER_PADDING);
+      // The tombstone commit appended before this notice draws the one line for a clear.
+      if (isClearedNotice(data)) return undefined;
+    }
     return new Text(data.text, 0, 0);
   });
   pi.registerEntryRenderer(COMMIT_META_TYPE, (entry, options, theme) => {
-    if (!options.expanded && isCommitMeta(entry.data)) return new Text(commitSummary(theme, entry.data), 0, 0);
-    return new Text(`[codex-goal-commit] ${JSON.stringify(entry.data)}`, 0, 0);
+    if (options.expanded || !isCommitMeta(entry.data)) return new Text(`[codex-goal-commit] ${JSON.stringify(entry.data)}`, 0, 0);
+    // A revision is bookkeeping; only a clear is an event the user caused.
+    return entry.data.tombstone === true ? new BannerLine(theme, clearedSummary(theme), NOTICE_BANNER_PADDING) : undefined;
   });
 }

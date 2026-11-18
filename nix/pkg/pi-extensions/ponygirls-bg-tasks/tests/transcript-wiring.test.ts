@@ -1,7 +1,7 @@
 /** Extension wiring of the transcript renderers: collapsed one-liners, expanded text unchanged. */
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Component } from "@earendil-works/pi-tui";
+import { visibleWidth, type Component } from "@earendil-works/pi-tui";
 import { COMPLETION_CUSTOM_TYPE, STATUS_CUSTOM_TYPE } from "../src/protocol.ts";
 import { expandedCall } from "../src/transcript.ts";
 import { renderCompletion } from "../src/ui.ts";
@@ -16,12 +16,13 @@ interface RegisteredTool {
 const THEME = { fg: (_color: string, text: string) => text, bg: (_color: string, text: string) => text, bold: (text: string) => text };
 const WIDTH = 100;
 
-async function load(): Promise<{ renderers: Map<string, MessageRenderer>; tool: RegisteredTool }> {
+async function load(): Promise<{ renderers: Map<string, MessageRenderer>; tool: RegisteredTool; commands: Map<string, string> }> {
   const renderers = new Map<string, MessageRenderer>();
+  const commands = new Map<string, string>();
   let tool: RegisteredTool | null = null;
   const pi = {
     registerTool: (definition: RegisteredTool) => { tool = definition; },
-    registerCommand: () => {},
+    registerCommand: (name: string, command: { description: string }) => { commands.set(name, command.description); },
     registerMessageRenderer: (type: string, renderer: MessageRenderer) => { renderers.set(type, renderer); },
     on: () => {},
     sendMessage: () => {},
@@ -29,7 +30,7 @@ async function load(): Promise<{ renderers: Map<string, MessageRenderer>; tool: 
   const mod = (await import("../index.ts")) as { default: (api: unknown) => void };
   mod.default(pi);
   assert.ok(tool);
-  return { renderers, tool };
+  return { renderers, tool, commands };
 }
 
 const COMPLETION = {
@@ -52,9 +53,35 @@ test("status notice: one line collapsed; expanded and unknown details keep pi's 
   const { renderers } = await load();
   const render = renderers.get(STATUS_CUSTOM_TYPE)!;
   const message = { content: "bg-tasks: status backend reachable again.", details: { status: "recovered" } };
-  assert.deepEqual(render(message, { expanded: false, outputPad: 1 }, THEME)!.render(WIDTH), [" ⚙ bg status backend reachable again."]);
+  assert.deepEqual(render(message, { expanded: false, outputPad: 1 }, THEME)!.render(WIDTH), [" ⚙ background task status is back"]);
   assert.equal(render(message, { expanded: true, outputPad: 1 }, THEME), undefined);
   assert.equal(render({ ...message, details: { status: "other" } }, { expanded: false, outputPad: 1 }, THEME), undefined);
+});
+
+// Defect B: at 120 columns the collapsed line was cut as `…(not --no-se...`.
+test("status notice: the no-session line is whole at 120 columns and narrows between words", async () => {
+  const { renderers } = await load();
+  const render = renderers.get(STATUS_CUSTOM_TYPE)!;
+  const message = {
+    content: "bg-tasks: status backend unreachable (NO_PERSISTENT_SESSION: background tasks need a persistent session file (not --no-session)); the badge keeps its last state.",
+    details: { status: "unavailable" },
+  };
+  const collapsed = render(message, { expanded: false, outputPad: 1 }, THEME)!;
+  assert.deepEqual(collapsed.render(120), [" ⚙ background tasks are off: this session is not saved (--no-session)"]);
+  assert.deepEqual(collapsed.render(40), [" ⚙ background tasks are off: this…"]);
+  for (const width of [60, 80, 100, 120, 170]) {
+    const lines = collapsed.render(width);
+    assert.equal(lines.length, 1);
+    assert.ok(visibleWidth(lines[0]!) <= width, `${width}: ${lines[0]}`);
+    assert.doesNotMatch(lines[0]!, /\.\.\./);
+  }
+  // Expanded, pi renders the content itself: the complete original text with the error code.
+  assert.equal(render(message, { expanded: true, outputPad: 1 }, THEME), undefined);
+});
+
+test("/bg describes itself in a few words", async () => {
+  const { commands } = await load();
+  assert.equal(commands.get("bg"), "Background tasks: output, terminate, signal");
 });
 
 test("bg_task: the call line until the result, then one combined line; expanded is pi's generic text", async () => {

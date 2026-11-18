@@ -16,12 +16,6 @@ export const GOAL_STATUS_LOOK: Readonly<Record<GoalStatus, StatusLook>> = {
   complete: { glyph: "◈", state: "settled" },
 };
 
-export function formatTokens(count: number): string {
-  if (count < 1000) return String(count);
-  if (count < 1_000_000) return `${(count / 1000).toFixed(1)}k`;
-  return `${(count / 1_000_000).toFixed(1)}M`;
-}
-
 export function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.round(seconds));
   const hours = Math.floor(total / 3600);

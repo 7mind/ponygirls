@@ -1,6 +1,22 @@
-/** Pure /usage table logic. No Pi runtime imports, so the tests can run under node; styling goes through the kit's UiTheme. */
+/** Pure /usage pane logic. No Pi runtime imports, so the tests can run under node; styling goes through the kit's UiTheme. */
 
-import { GRID_SEPARATOR, gridRule, gridSeparator, type UiTheme } from "@ponygirls/pi-ui";
+import {
+	GRID_SEPARATOR,
+	HINT,
+	KEY,
+	fit,
+	fitRight,
+	formatCompact,
+	formatCount,
+	frameRule,
+	frameTitle,
+	gridRule,
+	gridSeparator,
+	keyHints,
+	type KeyHint,
+	type UiTheme,
+} from "@ponygirls/pi-ui";
+import { TAB_ORDER } from "./ponygirls-usage-data.ts";
 import type {
 	BaseStats,
 	InputSize,
@@ -8,6 +24,7 @@ import type {
 	TimeFilteredStats,
 	TotalStats,
 } from "./ponygirls-usage-data.ts";
+import { clampScrollTop, scrollPosition, visibleRange } from "./scroll-state.ts";
 
 export const USAGE_TAB_LABELS: Record<TabName, string> = {
 	today: "Today",
@@ -31,7 +48,7 @@ export const USAGE_TAB_DEFAULT_MODE: Record<TabName, UsageTableMode> = {
 
 export interface UsageTableRow {
 	provider: string;
-	/** Model name, or null for the provider total. Every row carries both columns so scrolled slices stay readable. */
+	/** Model name, or null for the provider total. */
 	model: string | null;
 	sessions: number;
 	messages: number;
@@ -92,36 +109,45 @@ function formatCost(cost: number): string {
 	if (cost < 1) return `$${cost.toFixed(2)}`;
 	if (cost < 10) return `$${cost.toFixed(2)}`;
 	if (cost < 100) return `$${cost.toFixed(1)}`;
-	return `$${Math.round(cost)}`;
+	return `$${formatCount(Math.round(cost))}`;
 }
 
 function formatTokens(count: number): string {
 	if (count === 0) return "-";
-	if (count < 1000) return count.toString();
-	if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-	if (count < 1000000) return `${Math.round(count / 1000)}k`;
-	if (count < 10000000) return `${(count / 1000000).toFixed(1)}M`;
-	return `${Math.round(count / 1000000)}M`;
+	return formatCompact(count);
 }
 
 function formatNumber(n: number): string {
 	if (n === 0) return "-";
-	return n.toLocaleString();
+	return formatCount(n);
 }
 
-/** Fixed numeric widths, as in the upstream table. */
+/**
+ * Numeric columns in display order. `minWidth` holds the usual values, so the
+ * columns keep their widths from tab to tab; a longer value widens its column.
+ */
 const NUMERIC_COLUMNS = [
-	{ label: "Sessions", width: 9, value: (row: UsageTableRow) => formatNumber(row.sessions) },
-	{ label: "Msgs", width: 9, value: (row: UsageTableRow) => formatNumber(row.messages) },
-	{ label: "Cost", width: 9, value: (row: UsageTableRow) => formatCost(row.cost) },
-	{ label: "Tokens", width: 9, value: (row: UsageTableRow) => formatTokens(row.tokens) },
-	{ label: "↑In", width: 8, value: (row: UsageTableRow) => formatTokens(row.input) },
-	{ label: "↓Out", width: 8, value: (row: UsageTableRow) => formatTokens(row.output) },
-	{ label: "Cache", width: 8, value: (row: UsageTableRow) => formatTokens(row.cache) },
+	{ label: "Sessions", minWidth: 8, value: (row: UsageTableRow) => formatNumber(row.sessions) },
+	{ label: "Msgs", minWidth: 8, value: (row: UsageTableRow) => formatNumber(row.messages) },
+	{ label: "Cost", minWidth: 8, value: (row: UsageTableRow) => formatCost(row.cost) },
+	{ label: "Tokens", minWidth: 7, value: (row: UsageTableRow) => formatTokens(row.tokens) },
+	{ label: "↑In", minWidth: 7, value: (row: UsageTableRow) => formatTokens(row.input) },
+	{ label: "↓Out", minWidth: 7, value: (row: UsageTableRow) => formatTokens(row.output) },
+	{ label: "Cache", minWidth: 7, value: (row: UsageTableRow) => formatTokens(row.cache) },
 ] as const;
 
-const MAX_PROVIDER_WIDTH = 18;
-const MAX_MODEL_WIDTH = 26;
+type NumericColumn = (typeof NUMERIC_COLUMNS)[number];
+
+/** Columns given up when the terminal is narrower than the table, first to last. Msgs and Cost always stay. */
+const DROP_ORDER: readonly NumericColumn["label"][] = ["Cache", "↓Out", "↑In", "Sessions", "Tokens"];
+
+const HIDDEN_PREFIX = "hidden at this width: ";
+
+const LABEL_HEADER: Record<UsageTableMode, string> = { models: "Provider / model", aggregates: "Provider" };
+const MODEL_INDENT = "  ";
+/** The first column is never narrower, however narrow the terminal. */
+const MIN_LABEL_WIDTH = 12;
+const ELLIPSIS = "…";
 
 function padLeft(text: string, width: number): string {
 	return text.length >= width ? text : `${" ".repeat(width - text.length)}${text}`;
@@ -131,27 +157,57 @@ function padRight(text: string, width: number): string {
 	return text.length >= width ? text : text + " ".repeat(width - text.length);
 }
 
-function ellipsize(text: string, width: number): string {
-	if (text.length <= width) return text;
-	if (width <= 1) return text.slice(0, width);
-	return `${text.slice(0, width - 1)}…`;
+/**
+ * Columns of text whose characters are all one column wide (provider and model
+ * ids, digits, the table glyphs). The kit does not export pi-tui's
+ * visibleWidth, and pi-tui is not resolvable from the tests.
+ */
+function cellWidth(text: string): number {
+	return [...text].length;
 }
 
-/** Column widths measured across rows and totals, so the table never wobbles. */
-export interface UsageTableLayout {
-	providerWidth: number;
-	modelWidth: number;
+/** Keep both ends of a label wider than `width`: `ai-gateway-…-fable-5-2`. */
+function shortenMiddle(text: string, width: number): string {
+	const chars = [...text];
+	if (chars.length <= width) return text;
+	const kept = width - ELLIPSIS.length;
+	const head = Math.ceil(kept / 2);
+	return `${chars.slice(0, head).join("")}${ELLIPSIS}${chars.slice(chars.length - (kept - head)).join("")}`;
 }
 
-export function measureUsageTable(rows: readonly UsageTableRow[], totals: UsageTableRow): UsageTableLayout {
-	const names = [...rows, totals];
-	return {
-		providerWidth: Math.min(
-			MAX_PROVIDER_WIDTH,
-			Math.max("Provider".length, ...names.map((row) => row.provider.length)),
-		),
-		modelWidth: Math.min(MAX_MODEL_WIDTH, Math.max("Model".length, ...names.map((row) => (row.model ?? "").length))),
-	};
+/** First-column text: the provider, or its model indented under it. */
+function rowLabel(row: UsageTableRow): string {
+	return row.model === null ? row.provider : `${MODEL_INDENT}${row.model}`;
+}
+
+interface UsageTableLayout {
+	labelWidth: number;
+	/** Shown numeric columns in display order, with their widths. */
+	columns: { column: NumericColumn; width: number }[];
+	/** Labels of the dropped columns, in the order they were dropped. */
+	hidden: string[];
+}
+
+/**
+ * Fit the table to `width`. The first column takes its longest label and every
+ * numeric column its longest value; numeric columns are then dropped whole, in
+ * DROP_ORDER, until the rest fits. Only when Msgs and Cost alone are still too
+ * wide does the first column shrink, down to MIN_LABEL_WIDTH.
+ */
+function layoutUsageTable(labels: readonly string[], rows: readonly UsageTableRow[], width: number): UsageTableLayout {
+	const longestLabel = Math.max(MIN_LABEL_WIDTH, ...labels.map(cellWidth));
+	let columns = NUMERIC_COLUMNS.map((column) => ({
+		column,
+		width: Math.max(column.minWidth, ...rows.map((row) => cellWidth(column.value(row)))),
+	}));
+	const numericWidth = (): number => columns.reduce((sum, placed) => sum + GRID_SEPARATOR.length + placed.width, 0);
+	const hidden: string[] = [];
+	for (const label of DROP_ORDER) {
+		if (longestLabel + numericWidth() <= width) break;
+		columns = columns.filter((placed) => placed.column.label !== label);
+		hidden.push(label);
+	}
+	return { labelWidth: Math.max(MIN_LABEL_WIDTH, Math.min(longestLabel, width - numericWidth())), columns, hidden };
 }
 
 /** Plain header cells, dim as one line: separators and labels share the colour. */
@@ -164,50 +220,46 @@ function gridRow(theme: UiTheme, cells: readonly string[], bold: boolean): strin
 	return cells.map((cell) => (bold ? theme.bold(cell) : cell)).join(gridSeparator(theme));
 }
 
-function rowCells(row: UsageTableRow, layout: UsageTableLayout): string[] {
-	return [
-		padRight(ellipsize(row.provider, layout.providerWidth), layout.providerWidth),
-		padRight(ellipsize(row.model ?? "", layout.modelWidth), layout.modelWidth),
-		...NUMERIC_COLUMNS.map((column) => padLeft(column.value(row), column.width)),
-	];
-}
-
-function columnWidths(layout: UsageTableLayout): number[] {
-	return [layout.providerWidth, layout.modelWidth, ...NUMERIC_COLUMNS.map((column) => column.width)];
-}
-
 export interface RenderedUsageTable {
 	/** The dim column header and its `─┼─` rule. */
 	header: string[];
 	rows: string[];
 	/** The `─┴─` rule and the bold totals row. */
 	totals: string[];
+	/** One dim line naming the columns dropped at this width; empty when all are shown. */
+	hidden: string[];
 }
 
 /**
  * One period's table: dim header and `─┼─` rule, one line per row (provider
- * totals bold), then a `─┴─` rule and the bold totals row. Every `│` is dim.
- * Metric columns keep fixed widths and the caller truncates overlong lines;
- * without rows the table is a note line and the caller skips totals.
+ * totals bold, their models indented under them), then a `─┴─` rule and the
+ * bold totals row. Every `│` is dim. The table is at most `width` columns
+ * wide: a column is shown whole or dropped and named in `hidden` (see
+ * layoutUsageTable). Only a `width` below MIN_LABEL_WIDTH plus Msgs and Cost
+ * is exceeded; the caller clips. Without rows the table is a note line and
+ * the caller skips totals.
  */
 export function renderUsageTable(
 	rows: readonly UsageTableRow[],
 	totals: UsageTableRow,
 	theme: UiTheme,
-	opts?: { layout?: UsageTableLayout },
+	opts: { width: number; mode: UsageTableMode },
 ): RenderedUsageTable {
-	if (rows.length === 0) return { header: ["(no usage for this period)"], rows: [], totals: [] };
-	const layout = opts?.layout ?? measureUsageTable(rows, totals);
-	const header = gridHeader(theme, [
-		padRight("Provider", layout.providerWidth),
-		padRight("Model", layout.modelWidth),
-		...NUMERIC_COLUMNS.map((column) => padLeft(column.label, column.width)),
-	]);
-	const widths = columnWidths(layout);
+	if (rows.length === 0) return { header: ["(no usage for this period)"], rows: [], totals: [], hidden: [] };
+	const labelHeader = LABEL_HEADER[opts.mode];
+	const measured = [...rows, totals];
+	const layout = layoutUsageTable([labelHeader, ...measured.map(rowLabel)], measured, opts.width);
+	const cells = (label: string, numeric: readonly string[]): string[] => [
+		fit(shortenMiddle(label, layout.labelWidth), layout.labelWidth),
+		...numeric.map((text, index) => fitRight(text, layout.columns[index]!.width)),
+	];
+	const rowCells = (row: UsageTableRow): string[] => cells(rowLabel(row), layout.columns.map((placed) => placed.column.value(row)));
+	const widths = [layout.labelWidth, ...layout.columns.map((placed) => placed.width)];
 	return {
-		header: [header, gridRule(theme, widths, "┼")],
-		rows: rows.map((row) => gridRow(theme, rowCells(row, layout), row.model === null)),
-		totals: [gridRule(theme, widths, "┴"), gridRow(theme, rowCells(totals, layout), true)],
+		header: [gridHeader(theme, cells(labelHeader, layout.columns.map((placed) => placed.column.label))), gridRule(theme, widths, "┼")],
+		rows: rows.map((row) => gridRow(theme, rowCells(row), row.model === null)),
+		totals: [gridRule(theme, widths, "┴"), gridRow(theme, rowCells(totals), true)],
+		hidden: layout.hidden.length === 0 ? [] : [theme.fg("dim", `${HIDDEN_PREFIX}${layout.hidden.join(", ")}`)],
 	};
 }
 
@@ -285,6 +337,10 @@ function distTotal(bins: readonly InputDistBin[]): number {
 	return bins.reduce((total, bin) => total + bin.count, 0);
 }
 
+function messageTotal(total: number): string {
+	return `${formatCount(total)} message${total === 1 ? "" : "s"}`;
+}
+
 /**
  * Count/share table: dim header and `─┼─` rule, one line per bucket with dim
  * `│`, plus the message total (unstyled; the caller styles totals). Without
@@ -294,21 +350,24 @@ export function renderInputDistTable(bins: readonly InputDistBin[], theme: UiThe
 	const total = distTotal(bins);
 	if (total === 0) return { header: ["(no usage for this period)"], rows: [], totals: [] };
 	const labelWidth = Math.max("Range".length, ...bins.map((bin) => bin.label.length));
-	const countWidth = Math.max("Msgs".length, ...bins.map((bin) => String(bin.count).length));
+	const countWidth = Math.max("Msgs".length, ...bins.map((bin) => formatCount(bin.count).length));
 	const shareWidth = Math.max("Share".length, ...bins.map((bin) => formatShare(bin.pct).length));
 	const header = gridHeader(theme, [padRight("Range", labelWidth), padLeft("Msgs", countWidth), padLeft("Share", shareWidth)]);
 	const rows = bins.map((bin) =>
-		gridRow(theme, [padRight(bin.label, labelWidth), padLeft(String(bin.count), countWidth), padLeft(formatShare(bin.pct), shareWidth)], false),
+		gridRow(theme, [padRight(bin.label, labelWidth), padLeft(formatCount(bin.count), countWidth), padLeft(formatShare(bin.pct), shareWidth)], false),
 	);
 	return {
 		header: [header, gridRule(theme, [labelWidth, countWidth, shareWidth], "┼")],
 		rows,
-		totals: [`${total} message${total === 1 ? "" : "s"}`],
+		totals: [messageTotal(total)],
 	};
 }
 
 /** Box-drawing bar would collide with the table separators; the chart uses full blocks. */
 const DIST_BAR = "█";
+
+/** Widest bar area: wider terminals leave the rest empty, so counts stay next to their bars. */
+const MAX_DIST_BAR_WIDTH = 60;
 
 /** Bar-segment order in every stacked bar; the legend follows the same order. */
 export const INPUT_DIST_COMPONENTS = [
@@ -355,7 +414,8 @@ function splitBlocks(blocks: number, parts: readonly number[]): number[] {
 }
 
 /**
- * Ascii bar chart: bars scale to `width` so the fullest bucket fills it, and
+ * Ascii bar chart: bars scale to `width`, up to MAX_DIST_BAR_WIDTH, so the
+ * fullest bucket fills the bar area, with its count and share right after it;
  * each bar stacks its input/cacheRead/cacheWrite token shares (see `palette`).
  * Non-empty buckets always show at least one block. Lines never exceed `width`
  * in visible columns. A bucket with messages but zero tokens (degenerate —
@@ -369,9 +429,9 @@ export function renderInputDistChart(
 	const total = distTotal(bins);
 	if (total === 0) return { header: ["(no usage for this period)"], rows: [], totals: [] };
 	const labelWidth = Math.max(...bins.map((bin) => bin.label.length));
-	const countWidth = Math.max(...bins.map((bin) => String(bin.count).length));
+	const countWidth = Math.max(...bins.map((bin) => formatCount(bin.count).length));
 	const shareWidth = Math.max(...bins.map((bin) => formatShare(bin.pct).length));
-	const maxBar = Math.max(1, Math.floor(width) - labelWidth - countWidth - shareWidth - 3);
+	const maxBar = Math.max(1, Math.min(MAX_DIST_BAR_WIDTH, Math.floor(width) - labelWidth - countWidth - shareWidth - 3));
 	const peak = Math.max(...bins.map((bin) => bin.count));
 	const rows = bins.map((bin) => {
 		const barLen = bin.count === 0 ? 0 : Math.max(1, Math.round((bin.count / peak) * maxBar));
@@ -388,7 +448,119 @@ export function renderInputDistChart(
 			palette.cacheRead(DIST_BAR.repeat(segments[1]!)) +
 			palette.cacheWrite(DIST_BAR.repeat(segments[2]!)) +
 			" ".repeat(maxBar - barLen);
-		return `${padRight(bin.label, labelWidth)} ${bar} ${padLeft(String(bin.count), countWidth)} ${padLeft(formatShare(bin.pct), shareWidth)}`;
+		return `${padRight(bin.label, labelWidth)} ${bar} ${padLeft(formatCount(bin.count), countWidth)} ${padLeft(formatShare(bin.pct), shareWidth)}`;
 	});
-	return { header: [], rows, totals: [`${total} message${total === 1 ? "" : "s"}`] };
+	return { header: [], rows, totals: [messageTotal(total)] };
+}
+
+const USAGE_TITLE = "Usage";
+/** The hint shows a typographic minus; the keys are `+`/`=` and `-`/`_`. */
+const HEIGHT_HINT: KeyHint = { key: "+ −", action: "height" };
+const PERIOD_HINT: KeyHint = { key: KEY.tab, action: "period" };
+
+/** What the pane shows: the view owns it and changes it on key presses. */
+export interface UsagePaneState {
+	tab: TabName;
+	/** Table density of the current tab. */
+	mode: UsageTableMode;
+	view: UsageView;
+	distStyle: InputDistStyle;
+	scrollTop: number;
+	/** Content lines shown at once. */
+	budget: number;
+}
+
+export interface RenderedUsagePane {
+	lines: string[];
+	/** Scrollable content lines, and the offset clamped to them. */
+	lineCount: number;
+	scrollTop: number;
+}
+
+/** Each toggle names the view its key switches to. */
+function usageHints(pane: UsagePaneState): KeyHint[] {
+	const toggles: KeyHint[] =
+		pane.view === "table"
+			? [
+					{ key: "m", action: pane.mode === "models" ? "hide models" : "show models" },
+					{ key: "v", action: "input sizes" },
+				]
+			: [
+					{ key: "v", action: "usage table" },
+					{ key: "c", action: pane.distStyle === "chart" ? "show table" : "show chart" },
+				];
+	return [PERIOD_HINT, ...toggles, HINT.scroll, HINT.page, HEIGHT_HINT, HINT.close];
+}
+
+interface PaneBody {
+	/** Lines the viewport scrolls over. */
+	content: string[];
+	/** Lines kept under the viewport at every scroll position. */
+	pinned: string[];
+}
+
+function tableBody(theme: UiTheme, width: number, stats: TimeFilteredStats, mode: UsageTableMode): PaneBody {
+	const table = renderUsageTable(buildUsageRows(stats, mode), usageTotalsRow(stats.totals), theme, { width, mode });
+	return { content: [...table.header, ...table.rows, ...table.totals], pinned: table.hidden };
+}
+
+/** Stacked-segment colors; empty segments stay empty (no stray escapes). */
+function distPalette(theme: UiTheme): InputDistPalette {
+	const paint = (color: "accent" | "success" | "warning", bar: string): string => (bar === "" ? "" : theme.fg(color, bar));
+	return {
+		input: (bar) => paint("accent", bar),
+		cacheRead: (bar) => paint("success", bar),
+		cacheWrite: (bar) => paint("warning", bar),
+	};
+}
+
+function distLegend(theme: UiTheme): string {
+	const palette = distPalette(theme);
+	const swatch: Record<InputDistComponentKey, string> = {
+		input: palette.input(DIST_BAR),
+		cacheRead: palette.cacheRead(DIST_BAR),
+		cacheWrite: palette.cacheWrite(DIST_BAR),
+	};
+	return INPUT_DIST_COMPONENTS.map((component) => `${swatch[component.key]} ${theme.fg("dim", component.label)}`).join("  ");
+}
+
+function distBody(theme: UiTheme, width: number, stats: TimeFilteredStats, style: InputDistStyle): PaneBody {
+	const bins = buildInputDistribution(stats.inputSizes);
+	const subtitle = theme.fg("dim", "Input size per assistant message (ctx tokens, all models)");
+	if (style === "table") {
+		const rendered = renderInputDistTable(bins, theme);
+		const content: string[] = [subtitle, "", ...rendered.header, ...rendered.rows];
+		if (rendered.totals.length > 0) content.push("", ...rendered.totals.map((line) => theme.bold(line)));
+		return { content, pinned: [] };
+	}
+	const rendered = renderInputDistChart(bins, width, distPalette(theme));
+	if (rendered.totals.length === 0) return { content: [subtitle, "", ...rendered.header], pinned: [] };
+	const content: string[] = [subtitle, "", distLegend(theme), ...rendered.rows];
+	content.push("", ...rendered.totals.map((line) => theme.bold(line)));
+	return { content, pinned: [] };
+}
+
+/**
+ * The whole pane for one period: title rule with the period tabs and the scroll
+ * position, `budget` content lines from `scrollTop`, the hidden-columns note
+ * (kept in view while the table scrolls), a rule and the key hints. Every line
+ * is at most `width` columns.
+ */
+export function renderUsagePane(theme: UiTheme, width: number, stats: TimeFilteredStats, pane: UsagePaneState): RenderedUsagePane {
+	const { content, pinned } =
+		pane.view === "table" ? tableBody(theme, width, stats, pane.mode) : distBody(theme, width, stats, pane.distStyle);
+	const scrollTop = clampScrollTop(pane.scrollTop, content.length, pane.budget);
+	const { start, end } = visibleRange(content.length, scrollTop, pane.budget);
+	const right = content.length > pane.budget ? theme.fg("dim", scrollPosition(content.length, start, end)) : undefined;
+	const tabs = { labels: TAB_ORDER.map((name) => USAGE_TAB_LABELS[name]), active: TAB_ORDER.indexOf(pane.tab) };
+	return {
+		lines: [
+			frameTitle(theme, width, { title: USAGE_TITLE, tabs, right }, "none").line,
+			...[...content.slice(start, end), ...pinned].map((line) => fit(line, width)),
+			frameRule(theme, width),
+			...keyHints(theme, width, usageHints(pane)).lines,
+		],
+		lineCount: content.length,
+		scrollTop,
+	};
 }

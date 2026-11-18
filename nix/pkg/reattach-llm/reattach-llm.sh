@@ -2,22 +2,41 @@ set -euo pipefail
 
 readonly SUDO_BIN="/run/wrappers/bin/sudo"
 readonly SELF_BIN="$0"
-USER_NAME="$(id -un)"
-readonly USER_NAME
+# Set by main once the arguments and the environment are accepted.
+USER_NAME=""
 
 declare -A tmux_tty_set=()
 declare -A attached_pid_set=()
 declare -a candidate_rows=()
 declare -a process_rows=()
 
+print_help() {
+  cat <<EOF
+reattach-llm — move a detached Claude or Codex terminal into the current tmux pane
+
+Usage: reattach-llm
+       reattach-llm --attach PID TARGET_PANE   (used by the menu)
+
+Run inside tmux. Shows a menu of Claude/Codex processes that are not attached
+to any tmux pane; choosing one re-parents its terminal into this pane.
+Needs the setuid sudo wrapper at ${SUDO_BIN} (NixOS) for reptyr.
+EOF
+}
+
 fail() {
-  echo "$1" >&2
+  echo "reattach-llm: $1" >&2
   exit 1
 }
 
+usage_error() {
+  echo "reattach-llm: $1" >&2
+  echo "Try 'reattach-llm --help'." >&2
+  exit 2
+}
+
 ensure_tmux() {
-  [[ -n "${TMUX-}" ]] || fail "reattach-llm must be run from inside tmux."
-  [[ -u "${SUDO_BIN}" ]] || fail "Expected setuid sudo wrapper at ${SUDO_BIN}."
+  [[ -n "${TMUX-}" ]] || fail "run it inside tmux."
+  [[ -u "${SUDO_BIN}" ]] || fail "needs the setuid sudo wrapper at ${SUDO_BIN} (NixOS); it is missing here."
 }
 
 llm_label_from_text() {
@@ -151,7 +170,7 @@ collect_candidates_for_tty() {
     break
   done
 
-  [[ -n "${root_pid}" ]] || fail "Failed to determine sandbox root for tty ${tty}."
+  [[ -n "${root_pid}" ]] || fail "failed to determine sandbox root for tty ${tty}."
   [[ -z "${tmux_tty_set["${tty}"]+x}" ]] || return 0
   [[ -z "${attached_pid_set["${root_pid}"]+x}" ]] || return 0
 
@@ -250,21 +269,32 @@ show_menu() {
 }
 
 main() {
-  ensure_tmux
+  local argument
+  for argument in "$@"; do
+    case "${argument}" in
+      -h|--help)
+        print_help
+        exit 0
+        ;;
+    esac
+  done
 
-  case "${1-}" in
-    --attach)
-      [[ $# -eq 3 ]] || fail "Usage: reattach-llm --attach PID TARGET_PANE"
-      attach_pid "$2" "$3"
-      ;;
-    "")
-      [[ $# -eq 0 ]] || fail "Usage: reattach-llm [--attach PID TARGET_PANE]"
-      show_menu
-      ;;
-    *)
-      fail "Usage: reattach-llm [--attach PID TARGET_PANE]"
-      ;;
-  esac
+  if [[ $# -gt 0 ]]; then
+    [[ "$1" == "--attach" ]] || usage_error "unknown argument '$1'"
+    [[ $# -eq 3 ]] || usage_error "--attach needs exactly PID and TARGET_PANE"
+    [[ "$2" =~ ^[0-9]+$ ]] || usage_error "--attach PID must be a number, got '$2'"
+    [[ -n "$3" ]] || usage_error "--attach TARGET_PANE must not be empty"
+  fi
+
+  ensure_tmux
+  USER_NAME="$(id -un)"
+  readonly USER_NAME
+
+  if [[ $# -eq 0 ]]; then
+    show_menu
+  else
+    attach_pid "$2" "$3"
+  fi
 }
 
 main "$@"

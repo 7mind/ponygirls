@@ -105,6 +105,7 @@
             listed = mkPolicy {
               allowAllModels = false;
               allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
+              latestModelsOnly = false;
               allowedTools = [ "mcp__codegraph__codegraph_explore" ];
               worktreeRoot = "/srv/nvme/subagents-worktrees";
               maxDepth = 2;
@@ -124,6 +125,7 @@
             open = mkPolicy {
               allowAllModels = true;
               allowedModels = [ { provider = "zai"; id = "glm-5.3"; } ];
+              latestModelsOnly = true;
               allowedTools = [ ];
               worktreeRoot = null;
               maxDepth = 1;
@@ -237,6 +239,7 @@
             # file unmanaged); a changed limit manages it; misordered limits
             # trip the ordering assertion.
             limitsDefault = evalWorktree { };
+            latestModelsOptOut = evalWorktree { subagentsAllowAllModels = false; subagentsLatestModelsOnly = false; };
             observerExtensions = builtins.filter (name: builtins.elem name [ "ponygirls-subagents" "ponygirls-historian" ])
               (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
             limitsCustom = evalWorktree { subagentsMaxRunnable = 8; subagentsMaxResidentWorkers = 12; };
@@ -268,7 +271,7 @@
             ) [ managedPiConfigured historianChronicleConfigured ]);
             missingPiAssets = builtins.filter (asset: !(builtins.elem asset piSharedAssets)) managedPiAssets;
           in
-          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "maxDepth" "maxOpenAgents" "maxResidentWorkers" "maxRunnable" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
+          assert builtins.attrNames listed == [ "allowedModels" "allowedTools" "gateBypassAllowed" "gateMaxRoundsCeiling" "latestModelsOnly" "maxDepth" "maxOpenAgents" "maxResidentWorkers" "maxRunnable" "nesting" "repos" "workspaceOwnerCheckoutAllowed" "workspaceRoots" "worktreeRoot" ];
           assert listed == {
             maxDepth = 2;
             nesting = true;
@@ -277,6 +280,7 @@
               { repoId = "other"; checkoutPath = "/o"; readRoots = [ "/o" "/o/lib" ]; allowWriters = false; }
             ];
             allowedModels = [ { provider = "meta"; id = "muse-spark-1.3"; } ];
+            latestModelsOnly = false;
             allowedTools = [ "mcp__codegraph__codegraph_explore" ];
             worktreeRoot = "/srv/nvme/subagents-worktrees";
             gateBypassAllowed = true;
@@ -292,6 +296,7 @@
             nesting = false;
             repos = [ ];
             allowedModels = null;
+            latestModelsOnly = true;
             allowedTools = [ ];
             worktreeRoot = null;
             gateBypassAllowed = false;
@@ -311,14 +316,18 @@
           assert builtins.all (asset: !(builtins.elem asset piSharedAssets)) [ "auth.json" "sessions" "historian.json" "historian-chronicle.json" ];
           assert worktreeDefault == null;
           assert worktreeCustom == "/srv/nvme/subagents-worktrees";
-          assert worktreeManagedDefault == false;
+          assert worktreeManagedDefault == true;
+          assert limitsDefault.smind.hm.dev.llm.pi.subagentsAllowAllModels;
+          assert limitsDefault.smind.hm.dev.llm.pi.subagentsLatestModelsOnly;
+          assert latestModelsOptOut.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
+          assert !((evalWorktree { subagentsAllowAllModels = false; }).home.file ? "/home/alice/.pi/agent/subagents-policy.json");
           assert worktreeManagedCustom == true;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeInvalidAssertions;
           assert builtins.any (a: !a.assertion && builtins.match ".*subagentsWorktreeRoot.*" a.message != null) worktreeEmptyAssertions;
           assert limitsDefault.programs.pi.settings.httpIdleTimeoutMs == 900000;
           assert !(limitsDefault.programs.pi.settings.retry.provider ? timeoutMs);
           assert [ limitsDefault.smind.hm.dev.llm.pi.subagentsMaxRunnable limitsDefault.smind.hm.dev.llm.pi.subagentsMaxResidentWorkers limitsDefault.smind.hm.dev.llm.pi.subagentsMaxOpenAgents ] == [ 4 8 32 ];
-          assert !(limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json");
+          assert limitsDefault.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert limitsCustom.home.file ? "/home/alice/.pi/agent/subagents-policy.json";
           assert observerExtensions == [ "ponygirls-subagents" "ponygirls-historian" ];
           assert builtins.elem "ponygirls-cuckoo" (map builtins.baseNameOf limitsDefault.programs.pi.settings.extensions);
@@ -343,7 +352,11 @@
           assert !(failedLimitAssertion limitsDefault.assertions);
           assert !(failedLimitAssertion limitsCustom.assertions);
           assert failedLimitAssertion limitsMisordered.assertions;
-          pkgs.runCommandLocal "subagents-policy-shape-test" { } "touch $out";
+          pkgs.runCommandLocal "subagents-policy-shape-test" { } ''
+            ${pkgs.jq}/bin/jq -e '.allowedModels == null and .latestModelsOnly == true' ${limitsDefault.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
+            ${pkgs.jq}/bin/jq -e '.allowedModels == [] and .latestModelsOnly == false' ${latestModelsOptOut.home.file."/home/alice/.pi/agent/subagents-policy.json".source}
+            touch $out
+          '';
       in
       {
         # One pinned JVM/toolchain environment for all common-build modules.
@@ -384,6 +397,9 @@
           pi-coding-agent = pkgs.callPackage ./nix/pkg/pi-coding-agent/package.nix { };
           pi-claude-code = pkgs.callPackage ./nix/pkg/pi-claude-code/package.nix {
             pi-coding-agent = self.packages.${system}.pi-coding-agent;
+          };
+          pi-claude-code-subagents = pkgs.callPackage ./nix/pkg/pi-claude-code-subagents/package.nix {
+            inherit (self.packages.${system}) pi-coding-agent pi-claude-code ponygirls-pi-extensions;
           };
           ponygirls-pi-ui = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-ui/package.nix { inherit (self.packages.${system}) pi-coding-agent ponygirls-pi-settings; };
           ponygirls-pi-settings = pkgs.callPackage ./nix/pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = self.packages.${system}.pi-coding-agent; };
@@ -905,6 +921,9 @@
           pi-claude-code = pkgs.callPackage ./nix/pkg/pi-claude-code/check.nix {
             inherit (self.packages.${system}) pi-coding-agent pi-claude-code;
           };
+          pi-claude-code-subagents = pkgs.callPackage ./nix/pkg/pi-claude-code-subagents/check.nix {
+            inherit (self.packages.${system}) pi-coding-agent pi-claude-code pi-claude-code-subagents ponygirls-pi-extensions;
+          };
           pi-search-hub-eval = pkgs.callPackage ./nix/pkg/pi-search-hub/eval/check.nix {
             inherit (self.packages.${system}) pi-coding-agent pi-search-hub;
           };
@@ -954,7 +973,7 @@
             chmod -R u+w pi-extensions
             cd pi-extensions
             mkdir -p node_modules/@ponygirls && ln -s ${self.packages.${system}.ponygirls-pi-ui} node_modules/@ponygirls/pi-ui
-            node --test ponygirls-model-picker-state.test.ts
+            node --test ponygirls-model-picker-state.test.ts model-generations.test.ts
             touch $out
           '';
           ponygirls-usage = pkgs.runCommand "ponygirls-usage-test" {
@@ -1092,6 +1111,7 @@
             PI_TELEMETRY = "0";
           } ''
             cp -r ${./nix/pkg/pi-extensions/ponygirls-tokemon} ponygirls-tokemon
+            cp ${./nix/pkg/pi-extensions/model-generations.ts} model-generations.ts
             chmod -R u+w ponygirls-tokemon
             cd ponygirls-tokemon
             export TOKEMON_PYTHON_SOURCE=${./nix/pkg/tokemon/src}

@@ -1,0 +1,134 @@
+diff --git a/src/execution.ts b/src/execution.ts
+new file mode 100644
+--- /dev/null
++++ b/src/execution.ts
+@@ -0,0 +1,32 @@
++import { isAbsolute } from "node:path";
++import type { AssistantMessageEventStream, SimpleStreamOptions } from "@earendil-works/pi-ai";
++import type { RunClaudeInput, RunClaudeOutput } from "./claude-cli.ts";
++
++export const EXECUTION_NAMESPACE = "pi-claude-code.execution.v1";
++export const EXECUTION_SYMBOL = Symbol.for(EXECUTION_NAMESPACE);
++export const EXECUTION_PROFILE = "canonical-simple-no-provider-hooks-v1";
++
++export interface ClaudeExecutionCapability {
++  readonly version: 1;
++  readonly apis: readonly string[];
++  readonly requestProfile: typeof EXECUTION_PROFILE;
++}
++
++export interface ClaudeExecution {
++  readonly cwd: string;
++  readonly signal: AbortSignal;
++  beforeEntry(): void;
++  run(input: RunClaudeInput): Promise<RunClaudeOutput>;
++  captureOriginal(stream: AssistantMessageEventStream): AssistantMessageEventStream;
++  track<T>(pending: Promise<T>): Promise<T>;
++}
++
++export function selectedExecution(capability: ClaudeExecutionCapability, options: SimpleStreamOptions | undefined): ClaudeExecution | undefined {
++  const context = options?.metadata?.[EXECUTION_NAMESPACE] as { capability: ClaudeExecutionCapability; execution: ClaudeExecution } | undefined;
++  if (context === undefined) return undefined;
++  if (typeof context !== "object" || context === null || context.capability !== capability || typeof context.execution !== "object" || context.execution === null) throw new Error("Invalid Claude Code execution context");
++  const execution = context.execution;
++  if (typeof execution.cwd !== "string" || !isAbsolute(execution.cwd) || !(execution.signal instanceof AbortSignal) || typeof execution.beforeEntry !== "function" || typeof execution.run !== "function" || typeof execution.captureOriginal !== "function" || typeof execution.track !== "function") throw new Error("Invalid Claude Code execution dependency");
++  execution.beforeEntry();
++  return execution;
++}
+diff --git a/src/provider.ts b/src/provider.ts
+--- a/src/provider.ts
++++ b/src/provider.ts
+@@ -2,6 +2,7 @@
+ import { discoverClaudeModels, getClaudeStatus, LOGIN_HINT, POWERSHELL_ENV } from "./claude-cli.ts";
+ import { API_ID, CLAUDE_CODE_MODELS, modelFromDiscovery, PROVIDER_ID } from "./model-catalog.ts";
+ import { streamClaudeCode } from "./stream.ts";
++import { EXECUTION_PROFILE, EXECUTION_SYMBOL, selectedExecution, type ClaudeExecutionCapability } from "./execution.ts";
+ 
+ const PROVIDER_ENV_NAMES = [
+   "PI_CLAUDE_CODE_COMMAND",
+@@ -32,6 +33,8 @@
+ }
+ 
+ export function createClaudeCodeProvider() {
++  const capability: ClaudeExecutionCapability = Object.freeze({ version: 1, apis: Object.freeze([API_ID]), requestProfile: EXECUTION_PROFILE });
++  const selectedStream = (...[model, context, options]: Parameters<typeof streamClaudeCode>) => streamClaudeCode(model, context, options, selectedExecution(capability, options));
+   let discoveredIds: Set<string> | undefined;
+   const externalOAuthMarker = () => ({
+     type: "oauth" as const,
+@@ -39,7 +42,7 @@
+     refresh: "claude-code-external",
+     expires: Date.now() + 365 * 24 * 60 * 60 * 1_000,
+   });
+-  return createProvider({
++  const provider = createProvider({
+     id: PROVIDER_ID,
+     name: "Claude Code Subscription (Experimental)",
+     baseUrl: "process://claude-code",
+@@ -105,10 +108,12 @@
+       return ids ? models.filter((model) => ids.has(model.id)) : models;
+     },
+     api: {
+-      stream: streamClaudeCode,
+-      streamSimple: streamClaudeCode,
++      stream: selectedStream,
++      streamSimple: selectedStream,
+     },
+   });
++  Object.defineProperty(provider, EXECUTION_SYMBOL, { value: capability });
++  return provider;
+ }
+ 
+ export { API_ID, PROVIDER_ID };
+diff --git a/src/stream.ts b/src/stream.ts
+--- a/src/stream.ts
++++ b/src/stream.ts
+@@ -17,6 +17,7 @@
+ } from "@earendil-works/pi-ai";
+ import { describeUsageCreditsRejection } from "./billing.ts";
+ import { runClaudeRequest } from "./claude-cli.ts";
++import type { ClaudeExecution } from "./execution.ts";
+ import { nativeModel, supportsNativeToolChanges } from "./model-catalog.ts";
+ import type { AnthropicStreamEvent, NativeContentBlock, NativeMessage, NativeUsage } from "./native-types.ts";
+ import {
+@@ -331,7 +332,9 @@
+   model: Model<any>,
+   sourceContext: TranscriptContext,
+   options?: SimpleStreamOptions,
++  execution?: ClaudeExecution,
+ ): AssistantMessageEventStream {
++  if (execution !== undefined) options = { ...options, signal: execution.signal };
+   const stream = createAssistantMessageEventStream();
+   const output: AssistantMessage = {
+     role: "assistant",
+@@ -344,7 +347,8 @@
+     timestamp: Date.now(),
+   };
+ 
+-  void (async () => {
++  const exposed = execution === undefined ? stream : execution.captureOriginal(stream);
++  const pending = (async () => {
+     try {
+       const context = { ...sourceContext, messages: prepareMessages(sourceContext.messages, model) };
+       const nativeTranscript = prepareNativeTranscript(
+@@ -370,9 +374,9 @@
+       const translator = new EventTranslator(model, output, stream);
+ 
+       stream.push({ type: "start", partial: output });
+-      const response = await runClaudeRequest({
++      const response = await (execution === undefined ? runClaudeRequest : (input: Parameters<typeof runClaudeRequest>[0]) => { execution.beforeEntry(); return execution.run(input); })({
+         model: nativeModel(model.id),
+-        cwd: process.cwd(),
++        cwd: execution === undefined ? process.cwd() : execution.cwd,
+         frames,
+         systemPrompt,
+         manifest: preparedTools.manifest,
+@@ -423,5 +427,7 @@
+     }
+   })();
+ 
+-  return stream;
+-}
++  if (execution !== undefined) void execution.track(pending);
++  else void pending;
++  return exposed;
++}

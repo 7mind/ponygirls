@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import io
 import unittest
+from datetime import datetime, timedelta
 
 from rich.console import Console
 
-from tokemon.tui import run_tui
+from tokemon.tui import _refresh_note, run_tui
 
 
 def _interrupting_query():
@@ -34,6 +35,16 @@ class TuiTests(unittest.TestCase):
         console = Console(file=output, width=120)
         run_tui(_interrupting_query, 60, False, False, False, console)
         self.assertNotIn("tokemon", output.getvalue())
+
+    def test_title_note_reads_like_the_pane_title(self):
+        refreshed = datetime(2026, 9, 29, 21, 1, 44).astimezone()
+        due = refreshed + timedelta(seconds=300)
+        now = refreshed + timedelta(seconds=49)
+        self.assertEqual(
+            _refresh_note(refreshed, due, now, False),
+            "updated 21:01 · refresh in 4:11 · r refresh · i show invalid · q quit",
+        )
+        self.assertIn(" · i hide invalid · ", _refresh_note(refreshed, due, now, True))
 
 
 if __name__ == "__main__":

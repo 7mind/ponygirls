@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { BG_STATUS_KEY, bgStatusLine, countRunning } from "../src/status.ts";
+import { visibleWidth } from "@earendil-works/pi-tui";
+import { PLAIN_THEME, borderBadge, borderBadgeCompact, type UiTheme } from "@ponygirls/pi-ui";
+import { BG_STATUS_KEY, bgBadge, countRunning } from "../src/status.ts";
 import type { TaskRecord } from "../src/protocol.ts";
 
 function task(state: TaskRecord["state"], phase: TaskRecord["phase"] = null): TaskRecord {
@@ -39,11 +41,11 @@ test("status key sorts alongside the other footer indicators", () => {
 });
 
 test("no tasks or only finalized tasks clear the status", () => {
-  assert.equal(bgStatusLine([]), null);
+  assert.equal(bgBadge([]), null);
   assert.equal(countRunning([]), 0);
   const finalized = [task("completed"), task("failed"), task("dead")];
   assert.equal(countRunning(finalized), 0);
-  assert.equal(bgStatusLine(finalized), null);
+  assert.equal(bgBadge(finalized), null);
 });
 
 test("any running phase counts as active", () => {
@@ -53,7 +55,21 @@ test("any running phase counts as active", () => {
   }
 });
 
-test("running count renders singular and plural", () => {
-  assert.equal(bgStatusLine([task("running")]), "🛠️ 1");
-  assert.equal(bgStatusLine([task("running"), task("completed"), task("running")]), "🛠️ 2");
+/** Styling as visible tags; a background would show as `[token]`. */
+const TAGGED: UiTheme = { fg: (color, text) => `<${color}>${text}</${color}>`, bg: (color, text) => `[${color}]${text}[/${color}]`, bold: (text) => text };
+
+test("the badge is the glyph and the number of running tasks in the running colour, without a chip", () => {
+  const one = bgBadge([task("running")]);
+  assert.deepEqual(one, { glyph: "🛠️", state: "running", label: "1", compact: "1" });
+  assert.equal(borderBadge(TAGGED, one!, 80), " 🛠️ <accent>1</accent> ");
+  assert.equal(borderBadgeCompact(TAGGED, one!, 80), "🛠️<accent>1</accent>");
+  const two = bgBadge([task("running"), task("completed"), task("running")]);
+  assert.equal(borderBadge(TAGGED, two!, 80), " 🛠️ <accent>2</accent> ");
+  assert.equal(borderBadgeCompact(TAGGED, two!, 80), "🛠️<accent>2</accent>");
+  for (const width of [3, 60, 80, 100, 120, 170]) {
+    assert.ok(visibleWidth(borderBadge(PLAIN_THEME, two!, width)) <= width, `full form at ${width}`);
+    assert.ok(visibleWidth(borderBadgeCompact(PLAIN_THEME, two!, width)) <= width, `compact form at ${width}`);
+  }
+  assert.equal(borderBadge(PLAIN_THEME, two!, 80), " 🛠️ 2 ");
+  assert.equal(borderBadgeCompact(PLAIN_THEME, two!, 80), "🛠️2");
 });

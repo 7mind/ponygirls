@@ -1,0 +1,309 @@
+diff --git a/packages/coding-agent/docs/extensions.md b/packages/coding-agent/docs/extensions.md
+index 940cd62..4827692 100644
+--- a/packages/coding-agent/docs/extensions.md
++++ b/packages/coding-agent/docs/extensions.md
+@@ -2919,6 +2919,8 @@ ctx.ui.setWorkingIndicator();  // Restore default spinner
+ ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"]);
+ // Widget below editor
+ ctx.ui.setWidget("my-widget", ["Line 1", "Line 2"], { placement: "belowEditor" });
++// Position among widgets of the same placement: ascending, default 0; equal values keep first-set order
++ctx.ui.setWidget("my-badge", ["3 tasks"], { placement: "borderBottomLeft", order: 20 });
+ ctx.ui.setWidget("my-widget", (tui, theme) => new Text(theme.fg("accent", "Custom"), 0, 0));
+ ctx.ui.setWidget("my-widget", undefined);  // Clear
+ 
+diff --git a/packages/coding-agent/docs/rpc-extension-ui.md b/packages/coding-agent/docs/rpc-extension-ui.md
+index 7c8357f..b1360b2 100644
+--- a/packages/coding-agent/docs/rpc-extension-ui.md
++++ b/packages/coding-agent/docs/rpc-extension-ui.md
+@@ -141,7 +141,7 @@ Set or clear a widget (block of text lines) displayed above or below the editor.
+ }
+ ```
+ 
+-Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default), `"belowEditor"`, or one of the border placements (`"borderTopLeft"`, `"borderTopRight"`, `"borderBottomLeft"`, `"borderBottomRight"`); border placements show one line on the editor's border. Only string arrays are supported in RPC mode; component factories are ignored.
++Send `widgetLines: undefined` (or omit it) to clear the widget. The `widgetPlacement` field is `"aboveEditor"` (default), `"belowEditor"`, or one of the border placements (`"borderTopLeft"`, `"borderTopRight"`, `"borderBottomLeft"`, `"borderBottomRight"`); border placements show one line on the editor's border. The optional `widgetOrder` number positions the widget among those of the same placement (ascending, default 0; equal values keep first-set order). Only string arrays are supported in RPC mode; component factories are ignored.
+ 
+ ### setTitle
+ 
+diff --git a/packages/coding-agent/src/core/extensions/types.ts b/packages/coding-agent/src/core/extensions/types.ts
+index 70baf10..99c393c 100644
+--- a/packages/coding-agent/src/core/extensions/types.ts
++++ b/packages/coding-agent/src/core/extensions/types.ts
+@@ -139,6 +139,12 @@ export type WidgetPlacement =
+ export interface ExtensionWidgetOptions {
+ 	/** Where the widget is rendered. Defaults to "aboveEditor". */
+ 	placement?: WidgetPlacement;
++	/**
++	 * Position among the widgets of the same placement, ascending. Defaults to 0.
++	 * Widgets with equal order keep the order in which their keys were first set,
++	 * also after a widget is replaced or cleared and set again.
++	 */
++	order?: number;
+ }
+ 
+ /** Raw terminal input listener for extensions. */
+diff --git a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
+index 2774125..19e173a 100644
+--- a/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
++++ b/packages/coding-agent/src/modes/interactive/components/custom-editor.ts
+@@ -225,6 +225,7 @@ export class CustomEditor extends Editor {
+ 	private keybindings: KeybindingsManager;
+ 	private workingStatusIndicator: StatusIndicator | undefined;
+ 	private borderContent = new Map<string, BorderRegistration>();
++	private borderOrder: string[] = [];
+ 	private borderSpans: { top: RegisteredBorderSpan[]; bottom: RegisteredBorderSpan[] } = { top: [], bottom: [] };
+ 	private borderMouse: BorderMouseState = { width: 0, gesture: undefined };
+ 	public readonly embedWorkingStatus: boolean;
+@@ -260,6 +261,23 @@ export class CustomEditor extends Editor {
+ 		this.tui.requestRender();
+ 	}
+ 
++	/**
++	 * Display order of border content by key. Content whose key is not listed
++	 * follows the listed content, in registration order.
++	 */
++	setBorderOrder(keys: readonly string[]): void {
++		this.borderOrder = [...keys];
++		this.tui.requestRender();
++	}
++
++	private orderedBorderContent(): BorderRegistration[] {
++		const rank = new Map(this.borderOrder.map((key, index) => [key, index]));
++		const unlisted = this.borderOrder.length;
++		return [...this.borderContent]
++			.sort(([a], [b]) => (rank.get(a) ?? unlisted) - (rank.get(b) ?? unlisted))
++			.map(([, registration]) => registration);
++	}
++
+ 	/** Clear every border slot. */
+ 	clearBorderContent(): void {
+ 		for (const registration of this.borderContent.values()) registration.active = false;
+@@ -419,7 +437,7 @@ export class CustomEditor extends Editor {
+ 				},
+ 			});
+ 		}
+-		for (const entry of this.borderContent.values()) {
++		for (const entry of this.orderedBorderContent()) {
+ 			if (entry.slot === leftSlot) left.push(entry);
+ 			else if (entry.slot === rightSlot) right.push(entry);
+ 		}
+diff --git a/packages/coding-agent/src/modes/interactive/interactive-mode.ts b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+index 0a2f0be..7045362 100644
+--- a/packages/coding-agent/src/modes/interactive/interactive-mode.ts
++++ b/packages/coding-agent/src/modes/interactive/interactive-mode.ts
+@@ -247,6 +247,8 @@ function isEmbeddedStatus(editor: EditorComponent): editor is WorkingStatusEdito
+ interface BorderContentEditor extends EditorComponent {
+ 	setBorderContent(slot: EditorBorderSlot, key: string, content: EditorBorderContent | undefined): void;
+ 	clearBorderContent(): void;
++	/** Optional: editors without it show border content in registration order. */
++	setBorderOrder?(keys: readonly string[]): void;
+ }
+ 
+ function isBorderContentEditor(editor: EditorComponent): editor is BorderContentEditor {
+@@ -284,6 +286,7 @@ function borderSlotOf(placement: WidgetPlacement): EditorBorderSlot | undefined
+ 
+ interface ExtensionWidget {
+ 	placement: WidgetPlacement;
++	order: number;
+ 	/** Rendered above/below the editor, and the fallback for border placements on editors without border slots. */
+ 	component: Component & { dispose?(): void };
+ 	/** A registration lifetime boundary, replaced even when the factory reuses its component. */
+@@ -657,6 +660,8 @@ export class InteractiveMode {
+ 
+ 	// Extension widgets (rendered above/below the editor or in its border slots)
+ 	private extensionWidgets = new Map<string, ExtensionWidget>();
++	/** First-set sequence per widget key, kept while the key is cleared so equal orders stay put. */
++	private widgetSequence = new Map<string, number>();
+ 	private widgetContainerAbove!: Container;
+ 	private widgetContainerBelow!: Container;
+ 	private readonly widgetSpacer = new Spacer(1);
+@@ -2635,6 +2640,8 @@ export class InteractiveMode {
+ 		options?: ExtensionWidgetOptions,
+ 	): void {
+ 		const placement = options?.placement ?? "aboveEditor";
++		const order = options?.order ?? 0;
++		if (!Number.isFinite(order)) throw new Error(`setWidget("${key}"): order must be a finite number`);
+ 		const existing = this.extensionWidgets.get(key);
+ 		if (existing?.component.dispose) existing.component.dispose();
+ 		this.extensionWidgets.delete(key);
+@@ -2672,7 +2679,8 @@ export class InteractiveMode {
+ 
+ 		const container = new Container();
+ 		container.addChild(component);
+-		this.extensionWidgets.set(key, { placement, component, container, borderContent });
++		if (!this.widgetSequence.has(key)) this.widgetSequence.set(key, this.widgetSequence.size);
++		this.extensionWidgets.set(key, { placement, order, component, container, borderContent });
+ 		this.renderWidgets();
+ 	}
+ 
+@@ -2681,6 +2689,7 @@ export class InteractiveMode {
+ 			widget.component.dispose?.();
+ 		}
+ 		this.extensionWidgets.clear();
++		this.widgetSequence.clear();
+ 		this.renderWidgets();
+ 	}
+ 
+@@ -2748,7 +2757,12 @@ export class InteractiveMode {
+ 
+ 		const above: Component[] = [];
+ 		const below: Component[] = [];
+-		for (const [key, widget] of this.extensionWidgets) {
++		const ordered = [...this.extensionWidgets].sort(
++			([a, first], [b, second]) =>
++				first.order - second.order || this.widgetSequence.get(a)! - this.widgetSequence.get(b)!,
++		);
++		this.widgetBorderState?.editor.setBorderOrder?.(ordered.map(([key]) => key));
++		for (const [key, widget] of ordered) {
+ 			const slot = borderSlotOf(widget.placement);
+ 			if (slot !== undefined && this.widgetBorderState) {
+ 				if (!this.widgetBorderState.registrations.has(key)) {
+diff --git a/packages/coding-agent/src/modes/rpc/rpc-mode.ts b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+index 716d5e3..e9da4d0 100644
+--- a/packages/coding-agent/src/modes/rpc/rpc-mode.ts
++++ b/packages/coding-agent/src/modes/rpc/rpc-mode.ts
+@@ -206,6 +206,7 @@ export async function runRpcMode(runtimeHost: AgentSessionRuntime): Promise<neve
+ 					widgetKey: key,
+ 					widgetLines: content as string[] | undefined,
+ 					widgetPlacement: options?.placement,
++					widgetOrder: options?.order,
+ 				} as RpcExtensionUIRequest);
+ 			}
+ 			// Component factories are not supported in RPC mode - would need TUI access
+diff --git a/packages/coding-agent/src/modes/rpc/rpc-types.ts b/packages/coding-agent/src/modes/rpc/rpc-types.ts
+index b1f0c3f..baf77b2 100644
+--- a/packages/coding-agent/src/modes/rpc/rpc-types.ts
++++ b/packages/coding-agent/src/modes/rpc/rpc-types.ts
+@@ -288,6 +288,7 @@ export type RpcExtensionUIRequest =
+ 				| "borderTopRight"
+ 				| "borderBottomLeft"
+ 				| "borderBottomRight";
++			widgetOrder?: number;
+ 	  }
+ 	| { type: "extension_ui_request"; id: string; method: "setTitle"; title: string }
+ 	| { type: "extension_ui_request"; id: string; method: "set_editor_text"; text: string };
+diff --git a/packages/coding-agent/test/custom-editor-border-content.test.ts b/packages/coding-agent/test/custom-editor-border-content.test.ts
+index 46cfd4d..b2a753e 100644
+--- a/packages/coding-agent/test/custom-editor-border-content.test.ts
++++ b/packages/coding-agent/test/custom-editor-border-content.test.ts
+@@ -61,6 +61,24 @@ describe("CustomEditor border content", () => {
+ 		expect(editor.handleMouse(click(3, 2))?.handled).toBe(true);
+ 		expect(events).toEqual(["press", "release", "click"]);
+ 	});
++	it("shows border content in the given key order, unlisted keys last in registration order", () => {
++		initTheme("dark");
++		const editor = createEditor();
++		editor.setBorderContent("bottomLeft", "c", fixedContent("C"));
++		editor.setBorderContent("bottomLeft", "x", fixedContent("X"));
++		editor.setBorderContent("bottomLeft", "a", fixedContent("A"));
++		editor.setBorderContent("bottomLeft", "b", fixedContent("B"));
++		expect(bottomBorder(editor, 30).slice(0, 11)).toBe("── C X A B ");
++
++		editor.setBorderOrder(["a", "b", "c"]);
++		expect(bottomBorder(editor, 30).slice(0, 11)).toBe("── A B C X ");
++
++		// Replacing content re-registers it; its place follows the order, not the registration.
++		editor.setBorderContent("bottomLeft", "a", undefined);
++		editor.setBorderContent("bottomLeft", "a", fixedContent("A2"));
++		expect(bottomBorder(editor, 30).slice(0, 12)).toBe("── A2 B C X ");
++	});
++
+ 	it("renders top-right content at the end of the top border", () => {
+ 		initTheme("dark");
+ 		const editor = createEditor();
+diff --git a/packages/coding-agent/test/interactive-mode-widget-placement.test.ts b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
+index e83bb74..307c486 100644
+--- a/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
++++ b/packages/coding-agent/test/interactive-mode-widget-placement.test.ts
+@@ -53,6 +53,7 @@ function createContext(
+ 	const below = new Container();
+ 	const context = Object.assign(Object.create(InteractiveMode.prototype), {
+ 		extensionWidgets: new Map(),
++		widgetSequence: new Map(),
+ 		editor,
+ 		defaultEditor,
+ 		widgetContainerAbove: above,
+@@ -66,12 +67,17 @@ function createContext(
+ 
+ function borderEditor() {
+ 	const slots = new Map<string, EditorBorderContent>();
++	const state = { order: [] as string[] };
+ 	return {
+ 		slots,
++		state,
+ 		setBorderContent: (slot: EditorBorderSlot, key: string, content: EditorBorderContent | undefined) => {
+ 			if (content === undefined) slots.delete(`${slot}:${key}`);
+ 			else slots.set(`${slot}:${key}`, content);
+ 		},
++		setBorderOrder: (keys: readonly string[]) => {
++			state.order = [...keys];
++		},
+ 		clearBorderContent: () => slots.clear(),
+ 	};
+ }
+@@ -159,6 +165,66 @@ describe("InteractiveMode extension widget placement", () => {
+ 		expect(seen).toEqual([7]);
+ 	});
+ 
++	it("orders widgets by their order option, not by when they were set", () => {
++		const editor = borderEditor();
++		const { context, below } = createContext(editor);
++		const set = (key: string, order: number | undefined, placement: ExtensionWidgetOptions["placement"]) =>
++			widgetPrototype.setExtensionWidget.call(context, key, [key], { placement, order });
++
++		set("late", 30, "borderBottomLeft");
++		set("early", 10, "borderBottomLeft");
++		set("middle", 20, "borderBottomLeft");
++		expect(editor.state.order).toEqual(["early", "middle", "late"]);
++
++		set("below-b", 2, "belowEditor");
++		set("below-a", 1, "belowEditor");
++		expect(below.children.map((child) => (child as Container).children[0]!.render(20)[0]!.trim())).toEqual([
++			"below-a",
++			"below-b",
++		]);
++	});
++
++	it("keeps a widget's position when it is replaced or cleared and set again", () => {
++		const editor = borderEditor();
++		const { context } = createContext(editor);
++		const set = (key: string, order?: number) =>
++			widgetPrototype.setExtensionWidget.call(context, key, [key], { placement: "borderBottomLeft", order });
++
++		set("a");
++		set("b");
++		set("c");
++		// Equal orders: first-set sequence decides, also after replacement.
++		set("a");
++		expect(editor.state.order).toEqual(["a", "b", "c"]);
++		widgetPrototype.setExtensionWidget.call(context, "b", undefined);
++		expect(editor.state.order).toEqual(["a", "c"]);
++		set("b");
++		expect(editor.state.order).toEqual(["a", "b", "c"]);
++		// An explicit order outranks the sequence.
++		set("c", -1);
++		expect(editor.state.order).toEqual(["c", "a", "b"]);
++	});
++
++	it("forgets positions when every widget is cleared", () => {
++		const editor = borderEditor();
++		const { context } = createContext(editor);
++		const set = (key: string) =>
++			widgetPrototype.setExtensionWidget.call(context, key, [key], { placement: "borderBottomLeft" });
++		set("a");
++		set("b");
++		widgetPrototype.clearExtensionWidgets.call(context);
++		set("b");
++		set("a");
++		expect(editor.state.order).toEqual(["b", "a"]);
++	});
++
++	it("rejects a non-finite order", () => {
++		const { context } = createContext(borderEditor());
++		expect(() =>
++			widgetPrototype.setExtensionWidget.call(context, "w", ["w"], { placement: "borderBottomLeft", order: Number.NaN }),
++		).toThrow("order must be a finite number");
++	});
++
+ 	it("places above/below widgets in the widget containers", () => {
+ 		const editor = borderEditor();
+ 		const { context, above, below } = createContext(editor);

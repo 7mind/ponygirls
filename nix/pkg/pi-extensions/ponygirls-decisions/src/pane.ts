@@ -4,7 +4,7 @@ import {
   CURSOR_MARKER, Editor, Key, Markdown, SelectList, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi,
   type Component, type Focusable, type MarkdownTheme, type TUI,
 } from "@earendil-works/pi-tui";
-import { MARKER_WIDTH, PanelLayout, type PanelParts, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
+import { HINT, KEY, MARKER_WIDTH, PanelLayout, type PanelParts, ctrlKey, fit as fitCell, frameRule, frameTitle, keyHints, listRow, type KeyHint, type UiFg } from "@ponygirls/pi-ui";
 import type { Decision } from "./store.ts";
 import { relativeTime } from "./time.ts";
 
@@ -54,18 +54,20 @@ const MAX_LIST_ROWS = 8;
 const MAX_WARNING_LINES = 2;
 const MAX_HINT_LINES = 4;
 
+const SAVE_KEY = ctrlKey("s");
+const REBASE_KEY = ctrlKey("r");
 const LIST_HINTS: readonly KeyHint[] = [
-  { key: "↑↓", action: "select" }, { key: "⏎", action: "detail" }, { key: "⇥", action: "pending/all" },
-  { key: "⇞⇟", action: "scroll detail" }, { key: "⎋", action: "close" },
+  HINT.select, { key: KEY.enter, action: "detail" }, { key: KEY.tab, action: "pending/all" },
+  { key: KEY.page, action: "scroll detail" }, HINT.close,
 ];
-const DETAIL_HINTS: readonly KeyHint[] = [{ key: "↑↓/⇞⇟", action: "scroll" }, { key: "⎋", action: "inbox" }, { key: "⇥", action: "pending/all" }];
+const DETAIL_HINTS: readonly KeyHint[] = [HINT.scroll, HINT.page, HINT.back, { key: KEY.tab, action: "pending/all" }];
 const ACTION_HINTS: readonly KeyHint[] = [
   { key: "a/e", action: "answer" }, { key: "1–9/o", action: "options" }, { key: "d", action: "dismiss" }, { key: "u", action: "reopen" },
 ];
-const EDITOR_HINTS: readonly KeyHint[] = [{ key: "⏎", action: "newline" }, { key: "⌃S", action: "save" }, { key: "⎋", action: "discard" }];
-const REBASE_HINTS: readonly KeyHint[] = [{ key: "⌃R", action: "reload latest revision, keeping draft" }];
+const EDITOR_HINTS: readonly KeyHint[] = [{ key: KEY.enter, action: "newline" }, { key: SAVE_KEY, action: "save" }, { key: KEY.esc, action: "discard" }];
+const REBASE_HINTS: readonly KeyHint[] = [{ key: REBASE_KEY, action: "reload latest revision, keeping draft" }];
 const OPTIONS_HINTS: readonly KeyHint[] = [
-  { key: "↑↓/1–9", action: "choose" }, { key: "⌃S", action: "save" }, { key: "e", action: "edit" }, { key: "⎋", action: "discard" },
+  { key: "↑↓/1–9", action: "choose" }, { key: SAVE_KEY, action: "save" }, { key: "e", action: "edit" }, { key: KEY.esc, action: "discard" },
 ];
 
 /** A detail section: a styled label over an indented, sanitized Markdown body. */
@@ -173,7 +175,7 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
       this.scroll = 0;
     };
     // Enter merely selects; it is deliberately NOT a persistence action.
-    list.onSelect = () => { this.notice = "Option selected. ⌃S saves; e edits it."; };
+    list.onSelect = () => { this.notice = `Option selected. ${SAVE_KEY} saves; e edits it.`; };
     return list;
   }
 
@@ -262,7 +264,7 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
           this.draft.base = { ...latest, options: [...latest.options] };
           // Keep the exact staged text, even if the options changed externally.
           if (this.draft.mode === "options") this.edit();
-          this.notice = "Latest revision loaded; draft kept. Review before ⌃S.";
+          this.notice = `Latest revision loaded; draft kept. Review before ${SAVE_KEY}.`;
         } else this.notice = "Decision no longer exists; draft kept.";
       } else if (this.draft.mode === "editor") this.editorInput(data);
       else if (this.draft.mode === "options") {
@@ -374,10 +376,10 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
     const fit = (s: string) => truncateToWidth(s, w, "…");
     const dim = (s: string) => this.theme.fg("dim", s);
     const draft = this.draft, d = draft?.base ?? this.current();
-    const warning = [this.loadError, this.notice, this.changed() ? "Changed elsewhere; draft kept. ⌃R adopts latest revision." : ""].filter(Boolean).join(" ");
+    const warning = [this.loadError, this.notice, this.changed() ? `Changed elsewhere; draft kept. ${REBASE_KEY} adopts latest revision.` : ""].filter(Boolean).join(" ");
     const hints: (readonly KeyHint[])[] = draft?.mode === "editor" ? [EDITOR_HINTS, REBASE_HINTS]
       : draft?.mode === "options" ? [OPTIONS_HINTS]
-      : draft ? [[{ key: "⌃S", action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: "⎋", action: "cancel" }]]
+      : draft ? [[{ key: SAVE_KEY, action: `confirm ${draft.status === "pending" ? "reopen" : "dismiss"}` }, { key: KEY.esc, action: "cancel" }]]
       : [this.detail ? DETAIL_HINTS : LIST_HINTS, ACTION_HINTS];
     const foot = [
       ...warning ? wrapTextWithAnsi(this.theme.fg("warning", oneLine(warning)), w).slice(0, MAX_WARNING_LINES) : [],
@@ -404,11 +406,11 @@ export class DecisionsPane extends PanelLayout implements Component, Focusable {
         const selected = item.id === this.selectedId;
         return this.row(item, selected, idWidth, rowWidth).map((line) => listRow(this.theme, w, line, selected));
       });
-      out.push(...(listLines.length ? listLines : [dim("No pending decisions. ⇥ shows history.")]));
+      out.push(...(listLines.length ? listLines : [dim(`No pending decisions. ${KEY.tab} shows history.`)]));
       rows -= listLines.length || 1;
       if (d && rows > 1) { out.push(frameRule(this.theme, w)); rows--; }
     }
-    if (!d && rows > 0 && this.detail) out.push(dim("No pending decisions. ⇥ shows history."));
+    if (!d && rows > 0 && this.detail) out.push(dim(`No pending decisions. ${KEY.tab} shows history.`));
     if (d && rows > 0) {
       if (draft || this.detail) {
         out.push([dim(oneLine(d.id)), this.statusCell(d.status, visibleWidth(statusLabel(d.status))), this.sessionLabel(d)].filter(Boolean).join(COLUMN_GAP));

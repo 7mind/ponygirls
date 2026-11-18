@@ -58,6 +58,11 @@ let
   # subscription token exchange). Bump: edit version + rerun the two fake-hash builds in pkg/pi-coding-agent/package.nix.
   piBase = pkgs.callPackage ../pkg/pi-coding-agent/package.nix { };
   piClaudeCode = pkgs.callPackage ../pkg/pi-claude-code/package.nix { pi-coding-agent = piBase; };
+  piClaudeCodeSubagents = pkgs.callPackage ../pkg/pi-claude-code-subagents/package.nix {
+    pi-coding-agent = piBase;
+    pi-claude-code = piClaudeCode;
+    ponygirls-pi-extensions = piExtensions;
+  };
 
   piSettings = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-settings/package.nix { pi-coding-agent = piBase; };
   piUi = pkgs.callPackage ../pkg/pi-extensions/ponygirls-pi-ui/package.nix { pi-coding-agent = piBase; ponygirls-pi-settings = piSettings; };
@@ -334,6 +339,7 @@ let
   piSubagentsPolicyJson = jsonFormat.generate "pi-subagents-policy.json" (import ../lib/subagents-policy.nix {
     allowAllModels = cfg.pi.subagentsAllowAllModels;
     allowedModels = cfg.pi.subagentsAllowedModels;
+    latestModelsOnly = cfg.pi.subagentsLatestModelsOnly;
     allowedTools = cfg.pi.subagentsAllowedTools;
     worktreeRoot = cfg.pi.subagentsWorktreeRoot;
     maxDepth = cfg.pi.subagentsMaxDepth;
@@ -354,6 +360,7 @@ let
   subagentsPolicyManaged =
     cfg.pi.subagentsAllowAllModels
     || cfg.pi.subagentsAllowedModels != [ ]
+    || !cfg.pi.subagentsLatestModelsOnly
     || cfg.pi.subagentsAllowedTools != [ ]
     || cfg.pi.subagentsWorktreeRoot != null
     || cfg.pi.subagentsMaxDepth != 1
@@ -591,19 +598,39 @@ in
       '';
     };
 
-    smind.hm.dev.llm.pi.subagentsAllowAllModels = lib.mkOption {
+    smind.hm.dev.llm.pi.claudeCodeSubagents.enable = lib.mkOption {
       type = lib.types.bool;
       default = false;
+      description = "Load the additive pi-claude-code-subagents backend alongside the managed Claude Code provider and ponygirls-subagents.";
+    };
+
+    smind.hm.dev.llm.pi.subagentsAllowAllModels = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
       description = ''
-        Let Pi subagents use any model: writes `"allowedModels": null` to
+        Disable the explicit model allowlist: writes `"allowedModels": null` to
         `subagents-policy.json` (see {option}`smind.hm.dev.llm.pi.subagentsAllowedModels`),
         skipping the root model allowlist for `spawn_agent` overrides and
-        gate reviewers. Deny-by-default stays when this is false and the
-        list is empty. Takes precedence over
+        gate reviewers. The generation filter still applies independently
+        (see {option}`smind.hm.dev.llm.pi.subagentsLatestModelsOnly`). Explicit
+        model overrides are denied when this is false and the list is empty.
+        Takes precedence over
         {option}`smind.hm.dev.llm.pi.subagentsAllowedModels` when both are set.
         Setting this or a non-empty list manages `subagents-policy.json`
         declaratively (read-only store symlink); otherwise a hand-maintained
         file is left alone.
+      '';
+    };
+
+    smind.hm.dev.llm.pi.subagentsLatestModelsOnly = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = ''
+        Reject older generations for Pi subagents when a newer release in the
+        same model family is available on that provider. Applies to inherited
+        models, overrides, and reviewers, independently of the explicit model
+        allowlist. Set to false to permit older generations; this manages
+        `subagents-policy.json` declaratively.
       '';
     };
 
@@ -629,8 +656,8 @@ in
         Models Pi subagents may be assigned explicitly (`spawn_agent`
         `model` overrides and gate reviewers), written as `allowedModels`
         into `subagents-policy.json` (see
-        {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels`). Empty (the
-        default) denies every explicit model override; children then inherit
+        {option}`smind.hm.dev.llm.pi.subagentsAllowAllModels`). When that option
+        is false, an empty list denies every explicit model override; children then inherit
         the governing session's model.
       '';
     };
@@ -933,7 +960,7 @@ in
           # MiniMax uses Pi's built-in `minimax` provider (`MINIMAX_API_KEY`).
           packages = [
             "${piSearchHub}"
-          ] ++ enabledProviderPackages;
+          ] ++ enabledProviderPackages ++ lib.optional cfg.pi.claudeCodeSubagents.enable "${piClaudeCodeSubagents}";
           extensions = [
             # Codemode (model-written JS calling tools in a QuickJS sandbox)
             # is deliberately off; MCP tools use `deferred` / `direct`
@@ -950,9 +977,9 @@ in
             "${piExtensions}/ponygirls-model-picker.ts"
             # Per-model TTFT/total/tok-per-sec distributions (JSONL log) and /perf tables.
             "${piExtensions}/ponygirls-model-stats.ts"
-            # /usage table: period tabs with flat per-provider/per-model rows,
-            # scrollable, plus a global input-size distribution view (ascii
-            # chart/table, [v]/[c]). Data collection is vendored in ponygirls-usage-data.ts
+            # /usage table: period tabs, providers with their models indented
+            # underneath, scrollable, plus a global input-size distribution
+            # view (ascii chart/table, [v]/[c]). Data collection is vendored in ponygirls-usage-data.ts
             # (same cache file, plus a marked local inputSizes extension);
             # insights, graphs, and export are out of scope.
             "${piExtensions}/ponygirls-usage.ts"
@@ -1031,6 +1058,10 @@ in
       # A pooled worktree root must be an absolute path (never a store path).
       # Scheduler limits must be ordered as the extension validates them.
       assertions = [
+        {
+          assertion = !cfg.pi.claudeCodeSubagents.enable || cfg.pi.providers.claude-code.enable;
+          message = "smind.hm.dev.llm.pi.claudeCodeSubagents.enable requires the managed smind.hm.dev.llm.pi.providers.claude-code.enable provider.";
+        }
         {
           assertion = piCfg.historian.journalRoot == null || lib.hasPrefix "/" piCfg.historian.journalRoot;
           message = "programs.pi.historian.journalRoot must be null or an absolute path.";

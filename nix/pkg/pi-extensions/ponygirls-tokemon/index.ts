@@ -5,7 +5,8 @@
  * - Tool `tokemon`: every provider this pi is configured for (auth.json
  *   logins and keys, API-key environment variables, models.json providers)
  *   with its plan, login, and quota windows; `include_models` adds each
- *   provider's available models with effort levels. Quota windows are
+ *   provider's available models with effort levels, hiding older generations
+ *   unless `include_older_models` is true. Quota windows are
  *   included unless `include_quotas` is false; the calling session's
  *   context size and usage ride along unless `include_context` is false.
  *   Answers are cached for a minute; Anthropic quotas are shared across processes.
@@ -24,6 +25,7 @@ import { getTerminalColorMode, parseColor, styleText } from "@earendil-works/pi-
 import { CustomViewToggle } from "@ponygirls/pi-ui";
 import { Type } from "typebox";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { latestModelGenerations } from "../model-generations.ts";
 import { readableProviderColor, type Appearance } from "./src/colors.ts";
 import { discoverTargets } from "./src/discovery.ts";
 import { FetchHttp } from "./src/http.ts";
@@ -55,9 +57,10 @@ function authOf(ctx: ExtensionContext): ProviderAuth {
 }
 
 /** Available models with their effort levels, by provider. */
-function modelsOf(ctx: ExtensionContext): Map<string, ModelReport[]> {
+function modelsOf(ctx: ExtensionContext, includeOlder: boolean): Map<string, ModelReport[]> {
+  const available = ctx.modelRegistry.getAvailable();
   const byProvider = new Map<string, ModelReport[]>();
-  for (const model of ctx.modelRegistry.getAvailable()) {
+  for (const model of includeOlder ? available : latestModelGenerations(available)) {
     const models = byProvider.get(model.provider) ?? [];
     models.push({ id: model.id, efforts: getSupportedThinkingLevels(model) });
     byProvider.set(model.provider, models);
@@ -218,20 +221,20 @@ export default function (pi: ExtensionAPI): void {
       name: "tokemon",
       label: "Provider quotas",
       description:
-        "List the model providers this pi is configured for (auth.json logins and keys, API-key environment variables, models.json providers) with each account's plan, login, and quota windows: used and limit with their unit, state (ok, low at 90%+, EXHAUSTED, unlimited), and reset time. Providers without a quota endpoint or whose query failed are listed with a note or error. Set include_models to also get each provider's available models with their effort levels; set include_quotas to false to drop the quota windows; the calling session's context size and usage ride along unless include_context is false. Anthropic quotas share a cross-process cache (five-minute refresh, at least 30-minute backoff after rate limits). Last known values remain visible when stale; see each provider's fetchedAt, ageSeconds, stale, and nextRefreshAt. The top-level fetchedAt is the report assembly time.",
+        "List the model providers this pi is configured for (auth.json logins and keys, API-key environment variables, models.json providers) with each account's plan, login, and quota windows: used and limit with their unit, state (ok, low at 90%+, EXHAUSTED, unlimited), and reset time. Providers without a quota endpoint or whose query failed are listed with a note or error. Set include_models to list each provider's latest available model generations and their effort levels. With include_models, set include_older_models to true for the full list. Set include_quotas to false to drop the quota windows; the calling session's context size and usage ride along unless include_context is false. Anthropic quotas share a cross-process cache (five-minute refresh, at least 30-minute backoff after rate limits). Last known values remain visible when stale; see each provider's fetchedAt, ageSeconds, stale, and nextRefreshAt. The top-level fetchedAt is the report assembly time.",
       parameters: Type.Object({
-        include_models: Type.Optional(Type.Boolean({ description: "Also list each provider's available models with effort levels (default false)" })),
+        include_models: Type.Optional(Type.Boolean({ description: "Also list each provider's latest available model generations with effort levels (default false)" })),
+        include_older_models: Type.Optional(Type.Boolean({ description: "Include older generations in the model list; only applies with include_models: true (default false)" })),
         include_quotas: Type.Optional(Type.Boolean({ description: "Include the quota windows (default true)" })),
         include_context: Type.Optional(Type.Boolean({ description: "Include the calling session's context size and usage (default true)" })),
       }),
       async execute(_toolCallId, params, _signal, _onUpdate, ctx) {
         try {
           const report = await service.report(authOf(ctx), TOOL_MAX_AGE_MS);
-          const p = params as { include_models?: boolean; include_quotas?: boolean; include_context?: boolean };
-          const usage = p.include_context === false ? null : ctx.getContextUsage() ?? null;
+          const usage = params.include_context === false ? null : ctx.getContextUsage() ?? null;
           const body = toolReport(report, new Date(), {
-            models: p.include_models === true ? modelsOf(ctx) : null,
-            quotas: p.include_quotas !== false,
+            models: params.include_models === true ? modelsOf(ctx, params.include_older_models === true) : null,
+            quotas: params.include_quotas !== false,
             context: usage,
           });
           return { content: [{ type: "text", text: JSON.stringify(body) }], details: {} };
@@ -248,7 +251,7 @@ export default function (pi: ExtensionAPI): void {
     await controller[toggle ? "toggle" : "open"](ctx.ui, (tui, theme, _kb, done) =>
       new TokemonView({
         report: (maxAgeMs) => service.report(authOf(ctx), maxAgeMs),
-        models: () => modelsOf(ctx),
+        models: () => modelsOf(ctx, true),
         now: () => new Date(),
         rows: () => tui.terminal.rows,
         requestRender: () => tui.requestRender(),
@@ -261,7 +264,7 @@ export default function (pi: ExtensionAPI): void {
   };
 
   pi.registerCommand("tokemon", {
-    description: "Provider quotas: a scrollable, auto-refreshing table",
+    description: "Provider quotas and limits",
     handler: async (_args, ctx) => {
       if (ctx.mode !== "tui" || !ctx.hasUI) {
         try {

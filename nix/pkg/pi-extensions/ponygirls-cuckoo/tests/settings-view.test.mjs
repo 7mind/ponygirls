@@ -174,7 +174,7 @@ test('Cuckoo maps every owner field, source and dependency explanation', () => {
   assert.equal(row(controller, 'vectors').checked, true);
   assert.equal(
     row(controller, 'vectors').inactive,
-    'ready by settings',
+    '',
   );
   assert.equal(
     row(controller, 'policy').effectiveText,
@@ -188,7 +188,7 @@ test('Cuckoo maps every owner field, source and dependency explanation', () => {
   assert.equal(row(controller, 'reader').origin, 'default');
   assert.match(
     row(controller, 'vectors').inactive,
-    /reader is off/,
+    /^needs Memory reader$/,
   );
   assert.equal(f.saves.length, 0);
 });
