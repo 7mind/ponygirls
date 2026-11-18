@@ -129,7 +129,7 @@ async function check(name, run) {
 try {
   browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
 
-  await check("shell: the five presets and records are routes; Back to a preset or from a record restores its query draft, loaded rows, scroll and focus", async () => {
+  await check("shell: the five presets and records are routes; Back to a preset, to a previous query or sort, or from a record restores its loaded rows, scroll and focus", async () => {
     const { context, page, state } = await open(browser, { width: 1440, colorScheme: "light" });
     try {
       await signIn(page, "#/browse?q=start");
@@ -191,6 +191,33 @@ try {
       await waitRows(page, before.rows);
       assert.equal(await row.evaluate((element) => element === document.activeElement), true, "focus returns to the row it left");
       assert.equal(listSearches(), before.searches, "the round trips do not reload the list");
+      // Sort and query round trips within the list: Back restores the previous route's chain and scroll instead of
+      // searching it again; only the new sort's first page is searched.
+      const keptRoute = async () => {
+        await records(page).evaluate((element) => { element.scrollTop = 600; });
+        await page.evaluate(() => window.scrollTo(0, 80));
+        return { panel: await records(page).evaluate((element) => element.scrollTop), page: await page.evaluate(() => window.scrollY), searches: listSearches() };
+      };
+      const backTo = async (route, searched, what) => {
+        await page.goBack();
+        await waitRows(page, before.rows);
+        assert.equal(new URL(page.url()).hash, "#/browse", what);
+        assert.ok(Math.abs(await records(page).evaluate((element) => element.scrollTop) - route.panel) <= 2, `${what}: list scroll is restored`);
+        assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - route.page) <= 2, `${what}: page scroll is restored`);
+        assert.equal(listSearches(), route.searches + searched, `${what}: Back does not search the previous route again`);
+      };
+      // Clicked through the DOM: a pointer click would first scroll the control into view and move the page.
+      let route = await keptRoute();
+      await page.getByRole("button", { name: "Sort by Record", exact: true }).evaluate((button) => button.click());
+      await page.waitForFunction(() => location.hash.includes("sort=title"));
+      await waitRows(page, PAGE);
+      await backTo(route, 1, "sort round trip");
+      await query.fill("missing");
+      route = await keptRoute();
+      await page.getByRole("button", { name: "Search", exact: true }).evaluate((button) => button.click());
+      await page.getByRole("heading", { name: "No records found", exact: true }).waitFor();
+      await backTo(route, 0, "query round trip");
+      assert.equal(await query.inputValue(), "", "the restored route shows its own query");
       // Edit is a route: Cancel returns to the record, Back from the record to the list; a reload keeps the editor.
       await page.getByRole("button", { name: "notes:record-03", exact: true }).click();
       await page.getByRole("button", { name: "Edit", exact: true }).click();

@@ -188,9 +188,10 @@ export async function checkBrowse({ browser, base, login, navLink, humanPassword
         await settle(page);
         assert.equal(searches.length, 0);
       }
-      const reset = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "");
+      // Browse shows the empty-query route again (kept by the list since sign-in, so not necessarily searched again).
       await navLink(page, "Browse").click();
-      await reset;
+      await page.waitForFunction(() => location.hash === "#/browse");
+      await page.waitForFunction(() => document.querySelector('input[role="combobox"]').value === "");
       assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), "");
       assert.equal(await page.getByRole("button", { name: "Search", exact: true }).isEnabled(), true);
     } finally { await ctx.close(); }

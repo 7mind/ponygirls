@@ -17,6 +17,13 @@ const SEARCH_LIMIT_MAX = 100;
  */
 type Load = { kind: "first" } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
 interface Anchor { key: string; top: number }
+/**
+ * A route this list showed before another query or sort replaced it (spec §5 rule 2): its loaded chain and where the
+ * reader was. Returning to the route (Back, Forward, an address or link) restores it instead of searching again; an
+ * explicit Search or sort runs anew. `version` is the live-update count when it was kept: later changes are announced.
+ */
+interface Kept { items: Summary[]; cursor: string | undefined; panelTop: number; pageTop: number; focus: Element | null; version: number }
+const MAX_KEPT_ROUTES = 6;
 const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
   { field: "title", label: "Record" }, { field: "project", label: "Project" },
   { field: "type", label: "Type" }, { field: "status", label: "Status" },
@@ -47,6 +54,18 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const sentinel = useRef<HTMLDivElement>(null);
   const [changed, setChanged] = useState(false);
   const anchor = useRef<Anchor | null>(null);
+  const section = useRef<HTMLElement>(null);
+  const kept = useRef(new Map<string, Kept>());
+  const shown = useRef<BrowseState | null>(null);
+  const fresh = useRef(false);
+  const restored = useRef<Kept | null>(null);
+  // Where the page was while this list was last shown: the list may be hidden when its route changes.
+  const pageTop = useRef(0);
+  useEffect(() => {
+    const onScroll = () => { if (section.current !== null && section.current.getClientRects().length > 0) pageTop.current = window.scrollY; };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
   const helpId = useId();
   const live = useLiveUpdates();
   const inbox = preset === "inbox";
@@ -69,6 +88,15 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     if (kept === null || container === null) return;
     const row = [...container.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")].find((candidate) => candidate.dataset.rowId === kept.key);
     if (row !== undefined) container.scrollTop += row.getBoundingClientRect().top - kept.top;
+  }, [items]);
+  // A restored route gets its scroll positions and focus back once its rows are rendered.
+  useLayoutEffect(() => {
+    const route = restored.current;
+    restored.current = null;
+    if (route === null) return;
+    if (panel.current !== null) panel.current.scrollTop = route.panelTop;
+    window.scrollTo(0, route.pageTop);
+    if (route.focus instanceof HTMLElement && route.focus.isConnected) route.focus.focus({ preventScroll: true });
   }, [items]);
 
   const run = useCallback(async (state: BrowseState, load: Load) => {
@@ -129,7 +157,30 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     }
     setSort(initial.sort);
     applied.current = initial;
-    void run(initial, { kind: "first" });
+    const outgoing = shown.current;
+    shown.current = initial;
+    if (outgoing !== null && outgoing.migrationError === null && !sameBrowseState(outgoing, initial)) {
+      const focus = document.activeElement;
+      kept.current.delete(browseHash(outgoing, preset));
+      kept.current.set(browseHash(outgoing, preset), { items, cursor, panelTop: panel.current === null ? 0 : panel.current.scrollTop, pageTop: section.current !== null && section.current.getClientRects().length > 0 ? window.scrollY : pageTop.current,
+        focus: focus !== null && section.current !== null && section.current.contains(focus) ? focus : null, version: live.version });
+      if (kept.current.size > MAX_KEPT_ROUTES) kept.current.delete(kept.current.keys().next().value!);
+    }
+    const hash = initial.migrationError === null ? browseHash(initial, preset) : null;
+    const back = hash === null || fresh.current ? undefined : kept.current.get(hash);
+    fresh.current = false;
+    if (hash !== null) kept.current.delete(hash);
+    if (back === undefined) { void run(initial, { kind: "first" }); return; }
+    sequence.current++;
+    pending.current = null;
+    continuation.current = back.cursor;
+    restored.current = back;
+    setItems(back.items);
+    setCursor(back.cursor);
+    setError("");
+    setDiagnostics([]);
+    setBusy(false);
+    setChanged(back.version !== live.version);
   }, [initial.query, initial.migrationError, initial.sort.field, initial.sort.direction, run]);
 
   // A live change never resets a list: an untouched first page reloads in place; a list the reader has scrolled or
@@ -160,7 +211,8 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     setBusy(true);
     applied.current = state;
     const hash = browseHash(state, preset);
-    if (location.hash !== hash) { location.hash = hash; return; }
+    // An explicit Search or sort searches again even where a kept route exists.
+    if (location.hash !== hash) { fresh.current = true; location.hash = hash; return; }
     void run(state, { kind: "first" });
   }
 
@@ -181,7 +233,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
 
   return (<>
     {changed && <div className="update-pill"><button type="button" onClick={() => void refresh()}>Records changed · Show</button></div>}
-    <section className="browse-view" aria-label="Browse" aria-busy={busy}>
+    <section ref={section} className="browse-view" aria-label="Browse" aria-busy={busy}>
       <div className="page-heading"><div>
         <h1>{HEADINGS[preset]}</h1>
         <p>{inbox ? "Records requiring review." : "Search by text, metadata, tags, or project."}</p></div></div>

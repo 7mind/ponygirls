@@ -12,16 +12,14 @@ type ListRoute = Extract<Route, { name: "list" }>;
 /** Where the reader was in a list when it was hidden: restored when its route is shown again. */
 interface Position { scrollY: number; focus: Element | null }
 /**
- * A mounted list (one Browse instance) and the route it shows. Lists stay mounted, hidden, while another list,
- * a record or the account page is shown, so that returning to a list route keeps its query draft, loaded rows,
- * scroll and focus (spec §5 rule 2). Lists are keyed by their route (preset + query + sort); a new query or sort
- * submitted in the shown list stays in that list.
+ * A mounted list (one Browse instance per preset) and the route it shows. Lists stay mounted, hidden, while another
+ * list, a record or the account page is shown, so that returning to a list route keeps its query draft, loaded rows,
+ * scroll and focus (spec §5 rule 2); routes of the same preset that the list showed before are kept by the list.
  */
 interface ListEntry { id: number; route: ListRoute; position: Position | null }
 interface View { route: Route; lists: readonly ListEntry[]; shown: number | null }
 /** What the next layout pass does with the document scroll. */
 type ScrollAction = { kind: "restore"; position: Position } | { kind: "top" } | null;
-const MAX_LISTS = 6;
 
 const INBOX_COUNT_LIMIT = 100;
 const ACCOUNT_PROFILE_PATH = "/api/account/v1/profile";
@@ -54,22 +52,25 @@ function navigate(previous: View, route: Route, position: Position, nextId: () =
   const leaving = previous.route.name === "list" ? previous.lists.find((entry) => entry.id === previous.shown) : undefined;
   let lists = previous.lists.map((entry) => (leaving !== undefined && entry.id === leaving.id ? { ...entry, position } : entry));
   if (route.name === "item") return { view: { route, lists, shown: previous.shown }, scroll: { kind: "top" } };
-  const kept = lists.find((entry) => entry.route.hash === route.hash);
+  // One list per preset. It keeps every route it showed (Browse's kept routes), so another query or sort of
+  // the same preset is shown by that list, which restores the route if it showed it before.
+  const same = lists.find((entry) => entry.route.preset === route.preset);
   let target: ListEntry;
   let scroll: ScrollAction;
-  if (kept !== undefined) {
-    target = { ...kept, route, position: null };
-    scroll = kept.position === null ? { kind: "top" } : { kind: "restore", position: kept.position };
-  } else if (leaving !== undefined && leaving.route.preset === route.preset) {
-    // A query or sort applied in the shown list (or the address edited): the same list runs it.
-    target = { ...leaving, route, position: null };
-    scroll = null;
-  } else {
+  if (same === undefined) {
     target = { id: nextId(), route, position: null };
     scroll = { kind: "top" };
+  } else if (leaving !== undefined && same.id === leaving.id) {
+    target = { ...same, route, position: null };
+    scroll = null;
+  } else if (same.route.hash === route.hash) {
+    target = { ...same, route, position: null };
+    scroll = same.position === null ? { kind: "top" } : { kind: "restore", position: same.position };
+  } else {
+    target = { ...same, route, position: null };
+    scroll = { kind: "top" };
   }
-  lists = [...lists.filter((entry) => entry.id !== target.id), target];
-  if (lists.length > MAX_LISTS) lists = lists.slice(lists.length - MAX_LISTS);
+  lists = same === undefined ? [...lists, target] : lists.map((entry) => (entry.id === target.id ? target : entry));
   return { view: { route, lists, shown: target.id }, scroll };
 }
 
@@ -266,8 +267,7 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
       <main ref={main} id="main" className="workspace" tabIndex={-1} data-view={route.name === "list" ? "list" : route.edit ? "edit" : "record"}>
         <PendingWriteNotice />
         {notice !== "" && <p role="status" className="notice">{notice}</p>}
-        {/* In creation order: reordering would move (and so reset the scroll of) hidden lists. */}
-        {[...view.lists].sort((left, right) => left.id - right.id).map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
+        {view.lists.map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
           <Browse preset={entry.route.preset} initial={entry.route.state} onOpen={openItem} onAuthLost={onAuthLost} />
         </div>)}
         {route.name === "item" && <Detail key={route.key} itemKey={route.key} edit={route.edit} onAuthLost={onAuthLost}

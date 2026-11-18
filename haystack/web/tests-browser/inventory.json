@@ -141,7 +141,7 @@
     "HTTPS session survives backend stop, refresh, restart, refresh; logout still expires it",
     "quick-ui.sh restart retains its private database, password and independent browser session",
     "Haystack password login, account page in the outlet with token lifecycle, identity change and module sign-out at desktop widths",
-    "shell: the five presets and records are routes; Back to a preset or from a record restores its query draft, loaded rows, scroll and focus",
+    "shell: the five presets and records are routes; Back to a preset, to a previous query or sort, or from a record restores its loaded rows, scroll and focus",
     "shell: masthead fits 1440, 1024 and 390 pixels in light and dark; menus and popover close with Escape",
     "shell: a live change never resets a scrolled list, Show merges it in place keeping the first visible row; an untouched list refreshes in place",
     "shell: Access tokens open in the account outlet over a kept list (degraded server) and Sign out is module-owned"
