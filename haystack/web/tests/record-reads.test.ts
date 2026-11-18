@@ -69,3 +69,18 @@ test("a read in flight keeps one timer until it settles or is given up; giving i
   flights.settled(2);
   assert.throws(() => flights.abort(2), /not in flight/);
 });
+
+test("an older answer is dropped only while the record shown is at its floor: below it the bounded floor recovery runs", () => {
+  // A refresh captures revision 1; the editor's conflict read offers revision 3; the editor closes before its overwrite is
+  // confirmed as revision 4, which raises the floor while the refresh is still outstanding.
+  const raised = run(NOWHERE, { kind: "entered", key: KEY }, { kind: "answered", key: KEY, request: 1, item: item(1), floor: 0 },
+    { kind: "requested" }, { kind: "editor-opened" }, { kind: "offered", item: item(3), floor: 0 }, { kind: "editor-closed", floor: 0 },
+    { kind: "floor", floor: 4 });
+  assert.deepEqual(raised.effects, ["get 1", "apply 1", "ancillary 1", "get 2", "apply 3", "ancillary 3"]);
+  const recovered = run(raised.state, { kind: "answered", key: KEY, request: 2, item: item(1), floor: 4 },
+    { kind: "answered", key: KEY, request: 3, item: item(4), floor: 4 });
+  assert.deepEqual(recovered.effects, ["get 3", "apply 4", "ancillary 4"], "the older answer is read past, not dropped");
+  const failed = run(raised.state, ...Array.from({ length: FLOOR_READS }, (_, i) => ({ kind: "answered", key: KEY, request: 2 + i, item: item(3), floor: 4 }) as const));
+  assert.deepEqual(failed.effects, ["get 3", "get 4", "fail below-floor"], "or it ends in the visible failure with Retry");
+  assert.deepEqual([failed.state.lane.kind, failed.state.shown], ["idle", 3]);
+});
