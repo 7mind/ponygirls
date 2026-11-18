@@ -285,82 +285,88 @@ export const scenarios = [
   },
 
   {
-    name: "edit", title: "Record editing: typed fields editor, raw JSON, validation, conflict, pending write",
+    name: "edit", title: "UX-H4 record edit page: edit bar, typed field editors, raw JSON, validation, remote change, conflict, unconfirmed write, leave dialog",
     async run(env) {
       const { rec } = env;
       const h = heroes(env);
-      const { ctx, page } = await open(env);
-      const goItem = async (key) => { await page.goto(`${env.base}/#/item/${enc(key)}`); await page.locator(".detail-view > .page-heading h1").waitFor(); await page.waitForTimeout(700); };
-      const edit = () => page.getByRole("button", { name: "Edit", exact: true }).click();
-
-      await goItem(h.skill.key); await edit();
-      await page.locator(".typed-field-editor").first().waitFor();
-      await rec.shot(page, "edit-typed", { desc: "Edit form for the skill-draft: metadata inputs, Fields editor in 'Typed content' mode with side-by-side Markdown preview", how: "open the record, click Edit", expect: [".fields-editor", ".typed-editor-preview"] });
-      await rec.shot(page, "edit-typed", { desc: "Full page of the edit form (textarea 10 rows beside a preview that scrolls internally, max-height 500px)", how: "fullPage screenshot", full: true });
-      await rec.dump(page, "edit-typed");
-      await page.getByLabel("Preview", { exact: true }).uncheck();
-      await rec.shot(page, "edit-typed-no-preview", { desc: "Typed content mode with Preview unchecked", how: "uncheck the Preview toggle", expect: [".typed-field-editor"] });
-      await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
-      await page.getByLabel("Fields JSON").waitFor();
-      await rec.shot(page, "edit-raw-json", { desc: "Fields editor in Raw JSON mode (12-row monospace textarea holding the whole fields object)", how: "click 'Raw JSON'", expect: ["textarea[aria-label='Fields JSON']"] });
-      await page.getByLabel("Fields JSON").fill('{"broken": ');
-      await page.locator(".fields-json-error").waitFor();
-      await rec.shot(page, "edit-invalid-json", { desc: "Invalid fields JSON: red textarea border, inline error text, 'Save as new revision' disabled", how: "replace the Fields JSON text with an unterminated object", expect: [".fields-json-error"] });
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
-
-      await goItem(h.todo.key); await edit();
-      await page.getByLabel("Fields JSON").waitFor();
-      await rec.shot(page, "edit-todo", { desc: "Edit form for a record without typed fields (defaults to Raw JSON); type/status/importance are free-text inputs with datalists", how: "open the todo, click Edit", expect: [".editor-panel"] });
-      await page.getByLabel("Title").fill(h.todo.document.title + " (edited in the dashboard)");
-      await page.getByLabel("Links").fill("related-to ponygirls:no-such-item\nbroken-line-without-target");
-      await page.getByRole("button", { name: "Save as new revision" }).click();
-      await page.getByText(/link line needs/).waitFor();
-      const statusTop = await page.evaluate(() => { const r = document.querySelector(".detail-view [role=status]").getBoundingClientRect(); return { bottom: Math.round(r.bottom), viewportHeight: innerHeight, scrollY: Math.round(scrollY), saveButtonTop: Math.round(document.querySelector(".editor-panel button.primary").getBoundingClientRect().top) }; });
-      rec.note(`Measured: after clicking Save with a malformed link line, the status message's bottom edge is at y=${statusTop.bottom} (viewport ${statusTop.viewportHeight}, scrollY ${statusTop.scrollY}, Save button top at y=${statusTop.saveButtonTop}); negative or near 0 means the message is outside the visible area.`);
-      await rec.shot(page, "edit-link-error", { desc: "Malformed link line: error appears as a plain status line near the top of the page, far from the Links textarea (scrolled out of view)", how: "enter a link line without a target and save", expect: ["[role=status]"] });
-      await page.getByLabel("Links").fill(h.todo.document.links.map(([t, k]) => `${t} ${k}`).join("\n"));
-      await page.getByRole("button", { name: "Save as new revision" }).click();
-      await page.getByText(/Saved as revision/).waitFor();
-      await page.waitForTimeout(500);
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await rec.shot(page, "edit-saved", { desc: "After a successful save: status line 'Saved as revision N.' above the record, editor closed", how: "fix the link line, click 'Save as new revision'", expect: ["[role=status]"] });
-
-      // Stale-save conflict.
-      await goItem(h.fact.key); await edit();
-      await page.getByLabel("Title").fill(h.fact.document.title + " (my draft)");
-      await bump(env, h.fact, { title: h.fact.document.title + " (someone else)" });
-      await page.waitForTimeout(1200);
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await rec.shot(page, "edit-remote-update-notice", { desc: "While editing, another writer saved: 'This record may have changed elsewhere' notice (live update)", how: "open Edit, then put a newer revision through the API", expect: [".notice"] });
-      await page.getByRole("button", { name: "Save as new revision" }).click();
-      await page.locator("[role=alert]", { hasText: "Conflict" }).waitFor();
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await rec.shot(page, "edit-conflict", { desc: "Stale save: Conflict alert with 'Save my draft on top of revision N' / 'Discard draft and reload'; draft preserved in the form below", how: "click Save after the concurrent put", expect: ["[role=alert]"] });
-      await page.getByRole("button", { name: "Discard draft and reload" }).click();
-
-      // Uncertain write: server commits, response is lost.
-      await goItem(h.fact2.key); await edit();
-      await page.getByLabel("Title").fill(h.fact2.document.title + " (uncertain write)");
-      await page.route("**/api/v1/put", async (route) => { await route.fetch(); await route.abort("connectionreset"); });
-      await page.getByRole("button", { name: "Save as new revision" }).click();
-      await page.getByText(/Save failed|pending or uncertain/).first().waitFor({ timeout: 10000 });
-      await page.evaluate(() => window.scrollTo(0, 0));
-      await page.waitForTimeout(300);
-      await rec.shot(page, "edit-pending-write", { desc: "Lost response after a committed save: 'A write … is pending or uncertain' banner with 'Retry original write' and the Save failed status", how: "intercept POST /api/v1/put: let the server commit, then reset the connection", expect: [".notice"] });
-      await page.unroute("**/api/v1/put");
-      await page.getByRole("button", { name: "Retry original write" }).click();
-      await page.waitForTimeout(800);
-      await rec.shot(page, "edit-pending-write-resolved", { desc: "After 'Retry original write': banner shows the outcome sentence", how: "click Retry original write", expect: [".notice"] });
-
-      // Attention clear.
-      await goItem(h.attention.key);
-      await page.getByRole("button", { name: "Clear attention" }).click();
-      await page.getByText(/Attention cleared/).waitFor();
-      await rec.shot(page, "detail-attention-cleared", { desc: "After 'Clear attention': status line, no undo, no confirmation step was offered", how: "open a needs-review record, click 'Clear attention'", expect: ["[role=status]"] });
-      await ctx.close();
+      const hero = await recordHero(env, "ponygirls:todo-capture-edit");
+      const file = (state, width, dark) => `haystack-edit${state === "" ? "" : `-${state}`}${dark ? "-dark" : ""}-${width}.png`;
+      const edit = async (page, key) => {
+        await page.goto(`${env.base}/#/item/${enc(key)}`);
+        await page.locator('[data-record="ready"]').waitFor();
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
+        await page.locator('[data-record="editing"]').waitFor();
+        await page.getByLabel("Title", { exact: true }).waitFor();
+        await page.waitForTimeout(500);
+      };
+      // Opened from the Inbox list, as in the mockup: the masthead keeps Inbox current and Back reads "Inbox".
+      const fromInbox = async (page) => {
+        await page.goto(`${env.base}/#/inbox?${new URLSearchParams({ q: `id:"${hero.key}"` })}`); await settle(page);
+        await page.locator(`[data-row-id="${hero.key}"]`).getByText(hero.title, { exact: true }).click();
+        await page.locator('[data-record="ready"]').waitFor();
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
+        await page.locator('[data-record="editing"]').waitFor();
+        await page.getByLabel("Title", { exact: true }).waitFor();
+        await page.waitForTimeout(500);
+      };
+      const touch = (page) => page.getByLabel("Title", { exact: true }).fill(`${hero.title} (draft)`);
+      // The 1440 light pass changes the record under the editor and so runs last.
+      for (const [viewport, width, dark] of [[SMALL, 1024, false], [MOBILE, 390, false], [DESKTOP, 1440, true], [DESKTOP, 1440, false]]) {
+        const { ctx, page } = await open(env, { viewport, dark });
+        await fromInbox(page);
+        if (width === 1440 && !dark) await rec.shot(page, "edit-pristine", { file: file("pristine", width, false), desc: "Editor just opened: nothing changed, Save disabled", how: "open the record, click Edit", expect: [".edit-bar", ".rail"] });
+        await touch(page);
+        await rec.shot(page, "edit", { file: file("", width, dark), desc: "Edit page with a changed title: edit bar with the unsaved-changes chip, typed field editors, links, metadata rail", how: "open the record, click Edit, change the title", expect: [".edit-bar", ".rail"] });
+        if (width === 1440 && !dark) {
+          await rec.shot(page, "edit-full", { file: file("full", width, false), desc: "Full page", how: "fullPage screenshot", full: true });
+          await rec.dump(page, "edit");
+          await page.evaluate(() => window.scrollTo(0, 900)); await page.waitForTimeout(200);
+          await rec.shot(page, "edit-scrolled", { file: file("scrolled", width, false), desc: "Scrolled 900 px: the edit bar sticks, the rail sticks", how: "scrollTo(0, 900)" });
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.getByRole("button", { name: "Raw JSON", exact: true }).click(); await page.getByLabel("Fields JSON").waitFor(); await page.waitForTimeout(200);
+          await rec.shot(page, "edit-raw", { file: file("raw", width, false), desc: "Fields as raw JSON", how: "Raw JSON", expect: ["#edit-fields-json"] });
+          await page.getByRole("button", { name: "Typed content", exact: true }).click();
+          await page.getByLabel("Value: checklist", { exact: true }).fill('["reproduce", "fix" "verify"]');
+          await page.getByRole("button", { name: "Add link", exact: true }).click();
+          await page.locator('[role="alert"]', { hasText: "prevent" }).waitFor(); await page.evaluate(() => window.scrollTo(0, 0)); await page.waitForTimeout(200);
+          await rec.shot(page, "edit-invalid", { file: file("invalid", width, false), desc: "Two problems: invalid JSON in a field and a link without a target; summary, inline messages, Save disabled", how: "break checklist, Add link", expect: [".error-list"] });
+          await rec.shot(page, "edit-invalid-full", { file: file("invalid-full", width, false), desc: "Invalid, full page", how: "fullPage screenshot", full: true });
+          await page.getByLabel("Value: checklist", { exact: true }).fill('["reproduce", "fix", "verify"]');
+          await page.getByRole("button", { name: "Remove link 4", exact: true }).click();
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await page.getByRole("button", { name: "Cancel", exact: true }).click();
+          await page.getByRole("dialog").waitFor(); await page.waitForTimeout(200);
+          await rec.shot(page, "edit-leave", { file: file("leave", width, false), desc: "Cancel with unsaved changes asks in an in-app dialog (Cancel focused)", how: "Cancel", expect: ["dialog[open]"] });
+          await page.keyboard.press("Escape");
+          // Someone else saves while this draft is open; saving then reports the conflict.
+          await bumpKey(env, hero.key, { title: `${hero.title} (rescoped)` });
+          await page.getByText(/saved elsewhere/).waitFor(); await page.waitForTimeout(300);
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await rec.shot(page, "edit-remote", { file: file("remote", width, false), desc: "Remote change while editing: info notice, draft kept", how: "put a newer revision through the API while the editor is open", expect: [".notice"] });
+          await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+          await page.getByText(/while you were editing/).waitFor(); await page.waitForTimeout(300);
+          await page.evaluate(() => window.scrollTo(0, 0));
+          await rec.shot(page, "edit-conflict", { file: file("conflict", width, false), desc: "Stale save: conflict notice with Review their changes / Overwrite / Discard mine; draft kept", how: "click Save after the concurrent put", expect: [".edit-page .notice-warn"] });
+        }
+        await ctx.close();
+      }
+      {
+        // Unconfirmed write: the server commits, the response is lost.
+        const { ctx, page } = await open(env);
+        await edit(page, h.fact2.key);
+        await page.getByLabel("Title", { exact: true }).fill(`${h.fact2.document.title} (uncertain write)`);
+        await page.route("**/api/v1/put", async (route) => { await route.fetch(); await route.abort("connectionreset"); });
+        await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
+        await page.getByRole("button", { name: "Retry original write", exact: true }).waitFor(); await page.waitForTimeout(300);
+        await rec.shot(page, "edit-pending", { file: file("pending", 1440, false), desc: "The outcome of the save is unknown: notice with Retry original write, Save disabled, bar chip 'Save not confirmed'", how: "intercept POST /api/v1/put: let the server commit, then reset the connection", expect: [".edit-page .notice-warn"] });
+        await page.unroute("**/api/v1/put");
+        await page.getByRole("button", { name: "Retry original write", exact: true }).click();
+        await page.getByText(/Original write confirmed/).waitFor(); await page.waitForTimeout(300);
+        await rec.shot(page, "edit-pending-resolved", { file: file("pending-resolved", 1440, false), desc: "After Retry original write: the confirmation, draft kept", how: "click Retry original write", expect: [".notice-ok"] });
+        await ctx.close();
+      }
     },
   },
-
   {
     name: "account", title: "Account / token-settings dialog (shared/account-web) in every reachable state",
     async run(env) {
@@ -586,10 +592,6 @@ export const scenarios = [
       await rec.shot(page, "nav-inbox", { desc: "Attention inbox at 1024x700", how: "open /#/inbox", expect: [".records-panel tbody tr"] });
       await page.goto(`${env.base}/#/item/${enc(h.skill.key)}`); await page.locator(".detail-view > .page-heading h1").waitFor(); await page.waitForTimeout(600);
       await rec.shot(page, "detail-skill", { desc: "Skill detail at 1024x700", how: "open the skill record", expect: [".fields-view"] });
-      await page.getByRole("button", { name: "Edit", exact: true }).click();
-      await page.locator(".typed-field-editor").first().waitFor();
-      await rec.shot(page, "edit-typed", { desc: "Typed fields editor at 1024x700 (textarea and preview side by side)", how: "click Edit", expect: [".typed-editor-preview"] });
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.goto(`${env.base}/#/browse`); await settle(page);
       await page.getByRole("combobox").fill("type:"); await page.locator("[role=listbox] [role=option]").first().waitFor({ timeout: 8000 });
       await rec.shot(page, "query-completions", { desc: "Query completions at 1024x700", how: "type 'type:'", expect: ["[role=listbox]"] });
@@ -623,9 +625,6 @@ export const scenarios = [
       await rec.shot(page, "nav-inbox", { desc: "Attention inbox, dark theme", how: "open /#/inbox", expect: [".records-panel tbody tr"] });
       await page.goto(`${env.base}/#/item/${enc(h.skill.key)}`); await page.locator(".detail-view > .page-heading h1").waitFor(); await page.waitForTimeout(600);
       await rec.shot(page, "detail-skill", { desc: "Skill detail, dark theme (highlight colours on dark surfaces)", how: "open the skill record", expect: [".fields-view"] });
-      await page.getByRole("button", { name: "Edit", exact: true }).click(); await page.locator(".typed-field-editor").first().waitFor();
-      await rec.shot(page, "edit-typed", { desc: "Typed fields editor, dark theme", how: "click Edit", expect: [".typed-editor-preview"] });
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: /^Connection:/ }).click(); await page.waitForTimeout(300);
       await rec.shot(page, "live-panel-expanded", { desc: "Connection popover, dark theme", how: "click the connection button", expect: [".connection-panel"] });
       await ctx.close();
@@ -697,7 +696,7 @@ export const scenarios = [
     async run(env) {
       const { rec } = env;
       const h = heroes(env);
-      const hero = await recordHero(env);
+      const hero = await recordHero(env, "ponygirls:todo-capture");
       const ready = async (page) => {
         await page.locator('[data-record="ready"], [data-record="snapshot"]').waitFor();
         await page.locator(".hist-row").first().waitFor(); await page.waitForTimeout(300);
@@ -891,8 +890,12 @@ function heroes(env) {
   };
 }
 /** The mockup's record (four revisions by three authors, Markdown and code fields, links both ways), written for the record scenario. */
-async function recordHero(env) {
-  const key = "ponygirls:todo-capture";
+async function recordHero(env, key) {
+  env.recordHeroes ??= new Map();
+  if (!env.recordHeroes.has(key)) env.recordHeroes.set(key, await writeRecordHero(env, key));
+  return env.recordHeroes.get(key);
+}
+async function writeRecordHero(env, key) {
   const title = "Rework session store before the next release";
   const pony = env.corpus.filter((d) => d.key.startsWith("ponygirls:"));
   const archived = pony.find((d) => d.document.status === "archived");
@@ -921,4 +924,9 @@ async function bump(env, doc, patch) {
   const client = env.clients.alice;
   const current = await client.get(doc.key);
   await client.put({ key: doc.key, documentJson: JSON.stringify({ ...doc.document, ...patch }), expectedRevision: current.revision, requestId: env.uuidv7() });
+}
+async function bumpKey(env, key, patch) {
+  const client = env.clients.alice;
+  const current = await client.get(key);
+  await client.put({ key, documentJson: JSON.stringify({ ...JSON.parse(current.document.json), ...patch }), expectedRevision: current.revision, requestId: env.uuidv7() });
 }

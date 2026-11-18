@@ -75,11 +75,10 @@ try {
   const cookie = (await ctx.cookies(base)).find((value) => value.name === "haystack-dev");
   assert.ok(cookie);
   assert.ok(cookie.value !== seedToken && cookie.value !== first.password, "preview cookie must be an independent browser session");
-  await page.getByRole("button", { name: "demo:hello", exact: true }).click();
-  await page.getByRole("button", { name: "Edit", exact: true }).click();
+  await page.goto(`${base}/#/item/${encodeURIComponent("demo:hello")}/edit`);
   await page.getByLabel("Title", { exact: true }).fill("Retained preview edit");
   await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
-  await page.getByText(/Saved as revision 2/).waitFor();
+  await page.getByText("Saved as revision 2", { exact: true }).waitFor();
   await stopPreview();
   await assert.rejects(fetch(`${base}/api/v1/health`, { signal: AbortSignal.timeout(1000) }), TypeError);
   let cachedShell = false;

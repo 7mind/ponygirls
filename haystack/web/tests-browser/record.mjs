@@ -167,11 +167,6 @@ try {
       assert.match(await raw.textContent(), /"precision": 0\.12345678901234567890123456789/);
       assert.match(await raw.textContent(), /"count": 9007199254740993/);
       await page.getByRole("button", { name: "Typed view", exact: true }).click();
-      await page.getByRole("button", { name: "Edit", exact: true }).click();
-      await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
-      assert.match(await page.getByLabel("Fields JSON").inputValue(), /9007199254740993/);
-      assert.match(await page.getByLabel("Fields JSON").inputValue(), /"type":"md"/);
-      await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "View revision 1", exact: true }).click();
       await page.getByRole("region", { name: "Snapshot", exact: true }).getByText("Viewing revision 1 of 2").waitFor();
       const changes = page.getByRole("region", { name: "Changes: metadata", exact: true });

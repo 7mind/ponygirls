@@ -46,13 +46,15 @@ test("edits are named; blocking problems carry the anchor of their field and no 
   assert.throws(() => documentJsonOf(draft), /problems/);
 });
 
-test("a live announcement is a remote change unless it is the write this draft left unconfirmed arriving", () => {
+test("a live announcement is a remote change unless it is the first synchronization or the write this draft left unconfirmed arriving", () => {
   const record = { key: "ui:todo", revision: 4 };
   const unconfirmed = { key: "ui:todo", expectedRevision: 4 };
-  assert.equal(isRemoteChange({ key: null, revision: null }, record, undefined), true, "after a resynchronization anything may have changed");
-  assert.equal(isRemoteChange({ key: "ui:other", revision: 9 }, record, undefined), false);
-  assert.equal(isRemoteChange({ key: "ui:todo", revision: 4 }, record, undefined), false, "not newer than the edited revision");
-  assert.equal(isRemoteChange({ key: "ui:todo", revision: 5 }, record, undefined), true);
-  assert.equal(isRemoteChange({ key: "ui:todo", revision: 5 }, record, unconfirmed), false, "revision 5 is what the unconfirmed write creates");
-  assert.equal(isRemoteChange({ key: "ui:todo", revision: 6 }, record, unconfirmed), true);
+  const change = (version: number, key: string | null, revision: number | null) => ({ version, key, revision });
+  assert.equal(isRemoteChange(change(1, null, null), record, undefined), false, "the first connection has just read the record");
+  assert.equal(isRemoteChange(change(2, null, null), record, undefined), true, "after a reconnection anything may have changed");
+  assert.equal(isRemoteChange(change(2, "ui:other", 9), record, undefined), false);
+  assert.equal(isRemoteChange(change(2, "ui:todo", 4), record, undefined), false, "not newer than the edited revision");
+  assert.equal(isRemoteChange(change(2, "ui:todo", 5), record, undefined), true);
+  assert.equal(isRemoteChange(change(2, "ui:todo", 5), record, unconfirmed), false, "revision 5 is what the unconfirmed write creates");
+  assert.equal(isRemoteChange(change(2, "ui:todo", 6), record, unconfirmed), true);
 });

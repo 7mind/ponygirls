@@ -113,13 +113,17 @@ export function documentJsonOf(draft: Draft): string {
   });
 }
 
+/** The synchronization that follows the first connection of a page is no change: the page has just read the record. */
+const FIRST_CONNECTION = 1;
+
 /**
- * Whether a live announcement means the record changed under the draft: any change after a resynchronization, or a newer
- * revision of this record - except the one an unconfirmed write of this draft would create, which is that write arriving.
+ * Whether a live announcement means the record changed under the draft: a resynchronization after the first connection,
+ * or a newer revision of this record - except the one an unconfirmed write of this draft would create, which is that
+ * write arriving.
  */
-export function isRemoteChange(change: { key: string | null; revision: number | null }, record: { key: string; revision: number },
+export function isRemoteChange(change: { version: number; key: string | null; revision: number | null }, record: { key: string; revision: number },
   pending: Pick<WriteOperation, "key" | "expectedRevision"> | undefined): boolean {
-  if (change.key === null) return true;
+  if (change.key === null) return change.version > FIRST_CONNECTION;
   if (change.key !== record.key || change.revision === null || change.revision <= record.revision) return false;
   return pending === undefined || pending.key !== record.key || change.revision !== pending.expectedRevision + 1;
 }

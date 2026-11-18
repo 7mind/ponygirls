@@ -73,6 +73,8 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   const problems = useMemo(() => problemsOf(draft), [draft]);
   const dirty = parts.length > 0;
   const canSave = dirty && problems.length === 0 && conflict === null && pending === undefined && !saving;
+  // A write is pending from the moment it is sent; it is unconfirmed once its attempt has ended without an answer.
+  const unconfirmed = saving ? undefined : pending;
 
   useEffect(() => {
     if (live.version === openedAt.current) return;
@@ -88,7 +90,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   }, [focusId]);
 
   const leave = (action: () => void) => { if (dirty) setLeaving({ run: action }); else action(); };
-  useLeaveGuard(dirty, pending !== undefined, (hash) => leave(() => { location.hash = hash; }));
+  useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }));
 
   async function submit(revision: number) {
     setSaving(true); setFailure(null); setReconciled(null);
@@ -110,7 +112,8 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
         }
         return;
       }
-      setFailure(`Save failed: ${failureText(error)}`);
+      // A failure that leaves the outcome unknown is shown by the unconfirmed-write notice, not as a failure of its own.
+      if (api.pendingWrite() === undefined) setFailure(`Save failed: ${failureText(error)}`);
     } finally { setSaving(false); }
   }
 
@@ -132,7 +135,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   }
 
   const modifiedAt = (value: string) => { const at = new Date(value); return Number.isNaN(at.getTime()) ? value : new Intl.DateTimeFormat(undefined, WHEN).format(at); };
-  const status = pending !== undefined ? <span className="chip"><span className="status status-warn">Save not confirmed</span></span> :
+  const status = unconfirmed !== undefined ? <span className="chip"><span className="status status-warn">Save not confirmed</span></span> :
     conflict !== null ? <span className="chip chip-danger">Conflict with revision {conflict.currentRevision}</span> :
     problems.length > 0 ? <span className="chip chip-danger">{plural(problems.length, "problem")}</span> :
     dirty ? <span className="chip"><span className="status">Unsaved changes</span></span> : <span>No changes yet</span>;
@@ -158,26 +161,26 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
           Nothing was sent to the server. Fix {problems.length === 1 ? "it" : "these"} and save again:
           <ul className="error-list">{problems.map((problem, index) => <li key={index}>
             <button type="button" className="link-button" onClick={() => setFocusId(problem.anchor)}>{problem.where}: {problem.message}</button></li>)}</ul></div></div>}
-        {failure !== null && pending === undefined && <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div></div>}
+        {failure !== null && unconfirmed === undefined && <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div></div>}
         {remote !== null && conflict === null && <div className="notice" role="status"><UiIcon name="info" /><div className="grow">
           <span className="notice-title">{remote.revision === null ? "This record may have changed elsewhere." : `Revision ${remote.revision} was saved elsewhere.`}</span>{" "}
           Your draft is kept and is still based on revision {baseRevision}; saving checks that revision and asks how to combine the two if the record has moved on.
-          <div className="notice-actions"><a className="btn btn-sm" href={itemHash(itemKey, false)} target="_blank" rel="noopener noreferrer"><UiIcon name="external" small />Review their changes</a></div></div></div>}
+          <div className="notice-actions"><a className="btn btn-sm" href={itemHash(itemKey, false)} target="_blank" rel="noopener noreferrer" title="Opens the record in a new tab">Review their changes</a></div></div></div>}
         {conflict !== null && <div className="notice notice-warn" role="alert"><UiIcon name="alert" /><div className="grow">
           <div className="notice-title">Revision {conflict.currentRevision} was saved by {conflict.currentModifiedBy} while you were editing</div>
           {modifiedAt(conflict.currentModifiedAt)} · title now “{conflict.currentTitle}”. Your draft was <strong>not</strong> saved; it is kept below and is still based on revision {baseRevision}.
           <div className="notice-actions">
-            <a className="btn btn-sm btn-primary" href={itemHash(itemKey, false)} target="_blank" rel="noopener noreferrer"><UiIcon name="external" small />Review their changes</a>
+            <a className="btn btn-sm btn-primary" href={itemHash(itemKey, false)} target="_blank" rel="noopener noreferrer" title="Opens the record in a new tab">Review their changes</a>
             <button type="button" className="btn btn-sm" disabled={saving || problems.length > 0} onClick={overwrite}>Overwrite as revision {conflict.currentRevision + 1}</button>
             <button type="button" className="btn btn-sm btn-danger-quiet" onClick={() => setDiscarding(true)}>Discard mine</button></div></div></div>}
-        {pending !== undefined && <div className="notice notice-warn" role="alert"><UiIcon name="alert" /><div className="grow">
+        {unconfirmed !== undefined && <div className="notice notice-warn" role="alert"><UiIcon name="alert" /><div className="grow">
           <div className="notice-title">The outcome of your save is unknown</div>
-          The write to <span className="mono">{pending.key}</span> was sent but no answer arrived, so it may or may not be stored as revision {pending.expectedRevision + 1}.
+          The write to <span className="mono">{unconfirmed.key}</span> was sent but no answer arrived, so it may or may not be stored as revision {unconfirmed.expectedRevision + 1}.
           Other writes are blocked until this is settled; your draft is kept. Retrying sends exactly the same payload and request id, so it cannot save twice.
           {failure !== null && <p className="notice-detail">{failure}</p>}
           <div className="notice-actions"><button type="button" className="btn btn-sm btn-primary" disabled={retrying} onClick={() => void retryOriginal()}>
             <UiIcon name="refresh" small />Retry original write</button></div></div></div>}
-        {reconciled !== null && pending === undefined && <div className="notice notice-ok" role="status"><UiIcon name="check-circle" /><div className="grow">{reconciled}</div></div>}
+        {reconciled !== null && unconfirmed === undefined && <div className="notice notice-ok" role="status"><UiIcon name="check-circle" /><div className="grow">{reconciled}</div></div>}
 
         <div className="form-stack">
           <div className="field"><label className="label" htmlFor={`${formId}-title`}>Title</label>
@@ -195,11 +198,11 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
         <HistoryCard revisions={revisions} onView={(revision) => leave(() => onViewRevision(revision))} />
       </aside>
     </div></div>
-    {leaving !== null && <ConfirmDialog title="Discard unsaved changes?" confirmLabel="Discard changes" danger busy={false}
+    {leaving !== null && <ConfirmDialog title="Discard unsaved changes?" confirmLabel="Discard changes" cancelLabel="Keep editing" danger busy={false}
       onConfirm={() => { const { run } = leaving; setLeaving(null); run(); }} onCancel={() => setLeaving(null)}>
-      <p>You changed <strong>{listOf(parts)}</strong> of <span className="mono nowrap">{itemKey}</span>. Leaving now loses these changes; nothing has been saved. Cancel returns to the editor.</p>
+      <p>You changed <strong>{listOf(parts)}</strong> of <span className="mono nowrap">{itemKey}</span>. Leaving now loses these changes; nothing has been saved.</p>
     </ConfirmDialog>}
-    {discarding && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft and reload" danger busy={false}
+    {discarding && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft and reload" cancelLabel="Keep my draft" danger busy={false}
       onConfirm={() => { setDiscarding(false); onDiscard(); }} onCancel={() => setDiscarding(false)}>
       <p>Your changes to <span className="mono nowrap">{itemKey}</span> are dropped and revision {item.revision} is loaded. Nothing of your draft was saved.</p>
     </ConfirmDialog>}

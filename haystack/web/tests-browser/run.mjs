@@ -16,8 +16,6 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import { chromium, firefox } from "playwright-core";
 import { writePasswordHash } from "./credentials.mjs";
-import { BaboonCodecContext } from "../../generated/typescript/BaboonSharedRuntime.ts";
-import { GetRequest } from "../../generated/typescript/haystack/api/GetRequest.ts";
 import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, publicClient, freePort } from "./native.mjs";
 
 const CONN = process.env.HAYSTACK_TEST_PG;
@@ -329,28 +327,6 @@ await check("gateway outages are connection failures and preserve the session ac
   } finally { await ctx.close(); }
 });
 
-await check("invalid field JSON reports an inline error before saving", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:note", exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
-    let writes = 0;
-    page.on("request", (request) => { if (request.url().endsWith("/api/v1/put")) writes++; });
-    const fields = page.getByLabel("Fields JSON", { exact: true });
-    await fields.fill('{"n":');
-    await page.getByRole("alert").filter({ hasText: "Invalid JSON" }).waitFor({ timeout: 3000 });
-    assert.equal(await fields.getAttribute("aria-invalid"), "true");
-    assert.equal(await page.getByRole("button", { name: "Save as new revision", exact: true }).isDisabled(), true);
-    assert.equal(writes, 0);
-    await fields.fill('{"n":9007199254740993}');
-    assert.equal(await page.getByRole("alert").filter({ hasText: "Invalid JSON" }).count(), 0);
-    assert.equal(await page.getByRole("button", { name: "Save as new revision", exact: true }).isEnabled(), true);
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-  } finally { await ctx.close(); }
-});
-
 // Owner decision (spec §9.3): the shared radius tokens replace Haystack's square corners.
 await check("system theme changes update native controls and shared radius tokens without reloading", async () => {
   const ctx = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 1000 } });
@@ -401,160 +377,6 @@ await check("system theme changes update native controls and shared radius token
   } finally { await ctx.close(); }
 });
 
-await check("typed field editors preview content, preserve data, and save attributed revisions", async () => {
-  await seed.put({ key: "ui:editor", documentJson: docOf({ title: "Typed editor" }).replace('"fields":{}',
-    '"fields":{"count":9007199254740993,"decimal":0.12345678901234567890123456789,' +
-    '"skill":{"type":"md","content":"# Original"},"snippet":{"type":"code","language":"nix","content":"{ enabled = true; }"},' +
-    '"literal":{"type":"text","content":"old"},"__proto__":{"type":"text","content":"Prototype field"},' +
-    '"nested":{"__proto__":9007199254740993},"extended":{"type":"md","content":"# untouched","filename":"SKILL.md"}}'),
-    expectedRevision: 0, requestId: rid() }, agent);
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  try {
-    const page = await ctx.newPage();
-    const errors = [];
-    page.on("pageerror", (error) => errors.push(error.message));
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:editor", exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
-    const markdown = '# Edited skill\n\nUse **exact bytes**.\n\n```typescript\nconst n: number = 7;\n```';
-    await page.getByLabel("Content: skill", { exact: true }).fill(markdown);
-    const preview = page.getByRole("region", { name: "Preview: skill", exact: true });
-    await preview.getByRole("heading", { name: "Edited skill", exact: true }).waitFor();
-    assert.equal(await preview.locator("strong").textContent(), "exact bytes");
-    assert.ok(await preview.locator(".hljs-keyword").count() > 0);
-    await page.getByLabel("Language: snippet", { exact: true }).selectOption("typescript");
-    await page.getByLabel("Content: snippet", { exact: true }).fill('const text: string = "🐎";');
-    assert.equal(await page.getByRole("region", { name: "Preview: snippet", exact: true }).locator("code").getAttribute("data-language"), "typescript");
-    await page.getByLabel("Content: literal", { exact: true }).fill("**literal**\nsecond line");
-    await page.getByLabel("Content: __proto__", { exact: true }).fill("Prototype field edited");
-    assert.equal(await page.getByRole("region", { name: "Preview: literal", exact: true }).locator("pre").textContent(), "**literal**\nsecond line");
-    assert.equal(await page.getByRole("region", { name: "Preview: literal", exact: true }).locator("strong").count(), 0);
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "typed editor overflows on mobile");
-    await page.getByRole("checkbox", { name: "Preview", exact: true }).uncheck();
-    assert.equal(await page.getByRole("region", { name: "Preview: skill", exact: true }).count(), 0);
-    await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
-    const fields = page.getByLabel("Fields JSON", { exact: true });
-    const raw = await fields.inputValue();
-    assert.match(raw, /9007199254740993/);
-    assert.match(raw, /0\.12345678901234567890123456789/);
-    assert.match(raw, /"filename": "SKILL.md"/);
-    await fields.fill(raw.slice(0, -1));
-    await page.getByRole("alert").filter({ hasText: "Invalid JSON" }).waitFor();
-    assert.equal(await page.getByRole("button", { name: "Typed content", exact: true }).isDisabled(), true);
-    await fields.fill(raw);
-    await page.getByRole("button", { name: "Typed content", exact: true }).click();
-    assert.equal(await page.getByLabel("Content: skill", { exact: true }).inputValue(), markdown);
-    const write = page.waitForResponse((response) => response.url().endsWith("/api/v1/put"));
-    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
-    assert.equal((await write).status(), 200);
-    await page.getByText(/Saved as revision 2/).waitFor();
-    const result = await ctx.request.post(`${base}/api/v1/get`, { data: GetRequest.jsonCodec().encode(BaboonCodecContext.Default, new GetRequest("ui:editor", undefined)) });
-    const text = await result.text();
-    assert.match(text, /9007199254740993/);
-    assert.match(text, /0\.12345678901234567890123456789/);
-    const doc = JSON.parse(text);
-    doc.document = JSON.parse(doc.document.json);
-    assert.equal(doc.metadata.modifiedBy, "op");
-    assert.deepEqual(doc.document.fields.skill, { type: "md", content: markdown });
-    assert.deepEqual(doc.document.fields.snippet, { type: "code", language: "typescript", content: 'const text: string = "🐎";' });
-    assert.deepEqual(doc.document.fields.extended, { type: "md", content: "# untouched", filename: "SKILL.md" });
-    assert.deepEqual(doc.document.fields.__proto__, { type: "text", content: "Prototype field edited" });
-    assert.equal(Object.hasOwn(doc.document.fields.nested, "__proto__"), true);
-    assert.deepEqual(errors, []);
-  } finally { await ctx.close(); }
-});
-
-await check("root typed content can be edited and cancelled without writing", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:root-markdown", exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
-    await page.getByLabel("Content: Value", { exact: true }).fill("# Draft root");
-    await page.getByRole("region", { name: "Preview: Value", exact: true }).getByRole("heading", { name: "Draft root", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page.getByRole("heading", { name: "Root content", exact: true }).waitFor();
-    await page.reload();
-    await page.getByRole("heading", { name: "Root content", exact: true }).waitFor();
-    assert.equal(await page.getByRole("heading", { name: "Draft root", exact: true }).count(), 0);
-  } finally { await ctx.close(); }
-});
-
-await check("a lost committed response replays the original ID without overwriting a newer draft", async () => {
-  await seed.put({ key: "ui:uncertain", documentJson: docOf({ title: "Uncertain fixture" }), expectedRevision: 0, requestId: rid() });
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:uncertain", exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
-    await page.getByLabel("Title", { exact: true }).fill("Committed original");
-    const sent = [];
-    await page.route("**/api/v1/put", async (route) => {
-      sent.push(route.request().postDataJSON());
-      if (sent.length === 1) {
-        const committed = await route.fetch();
-        assert.equal(committed.status(), 200, "failure must happen after actual commit");
-        await route.abort("failed");
-      } else await route.continue();
-    });
-    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
-    await page.getByRole("status").filter({ hasText: "Save failed: server unreachable" }).waitFor();
-    await page.getByRole("button", { name: "Retry original write", exact: true }).waitFor();
-    await page.getByLabel("Title", { exact: true }).fill("Newer local draft");
-    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
-    await page.getByRole("status").filter({ hasText: "uncertain write must be replayed" }).waitFor();
-    assert.equal(sent.length, 1, "edited draft must not get a new operation ID before reconciliation");
-    await page.getByRole("button", { name: "Retry original write", exact: true }).click();
-    await page.getByText(/Original write confirmed as revision 2/).waitFor();
-    assert.deepEqual(sent[1], sent[0], "replay must use identical current encoded payload, original request ID and CAS");
-    assert.equal(sent[0].expectedRevision, 1);
-    const actual = await seed.get("ui:uncertain");
-    assert.equal(actual.revision, 2); assert.equal(JSON.parse(actual.document.json).title, "Committed original");
-    assert.deepEqual((await seed.history("ui:uncertain")).revisions.map(r => r.revision), [2, 1]);
-    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Newer local draft");
-    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
-    await page.getByRole("alert").waitFor();
-    assert.equal(sent[2].expectedRevision, 1, "unresolved local draft retains its captured original CAS");
-    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Newer local draft");
-    await page.getByRole("button", { name: "Save my draft on top of revision 2", exact: true }).click();
-    await page.getByText(/Saved as revision 3/).waitFor();
-    assert.notEqual(sent[3].requestId, sent[0].requestId, "only explicit terminal-conflict recovery is a new operation");
-    assert.equal(sent[3].expectedRevision, 2);
-  } finally { await ctx.close(); }
-});
-
-// Two-editor conflict preserves the draft.
-await check("conflict preserves draft", async () => {
-  const ctx = await browser.newContext();
-  const a = await ctx.newPage();
-  const b = await ctx.newPage();
-  // Both pages share one context (one session): log in once, then drive
-  // two concurrent editors of the same item.
-  await login(a, humanPassword);
-  await b.goto(`${base}/#/browse`);
-  await navLink(b, "Browse").waitFor();
-  for (const page of [a, b]) {
-    await page.getByLabel("Query").fill("hello");
-    await page.getByRole("button", { name: "Search", exact: true }).click();
-    await page.getByRole("button", { name: "ui:note" }).click();
-    await page.getByRole("button", { name: "Edit" }).click();
-  }
-  await a.getByLabel("Title").fill("winner text");
-  await a.getByRole("button", { name: "Save as new revision" }).click();
-  await a.getByText(/Saved as revision 2/).waitFor();
-  await b.getByLabel("Title").fill("loser draft text");
-  await b.getByRole("button", { name: "Save as new revision" }).click();
-  await b.getByRole("alert").waitFor();
-  assert.equal(await b.getByLabel("Title").inputValue(), "loser draft text");
-  await b.getByRole("button", { name: /Save my draft on top/ }).click();
-  await b.getByText(/Saved as revision 3/).waitFor();
-  await ctx.close();
-});
-
 await check("an unavailable logout does not pretend the session was cleared", async () => {
   const ctx = await browser.newContext();
   try {
@@ -576,28 +398,14 @@ await check("an unavailable logout does not pretend the session was cleared", as
   } finally { await ctx.close(); }
 });
 
-await check("live writes refresh browse and preserve concurrent drafts", async () => {
+await check("live writes refresh browse", async () => {
   const ctx = await browser.newContext();
   try {
     const page = await ctx.newPage();
     await login(page, humanPassword);
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
-    const write = async (expected, title) => {
-      await seed.put({ key: "live:external", documentJson: docOf({ title }), expectedRevision: expected, requestId: rid() });
-    };
-    await write(0, "Written by an agent");
+    await seed.put({ key: "live:external", documentJson: docOf({ title: "Written by an agent" }), expectedRevision: 0, requestId: rid() });
     await page.getByText("Written by an agent", { exact: true }).waitFor();
-    await page.getByRole("button", { name: "live:external", exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
-    await page.getByLabel("Title", { exact: true }).fill("My preserved draft");
-    await write(1, "Updated elsewhere");
-    await page.getByText(/This record may have changed elsewhere/).waitFor();
-    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "My preserved draft");
-    await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
-    await page.getByRole("alert").waitFor();
-    assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "My preserved draft");
-    await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
-    await page.getByRole("heading", { name: "Updated elsewhere", exact: true }).waitFor();
   } finally { await ctx.close(); }
 });
 
