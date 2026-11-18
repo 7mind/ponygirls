@@ -264,9 +264,15 @@ it saves about three scans, every rewritten row would pay one more index entry, 
 table. **Measured on the full clone (2026-11-18):** a `ch_search_chunks` scan by `profile` reads only the 640 MB main
 heap (the 5.5 GB of TOAST is not touched) and took 94 ms; the index question is moot. The expensive statement is the
 `UPDATE ch_search_chunks SET profile` of the relocation: **40,833 rows** (not about 14,000), each maintained in the
-HNSW index; part 3 took 130–141 s and holds `SHARE ROW EXCLUSIVE` on `ch_jobs` and `ch_owner_targets` throughout.
-The batched reset of unfinished runs (851 runs, 61,404 accepted checkpoints) took about 25 s and writes about
-9.7 GB of WAL (TOAST deletions); part 3 about 1 GB. A dry-run writes the same WAL although it rolls back.
+HNSW index; part 3 holds `SHARE ROW EXCLUSIVE` on `ch_jobs` and `ch_owner_targets` throughout.
+
+**Budget (re-validation with the binary built from the merged tree, LEG-LAND 2026-11-18, runbook order on a fresh
+copy):** binary start 0.21 s (no schema migration); lease wait after the stop 282 s; batched reset of unfinished runs
+839 runs / 61,087 accepted checkpoints; **dry-run 153.6 s, 9.94 GB WAL, `SHARE ROW EXCLUSIVE` ~129 s**; **apply
+142.4 s, 9.69 GB WAL, the same lock ~113 s**; verify 0.4 s; second apply 1.4 s; after `unfence` the service served
+131 s later (next scheduled restart). A dry-run writes about as much WAL as the apply although it rolls back.
+*First rehearsal (`ab3e8a87` JAR, for comparison only):* 851 runs / 61,404 checkpoints, reset ~25 s and ~9.7 GB WAL
+(TOAST deletions), part 3 130–141 s and ~1 GB WAL, dry-run 154–168 s.
 
 ### 2.5 Verification
 
@@ -548,8 +554,11 @@ process-exit defects is on `main` (CH-FIX, `a99cf163`, in `de43b916`) and was re
 built from the merged tree (LEG-LAND): with `indexing.embeddingBatchSize = 4`, retrying Failed jobs whose saved
 embedding results were written under 16 logs `accepted work discarded … discardedParts=… currentParts=…
 embeddingBatchSize=4` per affected window and recomputes it (a 3-window job completed; a 257-window job recomputed
-its 30 saved windows and reached publication); a claim blocked past the 30 s statement timeout is logged as `job
-claim failed … sqlState=57014` and retried; the process kept running in both cases. So the batch size is no longer
+its 30 saved windows, then did **not** complete: its publication, the `INSERT INTO ch_search_chunks … SELECT` of
+about 4,000 chunks, hit the separate, pre-existing 30 s statement timeout three times and the job stayed in retry
+as `worker-fault` — an open product issue outside the migration, also seen for two of production's unfinished runs
+on the clone); a claim blocked past the 30 s statement timeout is logged as `job claim failed … sqlState=57014` and
+retried; the process kept running in all of these cases. So the batch size is no longer
 pinned to 16: changing it costs the recomputation of the saved embedding windows of unfinished runs, nothing else.
 Still, the migration does not need any configuration change, so keep the deployed configuration (`indexing` absent
 → defaults 4, 8, 16) unchanged during the migration window and change it, if wanted, separately. Not fixed by
@@ -695,7 +704,7 @@ restarting production Chronicle, which gave up after its 30 s statement timeout 
 - any stop rule of a monitor near a running Chronicle triggers well below the service's 30 s statement timeout
   (blocked for more than 10 s → end our session);
 - no session of ours holds locks on all tables for more than a few seconds while the service can start. Measured on
-  the full clone (`out/safety/i3-lock-footprint.txt`): `preflight` ≤ 0.86 s (57 relations, ACCESS SHARE), `verify`
+  the full clone (`out/safety/i3-lock-footprint.txt`): `preflight` ≤ 0.86 s (57 relations, ACCESS SHARE; 0.35 s with the shared structural block on the merged tree), `verify`
   ≤ 0.34 s (40), `worklist` 0.02 s (18); Haystack/Manure ≤ 0.02 s. Long sessions (dry-run, apply, exports, counts)
   run only while Chronicle is fenced or stopped;
 - after **every** production session of ours, compare the pod's container restart counts with the ones taken
@@ -718,7 +727,8 @@ the `core` StatefulSet next to PostgreSQL, Haystack and Manure. Chronicle connec
 - `op.sh chronicle unfence --role chronicle`: restores LOGIN only on a role carrying the marker; idempotent.
 - `op.sh chronicle fence-status --role chronicle`: read-only (`unfenced` / `fenced` / `nologin-not-by-this-tool`).
 
-Rehearsed on the clone with the real binary connecting as role `chronicle` (`out/safety/rehearse-fence-*.txt`):
+Rehearsed first (LEG-SAFE, `ab3e8a87` line; its timings are not the budget, see 2.4) on the clone with the real
+binary connecting as role `chronicle` (`out/safety/rehearse-fence-*.txt`):
 fence at 17:15:58 → the binary's workers failed (`JdbcFailure`) and the process exited 1 s later; every restart then
 exited after ~2 s (`database-unavailable`); restarts followed the kubelet back-off (10, 20, 40, 80, 160, 300 s);
 leases expired by 17:20:54; a `TEMPLATE … FILE_COPY` copy succeeded under the fence (no connection needed, 135 s);
@@ -866,8 +876,8 @@ and its history; the proposed clean-up files apply and the retained checks print
 nix develop .#chronicle --command bash scripts/one-off/legacy-retirement/test.sh
 ```
 
-One owned PostgreSQL 18.6 cluster under a private `/tmp` directory; `chronicle.LegacyRetirementScriptsTest` (2 cases)
-and `haystack.storage.LegacyRetirementScriptsTest` (3 cases); each case creates its own database and drives the
+One owned PostgreSQL 18.6 cluster under a private `/tmp` directory; `chronicle.LegacyRetirementScriptsTest` (2 cases,
+plus 2 of its child-process helper) and `haystack.storage.LegacyRetirementScriptsTest` (3 cases, plus 2 of the helper); each case creates its own database and drives the
 scripts as subprocesses. Last run: 2 of 2 and 3 of 3 passed.
 
 | Claim | Evidence in the fixture |
