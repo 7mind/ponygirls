@@ -31,6 +31,9 @@ from manure.client import ManureClient, read_token_file
 API = "https://api.example.test"
 TOKEN_FILE = "/srv/manure-test/token.raw"
 HUMAN_TOKEN_FILE = "/srv/manure-test/human-token.raw"
+HUMAN_PASSWORD_FILE = "/srv/manure-test/human-password.raw"
+HUMAN_LOGIN = "human-login"
+ACCOUNT_LOGIN_URL = API + "/api/account/v1/login"
 ZERO = UUID(int=0)
 
 
@@ -113,22 +116,39 @@ def cookie(headers, name, same_site):
     return name + "=" + value.value
 
 
+def account_login(login, password, headers, status, error=None):
+    """Browser password login of manure/docs/account-auth.md (a plain JSON protocol, not a Baboon envelope)."""
+    body = json.dumps({"login": login, "password": password}).encode()
+    code, response_headers, payload = GuestTransport().request("POST", ACCOUNT_LOGIN_URL, {"Content-Type": "application/json", **headers}, body)
+    assert code == status, f"unexpected account login status: expected={status} actual={code}"
+    result = json.loads(payload)
+    if error is not None:
+        assert set(result) == {"error"} and result["error"]["code"] == error, "wrong account login error"
+        assert "set-cookie" not in {k.lower() for k in response_headers}, "rejected login sets cookie"
+    return result, response_headers
+
+
 def auth_probe():
     wire = Wire()
     agent_token = read_token_file(TOKEN_FILE)
     human_token = read_token_file(HUMAN_TOKEN_FILE)
+    password = Path(HUMAN_PASSWORD_FILE).read_text()
     result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, bearer=True)
     assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-agent", "default", cp.PrincipalType.Agent)
-    result, headers = wire.command(cp.Command_Login(human_token), cp.Result_Identity, headers={"Origin": API})
-    assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-human", "default", cp.PrincipalType.Human)
-    session = cookie(headers, "__Host-manure", "Strict")
-    result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, headers={"Cookie": session})
-    assert (result.principal.userId, result.principal.tokenId, result.principal.principalType) == ("w-human", "default", cp.PrincipalType.Human)
-    for command, h, status, error in ((cp.Command_Login(agent_token), {"Origin": API}, 403, "Forbidden"),
-                                    (cp.Command_Login(human_token), {}, 403, "Forbidden"),
-                                    (cp.Command_Login("x"), {"Origin": API}, 401, "Unauthorized")):
+    # Token login is retired (manure/docs/current-api.md): rejected without a cookie, the Origin guard still comes first.
+    for command, h, status, error in ((cp.Command_Login(human_token), {"Origin": API}, 400, "BadEnvelope"),
+                                    (cp.Command_Login(agent_token), {"Origin": API}, 400, "BadEnvelope"),
+                                    (cp.Command_Login(human_token), {}, 403, "Forbidden")):
         _, rejected = wire.command(command, cp.Result_Identity, headers=h, status=status, error=error)
         assert "set-cookie" not in {k.lower(): v for k, v in rejected.items()}, "rejected login sets cookie"
+    result, headers = account_login(HUMAN_LOGIN, password, {"Origin": API}, 200)
+    assert result["user"]["id"] == "w-human" and result["user"]["login"] == HUMAN_LOGIN, "wrong account login user"
+    session = cookie(headers, "__Host-manure", "Strict")
+    result, _ = wire.command(cp.Command_Whoami(), cp.Result_Identity, headers={"Cookie": session})
+    assert (result.principal.userId, result.principal.principalType) == ("w-human", cp.PrincipalType.Human), "session is not the human"
+    assert result.principal.tokenId != "default", "browser session carries the configured token identity"
+    account_login(HUMAN_LOGIN, human_token, {"Origin": API}, 401, "unauthorized")
+    account_login(HUMAN_LOGIN, password, {}, 403, "forbidden")
     print("CURRENT_LOGIN_COOKIE_ORIGIN_OK")
 
 
