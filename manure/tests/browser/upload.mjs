@@ -48,7 +48,15 @@ const instrument = () => {
   Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { window.__clipboard = text; } } });
 };
 
-const check = async (name, run, { clipboard = true, viewport = { width: 1440, height: 900 } } = {}) => {
+const login = async (page) => {
+  await page.locator("[data-account-login] input[name=login]").fill(input.login);
+  await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
+  await page.locator("[data-account-login] button[type=submit]").click();
+  await page.getByRole("button", { name: input.userId }).waitFor();
+  await page.waitForFunction(() => / loaded|No matches/.test(document.querySelector("#list-status").textContent));
+};
+
+const check = async (name, run, { clipboard = true, viewport = { width: 1440, height: 900 }, signedIn = true } = {}) => {
   const context = await browser.newContext({ viewport });
   try {
     const page = await context.newPage();
@@ -62,11 +70,7 @@ const check = async (name, run, { clipboard = true, viewport = { width: 1440, he
     await page.addInitScript(instrument);
     if (!clipboard) { await page.addInitScript(() => { Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined }); }); }
     await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
-    await page.locator("[data-account-login] input[name=login]").fill(input.login);
-    await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
-    await page.locator("[data-account-login] button[type=submit]").click();
-    await page.getByRole("button", { name: input.userId }).waitFor();
-    await page.waitForFunction(() => / loaded|No matches/.test(document.querySelector("#list-status").textContent));
+    if (signedIn) { await login(page); } else { await page.locator("[data-account-login]").waitFor(); }
     const data = await run(page);
     assert.deepEqual(await page.evaluate(() => window.__upload.violations), [], "no CSP violation");
     assert.deepEqual(problems, []);
@@ -106,7 +110,20 @@ const content = (page, id, file) => page.evaluate(async ([artifact, name]) => {
   return { status: response.status, base64: encode(new Uint8Array(await response.arrayBuffer())) };
 }, [id, file]);
 
+await check("files pasted or dropped while signed out are ignored", async (page) => {
+  await page.evaluate(() => {
+    const transfer = new DataTransfer(); transfer.items.add(new File(["x"], "before.png", { type: "image/png" }));
+    document.dispatchEvent(new ClipboardEvent("paste", { clipboardData: transfer, bubbles: true, cancelable: true }));
+    document.dispatchEvent(new DragEvent("drop", { dataTransfer: transfer, bubbles: true, cancelable: true }));
+  });
+  assert.equal(await page.evaluate(() => location.hash), "", "nothing navigates while signed out");
+  await login(page);
+  await goUpload(page);
+  assert.equal(await page.locator("tbody[data-upload-row]").count(), 0);
+}, { signedIn: false });
+
 await check("paste, picker, keyboard and drop-anywhere stage files; publish exact bytes; passwords cannot be lost", async (page) => {
+  assert.equal(await page.evaluate(() => !isSecureContext && !crypto.subtle), true, "runs where only the dashboard's own SHA-256 is available");
   // Hand-off from the catalogue: a pasted file continues on the Upload page; ordinary text paste is left alone.
   const pasted = await page.evaluate((base64) => {
     const transfer = new DataTransfer();
@@ -288,6 +305,10 @@ await check("without a clipboard the link is offered for manual copy in an in-ap
 
 await check("expiry and tags are sent and validated; settings lock while uploading; Cancel and Retry keep one artifact", async (page) => {
   await goUpload(page);
+  for (const [label, text] of [["External", /^External — readers need the link and a generated password/], ["Public", /^Public — anyone with the link/], ["Internal", /^Internal — only signed-in users/]]) {
+    await access(page, label);
+    await page.getByText(text).waitFor();
+  }
   await page.getByLabel("Expires", { exact: true }).selectOption("custom");
   const days = page.getByLabel(/^Days from upload/);
   await days.fill("0");

@@ -19,7 +19,7 @@
 .col-up-size { width: 110px; }
 .col-up-status { width: 200px; }
 .col-up-actions { width: 120px; }
-#upload-table td { vertical-align: top; }
+#upload-table td { vertical-align: middle; }
 #upload-table tbody:hover td { background: var(--bg-hover); }
 #upload-table tbody tr:last-child td { border-bottom: 1px solid var(--border); }
 #upload-table tbody:last-of-type:has(.up-extra-row:not([hidden])) .up-extra-row td { border-bottom: 0; }

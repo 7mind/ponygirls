@@ -810,7 +810,7 @@ SCENES.m1 = async () => {
 // Named like the mockup shots (manure-upload-<state>-<width>[-dark].png). Each state is reached through the real
 // upload protocol; chunk requests are held or aborted at the network layer to reach progress and failure.
 SCENES.m2 = async () => {
-  const away = async (page, name, what) => { await page.mouse.move(0, 0); await snap(page, name, what); };
+  const away = async (page, name, what) => { await page.mouse.move(0, 0); await page.evaluate(() => document.activeElement && document.activeElement.blur()); await snap(page, name, what); };
   const names = ["screenshot 2026-11-17 at 10.41.22.png", "a-very-long-file-name-that-keeps-going-and-going-for-the-purpose-of-layout-testing-0123456789.log", "notes.md"];
   const stage = async (page, sizes) => page.locator("#upload-files").setInputFiles(names.map((name, i) => ({ name, mimeType: "application/octet-stream", buffer: Buffer.alloc(sizes[i], 0x61 + i) })));
   const states = async (page, state, n) => page.waitForFunction(([wanted, count]) => document.querySelectorAll(`tbody[data-upload-row][data-state="${wanted}"]`).length === count, [state, n]);
