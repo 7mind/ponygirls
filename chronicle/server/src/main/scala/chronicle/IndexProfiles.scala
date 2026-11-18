@@ -77,9 +77,7 @@ object IndexProfiles {
     }.getOrElse(throw DomainError("unavailable","index profile has no verified descriptor"))
   private def readSpaceSql(profileColumn: String): String = {
     val policies=ReadableIndexPolicy.values.map(value=>s"'$value'").mkString(",")
-    // V1 prepends a transport hash; only the remaining complete model tuple can authorize reads.
-    val sameModel="CASE WHEN jsonb_typeof(legacy.descriptor)='array' AND jsonb_typeof(canonical.descriptor)='array' AND legacy.descriptor->>0='embedding-space-v1' AND canonical.descriptor->>0='embedding-space-v2' THEN legacy.descriptor-0-0=canonical.descriptor-0 ELSE false END"
-    s"SELECT canonical.id FROM ch_index_profiles compatible JOIN ch_embedding_spaces legacy ON legacy.id=compatible.embedding_space LEFT JOIN ch_retained_profile_reads approved ON approved.profile=compatible.profile AND approved.legacy_space=compatible.embedding_space AND approved.policy=compatible.policy AND approved.profile_descriptor=compatible.descriptor AND approved.legacy_descriptor=legacy.descriptor JOIN ch_embedding_spaces canonical ON canonical.id=COALESCE(approved.canonical_space,compatible.embedding_space) AND canonical.descriptor=COALESCE(approved.canonical_descriptor,legacy.descriptor) AND (approved.profile IS NULL OR ($sameModel)) AND (approved.profile IS NULL OR EXISTS(SELECT 1 FROM ch_index_profiles declared WHERE declared.profile=approved.canonical_profile AND declared.embedding_space=approved.canonical_space)) WHERE compatible.profile=$profileColumn AND compatible.policy IN($policies)"
+    s"SELECT compatible.embedding_space FROM ch_index_profiles compatible WHERE compatible.profile=$profileColumn AND compatible.policy IN($policies)"
   }
   def semantic(c: Connection,reader: String,visible: String,embedding: EmbeddingSpaceDescriptor): Unit = {
     OwnerTargets.read(c,reader,false)
@@ -88,7 +86,9 @@ object IndexProfiles {
     val incompatible=Sql.one(c,s"""SELECT 1 FROM ch_sources s LEFT JOIN ch_generations g ON g.id=s.published
       LEFT JOIN ch_owner_targets t ON t.owner=s.owner
       WHERE ($visible) AND (NOT ${compatibleSql("t.profile")} OR (g.id IS NOT NULL AND NOT ${compatibleSql("g.profile")})) LIMIT 1""",reader,reader,reader,embedding.id,embedding.id)(_ => true).contains(true)
-    Check(!incompatible,"unavailable","visible publications or owner targets have an unknown, incompatible or unapproved embedding profile")
+    Check(!incompatible,"unavailable","visible publications or owner targets have an unknown or incompatible embedding profile")
   }
-  def compatibleSql(profileColumn: String): String = s"EXISTS(${readSpaceSql(profileColumn)} AND canonical.id=?)"
+  /** OFFSET 0 keeps this a per-row filter: pulled up into a join, an underestimated number of profiles on the configured
+    * space can make a full chunk scan the repeated inner side of a nested loop. */
+  def compatibleSql(profileColumn: String): String = s"EXISTS(${readSpaceSql(profileColumn)} AND compatible.embedding_space=? OFFSET 0)"
 }

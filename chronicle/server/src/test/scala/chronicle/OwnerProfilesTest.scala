@@ -1,6 +1,7 @@
 package chronicle
 
 import chronicle.api.*
+import io.circe.Json
 import java.time.Clock
 import java.util.UUID
 
@@ -203,6 +204,14 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](a.claim(Set("opaque-same-dimensions"),ClaimScope.Owner("a"),300)).code,"unavailable")
     val incompatible=c.copy(embedding=c.embedding.copy(revision="different-space-same-dimensions"))
     db.transaction { x => IndexProfileCatalog.legacyOnly(incompatible).register(x); Sql.exec(x,"UPDATE ch_generations SET profile=? WHERE session_id=?",incompatible.profile,out.sessionId) }
+    rejected()
+    // The configured model on a v1 space (a transport hash prepended): no approval can bridge it any more.
+    val v1=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString("e"*64))++catalog.preferred.embedding.json.asArray.get.tail)*)
+    db.transaction { x =>
+      Sql.exec(x,"INSERT INTO ch_embedding_spaces VALUES(?,?::jsonb) ON CONFLICT DO NOTHING",Wire.hash(v1.noSpaces),v1.noSpaces)
+      Sql.exec(x,"INSERT INTO ch_index_profiles SELECT 'v1-space-profile',?,policy,descriptor FROM ch_index_profiles WHERE profile=? ON CONFLICT DO NOTHING",Wire.hash(v1.noSpaces),c.profile)
+      Sql.exec(x,"UPDATE ch_generations SET profile='v1-space-profile' WHERE session_id=?",out.sessionId)
+    }
     rejected()
     assertEquals(search.search("a",q.copy(mode=SearchMode.Lexical),None).total,1)
     db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET profile='unresolved-retained' WHERE owner='a'"))
