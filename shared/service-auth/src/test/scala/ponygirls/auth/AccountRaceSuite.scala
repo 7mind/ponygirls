@@ -1,6 +1,8 @@
 package ponygirls.auth
 
+import java.nio.file.Files
 import java.sql.{Connection, DriverManager}
+import java.time.{Clock, Duration, Instant, ZoneOffset}
 import java.util.concurrent.{Callable, Executors, TimeUnit}
 import scala.util.Using
 import scala.concurrent.duration.*
@@ -30,6 +32,17 @@ final class AccountRaceSuite extends munit.FunSuite {
       if (blocked < waiters) Thread.sleep(10)
     }
     assertEquals(blocked, waiters, "transactions must really be waiting behind the holder")
+  }
+  private def awaitWaiting(waiters: Int): Unit = {
+    val deadline = System.nanoTime() + 10.seconds.toNanos
+    var blocked = 0
+    while (blocked < waiters && System.nanoTime() < deadline) {
+      Using.resource(connection()) { observer =>
+        blocked = scalar(observer, "SELECT count(*) FROM pg_stat_activity WHERE cardinality(pg_blocking_pids(pid))>0")
+      }
+      if (blocked < waiters) Thread.sleep(10)
+    }
+    assertEquals(blocked, waiters, "transactions must really be waiting for locks")
   }
   private def committed[A](body: Connection => A): Callable[Either[Throwable, A]] = () => Using.resource(connection()) { c =>
     try { val result = body(c); c.commit(); Right(result) }
@@ -144,5 +157,142 @@ final class AccountRaceSuite extends munit.FunSuite {
       assertEquals(outcome.left.toOption.map { case failure: AccountFailure => failure.code; case _ => "unexpected" }, Some("unauthorized"))
     } finally executor.shutdownNow()
   }
+  }
+
+  private val imperativePassword = "synthetic imperative password"
+  private val totpSecret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  private val raceStart = Instant.parse("2026-01-01T00:00:00Z")
+  private val keyDirectory = Files.createTempDirectory("account-race-")
+  private lazy val settings: Option[ImperativeSettings] = {
+    val key = keyDirectory.resolve("totp-key")
+    Files.writeString(key, Secrets.generate())
+    Some(ImperativeSettings("race", true, false, false, 100, Duration.ofHours(24), "Race", Set.empty, TotpVault.load(key, "race")))
+  }
+  override def afterAll(): Unit = {
+    Files.list(keyDirectory).forEach(Files.delete(_))
+    Files.delete(keyDirectory)
+  }
+  private def resetImperative(declared: DeclaredDirectory): Unit = Using.resource(connection()) { setup =>
+    AccountSql.initialize(setup)
+    ImperativeAccountSql.initialize(setup)
+    Using.resource(setup.createStatement())(_.execute("""TRUNCATE ponygirls_account_users,ponygirls_account_sessions,ponygirls_account_tokens,
+      ponygirls_imperative_users,ponygirls_imperative_enrollments"""))
+    AccountSql.reconcile(setup, declared.users)
+    setup.commit()
+  }
+  /** The imperative core as a Haystack-style adapter wires it: shared sessions and fingerprint history on the same connection. */
+  private def imperative(c: Connection, declared: DeclaredDirectory, at: Instant): ImperativeAccounts = {
+    val sessions = new SharedAccountSessions(c, owner => owner, () => ImperativeAccountSql.directory(c, settings, declared))
+    ImperativeAccountSql.accounts(c, settings, declared, sessions, sessions, FastPasswordHasher, Clock.fixed(at, ZoneOffset.UTC))
+  }
+  private def code(at: Instant): String = Totp.code(Totp.decodeSecret(totpSecret).get, Totp.stepAt(at))
+  private def signup(c: Connection, declared: DeclaredDirectory, name: String, at: Instant): AccountOutcome[SignupResult] =
+    imperative(c, declared, at).signup(name, s"$name@example.test", NewCredentials(imperativePassword, totpSecret, code(at), false), None)
+  private def signedIn[A](outcome: AccountOutcome[A]): SignedIn = outcome match {
+    case AccountOutcome.Completed(SignupResult.Active(result)) => result
+    case AccountOutcome.Completed(result: SignedIn) => result
+    case other => fail(s"expected a session, got $other")
+  }
+  private def fingerprints(c: Connection, ids: String*): Int =
+    scalar(c, ids.map(id => s"'$id'").mkString("SELECT count(*) FROM ponygirls_account_users WHERE id IN (", ",", ")"))
+
+  test("Effectual GoodCommunication regression (C4): a stale reconciliation leaves imperative accounts alone; a declared name and a signup of it serialise") {
+    val current = DeclaredDirectory(Vector(declared("adam"), declared("bert")), Set.empty)
+    val stale = Vector(declared("adam"))
+    resetImperative(current)
+    val later = raceStart.plusSeconds(Totp.StepSeconds)
+    val (original, token) = Using.resource(connection()) { c =>
+      val ivy = signedIn(signup(c, current, "ivy", raceStart))
+      val issued = AccountSql.issue(c, ImperativeAccountSql.directory(c, settings, current), ivy.session.credential, "Ivy client")
+      c.commit()
+      (ivy, issued)
+    }
+    val executor = Executors.newSingleThreadExecutor()
+    try Using.resource(connection()) { recovering =>
+      val recovered = signedIn(imperative(recovering, current, later).recover("ivy", code(later), "synthetic recovered password", None))
+      Using.resource(connection()) { creating =>
+        val pid = scalar(creating, "SELECT pg_backend_pid()")
+        val created = signedIn(signup(creating, current, "newbie", later))
+        val reconciling = executor.submit(committed(c => AccountSql.reconcile(c, stale)))
+        awaitBlockedBy(pid, 1)
+        creating.commit()
+        // It completes while the recovery still holds the imperative owner's lock and rows.
+        assertEquals(reconciling.get(10, TimeUnit.SECONDS), Right(()))
+        recovering.commit()
+        Using.resource(connection()) { observer =>
+          val directory = ImperativeAccountSql.directory(observer, settings, DeclaredDirectory(stale, Set.empty))
+          assertEquals(Vector(original, recovered, created).map(signed => AccountSql.browser(observer, directory, signed.session.secret).map(_.userId)),
+            Vector(None, Some("ivy"), Some("newbie")))
+          assertEquals(AccountSql.bearer(observer, directory, token.secret).map(_.userId), Some("ivy"))
+          assertEquals(new PostgresImperativeUsers(observer).user("ivy").map(_.passwordHash), recovered.user.passwordHash)
+          assertEquals((fingerprints(observer, "ivy", "newbie"), scalar(observer, "SELECT count(*) FROM ponygirls_account_users WHERE id='bert' AND NOT enabled")), (0, 1))
+        }
+      }
+    } finally executor.shutdownNow()
+
+    def withName(name: String): DeclaredDirectory = DeclaredDirectory(current.users :+ declared(name), Set.empty)
+    def install(c: Connection, directory: DeclaredDirectory): Unit = ImperativeAccountSql.installDeclared(c, directory)(AccountSql.reconcile(c, directory.users))
+    val racing = Executors.newSingleThreadExecutor()
+    try {
+      Using.resource(connection()) { creating =>
+        val pid = scalar(creating, "SELECT pg_backend_pid()")
+        signedIn(signup(creating, current, "zed", later))
+        val installing = racing.submit(committed(c => install(c, withName("zed"))))
+        awaitBlockedBy(pid, 1)
+        creating.commit()
+        assertEquals(installing.get(10, TimeUnit.SECONDS).left.toOption.collect { case AccountFailure(code) => code }, Some("config"))
+      }
+      Using.resource(connection()) { installing =>
+        val pid = scalar(installing, "SELECT pg_backend_pid()")
+        install(installing, withName("yan"))
+        val creating = racing.submit(committed(c => signup(c, current, "yan", later)))
+        awaitBlockedBy(pid, 1)
+        installing.commit()
+        assertEquals(creating.get(10, TimeUnit.SECONDS), Right(AccountOutcome.Rejected(AccountRejection.UsernameUnavailable, None)))
+      }
+      Using.resource(connection()) { observer =>
+        val users = new PostgresImperativeUsers(observer)
+        assertEquals((users.user("zed").map(_.status), users.user("yan"), fingerprints(observer, "zed"), fingerprints(observer, "yan")),
+          (Some(AccountStatus.Active), None, 0, 1))
+      }
+    } finally racing.shutdownNow()
+  }
+
+  test("Effectual GoodCommunication regression (C5): an admin mutation, a login replacement across owner classes and a full reconciliation complete without a deadlock") {
+    val adamPassword = "synthetic admin password"
+    val adam = declared("adam").copy(passwordHash = Some(FastPasswordHasher.hash(adamPassword.toCharArray)))
+    val current = DeclaredDirectory(Vector(adam, declared("bert"), declared("dora")), Set("adam"))
+    resetImperative(current)
+    val (ivy, admin) = Using.resource(connection()) { c =>
+      val ivy = signedIn(signup(c, current, "ivy", raceStart))
+      val admin = AccountSql.establish(c, ImperativeAccountSql.directory(c, settings, current), "adam", None).session
+      c.commit()
+      (ivy, admin)
+    }
+    val executor = Executors.newFixedThreadPool(3)
+    try Using.resource(connection()) { holder =>
+      val pid = scalar(holder, "SELECT pg_backend_pid()")
+      new PostgresAccounts(holder).lockOwner("bert")
+      // Holds the directory lock and adam, then waits for bert.
+      val reconciling = executor.submit(committed(c => AccountSql.reconcile(c, current.users :+ declared("erin"))))
+      awaitBlockedBy(pid, 1)
+      // Waits for adam before it may take ivy.
+      val promoting = executor.submit(committed(c => imperative(c, current, raceStart).setAdmin(admin.credential, "ivy", true, adamPassword)))
+      awaitWaiting(2)
+      // Takes dora, then ivy: neither waiter may hold ivy.
+      val replacing = executor.submit(committed(c =>
+        AccountSql.loginReplacing(c, ImperativeAccountSql.directory(c, settings, current), "dora", "synthetic-race-password", Some(ivy.session.secret))))
+      val replacement = replacing.get(10, TimeUnit.SECONDS)
+      assertEquals(replacement.map(_.replaced.map(_.userId)), Right(Some("ivy")))
+      holder.commit()
+      assertEquals(reconciling.get(10, TimeUnit.SECONDS), Right(()))
+      assertEquals(promoting.get(10, TimeUnit.SECONDS), Right(AccountOutcome.Completed(())))
+      Using.resource(connection()) { observer =>
+        val directory = ImperativeAccountSql.directory(observer, settings, current)
+        assertEquals((new PostgresImperativeUsers(observer).user("ivy").map(_.admin), fingerprints(observer, "erin")), (Some(true), 1))
+        assertEquals(Vector(ivy.session, replacement.toOption.get.session).map(session => AccountSql.browser(observer, directory, session.secret).map(_.userId)),
+          Vector(None, Some("dora")))
+      }
+    } finally executor.shutdownNow()
   }
 }
