@@ -1534,7 +1534,7 @@ export function installAccountUI(environment) {
         const source = user.source === 'declarative' ? 'Configuration' : user.createdVia === 'enrollment' ? `Invited by ${user.createdBy ?? 'an administrator'}` : 'Sign-up';
         const twoFactor = user.totpRequired === null ? '—' : user.totpRequired ? 'Required' : 'Recovery only';
         return h('tr', { class: user.status === 'disabled' ? 'is-revoked' : null, 'data-row-id': user.id },
-          h('td', {}, h('span', { class: 'cell-title' }, nameOf(user)), h('span', { class: 'cell-sub' }, user.email ?? (user.displayName === nameOf(user) ? '' : user.displayName))),
+          h('td', {}, h('span', { class: 'cell-title' }, nameOf(user)), h('span', { class: 'cell-sub' }, h('span', {}, user.email ?? (user.displayName === nameOf(user) ? '' : user.displayName)))),
           h('td', { 'data-label': USER_COLUMNS.status }, h('div', { class: 'row row-wrap' }, ...chips)), h('td', { 'data-label': USER_COLUMNS.source }, source), h('td', { 'data-label': USER_COLUMNS.twoFactor }, twoFactor),
           h('td', { class: 'col-optional', 'data-label': USER_COLUMNS.created }, recentDate(user.createdAt)),
           h('td', { class: 'col-actions' }, userActions(user)));
