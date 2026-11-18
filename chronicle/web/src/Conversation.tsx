@@ -13,7 +13,7 @@ import { ErrorNotice, formatDate } from './App.tsx';
 import { CopyButton, MessageContent, sourceOnly } from './MessageContent.tsx';
 import { Anchored } from './Popover.tsx';
 import { Icon } from './Icon.tsx';
-import { HashRouter, InvalidSessionAddress, formatRoute, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace } from './router.ts';
+import { HashRouter, InvalidSessionAddress, formatRoute, parseFragment, routeSlot, sessionIdOf, sessionPlaceOf, sessionPlaceRoute, useRouteState, SESSION_PANES, type Route, type SessionPane, type SessionPlace } from './router.ts';
 import { contentViewKey, requireContentView } from './source-view.ts';
 import { isAuthorityDenial, sourceFailureAffectsView } from './source-authority.ts';
 import { PASSAGE_PAGE_SIZE, validatePassages, validatePassageSpans } from './passages.ts';
@@ -116,7 +116,10 @@ export function SessionPage({ connection, stats, user, findReads, route, router,
     current.current = place;
     const next = sessionPlaceRoute(sessionId, place), text = formatRoute(next);
     setSaved({ ...place, find: null });
-    if (text === formatRoute(router.getSnapshot().route)) return;
+    // Only into this page's own history entry: when the reader has already left (Back before the place was written), the
+    // browser's current entry is another view's, even before the router has seen the traversal, and must not be replaced.
+    const entry = parseFragment(window.location.hash);
+    if (entry.kind !== 'route' || entry.route.view !== 'session' || sessionIdOf(entry.route) !== sessionId || text === formatRoute(entry.route)) return;
     written.current = text; router.navigate(next, 'replace');
   }
   useLayoutEffect(() => {
