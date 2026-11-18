@@ -39,8 +39,8 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
       val configBefore=passwordConfig(dir);val current=new AtomicReference(Auth.load(configBefore))
       run(TestSupport.emptyDatabase.use { db=>for{
         _<-Migrations.initialize(db,TestSupport.Activity)
-        accounts=new AccountService(db,()=>current.get())
-        _<-accounts.reconcile(current.get())
+        accounts=new AccountService(db,()=>current.get(),imperative)
+        _<-accounts.install(current.get())
         signed<-accounts.login("alice",AlicePassword,None)
         repo=new PostgresItemRepository(db)
         _<-if(Set("put","cookie-put","mcp").contains(route))IO.unit else repo.commit(TestSupport.op(key,document=TestSupport.doc(secret)),TestSupport.Bot,TestSupport.Now).void
@@ -74,8 +74,8 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
     val auth=Auth.load(passwordConfig(dir).copy(cookieSecure=false,allowedHosts=Vector("127.0.0.1"),allowedOrigins=Vector("http://allowed.test"),insecureHttpOrigins=Vector.empty))
     run(TestSupport.emptyDatabase.use { db=>for{
       _<-Migrations.initialize(db,TestSupport.Activity)
-      accounts=new AccountService(db,()=>auth)
-      _<-accounts.reconcile(auth)
+      accounts=new AccountService(db,()=>auth,imperative)
+      _<-accounts.install(auth)
       signed<-accounts.login("alice",AlicePassword,None)
       hub<-LiveHub.create
       retrieval=new HaystackRetrieval(db,ProjectionPolicy("upgrade-test",true,Vector.empty,4096),new PostgresRetrieval("upgrade-test",None),None,4)
@@ -94,8 +94,8 @@ class HttpAuthorityLifetimeTest extends ContractSuite {
       val auth=Auth.load(passwordConfig(dir))
       run(TestSupport.emptyDatabase.use { db=>for{
         _<-Migrations.initialize(db,TestSupport.Activity)
-        accounts=new AccountService(db,()=>auth)
-        _<-accounts.reconcile(auth)
+        accounts=new AccountService(db,()=>auth,imperative)
+        _<-accounts.install(auth)
         signed<-accounts.login("alice",AlicePassword,None)
         owner<-accounts.resolve(RequestHeaders("ts.test:8445",cookie=Vector("__Host-haystack="+signed.session.secret)))
         issued<-accounts.issue(owner,"held read",Vector("api"),Vector(ponygirls.auth.AccountJson.actor("alice")))

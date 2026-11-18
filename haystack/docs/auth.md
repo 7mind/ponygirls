@@ -140,6 +140,76 @@ no-referrer. Errors are sanitized `{error:{code,message}}`; unavailable config/D
 is 503, never a fabricated invalid-password response. They do not expose SQL,
 paths, passwords, hashes or submitted content.
 
+## Imperative accounts (self-signup, admin enrollment)
+
+Accounts created at runtime live in the service database (`ponygirls_imperative_users`,
+`ponygirls_imperative_enrollments`, created at migration next to the shared account
+tables). Their endpoints, request/response shapes, limits and error codes are the
+shared protocol: `shared/service-auth/README.md`, "Imperative accounts". Haystack
+adds no shapes of its own; the five endpoints above keep their exact bytes.
+
+Configuration lives inside the hot-reloaded `auth` object; users gain `admin`:
+
+```json
+"users": [{"id": "operator", "type": "human", "login": "operator", "passwordHashFile": "…", "tokens": [], "admin": true}],
+"accounts": {
+  "enabled": true,
+  "keyFile": "$CREDENTIALS_DIRECTORY/accounts-key",
+  "signup": {"enabled": true, "requireApproval": true, "maxUsers": 100},
+  "enrollment": {"enabled": false, "ttlSeconds": 86400},
+  "issuer": "Haystack (memory.example.net)",
+  "reservedUsernames": []
+}
+```
+
+- `accounts.enabled` is the master switch and is required whenever `accounts` is
+  present; it is never derived from the creation flags. An absent `accounts`
+  object means off. `signup.enabled` or `enrollment.enabled` with the master off is
+  a configuration fault. Omitted members default to: signup and enrollment off,
+  `requireApproval: true`, `maxUsers: 100` (1–1000), `ttlSeconds: 86400`
+  (300–604800), no reserved names. With the master on, `keyFile` (absolute,
+  outside `/nix/store`), `issuer` (1–64 characters, no `:` or control characters)
+  and at least one enabled declared `admin` are required.
+- `admin: true` requires a human user with `login` and `passwordHashFile`. It
+  grants account administration only (approve/reject applications, enable/disable
+  imperative users, imperative admin flags, credential resets, invitations while
+  `enrollment.enabled`); item authority is unchanged. Declared users cannot be
+  changed through the API.
+- Imperative users are `human`; their id is the immutable lower-case username,
+  which is also their login. They hold the same item authority as every other
+  user, issue and revoke their own API tokens through the existing endpoints and
+  never have configured tokens.
+- Collisions fail closed: a declared id or login equal (ASCII case-insensitively)
+  to an active or disabled imperative account makes startup fail and a reload
+  publish a failure, so every request answers `503 unavailable` until the
+  configuration is corrected; this holds with the master on or off. A name that
+  Haystack retains — a fingerprint row of any former declared user, or a value in
+  `items.created_by`, `items.modified_by`, `item_revisions.modified_by` or
+  `write_requests.principal_user` — is never available for a new account.
+- Master off (or `accounts` removed) suspends imperative accounts: every new path
+  answers `404 not-found`, `/login` is handled exactly as before, imperative
+  sessions and API tokens are refused but kept, and they work again when the
+  master returns. Live sockets of an imperative user close on their next
+  revalidation, as for a disabled user. Startup logs the number of suspended
+  accounts. Administrative disable, unlike suspension, deletes the user's sessions
+  and revokes its issued tokens.
+- With the master on, `/login` and the unauthenticated account endpoints pass the
+  shared per-client-address windows and the PBKDF2 gate. The client address is
+  the socket peer, or the right-most `X-Forwarded-For` element when the peer is a
+  loopback address (the local reverse proxy). Without the header behind the
+  proxy all clients share one bucket: stricter, never weaker.
+- Key file: base64url of 32 random bytes; it encrypts TOTP secrets
+  (AES-256-GCM). Deliver it as a systemd credential like the password files;
+  it is re-read on every reload. Losing or replacing it makes stored TOTP
+  secrets `unavailable` until an admin reset; password login is unaffected.
+- Backups: database dumps contain PBKDF2 hashes, e-mail addresses (also of
+  pending applicants) and encrypted TOTP secrets. Back the key file up
+  separately and protect it like the database: a dump plus the key file can
+  recover every imperative account.
+- Rolling back to a binary without this feature after imperative accounts exist
+  deletes their sessions and irreversibly revokes their API tokens (its
+  reconciliation is not scoped); rows and data remain.
+
 ## 4. Cache, referrer, logging privacy
 
 - Every dynamic/auth response (API, MCP, whoami, errors): header
@@ -154,7 +224,10 @@ paths, passwords, hashes or submitted content.
   every unapproved field absent):
   - proxy: route label, request ID, timing, status only;
   - application: + principal/token **labels** (never secrets/digests),
-    revision counters, fixed result/error category;
+    revision counters, fixed result/error category; account security events
+    (`account.signup`, `account.approved`, …) carry exactly `event`, `actor`,
+    `target`, `outcome` and `clientAddress` — never e-mail addresses, codes,
+    passwords or bodies;
   - infra: + allowlisted DB/pool/latency/timeout counters.
   - never: bodies, URIs/query strings, Referer, Authorization, cookies,
     DSNs, raw exception messages, item keys/titles, query text.

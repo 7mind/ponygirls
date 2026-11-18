@@ -23,7 +23,7 @@ class QueryRequestHttpTest extends ContractSuite {
       repo=new PostgresItemRepository(db)
       service=new ItemService(repo,(_,_)=>IO.unit)
       retrieval=new HaystackRetrieval(db,ProjectionPolicy("request-boundary-test",true,Vector.empty,4096),new PostgresRetrieval("query-request",None),None,4)
-      http=new Http(()=>auth,service,hub,None,retrieval,new AccountService(db,()=>auth))
+      http=new Http(()=>auth,service,hub,None,retrieval,new AccountService(db,()=>auth,imperative))
       ws<-WebSocketBuilder2[IO]
       route=if(path=="complete")"/api/v1/complete"else"/api/v1/query/analyze"
       input=Request[IO](Method.POST,Uri.unsafeFromString(route)).withEntity(Wire.encode(api.QueryRequest.codecJson,api.QueryRequest(query,caret)).noSpaces).putHeaders(Header.Raw(CIString("Host"),"ts.test:8445"),Header.Raw(CIString("Authorization"),"Bearer "+AliceToken),Header.Raw(CIString("Content-Type"),"application/json"))

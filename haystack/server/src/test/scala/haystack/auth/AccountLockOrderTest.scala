@@ -29,8 +29,8 @@ class AccountLockOrderTest extends ContractSuite {
     val gateHeld=new CountDownLatch(1);val release=new CountDownLatch(1)
     run(TestSupport.emptyDatabase.use { db=>for{
       _<-Migrations.initialize(db,TestSupport.Activity)
-      accounts=new AccountService(db,()=>auth)
-      _<-accounts.reconcile(auth)
+      accounts=new AccountService(db,()=>auth,imperative)
+      _<-accounts.install(auth)
       old<-accounts.login("alice",AlicePassword,None)
       _<-db.transaction { c=>
         val statement=c.createStatement()
@@ -48,7 +48,7 @@ class AccountLockOrderTest extends ContractSuite {
       _<-IO.blocking(assert(gateHeld.await(2,TimeUnit.SECONDS)))
       login<-accounts.login("bob",AlicePassword,Some(old.session.secret)).attempt.start
       _<-waitFor(db,s"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=0 AND objid=$GateLock)")
-      reconcile<-accounts.reconcile(auth).attempt.start
+      reconcile<-accounts.install(auth).attempt.start
       _<-waitFor(db,s"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND (classid<>0 OR objid<>$GateLock))")
       _<-IO(release.countDown())
       outcomes<-(login.joinWithNever,reconcile.joinWithNever).tupled.timeout(8.seconds)

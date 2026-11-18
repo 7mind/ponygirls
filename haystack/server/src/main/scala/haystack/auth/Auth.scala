@@ -6,17 +6,22 @@ import java.nio.file.{Files, Path}
 import java.security.{MessageDigest, SecureRandom}
 import java.net.URI
 import java.util.{Base64, Locale}
-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,Password,PersistentCookie}
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,DeclaredDirectory,ImperativeSettings,Password,PersistentCookie,TotpVault}
 
 final case class TokenConfig(id: String, hashFile: String)
 final case class UserConfig(id: String, userType: String, displayName: String, tokens: Vector[TokenConfig],
-  login: Option[String] = None, passwordHashFile: Option[String] = None, enabled: Boolean = true)
+  login: Option[String] = None, passwordHashFile: Option[String] = None, enabled: Boolean = true, admin: Boolean = false)
+/** `auth.accounts` (design §6.1): imperative accounts. Absent means the master switch is off. */
+final case class AccountsConfig(enabled: Boolean, keyFile: Option[String], signup: SignupConfig, enrollment: EnrollmentConfig,
+  issuer: Option[String], reservedUsernames: Vector[String])
+final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
+final case class EnrollmentConfig(enabled: Boolean, ttlSeconds: Long)
 final case class RateLimit(windowMs: Long, max: Int) {
   require(windowMs > 0 && max > 0, "invalid rate limit")
 }
 final case class AuthConfig(activityProjectId: String, users: Vector[UserConfig], cookieSecure: Boolean = true,
   allowedHosts: Vector[String] = Vector.empty, allowedOrigins: Vector[String] = Vector.empty,
-  insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None)
+  insecureHttpOrigins: Vector[String] = Vector.empty, rateLimit: Option[RateLimit] = None, accounts: Option[AccountsConfig] = None)
 
 object Tokens {
   private val encoder = Base64.getUrlEncoder.withoutPadding()
@@ -46,8 +51,10 @@ object Tokens {
   def readDigest(path: String): String = read(path, 64, "[0-9a-f]{64}")
 }
 
-final class Auth private(val config: AuthConfig, val users: Vector[AccountUser], digests: Vector[(Array[Byte], Principal)]) {
-  def user(id:String):AccountUser=users.find(u=>u.id==id && u.enabled).getOrElse(throw Fault("unauthorized","invalid credentials"))
+/** `users` are the declarative users; `imperative` exists only while the master switch `auth.accounts.enabled` is on. */
+final class Auth private(val config: AuthConfig, val users: Vector[AccountUser], val declared: DeclaredDirectory,
+  val imperative: Option[ImperativeSettings], digests: Vector[(Array[Byte], Principal)]) {
+  /** Configured tokens only: an imperative user has none. */
   def configuredTokens(owner:String):Vector[AccountToken]=config.users.find(_.id==owner).toVector.flatMap(_.tokens).map(t=>AccountToken(t.id,t.id,"configured",None,false,Vector("api")))
   def authenticate(token: String): Option[Principal] = {
     if (!Tokens.canonical(token)) return None
@@ -58,6 +65,22 @@ final class Auth private(val config: AuthConfig, val users: Vector[AccountUser],
   }
 }
 object Auth {
+  /** Service name bound into the associated data of every encrypted TOTP secret. */
+  val ServiceName = "haystack"
+  private val NixStore = "/nix/store/"
+  /** Design §6.2–§6.3: the creation flags never imply the master switch; the master switch requires the key
+    * file, an issuer and an enabled declarative admin; the remaining bounds are checked by `ImperativeSettings`.
+    */
+  private def imperative(accounts: Option[AccountsConfig], declared: DeclaredDirectory): Option[ImperativeSettings] = accounts.flatMap { a =>
+    if (!a.enabled && (a.signup.enabled || a.enrollment.enabled)) throw Fault("config", "accounts.signup and accounts.enrollment require accounts.enabled")
+    Option.when(a.enabled) {
+      val keyFile = a.keyFile.filter(path => path.startsWith("/") && !path.startsWith(NixStore)).getOrElse(throw Fault("config", "accounts.keyFile must be an absolute runtime path"))
+      val issuer = a.issuer.getOrElse(throw Fault("config", "accounts.issuer required"))
+      if (!declared.users.exists(user => user.enabled && declared.admins(user.id))) throw Fault("config", "accounts require an enabled declarative admin")
+      ImperativeSettings(ServiceName, a.signup.enabled, a.signup.requireApproval, a.enrollment.enabled, a.signup.maxUsers,
+        java.time.Duration.ofSeconds(a.enrollment.ttlSeconds), issuer, a.reservedUsernames.toSet, TotpVault.load(Path.of(keyFile), ServiceName))
+    }
+  }
   def load(config: AuthConfig): Auth = {
     QualifiedId.encodeComponent(config.activityProjectId)
     if (config.users.isEmpty) throw Fault("config", "at least one user required")
@@ -103,7 +126,8 @@ object Auth {
       }
     }
     unique(entries.map(_._1), "digest assigned twice")
-    new Auth(config, users, entries.filter { case (_,principal)=>users.exists(u=>u.id==principal.userId && u.enabled) }.map { case (digest, principal) => digest.getBytes(StandardCharsets.US_ASCII) -> principal })
+    val declared = DeclaredDirectory(users, config.users.filter(_.admin).map(_.id).toSet)
+    new Auth(config, users, declared, imperative(config.accounts, declared), entries.filter { case (_,principal)=>users.exists(u=>u.id==principal.userId && u.enabled) }.map { case (digest, principal) => digest.getBytes(StandardCharsets.US_ASCII) -> principal })
   }
 }
 

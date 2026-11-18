@@ -30,6 +30,7 @@ object Migrations {
       case _ => ()
     }
     ponygirls.auth.AccountSql.initialize(c)
+    ponygirls.auth.ImperativeAccountSql.initialize(c)
     ()
   }
 }

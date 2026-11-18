@@ -14,7 +14,7 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import io.circe.Json
-import ponygirls.auth.{AccountFailure,AccountJson}
+import ponygirls.auth.{AccountFailure,AccountJson,AccountReply,ClientAddress,CookieEffect,ImperativeAccountApi,ImperativeSettings}
 import scala.concurrent.duration.*
 import java.nio.file.{Files,Path}
 
@@ -120,18 +120,56 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     if(!raw.asObject.exists(_.isEmpty))throw Fault("bad-envelope","empty object required")
     IO(accountBoundary(r)) *> revalidate(r,a).void
   }
+  private def presented(auth:Auth,r:Request[IO]):(Boolean,Option[String])={
+    val h=headers(r);val secure=Sessions.secure(auth.config,h)
+    (secure,Sessions.cookie(h,Sessions.name(secure)))
+  }
+  /** The socket peer, or the right-most `X-Forwarded-For` element when the peer is the local reverse proxy. */
+  private def clientAddress(r:Request[IO]):String=
+    ClientAddress.resolve(r.remoteAddr.fold(Http.UnknownPeer)(_.toString),all(r,"X-Forwarded-For"),peer=>scala.util.Try(java.net.InetAddress.ofLiteral(peer).isLoopbackAddress).getOrElse(false))
+  /** Writes a dispatcher reply after its transaction committed; security events go to the application log
+    * with exactly the shared field allowlist. */
+  private def accountReply(reply:AccountReply,secure:Boolean,previous:Option[String]):IO[Response[IO]]={
+    val response=json(Status.fromInt(reply.status).fold(throw _,identity),reply.body)
+      .putHeaders(reply.retryAfterSeconds.toList.map(seconds=>Header.Raw(CIString("Retry-After"),seconds.toString))*)
+    reply.events.traverse_(event=>IO.println(Json.obj(event.fields.map((name,value)=>name->Json.fromString(value))*).noSpaces)) *> (reply.cookie match {
+      case CookieEffect.Keep=>IO.pure(response)
+      case CookieEffect.Set(secret)=>previous.traverse_(hub.endSession).as(response.putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(secret),secure))))
+    })
+  }
+  /** Account paths added for imperative accounts, behind the same boundary as the five existing endpoints. */
+  private def imperativeAccount(r:Request[IO],auth:Auth,settings:ImperativeSettings):IO[Response[IO]]={
+    val entity=r.method==Method.POST || r.contentLength.exists(_>0) || r.isChunked
+    (if(entity)accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body=>
+      accountBoundary(r)
+      val (secure,previous)=presented(auth,r)
+      accounts.imperativeRequest(auth,settings,r.method.name,r.uri.path.renderString.stripPrefix(Http.AccountRoot),body,all(r,"X-Account-Actor"),previous,clientAddress(r))
+        .flatMap(accountReply(_,secure,previous))
+    }
+  }
+  /** Fixed telemetry labels of the account endpoints added for imperative accounts. */
+  private def accountLabel(method:Method,path:String):Option[String]=
+    Option.when(path.startsWith(Http.AccountPrefix))(path.stripPrefix(Http.AccountRoot)).flatMap(ImperativeAccountApi.route(method.name,_)).map("account"+_.endpoint.label)
   def routes(ws:WebSocketBuilder2[IO]):HttpRoutes[IO]={
     val core=HttpRoutes.of[IO] {
     case GET -> Root / "api" / "versions" =>IO.pure(ok(api.VersionInfo.codecJson,Wire.versions))
     case GET -> Root / "api" / "v1" / "health" =>IO.pure(ok(api.Ack.codecJson,api.Ack(true)))
     case r @ POST -> Root / "api" / "account" / "v1" / "login" =>accountHandled {
       IO(accountBoundary(r)) *> accountBody(r).flatMap { raw=>
-        val (login,password)=AccountJson.decodeLogin(raw)
-        accountBoundary(r)
-        val h=headers(r);val secure=Sessions.secure(getAuth().config,h)
-        val previous=Sessions.cookie(h,Sessions.name(secure))
-        accounts.login(login,password,previous).flatMap { signed=>
-          previous.traverse_(hub.endSession).as(json(Status.Ok,Json.obj("user"->AccountJson.user(signed.user))).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(signed.session.secret),secure))))
+        val auth=getAuth()
+        auth.imperative match {
+          case Some(settings)=>
+            accountBoundary(r)
+            val (secure,previous)=presented(auth,r)
+            accounts.imperativeLogin(auth,settings,raw,previous,clientAddress(r)).flatMap(accountReply(_,secure,previous))
+          case None=>
+            val (login,password)=AccountJson.decodeLogin(raw)
+            accountBoundary(r)
+            val h=headers(r);val secure=Sessions.secure(getAuth().config,h)
+            val previous=Sessions.cookie(h,Sessions.name(secure))
+            accounts.login(login,password,previous).flatMap { signed=>
+              previous.traverse_(hub.endSession).as(json(Status.Ok,Json.obj("user"->AccountJson.user(signed.user))).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(Some(signed.session.secret),secure))))
+            }
         }
       }
     }
@@ -149,6 +187,13 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
     }}
     case r @ POST -> Root / "api" / "account" / "v1" / "logout" =>accountHandled {accountAuthed(r,false) { a=>
       emptyAccountBody(r,a) *> accounts.logout(a,all(r,"X-Account-Actor")) *> hub.endSession(a.token).as(json(Status.Ok,Json.obj("ok"->Json.True)).putHeaders(Header.Raw(CIString("Set-Cookie"),Sessions.serialize(None,a.secureCookie))))
+    }}
+    case r if r.uri.path.renderString.startsWith(Http.AccountPrefix)=>accountHandled {IO(accountBoundary(r)) *> IO.defer {
+      val auth=getAuth()
+      auth.imperative match {
+        case Some(settings)=>imperativeAccount(r,auth,settings)
+        case None=>IO.pure(json(Status.NotFound,AccountJson.failure("not-found")))
+      }
     }}
     case r if r.uri.path.renderString.startsWith("/api/account/")=>accountHandled {IO {accountBoundary(r);json(Status.NotFound,AccountJson.failure("not-found"))}}
     case r @ POST -> Root / "api" / "v1" / "login" =>handled {
@@ -229,7 +274,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       val start=System.nanoTime()
       core(request).semiflatMap { response=>
         val path=request.uri.path.renderString
-        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","health","versions")).getOrElse("unknown") else "static"
+        val label=if(path=="/mcp") "mcp" else if(path.startsWith("/api/")) accountLabel(request.method,path).orElse(path.split("/").lastOption.filter(Set("login","logout","whoami","get","put","search","history","analyze","complete","values","live","retrieve","health","versions"))).getOrElse("unknown") else "static"
         accounts.resolve(headers(request),mcp=label=="mcp").attempt.flatMap { resolved=>
           val principal=resolved.toOption.map(_.principal)
           val event=Json.obj("requestId"->Json.fromString(java.util.UUID.randomUUID().toString),"route"->Json.fromString(label),"status"->Json.fromInt(response.status.code),"result"->Json.fromString(if(response.status.isSuccess) "ok" else "fault"),"durationMs"->Json.fromLong((System.nanoTime()-start)/1000000)).deepMerge(principal.fold(Json.obj())(p=>Json.obj("userId"->Json.fromString(p.userId),"tokenId"->Json.fromString(p.tokenId))))
@@ -348,6 +393,12 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
               else hub.authorized(session,accounts).map(ok=>if(ok)frame else WebSocketFrame.Close(4401,"Session revoked").fold(throw _,identity))
             }.takeThrough(!_.isInstanceOf[WebSocketFrame.Close]).concurrently(heartbeat)
   } yield (outgoing,incoming)
+}
+object Http {
+  private val AccountRoot="/api/account/v1"
+  private val AccountPrefix=AccountRoot+"/"
+  /** Bucket of requests without a socket peer: they share one client address, which is stricter, never weaker. */
+  private val UnknownPeer="unknown"
 }
 private final class RateLimiter {
   private var buckets=Map.empty[(String,String),(Long,Int)]

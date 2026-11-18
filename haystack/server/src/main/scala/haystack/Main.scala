@@ -6,7 +6,8 @@ import distage.*
 import ponygirls.runtime.{JdbcDatabase,CatsIOInjector}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
-import haystack.auth.{Auth,AccountService}
+import haystack.auth.{Auth,AccountService,ImperativeRuntime}
+import ponygirls.auth.PasswordHasher
 import haystack.storage.{Migrations,PostgresItemRepository,ItemRepository}
 import haystack.application.ItemService
 import haystack.http.{Http,LiveHub}
@@ -14,6 +15,7 @@ import haystack.retrieval.HaystackRetrieval
 import org.http4s.ember.server.EmberServerBuilder
 import com.comcast.ip4s.{Host,Port}
 import java.nio.file.Path
+import java.time.Clock
 import java.util.concurrent.atomic.AtomicReference
 import scala.concurrent.duration.*
 
@@ -38,19 +40,21 @@ object Main extends IOApp {
       case None=>Resource.pure(None)
       case Some(endpoint)=>EmbeddingClient.resource(endpoint,config.retrieval.maxConcurrent,config.retrieval.maxQueued,EmbeddingTelemetry.noop).map(Some(_))
     }
-    client.use { embedding=>for{
+    (client,ImperativeRuntime.resource(Clock.systemUTC(),PasswordHasher.Pbkdf2)).tupled.use { (embedding,imperative)=>for{
       initial<-IO.blocking(Auth.load(config.auth))
       reference=new AtomicReference[Either[Throwable,Auth]](Right(initial))
       getAuth=()=>reference.get().fold(throw _,identity)
-      accounts=new AccountService(database,getAuth)
-      _<-accounts.reconcile(initial)
+      accounts=new AccountService(database,getAuth,imperative)
+      _<-accounts.install(initial)
+      suspended<-accounts.suspended(initial)
+      _<-IO.whenA(suspended>0)(IO.println(s"haystack: $suspended imperative accounts suspended (auth.accounts.enabled is off)"))
       hub<-LiveHub.create
       projection=new HaystackRetrieval(database,config.retrieval.policy,new PostgresRetrieval("haystack",config.retrieval.embedding.map(e=>RetrievalProfile(e.space,config.retrieval.policy.id))),embedding,config.retrieval.batchSize)
       repository=new PostgresItemRepository(database,Some(projection))
       _<-repository.initializeProjection()
       // Every reload is fail-closed; invalid/unreadable replacement config
       // revokes access until repaired, rather than retaining stale authority.
-      reload=(IO.sleep(config.authReloadMs.millis) *> IO.blocking { val next=Config.load(file);if(next.auth.activityProjectId!=config.auth.activityProjectId)throw haystack.domain.Fault("config","activity namespace mismatch");Auth.load(next.auth) }.flatTap(accounts.reconcile).attempt.flatMap(value=>IO(reference.set(value)))).foreverM
+      reload=(IO.sleep(config.authReloadMs.millis) *> accounts.reloaded(IO.blocking { val next=Config.load(file);if(next.auth.activityProjectId!=config.auth.activityProjectId)throw haystack.domain.Fault("config","activity namespace mismatch");Auth.load(next.auth) }).flatMap(value=>IO(reference.set(value)))).foreverM
       graph=new ModuleDef{
         make[ItemRepository].fromValue(repository)
         make[LiveHub].fromValue(hub)

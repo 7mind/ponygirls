@@ -12,6 +12,10 @@ import scala.concurrent.duration.*
 final case class RetrievalConfig(policy:ProjectionPolicy,embedding:Option[EmbeddingEndpoint],maxConcurrent:Int,maxQueued:Int,batchSize:Int)
 final case class Config(listenHost:String,listenPort:Int,webRoot:Option[Path],authReloadMs:Int,auth:AuthConfig,database:JdbcConfig,retrieval:RetrievalConfig)
 object Config {
+  /** Design §6.2 defaults of members that `auth.accounts` may omit. */
+  private val DefaultRequireApproval=true
+  private val DefaultMaxUsers=100
+  private val DefaultEnrollmentTtlSeconds=86400L
   private def fail():Nothing=throw Fault("config","invalid service configuration")
   private def expand(raw:String):String={
     val prefix="$CREDENTIALS_DIRECTORY/"
@@ -33,10 +37,21 @@ object Config {
         case None=>None
         case Some(_)=>Some(get[A](u,key))
       }
-      UserConfig(get[String](u,"id"),get[String](u,"type"),get[String](u,"displayName"),get[Vector[Json]](u,"tokens").map{ raw=>val t=raw.hcursor;TokenConfig(get[String](t,"id"),expand(get[String](t,"hashFile")))},optional[String]("login"),optional[String]("passwordHashFile").map(expand),optional[Boolean]("enabled").getOrElse(true))
+      UserConfig(get[String](u,"id"),get[String](u,"type"),get[String](u,"displayName"),get[Vector[Json]](u,"tokens").map{ raw=>val t=raw.hcursor;TokenConfig(get[String](t,"id"),expand(get[String](t,"hashFile")))},optional[String]("login"),optional[String]("passwordHashFile").map(expand),optional[Boolean]("enabled").getOrElse(true),optional[Boolean]("admin").getOrElse(false))
     }
     val rate=get[Option[Json]](a,"rateLimit").map {raw=>val r=raw.hcursor;RateLimit(number[Long](r,"windowMs"),number[Int](r,"max"))}
-    val auth=AuthConfig(get[String](a,"activityProjectId"),users,get[Boolean](a,"cookieSecure"),get[Vector[String]](a,"allowedHosts"),get[Vector[String]](a,"allowedOrigins"),get[Vector[String]](a,"insecureHttpOrigins"),rate)
+    def member[A:io.circe.Decoder](cursor:HCursor,key:String):Option[A]=cursor.downField(key).focus.map(_=>get[A](cursor,key))
+    def numeric[A:io.circe.Decoder](cursor:HCursor,key:String):Option[A]=cursor.downField(key).focus.map(_=>number[A](cursor,key))
+    val accounts=member[Json](a,"accounts").map { raw=>val x=raw.hcursor
+      val signup=member[Json](x,"signup").map(_.hcursor).fold(SignupConfig(false,DefaultRequireApproval,DefaultMaxUsers)) { s=>
+        SignupConfig(get[Boolean](s,"enabled"),member[Boolean](s,"requireApproval").getOrElse(DefaultRequireApproval),numeric[Int](s,"maxUsers").getOrElse(DefaultMaxUsers))
+      }
+      val enrollment=member[Json](x,"enrollment").map(_.hcursor).fold(EnrollmentConfig(false,DefaultEnrollmentTtlSeconds)) { e=>
+        EnrollmentConfig(get[Boolean](e,"enabled"),numeric[Long](e,"ttlSeconds").getOrElse(DefaultEnrollmentTtlSeconds))
+      }
+      AccountsConfig(get[Boolean](x,"enabled"),member[String](x,"keyFile").map(expand),signup,enrollment,member[String](x,"issuer"),member[Vector[String]](x,"reservedUsernames").getOrElse(Vector.empty))
+    }
+    val auth=AuthConfig(get[String](a,"activityProjectId"),users,get[Boolean](a,"cookieSecure"),get[Vector[String]](a,"allowedHosts"),get[Vector[String]](a,"allowedOrigins"),get[Vector[String]](a,"insecureHttpOrigins"),rate,accounts)
     val d=child(c,"database");val l=child(d,"limits")
     val db=JdbcConfig(get[String](d,"jdbcUrl"),get[String](d,"user"),Path.of(expand(get[String](d,"passwordFile"))),JdbcLimits(number[Int](l,"maxConnections"),number[Int](l,"maxQueued"),duration(l,"queueTimeoutMs"),duration(l,"connectTimeoutMs"),duration(l,"statementTimeoutMs"),duration(l,"lockTimeoutMs"),duration(l,"idleTransactionTimeoutMs"),duration(l,"socketTimeoutMs")))
     db.validate()
