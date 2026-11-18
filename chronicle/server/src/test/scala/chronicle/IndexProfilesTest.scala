@@ -70,6 +70,39 @@ final class IndexProfilesTest extends munit.FunSuite {
       } finally admin.transaction(x => Sql.exec(x,s"DROP SCHEMA $schema CASCADE"))
     }
   }
+  test("Effectual GoodCommunication: start-up refuses generations that are not retired outside the current format, adds the current-format check once, and tombstones keep their labels") {
+    OwnerProfilePostgres.withDatabase { (c,admin,a,catalog) =>
+      val schema="passage_formats_retired_"+java.util.UUID.randomUUID().toString.replace("-","")
+      admin.transaction(x => Sql.exec(x,s"CREATE SCHEMA $schema"))
+      try {
+        val separator=if(c.jdbcUrl.contains("?")) "&" else "?"
+        val db=Fixtures.database(c.copy(jdbcUrl=c.jdbcUrl+separator+"currentSchema="+schema+",public"),catalog)
+        try {
+          val source=java.util.UUID.randomUUID(); val generation=java.util.UUID.randomUUID()
+          val insert="INSERT INTO ch_generations(id,session_id,revision,profile,passage_format) VALUES(?,?,0,'retired-policy-profile','ContiguousProblems')"
+          def check: Option[Long] = db.transaction(x => Sql.one(x,"SELECT oid::bigint FROM pg_constraint WHERE conrelid='ch_generations'::regclass AND conname='ch_generations_current_format_check'")(_.getLong(1)))
+          def label(format: String): Unit = db.transaction(x => Sql.exec(x,s"UPDATE ch_generations SET passage_format=$format WHERE id=?",generation))
+          db.initialize(); val added=check
+          assert(added.nonEmpty); assertEquals(db.transaction(x => Sql.one(x,"SELECT count(*) FROM ch_schema_migrations WHERE version=22")(_.getInt(1))),Some(1))
+          db.transaction(x => Sql.exec(x,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,'a','old-format-source')",source))
+          assertEquals(intercept[java.sql.SQLException](db.transaction(x => Sql.exec(x,insert,generation,source))).getSQLState,"23514")
+          db.initialize(); assertEquals(check,added,"added once, not re-created at every start")
+          // A database from before migration 022 that still holds a generation that is not retired, in an old format or without one.
+          db.transaction { x => Sql.exec(x,"ALTER TABLE ch_generations DROP CONSTRAINT ch_generations_current_format_check"); Sql.exec(x,insert,generation,source) }
+          List("'ContiguousProblems'","'LegacyAnnotations'","NULL").foreach { format =>
+            label(format)
+            val error=intercept[DomainError](db.initialize()); assertEquals(error.code,"migration-required")
+            assert(error.detail.contains("not retired remain in an old publication format"),error.detail)
+            assertEquals(check,None,"a refused start changes nothing")
+          }
+          // Retired as the legacy retirement leaves it: the tombstone keeps its historical label and the check is added.
+          label("'LegacyAnnotations'"); db.transaction(x => Sql.exec(x,"UPDATE ch_generations SET retired=true WHERE id=?",generation))
+          db.initialize(); assert(check.nonEmpty)
+          assertEquals(db.transaction(x => Sql.one(x,"SELECT passage_format FROM ch_generations WHERE id=?",generation)(_.getString(1))),Some("LegacyAnnotations"))
+        } finally db.close()
+      } finally admin.transaction(x => Sql.exec(x,s"DROP SCHEMA $schema CASCADE"))
+    }
+  }
   test("Effectual GoodCommunication: immutable registration rejects relabeling and keeps metadata credential-free") {
     OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
       val before=db.transaction(x => Sql.one(x,"SELECT descriptor::text FROM ch_index_profiles WHERE profile=?",c.profile)(_.getString(1)).get)

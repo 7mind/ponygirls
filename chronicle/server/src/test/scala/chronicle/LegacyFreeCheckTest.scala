@@ -9,20 +9,16 @@ import scala.concurrent.duration.*
 import scala.jdk.CollectionConverters.*
 
 /** The retained post-deployment check scripts/check-legacy-free.sql, run exactly as the operator runs it (psql -f),
-  * on copies of one fresh database of the current binary. The binary's start-up drops the four model identity tables
-  * (migration 21); every copy first receives the rest of the schema clean-up of the legacy data retirement plan
-  * (docs/drafts/20261118-1100-legacy-data-retirement.md §6.6), the current-format constraint, written here as
-  * idempotent SQL until the binary applies it as a start-up migration; then one legacy shape, seeded with plain SQL.
+  * on copies of one fresh database of the current binary. The binary's start-up applies the schema clean-up of the
+  * legacy data retirement plan (docs/drafts/20261118-1100-legacy-data-retirement.md §6.6): it drops the four model
+  * identity tables (migration 21) and adds the current-format check (migration 22). A copy then receives one legacy
+  * shape, seeded with plain SQL.
   */
 final class LegacyFreeCheckTest extends munit.FunSuite {
   private val check=Path.of("scripts","check-legacy-free.sql")
   private val original=Fixtures.config()
   private def url(database: String): String = original.jdbcUrl.take(original.jdbcUrl.lastIndexOf('/')+1)+database
   private val formatConstraint="ch_generations_current_format_check CHECK(retired OR (passage_format IS NOT NULL AND passage_format='ContextAwareProblems'))"
-  /** §6.6: the current-format constraint added (unless the binary already did it). */
-  private val cleanup=List(
-    "DO $$ BEGIN IF NOT EXISTS(SELECT 1 FROM pg_constraint WHERE conrelid='ch_generations'::regclass AND conname='ch_generations_current_format_check') THEN "+
-      s"ALTER TABLE ch_generations ADD CONSTRAINT $formatConstraint; END IF; END $$$$")
   /** Every counter line of a passing run (the database name, the migration list and the verdict are asserted apart). */
   private val clean=Map(
     "LP.embedding_spaces.not_proven_v2"->"0","LP.index_profiles.current_policy_not_proven_v2"->"0","LP.index_profiles.space_unregistered"->"0",
@@ -68,14 +64,14 @@ final class LegacyFreeCheckTest extends munit.FunSuite {
     Checked(ran.exit,ran.out.linesIterator.toList,ran.err)
   }
   private val noProductWrites: Config=>Unit = _=>()
-  /** A copy of the fresh database with `writes` (product code), the clean-up schema and the seed applied, in this order. */
+  /** A copy of the fresh database with `writes` (product code) and the seed applied, in this order. */
   private def copy[A](writes: Config=>Unit,seed: List[String])(body: String=>A): A = {
     val name="legacy_free_case_"+UUID.randomUUID().toString.replace("-","")
     admin(maintenance,List(s"CREATE DATABASE $name TEMPLATE ${fresh()}"))
-    try { writes(original.copy(jdbcUrl=url(name))); admin(name,cleanup++seed); body(name) } finally admin(maintenance,List(s"DROP DATABASE $name WITH (FORCE)"))
+    try { writes(original.copy(jdbcUrl=url(name))); admin(name,seed); body(name) } finally admin(maintenance,List(s"DROP DATABASE $name WITH (FORCE)"))
   }
 
-  test("a fresh database of the current binary with the clean-up schema: last line LF.result|legacy-free, exit 0, every counter clean") {
+  test("a fresh database of the current binary: last line LF.result|legacy-free, exit 0, every counter clean") {
     val ran=copy(noProductWrites,Nil)(checked)
     assertEquals((ran.exit,ran.last),(0,"LF.result|legacy-free"),ran.err)
     assertEquals(ran.counters,clean)
@@ -131,7 +127,7 @@ final class LegacyFreeCheckTest extends munit.FunSuite {
       Map("LP.generations.unregistered_profile"->"1")),
     Seed("a session with a deadline",List("INSERT INTO ch_sessions(hash,owner,expires) VALUES('seeded-deadline-session','a',clock_timestamp()+interval '1 day')"),
       Map("LP.sessions.deadline"->"1")),
-    // The clean-up constraint forbids this row in a new write; it models a row older than the constraint (NOT VALID).
+    // The current-format check (migration 22) forbids this row in a new write; it models a row older than the check (NOT VALID).
     Seed("a published old-format generation",List("ALTER TABLE ch_generations DROP CONSTRAINT ch_generations_current_format_check")++
       publishedSource("profile,passage_format",s"$currentProfile,'LegacyAnnotations'")++List(s"ALTER TABLE ch_generations ADD CONSTRAINT $formatConstraint NOT VALID"),
       Map("LP.generations.not_retired_old_format"->"1")),

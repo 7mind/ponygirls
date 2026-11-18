@@ -26,12 +26,21 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     val unseeded=Sql.one(c,"SELECT to_regclass('ch_profile') IS NOT NULL AND EXISTS(SELECT 1 FROM ch_users u WHERE NOT EXISTS(SELECT 1 FROM ch_owner_targets t WHERE t.owner=u.id))")(_.getBoolean(1)).contains(true)
     Check(!unseeded,"migration-required","users without an owner target in an archive from before owner targets; start the previous release once to seed them, then migrate with the legacy-retirement procedure")
   }
+  /** The old publication formats are retired: until migration 022 has added its check, a generation that is not retired
+    * and not in the current format (including one without a format) refuses the start instead of failing the check. */
+  private def requireRetiredPassageFormatsMigrated(c: Connection): Unit = {
+    val checked=Sql.one(c,"SELECT 1 FROM pg_constraint WHERE conrelid='ch_generations'::regclass AND conname='ch_generations_current_format_check'")(_ => true).nonEmpty
+    val remaining= !checked && Sql.one(c,"SELECT 1 FROM ch_generations WHERE NOT retired AND passage_format IS DISTINCT FROM 'ContextAwareProblems' LIMIT 1")(_ => true).nonEmpty
+    Check(!remaining,"migration-required","generations that are not retired remain in an old publication format; retire them with the legacy-retirement procedure before starting this release")
+  }
   def initialize(): Unit = {
     transaction { c =>
     Sql.exec(c,"SELECT pg_advisory_xact_lock(71393721)")
     List("001.sql","002.sql","003_index_progress.sql","004_collector_progress.sql","005_static_tokens.sql","006_archive_projection.sql","007_owner_profiles.sql","008_problem_passages.sql","009_transient_security_epoch.sql","010_index_checkpoints.sql","011_context_coverage.sql","012_reindex_cohorts.sql","013_revision_bindings.sql","014_renewable_sessions.sql","015_annotation_attempts.sql","020_persistent_sessions.sql").foreach(migrate(c,_))
     requireRetiredModelIdentityMigrated(c)
     migrate(c,"021_model_identity_retired.sql")
+    requireRetiredPassageFormatsMigrated(c)
+    migrate(c,"022_passage_formats_retired.sql")
     val dimensions=SearchPolicy.dimensions(config)
     Sql.exec(c,s"CREATE INDEX IF NOT EXISTS ch_search_hnsw_d$dimensions ON ch_search_chunks USING hnsw ((l2_normalize(embedding)::halfvec($dimensions)) halfvec_cosine_ops) WHERE vector_dims(embedding)=$dimensions")
     profiles.register(c)

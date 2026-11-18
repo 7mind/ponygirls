@@ -14,11 +14,13 @@ object Fixtures {
     val service=new PostgresOwnerReindex(db); val plan=service.preview(owner)
     service(owner,UUID.randomUUID(),plan.targetProfile,plan.selectionHash,true)
   }
-  /** Runs `body` while the generation carries an old-format label without being retired (a leftover), then restores it. */
+  /** Runs `body` while the generation carries an old-format label without being retired (a leftover: only a dropped
+    * current-format check admits one), then restores the label and, by a start, the check. */
   def leftover(db: Database,generation: UUID)(body: => Unit): Unit = {
     def label(format: PassageFormat): Unit = db.transaction { c => Sql.exec(c,"UPDATE ch_generations SET passage_format=? WHERE id=?",format.toString,generation); () }
+    db.transaction(c => Sql.exec(c,"ALTER TABLE ch_generations DROP CONSTRAINT ch_generations_current_format_check"))
     label(PassageFormat.LegacyAnnotations)
-    try body finally label(PassageFormat.ContextAwareProblems)
+    try body finally { label(PassageFormat.ContextAwareProblems); db.initialize() }
   }
   // Exact accounted infrastructure statement, not a wildcard SQL exclusion.
   val runtimeSetupSql = """SELECT set_config(s.name,least(coalesce(nullif(s.setting::bigint,0),v.bound),v.bound)::text,false)

@@ -74,36 +74,6 @@ class PassagePostgresBoundaryTest extends munit.FunSuite {
       intercept[java.sql.SQLException](reader.headSnapshot("a",receipt.sessionId))
     } finally db.transaction { c => Sql.exec(c,s"DROP OWNED BY $role"); Sql.exec(c,s"DROP ROLE $role") }
   }}
-  test("Effectual GoodCommunication: migration restores schema but never infers lost historical format or invents passage extents") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
-    val receipt=archive.ingest("a",request(List("A source"))); val current=claim(archive,catalog,300)
-    val chunk=Chunk(UUID.randomUUID(),receipt.sessionId,"manual legacy","retained",Nil,Nil,0.0)
-    TestPublications.stored(db,current,List(IndexedChunk(chunk,vector)))
-    val legacyView=archive.session("a",receipt.sessionId).view
-    val opaque=UUID.randomUUID(); val p1=UUID.randomUUID()
-    db.transaction { c =>
-      Sql.exec(c,"INSERT INTO ch_generations(id,session_id,revision,profile) VALUES(?,?,1,?),(?,?,1,?)",opaque,receipt.sessionId,"opaque-pre007",p1,receipt.sessionId,catalog.preferred.profile)
-      Sql.exec(c,"DROP TABLE ch_problem_pieces,ch_problem_spans,ch_problem_passages")
-      Sql.exec(c,"ALTER TABLE ch_generations DROP COLUMN passage_format,DROP COLUMN passage_count")
-      Sql.exec(c,"DROP TABLE ch_owner_targets,ch_index_profiles,ch_embedding_spaces")
-      Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=8")
-    }
-    db.initialize()
-    assertEquals(intercept[DomainError](archive.passages("a",receipt.sessionId,0,100,Some(legacyView))).code,"unavailable")
-    assertEquals(archive.pageChunks("a",receipt.sessionId,0,100,Some(legacyView)).chunks,List(chunk))
-    List(opaque,p1).foreach { generation =>
-      val view=ContentView(1,Some(generation))
-      assertEquals(intercept[DomainError](archive.passages("a",receipt.sessionId,0,100,Some(view))).code,"unavailable")
-      assertEquals(archive.pageChunks("a",receipt.sessionId,0,100,Some(view)).chunks,Nil)
-    }
-    val before=db.transaction(c => Sql.rows(c,"SELECT id,passage_format,passage_count FROM ch_generations ORDER BY id")(r => (r.getObject(1,classOf[UUID]),Option(r.getString(2)),r.getLong(3))))
-    db.initialize()
-    assertEquals(db.transaction(c => Sql.rows(c,"SELECT id,passage_format,passage_count FROM ch_generations ORDER BY id")(r => (r.getObject(1,classOf[UUID]),Option(r.getString(2)),r.getLong(3)))),before)
-    db.transaction { c =>
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_problem_passages")(_.getLong(1)).get,0L)
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_problem_spans")(_.getLong(1)).get,0L)
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_problem_pieces")(_.getLong(1)).get,0L)
-    }
-  }}
   test("Effectual GoodCommunication: purge cascades problem metadata/spans/links together with generations and chunks") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
     transition(db); val receipt=archive.ingest("a",request(List("A🙂BαA"))); val current=claim(archive,catalog,300)
     assert(archive.publishProblems(current,topics(current)))
