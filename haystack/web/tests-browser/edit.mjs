@@ -117,6 +117,44 @@ try {
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("request", (request) => { if (request.url().endsWith("/api/v1/put")) puts.push(request.postDataJSON()); });
     page.puts = puts;
+    // The page's requests and live sockets with their timings, printed by `diagnose()`.
+    const opened = Date.now();
+    const since = () => Date.now() - opened;
+    const traffic = new Map();
+    page.on("request", (request) => {
+      const { pathname } = new URL(request.url());
+      const body = request.method() === "POST" && pathname.startsWith("/api/v1/") ? request.postDataJSON() : null;
+      traffic.set(request, { at: since(), what: `${request.method()} ${pathname}${body !== null && typeof body.key === "string" ? ` ${body.key}` : ""}`, outcome: "pending" });
+    });
+    page.on("response", (response) => { traffic.get(response.request()).outcome = `${response.status()} at +${since()} ms`; });
+    page.on("requestfailed", (request) => { traffic.get(request).outcome = `failed (${request.failure().errorText}) at +${since()} ms`; });
+    page.on("websocket", (socket) => {
+      const entry = { at: since(), what: `WS ${new URL(socket.url()).pathname}`, outcome: "open" };
+      traffic.set(socket, entry);
+      socket.on("close", () => { entry.outcome = `closed at +${since()} ms`; });
+    });
+    /** The page's visible state and its traffic, for a wait that failed: diagnostics, not an assertion. */
+    page.diagnose = async () => {
+      const state = await page.evaluate(() => {
+        const text = (element) => element.innerText.replace(/\s+/g, " ").trim().slice(0, 300);
+        const record = document.querySelector("[data-record]");
+        const main = document.querySelector("main");
+        const outlet = document.querySelector("[data-account-outlet]");
+        const connection = document.querySelector('[aria-label^="Connection: "]');
+        const user = document.querySelector(".user-button");
+        return {
+          hash: location.hash, title: document.title,
+          record: record === null ? null : { state: record.dataset.record, visible: record.checkVisibility(), text: text(record) },
+          main: main === null ? null : { view: main.dataset.view ?? null, hidden: main.hidden, signIn: main.hasAttribute("data-account-auth") },
+          user: user === null ? null : text(user), connection: connection === null ? null : connection.getAttribute("aria-label"),
+          outlet: outlet === null ? null : { owner: outlet.dataset.accountUserId, hidden: outlet.hidden, text: text(outlet) },
+          headings: [...document.querySelectorAll("h1")].map(text),
+          notices: [...document.querySelectorAll('[role="status"], [role="alert"]')].map(text).filter((notice) => notice !== ""),
+        };
+      }).catch((error) => `unreadable: ${error.message}`);
+      const requests = [...traffic.values()].map((entry) => `#   +${entry.at} ms ${entry.what}: ${entry.outcome}`);
+      return [`# page state at +${since()} ms: ${JSON.stringify(state, null, 1).replace(/\n\s*/g, " ")}`, "# requests (ms since the page opened):", ...requests].join("\n");
+    };
     page.quiet = async () => {
       assert.deepEqual(dialogs, [], "no native dialog opens");
       assert.deepEqual(await page.evaluate(() => window.nativeDialogs), [], "window.alert/confirm/prompt are never called");
@@ -124,6 +162,11 @@ try {
     };
     return { context, page };
   }
+  /** Waits for `locator` to show; if it does not, prints `page.diagnose()` and rethrows. */
+  const shown = async (page, locator) => {
+    try { await locator.waitFor(); }
+    catch (error) { console.error(await page.diagnose()); throw error; }
+  };
   /** Opens the editor of `key` through the edit route. */
   const edit = async (page, key) => {
     await page.goto(`${base}/#/item/${encodeURIComponent(key)}/edit`);
@@ -843,14 +886,18 @@ try {
       });
       assert.equal(await draftNote(page).count(), 1, "the same identity keeps its draft");
       // Signing out ends the identity's drafts, even when the same user's session comes back into this document (signing in
-      // here would reload the page): the shared session of the other cases, announced as the module does.
+      // here would reload the page): the shared session of the other cases, announced as the module does. The sign-in page
+      // shows as soon as the server closes the live socket, before the sign-out's answer clears the session cookie; that
+      // cookie is installed only after the module has announced the sign-out (`account:changed`, sent after its answer).
+      await page.evaluate(() => { window.signedOut = new Promise((resolve) => document.addEventListener("account:changed", () => resolve(), { once: true })); });
       await page.getByRole("button", { name: "op", exact: true }).click();
       await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
+      await page.evaluate(() => window.signedOut);
       await page.getByLabel("Password", { exact: true }).waitFor();
       await page.evaluate(() => { window.pageMarker = "same document"; });
       await context.addCookies(storageState.cookies);
       await page.evaluate((hash) => { location.hash = hash; document.dispatchEvent(new Event("account:changed")); }, recordHash(key));
-      await page.locator('[data-record="ready"]').waitFor();
+      await shown(page, page.locator('[data-record="ready"]'));
       assert.equal(await page.evaluate(() => window.pageMarker), "same document");
       assert.equal(await anyDraftNote.count(), 0, "signing out ended the draft");
       await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -871,7 +918,7 @@ try {
       await page.getByRole("button", { name: "Retry", exact: true }).click();
       await page.getByRole("button", { name: "op", exact: true }).waitFor();
       await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
-      await page.locator('[data-record="ready"]').waitFor();
+      await shown(page, page.locator('[data-record="ready"]'));
       assert.equal(await page.evaluate(() => window.pageMarker), "same document");
       assert.equal(await anyDraftNote.count(), 0, "a draft of an ended identity does not come back with the same user");
       await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -897,7 +944,7 @@ try {
       await page.locator('[role="status"]', { hasText: "Signed-in identity changed" }).waitFor({ state: "attached" });
       // The views are rebuilt for the new identity (at the list): open the record again, in the same document.
       await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
-      await page.locator('[data-record="ready"]').waitFor();
+      await shown(page, page.locator('[data-record="ready"]'));
       assert.equal(await page.evaluate(() => window.pageMarker), "same document", "the page was not reloaded: only the end of the identity can have removed the draft");
       assert.equal(await anyDraftNote.count(), 0, "another identity is not offered op's draft");
       await page.getByRole("button", { name: "Edit", exact: true }).click();
