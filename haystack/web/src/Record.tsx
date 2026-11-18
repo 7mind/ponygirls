@@ -4,6 +4,7 @@ import { useLiveUpdates } from "./Live";
 import { FieldsJson, FieldsView, type CopyText } from "./FieldsView";
 import { RecordEdit } from "./RecordEdit";
 import { drafts } from "./edit-drafts";
+import { Flights, NOWHERE, RECORD_READ_TIMEOUT_MS, shows, step, type ReadEffect, type ReadEvent, type Reads } from "./record-reads";
 import { UiIcon } from "./Masthead";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
@@ -15,8 +16,6 @@ import { changedParts, compareRevisions, type Comparison, type DiffLine, type Te
 
 /** Incoming links are one search page (no server-side link summary; spec §9 decision 13). */
 const INCOMING_LIMIT = 100;
-/** Reads in a row that answer below the record's confirmed-revision floor before the page stops and offers Retry. */
-const FLOOR_READS = 3;
 const TYPE_ICONS: ReadonlyMap<string, string> = new Map([["fact", "layers"], ["todo", "list"], ["decision", "shield"], ["note", "file"],
   ["skill-draft", "sparkle"], ["github-issue", "hash"], ["github-pr", "branch"]]);
 const DEFAULT_TYPE_ICON = "layers";
@@ -26,9 +25,8 @@ const PARAGRAPH_BREAK = /\n\s*\n/;
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const DAY_MS = 24 * HOUR_MS;
+const SECOND_MS = 1_000;
 
-/** Why the record is read: something may have changed, or the record shown is below its floor. */
-type ReadReason = "change" | "floor";
 type Load = { kind: "loading" } | { kind: "ready"; item: Item } | { kind: "missing" } | { kind: "failed"; message: string };
 type Incoming = { kind: "loading" } | { kind: "loaded"; items: readonly Summary[]; more: boolean } | { kind: "unavailable" };
 type History = { kind: "loading" } | { kind: "loaded"; revisions: readonly RevisionMeta[] } | { kind: "unavailable" };
@@ -121,70 +119,69 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const latestItem = useRef<Item | null>(null);
   /** The record's confirmed-revision floor (edit-drafts.ts): a read below it is never applied. */
   const floor = useSyncExternalStore(drafts.subscribe, () => drafts.floor(itemKey));
-  /** One read at a time; a change requested meanwhile is read once more after it. */
-  const reading = useRef(false);
-  const again = useRef(false);
-  /** The read in flight has its record: it checked the floor before any later rise. */
-  const answered = useRef(false);
-  const alive = useRef(true);
+  /** The page's reads (record-reads.ts), and each record read in flight until it settles or is given up. */
+  const reads = useRef<Reads>(NOWHERE);
+  const [flights] = useState(() => new Flights({ set: (run, ms) => window.setTimeout(run, ms), clear: (handle) => window.clearTimeout(handle) }));
 
-  const read = useCallback(async (reason: ReadReason) => {
-    if (reading.current) {
-      // A read in flight that has not answered yet checks the floor when it does, so only a change needs one more.
-      if (reason === "change" || answered.current) again.current = true;
-      return;
-    }
-    reading.current = true;
-    try {
-      let below = 0;
-      do {
-        again.current = false;
-        const initial = latestItem.current === null;
-        let item: Item;
-        answered.current = false;
-        try {
-          item = await api.get(itemKey);
-        } catch (error) {
-          if (error instanceof AuthError) { onAuthLost(); return; }
-          if (!initial) setRefreshFailure(`Could not refresh the record: ${failureText(error)}.`);
-          else setLoad(error instanceof ApiError && error.code === "not-found" ? { kind: "missing" } : { kind: "failed", message: failureText(error) });
-          return;
-        }
-        answered.current = true;
-        const required = drafts.floor(itemKey);
-        if (item.revision < required) {
-          // Read before the user's own confirmed write reached it: not the record they saved. The next read sees it.
-          if (++below < FLOOR_READS) { again.current = true; continue; }
-          const message = `Revision ${required}, which your save created, could not be loaded`;
-          if (initial) setLoad({ kind: "failed", message }); else setRefreshFailure(`${message}.`);
-          return;
-        }
-        latestItem.current = item;
-        setLoad({ kind: "ready", item });
+  function dispatch(event: ReadEvent) {
+    const { state, effects } = step(reads.current, event);
+    reads.current = state;
+    for (const effect of effects) perform(effect);
+  }
+
+  function perform(effect: ReadEffect) {
+    switch (effect.kind) {
+      case "get": {
+        const { key, request } = effect;
+        const signal = flights.start(request, () => dispatch({ kind: "timed-out", key, request }));
+        api.get(key, undefined, signal).then(
+          (item) => { flights.settled(request); dispatch({ kind: "answered", key, request, item, floor: drafts.floor(key) }); },
+          (error: unknown) => { flights.settled(request); dispatch({ kind: "failed", key, request, error }); });
+        return;
+      }
+      case "abort":
+        flights.abort(effect.request);
+        return;
+      case "apply":
+        latestItem.current = effect.item;
+        setLoad({ kind: "ready", item: effect.item });
         setRefreshFailure(null);
-        await Promise.all([
-          api.search(incomingQuery(item.key), { limit: INCOMING_LIMIT }).then(
-            (page) => setIncoming({ kind: "loaded", items: page.items, more: page.cursor !== undefined }),
-            (error: unknown) => { if (error instanceof AuthError) onAuthLost(); else setIncoming({ kind: "unavailable" }); }),
-          api.history(itemKey).then(
-            (result) => setHistory({ kind: "loaded", revisions: result.revisions }),
-            (error: unknown) => { if (error instanceof AuthError) onAuthLost(); else setHistory({ kind: "unavailable" }); }),
-        ]);
-      } while (again.current && alive.current);
-    } finally { reading.current = false; }
-  }, [itemKey, onAuthLost]);
-
-  useEffect(() => { alive.current = true; void read("change"); return () => { alive.current = false; }; }, [read]);
+        return;
+      case "ancillary": {
+        const { key, item } = effect;
+        // Applied only while the page shows the record they were read for.
+        const still = () => shows(reads.current, key, item.revision);
+        api.search(incomingQuery(item.key), { limit: INCOMING_LIMIT }).then(
+          (page) => { if (still()) setIncoming({ kind: "loaded", items: page.items, more: page.cursor !== undefined }); },
+          (error: unknown) => { if (!still()) return; if (error instanceof AuthError) onAuthLost(); else setIncoming({ kind: "unavailable" }); });
+        api.history(key).then(
+          (result) => { if (still()) setHistory({ kind: "loaded", revisions: result.revisions }); },
+          (error: unknown) => { if (!still()) return; if (error instanceof AuthError) onAuthLost(); else setHistory({ kind: "unavailable" }); });
+        return;
+      }
+      case "fail": {
+        const { failure, initial } = effect;
+        if (failure.kind === "error" && failure.error instanceof AuthError) { onAuthLost(); return; }
+        if (initial && failure.kind === "error" && failure.error instanceof ApiError && failure.error.code === "not-found") { setLoad({ kind: "missing" }); return; }
+        const message = failure.kind === "error" ? failureText(failure.error) :
+          failure.kind === "timeout" ? `the server did not answer within ${RECORD_READ_TIMEOUT_MS / SECOND_MS} seconds` :
+          `Revision ${failure.floor}, which your save created, could not be loaded`;
+        if (initial) setLoad({ kind: "failed", message });
+        else setRefreshFailure(failure.kind === "below-floor" ? `${message}.` : `Could not refresh the record: ${message}.`);
+        return;
+      }
+    }
+  }
 
   useEffect(() => {
-    // Only changes announced after the page opened; an open editor reports them itself and is not read under.
-    if (live.version === openedAt.current || editing) return;
-    void read("change");
-  }, [live.version]);
-  // The record shown is below its floor (the user's own write was confirmed since it was read): read it, unless an editor is open.
-  useEffect(() => {
-    if (!editing && latestItem.current !== null && latestItem.current.revision < floor) void read("floor");
-  }, [editing, floor]);
+    dispatch({ kind: "entered", key: itemKey });
+    return () => dispatch({ kind: "left" });
+  }, [itemKey]);
+  // Only changes announced after the page opened; an open editor reports them itself, and the page reads them once it closes.
+  useEffect(() => { if (live.version !== openedAt.current) dispatch({ kind: "announced" }); }, [live.version]);
+  // The user's own write was confirmed: a record shown below it is read again, once no editor is open.
+  useEffect(() => { dispatch({ kind: "floor", floor }); }, [floor]);
+  useEffect(() => { dispatch(editing ? { kind: "editor-opened" } : { kind: "editor-closed", floor: drafts.floor(itemKey) }); }, [editing]);
 
   const ready = load.kind === "ready";
   // A fresh editor starts from the record shown, so never from one below the floor: it waits for the read. A kept draft
@@ -211,7 +208,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     try {
       const out = await api.put(item.key, documentJsonOf(item.document, "cleared"), item.revision, uuidv7());
       setToast({ text: `Attention cleared · saved as revision ${out.revision}`, action: null });
-      await read("change");
+      dispatch({ kind: "requested" });
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }
       setFailure(`Clear failed: ${failureText(error)}`);
@@ -244,7 +241,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
       const out = await api.put(latest.key, documentJsonOf(revision.document, revision.document.humanAttention), latest.revision, uuidv7());
       setRestoring(false); showLatest();
       setToast({ text: `Restored revision ${revision.revision} as new revision ${out.revision}`, action: null });
-      await read("change");
+      dispatch({ kind: "requested" });
     } catch (error) {
       if (error instanceof AuthError) { onAuthLost(); return; }
       setRestoring(false);
@@ -288,7 +285,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
           <a className="btn" href={browseQueryHash(item)}>Search for “{item}”</a></div>
       </div> : <div className="page"><div className="page-narrow">
         <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow"><span className="notice-title">Record unreadable.</span> {load.message}.</div>
-          <button type="button" className="btn btn-sm" onClick={() => { setLoad({ kind: "loading" }); void read("change"); }}>Retry</button></div>
+          <button type="button" className="btn btn-sm" onClick={() => { setLoad({ kind: "loading" }); dispatch({ kind: "requested" }); }}>Retry</button></div>
       </div></div>}
       {toasts}
     </div>;
@@ -296,7 +293,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
 
   const latest = load.item;
   if (editing) return <RecordEdit itemKey={itemKey} item={latest} revisions={history.kind === "loaded" ? history.revisions : null} origin={origin}
-    onItem={(item) => { if (item.revision >= drafts.floor(itemKey)) { latestItem.current = item; setLoad({ kind: "ready", item }); } }} onAuthLost={onAuthLost} onBack={onBack}
+    onItem={(item) => dispatch({ kind: "offered", item, floor: drafts.floor(itemKey) })} onAuthLost={onAuthLost} onBack={onBack}
     onSaved={async (revision) => {
       setEditing(false); onEditDone();
       setToast({ text: `Saved as revision ${revision}`, action: revision > 1 ? { label: "View changes", run: () => {
@@ -306,7 +303,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     }}
     onCancel={() => { setEditing(false); onEditDone(); }}
     onViewRevision={(revision) => { setEditing(false); onEditDone(); void openSnapshot(latestItem.current!, revision, latestItem.current!.revision); }}
-    onDiscard={() => { setEditing(false); onEditDone(); void read("change"); }} />;
+    onDiscard={() => { setEditing(false); onEditDone(); dispatch({ kind: "requested" }); }} />;
 
   const viewed = snapshot === null ? latest : snapshot.item;
   const attention = snapshot === null && latest.document.humanAttention === "required";
@@ -337,7 +334,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
         {failure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div>
           <button type="button" className="btn btn-sm btn-ghost btn-icon" aria-label="Dismiss" onClick={() => setFailure(null)}><UiIcon name="x" /></button></div>}
         {refreshFailure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{refreshFailure}</div>
-          <button type="button" className="btn btn-sm" onClick={() => void read("change")}>Retry</button></div>}
+          <button type="button" className="btn btn-sm" onClick={() => dispatch({ kind: "requested" })}>Retry</button></div>}
         {snapshot !== null ? <SnapshotMain snapshot={snapshot} only={snapshotOnly} raw={rawFields} onTyped={() => setRawFields(false)} onCopy={copy}
           onOnly={(only) => { setSnapshotOnly(only); if (!only) setRawFields(false); }} /> : <>
           {latest.document.status === "archived" && <div className="notice notice-neutral notice-row" role="note"><UiIcon name="archive" /><div className="grow">

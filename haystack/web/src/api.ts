@@ -66,14 +66,14 @@ async function request(path: string, init: RequestInit): Promise<Response> {
   if (res.status === 502 || res.status === 503 || res.status === 504) throw new NetworkError();
   return res;
 }
-async function call<T>(path: string, codec: Codec<T>, body?: unknown, method = "POST"): Promise<T> {
+async function call<T>(path: string, codec: Codec<T>, body?: unknown, method = "POST", signal?: AbortSignal): Promise<T> {
   const owner = sessionIdentity;
-  return callCurrent(path, codec, body, method, () => sessionIdentity === owner);
+  return callCurrent(path, codec, body, method, () => sessionIdentity === owner, signal);
 }
-async function callCurrent<T>(path: string, codec: Codec<T>, body: unknown, method: string, isCurrent: () => boolean): Promise<T> {
+async function callCurrent<T>(path: string, codec: Codec<T>, body: unknown, method: string, isCurrent: () => boolean, signal?: AbortSignal): Promise<T> {
   const res = await request(path, {
     method, headers: { "Content-Type": "application/json", "X-Haystack-Version": version },
-    body: method === "GET" ? undefined : JSON.stringify(body ?? {}),
+    body: method === "GET" ? undefined : JSON.stringify(body ?? {}), signal,
   });
   if (!isCurrent()) throw new SupersededRequestError();
   if (res.status === 401) {
@@ -279,8 +279,9 @@ export const api = {
     }
     return { userId: identity.userId, type: identity.userType as Principal["type"], tokenId: identity.tokenId, activityProjectId: identity.activityProjectId };
   },
-  get: async (key: string, revision?: number) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),
-    encode(GetRequest.jsonCodec(), new GetRequest(key, revision)))),
+  /** `signal` aborts the request: its caller has stopped waiting for it. */
+  get: async (key: string, revision?: number, signal?: AbortSignal) => toItem(await call("/api/v1/get", WireItem.jsonCodec(),
+    encode(GetRequest.jsonCodec(), new GetRequest(key, revision)), "POST", signal)),
   put: (key: string, documentJson: string, expectedRevision: number, requestId: string) =>
     writes.execute({ key, documentJson, expectedRevision, requestId }),
   search: async (query: string, opts?: { project?: string; limit?: number; cursor?: string; sort?: SearchSort }) => {
