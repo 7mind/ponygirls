@@ -19,6 +19,8 @@ const PAGE = 20;
 const PRESET_QUERIES = { Browse: "", Inbox: "human-attention:required", Upstream: "type:github-issue OR type:github-pr", "Skill drafts": "type:skill-draft", Archive: "archived:true" };
 const PRESET_PATHS = { Browse: "browse", Inbox: "inbox", Upstream: "upstream", "Skill drafts": "skills", Archive: "archive" };
 const WIDTHS = [1440, 1024, 390];
+const INVALID_QUERY_PREFIX = "bad:";
+const INVALID_SPAN = { message: "unexpected end of expression", start: 4, end: 5 };
 const HEIGHT = 900;
 
 const summary = (key, title, extra) => ({ key, project: key.split(":")[0], item: key.split(":")[1], revision: 1, title, docType: "fact", status: "actual", importance: "low",
@@ -49,7 +51,15 @@ const base = `http://127.0.0.1:${server.address().port}`;
 /** One signed-in browser context with the controlled API; `searches` records every search body. */
 async function open(browser, { width, colorScheme }) {
   const context = await browser.newContext({ viewport: { width, height: HEIGHT }, colorScheme });
-  const state = { signedIn: true, data: corpus(), searches: [], logouts: 0, dialogs: [], sockets: [] };
+  const state = { signedIn: true, data: corpus(), searches: [], logouts: 0, dialogs: [], sockets: [], holds: [] };
+  // Defers the response to the next search matching `match` until `release()`; `seen` resolves when it arrives.
+  state.hold = (match) => {
+    const hold = { match };
+    hold.seen = new Promise((resolve) => { hold.arrived = resolve; });
+    hold.released = new Promise((resolve) => { hold.release = resolve; });
+    state.holds.push(hold);
+    return hold;
+  };
   await context.addInitScript(() => {
     window.nativeDialogs = [];
     for (const name of ["alert", "confirm", "prompt"]) window[name] = (...args) => { window.nativeDialogs.push([name, ...args]); return null; };
@@ -66,6 +76,16 @@ async function open(browser, { width, colorScheme }) {
       case "/api/v1/whoami": await json(route, 200, { userId: USER, userType: "human", tokenId: "browser", activityProjectId: "corporate-activity" }); return;
       case "/api/v1/search": {
         state.searches.push(body);
+        if (body.query.startsWith(INVALID_QUERY_PREFIX)) {
+          await json(route, 400, { code: "invalid-query", message: "invalid query", spans: [INVALID_SPAN], currentRevision: null });
+          return;
+        }
+        const hold = state.holds.find((candidate) => candidate.match(body));
+        if (hold !== undefined) {
+          state.holds.splice(state.holds.indexOf(hold), 1);
+          hold.arrived();
+          await hold.released;
+        }
         const rows = body.query.startsWith("linked-to:") ? [] : state.data[body.query] ?? [];
         const start = body.cursor === null ? 0 : Number(body.cursor);
         const end = start + body.limit;
@@ -394,8 +414,69 @@ try {
       await state.noNativeDialogs();
     } finally { await context.close(); }
   });
+  await check("shell: only settled searches are kept: a failed route returns with its diagnostics, an interrupted initial search runs again, an interrupted append keeps its rows and continues", async () => {
+    const { context, page, state } = await open(browser, { width: 1440, colorScheme: "light" });
+    try {
+      await signIn(page, "#/browse");
+      await waitRows(page, PAGE);
+      const query = page.getByRole("combobox", { name: "Query", exact: true });
+      const submit = async (text) => { await query.fill(text); await page.getByRole("button", { name: "Search", exact: true }).click(); };
+      const searchesOf = (match) => state.searches.filter(match).length;
+      const finished = (match) => page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && match(response.request().postDataJSON()));
+      // A failed route comes back exactly as shown: error and diagnostics, no empty-result text, no new search.
+      const invalid = `${INVALID_QUERY_PREFIX}(`;
+      await submit(invalid);
+      const diagnostics = page.getByRole("list", { name: "Search errors" });
+      await diagnostics.getByText(INVALID_SPAN.message, { exact: false }).waitFor();
+      await submit("");
+      await waitRows(page, PAGE);
+      const invalidSearches = searchesOf((body) => body.query === invalid);
+      await page.goBack();
+      await diagnostics.getByText(INVALID_SPAN.message, { exact: false }).waitFor();
+      await page.getByRole("alert").filter({ hasText: "Invalid search query." }).waitFor();
+      assert.equal(await page.getByRole("heading", { name: "No records found", exact: true }).count(), 0, "a failed route is not shown as an empty result");
+      assert.equal(searchesOf((body) => body.query === invalid), invalidSearches, "the failed route is restored, not searched again");
+      // An initial search left in flight is not kept: returning searches once more and renders its rows.
+      const skills = (body) => body.query === "type:skill-draft" && body.cursor === null;
+      const held = state.hold(skills);
+      await submit("type:skill-draft");
+      await held.seen;
+      await page.goBack();
+      await diagnostics.waitFor();
+      const superseded = finished(skills);
+      held.release();
+      await superseded;
+      const before = searchesOf(skills);
+      await page.goForward();
+      await page.getByRole("button", { name: "skills:draft-1", exact: true }).waitFor();
+      await frames(page);
+      assert.equal(searchesOf(skills), before + 1, "exactly one new search for the route left while it was searching");
+      // An append left in flight keeps the settled rows and continuation: not the end, and the next append works.
+      await submit("");
+      await waitRows(page, PAGE);
+      const settled = await records(page).locator("tbody tr").evaluateAll((rows) => rows.map((row) => row.dataset.rowId));
+      const append = (body) => body.query === "" && body.cursor === String(PAGE);
+      const heldAppend = state.hold(append);
+      await records(page).evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await heldAppend.seen;
+      await submit("type:skill-draft");
+      await page.getByRole("button", { name: "skills:draft-1", exact: true }).waitFor();
+      const interrupted = finished(append);
+      heldAppend.release();
+      await interrupted;
+      const appendsBefore = searchesOf(append);
+      await page.goBack();
+      await waitRows(page, PAGE * 2);
+      const rows = await records(page).locator("tbody tr").evaluateAll((elements) => elements.map((row) => row.dataset.rowId));
+      assert.deepEqual(rows.slice(0, PAGE), settled, "the settled rows are kept");
+      assert.equal(new Set(rows).size, rows.length, "the continued chain has no duplicates");
+      assert.equal(searchesOf(append), appendsBefore + 1, "the next append follows the settled continuation");
+      assert.equal(await page.getByText(/^All \d+ records loaded/).count(), 0, "the interrupted append did not end the list");
+      await state.noNativeDialogs();
+    } finally { await context.close(); }
+  });
 } finally {
   if (browser !== undefined) await browser.close();
   await new Promise((resolve) => server.close(resolve));
 }
-assert.equal(results.length, 4);
+assert.equal(results.length, 5);

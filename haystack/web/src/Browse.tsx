@@ -17,12 +17,21 @@ const SEARCH_LIMIT_MAX = 100;
  */
 type Load = { kind: "first" } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
 interface Anchor { key: string; top: number }
+type Diagnostic = { message: string; start: number; end: number };
 /**
- * A route this list showed before another query or sort replaced it (spec §5 rule 2): its loaded chain and where the
- * reader was. Returning to the route (Back, Forward, an address or link) restores it instead of searching again; an
- * explicit Search or sort runs anew. `version` is the live-update count when it was kept: later changes are announced.
+ * A route this list showed before another query or sort replaced it (spec §5 rule 2). Only a settled search is kept:
+ * `complete` — its settled chain (`cursor` undefined: the end was reached), an append or refresh failure exactly as
+ * shown, whether live changes were pending, and where the reader was; `failed` — the initial search failed, with its
+ * error and diagnostics exactly as shown. A route left while its initial search was in flight is not kept: it
+ * searches again on return. Returning (Back, Forward, an address or link) restores a kept route without searching;
+ * an explicit Search or sort runs anew. `version` is the live-update count when kept: later changes are announced.
  */
-interface Kept { items: Summary[]; cursor: string | undefined; panelTop: number; pageTop: number; focus: Element | null; version: number }
+type Kept =
+  | { tag: "complete"; items: Summary[]; cursor: string | undefined; error: string; changesPending: boolean; version: number;
+      panelTop: number; pageTop: number; focus: Element | null }
+  | { tag: "failed"; error: string; diagnostics: Diagnostic[]; pageTop: number; focus: Element | null };
+/** Settlement of the initial search of the route shown: only a settled route may be kept. */
+type Phase = "loading" | "settled" | "failed";
 const MAX_KEPT_ROUTES = 6;
 const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
   { field: "title", label: "Record" }, { field: "project", label: "Project" },
@@ -41,7 +50,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const [sort, setSort] = useState<SearchSort>(initial.sort);
   const [items, setItems] = useState<Summary[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [diagnostics, setDiagnostics] = useState<Array<{ message: string; start: number; end: number }>>([]);
+  const [diagnostics, setDiagnostics] = useState<Diagnostic[]>([]);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(true);
   const sequence = useRef(0);
@@ -59,6 +68,9 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const shown = useRef<BrowseState | null>(null);
   const fresh = useRef(false);
   const restored = useRef<Kept | null>(null);
+  const phase = useRef<Phase>("loading");
+  // A live-change refresh in flight: if the route is left meanwhile, the change is still pending on return.
+  const refreshing = useRef(false);
   // Where the page was while this list was last shown: the list may be hidden when its route changes.
   const pageTop = useRef(0);
   useEffect(() => {
@@ -94,7 +106,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     const route = restored.current;
     restored.current = null;
     if (route === null) return;
-    if (panel.current !== null) panel.current.scrollTop = route.panelTop;
+    if (panel.current !== null) panel.current.scrollTop = route.tag === "complete" ? route.panelTop : 0;
     window.scrollTo(0, route.pageTop);
     if (route.focus instanceof HTMLElement && route.focus.isConnected) route.focus.focus({ preventScroll: true });
   }, [items]);
@@ -107,14 +119,16 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     setError("");
     setDiagnostics([]);
     if (load.kind !== "append") setChanged(false);
+    refreshing.current = load.kind === "refresh";
     if (load.kind === "first") {
+      phase.current = "loading";
       setItems([]);
       continuation.current = undefined;
       setCursor(undefined);
       if (panel.current !== null) panel.current.scrollTop = 0;
     }
     try {
-      if (state.migrationError !== null) { setError(state.migrationError); return; }
+      if (state.migrationError !== null) { phase.current = "failed"; setError(state.migrationError); return; }
       const wanted = load.kind === "refresh" ? load.rows : PAGE_SIZE;
       const rows: Summary[] = [];
       let next = load.kind === "append" ? load.cursor : undefined;
@@ -133,8 +147,13 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
       setItems((previous) => [...new Map([...(load.kind === "append" ? previous : []), ...rows].map((item) => [summaryKey(item), item])).values()]);
       continuation.current = next;
       setCursor(next);
+      if (load.kind !== "append") phase.current = "settled";
+      refreshing.current = false;
     } catch (err) {
       if (request !== sequence.current) return;
+      // A failed first search fails the route; a failed append or refresh keeps the settled rows and shows the error.
+      if (load.kind === "first") phase.current = "failed";
+      if (load.kind === "refresh") { refreshing.current = false; setChanged(true); }
       if (err instanceof AuthError) {
         onAuthLost();
         return;
@@ -160,10 +179,15 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     const outgoing = shown.current;
     shown.current = initial;
     if (outgoing !== null && outgoing.migrationError === null && !sameBrowseState(outgoing, initial)) {
-      const focus = document.activeElement;
-      kept.current.delete(browseHash(outgoing, preset));
-      kept.current.set(browseHash(outgoing, preset), { items, cursor, panelTop: panel.current === null ? 0 : panel.current.scrollTop, pageTop: section.current !== null && section.current.getClientRects().length > 0 ? window.scrollY : pageTop.current,
-        focus: focus !== null && section.current !== null && section.current.contains(focus) ? focus : null, version: live.version });
+      const key = browseHash(outgoing, preset);
+      const focused = document.activeElement;
+      const focus = focused !== null && section.current !== null && section.current.contains(focused) ? focused : null;
+      const top = section.current !== null && section.current.getClientRects().length > 0 ? window.scrollY : pageTop.current;
+      kept.current.delete(key);
+      // `cursor` is the settled continuation: an append in flight has not replaced it, so the next append can follow.
+      if (phase.current === "settled") kept.current.set(key, { tag: "complete", items, cursor, error, changesPending: changed || refreshing.current,
+        version: live.version, panelTop: panel.current === null ? 0 : panel.current.scrollTop, pageTop: top, focus });
+      else if (phase.current === "failed") kept.current.set(key, { tag: "failed", error, diagnostics, pageTop: top, focus });
       if (kept.current.size > MAX_KEPT_ROUTES) kept.current.delete(kept.current.keys().next().value!);
     }
     const hash = initial.migrationError === null ? browseHash(initial, preset) : null;
@@ -173,14 +197,25 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     if (back === undefined) { void run(initial, { kind: "first" }); return; }
     sequence.current++;
     pending.current = null;
-    continuation.current = back.cursor;
+    refreshing.current = false;
     restored.current = back;
+    setBusy(false);
+    setError(back.error);
+    if (back.tag === "failed") {
+      phase.current = "failed";
+      continuation.current = undefined;
+      setItems([]);
+      setCursor(undefined);
+      setDiagnostics(back.diagnostics);
+      setChanged(false);
+      return;
+    }
+    phase.current = "settled";
+    continuation.current = back.cursor;
     setItems(back.items);
     setCursor(back.cursor);
-    setError("");
     setDiagnostics([]);
-    setBusy(false);
-    setChanged(back.version !== live.version);
+    setChanged(back.changesPending || back.version !== live.version);
   }, [initial.query, initial.migrationError, initial.sort.field, initial.sort.direction, run]);
 
   // A live change never resets a list: an untouched first page reloads in place; a list the reader has scrolled or

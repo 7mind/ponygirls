@@ -144,7 +144,8 @@
     "shell: the five presets and records are routes; Back to a preset, to a previous query or sort, or from a record restores its loaded rows, scroll and focus",
     "shell: masthead fits 1440, 1024 and 390 pixels in light and dark; menus and popover close with Escape",
     "shell: a live change never resets a scrolled list, Show merges it in place keeping the first visible row; an untouched list refreshes in place",
-    "shell: Access tokens open in the account outlet over a kept list (degraded server) and Sign out is module-owned"
+    "shell: Access tokens open in the account outlet over a kept list (degraded server) and Sign out is module-owned",
+    "shell: only settled searches are kept: a failed route returns with its diagnostics, an interrupted initial search runs again, an interrupted append keeps its rows and continues"
   ],
   "markupCases": [
     "browse initial markup exposes one expression, secondary help and sortable columns without pagination"

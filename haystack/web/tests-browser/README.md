@@ -36,7 +36,7 @@ background execution lane rather than extending foreground tool timeouts.
 
 `inventory.json` is checked exactly against all 81 JUnit leaf cases (82 Node
 cases including the helper-mode group), 39 main browser checks, sixteen controlled
-layout checks, the controlled account fixture, four shell checks, HTTPS restart,
+layout checks, the controlled account fixture, five shell checks, HTTPS restart,
 preview restart, and markup case. The original 36 atomic cases remain.
 A fresh report records source and inventory hashes, dependency identities,
 JAR/ELF SHA256 before and after, complete logs, XML, and a zero-skip receipt.
@@ -136,8 +136,8 @@ checks. The fixture records the three asset SHA-256 digests without secrets.
 Chromium against page-routed API responses and a routed live socket (no backend):
 the five preset routes and record/edit routes with a state-preserving Back,
 the masthead at 1440, 1024 and 390 pixels in both themes, live changes on scrolled
-and untouched lists, the account outlet over a kept list and module-owned sign-out,
-and no native dialogs. Needs `HAYSTACK_CHROMIUM` and a prior `npm run build`.
+and untouched lists, which searches a route keeps (only settled ones), the account
+outlet over a kept list and module-owned sign-out, and no native dialogs. Needs `HAYSTACK_CHROMIUM` and a prior `npm run build`.
 
 ## Viewport layout regression
 
