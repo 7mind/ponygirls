@@ -2,15 +2,12 @@
 // Behavioral, blackbox/group: actual React UI and Chromium, controlled API fixture;
 // this does not establish server or protocol acceptance.
 import assert from "node:assert/strict";
-import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import { chromium } from "playwright-core";
 
 const executablePath = process.env.HAYSTACK_CHROMIUM;
 assert.ok(typeof executablePath === "string" && executablePath.startsWith("/"), "HAYSTACK_CHROMIUM must name the pinned browser executable");
-const artifacts = process.env.HAYSTACK_UI_ARTIFACTS;
-if (artifacts) await mkdir(artifacts, { recursive: true });
 const item = {
   project: "project-" + "namespace".repeat(12), item: "record-" + "identifier".repeat(16),
   revision: 123456789, title: "A long record title " + "unbroken".repeat(24),
@@ -39,7 +36,6 @@ const vite = await createServer({ root, optimizeDeps: { include: ["react", "reac
           if (window.holdWhoami === userId) await new Promise(resolve => { window.releaseWhoami = resolve; });
           return {userId,type:'human',tokenId:'test',activityProjectId:'corporate-activity'};
         };
-        api.logout = async () => { window.logoutInvalidations = window.accountInvalidations; return {ok:true}; };
         api.search = async () => ({items:location.search === "?fixture=normal" ? ${JSON.stringify(normalItems)} : [${JSON.stringify(item)}],cursor:undefined});
         api.analyze = async () => ({valid:true,diagnostics:[]});
         if (new URLSearchParams(location.search).has('pending')) {
@@ -53,7 +49,7 @@ const vite = await createServer({ root, optimizeDeps: { include: ["react", "reac
   configureServer(server) {
     server.middlewares.use("/layout.html", async (_req, res) => {
       res.setHeader("Content-Type", "text/html");
-      res.end(await server.transformIndexHtml('/layout.html', '<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><script type="module" src="/@vite/client"></script></head><body><div id="root"></div><script type="module" src="/layout-entry.js"></script></body></html>'));
+      res.end(await server.transformIndexHtml('/layout.html', '<!doctype html><html data-app="haystack"><head><meta name="viewport" content="width=device-width, initial-scale=1"><script src="/ui/theme-init.js"></script><link rel="stylesheet" href="/ui/tokens.css"><link rel="stylesheet" href="/ui/components.css"><script type="module" src="/@vite/client"></script></head><body><div id="root"></div><script type="module" src="/layout-entry.js"></script></body></html>'));
     });
   },
 }] });
@@ -68,26 +64,6 @@ try {
       await page.emulateMedia({ colorScheme });
       await page.goto(`${vite.resolvedUrls.local[0]}layout.html#/browse`);
       await page.locator(".record-open").waitFor();
-      assert.equal(await page.locator(".sidebar").count(), 0, "workspace navigation must not reserve a sidebar");
-      assert.equal(await page.locator(".topbar .brand").count(), 1, "brand belongs in the workspace header");
-      assert.equal(await page.locator(".topbar .connection-widget").count(), 1, "live status must flow with header controls, not overlay them");
-      assert.equal(await page.locator(".activity-namespace").isVisible(), true, "activity namespace remains visible on mobile");
-      assert.equal(await page.getByRole("button", { name: "Settings", exact: true }).getAttribute("data-account-settings"), "");
-      assert.equal(await page.getByRole("button", { name: "Settings", exact: true }).getAttribute("data-account-user-id"), "operator");
-      await page.locator(".connection-button").click();
-      const connection = await page.locator(".connection-panel").boundingBox();
-      assert.ok(connection.x >= 0 && connection.x + connection.width <= width, "connection details fit the viewport");
-      await page.getByRole("button", { name: "Close connection details", exact: true }).click();
-      for (const name of ["Browse", "Attention inbox", "Upstream activity", "Skill candidates", "Archive", "Settings", "Sign out"]) {
-        const control = page.getByRole("button", { name, exact: true });
-        assert.equal(await control.isVisible(), true, `${width}: ${name} remains visible`);
-        assert.ok(await control.evaluate(element => {
-          const rect = element.getBoundingClientRect();
-          const target = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
-          return rect.left >= 0 && rect.right <= innerWidth && target !== null && element.contains(target);
-        }), `${width}: ${name} fits and is not covered by another control`);
-      }
-      if (artifacts) await page.screenshot({ path: `${artifacts}/haystack-layout-${width}-${colorScheme}.png`, fullPage: true });
       const dimensions = await page.evaluate(() => {
         const panel = document.querySelector(".records-panel");
         const table = panel.querySelector("table");
@@ -117,7 +93,7 @@ try {
       await page.keyboard.press("Enter");
       await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       assert.equal(new URL(page.url()).hash, appliedHash, "skip navigation must not replace the applied hash route");
-      assert.equal(await page.locator(".workspace-main").evaluate(element => element === document.activeElement), true);
+      assert.equal(await page.getByRole("main").evaluate(element => element === document.activeElement), true);
       await page.locator(".record-open").focus();
       await page.keyboard.press("Enter");
       assert.ok(new URL(page.url()).hash.startsWith("#/item/"), "record action must remain available");
@@ -130,31 +106,19 @@ try {
   for (const row of await page.locator("tbody tr").all()) {
     assert.ok((await row.boundingBox()).height <= 64, "ordinary desktop rows stay compact");
   }
-  assert.equal(await page.locator(".workspace-main").evaluate(element => element.getBoundingClientRect().left), 0, "records use the full workspace width");
+  assert.equal(await page.getByRole("main").evaluate(element => element.getBoundingClientRect().left), 0, "records use the full workspace width");
   await page.evaluate(() => { window.layoutUser = "stale"; window.holdWhoami = "stale"; document.dispatchEvent(new Event("account:changed")); });
   await page.waitForFunction(() => typeof window.releaseWhoami === "function");
   await page.evaluate(() => { window.layoutUser = "replacement"; document.dispatchEvent(new Event("account:changed")); });
-  await page.waitForFunction(() => document.querySelector("[data-account-settings]").dataset.accountUserId === "replacement");
+  await page.waitForFunction(() => document.querySelector("[data-account-outlet]").dataset.accountUserId === "replacement");
   await page.evaluate(() => { window.releaseWhoami(); });
   await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-  assert.equal(await page.locator("[data-account-settings]").getAttribute("data-account-user-id"), "replacement", "a late identity response cannot restore a superseded account");
+  assert.equal(await page.locator("[data-account-outlet]").getAttribute("data-account-user-id"), "replacement", "a late identity response cannot restore a superseded account");
   assert.ok(await page.evaluate(() => window.accountInvalidations > 0), "identity replacement invalidates stale account state");
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
-  await page.getByLabel("Username", { exact: true }).waitFor();
-  assert.ok(await page.evaluate(() => window.logoutInvalidations >= 2), "account state is invalidated before logout dispatch");
   await page.setViewportSize({ width: 320, height: 900 });
   await page.goto(`${vite.resolvedUrls.local[0]}layout.html?fixture=normal&pending=1#/browse`);
   await page.getByRole("button", { name: "Retry original write", exact: true }).waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "uncertain-write recovery must fit the mobile workspace");
   await page.getByRole("button", { name: "Retry original write", exact: true }).click();
   await page.getByText(/Original write confirmed as revision 7/).waitFor();
-  if (artifacts) {
-    await page.setViewportSize({ width: 1440, height: 900 });
-    for (const colorScheme of ["light", "dark"]) {
-      await page.emulateMedia({ colorScheme });
-      await page.goto(`${vite.resolvedUrls.local[0]}layout.html?fixture=normal#/browse`);
-      await page.locator(".record-open").first().waitFor();
-      await page.screenshot({ path: `${artifacts}/haystack-normal-1440-${colorScheme}.png`, fullPage: true });
-    }
-  }
 } finally { if (browser) await browser.close(); await vite.close(); }

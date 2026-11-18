@@ -248,7 +248,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
       case None=>IO.pure(json(Status.NotFound,Json.Null))
       case Some(file)=>
         // Fixed account and shared-ui entrypoints cannot use normalized mtime/size as content identity.
-        val fixedEntry=Set("account.js","account.css").contains(file.getFileName.toString) || r.uri.path.renderString.startsWith("/ui/")
+        val fixedEntry=Set("account.js","account-client.js","account.css").contains(file.getFileName.toString) || r.uri.path.renderString.startsWith("/ui/")
         StaticFile.fromPath(fs2.io.file.Path.fromNioPath(file),if(fixedEntry)None else Some(r)).getOrElseF(IO.pure(json(Status.NotFound,Json.Null))).map(_.putHeaders(Header.Raw(CIString("Referrer-Policy"),"no-referrer"),Header.Raw(CIString("Cache-Control"),if(file.getFileName.toString.matches("[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\\.(js|css|woff2?|svg|png|jpg|webp)")) "public, max-age=31536000, immutable" else "no-store")))
     }
   }

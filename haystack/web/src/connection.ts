@@ -297,3 +297,31 @@ export class ConnectionManager {
     this.connections.clear(); this.runtime.cancelInterval(this.timer);
   }
 }
+
+// Masthead indicator (spec §3.2, mockup haystack-connection.html): five tones, one label and one sentence.
+export type ConnectionTone = "live" | "connecting" | "reconnecting" | "stale" | "offline";
+export interface ConnectionLabel { tone: ConnectionTone; label: string; name: string; sentence: string }
+const SECOND_MS = 1_000;
+const MINUTE_S = 60;
+function elapsed(ms: number): string {
+  const seconds = Math.max(0, Math.floor(ms / SECOND_MS));
+  return seconds < MINUTE_S ? `${seconds} s` : `${Math.floor(seconds / MINUTE_S)} min`;
+}
+export function connectionLabel(stats: ConnectionStats | null, now: number): ConnectionLabel {
+  const plain = (tone: ConnectionTone, label: string, sentence: string): ConnectionLabel => ({ tone, label, name: label, sentence });
+  if (stats === null) return plain("connecting", "Connecting…", "Opening the live connection. Lists are already usable.");
+  switch (stats.state) {
+    case "ALIVE": return plain("live", "Live", "Changes arrive automatically. A list you have scrolled is not reset: changes are announced and applied when you ask.");
+    case "STALE": {
+      const since = stats.phase !== null && stats.phase.kind === "Grace" ? stats.phase.started : now;
+      return { tone: "stale", label: `Stale · ${elapsed(now - since)}`, name: `Stale for ${elapsed(now - since)}`, sentence: "Connected, but the heartbeat is overdue. Displayed records may be out of date." };
+    }
+    case "STOPPED": return plain("offline", "Offline", "Automatic reconnection has stopped. Try again when the service is available.");
+    case "DEFERRED": return plain("offline", "Offline", "Reconnect waits until this tab is visible.");
+    case "SUSPENDED": return plain("offline", "Offline", "The page is paused; the connection resumes when it is shown again.");
+    case "NEW": case "DEAD":
+      if (stats.lastClose === null && stats.attempts <= 1) return plain("connecting", "Connecting…", "Opening the live connection. Lists are already usable.");
+      return { tone: "reconnecting", label: `Reconnecting · ${stats.attempts}/${stats.maxAttempts}`, name: `Reconnecting, attempt ${stats.attempts} of ${stats.maxAttempts}`,
+        sentence: "Displayed records may be out of date. Your work is not affected; saving still works when the server answers." };
+  }
+}

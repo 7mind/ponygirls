@@ -71,6 +71,8 @@ export function QueryInput({ value, onChange, onAuthLost, onCompositionChange }:
       if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k" || event.altKey) return;
       const target = event.target as HTMLElement | null;
       if (document.querySelector('dialog[open], [role="dialog"], [aria-modal="true"]') || target?.closest('dialog[open], [role="dialog"], [aria-modal="true"]')) return;
+      // A list kept mounted under a record or the account page is hidden: the shortcut is not its own.
+      if (input.current === null || input.current.getClientRects().length === 0) return;
       event.preventDefault(); input.current?.focus(); input.current?.select();
       setCaret(-1); setDismissed(true);
     }

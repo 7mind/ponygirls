@@ -992,13 +992,15 @@ export function installAccountUI(environment) {
         : null);
       const activeTokens = account === null ? null : account.tokens.filter(token => !token.revoked).length;
       const pending = self.admin.phase === 'ready' ? self.admin.data.users.filter(user => user.status === 'pending').length : 0;
-      nav.replaceChildren(
+      // Unavailable sections are null: append() skips them (replaceChildren would insert the text "null").
+      nav.replaceChildren();
+      append(nav, [
         h('div', { class: 'account-who' }, h('span', { class: 'avatar', 'aria-hidden': 'true' }, login.charAt(0)), h('div', {}, h('strong', {}, login), role === '' ? null : h('div', { class: 'xs muted' }, role))),
         h('span', { class: 'eyebrow' }, 'Account'),
         link('profile', 'user', 'Profile', null), link('password', 'lock', 'Password', null), link('two-factor', 'shield', 'Two-factor', null),
         link('tokens', 'key', 'Access tokens', activeTokens === null ? null : h('span', { class: 'count' }, String(activeTokens))),
         available('users') ? h('span', { class: 'eyebrow' }, 'Administration') : null,
-        link('users', 'users', 'Users', pending > 0 ? h('span', { class: 'count count-attn', title: `${pending} waiting for approval` }, String(pending)) : null));
+        link('users', 'users', 'Users', pending > 0 ? h('span', { class: 'count count-attn', title: `${pending} waiting for approval` }, String(pending)) : null)]);
     }
 
     function loadAccount() { void io.read('account', applyAccount, true); }

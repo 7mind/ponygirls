@@ -10,9 +10,7 @@ const vite = await createServer({ root, server: { middlewareMode: true, watch: n
 try {
   const { Login } = await vite.ssrLoadModule("/src/Login.tsx");
   const login = renderToStaticMarkup(createElement(Login));
-  assert.match(login, /data-account-login/, "sign-in delegates to the common account module");
-  assert.match(login, /<input(?=[^>]*name="login")(?=[^>]*autoComplete="username")[^>]*>/);
-  assert.match(login, /<input(?=[^>]*name="password")(?=[^>]*autoComplete="current-password")[^>]*>/);
+  assert.match(login, /<main[^>]*data-account-auth=""/, "sign-in is rendered by the common account module into its mount");
   assert.doesNotMatch(login, /\bToken\b|name="token"/, "API credentials are not browser sessions");
   const index = await readFile(new URL("../index.html", import.meta.url), "utf8");
   assert.match(index, /href="\/account\.css"/);
@@ -20,7 +18,7 @@ try {
   const { Browse } = await vite.ssrLoadModule("/src/Browse.tsx");
   const html = renderToStaticMarkup(createElement(Browse, {
     initial: { query: "", sort: { field: "modified-at", direction: "desc" }, migrationError: null },
-    inbox: false, onOpen() {}, onAuthLost() {},
+    preset: "browse", onOpen() {}, onAuthLost() {},
   }));
   assert.doesNotMatch(html, />Next<|>Back</, "cursor pagination must not be exposed as pages");
   assert.match(html, /aria-label="Sort by Modified"/);

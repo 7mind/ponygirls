@@ -21,7 +21,8 @@ selected server on a free loopback port, seeds 640 synthetic records (962 revisi
 long Markdown/code fields, links, archived and `human-attention: required` items) through the public API,
 then drives pinned Chromium (headless) via `playwright-core`. Everything is removed on exit.
 
-Output: `NN-page-state-viewport[-dark][-full].png`, `index.md` (one line per file: what + how reached,
+Output: `NN-page-state-viewport[-dark][-full].png` (the `shell` scenario names its shots like the mockup
+shots instead, e.g. `haystack-browse-dark-1440.png`, through `rec.shot(…, { file })`), `index.md` (one line per file: what + how reached,
 plus "Measured:" notes), `manifest.json` (per shot: visible headings/status messages, used because a
 reviewer without an image viewer can still verify the state), `dom/*.json` (scroll containers,
 sticky elements, table geometry, font-size histogram, small targets, heading outline).
@@ -60,5 +61,5 @@ product code is never modified. `env` also exposes `corpus`, `clients[author].pu
 
 - Native dialogs (`window.confirm` of token revocation, HTML5 validation bubbles) cannot be
   screenshotted headless; the confirm text is recorded as a note.
-- The dashboard has no theme toggle: dark = `prefers-color-scheme: dark`.
+- Captures use the theme menu's default (System): dark = `prefers-color-scheme: dark`.
 - "Identity changed" notice and the live `STALE`/`SUSPENDED` states are not reproduced.

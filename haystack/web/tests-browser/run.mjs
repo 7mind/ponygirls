@@ -10,7 +10,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { mkdir, mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { createHash, randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -24,7 +24,6 @@ import { ownedDatabase, configFor, atomicConfig, startServer, stopServer, public
 const CONN = process.env.HAYSTACK_TEST_PG;
 const CHROMIUM = process.env.HAYSTACK_CHROMIUM;
 const FIREFOX = process.env.HAYSTACK_FIREFOX;
-const ARTIFACTS = process.env.HAYSTACK_UI_ARTIFACTS;
 const here = path.dirname(fileURLToPath(import.meta.url));
 const webRoot = path.resolve(here, "..");
 
@@ -43,7 +42,6 @@ const cleanup = () => cleaning ??= (async () => {
 })();
 process.once("SIGTERM", () => { void cleanup().finally(() => process.exit(143)); });
 try {
-if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
 dir = await mkdtemp(path.join(os.tmpdir(), "haystack-uitest-"));
 database = await ownedDatabase({ connectionString: CONN, dir });
 const humanToken = randomBytes(32).toString("base64url");
@@ -152,7 +150,6 @@ console.log(`# Browser: ${FIREFOX ? "Firefox" : "Chromium"}`);
 browser = FIREFOX
   ? await firefox.launch({ executablePath: FIREFOX, firefoxUserPrefs: { "network.dns.localDomains": "haystack.test" } })
   : await chromium.launch({ executablePath: CHROMIUM, args: ["--no-sandbox", "--no-proxy-server", "--host-resolver-rules=MAP haystack.test 127.0.0.1"] });
-if (ARTIFACTS) await mkdir(ARTIFACTS, { recursive: true });
 const results = [];
 const check = async (name, fn) => {
   console.log(`# check - ${name}`);
@@ -163,17 +160,22 @@ const check = async (name, fn) => {
   } catch (err) {
     results.push(`FAIL - ${name}: ${err.message.split("\n")[0]}`);
     console.error(err);
-    if (ARTIFACTS) await writeFile(path.join(ARTIFACTS, `failure-${results.length}.txt`), err.stack ?? String(err));
     process.exitCode = 1;
   }
 };
 
+const navLink = (page, name) => page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name, exact: true });
+// Sign out is a user-menu item handled by the shared account module.
+const signOut = async (page) => {
+  await page.getByRole("button", { name: "op", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
+};
 const login = async (page, password) => {
   await page.goto(`${base}/#/browse`);
   await page.getByLabel("Username", { exact: true }).fill("op");
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("button", { name: "Browse" }).waitFor();
+  await navLink(page, "Browse").waitFor();
 };
 
 await check("plain HTTP preview verifies heartbeat without secure-context APIs", async () => {
@@ -188,7 +190,7 @@ await check("plain HTTP preview verifies heartbeat without secure-context APIs",
     await page.getByLabel("Username", { exact: true }).fill("op");
     await page.getByLabel("Password", { exact: true }).fill(humanPassword);
     await page.getByRole("button", { name: "Sign in" }).click();
-    await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+    await navLink(page, "Browse").waitFor();
     try {
       await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor({ timeout: 2000 });
     } catch (error) {
@@ -201,7 +203,7 @@ await check("plain HTTP preview verifies heartbeat without secure-context APIs",
     await page.reload();
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor({ timeout: 3000 });
     assert.equal((await ctx.cookies(insecureBase)).find((entry) => entry.name === "haystack-dev").value, cookie.value);
-    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await signOut(page);
     await page.getByLabel("Password", { exact: true }).waitFor();
     assert.equal((await ctx.cookies(insecureBase)).some((entry) => entry.name === "haystack-dev"), false);
     assert.deepEqual(errors, []);
@@ -220,10 +222,14 @@ await check("canonical keys survive browsing", async () => {
   } finally { await ctx.close(); }
 });
 
-// 401 prompts sign-in; login works; reload keeps the session.
+// 401 prompts sign-in; login works; reload keeps the session; the shared account page works against the
+// real server's five account endpoints (degraded mode: no /policy, no /profile).
 await check("login flow + persisted session", async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  page.on("dialog", (dialog) => { errors.push(`native dialog: ${dialog.message()}`); void dialog.dismiss(); });
   await page.goto(`${base}/#/browse`);
   await page.getByRole("button", { name: "Sign in" }).waitFor();
   await login(page, humanPassword);
@@ -232,47 +238,46 @@ await check("login flow + persisted session", async () => {
   await page.getByText("hello memory").waitFor({ timeout: 10000 });
   await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
   if (!FIREFOX) await ctx.grantPermissions(["clipboard-read", "clipboard-write"], { origin: base });
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
-  const settings = page.getByRole("dialog", { name: "Account settings", exact: true });
-  await settings.getByText("Managed in server configuration; read-only here.", { exact: true }).waitFor();
-  assert.equal(await settings.getByRole("button", { name: "Revoke browser", exact: true }).count(), 0, "configured token remains immutable in Settings");
+  await page.getByRole("button", { name: "op", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Access tokens", exact: true }).click();
+  const tokens = page.getByRole("table", { name: "Access tokens", exact: true });
+  await tokens.getByRole("row").filter({ hasText: "browser" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Revoke browser", exact: true }).count(), 0, "configured token remains immutable");
   const tokenName = "Browser acceptance token";
-  await settings.getByLabel("Token name", { exact: true }).fill(tokenName);
+  await page.getByRole("button", { name: "New token", exact: true }).first().click();
+  await page.getByLabel("Name", { exact: true }).fill(tokenName);
   const created = page.waitForResponse(response => new URL(response.url()).pathname === "/api/account/v1/tokens");
-  await settings.getByRole("button", { name: "Create access token", exact: true }).click();
+  await page.getByRole("button", { name: "Create token", exact: true }).click();
   const creation = await created;
   assert.equal(creation.status(), 200, "actual account endpoint accepts the actor-bound token request");
-  const secret = settings.getByLabel("One-time token secret", { exact: true });
+  const secret = page.getByLabel("One-time token secret", { exact: true });
   await secret.waitFor();
+  await page.getByRole("button", { name: "Reveal", exact: true }).click();
   const issuedSecret = await secret.inputValue();
   assert.ok(issuedSecret.length > 0 && issuedSecret !== humanPassword && issuedSecret !== humanToken);
-  await settings.getByRole("button", { name: "Copy secret", exact: true }).click();
-  await settings.getByRole("status").filter({ hasText: FIREFOX ? /Secret copied|Clipboard unavailable/ : "Secret copied" }).waitFor();
+  await page.getByRole("button", { name: "Copy secret", exact: true }).click();
+  if (FIREFOX) await page.getByRole("status").filter({ hasText: /Secret copied|Clipboard unavailable/ }).first().waitFor();
+  else await page.getByRole("status").filter({ hasText: "Secret copied to clipboard" }).waitFor();
   const issuedWhoami = () => fetch(`${base}/api/v1/whoami`, { headers: { Authorization: `Bearer ${issuedSecret}`, "X-Haystack-Version": "1.0.0" }, signal: AbortSignal.timeout(15000) });
   assert.equal((await issuedWhoami()).status, 200, "issued token authenticates through the real API bearer boundary");
   const accountResponse = await ctx.request.get(`${base}/api/account/v1`, { headers: { Origin: base } });
   assert.equal(accountResponse.status(), 200);
   assert.ok(!(await accountResponse.text()).includes(issuedSecret), "listed metadata must not reveal the one-time token secret");
-  await settings.getByRole("button", { name: "Dismiss secret", exact: true }).click();
-  assert.equal(await page.getByLabel("One-time token secret", { exact: true }).count(), 0);
-  page.once("dialog", confirmation => confirmation.accept());
-  await settings.getByRole("button", { name: `Revoke ${tokenName}`, exact: true }).click();
-  await settings.getByRole("status").filter({ hasText: "Access token revoked." }).waitFor();
+  await page.getByRole("button", { name: "I have saved it", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Yes, I have saved it", exact: true }).click();
+  await secret.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: `Revoke ${tokenName}`, exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Revoke token", exact: true }).click();
+  await page.getByRole("status").filter({ hasText: `Token “${tokenName}” revoked` }).waitFor();
   assert.equal((await issuedWhoami()).status, 401, "revocation immediately rejects the issued bearer without logging the browser out");
-  await page.keyboard.press("Escape");
-  assert.equal(await settings.count(), 0);
-  if (ARTIFACTS) {
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.screenshot({ path: path.join(ARTIFACTS, "browse-desktop.png"), fullPage: true });
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "mobile page overflows");
-    await page.screenshot({ path: path.join(ARTIFACTS, "browse-mobile.png"), fullPage: true });
-  }
+  await navLink(page, "Browse").click();
+  await page.getByText("hello memory").waitFor();
   // Logout clears it, even across history navigation.
-  await page.getByRole("button", { name: "Sign out" }).click();
+  await signOut(page);
   await page.getByRole("button", { name: "Sign in" }).waitFor();
   await page.goBack();
   await page.getByRole("button", { name: "Sign in" }).waitFor({ timeout: 10000 });
+  assert.deepEqual(errors, []);
   await ctx.close();
 });
 
@@ -294,7 +299,7 @@ await check("gateway outages are connection failures and preserve the session ac
       await page.unroute("**/api/account/v1/login");
     }
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
-    await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+    await navLink(page, "Browse").waitFor();
     const session = (await ctx.cookies(base)).find((cookie) => cookie.name === "haystack-dev");
     assert.ok(session);
     for (const status of [502, 503, 504]) {
@@ -307,7 +312,7 @@ await check("gateway outages are connection failures and preserve the session ac
       assert.ok((await ctx.cookies(base)).find((cookie) => cookie.name === session.name).value === session.value, "outage must preserve the session token");
       await page.unroute("**/api/**");
       await page.reload();
-      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await navLink(page, "Browse").waitFor();
     }
   } finally { await ctx.close(); }
 });
@@ -425,7 +430,6 @@ await check("query completion supports keyboard, caret insertion, and pointer se
     await query.press("Escape");
     await query.press("Control+Space");
     await page.getByRole("listbox", { name: "Query suggestions" }).waitFor();
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "query-completion.png"), fullPage: true });
     await query.press("Escape");
     assert.equal(await page.getByRole("listbox", { name: "Query suggestions" }).count(), 0);
   } finally { await ctx.close(); }
@@ -438,7 +442,8 @@ await check("one expression, clear, keyboard focus and explicit Search keep draf
     await login(page, humanPassword);
     const query = page.getByRole("combobox", { name: "Query", exact: true });
     const searches = [];
-    page.on("request", (request) => { if (request.url().endsWith("/api/v1/search")) searches.push(request.postDataJSON().query); });
+    // Record-list searches only: the masthead's Inbox count is a search of its own.
+    page.on("request", (request) => { if (request.url().endsWith("/api/v1/search") && request.postDataJSON().limit === 20) searches.push(request.postDataJSON().query); });
     await query.fill("type:todo OR type:fact");
     assert.equal(await page.getByLabel("Project scope").count(), 0);
     assert.equal(await page.getByLabel("Tag filter").count(), 0);
@@ -544,7 +549,8 @@ await check("dismissed query completions do not reopen after a delayed response"
   } finally { await ctx.close(); }
 });
 
-await check("system theme changes update native controls and square layouts without reloading", async () => {
+// Owner decision (spec §9.3): the shared radius tokens replace Haystack's square corners.
+await check("system theme changes update native controls and shared radius tokens without reloading", async () => {
   const ctx = await browser.newContext({ colorScheme: "light", viewport: { width: 1440, height: 1000 } });
   try {
     const page = await ctx.newPage();
@@ -553,13 +559,24 @@ await check("system theme changes update native controls and square layouts with
       const root = getComputedStyle(document.documentElement);
       const query = document.querySelector('input[role="combobox"]');
       return { scheme: root.colorScheme, background: root.backgroundColor, foreground: root.color,
-        controlScheme: getComputedStyle(query).colorScheme,
-        corners: [...document.querySelectorAll("button, input, .search-panel, .records-panel")].map((element) => getComputedStyle(element).borderTopLeftRadius) };
+        controlScheme: getComputedStyle(query).colorScheme };
     });
     const light = await theme();
     assert.equal(light.scheme, "light");
-    assert.ok(light.corners.every((radius) => radius === "0px"), JSON.stringify(await page.locator("button, input, .search-panel, .records-panel").evaluateAll(elements => elements.map(e => ({ tag: e.tagName, type: e.type, radius: getComputedStyle(e).borderTopLeftRadius })))));
+    const radius = (locator) => locator.evaluate((element) => getComputedStyle(element).borderTopLeftRadius);
+    const token = await page.evaluate(() => {
+      const probe = document.body.appendChild(document.createElement("div"));
+      probe.style.setProperty("border-radius", "var(--radius-md)");
+      const value = getComputedStyle(probe).borderTopLeftRadius;
+      probe.remove();
+      return value;
+    });
+    assert.notEqual(token, "0px");
+    for (const control of [page.getByRole("combobox", { name: "Query", exact: true }), page.getByRole("button", { name: "Search", exact: true }), page.getByRole("button", { name: "Theme", exact: true })])
+      assert.equal(await radius(control), token, "controls use the shared control radius");
+    // The shared theme bootstrap follows the OS change on its media-query event (a task after emulation).
     await page.emulateMedia({ colorScheme: "dark" });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "dark");
     const dark = await theme();
     assert.equal(dark.scheme, "dark");
     assert.equal(dark.controlScheme, "dark");
@@ -570,15 +587,13 @@ await check("system theme changes update native controls and square layouts with
     }).reduce((sum, value, i) => sum + value * [0.2126, 0.7152, 0.0722][i], 0);
     assert.ok(luminance(dark.background) < luminance(light.background));
     assert.ok((luminance(dark.foreground) + 0.05) / (luminance(dark.background) + 0.05) >= 4.5, "dark text contrast is insufficient");
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "browse-dark-desktop.png"), fullPage: true });
     await page.getByRole("combobox", { name: "Query", exact: true }).fill("ty");
     await page.getByRole("option", { name: "type:", exact: true }).waitFor();
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "completion-dark.png"), fullPage: true });
     await page.getByRole("combobox", { name: "Query", exact: true }).press("Escape");
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "dark mobile page overflows");
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "browse-dark-mobile.png"), fullPage: true });
     await page.emulateMedia({ colorScheme: "light" });
+    await page.waitForFunction(() => document.documentElement.dataset.theme === "light");
     assert.equal((await theme()).scheme, "light");
   } finally { await ctx.close(); }
 });
@@ -589,7 +604,7 @@ await check("inbox route persists", async () => {
   try {
     const page = await ctx.newPage();
     await login(page, humanPassword);
-    await page.getByRole("button", { name: "Attention inbox", exact: true }).click();
+    await navLink(page, "Inbox").click();
     await page.getByText("needs attention").waitFor();
     assert.equal(new URL(page.url()).hash, "#/inbox");
   } finally { await ctx.close(); }
@@ -690,12 +705,9 @@ await check("typed field editors preview content, preserve data, and save attrib
     await page.getByLabel("Content: __proto__", { exact: true }).fill("Prototype field edited");
     assert.equal(await page.getByRole("region", { name: "Preview: literal", exact: true }).locator("pre").textContent(), "**literal**\nsecond line");
     assert.equal(await page.getByRole("region", { name: "Preview: literal", exact: true }).locator("strong").count(), 0);
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "typed-editor-light.png"), fullPage: true });
     await page.emulateMedia({ colorScheme: "dark" });
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "typed-editor-dark.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "typed editor overflows on mobile");
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "typed-editor-mobile.png"), fullPage: true });
     await page.getByRole("checkbox", { name: "Preview", exact: true }).uncheck();
     assert.equal(await page.getByRole("region", { name: "Preview: skill", exact: true }).count(), 0);
     await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
@@ -777,12 +789,9 @@ await check("typed Markdown and snippets highlight content without executing or 
     await unsupported.getByText(/Unsupported language/).waitFor();
     assert.equal(await unsupported.locator("pre").textContent(), "literal <script>alert(12)</script>");
     assert.equal(await unsupported.locator("pre span").count(), 0);
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "semantic-fields-light.png"), fullPage: true });
     await page.emulateMedia({ colorScheme: "dark" });
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "semantic-fields-dark.png"), fullPage: true });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "semantic mobile fields overflow");
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "semantic-fields-mobile.png"), fullPage: true });
     await skill.getByText("Markdown source", { exact: true }).click();
     const source = skill.locator(".field-source pre");
     await source.waitFor();
@@ -800,7 +809,7 @@ await check("root arrays and typed Markdown remain renderable", async () => {
     const value = page.getByRole("region", { name: "Field: Value", exact: true });
     await value.waitFor();
     assert.equal(JSON.parse(await value.locator("pre").textContent())[0], "literal");
-    await page.getByRole("button", { name: "Browse", exact: true }).click();
+    await navLink(page, "Browse").click();
     await page.getByRole("button", { name: "ui:root-markdown", exact: true }).click();
     await page.getByRole("region", { name: "Field: Value", exact: true }).getByRole("heading", { name: "Root content", exact: true }).waitFor();
   } finally { await ctx.close(); }
@@ -823,8 +832,8 @@ await check("fidelity + inert rendering", async () => {
   await page.getByLabel("Query").fill("xss");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await page.getByRole("button", { name: "ui:xss" }).click();
-  // Literal payload text is visible…
-  await page.getByText('<script>alert("xss")</script>', { exact: false }).first().waitFor();
+  // Literal payload text is visible (the list it was opened from stays mounted, hidden, under the record)…
+  await page.getByText('<script>alert("xss")</script>', { exact: false }).filter({ visible: true }).first().waitFor();
   // …but nothing executed and no raw elements were created.
   assert.equal(dialogued, false);
   assert.equal(await page.locator("img").count(), 0);
@@ -886,7 +895,7 @@ await check("conflict preserves draft", async () => {
   // two concurrent editors of the same item.
   await login(a, humanPassword);
   await b.goto(`${base}/#/browse`);
-  await b.getByRole("button", { name: "Browse" }).waitFor();
+  await navLink(b, "Browse").waitFor();
   for (const page of [a, b]) {
     await page.getByLabel("Query").fill("hello");
     await page.getByRole("button", { name: "Search", exact: true }).click();
@@ -926,12 +935,12 @@ await check("attention inbox", async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await login(page, humanPassword);
-  await page.getByRole("button", { name: "Attention inbox" }).click();
+  await navLink(page, "Inbox").click();
   await page.getByText("needs attention").waitFor();
   await page.getByRole("button", { name: "ui:todo" }).click();
   await page.getByRole("button", { name: "Clear attention" }).click();
   await page.getByText(/Attention cleared/).waitFor();
-  await page.getByRole("button", { name: "Attention inbox" }).click();
+  await navLink(page, "Inbox").click();
   await page.getByRole("heading", { name: "No records requiring review", exact: true }).waitFor();
   await ctx.close();
 });
@@ -942,17 +951,17 @@ await check("an unavailable logout does not pretend the session was cleared", as
     const page = await ctx.newPage();
     await login(page, humanPassword);
     const session = (await ctx.cookies(base)).find((cookie) => cookie.name === "haystack-dev");
-    await page.route("**/api/v1/logout", (route) => route.fulfill({ status: 503, contentType: "text/html", body: "Service unavailable" }));
-    const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/logout"));
-    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await page.route("**/api/account/v1/logout", (route) => route.fulfill({ status: 503, contentType: "text/html", body: "Service unavailable" }));
+    const response = page.waitForResponse((value) => value.url().endsWith("/api/account/v1/logout"));
+    await signOut(page);
     await response;
     assert.equal(await page.getByLabel("Password", { exact: true }).count(), 0, "failed logout must retain signed-in identity");
-    await page.getByRole("status").filter({ hasText: "Sign out did not complete" }).waitFor({ timeout: 3000 });
+    await page.getByRole("status").filter({ hasText: "Sign-out failed" }).waitFor({ timeout: 3000 });
     assert.ok((await ctx.cookies(base)).find((cookie) => cookie.name === session.name).value === session.value, "failed logout must preserve the session token");
-    await page.unroute("**/api/v1/logout");
+    await page.unroute("**/api/account/v1/logout");
     await page.reload();
-    await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
-    await page.getByRole("button", { name: "Sign out", exact: true }).click();
+    await navLink(page, "Browse").waitFor();
+    await signOut(page);
     await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
   } finally { await ctx.close(); }
 });
@@ -990,10 +999,8 @@ await check("live writes refresh browse and preserve concurrent drafts", async (
     await page.getByRole("button", { name: "Save as new revision", exact: true }).click();
     await page.getByRole("alert").waitFor();
     assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "My preserved draft");
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "draft-conflict.png"), fullPage: true });
     await page.getByRole("button", { name: "Discard draft and reload", exact: true }).click();
     await page.getByRole("heading", { name: "Updated elsewhere", exact: true }).waitFor();
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "record-desktop.png"), fullPage: true });
   } finally { await ctx.close(); }
 });
 
@@ -1028,7 +1035,6 @@ await check("silent heartbeat loss opens an overlapping replacement", async () =
     await page.getByText("Event log", { exact: true }).click();
     await page.getByText(/Heartbeat overdue/).waitFor();
     await page.getByText(/Superseded/).waitFor();
-    if (ARTIFACTS) await page.screenshot({ path: path.join(ARTIFACTS, "connection-recovery.png"), fullPage: true });
   } finally { await ctx.close(); }
 });
 
@@ -1041,11 +1047,11 @@ await check("permanent close stops and manual retry resynchronizes missed writes
     await login(page, humanPassword);
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await channel.close({ code: 1007, reason: "Injected invalid payload" });
-    await page.getByRole("button", { name: "Connection: Connection stopped", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Connection: Offline", exact: true }).waitFor();
     await seed.put({ key: "live:missed", documentJson: docOf({ title: "Created while disconnected" }), expectedRevision: 0, requestId: rid() });
     assert.equal(await page.getByText("Created while disconnected", { exact: true }).count(), 0);
-    await page.getByRole("button", { name: "Connection: Connection stopped", exact: true }).click();
-    await page.getByRole("button", { name: "Try again", exact: true }).click();
+    await page.getByRole("button", { name: "Connection: Offline", exact: true }).click();
+    await page.getByRole("button", { name: "Reconnect now", exact: true }).click();
     await page.getByText("Created while disconnected", { exact: true }).waitFor();
     assert.equal(await page.title(), "Haystack · Live");
   } finally { await ctx.close(); }
@@ -1058,19 +1064,20 @@ await check("navigation suspension and resume restore live updates", async () =>
     await login(page, humanPassword);
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true })));
-    await page.getByRole("button", { name: "Connection: Connection paused", exact: true }).waitFor();
+    await page.getByRole("button", { name: "Connection: Offline", exact: true }).click();
+    await page.getByText("The page is paused; the connection resumes when it is shown again.", { exact: true }).waitFor();
+    await page.keyboard.press("Escape");
     await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await page.evaluate(() => document.dispatchEvent(new Event("resume")));
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
     await page.getByRole("button", { name: "Connection: Live", exact: true }).click();
     await page.getByText("Event log", { exact: true }).click();
-    await page.getByText(/Page navigation/).waitFor();
     await page.getByText(/Checking connection after resume/).first().waitFor();
   } finally { await ctx.close(); }
 });
 
-await checkBrowse({ browser, base, login, humanPassword, check, seed, agent, docOf, rid, artifacts: ARTIFACTS,
+await checkBrowse({ browser, base, login, navLink, humanPassword, check, seed, agent, docOf, rid,
   interceptSearch: (handler) => { searchInterceptor = handler; },
 });
 

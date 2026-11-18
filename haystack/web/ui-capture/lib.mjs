@@ -6,8 +6,9 @@ export class Recorder {
   constructor(outDir) { this.outDir = outDir; this.n = 0; this.entries = []; this.manifest = []; this.notes = []; }
   async init() { await mkdir(path.join(this.outDir, "dom"), { recursive: true }); }
   section(title) { this.entries.push({ section: title }); }
-  /** slug = "page-state"; viewport label is appended automatically. */
-  async shot(page, slug, { desc, how, full = false, clip = undefined, locator = undefined, expect = [] } = {}) {
+  /** slug = "page-state"; viewport label is appended automatically, unless `file` names the output exactly
+   *  (mockup shot names, spec §8 item 10: `<app>-<view>-<state>[-dark]-<width>.png`). */
+  async shot(page, slug, { desc, how, full = false, clip = undefined, locator = undefined, expect = [], file: named = undefined } = {}) {
     if (!desc || !how) throw new Error(`shot ${slug}: desc and how are required`);
     // Fail loudly on a blank/half-loaded capture: every expected selector must be visible.
     for (const selector of expect) await page.locator(selector).first().waitFor({ state: "visible", timeout: 5000 }).catch(() => { throw new Error(`shot ${slug}: expected ${selector} to be visible`); });
@@ -16,7 +17,8 @@ export class Recorder {
     const vp = page.viewportSize();
     const theme = await page.evaluate(() => matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     const label = `${vp.width}x${vp.height}${theme === "dark" ? "-dark" : ""}${full ? "-full" : ""}`;
-    const file = `${String(++this.n).padStart(2, "0")}-${slug}-${label}.png`;
+    ++this.n;
+    const file = named ?? `${String(this.n).padStart(2, "0")}-${slug}-${label}.png`;
     await (locator ?? page).screenshot({ path: path.join(this.outDir, file), fullPage: locator ? undefined : full, clip });
     this.entries.push({ file, desc, how });
     const live = await page.evaluate(() => ({

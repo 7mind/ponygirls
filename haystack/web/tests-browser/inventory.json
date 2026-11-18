@@ -111,7 +111,7 @@
     "accepted field prefixes immediately offer value hints without a preset row",
     "query completion coalesces in-flight requests and replaces a mid-token suffix",
     "dismissed query completions do not reopen after a delayed response",
-    "system theme changes update native controls and square layouts without reloading",
+    "system theme changes update native controls and shared radius tokens without reloading",
     "inbox route persists",
     "search + diagnostics + archive",
     "semantic fields preserve scalar types and exact nested numbers through history",
@@ -140,7 +140,11 @@
     "unsafe legacy URL filters show a migration error without searching",
     "HTTPS session survives backend stop, refresh, restart, refresh; logout still expires it",
     "quick-ui.sh restart retains its private database, password and independent browser session",
-    "Haystack password login, settings lifecycle and token controls fit desktop and mobile"
+    "Haystack password login, account page in the outlet with token lifecycle, identity change and module sign-out at desktop widths",
+    "shell: the five presets and records are routes; Back restores the originating list, its scroll and row focus",
+    "shell: masthead fits 1440, 1024 and 390 pixels in light and dark; menus and popover close with Escape",
+    "shell: a live change never resets a scrolled list; an untouched list refreshes in place",
+    "shell: Access tokens open in the account outlet over a kept list (degraded server) and Sign out is module-owned"
   ],
   "markupCases": [
     "browse initial markup exposes one expression, secondary help and sortable columns without pagination"

@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
-import { browseHash, sameBrowseState, type BrowseState } from "./browse-state";
+import { browseHash, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
 import { useLiveUpdates } from "./Live";
 import { Icon } from "./Icon";
 import { QueryInput } from "./QueryInput";
 
 const PAGE_SIZE = 20;
+const HEADINGS: Record<Preset, string> = { browse: "Records", inbox: "Attention inbox", upstream: "Upstream activity", skills: "Skill candidates", archive: "Archive" };
 const PREFETCH_MARGIN = "200px";
 const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
   { field: "title", label: "Record" }, { field: "project", label: "Project" },
@@ -14,9 +15,9 @@ const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
   { field: "modified-at", label: "Modified" }, { field: "revision", label: "Rev" },
 ];
 
-export function Browse({ initial, inbox, onOpen, onAuthLost }: {
+export function Browse({ initial, preset, onOpen, onAuthLost }: {
   initial: BrowseState;
-  inbox: boolean;
+  preset: Preset;
   onOpen: (key: string) => void;
   onAuthLost: () => void;
 }) {
@@ -35,9 +36,12 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
   const applied = useRef(initial);
   const panel = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
+  const [changed, setChanged] = useState(false);
   const live = useLiveUpdates();
+  const inbox = preset === "inbox";
 
-  const run = useCallback(async (state: BrowseState, cursorValue: string | undefined) => {
+  // `refresh` reloads the first page in place: rows stay until the new page arrives and the scroll is kept.
+  const run = useCallback(async (state: BrowseState, cursorValue: string | undefined, refresh = false) => {
     const append = cursorValue !== undefined;
     if (append && (pending.current !== null || cursorValue !== continuation.current)) return;
     const request = ++sequence.current;
@@ -45,7 +49,8 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
     setBusy(true);
     setError("");
     setDiagnostics([]);
-    if (!append) {
+    if (!append) setChanged(false);
+    if (!append && !refresh) {
       setItems([]);
       continuation.current = undefined;
       setCursor(undefined);
@@ -90,8 +95,12 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
     void run(initial, undefined);
   }, [initial.query, initial.migrationError, initial.sort.field, initial.sort.direction, run]);
 
+  // A live change never resets a list the reader has scrolled or extended: it is announced instead (spec §1.5).
   useEffect(() => {
-    if (live.version !== 0) void run(applied.current, undefined);
+    if (live.version === 0) return;
+    const untouched = (panel.current === null || panel.current.scrollTop === 0) && items.length <= PAGE_SIZE;
+    if (untouched) void run(applied.current, undefined, true);
+    else setChanged(true);
   }, [live.version, run]);
   useEffect(() => () => { sequence.current++; }, []);
 
@@ -111,7 +120,7 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
     continuation.current = undefined;
     setBusy(true);
     applied.current = state;
-    const hash = browseHash(state, inbox);
+    const hash = browseHash(state, preset);
     if (location.hash !== hash) { location.hash = hash; return; }
     void run(state, undefined);
   }
@@ -131,10 +140,11 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
     </th>;
   }
 
-  return (
+  return (<>
+    {changed && <div className="update-pill"><button type="button" onClick={() => void run(applied.current, undefined)}>Records changed · Show</button></div>}
     <section className="browse-view" aria-label="Browse" aria-busy={busy}>
       <div className="page-heading"><div>
-        <h1>{inbox ? "Attention inbox" : initial.query === "type:skill-draft" ? "Skill candidates" : initial.query === "archived:true" || initial.query === 'archived:"true"' ? "Archive" : initial.query.includes("github-") ? "Upstream activity" : "Records"}</h1>
+        <h1>{HEADINGS[preset]}</h1>
         <p>{inbox ? "Records requiring review." : "Search by text, metadata, tags, or project."}</p></div></div>
       <form
         className="search-panel"
@@ -199,5 +209,5 @@ export function Browse({ initial, inbox, onOpen, onAuthLost }: {
         {cursor !== undefined && error === "" && <button type="button" disabled={busy} onClick={() => void run(applied.current, cursor)}>Load more records</button>}
       </div>
     </section>
-  );
+  </>);
 }

@@ -36,8 +36,8 @@ background execution lane rather than extending foreground tool timeouts.
 
 `inventory.json` is checked exactly against all 81 JUnit leaf cases (82 Node
 cases including the helper-mode group), 39 main browser checks, sixteen controlled
-layout checks, the controlled account fixture, HTTPS restart, preview restart,
-and markup case. The original 36 atomic cases remain.
+layout checks, the controlled account fixture, four shell checks, HTTPS restart,
+preview restart, and markup case. The original 36 atomic cases remain.
 A fresh report records source and inventory hashes, dependency identities,
 JAR/ELF SHA256 before and after, complete logs, XML, and a zero-skip receipt.
 Failed/missing case inventories fail the runner; existing reports are never
@@ -118,14 +118,26 @@ valid without changing the evaluated JSON.
 ## Controlled account integration
 
 `npm run test:account` uses the real React app and shared account assets with
-owned HTTP fixtures. It checks username/password sign-in, distinct invalid-login
-and outage feedback, independent HttpOnly cookies, configured-token immutability,
-create/copy/dismiss/revoke, secret-free web storage, focus restoration, logout,
-and Settings-to-Haystack identity-change hooks at 1440, 390 and 320 pixels in
-both themes. It does not establish backend account authorization or persistence.
+owned HTTP fixtures that answer only the five existing account endpoints (the
+module's degraded mode). It checks username/password sign-in, distinct
+invalid-login and outage feedback, independent HttpOnly cookies, the Access tokens
+page in the account outlet over the kept list, configured-token immutability,
+create/reveal/copy/"I have saved it"/revoke through in-app dialogs, secret-free web
+storage, an identity change observed by the module, and module-owned sign-out at
+1440 and 1024 pixels in both themes (the shared account page has no phone layout
+yet). It does not establish backend account authorization or persistence.
 The default assets are `shared/account-web`; an explicit absolute
 `HAYSTACK_ACCOUNT_WEB_ROOT` can select another task worktree for integration
-checks. The fixture records both asset SHA-256 digests without secrets.
+checks. The fixture records the three asset SHA-256 digests without secrets.
+
+## Shell
+
+`node tests-browser/shell.mjs` serves the built `web/dist` and drives it in pinned
+Chromium against page-routed API responses and a routed live socket (no backend):
+the five preset routes and record/edit routes with a state-preserving Back,
+the masthead at 1440, 1024 and 390 pixels in both themes, live changes on scrolled
+and untouched lists, the account outlet over a kept list and module-owned sign-out,
+and no native dialogs. Needs `HAYSTACK_CHROMIUM` and a prior `npm run build`.
 
 ## Viewport layout regression
 
@@ -133,18 +145,15 @@ The controlled-API layout fixture renders the actual App in pinned Chromium.
 It checks 1440, 1101, 1100, 1024, 801, 800, 390 and 320 pixel viewports in
 light/dark mode with long
 unbroken titles, identifiers, projects, types, tags and modifier identities.
-The header/toolbar must expose every workspace destination, Settings, Sign out,
-and the activity namespace without a sidebar or overlapping controls; live
-connection details must fit the viewport. Ordinary desktop rows stay compact.
+Ordinary desktop rows stay compact.
 Page, results region and table must fit horizontally without clipping metadata;
 every sort control and the open-record action is exercised by keyboard. Account
-identity changes refresh the principal and invalidate stale Settings state
-before logout or identity replacement.
+identity changes refresh the principal, update the account outlet's owner and
+invalidate stale account state. The masthead is covered by the shell checks.
 Accessibility snapshots retain the table, rows, column headers and cells. This is UI layout
 coverage, not backend/protocol acceptance. It also runs in `test:browser`.
 
 ```sh
 HAYSTACK_CHROMIUM=/absolute/pinned/chromium \
-HAYSTACK_UI_ARTIFACTS=/absolute/fresh-screenshots \
 nix develop .#chronicle --command bash -c 'cd haystack/web && npm run test:layout'
 ```

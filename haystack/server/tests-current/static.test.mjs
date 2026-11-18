@@ -13,7 +13,7 @@ it("fixed account assets serve same-size timestamp-preserving updates while hash
     await mkdir(config.webRoot);
   });
   try {
-    for (const name of ["account.js", "account.css"]) {
+    for (const name of ["account.js", "account-client.js", "account.css"]) {
       const file = path.join(f.config.webRoot, name);
       await writeFile(file, "/* account v1 */\n");
       await utimes(file, timestamp, timestamp);

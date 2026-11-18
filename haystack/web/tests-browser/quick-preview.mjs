@@ -71,7 +71,7 @@ try {
   await page.getByLabel("Username", { exact: true }).fill(first.login);
   await page.getByLabel("Password", { exact: true }).fill(first.password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
   const cookie = (await ctx.cookies(base)).find((value) => value.name === "haystack-dev");
   assert.ok(cookie);
   assert.ok(cookie.value !== seedToken && cookie.value !== first.password, "preview cookie must be an independent browser session");
@@ -93,7 +93,7 @@ try {
   assert.equal(who.status(), 200, "restarting quick-ui.sh must accept the existing cookie");
   assert.ok(first.login === second.login && first.password === second.password, "preview credentials must remain stable across launches");
   await page.goto(base);
-  await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
   assert.equal(await page.getByLabel("Password", { exact: true }).count(), 0);
   await page.getByText("Retained preview edit", { exact: true }).waitFor();
   assert.equal((await ctx.request.get(`${base}/api/v1/whoami`, { headers: { Cookie: `haystack-dev=${seedToken}` } })).status(), 401, "API seed must not authenticate as a browser cookie");

@@ -152,7 +152,7 @@ try {
   await page.getByLabel("Username", { exact: true }).fill("op");
   await page.getByLabel("Password", { exact: true }).fill(password);
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
-  await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
   await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
   const session = (await ctx.cookies()).find((cookie) => cookie.name === "__Host-haystack");
   assert.ok(session && session.secure && session.httpOnly);
@@ -178,10 +178,11 @@ try {
   diagnostic.phase = "backend-restart";
   await startBackend();
   await page.reload();
-  await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
   await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
   assert.ok((await ctx.cookies()).find((cookie) => cookie.name === session.name).value === session.value, "restart must preserve the session token");
-  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await page.getByRole("button", { name: "op", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Sign out", exact: true }).click();
   await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
   await page.reload();
   await page.getByRole("button", { name: "Sign in", exact: true }).waitFor();
@@ -190,7 +191,6 @@ try {
   // Never capture requests, response bodies, credentials or cookie values.
   const evidence = { ...diagnostic, cookies: context ? (await context.cookies()).map(({ name, secure, httpOnly, sameSite }) => ({ name, secure, httpOnly, sameSite })) : [] };
   console.error("HTTPS restart diagnostic:", JSON.stringify(evidence));
-  if (process.env.HAYSTACK_UI_ARTIFACTS) await writeFile(path.join(process.env.HAYSTACK_UI_ARTIFACTS, "https-restart-diagnostic.json"), JSON.stringify(evidence, null, 2) + "\n");
   throw error;
 } finally {
   if (browser !== undefined) await browser.close();

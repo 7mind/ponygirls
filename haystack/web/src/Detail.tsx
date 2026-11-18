@@ -13,9 +13,13 @@ interface Conflict {
   currentModifiedAt: string;
 }
 
-export function Detail({ itemKey, onBack, onAuthLost }: {
+export function Detail({ itemKey, edit, onBack, onEdit, onEditDone, onAuthLost }: {
   itemKey: string;
+  /** The edit route (#/item/<key>/edit) is current: the editor opens once the record is loaded. */
+  edit: boolean;
   onBack: () => void;
+  onEdit: () => void;
+  onEditDone: () => void;
   onAuthLost: () => void;
 }) {
   const [item, setItem] = useState<Item | null>(null);
@@ -64,7 +68,6 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
   }, [itemKey, onAuthLost]);
 
   useEffect(() => {
-    location.hash = `#/item/${encodeURIComponent(itemKey)}`;
     setEditing(false);
     setConflict(null);
     setSnapshot(null);
@@ -80,6 +83,12 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
     }
     void load(true);
   }, [live.version, load]);
+
+  const loaded = item !== null;
+  useEffect(() => {
+    if (!edit) setEditing(false);
+    else if (loaded) startEdit();
+  }, [edit, loaded]);
 
   function startEdit() {
     if (item === null) return;
@@ -145,6 +154,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       const out = await api.put(item.key, documentJson, editRevision.current, uuidv7());
       setConflict(null);
       setEditing(false);
+      onEditDone();
       setRemoteUpdate(false);
       setStatus(`Saved as revision ${out.revision}.`);
       await load(true);
@@ -214,6 +224,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
       const out = await api.put(item.key, documentJson, revision, uuidv7());
       setConflict(null);
       setEditing(false);
+      onEditDone();
       setRemoteUpdate(false);
       setStatus(`Saved as revision ${out.revision}.`);
       await load(true);
@@ -306,7 +317,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
           <button type="button" disabled={fieldsInspection.error !== null} onClick={() => void retryOnLatest()}>
             Save my draft on top of revision {conflict.currentRevision}
           </button>
-          <button type="button" onClick={() => { setConflict(null); setEditing(false); void load(); }}>
+          <button type="button" onClick={() => { setConflict(null); setEditing(false); onEditDone(); void load(); }}>
             Discard draft and reload
           </button>
         </div>
@@ -347,7 +358,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
               ))}
             </ul>
           )}
-          </div></div><div className="record-actions"><button className="primary" type="button" onClick={startEdit}>Edit</button>
+          </div></div><div className="record-actions"><button className="primary" type="button" onClick={onEdit}>Edit</button>
           {item.document.humanAttention === "required" && (
             <button type="button" onClick={() => void clearAttention()}>Clear attention</button>
           )}
@@ -393,7 +404,7 @@ export function Detail({ itemKey, onBack, onAuthLost }: {
             <option value="high" /><option value="low" />
           </datalist>
           <button className="primary" type="submit" disabled={fieldsInspection.error !== null}>Save as new revision</button>
-          <button type="button" onClick={() => setEditing(false)}>Cancel</button>
+          <button type="button" onClick={() => { setEditing(false); onEditDone(); }}>Cancel</button>
         </form>
       )}
       <div className="detail-panel history-panel"><h3>Revision history</h3>

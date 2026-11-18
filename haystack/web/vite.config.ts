@@ -18,6 +18,7 @@ function sharedAssets(): Plugin {
   const file = (root: string, path: string, name: string, contentType: string): SharedAsset => ({ name, contentType, read: async () => readFileSync(join(root, path)) });
   const assets: readonly SharedAsset[] = [
     file(account, "account.js", "account.js", "text/javascript"),
+    file(account, "account-client.js", "account-client.js", "text/javascript"),
     file(account, "account.css", "account.css", "text/css"),
     file(ui, "tokens.css", "ui/tokens.css", "text/css"),
     file(ui, "components.css", "ui/components.css", "text/css"),

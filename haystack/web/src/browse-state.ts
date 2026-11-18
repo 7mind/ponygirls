@@ -7,14 +7,25 @@ export interface BrowseState {
   migrationError: string | null;
 }
 
+/** The five navigation presets: each is a route (`#/<preset>`) whose default query is its preset expression. */
+export type Preset = "browse" | "inbox" | "upstream" | "skills" | "archive";
+export const PRESETS: Readonly<Record<Preset, { readonly label: string; readonly query: string }>> = {
+  browse: { label: "Browse", query: "" },
+  inbox: { label: "Inbox", query: "human-attention:required" },
+  upstream: { label: "Upstream", query: "type:github-issue OR type:github-pr" },
+  skills: { label: "Skill drafts", query: "type:skill-draft" },
+  archive: { label: "Archive", query: "archived:true" },
+};
+export const PRESET_ORDER: readonly Preset[] = ["browse", "inbox", "upstream", "skills", "archive"];
+
 export const DEFAULT_SORT: SearchSort = { field: "modified-at", direction: "desc" };
 const SORT_FIELDS: readonly SearchSortField[] = ["key", "title", "project", "type", "status", "importance", "human-attention", "modified-at", "revision"];
 const MIGRATION_ERROR = "Cannot safely migrate legacy URL filters into this query. No search was run. Open Browse to reset, or complete the query in the original URL.";
 
-export function readBrowseState(hash: string, inbox: boolean): BrowseState {
+export function readBrowseState(hash: string, preset: Preset): BrowseState {
   const start = hash.indexOf("?");
   const params = new URLSearchParams(start === -1 ? "" : hash.slice(start + 1));
-  const original = params.get("q") ?? (inbox ? "human-attention:required" : "");
+  const original = params.get("q") ?? PRESETS[preset].query;
   const project = (params.get("project") ?? "").trim();
   const tag = (params.get("tag") ?? "").trim();
   const archive = params.get("archive");
@@ -39,15 +50,15 @@ export function readBrowseState(hash: string, inbox: boolean): BrowseState {
   };
 }
 
-export function browseHash(state: BrowseState, inbox: boolean): string {
+export function browseHash(state: BrowseState, preset: Preset): string {
   if (state.migrationError !== null) throw new Error("Cannot serialize a failed legacy URL migration.");
   const params = new URLSearchParams();
-  if (state.query !== (inbox ? "human-attention:required" : "")) params.set("q", state.query);
+  if (state.query !== PRESETS[preset].query) params.set("q", state.query);
   if (state.sort.field !== DEFAULT_SORT.field || state.sort.direction !== DEFAULT_SORT.direction) {
     params.set("sort", state.sort.field);
     params.set("direction", state.sort.direction);
   }
-  return `${inbox ? "#/inbox" : "#/browse"}${params.size > 0 ? `?${params.toString()}` : ""}`;
+  return `#/${preset}${params.size > 0 ? `?${params.toString()}` : ""}`;
 }
 
 export function sameBrowseState(left: BrowseState, right: BrowseState): boolean {

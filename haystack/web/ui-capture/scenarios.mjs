@@ -16,7 +16,7 @@ async function loggedInState(env) {
   await page.getByLabel("Username", { exact: true }).fill("op");
   await page.getByLabel("Password", { exact: true }).fill(env.passwords.op);
   await page.getByRole("button", { name: "Sign in" }).click();
-  await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
   storage = await ctx.storageState();
   await ctx.close();
   return storage;
@@ -34,7 +34,7 @@ export async function open(env, { viewport = DESKTOP, dark = false, auth = true 
 
 export async function gotoBrowse(page, env, hash = "#/browse") {
   await page.goto(`${env.base}/${hash}`);
-  await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
   await settle(page);
 }
 export async function settle(page) {
@@ -86,7 +86,7 @@ export const scenarios = [
       const nav = page.goto(`${env.base}/#/browse`);
       await page.waitForTimeout(500);
       await rec.shot(page, "boot-loading", { desc: "Bare 'Loading…' boot screen while whoami is pending (delayed 3 s)", how: "open /#/browse with a valid session; delay /api/v1/whoami", expect: ["[role=status]"] });
-      await nav; await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await nav; await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
       await page.unroute("**/api/v1/whoami");
       await page.route("**/api/v1/whoami", (route) => route.abort("connectionrefused"));
       await page.reload();
@@ -213,7 +213,7 @@ export const scenarios = [
         ["#/browse?q=archived%3Atrue", "archive", "Archive: archived:true records (same table, preset query)", true],
       ]) {
         await page.goto(`${env.base}/${hash}`);
-        await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+        await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
         await settle(page);
         await rec.shot(page, `nav-${slug}`, { desc, how: `open /${hash}`, expect: [".records-panel tbody tr", "button[aria-current=page]"] });
         if (full) await rec.shot(page, `nav-${slug}`, { desc: desc + " (full page)", how: "same, fullPage", full: true });
@@ -229,7 +229,7 @@ export const scenarios = [
       let { ctx, page } = await open(env);
       await page.route("**/api/v1/search", (route) => route.fulfill(fault("internal", "synthetic backend failure")));
       await page.goto(`${env.base}/#/browse`);
-      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
       await page.getByRole("alert").first().waitFor();
       await page.waitForTimeout(300);
       await rec.shot(page, "error-search-failed", { desc: "First search fails (HTTP 500): alert 'Search failed: …' with Retry button above an empty table header (the empty-state card is suppressed while an error is shown)", how: "fulfill POST /api/v1/search with a 500 fault", expect: ["[role=alert]"] });
@@ -238,7 +238,7 @@ export const scenarios = [
       ({ ctx, page } = await open(env));
       await page.route("**/api/v1/search", (route) => route.abort("connectionrefused"));
       await page.goto(`${env.base}/#/browse`);
-      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
       await page.getByRole("alert").first().waitFor();
       await page.waitForTimeout(300);
       await rec.shot(page, "error-search-unreachable", { desc: "Search request aborted at the network level: 'Server unreachable' alert inside the otherwise normal shell", how: "abort POST /api/v1/search", expect: ["[role=alert]"] });
@@ -247,7 +247,7 @@ export const scenarios = [
       ({ ctx, page } = await open(env));
       await page.route("**/api/v1/search", (route) => /"cursor":"/.test(route.request().postData() ?? "") ? route.fulfill(fault("internal", "synthetic page-2 failure")) : route.continue());
       await page.goto(`${env.base}/#/browse`);
-      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
       await page.locator(".records-panel tbody tr").first().waitFor();
       await page.waitForTimeout(1500);
       await page.locator(".records-panel").evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -266,7 +266,7 @@ export const scenarios = [
       let slow = 0;
       await page.route("**/api/v1/search", async (route) => { const cursor = /"cursor":"/.test(route.request().postData() ?? ""); if (cursor) { slow++; await sleep(4000); } await route.continue(); });
       await page.goto(`${env.base}/#/browse`);
-      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
       await page.locator(".records-panel tbody tr").first().waitFor();
       await page.waitForTimeout(1500);
       await page.locator(".records-panel").evaluate((el) => { el.scrollTop = el.scrollHeight; });
@@ -277,7 +277,7 @@ export const scenarios = [
       ({ ctx, page } = await open(env));
       await page.route("**/api/v1/search", async (route) => { await sleep(4000); await route.continue(); });
       await page.goto(`${env.base}/#/browse`);
-      await page.getByRole("button", { name: "Browse", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Browse", exact: true }).waitFor();
       await page.waitForTimeout(600);
       await rec.shot(page, "loading-first", { desc: "First search in flight (delayed 4 s): 'Searching…' footer, no skeleton, empty table header only", how: "delay POST /api/v1/search, capture 600 ms after the shell renders", expect: [".results-footer"] });
       await ctx.close();
@@ -686,6 +686,66 @@ export const scenarios = [
       await page.getByRole("button", { name: /^Connection:/ }).click(); await page.waitForTimeout(300);
       await rec.shot(page, "live-panel-expanded", { desc: "Connection popover, dark theme", how: "click the connection button", expect: [".connection-panel"] });
       await ctx.close();
+    },
+  },
+  {
+    // UX-H1 (shell): outputs are named like the mockup shots for comparison through `look` (spec §8 item 10).
+    name: "shell", title: "UX-H1 shell: masthead, presets, record, connection popover, account outlet, sign-in",
+    async run(env) {
+      const { rec } = env;
+      const h = heroes(env);
+      const nav = (page) => page.getByRole("navigation", { name: "Main navigation" });
+      const record = async (page, key) => {
+        await page.goto(`${env.base}/#/browse`); await settle(page);
+        await page.goto(`${env.base}/#/item/${enc(key)}`);
+        await page.getByRole("button", { name: "Edit", exact: true }).waitFor(); await page.waitForTimeout(400);
+      };
+      for (const [viewport, width] of [[DESKTOP, 1440], [SMALL, 1024], [MOBILE, 390]]) for (const dark of [false, true]) {
+        const suffix = `${dark ? "-dark" : ""}-${width}`;
+        const { ctx, page } = await open(env, { viewport, dark });
+        await gotoBrowse(page, env);
+        await rec.shot(page, "shell-browse", { file: `haystack-browse${suffix}.png`, desc: "Browse under the new masthead (view inside not restyled yet: UX-H2)", how: "open /#/browse", expect: ["header nav a[aria-current=page]"] });
+        await nav(page).getByRole("link", { name: "Inbox", exact: true }).click(); await settle(page);
+        await rec.shot(page, "shell-inbox", { file: `haystack-browse-inbox${suffix}.png`, desc: "Inbox preset route: nav highlight and count", how: "click Inbox in the masthead", expect: ["header nav a[aria-current=page]"] });
+        await record(page, h.todo.key);
+        await rec.shot(page, "shell-record", { file: `haystack-detail${suffix}.png`, desc: "Record route under the new masthead (inside not restyled yet: UX-H3)", how: `open /#/item/${h.todo.key}`, expect: ["header nav"] });
+        await page.getByRole("button", { name: /^Connection:/ }).click();
+        await page.getByText("Event log", { exact: true }).click();
+        await rec.shot(page, "shell-connection", { file: `haystack-connection-live${suffix}.png`, desc: "Connection popover, Live, event log open", how: "click the masthead indicator, open Event log", expect: ["#connection-details"] });
+        await page.keyboard.press("Escape");
+        await page.getByRole("button", { name: "op", exact: true }).click();
+        await rec.shot(page, "shell-user-menu", { file: `haystack-user-menu${suffix}.png`, desc: "User menu (no Users entry: this server has no GET /profile)", how: "click the user button", expect: ["[role=menu]"] });
+        await page.getByRole("menuitem", { name: "Access tokens", exact: true }).click();
+        await page.getByRole("heading", { name: "Access tokens", exact: true }).waitFor(); await page.waitForTimeout(400);
+        await rec.shot(page, "shell-tokens", { file: `account-settings-tokens-haystack${suffix}.png`, desc: "Access tokens in the account outlet (degraded server: login + tokens only)", how: "user menu → Access tokens", expect: ["[data-account-outlet] table"] });
+        await ctx.close();
+      }
+      // Connection popover states over a routed live socket: reconnecting (each attempt closed 1011), offline (permanent close).
+      for (const [state, code] of [["reconnecting", 1011], ["offline", 1007]]) for (const dark of [false, true]) {
+        const { ctx, page } = await open(env, { dark });
+        const reason = state === "offline" ? "Injected invalid payload" : "server restart";
+        let first = null;
+        await page.routeWebSocket(/\/api\/v1\/live$/, (socket) => {
+          if (first !== null) { void socket.close({ code, reason }); return; }
+          first = socket; socket.connectToServer();
+        });
+        await gotoBrowse(page, env);
+        await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
+        await first.close({ code, reason });
+        const label = state === "offline" ? "Connection: Offline" : /^Connection: Reconnecting, attempt [2-9]/;
+        await page.getByRole("button", { name: label }).waitFor({ timeout: 15000 });
+        await page.getByRole("button", { name: label }).click();
+        await page.getByText("Event log", { exact: true }).click();
+        await rec.shot(page, `shell-connection-${state}`, { file: `haystack-connection-${state}${dark ? "-dark" : ""}-1440.png`, desc: `Connection popover, ${state}`, how: `route /api/v1/live: close the live socket and every later one with ${code}`, expect: ["#connection-details"] });
+        await ctx.close();
+      }
+      for (const [viewport, width] of [[DESKTOP, 1440], [SMALL, 1024], [MOBILE, 390]]) for (const dark of [false, true]) {
+        const { ctx, page } = await open(env, { auth: false, viewport, dark });
+        await page.goto(`${env.base}/#/browse`);
+        await page.getByLabel("Username", { exact: true }).waitFor();
+        await rec.shot(page, "shell-login", { file: `account-login-default-haystack${dark ? "-dark" : ""}-${width}.png`, desc: "Sign-in card rendered by the shared module into the auth mount", how: "open /#/browse without a session", expect: ["form[data-account-login]"] });
+        await ctx.close();
+      }
     },
   },
 ];

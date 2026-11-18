@@ -12,12 +12,13 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <script src="/ui/theme-init.js" vite-ignore></script>
     <link rel="stylesheet" href="/ui/tokens.css" vite-ignore />
-    <link rel="stylesheet" href="/ui/components.css" media="not all" vite-ignore />
-    <link rel="stylesheet" href="/account.css" vite-ignore />
+    <link rel="stylesheet" href="/ui/components.css" vite-ignore />
     <script type="module" src="/account.js" vite-ignore></script>
   </head>
   <body>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
+    <!-- After the app stylesheet that the build injects into <head>: tokens, components, app view CSS, account.css. -->
+    <link rel="stylesheet" href="/account.css" vite-ignore />
   </body>
 </html>

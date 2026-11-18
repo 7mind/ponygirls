@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export async function checkBrowse({ browser, base, login, humanPassword, check, seed, agent, docOf, rid, artifacts, interceptSearch }) {
+export async function checkBrowse({ browser, base, login, navLink, humanPassword, check, seed, agent, docOf, rid, interceptSearch }) {
   const total = 45;
   // Reverse insertion order makes real modified-at desc match the original
   // constant-clock/key-order fixture, without injecting private server state.
@@ -33,13 +33,10 @@ export async function checkBrowse({ browser, base, login, humanPassword, check, 
       assert.ok((await page.evaluate(() => location.hash)).includes("sort=title"));
       await page.reload();
       await page.waitForFunction(() => document.querySelector(".record-open strong")?.textContent === "Record 00");
-      if (artifacts) await page.screenshot({ path: `${artifacts}/browse-table-light.png`, fullPage: true });
       await page.emulateMedia({ colorScheme: "dark" });
-      if (artifacts) await page.screenshot({ path: `${artifacts}/browse-table-dark.png`, fullPage: true });
       await page.setViewportSize({ width: 390, height: 844 });
       assert.equal(await page.getByRole("columnheader", { name: "Sort by Project" }).isVisible(), true);
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "table must scroll within its container on mobile");
-      if (artifacts) await page.screenshot({ path: `${artifacts}/browse-table-mobile.png`, fullPage: true });
     } finally { await ctx.close(); }
   });
 
@@ -162,7 +159,7 @@ export async function checkBrowse({ browser, base, login, humanPassword, check, 
       await count(page, 20);
       assert.equal(await query.inputValue(), expression, "canonical URL does not compose the scopes twice");
       const archive = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "archived:true");
-      await page.getByRole("button", { name: "Archive", exact: true }).click();
+      await navLink(page, "Archive").click();
       assert.equal((await archive).request().postDataJSON().project, null);
       assert.equal(await query.inputValue(), "archived:true", "navigation presets also use the expression");
       await page.getByRole("button", { name: "ui:old", exact: true }).waitFor();
@@ -192,7 +189,7 @@ export async function checkBrowse({ browser, base, login, humanPassword, check, 
         assert.equal(searches.length, 0);
       }
       const reset = page.waitForResponse((response) => response.url().endsWith("/api/v1/search") && response.request().postDataJSON().query === "");
-      await page.getByRole("button", { name: "Browse", exact: true }).click();
+      await navLink(page, "Browse").click();
       await reset;
       assert.equal(await page.getByRole("combobox", { name: "Query", exact: true }).inputValue(), "");
       assert.equal(await page.getByRole("button", { name: "Search", exact: true }).isEnabled(), true);

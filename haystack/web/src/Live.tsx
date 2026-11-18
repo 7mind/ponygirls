@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { ConnectionManager, type ConnectionStats } from "./connection";
+import { ConnectionManager, connectionLabel, type ConnectionStats, type ConnectionTone } from "./connection";
+import { useOverlay } from "./overlay";
 import { uuidv7 } from "./api";
 
 interface Invalidation { version: number; key: string | null; revision: number | null }
@@ -36,59 +37,68 @@ export function LiveProvider({ children, onAuthLost }: { children: ReactNode; on
   </LiveContext.Provider>;
 }
 
-const LABELS: Record<ConnectionStats["state"], string> = {
-  NEW: "Connecting", ALIVE: "Live", STALE: "Connection stale", DEAD: "Disconnected",
-  STOPPED: "Connection stopped", DEFERRED: "Reconnect deferred", SUSPENDED: "Connection paused",
-};
+const EVENT_LOG_TAIL = 6;
+const CLOCK: Intl.DateTimeFormatOptions = { hour: "2-digit", minute: "2-digit", second: "2-digit", hourCycle: "h23" };
+const RTT_WINDOW_S = 30;
+const SECOND_MS = 1_000;
+const MINUTE_S = 60;
+const HOUR_MIN = 60;
+const STATUS_CLASS: Record<ConnectionTone, string> = { live: "status-ok", connecting: "status-warn", reconnecting: "status-warn", stale: "status-warn", offline: "status-danger" };
 
+function duration(ms: number): string {
+  const minutes = Math.floor(ms / SECOND_MS / MINUTE_S);
+  if (minutes < 1) return `${Math.max(0, Math.floor(ms / SECOND_MS))} s`;
+  return minutes < HOUR_MIN ? `${minutes} min` : `${Math.floor(minutes / HOUR_MIN)} h ${minutes % HOUR_MIN} min`;
+}
+
+function figures(stats: ConnectionStats, tone: ConnectionTone, now: number): Array<[string, string]> {
+  const pending = stats.pool.reduce((sum, entry) => sum + entry.pending, 0);
+  const pendingText = `${pending} ${pending === 1 ? "request" : "requests"}`;
+  const active = stats.pool.find((entry) => entry.active);
+  if (tone === "live" && active !== undefined) {
+    const window = active.rtt.find((entry) => entry.seconds === RTT_WINDOW_S);
+    return [
+      ["Round trip", window === undefined || window.median === null ? "No samples yet" : `${Math.round(window.median)} ms median (${RTT_WINDOW_S} s)`],
+      ["Uptime", duration(now - active.created)],
+      ["Pending", pendingText],
+    ];
+  }
+  const lastClose: [string, string] = ["Last close", stats.lastClose === null ? "None" : `${stats.lastClose.code} · ${stats.lastClose.reason || "no reason given"}`];
+  const last = stats.events.at(-1);
+  if (tone === "offline") return [lastClose, ["Offline for", last === undefined ? "—" : duration(now - last.at)], ["Pending", pendingText]];
+  return [
+    ["Next attempt", stats.phase !== null && stats.phase.kind === "Backoff" ? `in ${duration(stats.phase.started + stats.phase.duration - now)} (backoff)` : "—"],
+    lastClose,
+    ["Pending", pendingText],
+  ];
+}
+
+/** Masthead live-connection indicator: dot + label; diagnostics in a popover on demand. */
 export function ConnectionIndicator() {
   const connection = useContext(ConnectionContext);
   if (connection === null) throw new Error("ConnectionIndicator requires LiveProvider");
   const { stats, retry } = connection;
-  const [expanded, setExpanded] = useState(false);
-  const ring = useRef<SVGCircleElement | null>(null);
-  useEffect(() => {
-    let frame = 0;
-    let last = 0;
-    const render = (now: number) => {
-      if (now - last >= 100) {
-        last = now;
-        const phase = stats === null ? null : stats.phase;
-        const remaining = phase === null ? 1 : Math.max(0, Math.min(1, 1 - (Date.now() - phase.started) / phase.duration));
-        if (ring.current !== null) ring.current.style.strokeDasharray = `${remaining * 100} 100`;
-      }
-      frame = requestAnimationFrame(render);
-    };
-    frame = requestAnimationFrame(render);
-    return () => cancelAnimationFrame(frame);
-  }, [stats]);
-  const state = stats === null ? "NEW" : stats.state;
-  const label = LABELS[state];
-  useEffect(() => { document.title = `Haystack · ${label}`; }, [label]);
-  return <aside className="connection-widget" data-state={state} aria-label="Connection health">
-    <button type="button" className="connection-button" aria-label={`Connection: ${label}`} aria-expanded={expanded}
-      onClick={() => setExpanded(!expanded)}>
-      <svg viewBox="0 0 32 32" aria-hidden="true"><circle className="ring-track" cx="16" cy="16" r="12" />
-        <circle ref={ring} className="ring-progress" cx="16" cy="16" r="12" pathLength="100" />
-        <circle className="connection-dot" cx="16" cy="16" r="4" /></svg>
-      <span>{label}</span>
-    </button>
-    {expanded && <div className="connection-panel">
-      <div className="panel-heading"><h3>Connection health</h3><button type="button" aria-label="Close connection details" onClick={() => setExpanded(false)}>×</button></div>
-      <p>{state === "ALIVE" ? "Changes arrive automatically." : state === "DEFERRED" ? "Reconnect waits until this tab is visible." :
-        state === "STOPPED" ? "Automatic reconnection has stopped. Try again when the service is available." : "Displayed records may be out of date."}</p>
-      {stats !== null && <>
-        <p className="muted">Attempt {stats.attempts}/{stats.maxAttempts} · {stats.phase === null ? label : `${stats.phase.kind} deadline`}</p>
-        <div className="connection-pool">{stats.pool.map((c) => <div key={c.id} className={`pool-entry ${c.active ? "active" : ""}`}>
-          <strong>#{c.id} · {c.state}{c.active && " · active"}</strong>
-          <small>Uptime {Math.floor((Date.now() - c.created) / 1000)}s · {c.pending} pending · {c.sent === 0 ? 0 : Math.round(c.missed / c.sent * 100)}% missed</small>
-          {c.rtt.map((w) => <small key={w.seconds}>{w.seconds}s RTT · {w.count === 0 ? "No samples" : `${w.min}/${w.median}/${w.max} ms min/median/max · ${w.count} samples`}</small>)}
-        </div>)}</div>
-        {stats.lastClose !== null && <p>Last close: {stats.lastClose.code} · {stats.lastClose.reason || "No reason given"}</p>}
-        <details><summary>Event log</summary><ol className="connection-log">{stats.events.slice().reverse().map((event, i) =>
-          <li key={i}><time>{new Date(event.at).toLocaleTimeString()}</time> {event.message}</li>)}</ol></details>
-      </>}
-      <button type="button" onClick={retry}>Try again</button>
-    </div>}
-  </aside>;
+  const overlay = useOverlay();
+  const now = Date.now();
+  const view = connectionLabel(stats, now);
+  useEffect(() => { document.title = `Haystack · ${view.label}`; }, [view.label]);
+  const events = stats === null ? [] : stats.events;
+  const shown = events.slice(-EVENT_LOG_TAIL).reverse();
+  return <div className="anchor" ref={overlay.anchor}>
+    <button type="button" ref={overlay.trigger} className="conn" data-state={view.tone} aria-label={`Connection: ${view.name}`}
+      aria-expanded={overlay.open} aria-controls="connection-details" onClick={overlay.toggle}><span className="conn-text">{view.label}</span></button>
+    {overlay.open && <section className="popover conn-popover" id="connection-details" aria-label="Connection details">
+      <div className="conn-head"><strong>Connection</strong><span className={`status ${STATUS_CLASS[view.tone]}`}>{view.label}</span></div>
+      <p className="conn-sentence">{view.sentence}</p>
+      {stats !== null && <dl className="dl conn-figures">{figures(stats, view.tone, now).map(([term, value]) =>
+        <div key={term} className="conn-figure"><dt>{term}</dt><dd>{value}</dd></div>)}</dl>}
+      <details className="disclosure">
+        <summary><span>Event log</span> <span className="count">{events.length}</span></summary>
+        <ol className="event-log">{shown.map((event, index) =>
+          <li key={`${event.at}-${index}`}><time dateTime={new Date(event.at).toISOString()}>{new Date(event.at).toLocaleTimeString([], CLOCK)}</time><span>{event.message}</span></li>)}</ol>
+        {events.length > shown.length && <p className="conn-sentence">Last {shown.length} of {events.length} events</p>}
+      </details>
+      <div className="conn-actions"><button type="button" className={`btn btn-sm ${view.tone === "live" ? "" : "btn-primary"}`} onClick={retry}>Reconnect now</button></div>
+    </section>}
+  </div>;
 }
