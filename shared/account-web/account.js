@@ -6,7 +6,7 @@
 // events account:invalidate (in), account:changed and account:route (out).
 // Account v1 is deliberately independent of each application's domain protocol.
 import {
-  ACCOUNT_API_PATH, ACCOUNT_REQUEST_TIMEOUT_MS, AccountApiError, AccountOwnerChangedError, AccountResponseError,
+  ACCOUNT_API_PATH, ACCOUNT_REQUEST_HEADERS, ACCOUNT_REQUEST_TIMEOUT_MS, AccountApiError, AccountOwnerChangedError, AccountResponseError,
   actionStart, captureEnrollmentFragment, createAccountClient, enrollmentLink, generateTotpSecret,
   loadEnrollment, loadSignup, loginInitial, loginReduce, otpauthUri, qrMatrix, recoveryInitial, runAction,
   submitEnrollment, submitLogin, submitRecovery, submitSignup
@@ -130,7 +130,7 @@ function createCoordinator({ fetch, window, onSlotChange }) {
   async function endpoint(method, path, body, actor, signal) {
     const signals = [window.AbortSignal.timeout(ACCOUNT_REQUEST_TIMEOUT_MS)];
     if (signal !== null) signals.push(signal);
-    const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: window.AbortSignal.any(signals), headers: { Accept: 'application/json' } };
+    const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: window.AbortSignal.any(signals), headers: { ...ACCOUNT_REQUEST_HEADERS } };
     if (body !== null) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
     if (actor !== null) options.headers[ACTOR_HEADER] = actor;
     const response = await fetch(ACCOUNT_API_PATH + path, options);
@@ -161,7 +161,9 @@ function createCoordinator({ fetch, window, onSlotChange }) {
     }
     if (!alive()) return { outcome: 'cancelled', cause: null };
     try {
-      const result = await endpoint('POST', '/logout', {}, account.user.actor, signal);
+      // Once sent, the sign-out is not aborted with the area (a host may leave the page as the server ends the
+      // session, e.g. on its live socket): the response must still clear the session cookie.
+      const result = await endpoint('POST', '/logout', {}, account.user.actor, null);
       if (result === null || result.ok !== true) throw new AccountResponseError();
     } catch (cause) {
       if (!alive()) return { outcome: 'cancelled', cause };

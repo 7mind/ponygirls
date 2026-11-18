@@ -103,7 +103,9 @@ async function open(browser, { width, colorScheme }) {
 const nav = (page) => page.getByRole("navigation", { name: "Main navigation" });
 const records = (page) => page.getByRole("region", { name: "Record results" });
 const rowCount = (page) => page.getByRole("region", { name: "Record results" }).getByRole("row").count().then((rows) => rows - 1);
-const waitRows = (page, rows) => page.waitForFunction((n) => document.querySelectorAll('[aria-label="Record results"] tbody tr').length === n, rows);
+// Rows of the shown list only: lists kept for other routes stay mounted, hidden.
+const waitRows = (page, rows) => page.waitForFunction((n) => [...document.querySelectorAll('[aria-label="Record results"]')]
+  .some((region) => region.getClientRects().length > 0 && region.querySelectorAll("tbody tr").length === n), rows);
 const frames = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
 const current = (page) => nav(page).locator('[aria-current="page"]').allTextContents();
 async function signIn(page, hash) {
@@ -127,10 +129,10 @@ async function check(name, run) {
 try {
   browser = await chromium.launch({ executablePath, args: ["--no-sandbox"] });
 
-  await check("shell: the five presets and records are routes; Back restores the originating list, its scroll and row focus", async () => {
+  await check("shell: the five presets and records are routes; Back to a preset or from a record restores its query draft, loaded rows, scroll and focus", async () => {
     const { context, page, state } = await open(browser, { width: 1440, colorScheme: "light" });
     try {
-      await signIn(page, "#/inbox");
+      await signIn(page, "#/browse?q=start");
       for (const [label, query] of Object.entries(PRESET_QUERIES)) {
         const searched = page.waitForRequest((request) => request.url().endsWith("/api/v1/search") && request.postDataJSON().query === query && request.postDataJSON().limit === PAGE);
         await nav(page).getByRole("link", { name: label, exact: true }).click();
@@ -166,6 +168,29 @@ try {
       assert.ok(Math.abs(pageAfter - before.page) <= 2, `page scroll is restored: ${before.page} → ${pageAfter}`);
       assert.equal(await opener.evaluate((element) => element === document.activeElement), true, "focus returns to the originating row");
       assert.equal(listSearches(), before.searches, "Back does not reload the list");
+      // Preset round trip: an unsubmitted query draft, three batches and the scroll survive Inbox and browser Back.
+      const query = page.getByRole("combobox", { name: "Query", exact: true });
+      await query.fill("draft not submitted");
+      await records(page).evaluate((element) => { element.scrollTop = 800; });
+      await page.evaluate(() => window.scrollTo(0, 100));
+      const left = { panel: await records(page).evaluate((element) => element.scrollTop), page: await page.evaluate(() => window.scrollY) };
+      await nav(page).getByRole("link", { name: "Inbox", exact: true }).click();
+      await page.getByRole("button", { name: "todo:review-00", exact: true }).waitFor();
+      await page.goBack();
+      await waitRows(page, before.rows);
+      assert.equal(new URL(page.url()).hash, "#/browse");
+      assert.equal(await query.inputValue(), "draft not submitted", "the query draft is kept");
+      assert.ok(Math.abs(await records(page).evaluate((element) => element.scrollTop) - left.panel) <= 2, "list scroll is kept across presets");
+      assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - left.page) <= 2, "page scroll is kept across presets");
+      // Focus in the list (an address change keeps it there) returns with the list.
+      const row = page.getByRole("button", { name: "notes:record-30", exact: true });
+      await row.focus();
+      await page.evaluate(() => { location.hash = "#/upstream"; });
+      await page.getByRole("button", { name: "upstream:issue-1", exact: true }).waitFor();
+      await page.goBack();
+      await waitRows(page, before.rows);
+      assert.equal(await row.evaluate((element) => element === document.activeElement), true, "focus returns to the row it left");
+      assert.equal(listSearches(), before.searches, "the round trips do not reload the list");
       // Edit is a route: Cancel returns to the record, Back from the record to the list; a reload keeps the editor.
       await page.getByRole("button", { name: "notes:record-03", exact: true }).click();
       await page.getByRole("button", { name: "Edit", exact: true }).click();
@@ -178,7 +203,7 @@ try {
       assert.equal(new URL(page.url()).hash, "#/item/notes%3Arecord-03");
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await page.waitForFunction(() => location.hash === "#/browse");
-      await waitRows(page, PAGE);
+      await waitRows(page, PAGE); // the reload above started a new document: the list loads afresh
       // Browser Back and Forward between a preset and a record.
       await nav(page).getByRole("link", { name: "Skill drafts", exact: true }).click();
       await page.getByRole("button", { name: "skills:draft-1", exact: true }).click();
@@ -270,7 +295,7 @@ try {
     }
   });
 
-  await check("shell: a live change never resets a scrolled list; an untouched list refreshes in place", async () => {
+  await check("shell: a live change never resets a scrolled list, Show merges it in place keeping the first visible row; an untouched list refreshes in place", async () => {
     const { context, page, state } = await open(browser, { width: 1440, colorScheme: "light" });
     try {
       await signIn(page, "#/browse");
@@ -294,9 +319,19 @@ try {
       assert.equal(await rowCount(page), PAGE * 3, "rows are kept");
       assert.equal(await records(page).evaluate((element) => element.scrollTop), 900, "scroll is kept");
       assert.equal(listSearches(), searches, "the list is not reloaded until the reader asks");
+      const firstVisible = () => records(page).evaluate((element) => {
+        const top = element.getBoundingClientRect().top;
+        const row = [...element.querySelectorAll("tbody tr")].find((candidate) => candidate.getBoundingClientRect().bottom > top);
+        return { key: row.dataset.rowId, top: row.getBoundingClientRect().top };
+      });
+      const anchor = await firstVisible();
       await pill.click();
-      await page.getByRole("button", { name: "notes:later", exact: true }).waitFor();
+      await records(page).getByRole("button", { name: "notes:later", exact: true }).waitFor({ state: "attached" });
+      await frames(page);
       assert.equal(await pill.count(), 0);
+      assert.equal(await rowCount(page), PAGE * 3, "Show reloads the loaded chain in place instead of restarting it");
+      const after = await records(page).evaluate((element, key) => element.querySelector(`tbody tr[data-row-id="${CSS.escape(key)}"]`).getBoundingClientRect().top, anchor.key);
+      assert.ok(Math.abs(after - anchor.top) <= 2, `the first visible row keeps its place: ${anchor.top} → ${after}`);
       await state.noNativeDialogs();
     } finally { await context.close(); }
   });

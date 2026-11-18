@@ -23,7 +23,7 @@ import java.nio.file.{Files,Path}
 final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option[Path],retrieval:haystack.retrieval.HaystackRetrieval,accounts:AccountService) {
   private val limiter=new RateLimiter
   private def all(r:Request[IO],name:String):Vector[String]=r.headers.headers.filter(_.name==CIString(name)).map(_.value).toVector
-  private def headers(r:Request[IO]):RequestHeaders=RequestHeaders(all(r,"Host").headOption.getOrElse(""),all(r,"Authorization"),all(r,"Cookie"),all(r,"Origin"),all(r,"Sec-Fetch-Site").headOption)
+  private def headers(r:Request[IO]):RequestHeaders=RequestHeaders(all(r,"Host").headOption.getOrElse(""),all(r,"Authorization"),all(r,"Cookie"),all(r,"Origin"),all(r,"Sec-Fetch-Site").headOption,all(r,Sessions.AccountRequestHeader))
   private def json(status:Status,value:Json):Response[IO]=Response[IO](status).withEntity(value.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"),Header.Raw(CIString("Referrer-Policy"),"no-referrer"))
   private def ok[A](codec:baboon.runtime.shared.BaboonJsonCodec[A],value:A):Response[IO]=json(Status.Ok,Wire.encode(codec,value))
   private val AccountBodyLimit=AccountJson.maxBodyBytes
@@ -90,7 +90,7 @@ final class Http(getAuth:()=>Auth,service:ItemService,hub:LiveHub,webRoot:Option
   private def accountBoundary(r:Request[IO]):Unit={
     if(all(r,"Host").size!=1 || all(r,"Sec-Fetch-Site").size>1)throw Fault("forbidden","ambiguous host or fetch metadata")
     if(r.uri.query.nonEmpty)throw Fault("bad-envelope","query parameters are not supported")
-    Sessions.accountTransport(getAuth().config,headers(r))
+    Sessions.accountTransport(getAuth().config,headers(r),safeRead=r.method==Method.GET)
   }
   private def accountHandled(operation: =>IO[Response[IO]]):IO[Response[IO]]=IO.defer(operation).handleError { error=>
     val category=error match {

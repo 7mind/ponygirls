@@ -1,17 +1,27 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
-import { api, AuthError, NetworkError, type Principal } from "./api";
+import { api, AuthError, type Principal } from "./api";
 import { Login } from "./Login";
 import { Browse } from "./Browse";
 import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
 import { Detail } from "./Detail";
 import { LiveProvider, useLiveUpdates } from "./Live";
-import { Masthead, SignedOutMasthead, type Identity, type NavState, type SignOut } from "./Masthead";
+import { Masthead, SignedOutMasthead, type Identity, type NavState } from "./Masthead";
 import { adoptItem, closeEdit, isAccountHash, leaveItem, parseRoute, presetOf, pushEdit, pushItem, type Route } from "./router";
 
 type ListRoute = Extract<Route, { name: "list" }>;
-/** The current route and the last list route: the list stays mounted (hidden) while a record is open. */
-interface View { route: Route; list: ListRoute | null }
-interface SavedList { hash: string; scrollY: number; focus: Element | null }
+/** Where the reader was in a list when it was hidden: restored when its route is shown again. */
+interface Position { scrollY: number; focus: Element | null }
+/**
+ * A mounted list (one Browse instance) and the route it shows. Lists stay mounted, hidden, while another list,
+ * a record or the account page is shown, so that returning to a list route keeps its query draft, loaded rows,
+ * scroll and focus (spec §5 rule 2). Lists are keyed by their route (preset + query + sort); a new query or sort
+ * submitted in the shown list stays in that list.
+ */
+interface ListEntry { id: number; route: ListRoute; position: Position | null }
+interface View { route: Route; lists: readonly ListEntry[]; shown: number | null }
+/** What the next layout pass does with the document scroll. */
+type ScrollAction = { kind: "restore"; position: Position } | { kind: "top" } | null;
+const MAX_LISTS = 6;
 
 const INBOX_COUNT_LIMIT = 100;
 const ACCOUNT_PROFILE_PATH = "/api/account/v1/profile";
@@ -32,10 +42,35 @@ function currentRoute(): Route {
   return { ...route, hash };
 }
 
+const FIRST_LIST_ID = 0;
 function initialView(): View {
   // A first load on an account fragment shows the account page above the default list.
   const route = isAccountHash(location.hash) ? parseRoute("", null) : currentRoute();
-  return { route, list: route.name === "list" ? route : null };
+  return route.name === "list" ? { route, lists: [{ id: FIRST_LIST_ID, route, position: null }], shown: FIRST_LIST_ID } : { route, lists: [], shown: null };
+}
+
+/** The view after navigating to `route`, and what to do with the scroll; `position` is where the shown list was. */
+function navigate(previous: View, route: Route, position: Position, nextId: () => number): { view: View; scroll: ScrollAction } {
+  const leaving = previous.route.name === "list" ? previous.lists.find((entry) => entry.id === previous.shown) : undefined;
+  let lists = previous.lists.map((entry) => (leaving !== undefined && entry.id === leaving.id ? { ...entry, position } : entry));
+  if (route.name === "item") return { view: { route, lists, shown: previous.shown }, scroll: { kind: "top" } };
+  const kept = lists.find((entry) => entry.route.hash === route.hash);
+  let target: ListEntry;
+  let scroll: ScrollAction;
+  if (kept !== undefined) {
+    target = { ...kept, route, position: null };
+    scroll = kept.position === null ? { kind: "top" } : { kind: "restore", position: kept.position };
+  } else if (leaving !== undefined && leaving.route.preset === route.preset) {
+    // A query or sort applied in the shown list (or the address edited): the same list runs it.
+    target = { ...leaving, route, position: null };
+    scroll = null;
+  } else {
+    target = { id: nextId(), route, position: null };
+    scroll = { kind: "top" };
+  }
+  lists = [...lists.filter((entry) => entry.id !== target.id), target];
+  if (lists.length > MAX_LISTS) lists = lists.slice(lists.length - MAX_LISTS);
+  return { view: { route, lists, shown: target.id }, scroll };
 }
 
 // Users is offered to administrators only; servers without GET /profile (404) have no administrators to offer it to.
@@ -109,25 +144,6 @@ export function App() {
     setBoot("login");
   }, []);
 
-  // Insecure contexts (private-network HTTP origins) send neither Origin nor Sec-Fetch-Site on GET, so the account
-  // plane rejects the module's sign-out preflight read; there Haystack signs out through its own endpoint and
-  // tells the module (contract: account:invalidate with reason signed-out).
-  const hostSignOut = async () => {
-    try {
-      await api.logout();
-    } catch (error) {
-      if (!(error instanceof AuthError)) {
-        setNotice(error instanceof NetworkError ? "Server unreachable — Sign out did not complete. Your session is unchanged." : "Sign out did not complete.");
-        return;
-      }
-    }
-    refreshSequence.current++;
-    document.dispatchEvent(new CustomEvent("account:invalidate", { detail: { reason: "signed-out" } }));
-    setPrincipal(null);
-    setBoot("login");
-  };
-  const signOut: SignOut = window.isSecureContext ? { owner: "module" } : { owner: "host", run: () => void hostSignOut() };
-
   if (boot === "loading") return <><SignedOutMasthead /><main id="main" className="auth-page"><p role="status">Loading…</p></main></>;
   if (boot === "unreachable") {
     return <><SignedOutMasthead /><main id="main" className="auth-page">
@@ -143,7 +159,7 @@ export function App() {
   return (
     <LiveProvider key={`${principal.userId}:${principal.tokenId}`} onAuthLost={handleAuthLost}>
       <Workspace identity={{ userId: principal.userId, type: principal.type, activityProjectId: principal.activityProjectId, admin }}
-        signOut={signOut} notice={notice} onAuthLost={handleAuthLost} />
+        notice={notice} onAuthLost={handleAuthLost} />
     </LiveProvider>
   );
 }
@@ -178,13 +194,12 @@ function useInboxCount(onAuthLost: () => void): NavState["inbox"] {
   return count;
 }
 
-function Workspace({ identity, signOut, notice, onAuthLost }: { identity: Identity; signOut: SignOut; notice: string; onAuthLost: () => void }) {
+function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notice: string; onAuthLost: () => void }) {
   const [view, setView] = useState<View>(initialView);
   const current = useRef(view);
   current.current = view;
-  const saved = useRef<SavedList | null>(null);
-  const shown = useRef<Route["name"]>(view.route.name);
-  const list = useRef<HTMLDivElement>(null);
+  const scroll = useRef<ScrollAction>(null);
+  const lastId = useRef(FIRST_LIST_ID);
   const main = useRef<HTMLElement>(null);
   const inbox = useInboxCount(onAuthLost);
   // The account page covers <main>; while it is open no workspace entry is current. Registered in a layout
@@ -210,11 +225,11 @@ function Workspace({ identity, signOut, notice, onAuthLost }: { identity: Identi
       route = { ...route, origin, known: true };
     }
     if (routeKey(route) === routeKey(previous.route)) return;
-    if (previous.route.name === "list" && route.name === "item" && previous.list !== null) {
-      const focus = document.activeElement;
-      saved.current = { hash: previous.list.hash, scrollY: window.scrollY, focus: focus !== null && list.current !== null && list.current.contains(focus) ? focus : null };
-    }
-    setView({ route, list: route.name === "list" ? route : previous.list });
+    const focus = document.activeElement;
+    const inShownList = focus !== null && previous.shown !== null && focus.closest(`[data-list-entry="${previous.shown}"]`) !== null;
+    const next = navigate(previous, route, { scrollY: window.scrollY, focus: inShownList ? focus : null }, () => ++lastId.current);
+    scroll.current = next.scroll;
+    setView(next.view);
   }, []);
 
   useEffect(() => {
@@ -231,16 +246,14 @@ function Workspace({ identity, signOut, notice, onAuthLost }: { identity: Identi
   }, [onCanvas]);
 
   useLayoutEffect(() => {
-    const route = view.route;
-    const previous = shown.current;
-    shown.current = route.name;
-    if (route.name === "item") { window.scrollTo(0, 0); return; }
-    const restore = saved.current;
-    saved.current = null;
-    if (previous !== "item" || restore === null || restore.hash !== route.hash) return;
-    window.scrollTo(0, restore.scrollY);
-    if (restore.focus instanceof HTMLElement && restore.focus.isConnected) restore.focus.focus({ preventScroll: true });
-  }, [view.route]);
+    const action = scroll.current;
+    scroll.current = null;
+    if (action === null) return;
+    if (action.kind === "top") { window.scrollTo(0, 0); return; }
+    window.scrollTo(0, action.position.scrollY);
+    const focus = action.position.focus;
+    if (focus instanceof HTMLElement && focus.isConnected) focus.focus({ preventScroll: true });
+  }, [view]);
 
   const route = view.route;
   const active: Preset | null = accountOpen ? null : route.name === "list" ? route.preset : presetOf(route.origin);
@@ -249,13 +262,14 @@ function Workspace({ identity, signOut, notice, onAuthLost }: { identity: Identi
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main" onClick={(event) => { event.preventDefault(); main.current!.focus(); }}>Skip to main content</a>
-      <Masthead identity={identity} signOut={signOut} nav={{ active, inbox }} />
+      <Masthead identity={identity} nav={{ active, inbox }} />
       <main ref={main} id="main" className="workspace" tabIndex={-1} data-view={route.name === "list" ? "list" : route.edit ? "edit" : "record"}>
         <PendingWriteNotice />
         {notice !== "" && <p role="status" className="notice">{notice}</p>}
-        {view.list !== null && <div ref={list} hidden={route.name !== "list"} data-list={view.list.preset}>
-          <Browse key={view.list.preset} preset={view.list.preset} initial={view.list.state} onOpen={openItem} onAuthLost={onAuthLost} />
-        </div>}
+        {/* In creation order: reordering would move (and so reset the scroll of) hidden lists. */}
+        {[...view.lists].sort((left, right) => left.id - right.id).map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
+          <Browse preset={entry.route.preset} initial={entry.route.state} onOpen={openItem} onAuthLost={onAuthLost} />
+        </div>)}
         {route.name === "item" && <Detail key={route.key} itemKey={route.key} edit={route.edit} onAuthLost={onAuthLost}
           onBack={leaveItem}
           onEdit={() => { pushEdit(route.key); sync(); }}

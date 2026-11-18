@@ -1,6 +1,8 @@
 # Actual exported NixOS module -> exact declaration consumed by the browser
 # harness. Ports are declared, never rewritten after evaluation. No activation.
-{ pkgs, nixpkgs, haystackModule, haystackPackage, backendPort ? 47328, publicPort ? 58445 }:
+# Below the kernel's ephemeral range (32768-60999): the preceding browser legs leave thousands of client sockets
+# in TIME_WAIT, and one on a declared port made the restart leg refuse it as occupied.
+{ pkgs, nixpkgs, haystackModule, haystackPackage, backendPort ? 27328, publicPort ? 28445 }:
 let
   cfg=(nixpkgs.lib.nixosSystem {
     system=pkgs.stdenv.hostPlatform.system;

@@ -53,10 +53,8 @@ function ThemeMenu() {
 }
 
 export interface Identity { userId: string; type: "human" | "agent"; activityProjectId: string; admin: boolean }
-/** Who signs out: the shared account module ([data-account-logout]) or, where it cannot, Haystack itself. */
-export type SignOut = { owner: "module" } | { owner: "host"; run: () => void };
 
-function UserMenu({ identity, signOut }: { identity: Identity; signOut: SignOut }) {
+function UserMenu({ identity }: { identity: Identity }) {
   const overlay = useOverlay();
   const menu = useRef<HTMLDivElement>(null);
   useEffect(() => { if (overlay.open) focusMenu(menu.current); }, [overlay.open]);
@@ -75,16 +73,14 @@ function UserMenu({ identity, signOut }: { identity: Identity; signOut: SignOut 
       <button type="button" {...item} data-account-settings="tokens"><UiIcon name="key" />Access tokens</button>
       {identity.admin && <a {...link} href="#account/users"><UiIcon name="users" />Users</a>}
       <div className="menu-sep" role="separator" />
-      {signOut.owner === "module"
-        ? <button type="button" {...item} data-account-logout=""><UiIcon name="arrow-right" />Sign out</button>
-        : <button type="button" {...link} onClick={() => { overlay.close(false); signOut.run(); }}><UiIcon name="arrow-right" />Sign out</button>}
+      <button type="button" {...item} data-account-logout=""><UiIcon name="arrow-right" />Sign out</button>
     </div>}
   </div>;
 }
 
 export interface NavState { active: Preset | null; inbox: { count: number; more: boolean } | null }
 
-export function Masthead({ identity, signOut, nav }: { identity: Identity; signOut: SignOut; nav: NavState }) {
+export function Masthead({ identity, nav }: { identity: Identity; nav: NavState }) {
   return <header className="masthead">
     <Brand />
     <nav className="nav" aria-label="Main navigation">{PRESET_ORDER.map((preset) => {
@@ -100,7 +96,7 @@ export function Masthead({ identity, signOut, nav }: { identity: Identity; signO
     <div className="masthead-end">
       <ConnectionIndicator />
       <ThemeMenu />
-      <UserMenu identity={identity} signOut={signOut} />
+      <UserMenu identity={identity} />
     </div>
   </header>;
 }

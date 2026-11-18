@@ -125,7 +125,7 @@ object Origin {
   }
 }
 final case class RequestHeaders(host: String, authorization: Vector[String] = Vector.empty, cookie: Vector[String] = Vector.empty,
-  origin: Vector[String] = Vector.empty, fetchSite: Option[String] = None)
+  origin: Vector[String] = Vector.empty, fetchSite: Option[String] = None, accountRequest: Vector[String] = Vector.empty)
 final case class Authenticated(principal: Principal, token: String, cookie: Boolean, secureCookie: Boolean) {
   override def toString:String=s"Authenticated($principal,<redacted>,$cookie,$secureCookie)"
 }
@@ -165,9 +165,22 @@ object Sessions {
     if (!(headers.origin.size == 1 && config.allowedOrigins.contains(headers.origin.head)) && !(headers.origin.isEmpty && headers.fetchSite.contains("same-origin")))
       throw Fault("forbidden", "missing or invalid origin")
   }
-  def accountTransport(config:AuthConfig,headers:RequestHeaders):Unit={
+  /** Sent by the shared account module (shared/account-web/account-client.js) with every account-plane request. */
+  val AccountRequestHeader = "X-Account-Request"
+  val AccountRequestValue = "1"
+  /**
+   * On an opted-in plain-HTTP origin, browsers send neither Origin nor Sec-Fetch-Site with a same-origin GET (Fetch
+   * Metadata is limited to secure contexts), so `csrf` cannot recognise the account module's reads there. Only for
+   * such a safe read (`safeRead`: GET) on an insecure-HTTP origin does the module's custom header prove same origin
+   * instead: a cross-origin page cannot add a custom header without a CORS preflight, and this server grants none.
+   * Writes keep requiring Origin (browsers send it with every POST).
+   */
+  def accountTransport(config:AuthConfig,headers:RequestHeaders,safeRead:Boolean):Unit={
     validateTransport(config,headers)
-    csrf(config,headers)
+    val authority=Origin.requestAuthority(headers.host)
+    val insecureOrigin=config.insecureHttpOrigins.exists(raw=>Origin.authority(Origin.canonical(raw))==Origin.authority(authority))
+    val headerProof=safeRead && insecureOrigin && headers.origin.isEmpty && headers.fetchSite.isEmpty && headers.accountRequest==Vector(AccountRequestValue)
+    if(!headerProof) csrf(config,headers)
     val request=Origin.requestAuthority(headers.host)
     def matches(raw:String):Boolean={
       val origin=Origin.canonical(raw)

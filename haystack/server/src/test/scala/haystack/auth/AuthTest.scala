@@ -262,6 +262,16 @@ class SessionsTest extends munit.FunSuite {
     assert(Sessions.resolve(auth.config, base.copy(fetchSite = Some("same-origin")), mutate = true).cookie)
     unauthorized(Sessions.csrf(auth.config, base.copy(origin = Vector("https://evil.test"), fetchSite = Some("same-origin"))), "forbidden")
   } }
+  test("account reads on an insecure-HTTP origin prove same origin with the account request header, writes do not") { withAuth { auth =>
+    val read = RequestHeaders("nb.test:8085", cookie = Vector("haystack-dev=" + AliceSession), accountRequest = Vector(Sessions.AccountRequestValue))
+    Sessions.accountTransport(auth.config, read, safeRead = true)
+    unauthorized(Sessions.accountTransport(auth.config, read.copy(accountRequest = Vector.empty), safeRead = true), "forbidden")
+    unauthorized(Sessions.accountTransport(auth.config, read.copy(accountRequest = Vector("1", "1")), safeRead = true), "forbidden")
+    unauthorized(Sessions.accountTransport(auth.config, read.copy(fetchSite = Some("cross-site")), safeRead = true), "forbidden")
+    unauthorized(Sessions.accountTransport(auth.config, read, safeRead = false), "forbidden")
+    unauthorized(Sessions.accountTransport(auth.config, RequestHeaders("ts.test:8445", cookie = Vector("__Host-haystack=" + AliceSession), accountRequest = Vector("1")), safeRead = true), "forbidden")
+    Sessions.accountTransport(auth.config, read.copy(origin = Vector(Plain)), safeRead = false)
+  } }
   test("disallowed/malformed Host fails for bearer and cookie, not only mutations") { withAuth { auth =>
     Vector("evil.test", "", "ts.test/path", "ts.test@evil.test", "ts.test?x", "ts.test#x", "ts.test\\evil", "ts.test\n").foreach { host =>
       unauthorized(Sessions.resolve(auth.config, RequestHeaders(host, authorization = Vector("Bearer " + AliceToken))), "forbidden")

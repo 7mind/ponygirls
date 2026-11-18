@@ -11,6 +11,9 @@ export const ACCOUNT_API_PATH = '/api/account/v1';
 export const ACCOUNT_REQUEST_TIMEOUT_MS = 15_000;
 export const ENROLLMENT_FRAGMENT_PREFIX = '#account-enroll=';
 export const TOTP_PARAMETERS = Object.freeze({ algorithm: 'SHA1', digits: 6, period: 30, secretBytes: 20 });
+// Sent with every account request: a custom header proves same origin where browsers send neither Origin nor
+// Sec-Fetch-Site (plain-HTTP origins), because a cross-origin page cannot add it without a CORS preflight.
+export const ACCOUNT_REQUEST_HEADERS = Object.freeze({ Accept: 'application/json', 'X-Account-Request': '1' });
 
 const ACTOR_HEADER = 'X-Account-Actor';
 const RETRY_AFTER_HEADER = 'Retry-After';
@@ -91,7 +94,7 @@ export function createAccountClient({ fetch, requestTimeoutMs, signal }) {
   async function request(method, path, body, actor, validate) {
     const signals = [AbortSignal.timeout(requestTimeoutMs)];
     if (signal !== null) signals.push(signal);
-    const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.any(signals), headers: { Accept: 'application/json' } };
+    const options = { method, credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: AbortSignal.any(signals), headers: { ...ACCOUNT_REQUEST_HEADERS } };
     if (body !== null) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); }
     if (actor !== null) options.headers[ACTOR_HEADER] = actor;
     const response = await fetch(ACCOUNT_API_PATH + path, options);

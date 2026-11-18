@@ -86,6 +86,12 @@
   exact HTTP Origin and Host; this also applies to reads and live upgrades.
   Login, renewal, logout, and live session replacement use the same selection;
   the other cookie name is never a fallback. `/mcp` rejects either cookie name.
+  Browsers send neither `Origin` nor `Sec-Fetch-Site` with a same-origin GET
+  from such an HTTP page (Fetch Metadata is limited to secure contexts). There,
+  and only for account-plane GET requests, the shared account module's
+  `X-Account-Request: 1` header is the same-origin proof instead: a cross-origin
+  page cannot add a custom header without a CORS preflight, which the server
+  never grants. Account writes still require the `Origin` header.
 - **HTTP exposes browser credentials and all content to interception.**
   Use only on a trusted, encrypted private overlay, with listener/firewall
   restrictions (for example NetBird interface and loopback only). HTTP is not

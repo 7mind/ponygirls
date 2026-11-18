@@ -695,9 +695,10 @@ export const scenarios = [
       const { rec } = env;
       const h = heroes(env);
       const nav = (page) => page.getByRole("navigation", { name: "Main navigation" });
+      // Opened from the Inbox list, as in the mockup: the record keeps Inbox highlighted.
       const record = async (page, key) => {
-        await page.goto(`${env.base}/#/browse`); await settle(page);
-        await page.goto(`${env.base}/#/item/${enc(key)}`);
+        await page.goto(`${env.base}/#/inbox?${new URLSearchParams({ q: `id:"${key}"` })}`); await settle(page);
+        await page.getByRole("button", { name: key, exact: true }).click();
         await page.getByRole("button", { name: "Edit", exact: true }).waitFor(); await page.waitForTimeout(400);
       };
       for (const [viewport, width] of [[DESKTOP, 1440], [SMALL, 1024], [MOBILE, 390]]) for (const dark of [false, true]) {
@@ -708,7 +709,7 @@ export const scenarios = [
         await nav(page).getByRole("link", { name: "Inbox", exact: true }).click(); await settle(page);
         await rec.shot(page, "shell-inbox", { file: `haystack-browse-inbox${suffix}.png`, desc: "Inbox preset route: nav highlight and count", how: "click Inbox in the masthead", expect: ["header nav a[aria-current=page]"] });
         await record(page, h.todo.key);
-        await rec.shot(page, "shell-record", { file: `haystack-detail${suffix}.png`, desc: "Record route under the new masthead (inside not restyled yet: UX-H3)", how: `open /#/item/${h.todo.key}`, expect: ["header nav"] });
+        await rec.shot(page, "shell-record", { file: `haystack-detail${suffix}.png`, desc: "Record route under the new masthead (inside not restyled yet: UX-H3)", how: `open the record from the Inbox list (#/inbox?q=id:"…")`, expect: ["header nav"] });
         await page.getByRole("button", { name: /^Connection:/ }).click();
         await page.getByText("Event log", { exact: true }).click();
         await rec.shot(page, "shell-connection", { file: `haystack-connection-live${suffix}.png`, desc: "Connection popover, Live, event log open", how: "click the masthead indicator, open Event log", expect: ["#connection-details"] });

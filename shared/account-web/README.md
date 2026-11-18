@@ -153,7 +153,7 @@ table-driven browser case "sequencer interleavings"; ‡ are covered by the
 | S × S | second click held; one `/logout` request † |
 | S fails | nothing changes; with a shown secret the dialog reports the failure and "Keep it visible" keeps it † |
 | S × O | the sign-out preflight read must return the area's own owner: another owner (or 401) → no `POST /logout` for anyone; another owner → the area is lost with the notice † |
-| S × D | dispose aborts the sign-out preflight (area signal): no POST; the completion is bound to the area that started it and a replacement area is not touched |
+| S × D | dispose aborts the sign-out preflight (area signal): no POST; a POST already sent is not aborted (its response clears the session cookie); the completion is bound to the area that started it and a replacement area is not touched |
 | background read × W | a read that returns while a write holds the slot (or a form/dialog/card is open) applies its data but does not rebuild the section; the re-render waits until the slot is free and the prompt closed † |
 | overlapping refreshes | per-resource generations: the newest list wins, an older snapshot arriving later is discarded † |
 | W preflight fails (transport) | the write stops with "connection lost", authority becomes `unverified` (Reveal/Copy/writes disabled) and recovers on re-verification † |

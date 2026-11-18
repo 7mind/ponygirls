@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { api, ApiError, AuthError, NetworkError, summaryKey, type SearchSort, type SearchSortField, type Summary } from "./api";
 import { browseHash, sameBrowseState, type BrowseState, type Preset } from "./browse-state";
 import { useLiveUpdates } from "./Live";
@@ -8,6 +8,15 @@ import { QueryInput } from "./QueryInput";
 const PAGE_SIZE = 20;
 const HEADINGS: Record<Preset, string> = { browse: "Records", inbox: "Attention inbox", upstream: "Upstream activity", skills: "Skill candidates", archive: "Archive" };
 const PREFETCH_MARGIN = "200px";
+/** Largest page the search API serves (limit 1–100); a refresh reloads the loaded chain in pages of this size. */
+const SEARCH_LIMIT_MAX = 100;
+/**
+ * first: a new query or sort (the list restarts); append: the next page of the chain; refresh: reload the first
+ * `rows` rows of the same query in place — rows stay until the new chain arrives and the first visible row keeps
+ * its position (live updates, spec §5 rule 6).
+ */
+type Load = { kind: "first" } | { kind: "append"; cursor: string } | { kind: "refresh"; rows: number };
+interface Anchor { key: string; top: number }
 const SORT_COLUMNS: ReadonlyArray<{ field: SearchSortField; label: string }> = [
   { field: "title", label: "Record" }, { field: "project", label: "Project" },
   { field: "type", label: "Type" }, { field: "status", label: "Status" },
@@ -37,20 +46,40 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const panel = useRef<HTMLDivElement>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const [changed, setChanged] = useState(false);
+  const anchor = useRef<Anchor | null>(null);
+  const helpId = useId();
   const live = useLiveUpdates();
   const inbox = preset === "inbox";
 
-  // `refresh` reloads the first page in place: rows stay until the new page arrives and the scroll is kept.
-  const run = useCallback(async (state: BrowseState, cursorValue: string | undefined, refresh = false) => {
-    const append = cursorValue !== undefined;
-    if (append && (pending.current !== null || cursorValue !== continuation.current)) return;
+  // The first row visible in the scrolled results panel and its offset, so that a refreshed chain keeps it in place.
+  function captureAnchor(): Anchor | null {
+    const container = panel.current;
+    if (container === null || container.scrollTop === 0) return null;
+    const top = container.getBoundingClientRect().top;
+    for (const row of container.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")) {
+      const rect = row.getBoundingClientRect();
+      if (rect.bottom > top) return { key: row.dataset.rowId!, top: rect.top };
+    }
+    return null;
+  }
+  useLayoutEffect(() => {
+    const kept = anchor.current;
+    anchor.current = null;
+    const container = panel.current;
+    if (kept === null || container === null) return;
+    const row = [...container.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")].find((candidate) => candidate.dataset.rowId === kept.key);
+    if (row !== undefined) container.scrollTop += row.getBoundingClientRect().top - kept.top;
+  }, [items]);
+
+  const run = useCallback(async (state: BrowseState, load: Load) => {
+    if (load.kind === "append" && (pending.current !== null || load.cursor !== continuation.current)) return;
     const request = ++sequence.current;
     pending.current = request;
     setBusy(true);
     setError("");
     setDiagnostics([]);
-    if (!append) setChanged(false);
-    if (!append && !refresh) {
+    if (load.kind !== "append") setChanged(false);
+    if (load.kind === "first") {
       setItems([]);
       continuation.current = undefined;
       setCursor(undefined);
@@ -58,16 +87,24 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     }
     try {
       if (state.migrationError !== null) { setError(state.migrationError); return; }
-      const page = await api.search(state.query, {
-        limit: PAGE_SIZE,
-        cursor: cursorValue,
-        sort: state.sort,
-      });
-      if (request !== sequence.current) return;
-      if (append && page.cursor === cursorValue) throw new Error("Search returned a repeated continuation cursor.");
-      setItems((previous) => [...new Map([...(append ? previous : []), ...page.items].map((item) => [summaryKey(item), item])).values()]);
-      continuation.current = page.cursor;
-      setCursor(page.cursor);
+      const wanted = load.kind === "refresh" ? load.rows : PAGE_SIZE;
+      const rows: Summary[] = [];
+      let next = load.kind === "append" ? load.cursor : undefined;
+      do {
+        const page = await api.search(state.query, {
+          limit: Math.min(SEARCH_LIMIT_MAX, wanted - rows.length),
+          cursor: next,
+          sort: state.sort,
+        });
+        if (request !== sequence.current) return;
+        if (next !== undefined && page.cursor === next) throw new Error("Search returned a repeated continuation cursor.");
+        rows.push(...page.items);
+        next = page.cursor;
+      } while (load.kind === "refresh" && next !== undefined && rows.length < wanted);
+      if (load.kind === "refresh") anchor.current = captureAnchor();
+      setItems((previous) => [...new Map([...(load.kind === "append" ? previous : []), ...rows].map((item) => [summaryKey(item), item])).values()]);
+      continuation.current = next;
+      setCursor(next);
     } catch (err) {
       if (request !== sequence.current) return;
       if (err instanceof AuthError) {
@@ -92,14 +129,16 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     }
     setSort(initial.sort);
     applied.current = initial;
-    void run(initial, undefined);
+    void run(initial, { kind: "first" });
   }, [initial.query, initial.migrationError, initial.sort.field, initial.sort.direction, run]);
 
-  // A live change never resets a list the reader has scrolled or extended: it is announced instead (spec §1.5).
+  // A live change never resets a list: an untouched first page reloads in place; a list the reader has scrolled or
+  // extended announces the change, and Show reloads the whole loaded chain in place (spec §1.5, §5 rule 6).
+  const refresh = () => run(applied.current, { kind: "refresh", rows: Math.max(items.length, PAGE_SIZE) });
   useEffect(() => {
     if (live.version === 0) return;
     const untouched = (panel.current === null || panel.current.scrollTop === 0) && items.length <= PAGE_SIZE;
-    if (untouched) void run(applied.current, undefined, true);
+    if (untouched) void refresh();
     else setChanged(true);
   }, [live.version, run]);
   useEffect(() => () => { sequence.current++; }, []);
@@ -107,7 +146,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   useEffect(() => {
     if (cursor === undefined || busy || error !== "" || sentinel.current === null || typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver((entries) => {
-      if (entries.some((entry) => entry.isIntersecting)) void run(applied.current, cursor);
+      if (entries.some((entry) => entry.isIntersecting)) void run(applied.current, { kind: "append", cursor });
     }, { root: panel.current, rootMargin: PREFETCH_MARGIN });
     observer.observe(sentinel.current);
     return () => observer.disconnect();
@@ -122,7 +161,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
     applied.current = state;
     const hash = browseHash(state, preset);
     if (location.hash !== hash) { location.hash = hash; return; }
-    void run(state, undefined);
+    void run(state, { kind: "first" });
   }
 
   function changeSort(field: SearchSortField) {
@@ -141,7 +180,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   }
 
   return (<>
-    {changed && <div className="update-pill"><button type="button" onClick={() => void run(applied.current, undefined)}>Records changed · Show</button></div>}
+    {changed && <div className="update-pill"><button type="button" onClick={() => void refresh()}>Records changed · Show</button></div>}
     <section className="browse-view" aria-label="Browse" aria-busy={busy}>
       <div className="page-heading"><div>
         <h1>{HEADINGS[preset]}</h1>
@@ -170,10 +209,10 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
         </ul>
       )}
       <div className="results-heading"><h2>{inbox ? "Waiting for review" : "Records"} <span className="count-badge">{items.length}{cursor !== undefined && "+"}</span></h2><span>Sorted by {SORT_COLUMNS.find((column) => column.field === sort.field)?.label ?? "record key"} {sort.direction === "asc" ? "↑" : "↓"}</span></div>
-      <p id="records-scroll-help" className="scroll-help">Scroll the table to load more records. Select a column heading to sort all results.</p>
-      {error !== "" && <p role="alert">{error} {diagnostics.length === 0 && initial.migrationError === null && <button type="button" onClick={() => void run(applied.current, cursor)}>Retry loading records</button>}</p>}
+      <p id={helpId} className="scroll-help">Scroll the table to load more records. Select a column heading to sort all results.</p>
+      {error !== "" && <p role="alert">{error} {diagnostics.length === 0 && initial.migrationError === null && <button type="button" onClick={() => void run(applied.current, cursor === undefined ? { kind: "first" } : { kind: "append", cursor })}>Retry loading records</button>}</p>}
       {items.length === 0 && !busy && error === "" && <div className="empty-state"><Icon name={inbox ? "inbox" : "search"} /><h3>{inbox ? "No records requiring review" : "No records found"}</h3><p>{inbox ? "Records requiring attention appear here." : "Try a different query or include archived records."}</p></div>}
-        <div className="records-panel" ref={panel} role="region" aria-label="Record results" aria-describedby="records-scroll-help" tabIndex={0}><table>
+        <div className="records-panel" ref={panel} role="region" aria-label="Record results" aria-describedby={helpId} tabIndex={0}><table>
           <thead>
             <tr>
               {SORT_COLUMNS.slice(0, 6).map((column) => sortHeader(column.field, column.label))}
@@ -183,7 +222,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
           </thead>
           <tbody>
             {items.map((item) => (
-              <tr key={summaryKey(item)}>
+              <tr key={summaryKey(item)} data-row-id={summaryKey(item)}>
                 <td>
                   <button className="record-open" type="button" aria-label={summaryKey(item)} onClick={() => onOpen(summaryKey(item))}>
                     <span className={`record-icon type-${item.type}`}><Icon name={item.type === "skill-draft" ? "spark" : item.type.startsWith("github-") ? "branch" : "stack"} /></span>
@@ -206,7 +245,7 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
         </table><div ref={sentinel} className="scroll-sentinel" aria-hidden="true" /></div>
       <div className="results-footer">
         <span role="status" aria-live="polite">{busy ? items.length === 0 ? "Searching…" : "Loading more records…" : error === "" && items.length > 0 && cursor === undefined ? `All ${items.length} records loaded.` : `${items.length} records loaded.`}</span>
-        {cursor !== undefined && error === "" && <button type="button" disabled={busy} onClick={() => void run(applied.current, cursor)}>Load more records</button>}
+        {cursor !== undefined && error === "" && <button type="button" disabled={busy} onClick={() => void run(applied.current, { kind: "append", cursor })}>Load more records</button>}
       </div>
     </section>
   </>);

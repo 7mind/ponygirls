@@ -165,6 +165,11 @@ const check = async (name, fn) => {
 };
 
 const navLink = (page, name) => page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name, exact: true });
+// The preset's list is shown once its entry is current; until then the previous list (kept mounted) is still visible.
+const openPreset = async (page, name) => {
+  await navLink(page, name).click();
+  await page.getByRole("navigation", { name: "Main navigation" }).locator('[aria-current="page"]', { hasText: name }).waitFor();
+};
 // Sign out is a user-menu item handled by the shared account module.
 const signOut = async (page) => {
   await page.getByRole("button", { name: "op", exact: true }).click();
@@ -178,7 +183,9 @@ const login = async (page, password) => {
   await navLink(page, "Browse").waitFor();
 };
 
-await check("plain HTTP preview verifies heartbeat without secure-context APIs", async () => {
+// The non-loopback http://haystack.test origin is not a secure context: no Fetch Metadata, so the account plane's
+// reads rely on the account module's X-Account-Request header; sign-out stays module-owned.
+await check("plain HTTP preview verifies heartbeat, account reads and module sign-out without secure-context APIs", async () => {
   const ctx = await browser.newContext();
   try {
     const page = await ctx.newPage();
@@ -203,7 +210,18 @@ await check("plain HTTP preview verifies heartbeat without secure-context APIs",
     await page.reload();
     await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor({ timeout: 3000 });
     assert.equal((await ctx.cookies(insecureBase)).find((entry) => entry.name === "haystack-dev").value, cookie.value);
+    const reads = [];
+    page.on("request", (request) => { if (request.method() === "GET" && new URL(request.url()).pathname === "/api/account/v1") reads.push(request); });
+    await page.getByRole("button", { name: "op", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Access tokens", exact: true }).click();
+    await page.getByRole("table", { name: "Access tokens", exact: true }).getByRole("row").filter({ hasText: "browser" }).waitFor();
+    const headers = await reads[0].allHeaders();
+    assert.equal(headers.origin, undefined, "a same-origin GET carries no Origin");
+    assert.equal(headers["sec-fetch-site"], undefined, "no Fetch Metadata outside secure contexts");
+    assert.equal((await reads[0].response()).status(), 200, "the account read is accepted on the plain-HTTP origin");
+    const logout = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/account/v1/logout");
     await signOut(page);
+    assert.equal((await logout).status(), 200, "the module posts the sign-out");
     await page.getByLabel("Password", { exact: true }).waitFor();
     assert.equal((await ctx.cookies(insecureBase)).some((entry) => entry.name === "haystack-dev"), false);
     assert.deepEqual(errors, []);
@@ -604,8 +622,8 @@ await check("inbox route persists", async () => {
   try {
     const page = await ctx.newPage();
     await login(page, humanPassword);
-    await navLink(page, "Inbox").click();
-    await page.getByText("needs attention").waitFor();
+    await openPreset(page, "Inbox");
+    await page.getByText("needs attention").filter({ visible: true }).waitFor(); // other preset lists stay mounted, hidden
     assert.equal(new URL(page.url()).hash, "#/inbox");
   } finally { await ctx.close(); }
 });
@@ -935,12 +953,12 @@ await check("attention inbox", async () => {
   const ctx = await browser.newContext();
   const page = await ctx.newPage();
   await login(page, humanPassword);
-  await navLink(page, "Inbox").click();
-  await page.getByText("needs attention").waitFor();
+  await openPreset(page, "Inbox");
+  await page.getByText("needs attention").filter({ visible: true }).waitFor(); // other preset lists stay mounted, hidden
   await page.getByRole("button", { name: "ui:todo" }).click();
   await page.getByRole("button", { name: "Clear attention" }).click();
   await page.getByText(/Attention cleared/).waitFor();
-  await navLink(page, "Inbox").click();
+  await openPreset(page, "Inbox");
   await page.getByRole("heading", { name: "No records requiring review", exact: true }).waitFor();
   await ctx.close();
 });

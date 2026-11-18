@@ -62,7 +62,8 @@ try {
     for (const colorScheme of ["light", "dark"]) {
       await page.setViewportSize({ width, height: 900 });
       await page.emulateMedia({ colorScheme });
-      await page.goto(`${vite.resolvedUrls.local[0]}layout.html#/browse`);
+      // A new document per case: lists stay mounted (hidden) across routes within one document.
+      await page.goto(`${vite.resolvedUrls.local[0]}layout.html?case=${width}-${colorScheme}#/browse`);
       await page.locator(".record-open").waitFor();
       const dimensions = await page.evaluate(() => {
         const panel = document.querySelector(".records-panel");
