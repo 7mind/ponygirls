@@ -1,7 +1,7 @@
 // Behavioral-Active / Blackbox-Group, specified generated browser boundary.
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {readFileSync} from 'node:fs';
+import {readFileSync, readdirSync} from 'node:fs';
 import * as boundary from '../../web/dashboard/current-protocol.js';
 import * as p from '../../web/dashboard/current/manure/api/index.js';
 import {BaboonCodecContext} from '../../web/dashboard/current/BaboonSharedRuntime.js';
@@ -14,6 +14,19 @@ test('all 76 Baboon codec vectors pass strict browser schema validation',()=>{
   for(const [name,type] of [['commands','ClientEnvelope'],['results','ServerEnvelope'],['content','ContentEnvelope'],['chunks','ChunkReceipt']]){
     const raw=readFileSync(new URL(`../../models/fixtures/${name}.json`,import.meta.url),'utf8');
     const vectors=boundary.parseStrict(raw);vectors.forEach(v=>boundary.validate(type,v));count+=vectors.length;
+  }
+  assert.equal(count,76);
+});
+
+test('generated TypeScript codecs round-trip every golden vector of the sole current API',()=>{
+  assert.deepEqual(readdirSync(new URL('../../models/',import.meta.url)).filter(name=>name.endsWith('.baboon')),['manure.baboon']);
+  assert.equal(p.ClientEnvelope.BaboonDomainVersion,'1.0.0');
+  assert.equal(readdirSync(new URL('../../generated/typescript/manure/api/',import.meta.url)).some(name=>/^v\d|^from_/.test(name)),false);
+  let count=0;
+  for(const [name,codec] of [['commands',p.ClientEnvelope_JsonCodec.instance],['results',p.ServerEnvelope_JsonCodec.instance],['content',p.ContentEnvelope_JsonCodec.instance],['chunks',p.ChunkReceipt_JsonCodec.instance]]){
+    const vectors=JSON.parse(readFileSync(new URL(`../../models/fixtures/${name}.json`,import.meta.url),'utf8'));
+    for(const vector of vectors)assert.deepEqual(codec.encode(ctx,codec.decode(ctx,vector)),vector,`${name}: round trip`);
+    count+=vectors.length;
   }
   assert.equal(count,76);
 });
@@ -92,6 +105,7 @@ test('search goldens carry actual published space distinct from profile and lexi
   assert.equal(published.hits[0].embeddingProfile,'b'.repeat(64));
   assert.equal(published.hits[0].embeddingSpace,'c'.repeat(64));
   assert.equal(head.hits[0].embeddingProfile,undefined);assert.equal(head.hits[0].embeddingSpace,undefined);
+  assert.equal(vectors.filter(v=>v.result.SearchResults)[1].result.SearchResults.page.hits[0].embeddingProfile,null);
   assert.equal(vectors.filter(v=>v.result.SearchResults)[1].result.SearchResults.page.hits[0].embeddingSpace,null);
   assert.equal(published.countScope,p.SearchCountScope.CandidateWindow);
   assert.equal(head.countScope,p.SearchCountScope.ExactMatches);

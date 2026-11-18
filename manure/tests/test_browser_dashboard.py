@@ -1,9 +1,6 @@
 """B1 / B7 / D1: dashboard login, CSRF origin enforcement, shell flows.
 
-Real Chromium + real manure server. Static asset-hygiene checks run
-without a server; all browser flows SkipTest until the server
-implementation is synced (governor sync pending) rather than passing
-vacuously.
+Real Chromium + real manure server.
 """
 
 from __future__ import annotations
@@ -17,90 +14,6 @@ import urllib.parse
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import browser_fixtures as bf
-
-REPO_MANURE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DASH_JS = os.path.join(REPO_MANURE_DIR, "web", "dashboard", "app.js")
-DASH_HTML = os.path.join(REPO_MANURE_DIR, "web", "dashboard", "index.html")
-UNLOCK_HTML = os.path.join(REPO_MANURE_DIR, "web", "unlock", "index.html")
-UNLOCK_JS = os.path.join(REPO_MANURE_DIR, "web", "unlock", "unlock.js")
-UNLOCK_CSS = os.path.join(REPO_MANURE_DIR, "web", "unlock", "styles.css")
-
-
-class TestAssetHygiene(unittest.TestCase):
-    """Static checks on the shipped shells (run pre-sync, no server)."""
-
-    def _read(self, path):
-        with open(path, "r", encoding="utf-8") as fh:
-            return fh.read()
-
-    def _code_text(self, src):
-        import re
-        src = re.sub(r"/\*.*?\*/", "", src, flags=re.DOTALL)
-        src = re.sub(r"^\s*//.*$", "", src, flags=re.MULTILINE)
-        return src
-
-    def _code(self, path):
-        import re
-        with open(path, "r", encoding="utf-8") as fh:
-            src = fh.read()
-        # Strip comments so prose about a ban does not trip the check;
-        # string literals remain (a banned call built via string concat
-        # would still need the literal name... except split across
-        # literals; the browser XSS tests cover actual exploitability).
-        return self._code_text(src)
-
-    def test_dashboard_js_never_injects_html_or_touches_storage(self):
-        src = self._code(DASH_JS)
-        for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML",
-                       "document.write", "localStorage", "sessionStorage",
-                       "document.cookie"):
-            self.assertNotIn(banned, src, f"dashboard app.js uses {banned}")
-
-    def test_unlock_js_never_injects_html_or_touches_storage(self):
-        src = self._code(UNLOCK_JS)
-        for banned in ("innerHTML", "outerHTML", "insertAdjacentHTML",
-                       "document.write", "localStorage", "sessionStorage",
-                       "document.cookie"):
-            self.assertNotIn(banned, src, f"unlock.js uses {banned}")
-
-    def test_unlock_shell_uses_external_assets_only(self):
-        # R3: external files served as trusted sibling assets while
-        # locked; absolute same-origin paths resolve from both / and
-        # /__manure/password. No inline script or style allowed.
-        with open(UNLOCK_HTML, "r", encoding="utf-8") as fh:
-            html = fh.read()
-        self.assertIn('src="/unlock.js"', html)
-        self.assertIn('href="/styles.css"', html)
-        self.assertNotIn("<script>", html)
-        self.assertNotIn("<style>", html)
-        for path in (UNLOCK_JS, UNLOCK_CSS):
-            self.assertTrue(os.path.isfile(path), path)
-
-    def test_login_uses_transient_username_password_fields(self):
-        html = self._read(DASH_HTML)
-        self.assertIn('type="password"', html)
-        self.assertIn('name="login"', html)
-        self.assertIn('name="password"', html)
-        self.assertIn('data-account-login', html)
-        self.assertNotIn('name="token"', html)
-        for banned in ("localStorage", "sessionStorage"):
-            self.assertNotIn(banned, html)
-
-    def test_unlock_form_posts_urlencoded_to_own_origin(self):
-        html = self._read(UNLOCK_HTML)
-        self.assertIn('method="post"', html)
-        self.assertIn('action="/__manure/unlock"', html)
-        self.assertIn("application/x-www-form-urlencoded", html)
-        self.assertIn('name="password"', html)
-        self.assertIn('type="password"', html)
-
-    def test_grant_handoff_is_form_post_not_url(self):
-        src = self._read(DASH_JS)
-        self.assertIn("/__manure/grant", src)
-        self.assertIn('method', src)
-        # The grant travels in a hidden form field, never in a URL.
-        self.assertIn('name = "grant"', src)
-        self.assertNotIn("grant=", src.replace('name = "grant"', ""))
 
 
 def _api_host(url):

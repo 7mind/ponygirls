@@ -57,8 +57,8 @@ pkgs.runCommand "backend-source-layout-test" {
   test -f "$manureJvmTestSource/manure/web/viewer/index.html"
   test -f "$manureJvmTestSource/manure/models/fixtures/results.json"
   test ! -e "$manureJvmTestSource/manure/tests"
-  test -f "$manureTargetTestSource/manure/docs/current-api.md"
-  test -f "$manureTargetTestSource/shared/retrieval-postgres/src/test/scala/ponygirls/retrieval/postgres/PublicationFenceTest.scala"
+  test -f "$manureTargetTestSource/manure/tests/target_server.py"
+  test ! -e "$manureTargetTestSource/manure/docs/current-api.md"
   test ! -e "$manureTargetTestSource/manure/README.md"
   touch "$out"
 ''

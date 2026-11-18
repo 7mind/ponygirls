@@ -6,6 +6,13 @@ import './table-columns.css';
 interface ColumnState extends SizedColumn { visible: boolean }
 export interface TableLayout { columns: readonly SizedColumn[]; specs: readonly TableColumnSpec[]; visibilityKey: string; width: number; canPinEnds: boolean; container: RefObject<HTMLDivElement | null>; table: RefObject<HTMLTableElement | null>; resize(id: string, width: number): void; toggle(id: string, visible: boolean): void; fitContent(): void; fitWidth(): void; showAll(): void; compact(): void }
 const RESIZE_STEP = 16, MIN_UNPINNED_WIDTH = 120;
+// Canvas metrics ignore font-variant-numeric (e.g. tabular-nums), so such text is measured as rendered.
+function renderedWidth(text: string, style: CSSStyleDeclaration, document: Document): number {
+  const probe = document.createElement('span');
+  for (const property of ['font-style', 'font-weight', 'font-stretch', 'font-size', 'font-family', 'font-variant-numeric', 'letter-spacing'] as const) probe.style.setProperty(property, style.getPropertyValue(property));
+  probe.style.setProperty('position', 'absolute'); probe.style.setProperty('visibility', 'hidden'); probe.style.setProperty('white-space', 'pre'); probe.textContent = text;
+  document.body.append(probe); try { return probe.getBoundingClientRect().width; } finally { probe.remove(); }
+}
 function contentWidth(node: Node, context: CanvasRenderingContext2D): number {
   if (node.nodeType === Node.TEXT_NODE) {
     const parent = node.parentElement; if (parent === null) throw new Error('Table text has no element.');
@@ -15,7 +22,7 @@ function contentWidth(node: Node, context: CanvasRenderingContext2D): number {
     let text = node.textContent!.replace(/\r\n?/g, '\n');
     if (style.whiteSpace === 'normal' || style.whiteSpace === 'nowrap') text = text.replace(/[ \t\n\f]+/g, ' ');
     else if (style.whiteSpace === 'pre-line') text = text.replace(/[ \t\f]+/g, ' ');
-    let width = 0; for (const line of text.split('\n')) width = Math.max(width, context.measureText(line).width); return width;
+    let width = 0; for (const line of text.split('\n')) width = Math.max(width, style.fontVariantNumeric === 'normal' ? context.measureText(line).width : renderedWidth(line, style, parent.ownerDocument)); return width;
   }
   if (!(node instanceof HTMLElement)) return node instanceof Element ? node.getBoundingClientRect().width : 0;
   const style = getComputedStyle(node);

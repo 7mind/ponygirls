@@ -2,8 +2,7 @@
 > The sole coordinated application API is Baboon `manure.api` 1.0.0 in
 > [`docs/current-api.md`](docs/current-api.md). The Scala/distage/cats-effect/http4s
 > backend at `backend/`, PostgreSQL byte-exact metadata, tested descriptor-relative
-> POSIX payload store at `server/`, and explicit offline conversion in
-> [`docs/offline-conversion.md`](docs/offline-conversion.md) supersede the Python/
+> POSIX payload store at `server/` supersede the Python/
 > SQLite production-runtime freeze, old REST wire schemas/routes/cursors and
 > no-search implementation restrictions below. Current generated owned clients
 > replace the old wire API together; no historical codec/API promise is made.

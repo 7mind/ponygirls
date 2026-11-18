@@ -1,0 +1,184 @@
+/* tokens.css — shared design tokens for the Chronicle, Haystack and Manure dashboards.
+ * Every colour, size, radius, shadow and z-index used by components.css and by the
+ * per-dashboard view styles must come from this file (checked by tests/census.mjs).
+ *
+ * Theme contract: a tiny blocking script (theme-init.js) always sets
+ *   <html data-theme="light|dark" data-theme-choice="system|light|dark">
+ * so there is exactly one dark block and no duplicated prefers-color-scheme copy.
+ * App identity: <html data-app="chronicle|haystack|manure"> selects the accent ramp only.
+ */
+/* Inter 4.1 variable (upright), SIL OFL 1.1 — fonts/LICENSE.txt. Italic is synthesised. */
+@font-face {
+  font-family: Inter;
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("fonts/InterVariable.woff2") format("woff2");
+}
+
+/* Everything below is in the cascade layer `ui`, so unlayered host stylesheets always win over it,
+ * independent of selector specificity. Not indented, to keep diffs against the reference readable. */
+@layer ui {
+:root {
+  color-scheme: light;
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-sans: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", "Noto Sans", sans-serif;
+  --font-mono: ui-monospace, "JetBrains Mono", "SF Mono", "Cascadia Mono", Menlo, Consolas, "DejaVu Sans Mono", monospace;
+  --text-xs: 12px;   /* floor: captions, table headers, chips, meta */
+  --text-sm: 13px;   /* dense UI: table cells, buttons, inputs, nav */
+  --text-md: 14px;   /* base: prose, transcript, forms */
+  --text-lg: 16px;   /* section titles */
+  --text-xl: 20px;   /* page titles */
+  --text-2xl: 28px;  /* headline numbers (status tiles) */
+  --leading-tight: 1.25;
+  --leading-normal: 1.45;
+  --leading-prose: 1.6;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+
+  /* ── Space (4 px grid; the only values allowed in margin/padding/gap) ─── */
+  --space-0: 2px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  /* ── Sizes ────────────────────────────────────────────────────────────── */
+  --control-h: 32px;       /* buttons, inputs, selects, segmented, icon buttons */
+  --control-h-lg: 40px;    /* query bar, primary form fields on auth pages */
+  --control-h-sm: 28px;    /* in-row actions only; never smaller */
+  --row-h: 40px;           /* single-line table row */
+  --row-h-2: 52px;         /* two-line table row (title + meta) */
+  --masthead-h: 48px;
+  --subnav-h: 40px;
+  --viewbar-h: 56px;
+  --gutter: 24px;
+  --measure: 720px;        /* max line length for prose (≈ 80–90 characters at --text-md) */
+  --rail-w: 340px;         /* side panes (session outline, detail rail) */
+
+  /* ── Shape ────────────────────────────────────────────────────────────── */
+  --radius-sm: 4px;        /* chips, small controls */
+  --radius-md: 6px;        /* buttons, inputs, cards, popovers */
+  --radius-lg: 10px;       /* dialogs, auth cards */
+  --radius-full: 999px;
+  --shadow-1: 0 1px 2px rgb(16 24 40 / 6%), 0 4px 16px rgb(16 24 40 / 10%);   /* popover, menu, toast */
+  --shadow-2: 0 8px 20px rgb(16 24 40 / 12%), 0 24px 64px rgb(16 24 40 / 20%); /* dialog */
+  --ring: 0 0 0 2px var(--bg-surface), 0 0 0 4px var(--focus);
+
+  /* ── Layers ───────────────────────────────────────────────────────────── */
+  --z-sticky: 10;
+  --z-masthead: 20;
+  --z-popover: 30;
+  --z-dialog: 40;
+  --z-toast: 50;
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --ease: 120ms ease-out;
+
+  /* ── Neutral palette (light) ──────────────────────────────────────────── */
+  --bg-canvas: #f4f5f7;        /* page ground behind cards, auth pages */
+  --bg-surface: #ffffff;       /* data ground: lists, cards, dialogs */
+  --bg-sunken: #f0f2f5;        /* table header band, code, wells */
+  --bg-hover: #f3f5f8;         /* row / menu-item hover */
+  --bg-scrim: rgb(16 24 40 / 45%);
+  --border: #d8dce2;
+  --border-strong: #a9b1bd;
+  --text: #181b20;
+  --text-muted: #59616e;       /* 6.3:1 on surface */
+  --text-faint: #6b7380;       /* 4.8:1 on surface: placeholders, disabled labels */
+  --text-on-solid: #ffffff;
+
+  /* ── Accent (Chronicle default: ink blue) ─────────────────────────────── */
+  --accent: #2c56c4;           /* links, active nav, icons */
+  --accent-solid: #2f5bd0;     /* primary button ground */
+  --accent-solid-hover: #2549ad;
+  --accent-soft: #e9effd;      /* selected row, active chip ground */
+  --accent-soft-border: #c3d2f7;
+  --focus: #2f5bd0;
+
+  /* ── Semantic status colours: fg (text/icon), bg (soft ground), bd (border) */
+  --ok-fg: #17753a;      --ok-bg: #e5f5ea;      --ok-bd: #b5dfc2;
+  --warn-fg: #8a5700;    --warn-bg: #fdf2d3;    --warn-bd: #ecd28a;
+  --danger-fg: #b9242b;  --danger-bg: #fdeaea;  --danger-bd: #f2bcbe;  --danger-solid: #c62a31; --danger-solid-hover: #a61f26;
+  --info-fg: #1f5cb8;    --info-bg: #e8f0fd;    --info-bd: #bcd3f7;
+  --neutral-fg: #4a5260; --neutral-bg: #eceef2; --neutral-bd: #d5d9e0;
+  --mark-bg: #ffe27a;    --mark-fg: #181b20;    /* search-hit highlight */
+
+  --qr-fg: #000000;      --qr-bg: #ffffff;      /* theme-invariant: scanners need black on white */
+
+  /* ── Transcript roles (left rule + label) ─────────────────────────────── */
+  --role-user: #2c56c4;
+  --role-assistant: #0b7466;
+  --role-tool: #8a5700;
+  --role-system: #6b7380;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --shadow-1: 0 1px 2px rgb(0 0 0 / 40%), 0 6px 20px rgb(0 0 0 / 45%);
+  --shadow-2: 0 8px 20px rgb(0 0 0 / 50%), 0 24px 64px rgb(0 0 0 / 60%);
+
+  --bg-canvas: #0d1015;
+  --bg-surface: #151920;
+  --bg-sunken: #1b2029;
+  --bg-hover: #1d232d;
+  --bg-scrim: rgb(0 0 0 / 60%);
+  --border: #333a47;
+  --border-strong: #4a5362;
+  --text: #e5e8ed;
+  --text-muted: #a0a9b6;
+  --text-faint: #8891a0;
+  --text-on-solid: #ffffff;
+
+  --accent: #86a8ff;
+  --accent-solid: #3d68dc;
+  --accent-solid-hover: #5079e6;
+  --accent-soft: #1a2747;
+  --accent-soft-border: #2e437a;
+  --focus: #86a8ff;
+
+  --ok-fg: #5fca7c;      --ok-bg: #10301b;      --ok-bd: #1f5a33;
+  --warn-fg: #e3b341;    --warn-bg: #33270a;    --warn-bd: #5f4a13;
+  --danger-fg: #ff8587;  --danger-bg: #3a1618;  --danger-bd: #6f2529;  --danger-solid: #cf3a41; --danger-solid-hover: #e0484f;
+  --info-fg: #86b7ff;    --info-bg: #132846;    --info-bd: #254a80;
+  --neutral-fg: #b6bdc9; --neutral-bg: #232a35; --neutral-bd: #353d4a;
+  --mark-bg: #6b5200;    --mark-fg: #fff6d6;
+
+  --role-user: #86a8ff;
+  --role-assistant: #4fd1bd;
+  --role-tool: #e3b341;
+  --role-system: #8891a0;
+}
+
+/* ── App identity: accent ramp only ─────────────────────────────────────── */
+:root[data-app="haystack"] {
+  --accent: #0a6c61; --accent-solid: #0b7a6d; --accent-solid-hover: #096459;
+  --accent-soft: #e1f4f1; --accent-soft-border: #a9dcd4; --focus: #0b7a6d;
+}
+:root[data-app="haystack"][data-theme="dark"] {
+  --accent: #56d3c0; --accent-solid: #0d7f70; --accent-solid-hover: #14a08e;
+  --accent-soft: #0f2e2a; --accent-soft-border: #1c5a52; --focus: #56d3c0;
+}
+:root[data-app="manure"] {
+  --accent: #6238c0; --accent-solid: #6a41c8; --accent-solid-hover: #5531a9;
+  --accent-soft: #f0ebfc; --accent-soft-border: #d3c5f4; --focus: #6a41c8;
+}
+:root[data-app="manure"][data-theme="dark"] {
+  --accent: #b7a0ff; --accent-solid: #7450d6; --accent-solid-hover: #8a69e4;
+  --accent-soft: #261d45; --accent-soft-border: #43347a; --focus: #b7a0ff;
+}
+
+/* ── Responsive layout tokens ───────────────────────────────────────────── */
+@media (max-width: 1100px) {
+  :root { --gutter: 16px; --rail-w: 300px; }
+}
+@media (max-width: 720px) {
+  :root { --gutter: 12px; }
+}
+
+} /* @layer ui */

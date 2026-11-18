@@ -160,9 +160,8 @@ cfg = {"port": 47329, "data_dir": str(work / "data"), "api_origin": "http://127.
 EOF
 ```
 
-The generated config is historical source-format fixture data. It must not
-activate a Python backend: `python -m manure.server` now exits2 without reading
-it. Current server configuration and launch use the backend instructions above.
+The generated config is historical source-format fixture data. Current server
+configuration and launch use the backend instructions above.
 
 Loopback HTTP needs no setup on `127.0.0.1` (one socket,
 Host-routed). `*.localhost` content names depend on your resolver —
@@ -215,8 +214,7 @@ Web Crypto APIs; Python hashing/RNG are unchanged.
 
 Portable Python entrypoints: `manure` (CLI) and `manure-mcp`
 (`python -m manure.cli` / `python -m manure.mcp`). `manure-server` is the built
-Scala/native service, not a Python console script; `python -m manure.server`
-is deliberately fail-closed.
+Scala/native service, not a Python console script.
 
 Output is human-readable by default, including when redirected or piped. `list`
 shows a compact table with full artifact IDs, access/state and readable sizes;
@@ -523,17 +521,15 @@ form). No automatic staging outside the Nix build.
 
 ## Tests (what runs where — and what does not count)
 
-- Full suite from the repo root (no external network; server/client
-  tests still use loopback sockets, so “offline” means no outside
-  traffic, not no sockets):
-
-```bash
-MANURE_PLAYWRIGHT_CORE_PATH=/path/to/playwright-core \
-MANURE_CHROMIUM_BIN=/path/to/chromium \
-MANURE_MCP_SDK_PATH=/path/to/node_modules/@modelcontextprotocol/sdk \
-python3 -m unittest discover -s manure/tests -p "test_*.py"
-```
-
+- Full target suite (inside `nix develop .#chronicle`): `manure/scripts/test-target.sh
+  native /absolute/manure-server` or
+  `manure/scripts/test-target.sh jvm`; `nix build .#checks.x86_64-linux.manure-native`
+  runs the same `manure/scripts/target-suite.py` against the native ELF. The runner
+  discovers every `manure/tests/test_*.py` module and `*.test.mjs` suite and fails on
+  any failure, error, skip, expected failure, unexpected success or an empty run.
+  Test names after the mode (`test-target.sh jvm test_cli_process`) run a diagnostic
+  subset. Do not run `unittest discover` directly: the target tests need the owned
+  PostgreSQL provider and target executable that these runners supply.
 - Driver: absolute dir with `playwright-core`'s `package.json`;
   browser: `MANURE_CHROMIUM_BIN` else PATH/Nix; SDK:
   `MANURE_MCP_SDK_PATH` = the `@modelcontextprotocol/sdk` **package
@@ -548,17 +544,11 @@ directory** (resolved absolutely, first existing hit wins). Browser
   driver/browser/SDK/node/openssl or a skipped mandatory case is a
   failed acceptance, never a green run.
 - Additional workspace UX checks: run
-  `python3 -m unittest discover -s manure/tests -p test_browser_dashboard_ux.py`
+  `manure/scripts/test-target.sh jvm test_browser_dashboard_ux`
   with the same driver/browser environment. `MANURE_FIREFOX_BIN` explicitly
   selects Firefox instead of Chromium; `MANURE_UX_ARTIFACTS` optionally writes
   screenshots to a scratch directory. A Firefox UX run does not replace the
   mandatory Chromium, TLS or NixOS/HM security gates.
-- The UX module also runs `browser/dashboard-layout.mjs` against the actual
-  dashboard modules and a controlled current-API boundary. Long unbroken names,
-  owners and paths are checked at 320, 390, 570, 571, 800, 801, 1024, 1350, 1351 and 1440px in light/dark mode:
-  no page/table/cell horizontal overflow, all metadata retained, nine keyboard
-  sorts and focusable actions. This is frontend layout evidence, not native
-  backend acceptance. `MANURE_UX_ARTIFACTS` saves catalogue/manifest screenshots.
 - Absolute scratch paths from a developer run are not gates either;
   release acceptance is the parent-run F/B/N matrix (`CONTRACT.md` §13).
   Linux covers service/storage acceptance; CLI portability beyond Linux

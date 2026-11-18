@@ -3,7 +3,7 @@
 # polling. Invoke INSIDE the pinned `nix develop .#chronicle` environment.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
-[[ $# -ge 5 ]] || { echo 'usage: run-owned-target.sh /abs/pg-env.json /abs/with-owned-postgres.py /abs/provision-owned-database.py jvm|native ARGS...' >&2; exit 2; }
+[[ $# -ge 4 ]] || { echo 'usage: run-owned-target.sh /abs/pg-env.json /abs/with-owned-postgres.py /abs/provision-owned-database.py jvm|native ARGS...' >&2; exit 2; }
 provider_env=$1; fixture_wrapper=$2; provision_source=$3; shift 3
 for source in "$provider_env" "$fixture_wrapper" "$provision_source"; do
  [[ $source = /* && -f $source ]] || { echo 'explicit absolute owned-fixture source required' >&2; exit 2; }

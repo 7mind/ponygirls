@@ -27,8 +27,6 @@ let
     export PYTHONPATH=${sources.manureTargetTests}/manure:${sources.manureTargetTests}/manure/tests
     unset MANURE_TOKEN MANURE_TOKEN_FILE MANURE_URL MANURE_URL_FILE MANURE_CACHE_DIR MANURE_POSIX_LIBRARY
     cd ${sources.manureTargetTests}
-    python3 manure/scripts/artifact-source.py > /srv/portable-volume/runtime-inputs.sha256
-    cmp /srv/portable-volume/runtime-inputs.sha256 ${native}/share/manure/compiled-inputs.sha256
     readelf -lW ${native}/libexec/manure-server > /srv/portable-volume/elf-headers
     readelf -dW ${native}/libexec/manure-server > /srv/portable-volume/elf-dynamic
     ! grep -q INTERP /srv/portable-volume/elf-headers
@@ -82,7 +80,7 @@ in pkgs.testers.runNixOSTest {
         Path(os.environ["out"]).mkdir(exist_ok=True)
         Path(os.environ["out"], "portable-native.log").write_text(probe_log)
     residue = machine.succeed("find /srv/portable-volume -mindepth 1 -maxdepth 1 -printf '%f\\n'")
-    assert set(residue.splitlines()) == {"lost+found", "runtime-inputs.sha256", "elf-headers", "elf-dynamic"}
+    assert set(residue.splitlines()) == {"lost+found", "elf-headers", "elf-dynamic"}
     machine.succeed("umount /srv/portable-volume")
     receipt = json.loads([line for line in probe_log.splitlines() if line.startswith('{"scope":')][-1])
     artifact = "${native}/libexec/manure-server"

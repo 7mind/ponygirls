@@ -39,13 +39,6 @@ publication/recovery state machine, physical power-loss durability, or the
 actual Graal static-musl executable. The JVM runner uses `--shared`; static
 runtime acceptance is separate.
 
-Retained invalid-prerequisite setup-failure transcripts are in
-`verification/setup-failures.md`. Current harness strict/sanitizer logs,
-commands and input digests are in `verification/20261102-harness-instance/`.
-The unchanged `verification/20261102-size-truncate/` receipts are historical:
-their harness digest identifies the earlier harness, not the current source.
-Production C/Java input digests remain identical; see `verification/README.md`.
-
 ## Boundary assumptions
 
 - `openFile` first pins with `O_PATH|O_NOFOLLOW`, stats that pin and rejects

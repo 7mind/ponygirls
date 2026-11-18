@@ -46,11 +46,11 @@ try {
   assert.deepEqual(errors, []);
 } finally { await browser.close(); await server.close(); }
 
-async function snapshot(page) { return page.evaluate(() => { const data = document.documentElement.dataset; return { preference: data.themePreference, resolved: data.theme, persistence: data.themePersistence }; }); }
-async function choose(page, preference) { if (await page.getByRole('button', { name: 'Theme settings', exact: true }).getAttribute('aria-expanded') !== 'true') await page.getByRole('button', { name: 'Theme settings', exact: true }).click(); await page.getByLabel('Color theme', { exact: true }).selectOption(preference); await page.waitForFunction(value => document.documentElement.dataset.themePreference === value, preference); }
+async function snapshot(page) { return page.evaluate(() => { const data = document.documentElement.dataset; return { preference: data.themeChoice, resolved: data.theme, persistence: data.themePersistence }; }); }
+async function choose(page, preference) { if (await page.getByRole('button', { name: 'Theme settings', exact: true }).getAttribute('aria-expanded') !== 'true') await page.getByRole('button', { name: 'Theme settings', exact: true }).click(); await page.getByLabel('Color theme', { exact: true }).selectOption(preference); await page.waitForFunction(value => document.documentElement.dataset.themeChoice === value, preference); }
 async function settledFrame(page) { await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))); }
 async function storeInTab(page, value) { await page.evaluate(({ key, value }) => { if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value); }, { key: THEME_KEY, value }); }
-async function waitStoredTheme(page, value) { await page.waitForFunction(value => { const data = document.documentElement.dataset; return data.themePreference === (value === 'light' || value === 'dark' ? value : 'system') && data.themePersistence === (value === null || ['system', 'light', 'dark'].includes(value) ? 'available' : 'invalid'); }, value); }
+async function waitStoredTheme(page, value) { await page.waitForFunction(value => { const data = document.documentElement.dataset; return data.themeChoice === (value === 'light' || value === 'dark' ? value : 'system') && data.themePersistence === (value === null || ['system', 'light', 'dark'].includes(value) ? 'available' : 'invalid'); }, value); }
 async function configureTheme(context, page, colorScheme, preference) { await page.emulateMedia({ colorScheme }); if (preference !== null) await context.addInitScript(({ key, value }) => localStorage.setItem(key, value), { key: THEME_KEY, value: preference }); }
 async function activity(page) { await page.getByRole('button', { name: 'activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor(); }
 async function source(page) { await page.locator('.archive-row .table-title').first().click(); await page.getByRole('dialog', { name: 'Source conversation', exact: true }).waitFor(); await page.locator('.original-message').first().waitFor(); }
@@ -194,12 +194,12 @@ async function productionPrepaint() {
         await context.addInitScript(({ key, preference }) => {
           if (preference !== null) localStorage.setItem(key, preference);
           window.themePaints = []; window.themePolicyViolations = [];
-          new PerformanceObserver(list => { for (const entry of list.getEntries()) window.themePaints.push({ name: entry.name, theme: document.documentElement.dataset.theme, background: getComputedStyle(document.documentElement).backgroundColor, scheme: document.documentElement.style.colorScheme }); }).observe({ type: 'paint', buffered: true });
+          new PerformanceObserver(list => { for (const entry of list.getEntries()) window.themePaints.push({ name: entry.name, theme: document.documentElement.dataset.theme, choice: document.documentElement.dataset.themeChoice, background: getComputedStyle(document.documentElement).backgroundColor, scheme: document.documentElement.style.colorScheme }); }).observe({ type: 'paint', buffered: true });
           document.addEventListener('securitypolicyviolation', event => window.themePolicyViolations.push({ directive: event.effectiveDirective, blocked: event.blockedURI }));
         }, { key: THEME_KEY, preference });
         page.on('pageerror', error => errors.push(error.message)); await fixture.install(page); await page.route('**/assets/*.js', route => { held.push(route); }); await page.goto(base, { waitUntil: 'commit' });
         await page.waitForFunction(() => window.themePaints.length > 0); const paints = await page.evaluate(() => window.themePaints); assert.ok(held.length > 0); assert.equal(await page.locator('#root').innerHTML(), '');
-        for (const paint of paints) { assert.equal(paint.theme, expected); assert.equal(paint.scheme, expected); assert.equal(paint.background, THEME_CANVAS_RGB[expected]); }
+        for (const paint of paints) { assert.equal(paint.theme, expected); assert.equal(paint.choice, preference ?? 'system'); assert.equal(paint.scheme, expected); assert.equal(paint.background, THEME_CANVAS_RGB[expected]); }
         for (const route of held) await route.continue(); await page.unroute('**/assets/*.js'); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('button', { name: 'archive', exact: true }).click(); await page.locator('.archive-row').first().waitFor(); assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[expected]);
         const nextTheme = expected === 'dark' ? 'light' : 'dark'; await choose(page, nextTheme);
         assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), THEME_CANVAS_RGB[nextTheme]);

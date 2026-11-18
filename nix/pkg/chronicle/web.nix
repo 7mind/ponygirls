@@ -6,6 +6,7 @@ let
     root = ../../../shared/account-web;
     fileset = lib.fileset.unions [ ../../../shared/account-web/account.js ../../../shared/account-web/account.css ];
   };
+  uiWeb = callPackage ../ui-web.nix { };
 in
 buildNpmPackage {
   pname = "chronicle-web";
@@ -25,7 +26,7 @@ buildNpmPackage {
     runHook preBuild
     cd web
     npm run typecheck
-    ACCOUNT_WEB_ROOT=${accountWeb} npm run build
+    ACCOUNT_WEB_ROOT=${accountWeb} UI_WEB_ROOT=${uiWeb} npm run build
     cd ..
     runHook postBuild
   '';
@@ -33,7 +34,7 @@ buildNpmPackage {
   checkPhase = ''
     runHook preCheck
     cd web
-    npm test
+    UI_WEB_ROOT=${uiWeb} npm test
     cd ..
     runHook postCheck
   '';
