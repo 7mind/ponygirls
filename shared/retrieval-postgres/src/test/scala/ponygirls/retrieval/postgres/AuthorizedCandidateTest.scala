@@ -8,7 +8,14 @@ class AuthorizedCandidateTest extends munit.FunSuite {
   private val Window = 25
   private val ForbiddenSources = Window+5
   private val FilteredSources = Window+5
-  private val AuthorizedSources = 12
+  private val NearAuthorizedSources = Window
+  // Authorized, lexically strongest of the authorized, but vector-farther than the ANN window.
+  private val LexicalOnlyAuthorizedSources = 5
+  private val AuthorizedSources = NearAuthorizedSources+LexicalOnlyAuthorizedSources
+  // Strict lexical rank order by 'alpha' occurrences: excluded > lexical-only authorized > near authorized.
+  private val ExcludedText = "alpha alpha alpha alpha nearest"
+  private val LexicalOnlyText = "alpha alpha alpha tail"
+  private val NearText = "alpha controlled"
 
   test("Contract: the production candidate window is 1000 per leg") {
     assertEquals(CandidatePolicy.candidatesPerLeg,ProductionCandidatesPerLeg)
@@ -17,11 +24,11 @@ class AuthorizedCandidateTest extends munit.FunSuite {
   test("Blackbox-GoodCommunication: ACL and typed filters precede each candidate-window leg; exact scan is the negative control") {
     val f=new PgFixture(Some(profile),Window)
     f.tx { c =>
-      // More than a full ANN/lexical window of forbidden nearest neighbors.
-      (0 until ForbiddenSources).foreach(i => f.index.put(c,source(s"forbidden-$i","alpha nearest",Set("other"))))
+      // More than a full ANN/lexical window of forbidden nearest, lexically strongest candidates.
+      (0 until ForbiddenSources).foreach(i => f.index.put(c,source(s"forbidden-$i",ExcludedText,Set("other"))))
       // A second full window is authorized but fails the structured filter.
-      (0 until FilteredSources).foreach(i => f.index.put(c,source(s"filtered-$i","alpha nearest",Set("reader")).copy(attributes=Vector(ProjectionAttribute(field,AttributeValue("excluded"))))))
-      (0 until AuthorizedSources).foreach(i => f.index.put(c,source(s"authorized-$i","alpha controlled",Set("reader"))))
+      (0 until FilteredSources).foreach(i => f.index.put(c,source(s"filtered-$i",ExcludedText,Set("reader")).copy(attributes=Vector(ProjectionAttribute(field,AttributeValue("excluded"))))))
+      (0 until AuthorizedSources).foreach(i => f.index.put(c,source(s"authorized-$i",if(i<NearAuthorizedSources) NearText else LexicalOnlyText,Set("reader"))))
       var claim=f.index.claim(c,60)
       while(claim.nonEmpty) {
         val work=claim.get
@@ -46,13 +53,16 @@ class AuthorizedCandidateTest extends munit.FunSuite {
       if(mode==RetrievalMode.Lexical) assertEquals(page.total,oracle.size.toLong)
       else {
         // Exact diagnostic executes the SAME production query with index scans disabled.
-        // Post-limit ACL/filtering would return zero here too, so this is the negative control.
+        // Post-window ACL/filtering would lose the ANN leg (semantic and hybrid) or the lexical leg (hybrid:
+        // the lexical-only authorized sources) here, so this is the negative control.
+        // Semantic is clipped to the ANN window; hybrid also holds the lexical-only sources outside it.
+        val expected=if(mode==RetrievalMode.Semantic) oracle.take(Window) else oracle
         val exactPlan=f.tx { c =>
           Jdbc.exec(c,"SET LOCAL enable_indexscan = off"); Jdbc.exec(c,"SET LOCAL enable_bitmapscan = off")
           f.index.search(c,q.copy(mode=mode),Some(List(1.0,0.0,0.0)))
         }
-        assertEquals(exactPlan.total,oracle.size.toLong); assertEquals(exactPlan.hits.map(_.id).toSet,oracle.toSet)
-        if(mode==RetrievalMode.Semantic) assertEquals(exactPlan.hits.map(_.id),oracle)
+        assertEquals(exactPlan.total,expected.size.toLong); assertEquals(exactPlan.hits.map(_.id).toSet,expected.toSet)
+        if(mode==RetrievalMode.Semantic) assertEquals(exactPlan.hits.map(_.id),expected)
         assertEquals(page.countScope,CountScope.CandidateWindow)
         assertEquals(page.rankingLimit,Some(if(mode==RetrievalMode.Hybrid) Window*2 else Window))
       }
