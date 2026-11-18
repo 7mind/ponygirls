@@ -54,11 +54,22 @@ interface PageIntegration {
   messageLink(view: ContentView, messageId: string): string;
   report(update: { readonly view: ContentView; readonly at: string | null; readonly passage: string | null }): void;
 }
+/**
+ * A source read of this session was denied (session, passages, spans, message pages, locator or Find): the message the user
+ * saw, its failure code, the pin the failed read used (null while the default view is still being chosen) and the session.
+ */
+export interface SourceUnavailableReport { readonly sessionId: string; readonly pin: ContentView | null; readonly code: string; readonly message: string }
+/** The host learned elsewhere (another view's denial) that the source of `pin` became unavailable; one object per signal. */
+export interface SourceRevocation { readonly pin: ContentView; readonly code: string; readonly message: string }
+const UNAVAILABLE_CODES: ReadonlySet<string> = new Set(['indexed-view-retired', 'forbidden', 'not-found', 'unauthorized']);
 interface ConversationProps {
   connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; sessionId: string;
   initialView: ContentView | undefined; initialLanding?: SourceLanding | undefined; onSourceUnavailable?: ((message: string) => void) | undefined; archiveHead: ArchiveRow | null; select: (id: string) => void; refresh: number; findReads: SessionFindReadGate;
 }
-interface SessionViewProps extends Omit<ConversationProps, 'select'> { related: RelatedTarget; pane: SessionPane; setPane(pane: SessionPane): void; page: PageIntegration | null }
+interface SessionViewProps extends Omit<ConversationProps, 'select' | 'onSourceUnavailable'> {
+  related: RelatedTarget; pane: SessionPane; setPane(pane: SessionPane): void; page: PageIntegration | null;
+  report: ((report: SourceUnavailableReport) => void) | null; revocation: SourceRevocation | null;
+}
 interface HeadScope { connection: ChronicleConnection; userId: string; sessionId: string; generation: number; activeId: number | null; invalidation: number }
 interface KnownHead extends HeadScope { ownerId: string; revision: number }
 function sameHeadScope(left: HeadScope, right: HeadScope): boolean {
@@ -74,9 +85,10 @@ function rememberPane(storage: Storage, pane: SessionPane) { try { storage.setIt
 function initialPane(): SessionPane { return storedPane(window.localStorage) ?? (window.matchMedia(WIDE_SESSION_QUERY).matches ? 'outline' : 'closed'); }
 
 /** The session embedded in the legacy Archive/Search dialog (until those views open the routed page). */
-export function Conversation({ select, ...props }: ConversationProps) {
+export function Conversation({ select, onSourceUnavailable, ...props }: ConversationProps) {
   const [pane, setPane] = useState<SessionPane>(initialPane);
-  return <SessionView {...props} related={{ kind: 'select', select }} pane={pane} setPane={value => { rememberPane(window.localStorage, value); setPane(value); }} page={null}/>;
+  return <SessionView {...props} related={{ kind: 'select', select }} pane={pane} setPane={value => { rememberPane(window.localStorage, value); setPane(value); }} page={null}
+    report={onSourceUnavailable === undefined ? null : report => onSourceUnavailable(report.message)} revocation={null}/>;
 }
 
 // Last reading place per session of this owner: reopening a session from a list returns to it (spec §5, groundwork S5).
@@ -86,7 +98,13 @@ const EMPTY_PLACE: SessionPlace = { pin: null, at: null, find: null, pane: null,
  * The routed session page (`#/session/<id>?…`, scroll model B). The address holds the reading place and is replaced, never
  * pushed, while reading; an address that changes otherwise (an edited fragment) reopens the session at the new place.
  */
-export function SessionPage({ connection, stats, user, findReads, route, router, parent, back }: { connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; findReads: SessionFindReadGate; route: Route; router: HashRouter; parent: string; back: () => void }) {
+export function SessionPage({ connection, stats, user, findReads, route, router, parent, back, onSourceUnavailable, revocation }: {
+  connection: ChronicleConnection; stats: ManagerStats; user: UserInfo; findReads: SessionFindReadGate; route: Route; router: HashRouter; parent: string; back: () => void;
+  /** Every denial of this session's source reads (see SourceUnavailableReport); null when the host does not listen. */
+  onSourceUnavailable: ((report: SourceUnavailableReport) => void) | null;
+  /** Clears the source of the matching pin and shows the source-unavailable state, as the page's own denials do. */
+  revocation: SourceRevocation | null;
+}) {
   const sessionId = sessionIdOf(route), [saved, setSaved] = useRouteState(SESSION_PLACES, sessionId);
   const written = useRef<string | null>(null), current = useRef<SessionPlace>(EMPTY_PLACE);
   const [arrival, setArrival] = useState<{ epoch: number; place: SessionPlace } | null>(null);
@@ -117,7 +135,7 @@ export function SessionPage({ connection, stats, user, findReads, route, router,
   const pin = arrival.place.pin;
   return <main className="session" aria-label="Session" data-view="session">
     <SessionView key={arrival.epoch} connection={connection} stats={stats} user={user} sessionId={sessionId} findReads={findReads} refresh={0} archiveHead={null}
-      initialView={pin === null ? undefined : new ContentView(pin.revision, pin.generationId ?? undefined)} initialLanding={undefined} onSourceUnavailable={undefined}
+      initialView={pin === null ? undefined : new ContentView(pin.revision, pin.generationId ?? undefined)} initialLanding={undefined} report={onSourceUnavailable} revocation={revocation}
       related={{ kind: 'link', href: id => formatRoute(sessionPlaceRoute(id, EMPTY_PLACE)) }} pane={pane}
       setPane={value => { rememberPane(window.localStorage, value); setPreference(value); setArrival(previous => previous === null ? previous : { ...previous, place: { ...previous.place, pane: null } }); write({ ...current.current, pane: value }); }} page={page}/>
   </main>;
@@ -302,7 +320,7 @@ function InfoPane({ session, view, sessionId, headRevision, archiveHead, passage
   </div>;
 }
 
-function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead, related: relatedTarget, refresh, view, chooseView, resolveView, retry, initial, knownHead, rememberHead, findReads, initialLanding, onSourceUnavailable, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
+function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead, related: relatedTarget, refresh, view, chooseView, resolveView, retry, initial, knownHead, rememberHead, findReads, initialLanding, report: reportUnavailable, revocation, pane, setPane, page }: SessionViewProps & { view: ContentView | undefined; chooseView(view: ContentView | undefined): void; resolveView(view: ContentView): void; retry(): void; initial: PageIntegration['initial'] | null; knownHead: KnownHead | null; rememberHead: (ownerId: string, revision: number) => void }) {
   const [messageStart, setMessageStart] = useState(0), [retired, setRetired] = useState(false);
   const [passage, setPassage] = useState<PassageInfo | null>(null), [spanOffset, setSpanOffset] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false), [revealedMessage, setRevealedMessage] = useState<string | null>(null);
@@ -332,9 +350,19 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   const accessEpoch = useRef(0), accessScope = JSON.stringify([user.id, stats.activeId, stats.generation, contentViewKey(view)]), liveAccessScope = useRef(accessScope); liveAccessScope.current = accessScope;
   function retireIndexedView() { navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRetired(true); }
   function sourceUnavailable(cause: RequestFailure) {
-    if (onSourceUnavailable !== undefined && ['indexed-view-retired', 'forbidden', 'not-found', 'unauthorized'].includes(cause.code)) onSourceUnavailable(cause.message);
+    if (reportUnavailable !== null && UNAVAILABLE_CODES.has(cause.code)) reportUnavailable({ sessionId, pin: view === undefined ? null : view, code: cause.code, message: cause.message });
     if (cause.code === 'indexed-view-retired') retireIndexedView();
   }
+  // A denial seen by another view for this pin: a retired generation retires this view; any other code clears the source
+  // into the same notice a denied session read shows (Retry reads again).
+  const [revoked, setRevoked] = useState<string | null>(null), appliedRevocation = useRef<SourceRevocation | null>(null);
+  useEffect(() => {
+    if (revocation === null || revocation === appliedRevocation.current || view === undefined || !sameContentView(view, revocation.pin) || !UNAVAILABLE_CODES.has(revocation.code)) return;
+    appliedRevocation.current = revocation;
+    if (revocation.code === 'indexed-view-retired') { retireIndexedView(); return; }
+    accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null;
+    setLanded(null); setPassage(null); setSpanOffset(0); setSeeking(false); setSeekError(null); setRevealedMessage(null); setFindEpoch(epoch => epoch + 1); setRevoked(revocation.message);
+  }, [revocation, view]);
   async function readPinned<T>(operation: Operation, extract: (reply: Result) => T | null): Promise<T> {
     const epoch = accessEpoch.current;
     try { return await read(connection, operation, extract); }
@@ -343,7 +371,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
       throw cause;
     }
   }
-  useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
+  useEffect(() => connection.onInvalidate(() => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; setLanded(null); setPassage(null); setSpanOffset(0); setRetired(false); setRevoked(null); setSeeking(false); setSeekError(null); setRevealedMessage(null); }), [connection]);
   useEffect(() => () => { accessEpoch.current++; navigation.current++; currentSourceNavigation.current = null; pendingScroll.current = null; }, []);
   const session = useResource(connection, stats, `${sessionId}:${contentViewKey(view)}`, `${refresh}`, true, async () => {
     const result = await readPinned(new Operation_GetSession(sessionId, view), value => value instanceof Result_Session ? value.result : null);
@@ -351,7 +379,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     return result;
   });
   useEffect(() => { if (view === undefined && session.data !== null) resolveView(session.data.session.view); }, [view, session.data, resolveView]);
-  const snapshot = view === undefined || retired ? null : session.data;
+  const snapshot = view === undefined || retired || revoked !== null ? null : session.data;
   const passages = useInfiniteResource<PassageInfo, PassagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}`, `${refresh}`, snapshot !== null, undefined, async cursor => {
     const offset = cursor === undefined ? 0 : cursor;
     const result = validatePassages(await readPinned(new Operation_GetPassages(sessionId, view!, offset, PASSAGE_PAGE_SIZE), reply => reply instanceof Result_Passages ? reply.result : null), view!, offset);
@@ -494,7 +522,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   }, [page]);
   useEffect(() => { if (snapshot !== null && messages.error === null) arrivalFind.current = null; });
   const title = snapshot === null ? 'Session' : snapshot.session.metadata.title || 'Untitled conversation';
-  const loading = !retired && (session.loading || (snapshot === null && session.error === null));
+  const loading = !retired && revoked === null && (session.loading || (snapshot === null && session.error === null));
   const rail = pane === 'closed' ? null : pane;
   // The side pane toggle reopens the tab it showed last.
   const lastRail = useRef<Exclude<SessionPane, 'closed'>>(rail ?? 'outline'); if (rail !== null) lastRail.current = rail;
@@ -526,7 +554,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
     </>}
   </header>;
   if (retired) return <>{head}<div className="page session-state"><section className="notice notice-warn" role="region" aria-label="Indexed view unavailable"><div><h3 className="notice-title" ref={retiredHeading} tabIndex={-1}>Indexed view unavailable</h3><p>This indexed view is unavailable because its derived generation was retired.</p>{view !== undefined && <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={() => chooseView(new ContentView(view.revision, undefined))}>View archived source r{view.revision}</button></div>}<p className="xs">This explicitly requests the same source revision without a generation. No HEAD or published view is selected automatically.</p></div></section></div></>;
-  if (session.error !== null) return <>{head}<div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session can no longer be read</div>{session.error}. Source content has been cleared.<div className="notice-actions">{page !== null && <button type="button" className="btn btn-sm" onClick={page.back}>Back to Archive</button>}<button type="button" className="btn btn-sm btn-ghost" onClick={retry}>Retry</button></div></div></div></div></>;
+  const unreadable = session.error !== null ? session.error : revoked;
+  if (unreadable !== null) return <>{head}<div className="page session-state"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">This session can no longer be read</div>{unreadable}. Source content has been cleared.<div className="notice-actions">{page !== null && <button type="button" className="btn btn-sm" onClick={page.back}>Back to Archive</button>}<button type="button" className="btn btn-sm btn-ghost" onClick={retry}>Retry</button></div></div></div></div></>;
   const outline = <div className="outline-pane" ref={outlinePane}>
     <div className="rail-search"><span className="grow" role="status">{passages.loading ? 'Loading passage metadata…' : passages.meta === null ? 'Passages' : passages.meta.format === PassageFormat.Unindexed ? 'Unindexed · no published passages for this source view.' : passages.meta.total === 0n ? 'No problems classified in this published context-aware generation.' : `Passages in transcript order · ${passages.meta.total.toString()}`}</span>{passages.updateAvailable && <button type="button" className="btn btn-sm" onClick={passages.applyUpdates}>Updated problem passages available</button>}</div>
     {passages.error !== null && <div className="notice" role="status"><div><p>Problem metadata unavailable. Original source remains readable; no legacy annotation fallback is used.</p><ErrorNotice>{passages.error}</ErrorNotice></div></div>}

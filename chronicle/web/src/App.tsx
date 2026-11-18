@@ -263,7 +263,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   }
   function sessionPage(user: UserInfo) {
     if (!sessionShown) return null;
-    return <SessionPage key={`${scope.owner ?? ""}:${sessionIdOf(route)}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={formatRoute(retainedRoute('archive', scope.cache))} back={() => router.back(retainedRoute('archive', scope.cache))}/>;
+    return <SessionPage key={`${scope.owner ?? ""}:${sessionIdOf(route)}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={formatRoute(retainedRoute('archive', scope.cache))} back={() => router.back(retainedRoute('archive', scope.cache))} onSourceUnavailable={null} revocation={null}/>;
   }
   return <RouteStateContext.Provider value={scope.cache}><div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skipToContent}>Skip to content</a>
     <header className="masthead"><Brand/>
