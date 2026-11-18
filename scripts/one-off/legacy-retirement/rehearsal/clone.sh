@@ -6,9 +6,13 @@
 #       Read-only at the source: one `pg_dump --format=custom` per database, streamed into DIR/dumps.
 #       SOURCE_PG_DUMP is the complete pg_dump command line AT THE SOURCE without the database argument, for example
 #       an exec into the database pod (`kubectl … exec -i POD -c CONTAINER -- pg_dump -h SOCKETDIR -U ROLE`).
-#       Default: `pg_dump` with the PG* variables. CLONE_COMPRESS (default 1) is pg_dump's --compress value.
+#       Default: `pg_dump` with the PG* variables. CLONE_COMPRESS (default 1) is pg_dump's --compress value
+#       (0 = compress nowhere, e.g. to keep CPU off the source host). The archive must pass `pg_restore --list`.
 #   clone.sh init-cluster --dir DIR        initdb + start a scratch PostgreSQL in DIR: unix socket for psql, and
 #                                          127.0.0.1:${CLONE_PORT:-54329} with a generated password for the binary
+#   clone.sh start-cluster --dir DIR       start the existing scratch cluster again (same listeners)
+#   Listeners: CLONE_SOCKET_DIR (default DIR/s; must be an existing 0700 directory of the current user) and
+#   CLONE_LISTEN (default 127.0.0.1; the empty string means unix socket only). Pass the same values to every mode.
 #   clone.sh restore --dir DIR [--jobs N] DATABASE [DATABASE...]      createdb + pg_restore into that cluster
 #   clone.sh env --dir DIR                 prints the PGHOST/PGPORT/PGUSER lines for run.sh against the clone
 #   clone.sh stop-cluster --dir DIR
@@ -16,9 +20,9 @@
 #       Removes DIR entirely (dumps, cluster, anything the rehearsal wrote there). Refuses while the cluster runs
 #       and for any directory this script did not create.
 #
-# init-cluster/restore/stop-cluster need POSTGRES_HOME (PostgreSQL 18 with pgvector: `nix develop .#chronicle`).
+# export/init-cluster/start-cluster/restore/stop-cluster need POSTGRES_HOME (PostgreSQL 18 with pgvector: `nix develop .#chronicle`).
 set -euo pipefail
-usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail() { printf 'clone: %s\n' "$1" >&2; exit 3; }
 [[ $# -ge 1 ]] || usage
 mode=$1; shift
@@ -42,7 +46,16 @@ private() {
   [[ $(stat -c '%a %u' "$dir") == "700 $(id -u)" ]] || fail "$dir must be mode 0700 and owned by the current user"
 }
 pg() { : "${POSTGRES_HOME:?POSTGRES_HOME required (nix develop .#chronicle)}"; local tool=$1; shift; "$POSTGRES_HOME/bin/$tool" "$@"; }
-socket=$dir/s; port=${CLONE_PORT:-54329}
+socket=${CLONE_SOCKET_DIR:-$dir/s}; port=${CLONE_PORT:-54329}; listen=${CLONE_LISTEN-127.0.0.1}
+[[ $socket = /* ]] || fail 'CLONE_SOCKET_DIR must be an absolute path'
+[[ -z $listen || $listen == 127.0.0.1 ]] || fail 'CLONE_LISTEN must be 127.0.0.1 or empty'
+start_cluster() {
+  if [[ $socket != "$dir/s" ]]; then
+    [[ -d $socket && ! -L $socket && $(stat -c '%a %u' "$socket") == "700 $(id -u)" ]] || fail "$socket must be an existing 0700 directory owned by the current user"
+  fi
+  pg pg_ctl -D "$dir/pgdata" -l "$dir/server.log" -o "-c listen_addresses='$listen' -k $socket -p $port -c max_wal_size=16GB -c maintenance_work_mem=2GB" -w start >/dev/null
+  echo "cluster started; socket $socket; tcp ${listen:-none}${listen:+:$port} (jdbc:postgresql://127.0.0.1:$port/<database> user postgres, password file $dir/password)"
+}
 [[ $port =~ ^[1-9][0-9]{3,4}$ ]] || fail 'CLONE_PORT must be a port number'
 case $mode in
   export)
@@ -54,21 +67,24 @@ case $mode in
       start=$(date +%s)
       # pg_dump reads inside one REPEATABLE READ, READ ONLY transaction; nothing is written at the source.
       # shellcheck disable=SC2086
-      ${SOURCE_PG_DUMP:-pg_dump} --format=custom --compress="${CLONE_COMPRESS:-1}" --no-owner --no-privileges --dbname="$database" >"$dir/dumps/$database.dump.partial"
+      rc=0; ${SOURCE_PG_DUMP:-pg_dump} --format=custom --compress="${CLONE_COMPRESS:-1}" --no-owner --no-privileges --dbname="$database" >"$dir/dumps/$database.dump.partial" || rc=$?
+      [[ $rc -eq 0 ]] || fail "$database: pg_dump exited with status $rc"
       # A complete custom-format archive has a readable table of contents; a cut stream does not.
-      [[ -z ${POSTGRES_HOME:-} ]] || pg pg_restore --list "$dir/dumps/$database.dump.partial" >/dev/null || fail "$database: the dump stream is incomplete"
+      pg pg_restore --list "$dir/dumps/$database.dump.partial" >/dev/null || fail "$database: the dump stream is incomplete"
       mv "$dir/dumps/$database.dump.partial" "$dir/dumps/$database.dump"
       printf '%s %s bytes=%s seconds=%s sha256=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$database" "$(stat -c %s "$dir/dumps/$database.dump")" "$(( $(date +%s) - start ))" "$(sha256sum "$dir/dumps/$database.dump" | cut -d' ' -f1)" | tee -a "$dir/MANIFEST"
     done ;;
   init-cluster)
     private; [[ ! -e $dir/pgdata ]] || fail 'the cluster already exists'
-    mkdir "$socket"
+    [[ $socket != "$dir/s" ]] || mkdir "$socket"
     # Two ways in, both private: the unix socket in this 0700 directory (trust: only this user can reach it), and
     # loopback TCP for the service binary's JDBC driver, which requires the generated password (scram-sha-256).
     head -c 24 /dev/urandom | base64 | tr -d '/+=' >"$dir/password"
     pg initdb -D "$dir/pgdata" -U postgres --auth-local=trust --auth-host=scram-sha-256 --pwfile="$dir/password" --no-locale --encoding=UTF8 >"$dir/initdb.log"
-    pg pg_ctl -D "$dir/pgdata" -l "$dir/server.log" -o "-c listen_addresses=127.0.0.1 -k $socket -p $port -c max_wal_size=16GB -c maintenance_work_mem=2GB" -w start >/dev/null
-    echo "cluster started; socket $socket; jdbc:postgresql://127.0.0.1:$port/<database> user postgres, password file $dir/password" ;;
+    start_cluster ;;
+  start-cluster)
+    private; [[ -d $dir/pgdata && ! -e $dir/pgdata/postmaster.pid ]] || fail 'no stopped cluster in this directory'
+    start_cluster ;;
   env)
     private; printf 'export PGHOST=%s PGPORT=%s PGUSER=postgres\n' "$socket" "$port" ;;
   restore)

@@ -7,13 +7,14 @@
 #       read-only: for each named database whether it exists, its OID, size and connections; and every other
 #       database of the cluster, so that what stays is visible.
 #   drop-databases.sh drop NAME --confirm-database NAME --expect-oid OID
-#       drops exactly one database. Refuses unless: the name is typed twice, the database exists, it is not the
-#       connected one and not a template, nobody is connected to it, and its OID is the one preflight printed
+#       drops exactly one database. Refuses unless: the name is typed twice, it is not one of the live databases
+#       chronicle, haystack, manure, postgres, the database exists, it is not the connected one and not a template,
+#       nobody is connected to it, and its OID is the one preflight printed
 #       (the OID identifies the object: a database re-created under the same name has another one).
 #
 # Output: `DB.<key>|…` lines. Exit status: 0 success; 2 usage; 3 refusal.
 set -eu
-usage() { sed -n '2,13p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,14p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail() { printf 'drop-databases: %s\n' "$1" >&2; exit 2; }
 name_ok() { printf '%s' "$1" | grep -Eq '^[A-Za-z_][A-Za-z0-9_]{0,62}$'; }
 [ $# -ge 2 ] || usage
@@ -38,6 +39,9 @@ case $mode in
       esac
     done
     name_ok "$name" || fail "unexpected database name: $name"
+    # The live databases are never a rollback copy; the OID check alone does not stop a mistyped live name
+    # (observed in the rehearsal: the live-name refusal case dropped the clone's `haystack`).
+    case $name in chronicle|haystack|manure|postgres) printf 'drop-databases refused: %s is a live database of the deployment\n' "$name" >&2; exit 3 ;; esac
     [ "$confirm" = "$name" ] || fail '--confirm-database must repeat the database name'
     printf '%s' "$oid" | grep -Eq '^[1-9][0-9]{0,9}$' || fail '--expect-oid OID (from preflight) is required'
     session=$(header
