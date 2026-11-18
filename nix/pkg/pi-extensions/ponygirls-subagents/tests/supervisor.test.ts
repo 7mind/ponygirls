@@ -15,6 +15,7 @@ function setup(script: "settle-text" | "hang" | "fail" = "settle-text", limits =
   const policy = defaultSupervisorPolicy();
   policy.maxDepth = 2;
   policy.nesting = true;
+  policy.allowedModels = [{ provider: "test", id: "override" }];
   const sup = new Supervisor({
     rootId: "root-1",
     governor: testGovernor,
@@ -40,6 +41,40 @@ test("spawn returns while the child remains active (async delegation)", async ()
   assert.equal(views.length, 1);
   assert.ok(["running", "starting"].includes(views[0]!.observed));
   cleanup();
+});
+
+for (const [name, model, expectedModel, expectedLevel] of [
+  ["explicit thinking level", { provider: "test", id: "override", thinkingLevel: "high" }, "test/override", "high"],
+  ["model override without a level", { provider: "test", id: "override" }, "test/override", "medium"],
+  ["no model override", undefined, "test/override", "medium"],
+] as const) {
+  test(`spawn and status report the effective thinking level with ${name}`, async () => {
+    const { sup, cleanup } = setup("hang");
+    try {
+      const parent = await sup.spawn("governor", { taskName: "parent", message: "delegate", profile: "reader", model: { provider: "test", id: "override", thinkingLevel: "medium" } }, "parent");
+      const params = { taskName: "child", message: "work", profile: "reader", ...(model ? { model } : {}) } as const;
+      const spawned = await sup.spawn(parent.agentId, params, "child");
+      const replayed = await sup.spawn(parent.agentId, params, "child");
+      const listed = sup.list("governor").find((agent) => agent.id === spawned.agentId)!;
+      const { status } = sup.read("governor", spawned.agentId, "status", 0, 10, null);
+      for (const view of [spawned, replayed, listed, status]) {
+        assert.equal(view.model, expectedModel);
+        assert.equal(view.requestedThinkingLevel, expectedLevel);
+        assert.equal(view.thinkingLevel, expectedLevel);
+      }
+    } finally { cleanup(); }
+  });
+}
+
+test("a queued spawn reports its selected level without inventing an effective level", async () => {
+  const { sup, cleanup } = setup("hang", { maxRunnable: 1 });
+  try {
+    await sup.spawn("governor", { taskName: "first", message: "hold the slot", profile: "reader" }, "first");
+    const queued = await sup.spawn("governor", { taskName: "queued", message: "work", profile: "reader", model: { provider: "test", id: "override", thinkingLevel: "high" } }, "queued");
+    assert.equal(queued.status, "queued");
+    assert.equal(queued.requestedThinkingLevel, "high");
+    assert.equal(queued.thinkingLevel, "unresolved");
+  } finally { cleanup(); }
 });
 
 test("repeated spawn with the same request id returns one identity; conflicting reuse fails", async () => {

@@ -1742,6 +1742,7 @@ async function handleInitialize(env: IpcEnvelope): Promise<void> {
   ack(env.requestId, {
     sessionId: session.sessionId,
     sessionFile: session.sessionManager.getSessionFile() ?? null,
+    thinkingLevel: session.thinkingLevel,
     ...(state.collector !== null ? { collector: { name: state.collector.name, ready: state.collector.ready } } : {}),
   });
   if (init.taskText === null) {

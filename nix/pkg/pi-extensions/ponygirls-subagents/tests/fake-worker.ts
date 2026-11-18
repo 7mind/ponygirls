@@ -125,7 +125,7 @@ export class FakeWorker implements WorkerPort {
       this.taskRunId = (p["taskRunId"] as string) ?? opts?.taskRunId ?? "task-fake";
       this.generation = (p["executionGeneration"] as number) ?? 1;
       if (p["taskText"] !== null) this.schedule(this.taskRunId, this.generation, String(p["taskText"] ?? ""));
-      return { ok: true, sessionId: `sess-${this.instanceId.slice(0, 8)}` };
+      return { ok: true, sessionId: `sess-${this.instanceId.slice(0, 8)}`, thinkingLevel: (p["model"] as { thinkingLevel: string }).thinkingLevel };
     }
     if (operation === "deliver") {
       const mode = String(p["mode"] ?? "");

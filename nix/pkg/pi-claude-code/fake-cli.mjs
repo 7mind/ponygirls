@@ -17,7 +17,9 @@ let tools = [];
 if (querying) {
   const mcp = JSON.parse(argument("--mcp-config"));
   tools = JSON.parse(readFileSync(mcp.mcpServers.pi.args[1], "utf8")).map((tool) => tool.name);
-  appendFileSync(join(config, "launch.jsonl"), JSON.stringify({ pid: process.pid, cwd: process.cwd(), config, model: argument("--model"), detached: process.platform !== "win32", emptyTools: argument("--tools") === "", settingSources: argument("--setting-sources"), strictMcp: process.argv.includes("--strict-mcp-config") }) + "\n");
+  const settings = JSON.parse(readFileSync(argument("--settings"), "utf8"));
+  const effort = JSON.parse(settings.env.CLAUDE_CODE_EXTRA_BODY).output_config?.effort;
+  appendFileSync(join(config, "launch.jsonl"), JSON.stringify({ pid: process.pid, cwd: process.cwd(), config, model: argument("--model"), effort, detached: process.platform !== "win32", emptyTools: argument("--tools") === "", settingSources: argument("--setting-sources"), strictMcp: process.argv.includes("--strict-mcp-config") }) + "\n");
 }
 const history = [];
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {

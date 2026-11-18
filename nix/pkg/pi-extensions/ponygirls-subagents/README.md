@@ -257,6 +257,10 @@ session (reported at start and by every subagent tool).
 error.
 
 Children inherit their owner's selected model and thinking level.
+`spawn_agent`, `list_agents`, and `read_agent view=status` report `model` as
+`provider/id`, `requestedThinkingLevel` as the selected level (including
+inheritance), and `thinkingLevel` as the effective Pi session level after
+clamping. An unconfirmed level is `"unresolved"`, not `"off"`.
 Explicit overrides and reviewer models must be in `allowedModels` (or the
 allowlist must be disabled with `"allowedModels": null`). Independently,
 `latestModelsOnly` (default `true`) rejects older generations for inherited

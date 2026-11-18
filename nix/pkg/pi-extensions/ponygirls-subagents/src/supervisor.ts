@@ -21,7 +21,7 @@ import { newerModelIn, type ModelIdentity } from "../../model-generations.ts";
 import { ToolBroker, type BrokerCaller, type CallerSandbox, type ToolExecutors } from "./broker.ts";
 import { err, type SubagentsError } from "./errors.ts";
 import { historyPath, nativeHistoryId, openRegisteredHistoryFile, publicHistorySource, readRegisteredHistoryPage, reconstructedHistoryPrefix, type HistoryFeed, type RegisteredHistorySource } from "./history.ts";
-import type { Api, Model } from "@earendil-works/pi-ai";
+import type { Api, Model, ModelThinkingLevel } from "@earendil-works/pi-ai";
 import { BackendSlot, type BackendRegistry } from "./backends.ts";
 import { parseParentModel, parseProviderRequestAuth, type ParentModels } from "./parent-models.ts";
 import { GateController, fingerprintSummary, restoreGateSpec, type CandidateRecord, type GateDecisionInput, type GateFinding, type GateHost, type GateSpecInput, type GateTerminalOutcome, type NormalizedGateCheck, type NormalizedGateSpec, type NormalizedReviewerSpec, type ReviewFeedback, type ReviewSpecInput, type WorkspaceFingerprint } from "./gate.ts";
@@ -63,7 +63,7 @@ import type {
 import { WorkerHandle, newWorkerBinding, type ToolPrepareRequest, type ToolPrepareResponse, type ToolRequest, type ToolResponse } from "./worker-launch.ts";
 import { validateToolArguments } from "@earendil-works/pi-ai";
 import type { Tool as AiTool, ToolCall as AiToolCall } from "@earendil-works/pi-ai";
-import type { IpcEnvelope, ProviderAdmissionPayload, ProviderAdmissionResponse, WorkerEvent } from "./protocol.ts";
+import type { InitializeResponse, IpcEnvelope, ProviderAdmissionPayload, ProviderAdmissionResponse, WorkerEvent } from "./protocol.ts";
 import { MAX_PAYLOAD_BYTES } from "./protocol.ts";
 import { GitWorkspaceManager, encodeWorktreeLeaf, fingerprintWorktree, realDirectory, type CheckoutInfo, type WorkspaceManager, type WorktreeAllocation } from "./workspace.ts";
 
@@ -98,7 +98,15 @@ export interface SpawnParams {
 
 export type GateSpec = GateSpecInput;
 
-export interface SpawnResult {
+type ObservedThinkingLevel = ModelThinkingLevel | "unresolved";
+
+interface ModelView {
+  model: string;
+  requestedThinkingLevel: ObservedThinkingLevel;
+  thinkingLevel: ObservedThinkingLevel;
+}
+
+export interface SpawnResult extends ModelView {
   agentId: AgentId;
   path: string;
   taskRunId: TaskRunId;
@@ -110,7 +118,7 @@ export interface SpawnResult {
   status: string;
 }
 
-export interface AgentView {
+export interface AgentView extends ModelView {
   /** Volatile root health; observed agent state may predate this failure. */
   storageFailure?: StoreFailure;
   id: AgentId;
@@ -123,7 +131,6 @@ export interface AgentView {
   workdir: string;
   /** Governing-session tools (MCP etc) this agent may call besides its file/shell/control tools. */
   externalTools: string[];
-  model: string;
   observed: string;
   desiredLifecycle: AgentRecord["desiredLifecycle"];
   pendingIntent: string;
@@ -141,11 +148,10 @@ export interface AgentView {
 }
 
 /** A gate evaluation shown in a transcript. */
-export interface ReviewTranscript {
+export interface ReviewTranscript extends ModelView {
   reviewId: string;
   taskRunId: TaskRunId;
   candidateId: string;
-  model: string;
   sessionFile: string;
   /** When the evaluation started (orders it among the gated agent's conversation). */
   at: string;
@@ -271,6 +277,7 @@ interface ActiveRun {
 
 interface AgentRuntime {
   record: AgentRecord;
+  thinkingLevel: ObservedThinkingLevel;
   parentModel: Model<Api> | null;
   backend: BackendSlot | null;
   worker: WorkerPort | null;
@@ -322,14 +329,13 @@ interface ReviewInput {
 }
 
 /** One gate evaluation's conversation file. */
-interface ReviewSession {
+interface ReviewSession extends ModelView {
   reviewerId: AgentId;
   /** The gated agent whose candidate was reviewed. */
   agentId: AgentId;
   taskRunId: TaskRunId;
   reviewId: string;
   candidateId: string;
-  model: string;
   sessionFile: string;
   at: string;
 }
@@ -408,9 +414,25 @@ const IDLE_POLL_MS = 25;
 /** Events a settlement wait reports (tool-level progress stays in activity waits and read_agent). */
 const MATERIAL_EVENTS: ReadonlySet<string> = new Set(["task.terminal", "generation.settled", "mailbox.accepted", "mailbox.answered", "mailbox.question_expired", "agent.closed", "agent.interrupted", "gate.decision", "gate.review_failed", "task.phase"]);
 
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const satisfies readonly ModelThinkingLevel[];
+
+function observedThinkingLevel(value: unknown): ObservedThinkingLevel {
+  return THINKING_LEVELS.find((level) => level === value) ?? "unresolved";
+}
+
+function modelView(rt: AgentRuntime): ModelView {
+  const model = rt.record.model;
+  return {
+    model: model ? `${model.provider}/${model.id}` : "unresolved",
+    requestedThinkingLevel: observedThinkingLevel(model?.thinkingLevel),
+    thinkingLevel: rt.thinkingLevel,
+  };
+}
+
 function newRuntime(record: AgentRecord): AgentRuntime {
   return {
     record,
+    thinkingLevel: "unresolved",
     parentModel: null,
     backend: null,
     worker: null,
@@ -722,6 +744,8 @@ export class Supervisor implements GateHost {
             reviewId: b["reviewId"] as string,
             candidateId: b["candidateId"] as string,
             model: b["model"] as string,
+            requestedThinkingLevel: observedThinkingLevel(b["requestedThinkingLevel"]),
+            thinkingLevel: observedThinkingLevel(b["thinkingLevel"]),
             sessionFile: b["sessionFile"] as string,
             at: b["at"] as string,
           });
@@ -1467,8 +1491,9 @@ export class Supervisor implements GateHost {
       if (prior) {
         const b = prior.body as { agentId?: string; path?: string; taskRunId?: string; profile?: string; digest?: string };
         if (prior.kind === "agent.spawned" && b.digest === digest && typeof b.agentId === "string" && this.agents.has(b.agentId)) {
-          const prev = this.agents.get(b.agentId)!.record;
-          return { agentId: b.agentId, path: b.path ?? "", taskRunId: b.taskRunId ?? "", generation: 1, profile: b.profile ?? "", isolation: prev.grants.isolation, workdir: prev.allocation.workdir, status: prev.observed };
+          const rt = this.agents.get(b.agentId)!;
+          const prev = rt.record;
+          return { agentId: b.agentId, path: b.path ?? "", taskRunId: b.taskRunId ?? "", generation: 1, profile: b.profile ?? "", isolation: prev.grants.isolation, workdir: prev.allocation.workdir, status: prev.observed, ...modelView(rt) };
         }
         throw err("DUPLICATE_REQUEST", `conflicting reuse of requestId ${requestId}`);
       }
@@ -1641,7 +1666,7 @@ export class Supervisor implements GateHost {
           this.startupFailed(rt, taskRunId, e as Error);
           throw e;
         }
-        return { agentId, path, taskRunId, generation: 1, profile: params.profile, isolation, workdir: allocation.workdir, status: record.observed };
+        return { agentId, path, taskRunId, generation: 1, profile: params.profile, isolation, workdir: allocation.workdir, status: record.observed, ...modelView(rt) };
       } finally {
         this.scheduler.cancelAgentCreation(charged.reservation);
         if (!this.scheduler.isAgentOpen(agentId)) {
@@ -2526,6 +2551,7 @@ export class Supervisor implements GateHost {
   /** Launch a worker process bound to this runtime (no work accepted yet). */
   private async launchWorker(rt: AgentRuntime): Promise<WorkerPort> {
     const model = rt.record.model;
+    rt.thinkingLevel = "unresolved";
     rt.parentModel = null;
     rt.backend = null;
     const backend = model !== null && this.opts.backends !== undefined ? this.opts.backends().select(model) : null;
@@ -2678,8 +2704,9 @@ export class Supervisor implements GateHost {
     // The run is active from the moment the worker may prompt.
     rt.activeRun = { taskRunId: record.currentTaskRunId!, generation: record.executionGeneration, interruptRequested: false };
     try {
-      const res = (await worker.request("initialize", init, { taskRunId: record.currentTaskRunId ?? undefined, generation: record.executionGeneration })) as { ok?: boolean; sessionId?: string; sessionFile?: string | null; message?: string };
+      const res = (await worker.request("initialize", init, { taskRunId: record.currentTaskRunId ?? undefined, generation: record.executionGeneration })) as InitializeResponse;
       if (!res || res.ok !== true) throw err("INVALID", `worker initialize rejected: ${res?.message ?? "unknown"}`);
+      rt.thinkingLevel = observedThinkingLevel(res.thinkingLevel);
       this.registerHistory(rt, res.sessionId, res.sessionFile, "agent", null, undefined, undefined);
       record.nativeSessionPath = typeof res.sessionFile === "string" ? res.sessionFile : record.nativeSessionPath;
     } catch (e) {
@@ -3840,6 +3867,7 @@ export class Supervisor implements GateHost {
       this.messages.set(messageId, message);
       if (rt && model) {
         rt.record.model = model;
+        rt.thinkingLevel = "unresolved";
         this.unloadWorker(rt);
       }
       rt?.record.pendingMessageIds.push(messageId);
@@ -3912,7 +3940,7 @@ export class Supervisor implements GateHost {
 
   private validateReuseModel(rt: AgentRuntime | null, override: SpawnParams["model"]): ResolvedModel {
     if (!override || typeof override.provider !== "string" || !override.provider.trim() || typeof override.id !== "string" || !override.id.trim()
-      || (override.thinkingLevel !== undefined && !["off", "minimal", "low", "medium", "high", "xhigh", "max"].includes(override.thinkingLevel))) {
+      || (override.thinkingLevel !== undefined && observedThinkingLevel(override.thinkingLevel) === "unresolved")) {
       throw err("INVALID", "model requires nonempty provider/id and a valid thinkingLevel");
     }
     if (!rt || !this.canReuseSettled(rt)) throw err("CONFLICT", "model switch requires a settled open non-gated agent with no running, queued, checkpointing, descendant or owned work and no unknown usage");
@@ -4194,7 +4222,7 @@ export class Supervisor implements GateHost {
       // Only a reviewer's latest evaluation can be the one it is executing.
       const latest = !sessions.slice(i + 1).some((later) => later.reviewerId === r.reviewerId);
       const active = latest && reviewerRt?.activeRun?.taskRunId === r.taskRunId;
-      return { reviewId: r.reviewId, taskRunId: r.taskRunId, candidateId: r.candidateId, model: r.model, sessionFile: r.sessionFile, at: r.at, active, streaming: active ? reviewerRt!.streaming : null };
+      return { reviewId: r.reviewId, taskRunId: r.taskRunId, candidateId: r.candidateId, model: r.model, requestedThinkingLevel: r.requestedThinkingLevel, thinkingLevel: r.thinkingLevel, sessionFile: r.sessionFile, at: r.at, active, streaming: active ? reviewerRt!.streaming : null };
     });
     // A reviewer's in-flight text belongs to the review it is executing.
     return { sessionFile: reviewer ? null : (rt.record.nativeSessionPath ?? this.newestSessionFile(target)), reviews, streaming: !reviewer && rt.activeRun ? rt.streaming : null, messages };
@@ -4584,8 +4612,9 @@ export class Supervisor implements GateHost {
     let worker: WorkerPort;
     try {
       worker = await this.launchWorker(rt);
-      const res = (await worker.request("initialize", this.initPayload(rt, null, this.workdirOf(rt)), {})) as { ok?: boolean; message?: string; sessionId?: string; sessionFile?: string | null };
+      const res = (await worker.request("initialize", this.initPayload(rt, null, this.workdirOf(rt)), {})) as InitializeResponse;
       if (!res || res.ok !== true) throw err("INVALID", `worker initialize rejected: ${res?.message ?? "unknown"}`);
+      rt.thinkingLevel = observedThinkingLevel(res.thinkingLevel);
       if (checkpoint) {
         if (typeof res.sessionFile !== "string" || typeof res.sessionId !== "string" || rt.pendingRestore === null ||
             res.sessionFile !== rt.pendingRestore.sessionFile || res.sessionId !== nativeHistoryId(checkpoint.bytes)) throw err("RECOVERY_CORRUPT", "restored native identity missing or changed during initialization");
@@ -5251,11 +5280,13 @@ export class Supervisor implements GateHost {
           }
           return;
         }
-        const res = (await worker.request("initialize", { ...this.initPayload(rt, input.prompt, this.workdirOf(rt)), restore: null }, { taskRunId: run.taskRunId, generation })) as { ok?: boolean; message?: string; sessionId?: string; sessionFile?: string | null };
+        const res = (await worker.request("initialize", { ...this.initPayload(rt, input.prompt, this.workdirOf(rt)), restore: null }, { taskRunId: run.taskRunId, generation })) as InitializeResponse;
         if (!res || res.ok !== true) throw new Error(`reviewer initialize rejected: ${res?.message ?? "unknown"}`);
+        const thinkingLevel = observedThinkingLevel(res.thinkingLevel);
         this.registerHistory(rt, res.sessionId, res.sessionFile, "review", input.taskRunId, null, 0);
         this.detached(() => {
           if (rt.activeRun === run) rt.record.observed = "running";
+          if (rt.worker === worker) rt.thinkingLevel = thinkingLevel;
           const agentId = this.gate.inspect(input.taskRunId)?.agentId;
           if (typeof res.sessionFile === "string" && agentId) {
             const session: ReviewSession = {
@@ -5264,7 +5295,8 @@ export class Supervisor implements GateHost {
               taskRunId: input.taskRunId,
               reviewId: input.reviewId,
               candidateId: input.candidateId,
-              model: rt.record.model ? `${rt.record.model.provider}/${rt.record.model.id}` : "unresolved",
+              ...modelView(rt),
+              thinkingLevel,
               sessionFile: res.sessionFile,
               at: this.now(),
             };
@@ -5535,7 +5567,7 @@ export class Supervisor implements GateHost {
       isolation: r.grants.isolation,
       workdir: r.allocation.workdir,
       externalTools: [...(r.grants.externalTools ?? [])],
-      model: r.model ? `${r.model.provider}/${r.model.id}` : "unresolved",
+      ...modelView(rt),
       observed: r.observed,
       desiredLifecycle: r.desiredLifecycle,
       ...(this.storageFailure !== null ? { storageFailure: this.storageFailure } : {}),

@@ -148,8 +148,15 @@ for (const paths of [originalPaths, [...originalPaths].reverse()]) {
     assert.equal(ordinary.usage.input, 7);
     assert.equal(ordinary.usage.output, 3);
     assert.equal((await lines(join(f.config, "launch.jsonl")))[0].cwd, process.cwd());
-    const child = await f.spawn(CLAUDE, { model: SONNET, prompt: "Require Opus", thinkingLevel: "off", maxRounds: 1 });
+    const child = await f.spawn({ ...CLAUDE, thinkingLevel: "high" }, { model: SONNET, prompt: "Require Opus", thinkingLevel: "off", maxRounds: 1 });
     assert.equal((await f.terminal(child)).outcome, "passed");
+    const listed = (await f.call("list_agents", {})).agents.find((agent) => agent.id === child.agentId);
+    const { status } = await f.call("read_agent", { target: child.agentId, view: "status" });
+    for (const view of [child, listed, status]) {
+      assert.equal(view.model, "claude-code/claude-opus-5-5");
+      assert.equal(view.requestedThinkingLevel, "high");
+      assert.equal(view.thinkingLevel, "high");
+    }
     await f.session.reload();
     const continued = await f.call("send_message", { target: child.agentId, mode: "task", message: "Continue retained conversation." });
     assert.equal((await f.terminal({ ...child, taskRunId: continued.taskRunId })).outcome, "succeeded");
@@ -165,7 +172,9 @@ for (const paths of [originalPaths, [...originalPaths].reverse()]) {
     assert.equal(f.loader.getExtensions().extensions.length, 2);
     assert.deepEqual(f.errors, []);
     const records = await lines(join(f.config, "launch.jsonl"));
-    assert.ok(records.some((record) => record.model === "fixture-opus-route"));
+    const opusLaunches = records.filter((record) => record.model === "fixture-opus-route");
+    assert.ok(opusLaunches.length > 0);
+    assert.deepEqual([...new Set(opusLaunches.map((record) => record.effort))], [child.thinkingLevel]);
     assert.ok(records.some((record) => record.model === "fixture-sonnet-route"));
     assert.ok(records.slice(1).every((record) => record.cwd === f.root && record.config === f.config));
   });

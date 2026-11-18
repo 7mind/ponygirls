@@ -24,6 +24,8 @@ function view(overrides: Partial<AgentView> = {}): AgentView {
     workdir: "/proj",
     externalTools: [],
     model: "p/m",
+    requestedThinkingLevel: "off",
+    thinkingLevel: "off",
     observed: "running",
     desiredLifecycle: "open",
     pendingIntent: "running",
@@ -329,7 +331,7 @@ test("a gated agent's transcript shows each review in a gate frame where it happ
   const { ui } = transcriptView({
     view: () => view({ observed: "settled", pendingIntent: "settled" }),
     rows: () => 60,
-    source: () => ({ sessionFile: "/main.jsonl", streaming: null, messages: new Map(), reviews: [{ reviewId: "review-1", taskRunId: "t1", candidateId: "candidate-1", model: "zai/glm", sessionFile: "/review-1.jsonl", at: "2026-10-06T10:00:30.000Z", active: false, streaming: null }] }),
+    source: () => ({ sessionFile: "/main.jsonl", streaming: null, messages: new Map(), reviews: [{ reviewId: "review-1", taskRunId: "t1", candidateId: "candidate-1", model: "zai/glm", requestedThinkingLevel: "off", thinkingLevel: "off", sessionFile: "/review-1.jsonl", at: "2026-10-06T10:00:30.000Z", active: false, streaming: null }] }),
     reader: { version: (p) => (files.has(p) ? "1" : null), read: (p) => files.get(p)! },
   });
   const lines = ui.render(90);
