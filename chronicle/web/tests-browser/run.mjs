@@ -256,7 +256,9 @@ try {
   for (const transition of ['logout-bob', 'observed-bob', 'logout-alice']) {
     const { context, page, fixture } = await scene();
     const privateQuery = '(alice-private-migration-phrase) AND project:"alice-private-project" AND branch:"alice-private-branch" AND after:"2026-10-01T10:00:00Z" AND before:"2026-11-01T10:00:00Z" AND tag:"alice-private-tag" mode:semantic';
-    const privateDraft = `${privateQuery} AND producer:"alice-private-draft"`;
+    // An incomplete draft is never applied by the live Archive editor (a complete one is applied after 350 ms and
+    // closes the source dialog, which raced the steps below).
+    const privateDraft = `${privateQuery} AND producer:"alice-private-draft" AND`;
     await submitExpression(page, privateQuery);
     await page.getByRole('combobox', { name: 'Search conversations' }).fill(privateDraft);
     await openConversation(page);
