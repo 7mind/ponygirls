@@ -58,18 +58,28 @@ class IndexedSearchSnapshotTest extends munit.FunSuite {
     }
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
     val chunk=Wire.encode(Chunk.codecJson,Fragments.split(Fixtures.snapshot().messages).head).noSpaces
-    def insert(first: Int,last: Int): Unit={ db.transaction { c =>
-      Sql.exec(c,s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||((i-1)/$chunksPerSession))::uuid AS sid,md5('generation'||((i-1)/$chunksPerSession))::uuid AS gid,md5('chunk'||i)::uuid AS cid FROM generate_series($first,$last)i")
+    // Each batch projects its first session by production backfill and copies it to the others (identical snapshots);
+    // the initial batch is indexed by a single-pass Database.initialize(), the added batch by incremental HNSW inserts.
+    def insert(first: Int,last: Int): Unit={
+      val fixture=s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||((i-1)/$chunksPerSession))::uuid AS sid,md5('generation'||((i-1)/$chunksPerSession))::uuid AS gid,md5('chunk'||i)::uuid AS cid FROM generate_series($first,$last)i"
+      val template=s"md5('source'||(($first-1)/$chunksPerSession))::uuid"
+      db.transaction { c =>
+      Sql.exec(c,fixture)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT DISTINCT sid,'a',sid::text,1,gid FROM fixture ON CONFLICT DO NOTHING")
-      Sql.exec(c,"INSERT INTO ch_revisions SELECT DISTINCT sid,1,?::jsonb FROM fixture ON CONFLICT DO NOTHING",snapshot)
+      Sql.exec(c,s"INSERT INTO ch_revisions SELECT $template,1,?::jsonb",snapshot)
       Sql.exec(c,"INSERT INTO ch_generations SELECT DISTINCT gid,sid,1,? FROM fixture ON CONFLICT DO NOTHING",config.profile)
       Sql.exec(c,s"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english','synthetic'),(SELECT array_agg(sin(i*d*0.031)+cos(i*d*0.017))::vector FROM generate_series(1,$dimensions)d),0 FROM fixture",chunk)
       Sql.exec(c,"INSERT INTO ch_search_chunks SELECT ch.id,ch.generation,g.session_id,g.revision,g.profile,ch.document,ch.embedding FROM ch_chunks ch JOIN fixture f ON f.cid=ch.id JOIN ch_generations g ON g.id=ch.generation")
     }
       ArchiveProjection.backfill(db)
+      db.transaction { c =>
+        Sql.exec(c,fixture)
+        Sql.exec(c,s"INSERT INTO ch_revisions SELECT DISTINCT sid,1,?::jsonb FROM fixture WHERE sid<>$template",snapshot)
+        ProjectionFixture.copy(c,s"SELECT DISTINCT $template,sid FROM fixture WHERE sid<>$template")
+      }
     }
     try {
-      insert(1,initialChunks); db.transaction(c => Sql.exec(c,"ANALYZE"))
+      db.transaction(c => Sql.exec(c,s"DROP INDEX ch_search_hnsw_d$dimensions")); insert(1,initialChunks); db.initialize(); db.transaction(c => Sql.exec(c,"ANALYZE"))
       val archive=new PostgresArchive(db,config); val index=new PostgresSearch(db,archive,config)
       val query=SearchQuery("synthetic",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),pageLimit,0)
       val vector=Some(embedding(42)); val plan=index.statement("a",query,vector)

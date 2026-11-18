@@ -72,19 +72,33 @@ class IndexedSearchTest extends munit.FunSuite {
       current.members.foreach { case (group,user) => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",group,user) }
     }
   }
+  private val haystackTemplate=1
+  private val needleTemplate=37
+  // Production backfill projects one template revision per project class and the rest are copied (identical snapshots);
+  // the HNSW index is dropped so that Database.initialize() builds it in one pass instead of one insert per row.
   private def seed(config: Config,db: Database,size: Int): Unit = {
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
     val chunk=Wire.encode(Chunk.codecJson,Fragments.split(Fixtures.snapshot().messages).head).noSpaces
+    val fixture=s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||i)::uuid AS sid,md5('generation'||i)::uuid AS gid,md5('chunk'||i)::uuid AS cid,CASE WHEN i%100=0 THEN 'a' WHEN i%100=1 THEN 'b' ELSE 'c' END AS owner FROM generate_series(1,$size)i"
+    val revision="INSERT INTO ch_revisions SELECT sid,1,jsonb_set(?::jsonb,'{metadata,project}',to_jsonb(CASE WHEN i%37=0 THEN 'needle' ELSE 'haystack' END)) FROM fixture"
+    val templates=s"i IN($haystackTemplate,$needleTemplate)"
     db.transaction { c =>
-      Sql.exec(c,s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||i)::uuid AS sid,md5('generation'||i)::uuid AS gid,md5('chunk'||i)::uuid AS cid,CASE WHEN i%100=0 THEN 'a' WHEN i%100=1 THEN 'b' ELSE 'c' END AS owner FROM generate_series(1,$size)i")
+      Sql.exec(c,fixture)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT sid,owner,i::text,1,gid FROM fixture")
-      Sql.exec(c,"INSERT INTO ch_revisions SELECT sid,1,jsonb_set(?::jsonb,'{metadata,project}',to_jsonb(CASE WHEN i%37=0 THEN 'needle' ELSE 'haystack' END)) FROM fixture",snapshot)
+      Sql.exec(c,s"$revision WHERE $templates",snapshot)
       Sql.exec(c,"INSERT INTO ch_generations SELECT gid,sid,1,? FROM fixture",config.profile)
       Sql.exec(c,s"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english',CASE WHEN i%61=0 THEN 'targetterm synthetic' ELSE 'commonterm synthetic' END),(SELECT array_agg(sin(i*d*0.031)+cos(i*d*0.017))::vector FROM generate_series(1,${config.embedding.dimensions})d),0 FROM fixture",chunk)
       Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=2")
+      Sql.exec(c,s"DROP INDEX ch_search_hnsw_d${config.embedding.dimensions}")
       val ab=UUID.randomUUID(); val bc=UUID.randomUUID()
       Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','AB'),(?,'b','BC')",ab,bc)
       Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b'),(?,'b'),(?,'c')",ab,ab,bc,bc)
+    }
+    ArchiveProjection.backfill(db)
+    db.transaction { c =>
+      Sql.exec(c,fixture)
+      Sql.exec(c,s"$revision WHERE NOT($templates)",snapshot)
+      ProjectionFixture.copy(c,s"SELECT md5('source'||CASE WHEN i%37=0 THEN $needleTemplate ELSE $haystackTemplate END)::uuid,sid FROM fixture WHERE NOT($templates)")
     }
     db.initialize()
     db.transaction(c => Sql.exec(c,"ANALYZE"))
