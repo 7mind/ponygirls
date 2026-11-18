@@ -84,6 +84,7 @@ function expressionInput(input, list, change, compositionChange) {
   var SOON_MS = 48 * 3600 * 1000;
   var MINUTE_MS = 60 * 1000, HOUR_MS = 60 * MINUTE_MS, DAY_MS = 24 * HOUR_MS;
   var ACCOUNT_PREFIX = "#account";
+  var LIST_CACHE_ENTRIES = 8;
   var VIEWS = { catalogue: "dashboard-section", upload: "upload-section", cli: "cli-section", detail: "detail-section" };
   var ACCESS_CHIPS = { internal: ["chip", "lock", "Internal"], external: ["chip chip-warn", "key", "External"], public: ["chip chip-info", "external", "Public"] };
   var STATES = { uploading: ["status status-run", "Uploading"], publishing: ["status status-run", "Publishing"] };
@@ -109,6 +110,8 @@ function expressionInput(input, list, change, compositionChange) {
   // Where the catalogue was left (rows stay cached): restored on return, keyed by the applied query.
   var listPlace = null;
   var detailFromList = false;
+  // Loaded chains of applied queries left behind, keyed like loadedKey, for history navigation back to them.
+  var listCache = new Map();
   var dragDepth = 0;
   var state = readRoute().state;
   var dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
@@ -121,6 +124,8 @@ function expressionInput(input, list, change, compositionChange) {
     failVisible: failVisible, backToList: backToList, showCatalogue: function () { showView("catalogue"); }, suspendForDetail: suspendForDetail, detailFailed: detailFailed });
   var upload = createUpload(ctx, { showLoggedOut: showLoggedOut, reloadAfterUpload: reloadAfterUpload }, detail.copy);
   overlays.hydrateIcons(document);
+  // Lists restore their own scroll position (restorePlace); the browser's would land on stale document heights.
+  window.history.scrollRestoration = "manual";
 
   function apiFetch(descriptor) {
     var epoch = ctx.sessionEpoch;
@@ -283,6 +288,7 @@ function expressionInput(input, list, change, compositionChange) {
   function navigateList(next, submitted) {
     var query = stateParams(next).toString();
     var hash = "#/artifacts" + (query ? "?" + query : "");
+    if (JSON.stringify(next) !== JSON.stringify(state)) { rememberList(null); }
     invalidateNavigation();
     loadedKey = "";
     submittedKey = submitted ? JSON.stringify(next) : null;
@@ -313,6 +319,28 @@ function expressionInput(input, list, change, compositionChange) {
     if (state.mode !== "catalogue" && searchPage === null) { submittedKey = null; }
   }
   function suspendForDetail() { leaveCatalogue(); }
+  // Keeps the applied query's loaded rows, scroll position, focused row and unsent draft (spec §5 rule 2).
+  function rememberList(draft) {
+    var key = JSON.stringify(state);
+    if (loadedKey !== key || pendingReset || listError || state.mode !== "catalogue" && searchPage === null) { return; }
+    var active = document.activeElement;
+    var place = view === "catalogue" ? { y: window.scrollY, focus: active !== null && $("catalogue-table").contains(active) && active.dataset.artifactId ? active.dataset.artifactId : null }
+      : listPlace !== null && listPlace.key === key ? listPlace : { y: 0, focus: null };
+    listCache.delete(key);
+    listCache.set(key, { summaries: summaries, nextCursor: nextCursor, searchPage: searchPage, y: place.y, focus: place.focus, draft: draft });
+    while (listCache.size > LIST_CACHE_ENTRIES) { listCache.delete(listCache.keys().next().value); }
+  }
+  // History navigation back to a remembered query shows its rows again; retrieval is never replayed.
+  function restoreList(key) {
+    var entry = listCache.get(key);
+    if (entry === undefined) { return null; }
+    listCache.delete(key);
+    summaries = entry.summaries; nextCursor = entry.nextCursor; searchPage = entry.searchPage;
+    loadedKey = key; listError = false;
+    if (entry.searchPage !== null) { submittedKey = key; }
+    listPlace = { key: key, y: entry.y, focus: entry.focus };
+    return entry;
+  }
   function handleRoute(keepDraft) {
     if (!ctx.authenticated) { return; }
     if (window.location.hash.startsWith(ACCOUNT_PREFIX)) { markNav(null); return; }
@@ -326,14 +354,18 @@ function expressionInput(input, list, change, compositionChange) {
     }
     var changed = JSON.stringify(route.state) !== JSON.stringify(state);
     var currentDraft = keepDraft === true || !changed ? $("filter-text").value : null;
+    var restored = null;
     if (changed) {
       // Direct hash/history navigation bypasses navigateList. Fence both a held
       // result and any queued unsent intent before changing the owner of rows.
+      rememberList($("filter-text").value === serializeExpression(state) ? null : $("filter-text").value);
       invalidateNavigation(); loadedKey = ""; submittedKey = null; listPlace = null;
+      restored = route.error === null ? restoreList(JSON.stringify(route.state)) : null;
     }
     state = route.state;
     updateControls();
     if (!changed && currentDraft !== null) { $("filter-text").value = currentDraft; updateDraft(); }
+    if (restored !== null && restored.draft !== null) { $("filter-text").value = restored.draft; updateDraft(); }
     if (route.error !== null) {
       invalidateNavigation(); loadedKey = ""; summaries = []; searchPage = null; nextCursor = null;
       $("filter-text").value = route.expression; updateDraft(); renderList();
@@ -343,7 +375,7 @@ function expressionInput(input, list, change, compositionChange) {
       return;
     }
     if (route.id !== null) {
-      if (view === "catalogue") { leaveCatalogue(); } else { detailFromList = false; }
+      if (view === "catalogue" && restored === null) { leaveCatalogue(); } else { detailFromList = false; }
       // The detail section replaces the list once the artifact has loaded (detail.js); other views close now.
       view = "detail"; $("main").dataset.currentView = "detail"; markNav("artifacts");
       $("upload-section").hidden = true; $("cli-section").hidden = true;
@@ -370,7 +402,7 @@ function expressionInput(input, list, change, compositionChange) {
     }
     else {
       renderList();
-      if (returning) { restorePlace(); }
+      if (returning || restored !== null) { restorePlace(); }
       watchList();
     }
   }
@@ -415,7 +447,7 @@ function expressionInput(input, list, change, compositionChange) {
     state = readRoute().state;
     updateControls();
     summaries = []; searchPage = null; submittedKey = null; queuedRead = null; loadedKey = ""; nextCursor = null; listError = false;
-    listPlace = null; detailFromList = false; view = null;
+    listPlace = null; detailFromList = false; view = null; listCache.clear();
     if (observer !== null) { observer.disconnect(); }
     $("artifact-list").textContent = ""; $("retrieval-results").textContent = "";
     detail.clear();
@@ -699,6 +731,7 @@ function expressionInput(input, list, change, compositionChange) {
     if (reset) {
       summaries = []; searchPage = null; nextCursor = null;
       loadedKey = JSON.stringify(intent.value);
+      listCache.delete(loadedKey);
       window.scrollTo(0, 0);
       setCounter(state.mode === "catalogue" ? "Loading artifacts…" : "Searching metadata and manifest paths…");
     }
@@ -750,24 +783,30 @@ function expressionInput(input, list, change, compositionChange) {
     });
   }
   function detailFailed() {
-    summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true;
+    summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true; listCache.clear();
     showView("catalogue");
     renderList();
     setCounter("Not loaded");
     $("retry-list-button").hidden = false;
   }
   function reloadAfterUpload() {
-    loadedKey = "";
+    loadedKey = ""; listCache.clear();
     if (view === "catalogue") { if (state.mode === "catalogue") { loadPage(true); } else { invalidateCatalogue(); } }
   }
   function invalidateCatalogue() {
     listGeneration++; pendingPage = null; pendingReset = false; queuedRead = null; summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; listError = false;
-    listPlace = null;
+    listPlace = null; listCache.clear();
     if (observer !== null) { observer.disconnect(); }
     renderList();
     if (state.mode !== "catalogue") { submittedKey = null; setCounter("Not searched"); notice("info", "Results invalidated. Press Search to run retrieval again.", false); }
     if (ctx.authenticated && readRoute().view === "catalogue" && state.mode === "catalogue") { loadPage(true); }
   }
+
+  // The view bar wraps on narrow screens: the table header sticks under its actual height (CSSOM, not a style attribute).
+  new window.ResizeObserver(function () {
+    var height = $("catalogue-viewbar").getBoundingClientRect().height;
+    if (height > 0) { $("catalogue-table").style.setProperty("--viewbar-h", height + "px"); }
+  }).observe($("catalogue-viewbar"));
 
   // ── Theme ──────────────────────────────────────────────────────────────
   function syncTheme() {

@@ -736,10 +736,11 @@ SCENES.m1 = async () => {
   for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"], [VP.s, "dark"], [VP.m, "dark"]]) {
     const page = await catalogue(vp, scheme);
     await snap(page, `manure-catalogue${scheme === "dark" ? "-dark" : ""}-${width(vp)}`, "Catalogue first render");
-    if (vp === VP.d) {
+    if (vp === VP.d || vp === VP.m) {
       await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await sleep(1200);
+      if (vp === VP.m) await page.fill("#filter-text", "access:external changed draft");
       await page.evaluate(() => window.scrollTo(0, 1500)); await sleep(300);
-      await snap(page, `manure-catalogue-scrolled${scheme === "dark" ? "-dark" : ""}-1440`, "Catalogue scrolled: sticky view bar and table header");
+      await snap(page, `manure-catalogue-scrolled${scheme === "dark" ? "-dark" : ""}-${width(vp)}`, "Catalogue scrolled: sticky view bar and table header (390: wrapped view bar with a changed draft)");
     }
     await page.context().close();
   }

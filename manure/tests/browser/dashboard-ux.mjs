@@ -24,7 +24,7 @@ const check = async (name, run) => {
     page.on("request", (request) => urls.push(request.url()));
     await page.addInitScript(() => {
       const original = window.fetch.bind(window);
-      window.__ux = { listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdListReset: false, releaseListReset: null, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
+      window.__ux = { rotations: 0, listInFlight: 0, listPeak: 0, readCommands: [], holdSearch: false, releaseSearch: null, failList: false, holdList: false, holdListReset: false, releaseListReset: null, holdCapabilities: false, releaseCapabilities: null, holdRotate: false, failLogout: false, failSession: location.hash === "#/ux-session-fail", holdInfoId: null, releaseInfo: null, releaseList: null, releaseRotate: null };
       window.fetch = (url, options) => {
         const state = window.__ux;
         const value = String(url);
@@ -32,6 +32,7 @@ const check = async (name, run) => {
         const command=new URL(value,location.href).pathname==="/api/current" ? envelope?.command : null;
         if (state.failSession && command?.Whoami) return Promise.reject(new Error("test-offline"));
         if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
+        if (command?.RotateExternalPassword) state.rotations++;
         if (command?.ListArtifacts) state.readCommands.push({ mode: "catalogue", query: command.ListArtifacts.query.query });
         if (command?.Search) state.readCommands.push({ mode: command.Search.query.mode, query: command.Search.query.query });
         const listPage=command?.ListArtifacts?.query.cursor != null;
@@ -334,16 +335,30 @@ await check("expired artifacts remain deletable from the catalogue", async (page
   assert.equal((await page.request.post(input.base+"/api/current",{data:{requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{GetArtifact:{artifactId:input.expiredId}}}})).status(),404);
 });
 
-await check("password reveals clear on dismiss, navigation and confirmed logout", async (page, context) => {
+await check("rotation asks first; password reveals clear on dismiss, navigation and confirmed logout", async (page, context) => {
   await detail(page, input.protectedId, "ux-protected");
+  const confirmRotation = page.getByRole("dialog", { name: "Rotate the external password?" });
   await page.locator("#rotate-button").click();
+  await confirmRotation.waitFor();
+  assert.equal(await page.evaluate(() => document.activeElement.textContent), "Cancel");
+  await page.keyboard.press("Escape");
+  await confirmRotation.waitFor({ state: "detached" });
+  await page.locator("#rotate-button").click();
+  await confirmRotation.getByRole("button", { name: "Cancel", exact: true }).click();
+  await confirmRotation.waitFor({ state: "detached" });
+  await settle(page);
+  assert.equal(await page.evaluate(() => window.__ux.rotations), 0, "Escape and Cancel rotate nothing");
+  await page.locator("#rotate-button").click();
+  await confirmRotation.getByRole("button", { name: "Rotate password", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 43);
+  assert.equal(await page.evaluate(() => window.__ux.rotations), 1, "only the explicit confirmation rotates");
   assert.equal(await page.evaluate(() => Object.keys(localStorage).length + Object.keys(sessionStorage).length), 0);
   const session = (await context.cookies(input.base)).find((cookie) => cookie.name === "manure-dev");
   assert.equal(session.httpOnly, true);
   await page.locator("#rotate-dismiss-button").click();
   assert.equal((await page.locator("#rotate-password").textContent()).length, 0);
   await page.locator("#rotate-button").click();
+  await confirmRotation.getByRole("button", { name: "Rotate password", exact: true }).click();
   await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 43);
   await page.locator("#detail-back-button").click();
   await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 0);

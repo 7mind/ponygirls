@@ -236,6 +236,7 @@ class DashboardFlows:
             {"op": "waitForText", "selector": "#detail-list",
              "contains": aid},
             {"op": "click", "selector": "#rotate-button"},
+            {"op": "click", "selector": "dialog[open] >> role=button[name=\"Rotate password\"]"},
             {"op": "waitForEval",
              "fn": "() => document.querySelector('#rotate-password')"
                    " .textContent.length === 43"},
@@ -277,6 +278,7 @@ class DashboardFlows:
             {"op": "waitForText", "selector": "#detail-list",
              "contains": aid},
             {"op": "click", "selector": "#rotate-button"},
+            {"op": "click", "selector": "dialog[open] >> role=button[name=\"Rotate password\"]"},
             {"op": "waitForEval",
              "fn": "() => document.querySelector('#rotate-password')"
                    " .textContent.length === 43"},

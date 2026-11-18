@@ -24,6 +24,6 @@ class CatalogueShellTests(unittest.TestCase):
                                 input=json.dumps(payload).encode(), capture_output=True, timeout=240)
         report = json.loads(result.stdout or b"[]")
         self.assertEqual(result.returncode, 0, [check for check in report if not check["ok"]] or result.stderr.decode()[-2000:])
-        self.assertEqual(len(report), 4)
+        self.assertEqual(len(report), 5)
         for check in report:
             print("ok - " + check["name"])

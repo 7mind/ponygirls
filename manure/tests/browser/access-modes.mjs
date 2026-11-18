@@ -398,6 +398,7 @@ if (input.includeRaces) {
     await hiddenPassword(page);
     assert.equal(await page.locator("#rotate-button").isEnabled(), true);
     await page.locator("#rotate-button").click();
+    await page.getByRole("dialog", { name: "Rotate the external password?" }).getByRole("button", { name: "Rotate password" }).click();
     const value = await password(page);
     const unlocked = await contentWire(content("lost"),new api.ContentCommand_Unlock(value));
     assert.equal(unlocked.status, 200);

@@ -23,12 +23,13 @@ const check = async (name, run) => {
     page.on("console", (message) => { if (/Content Security Policy/i.test(message.text())) problems.push("console: " + message.text()); });
     page.on("dialog", (dialog) => { problems.push("native dialog: " + dialog.type()); dialog.dismiss().catch(() => {}); });
     await page.addInitScript(() => {
-      window.__shell = { violations: [], listCalls: 0, failNextAppend: false };
+      window.__shell = { violations: [], listCalls: 0, searchCalls: 0, failNextAppend: false };
       document.addEventListener("securitypolicyviolation", (event) => window.__shell.violations.push(event.violatedDirective));
       const original = window.fetch.bind(window);
       window.fetch = (url, options) => {
         let command = null;
         try { command = JSON.parse(options?.body || "null")?.command ?? null; } catch (_) { command = null; }
+        if (command?.Search) window.__shell.searchCalls++;
         if (command?.ListArtifacts) {
           window.__shell.listCalls++;
           if (command.ListArtifacts.query.cursor != null && window.__shell.failNextAppend) {
@@ -59,7 +60,7 @@ const settled = async (page, what, wait) => {
   try { await wait; }
   catch (error) { throw new Error(`${what}: rows ${await page.evaluate(() => document.querySelectorAll("#artifact-list > tr").length)}, counter "${await page.locator("#list-status").textContent()}", hash ${await page.evaluate(() => location.hash)}: ${error.message.split("\n")[0]}`); }
 };
-const counterLoaded = (page) => settled(page, "counter loaded", page.waitForFunction(() => / loaded/.test(document.querySelector("#list-status").textContent)));
+const counterLoaded = (page) => settled(page, "counter loaded", page.waitForFunction(() => / loaded| hits · /.test(document.querySelector("#list-status").textContent)));
 const rowCount = (page, n) => settled(page, `${n} rows`, page.waitForFunction((count) => document.querySelectorAll("#artifact-list > tr").length === count, n));
 const toEnd = (page) => page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
 const search = async (page, text) => {
@@ -83,14 +84,17 @@ await check("one document scroller, sticky view bar and header, a table at every
   await toEnd(page); await rowCount(page, 2 * PAGE);
   assert.deepEqual(await scrollers(page), []);
   assert.ok(await page.evaluate(() => document.scrollingElement.scrollHeight > innerHeight), "the document scrolls");
-  await page.evaluate(() => window.scrollTo(0, 1500));
-  const tops = await page.evaluate(() => {
-    const viewbar = document.querySelector("#list-form").parentElement.getBoundingClientRect();
-    return { masthead: document.querySelector(".masthead").getBoundingClientRect().height, viewbarTop: viewbar.top, viewbarHeight: viewbar.height,
-      headerTop: document.querySelector("#catalogue-table thead th").getBoundingClientRect().top };
-  });
-  assert.ok(Math.abs(tops.viewbarTop - tops.masthead) <= 1, "view bar sticks under the masthead: " + JSON.stringify(tops));
-  assert.ok(Math.abs(tops.headerTop - tops.masthead - tops.viewbarHeight) <= 1, "table header sticks under the view bar: " + JSON.stringify(tops));
+  // Spec §8.2: after scrolling, the view bar sits under the masthead and the whole table header under the view bar.
+  const stuck = async (label) => {
+    await page.evaluate(() => window.scrollTo(0, 1500));
+    await settled(page, label, page.waitForFunction(() => {
+      const masthead = document.querySelector(".masthead").getBoundingClientRect();
+      const viewbar = document.querySelector("#list-form").closest(".viewbar").getBoundingClientRect();
+      const header = document.querySelector("#catalogue-table thead th").getBoundingClientRect();
+      return scrollY > 0 && Math.abs(viewbar.top - masthead.bottom) <= 1 && Math.abs(header.top - viewbar.bottom) <= 1;
+    }, null, { timeout: 5000 }));
+  };
+  await stuck("sticky chrome at 1440px");
   for (const [width, height] of [[1024, 700], [390, 844]]) {
     await page.setViewportSize({ width, height });
     const layout = await page.evaluate(() => ({
@@ -101,7 +105,12 @@ await check("one document scroller, sticky view bar and header, a table at every
     assert.equal(layout.overflow <= 0, true, `no horizontal document overflow at ${width}px`);
     if (width === 1024) { assert.equal(layout.table, "table"); assert.equal(layout.row, "table-row", "rows stay table rows at 1024px"); }
     assert.deepEqual(await scrollers(page), [], `no inner scroller at ${width}px`);
+    await stuck(`sticky chrome at ${width}px`);
   }
+  // A changed draft adds its hint to the query bar; on a phone the wrapped view bar grows and the header follows it.
+  await page.getByRole("combobox", { name: "Search artifacts" }).fill(input.prefix + " changed draft");
+  await page.getByText("Draft changed — press Enter to apply").waitFor();
+  await stuck("sticky chrome at 390px with a changed draft");
 });
 
 await check("document scrolling appends without duplicates, labels progress, ends with a marker; a failed append keeps rows", async (page) => {
@@ -155,6 +164,38 @@ await check("Back from an artifact restores rows, scroll and focus; a view round
   await counterLoaded(page);
   assert.equal(await page.getByRole("combobox", { name: "Search artifacts" }).inputValue(), "sort:name direction:asc " + input.prefix);
   assert.equal(await page.locator('th:has([data-sort="name"])').getAttribute("aria-sort"), "ascending");
+});
+
+await check("history Back to an earlier query restores its loaded rows, scroll and retrieval results without a request", async (page) => {
+  const calls = () => page.evaluate(() => ({ list: window.__shell.listCalls, search: window.__shell.searchCalls }));
+  const onRoute = (query) => settled(page, "route " + query, page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q &&
+    document.querySelector("#catalogue-table").getAttribute("aria-busy") === "false", query));
+  await search(page, input.prefix);
+  await loadAll(page);
+  await page.evaluate(() => window.scrollTo(0, 1200));
+  const before = await page.evaluate(() => scrollY);
+  await page.getByRole("button", { name: "Sort by Name" }).click();
+  await onRoute("sort:name direction:asc " + input.prefix);
+  await rowCount(page, PAGE);
+  // Left at its top, the sorted list does not reach its end marker when it is shown again (no append).
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await search(page, "mode:lexical " + input.prefix);
+  const hits = await page.locator("#list-status").textContent();
+  assert.match(hits, / hits · lexical$/);
+  const sent = await calls();
+  await page.goBack();
+  await onRoute("sort:name direction:asc " + input.prefix);
+  await rowCount(page, PAGE);
+  await page.goBack();
+  await onRoute(input.prefix);
+  await rowCount(page, RECORDS);
+  assert.ok(Math.abs(await page.evaluate(() => scrollY) - before) <= 2, "scroll position of the earlier query restored");
+  assert.equal(await page.locator("#list-status").textContent(), `All ${RECORDS} artifacts loaded`);
+  await page.goForward(); await onRoute("sort:name direction:asc " + input.prefix);
+  await rowCount(page, PAGE);
+  await page.goForward(); await onRoute("mode:lexical " + input.prefix);
+  assert.equal(await page.locator("#list-status").textContent(), hits, "retrieval results shown again");
+  assert.deepEqual(await calls(), sent, "history navigation sends no list or Search request");
 });
 
 await check("delete confirms in an in-app dialog with Cancel focused; Escape cancels", async (page) => {

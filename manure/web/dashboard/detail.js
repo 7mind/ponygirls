@@ -327,10 +327,24 @@ export function createDetail(ctx, catalogue) {
       if (passwordRead === request) { passwordRead = null; updateDetailActions(); }
     });
   }
+  function rotatable(id) {
+    return id !== null && currentDetailId === id && currentDetailInfo !== null && currentDetailInfo.visibility === "external" &&
+      !accessMutations.has(id) && !deleting.has(id);
+  }
+  // Rotation revokes the current password and every grant made with it: it runs only after the in-app confirmation,
+  // and only for the same session and the same artifact view that asked.
   function onRotate() {
-    if (currentDetailId === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external" ||
-        accessMutations.has(currentDetailId) || deleting.has(currentDetailId)) { return; }
     var id = currentDetailId;
+    if (!rotatable(id)) { return; }
+    var info = currentDetailInfo, epoch = ctx.sessionEpoch, generation = detailGeneration;
+    ctx.overlays.confirmAction({ title: "Rotate the external password?", danger: true, icon: null, confirmLabel: "Rotate password", paragraphs: [
+      [{ strong: info.name || id }, { sub: id }],
+      "The current password stops working immediately and existing content grants are revoked. Readers need the new password, which is shown once here and stays retrievable by signed-in users."
+    ] }).then(function (confirmed) {
+      if (confirmed && epoch === ctx.sessionEpoch && generation === detailGeneration && rotatable(id)) { rotate(id); }
+    });
+  }
+  function rotate(id) {
     var mutation = beginAccessMutation(id, "Rotating external password…");
     apiFetch(current.rotate(id)).then(function (body) {
       var password = takeExternalPassword(body, true);
