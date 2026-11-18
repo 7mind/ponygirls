@@ -48,10 +48,10 @@ object Main extends IOApp {
     if(workersEnabled) worker else IO.never[Unit]
   private def reportAccounts(s: RuntimeServices,accounts: Option[AccountPlane]): IO[Unit] = accounts match {
     case None => IO.blocking(s.database.transaction(Database.activeImperativeAccounts)).flatMap { suspended =>
-      IO(if(suspended>0) s.logger.warn(s"accounts.enabled is off: imperative accounts are suspended, their rows and tokens are kept suspended=$suspended"))
+      IO(if(suspended>0) s.logger.warn(s"accounts.enabled is off: imperative accounts are suspended, their rows and tokens are kept; $suspended"))
     }
     case Some(plane) => IO.blocking(s.database.transaction(Database.imperativeAccountsSealedByAnotherKey(_,plane.settings.vault.keyId))).flatMap { sealedByAnotherKey =>
-      IO(if(sealedByAnotherKey>0) s.logger.warn(s"imperative accounts whose TOTP secret another key sealed need an administrator reset sealedByAnotherKey=$sealedByAnotherKey"))
+      IO(if(sealedByAnotherKey>0) s.logger.warn(s"imperative accounts whose TOTP secret another key sealed need an administrator reset; $sealedByAnotherKey"))
     }
   }
   private def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean): IO[Nothing] = AccountPlane.resource(config).use { accounts => for {
