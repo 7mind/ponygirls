@@ -111,6 +111,9 @@ await check("one document scroller, sticky view bar and header, a table at every
   await page.getByRole("combobox", { name: "Search artifacts" }).fill(input.prefix + " changed draft");
   await page.getByText("Draft changed — press Enter to apply").waitFor();
   await stuck("sticky chrome at 390px with a changed draft");
+  assert.ok(await page.evaluate(() => document.scrollingElement.scrollWidth <= innerWidth), "no horizontal overflow at 390px with a changed draft");
+  const searchButton = await page.getByRole("button", { name: "Search", exact: true }).boundingBox();
+  assert.ok(searchButton.x >= 0 && searchButton.x + searchButton.width <= 390, "the Search button stays inside the viewport");
 });
 
 await check("document scrolling appends without duplicates, labels progress, ends with a marker; a failed append keeps rows", async (page) => {
