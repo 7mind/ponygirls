@@ -19,7 +19,6 @@ trap '"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/nul
 "$POSTGRES_HOME/bin/initdb" -D "$base/data" -U postgres -A trust --no-locale --encoding=UTF8 > "$base/init.log"
 "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base" -w start
 export CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/postgres"
-export RETRIEVAL_DIAGNOSTIC_DIR="$report/retrieval-postgres/diagnostics"
 set +e
 bash scripts/backend-sbt.sh 'retrievalCore/Test/validationInventory' 'modelHttp/Test/validationInventory' 'retrievalPostgres/Test/validationInventory' 'retrievalCore/testFull' 'modelHttp/testFull' 'retrievalPostgres/testFull' 2>&1 | tee "$report/run.log"
 status=${PIPESTATUS[0]}
