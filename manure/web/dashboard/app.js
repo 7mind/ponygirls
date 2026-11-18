@@ -280,8 +280,10 @@ function expressionInput(input, list, change, compositionChange) {
   }
 
   // ── Navigation and list state ──────────────────────────────────────────
+  // Fences every pending list read; an abandoned first page leaves no loaded chain behind.
   function invalidateNavigation() {
     listGeneration++; pendingPage = null; queuedRead = null;
+    if (pendingReset) { loadedKey = ""; pendingReset = false; }
     if (observer !== null) { observer.disconnect(); }
     detail.invalidate();
   }
@@ -336,7 +338,7 @@ function expressionInput(input, list, change, compositionChange) {
     if (entry === undefined) { return null; }
     listCache.delete(key);
     summaries = entry.summaries; nextCursor = entry.nextCursor; searchPage = entry.searchPage;
-    loadedKey = key; listError = false;
+    loadedKey = key; listError = false; pendingReset = false;
     if (entry.searchPage !== null) { submittedKey = key; }
     listPlace = { key: key, y: entry.y, focus: entry.focus };
     return entry;

@@ -23,7 +23,7 @@ const check = async (name, run) => {
     page.on("console", (message) => { if (/Content Security Policy/i.test(message.text())) problems.push("console: " + message.text()); });
     page.on("dialog", (dialog) => { problems.push("native dialog: " + dialog.type()); dialog.dismiss().catch(() => {}); });
     await page.addInitScript(() => {
-      window.__shell = { violations: [], listCalls: 0, searchCalls: 0, failNextAppend: false };
+      window.__shell = { violations: [], listCalls: 0, searchCalls: 0, failNextAppend: false, holdFirstPage: false, releaseFirstPage: null };
       document.addEventListener("securitypolicyviolation", (event) => window.__shell.violations.push(event.violatedDirective));
       const original = window.fetch.bind(window);
       window.fetch = (url, options) => {
@@ -37,7 +37,12 @@ const check = async (name, run) => {
             return Promise.resolve(new Response(JSON.stringify({ requestId: JSON.parse(options.body).requestId, result: { Error: { failure: { code: "Unavailable", message: "controlled fixture", retryAfterSeconds: 1 } } } }), { status: 503, headers: { "Content-Type": "application/json" } }));
           }
         }
-        return original(url, options);
+        const response = original(url, options);
+        if (command?.ListArtifacts && command.ListArtifacts.query.cursor == null && window.__shell.holdFirstPage) {
+          window.__shell.holdFirstPage = false;
+          return response.then((res) => new Promise((resolve) => { window.__shell.releaseFirstPage = () => resolve(res); }));
+        }
+        return response;
       };
     });
     await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
@@ -199,6 +204,31 @@ await check("history Back to an earlier query restores its loaded rows, scroll a
   await page.goForward(); await onRoute("mode:lexical " + input.prefix);
   assert.equal(await page.locator("#list-status").textContent(), hits, "retrieval results shown again");
   assert.deepEqual(await calls(), sent, "history navigation sends no list or Search request");
+});
+
+await check("Back before a new query's first page arrives keeps the earlier list through a later artifact visit", async (page) => {
+  await search(page, input.prefix);
+  await loadAll(page);
+  await page.evaluate(() => { window.__shell.holdFirstPage = true; });
+  await page.getByRole("button", { name: "Sort by Name" }).click();
+  await settled(page, "held first page", page.waitForFunction(() => window.__shell.releaseFirstPage !== null));
+  await page.goBack();
+  await settled(page, "route back", page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query") === q, input.prefix));
+  await rowCount(page, RECORDS);
+  await page.evaluate(() => window.__shell.releaseFirstPage());
+  await page.evaluate(() => window.scrollTo(0, 1200));
+  const before = await page.evaluate(() => scrollY);
+  const calls = await page.evaluate(() => window.__shell.listCalls);
+  const target = await page.evaluate(() => [...document.querySelectorAll("#artifact-list > tr")].find((row) => row.getBoundingClientRect().top > 200).dataset.artifactId);
+  await page.locator(`#artifact-list a[data-action=details][data-artifact-id="${target}"]`).click();
+  await settled(page, "detail shown", page.waitForFunction((id) => document.querySelector("#detail-list").textContent.includes(id), target));
+  await page.goBack();
+  await page.locator('[data-view="catalogue"]').waitFor({ state: "visible" });
+  await rowCount(page, RECORDS);
+  assert.ok(Math.abs(await page.evaluate(() => scrollY) - before) <= 2, "scroll position restored");
+  assert.equal(await page.evaluate(() => document.activeElement.dataset.artifactId), target, "focus returns to the originating row");
+  assert.equal(await page.evaluate(() => window.__shell.listCalls), calls, "the earlier list is not fetched again");
+  assert.equal(await page.locator("#list-status").textContent(), `All ${RECORDS} artifacts loaded`);
 });
 
 await check("delete confirms in an in-app dialog with Cancel focused; Escape cancels", async (page) => {
