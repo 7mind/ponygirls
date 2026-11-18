@@ -1196,6 +1196,11 @@
           rites-browser = pkgs.callPackage ./nix/pkg/rites/browser-tests.nix { };
           chronicle-backend = self.packages.${system}.chronicle.backendValidation;
           chronicle-protocol = self.packages.${system}.chronicle.protocolValidation;
+          inherit (import ./nix/tests/jvm-suites.nix { inherit pkgs; squishLib = inputs.squish.lib; })
+            chronicle-backend-full haystack-jvm shared-jvm;
+          chronicle-browser = pkgs.callPackage ./nix/tests/chronicle-browser.nix { };
+          chronicle-eval = pkgs.callPackage ./nix/tests/chronicle-eval.nix { };
+          account-web-browser = pkgs.callPackage ./nix/tests/account-web-browser.nix { };
           chronicle-validation = self.packages.${system}.chronicle.validationEvidence;
           chronicle-evidence-layout = import ./nix/tests/chronicle-evidence-layout.nix { inherit pkgs; };
           chronicle-validation-policy = pkgs.runCommand "chronicle-validation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
@@ -1203,14 +1208,6 @@
             touch "$out"
           '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
-          manure-portable-root = import ./nix/tests/manure-portable-root.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
-          manure-unittests = import ./nix/tests/manure-unittests.nix {
-            inherit pkgs;
-            backendCheck = self.checks.${system}.manure-backend;
-            installedClientCheck = self.checks.${system}.manure-client;
-            nativeCheck = self.checks.${system}.manure-native;
-            portableRootCheck = self.checks.${system}.manure-portable-root;
-          };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
           hm-service-unit-graph-harness = import ./nix/tests/hm-service-unit-graph-harness.nix { inherit pkgs; };
           hm-service-unit-graph-vm = import ./nix/tests/hm-service-unit-graph-vm.nix {
@@ -1261,7 +1258,6 @@
           manure-direct-jni = pkgs.callPackage ./nix/pkg/manure/direct-jni.nix { };
           manure-posix-acceptance = pkgs.callPackage ./nix/pkg/manure/posix-acceptance.nix { squishLib = inputs.squish.lib; };
           backend-source = import ./nix/tests/backend-source.nix { inherit pkgs; };
-          backend-coassembly = pkgs.callPackage ./nix/tests/backend-coassembly.nix { squishLib = inputs.squish.lib; };
           rites-worker-source = pkgs.callPackage ./nix/tests/rites-worker-source.nix { };
           chronicle-sbt-lock = import ./nix/tests/chronicle-sbt-lock.nix { inherit pkgs; };
           chronicle-sbt-lock-helper = let
@@ -1296,14 +1292,6 @@
             touch $out
           '';
           podman-module = podmanModuleCheck;
-          manure-browser = import ./nix/tests/manure-browser.nix { nativeCheck = self.checks.${system}.manure-native; };
-          manure-vm = import ./nix/tests/manure-vm.nix {
-            inherit pkgs nixpkgs;
-            manureModule = self.nixosModules.manure;
-            manureHmModule = self.homeManagerModules.manure;
-            yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
-            toolsHmModule = import ./nix/hm/tools.nix { inherit inputs; };
-          };
           # Pre-exec launch validator fixtures (host-only: python3 +
           # qemu-img, no guest, no QEMU launch, no KVM needed).
           manure-vm-audit-test = pkgs.runCommandLocal "manure-vm-audit-test" {
@@ -1369,6 +1357,48 @@
             grep -q '192.168.0.0/16' "$out"
           '';
         };
+        # Tier F aggregates (`nix build .#verify-<service>`, scripts/verify) link their member checks; Tier X checks are
+        # built only on demand (`nix build .#onDemand.<name>`), never by `nix flake check`.
+        legacyPackages = pkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux (
+          let
+            checks = self.checks.${system};
+            packages = self.packages.${system};
+            chronicle = {
+              inherit (checks) chronicle chronicle-backend-full chronicle-browser chronicle-web chronicle-collector chronicle-protocol
+                chronicle-eval chronicle-modules chronicle-models chronicle-hm-server shared-jvm;
+              inherit (packages) chronicle-cli;
+            };
+            haystack = {
+              inherit (checks) haystack haystack-jvm haystack-native haystack-browser haystack-proxy haystack-nixos-eval
+                haystack-hm-eval haystack-run-check shared-jvm account-web-browser;
+              inherit (packages) haystack-cli;
+            };
+            manure = {
+              inherit (checks) manure manure-backend manure-native manure-client manure-config manure-direct-jni
+                manure-posix-acceptance manure-nixos-eval manure-hm-eval shared-jvm account-web-browser;
+            };
+            crossService = {
+              inherit (checks) shared-services-modules service-accounts service-cli-hm shared-postgres shared-postgres-modules
+                provider-credential-transports agentic-services-credentials agentic-services-hm-eval runtime-token oci-images
+                service-unit-graph-vm hm-service-unit-graph-vm;
+            };
+          in {
+            verify-chronicle = pkgs.linkFarm "verify-chronicle" chronicle;
+            verify-haystack = pkgs.linkFarm "verify-haystack" haystack;
+            verify-manure = pkgs.linkFarm "verify-manure" manure;
+            verify-all = pkgs.linkFarm "verify-all" (chronicle // haystack // manure // crossService);
+            onDemand = {
+              manure-vm = import ./nix/tests/manure-vm.nix {
+                inherit pkgs nixpkgs;
+                manureModule = self.nixosModules.manure;
+                manureHmModule = self.homeManagerModules.manure;
+                yoloHmModule = import ./nix/hm/yolo.nix { inherit inputs; };
+                toolsHmModule = import ./nix/hm/tools.nix { inherit inputs; };
+              };
+              manure-portable-root = import ./nix/tests/manure-portable-root.nix { inherit pkgs; manurePackage = packages.manure; };
+              backend-coassembly = pkgs.callPackage ./nix/tests/backend-coassembly.nix { squishLib = inputs.squish.lib; };
+            };
+          });
       })) // {
         homeManagerModules.dev-llm = import ./nix/hm/dev-llm.nix { inherit inputs; };
         homeManagerModules.chronicle = import ./nix/hm/chronicle.nix;

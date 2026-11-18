@@ -3,12 +3,13 @@
 //   CHRONICLE_BROWSER_POOL                 pool size, positive integer (default: min(7, floor(cores / 2)), at least 1)
 //   CHRONICLE_BROWSER_SCRIPT_TIMEOUT_MS    hard per-script limit, positive integer (default 480000)
 //   NIX_BUILD_CORES                        core count when set and positive, otherwise os.availableParallelism()
+//   CHRONICLE_BROWSER_JUNIT_DIR            when set, writes chronicle-browser.xml there: one JUnit case per script
 // Each child gets its own Vite cache directory (CHRONICLE_VITE_CACHE_DIR, read by vite.config.ts) under $TMPDIR;
 // scenario scripts bind port 0, so ports are per process as well.
 // Exit status: 0 all scripts passed; 1 a script failed or timed out; 2 invalid configuration or no script ran.
 import { spawn } from 'node:child_process';
 import { availableParallelism, tmpdir } from 'node:os';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +33,14 @@ function envInteger(name, fallback) { const value = process.env[name]; return va
 function poolSize() {
   const cores = envInteger('NIX_BUILD_CORES', availableParallelism());
   return envInteger('CHRONICLE_BROWSER_POOL', Math.max(1, Math.min(DEFAULT_POOL_CEILING, Math.floor(cores / CORES_PER_SCRIPT))));
+}
+
+function xmlEscape(text) { return text.replace(/[<>&"']/g, character => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;' })[character]); }
+async function writeJunit(directory, results, failures) {
+  const cases = results.map(result => `  <testcase classname="chronicle.browser" name="${xmlEscape(result.script)}" time="${result.seconds.toFixed(3)}">`
+    + `${result.status === 'ok' ? '' : `<failure message="${xmlEscape(result.detail)}"/>`}</testcase>`);
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, 'chronicle-browser.xml'), `<?xml version="1.0" encoding="UTF-8"?>\n<testsuite name="chronicle-browser" tests="${results.length}" failures="${failures}" errors="0" skipped="0">\n${cases.join('\n')}\n</testsuite>\n`);
 }
 
 const children = new Set();
@@ -79,6 +88,7 @@ async function main() {
   try { await Promise.all(Array.from({ length: Math.min(pool, SCRIPTS.length) }, worker)); }
   finally { await rm(cacheRoot, { recursive: true, force: true }); }
   const failed = results.filter(result => result.status !== 'ok');
+  if (process.env.CHRONICLE_BROWSER_JUNIT_DIR !== undefined) await writeJunit(process.env.CHRONICLE_BROWSER_JUNIT_DIR, results, failed.length);
   console.log(`browser summary (${((Date.now() - started) / 1000).toFixed(1)} s wall, pool ${pool}):`);
   for (const result of [...results].sort((a, b) => b.seconds - a.seconds)) console.log(`  ${result.status === 'ok' ? 'ok  ' : 'FAIL'} ${result.seconds.toFixed(1).padStart(6)} s  ${result.script}${result.detail === '' ? '' : `  (${result.detail})`}`);
   if (results.length === 0) { console.error('no browser script ran'); return EXIT_CONFIGURATION; }
