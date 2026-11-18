@@ -51,4 +51,10 @@ class CoreTest extends munit.FunSuite {
     assertEquals(chunks.last.spans.head.end,m.text.getBytes(java.nio.charset.StandardCharsets.UTF_8).length)
     assert(chunks.sliding(2).forall(p => p.size < 2 || p.head.spans.head.end == p.last.spans.head.start))
   }
+  test("BA regression: large observed imports need the explicit 512MiB maximum, default remains 8MiB") {
+    val c=Fixtures.config(); assertEquals(c.maxBodyBytes,8*1024*1024)
+    c.copy(maxBodyBytes=512*1024*1024).validate()
+    assertEquals(intercept[DomainError](c.copy(maxBodyBytes=512*1024*1024+1).validate()).code,"config")
+    c.copy(maxBodyBytes=256*1024*1024,maxFileBytes=256*1024*1024,maxMessages=100000).validate()
+  }
 }
