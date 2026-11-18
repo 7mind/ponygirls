@@ -55,7 +55,7 @@ async function run(name, options, body) {
   if (process.env.CHRONICLE_SESSION_CASE !== undefined && !name.includes(process.env.CHRONICLE_SESSION_CASE)) return;
   const current = await scene(options);
   try {
-    await body(current);
+    try { await body(current); } catch (cause) { console.log(`FAIL session: ${name}`); throw cause; }
     assert.deepEqual(current.errors, [], 'no page errors');
     assert.deepEqual(current.dialogs, [], 'no native dialogs (window.confirm/alert/prompt)');
   } finally { await current.context.close(); }
@@ -211,6 +211,26 @@ try {
     await page.reload(); await ready(page); await message(page, 'm1').locator('mark').waitFor();
     assert.equal(await outlineRow(page, /Keep original source independent/).getAttribute('aria-current'), 'true');
   });
+  await run('a passage beyond the first outline page is restored through bounded pages after a reload and Back/Forward, also with the outline closed', { hash: () => '#/archive', configure: fixture => { fixture.annotationCount = 205; } }, async ({ page, fixture }) => {
+    await page.getByRole('main', { name: 'Archive', exact: true }).waitFor();
+    await page.evaluate(target => { location.hash = target; }, sessionHash(fixture, rowPin(fixture, 0))); await ready(page);
+    await loadUntil(page, railPane(page), '[data-passage-id]', 200);
+    await outlineRow(page, /Winning passage beyond the first hundred/).click(); await message(page, 'm65').locator('mark').waitFor();
+    const selected = () => new URLSearchParams(location.hash.split('?')[1]).get('passage');
+    const id = await page.waitForFunction(selected).then(handle => handle.jsonValue());
+    await page.getByRole('button', { name: 'Side pane', exact: true }).click(); await sidePane(page).waitFor({ state: 'detached' });
+    const before = calls(fixture, api.Operation_GetPassages).length;
+    await page.reload(); await ready(page); await message(page, 'm65').locator('mark').waitFor();
+    assert.equal(await page.evaluate(selected), id, 'the address keeps the passage while and after it is restored');
+    const pages = calls(fixture, api.Operation_GetPassages).slice(before).map(call => call.operation);
+    assert.deepEqual(pages.map(operation => operation.offset), [0, 40, 80, 120, 160], 'the saved passage is found through bounded pages, then loading stops');
+    assert.ok(pages.every(operation => operation.limit === PASSAGE_PAGE));
+    await page.goBack(); await page.getByRole('main', { name: 'Archive', exact: true }).waitFor();
+    await page.goForward(); await ready(page); await message(page, 'm65').locator('mark').waitFor();
+    await page.getByRole('button', { name: 'Side pane', exact: true }).click();
+    assert.equal(await outlineRow(page, /Winning passage beyond the first hundred/).getAttribute('aria-current'), 'true');
+    assert.equal(await page.evaluate(selected), id);
+  });
   await run('the position bar shows the visible range and goes to the start, the end and a message number', {}, async ({ page, fixture }) => {
     await ready(page); await visible(page).filter({ hasText: /^Messages 1–\d+ of 87$/ }).waitFor();
     await page.getByRole('button', { name: 'End', exact: true }).click();
@@ -226,10 +246,11 @@ try {
   // ── Transcript rendering: inert untrusted text, exact clipboard and source bytes (was transcript.mjs, run.mjs) ──
   const longText = '# Heading\n' + '\n'.repeat(21000);
   const code = 'const animal = "猫🦄";\nconsole.log(animal);\n';
+  const toolLog = Array.from({ length: 600 }, (_, index) => `${index % 2 === 0 ? '+' : '-'}synthetic log line ${index + 1}`).join('\n');
   const text = '# A terminal transcript\r\n\r\nUse **immutable revisions** and `exact bytes`.\r\n1. Deploy\r\n2. Verify\r\n\r\n2 * 3 * 4\r\n\r\n```typescript\r\n' + code + '```\r\n\r\n<script>window.transcriptExecuted = true</script>\r\n[jump](javascript:alert(1))';
   for (const [viewport, scheme] of [[DESKTOP, 'light'], [PHONE, 'dark']]) await run(`${scheme} ${viewport.width}: inert formatted text, exact clipboard, source text, bounded large messages and UTF-8 highlights`, { viewport, scheme, permissions: ['clipboard-read', 'clipboard-write'], configure: fixture => {
     const messagesAt = fixture.messagesAt.bind(fixture);
-    fixture.messagesAt = revision => messagesAt(revision).map(item => item.id === 'm2' ? item.with({ text }) : item.id === 'm3' ? item.with({ text: longText }) : item);
+    fixture.messagesAt = revision => messagesAt(revision).map(item => item.id === 'm2' ? item.with({ text }) : item.id === 'm3' ? item.with({ text: longText }) : item.id === 'm4' ? item.with({ role: 'tool', text: toolLog }) : item);
   } }, async ({ page, fixture }) => {
     await ready(page);
     const item = message(page, 'm2'); await item.waitFor();
@@ -263,6 +284,11 @@ try {
     const large = message(page, 'm3');
     assert.ok(await large.locator('.message-content *').count() < 100, 'large formatted messages must not amplify into unbounded DOM trees');
     assert.equal(await large.locator('.message-source-text').textContent(), longText);
+    const log = message(page, 'm4'); await log.getByRole('button', { name: /^Tool/ }).click();
+    assert.equal(await log.locator('.message-source-text').textContent(), toolLog, 'large tool output keeps its exact text');
+    assert.ok(await log.locator('.message-content *').count() < 100, 'large tool output stays a bounded DOM (no per-line elements)');
+    await log.getByRole('button', { name: 'Show all 600 lines', exact: true }).click();
+    assert.ok(await log.locator('.message-content *').count() < 100); assert.equal(await log.locator('.message-source-text').textContent(), toolLog);
     const bounds = await item.evaluate(element => ({ width: element.scrollWidth, available: element.clientWidth, document: document.documentElement.scrollWidth, viewport: innerWidth }));
     assert.ok(bounds.width <= bounds.available + 1 && bounds.document <= bounds.viewport, JSON.stringify(bounds));
     await showTab(page, 'Outline'); await outlineRow(page, /Keep original source independent/).click();

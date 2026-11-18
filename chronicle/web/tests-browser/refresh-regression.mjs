@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
+import { ChronicleFixture } from './fixture.mjs';
 
 // Regression: Behavioral-Active Blackbox / Good Communication; synthetic source only.
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH; browser downloads are disabled.');
@@ -121,4 +122,21 @@ try {
     await context.close();
   }
   console.log('PASS browser: infinite chain atomic refresh, authoritative shrink, no prepend, focus/anchor continuity and stale cursor/identity/error guards');
+  {
+    // Authorization: the Archive view still opens a session in its own dialog. A successful refresh whose authorized list
+    // no longer contains the row clears the row and the open session, without waiting for a forbidden source read.
+    const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+    const page = await context.newPage(), fixture = new ChronicleFixture();
+    await fixture.install(page);
+    await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
+    await page.getByRole('main', { name: 'Archive', exact: true }).waitFor();
+    await page.locator('.archive-row .table-title').first().click();
+    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true }); await dialog.waitFor(); await dialog.locator('[data-message-id]').first().waitFor();
+    fixture.archiveExcluded.add(fixture.session.id);
+    await page.getByRole('button', { name: 'Refresh archive', exact: true }).evaluate(element => element.click());
+    await dialog.waitFor({ state: 'detached' });
+    assert.equal(await page.locator('.archive-row, [data-message-id]').count(), 0, 'a successful authorized list shrink clears the excluded row and the session bound to it');
+    await context.close();
+    console.log('PASS browser: successful membership shrink clears the excluded row and its open session');
+  }
 } finally { await browser.close(); await server.close(); }

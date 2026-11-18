@@ -58,7 +58,7 @@ function FormattedText({ text }: { text: string }) {
 }
 /** Large or highlighted messages are shown as unchanged source text; formatting would not bound the DOM or the byte offsets. */
 export function sourceOnly(text: string, spans: readonly Span[]): boolean { return spans.length > 0 || formattingLimit(text); }
-/** The body of one message: formatted (inert Markdown subset) or its exact source text with UTF-8 highlights; tool output marks diff lines. */
+/** The body of one message: formatted (inert Markdown subset) or its exact source text with UTF-8 highlights; tool output within the formatting limit marks diff lines (larger output stays one bounded text run). */
 export function MessageContent({ text, spans, sourceText, tool }: { text: string; spans: readonly Span[]; sourceText: boolean; tool: boolean }) {
   let error: string | null = null;
   let parts;
@@ -66,6 +66,6 @@ export function MessageContent({ text, spans, sourceText, tool }: { text: string
   catch (cause) { error = cause instanceof Error ? cause.message : 'Invalid source span'; parts = [{ text, highlighted: false }]; }
   return <div className="message-content">
     {error !== null && <p className="copy-error" role="alert">{error}. Showing unchanged source without highlighting.</p>}
-    {sourceText || sourceOnly(text, spans) ? <pre className="message-source-text">{tool && spans.length === 0 ? diffLines(text).map((line, index) => <span key={index} className={line.kind === 'added' ? 'diff-add' : line.kind === 'deleted' ? 'diff-del' : undefined}>{line.text}</span>) : parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</pre> : messageBlocks(text).map((block, index) => block.kind === 'code' ? <div className="message-code" key={index}><div className="message-code-bar"><span>{block.language || 'code'}</span><CopyButton text={block.text} label="Copy code" done="Code copied" compact={false}/></div><pre><code>{block.text}</code></pre></div> : <FormattedText key={index} text={block.text}/>)}
+    {sourceText || sourceOnly(text, spans) ? <pre className="message-source-text">{tool && spans.length === 0 && !formattingLimit(text) ? diffLines(text).map((line, index) => <span key={index} className={line.kind === 'added' ? 'diff-add' : line.kind === 'deleted' ? 'diff-del' : undefined}>{line.text}</span>) : parts.map((part, index) => part.highlighted ? <mark key={index}>{part.text}</mark> : <span key={index}>{part.text}</span>)}</pre> : messageBlocks(text).map((block, index) => block.kind === 'code' ? <div className="message-code" key={index}><div className="message-code-bar"><span>{block.language || 'code'}</span><CopyButton text={block.text} label="Copy code" done="Code copied" compact={false}/></div><pre><code>{block.text}</code></pre></div> : <FormattedText key={index} text={block.text}/>)}
   </div>;
 }

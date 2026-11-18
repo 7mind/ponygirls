@@ -325,7 +325,9 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   const [passage, setPassage] = useState<PassageInfo | null>(null), [spanOffset, setSpanOffset] = useState(0);
   const [seekError, setSeekError] = useState<string | null>(null), [seeking, setSeeking] = useState(false), [revealedMessage, setRevealedMessage] = useState<string | null>(null);
   const [revealEpoch, setRevealEpoch] = useState(0), [findEpoch, setFindEpoch] = useState(0);
-  const initialAttempted = useRef(false), initialPassage = useRef(initial === null ? null : initial.passage);
+  const initialAttempted = useRef(false);
+  // A passage restored from the address: kept (and reported) until it is selected or the whole outline shows it is gone.
+  const [pendingPassage, setPendingPassage] = useState(initial === null ? null : initial.passage);
   const [searchSpan, setSearchSpan] = useState<Span | null>(null);
   const [landed, setLanded] = useState<LandedSource | null>(null);
   const navigation = useRef(0), currentSourceNavigation = useRef<SourceNavigation | null>(null), pendingScroll = useRef<PendingSourceScroll | null>(null);
@@ -389,11 +391,16 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   useEffect(() => {
     if (passages.error !== null || (passage !== null && passages.meta !== null && !passages.refreshing && !passages.items.some(item => item.id === passage.id))) { setPassage(null); pendingScroll.current = null; }
   }, [passages.error, passages.items, passages.meta, passages.refreshing, passage]);
-  // A routed page restores its selected passage (and its highlight) once that passage is loaded; its place is `at`.
+  // A routed page restores its selected passage (and its highlight) through the bounded passage pages, whether or not the
+  // outline is shown; its place is `at`. An outline that ends without it (or fails) ends the restoration.
   useEffect(() => {
-    const wanted = initialPassage.current, item = wanted === null ? undefined : passages.items.find(candidate => candidate.id === wanted);
-    if (item !== undefined) { initialPassage.current = null; setPassage(item); setSpanOffset(0); }
-  }, [passages.items]);
+    if (pendingPassage === null || passages.meta === null || passages.loading || passages.refreshing) return;
+    const item = passages.items.find(candidate => candidate.id === pendingPassage);
+    if (item !== undefined) { setPendingPassage(null); setPassage(item); setSpanOffset(0); return; }
+    if (passages.hasMore) { if (!passages.loadingMore) passages.loadMore(); return; }
+    setPendingPassage(null);
+  }, [pendingPassage, passages.items, passages.meta, passages.loading, passages.refreshing, passages.loadingMore, passages.hasMore]);
+  useEffect(() => { if (passages.error !== null) setPendingPassage(null); }, [passages.error]);
   const messages = useInfiniteResource<Message, MessagesResult, number>(connection, stats, `${sessionId}:${contentViewKey(view)}:${messageStart}`, `${refresh}`, snapshot !== null, messageStart, async cursor => {
     const offset = cursor === undefined ? messageStart : cursor;
     const result = await readPinned(new Operation_GetMessages(sessionId, offset, MESSAGE_PAGE_SIZE, view), value => value instanceof Result_Messages ? value.result : null);
@@ -472,7 +479,7 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
       void showSource(initial.at, null, 'place', false);
     }
   }, [snapshot, initialLanding, view]);
-  function showPassage(selected: PassageInfo) { setPassage(selected); setSpanOffset(0); void showSource(selected.start.messageId, selected.start.messagePosition, 'annotation', false); }
+  function showPassage(selected: PassageInfo) { setPendingPassage(null); setPassage(selected); setSpanOffset(0); void showSource(selected.start.messageId, selected.start.messagePosition, 'annotation', false); }
   function revealTranscript() { if (pane !== 'closed' && window.matchMedia(PHONE_QUERY).matches) setPane('closed'); }
   function selectPassage(selected: PassageInfo) {
     showPassage(selected);
@@ -497,7 +504,8 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
   // The routed page keeps its reading place in the address: the pinned view, the top message after scrolling, the passage.
   const topMessage = useRef<string | null>(initial === null ? null : initial.at);
   const report = page === null ? null : page.report;
-  useEffect(() => { if (report !== null && view !== undefined && snapshot !== null) report({ view, at: topMessage.current, passage: passage === null ? null : passage.id }); }, [view, snapshot !== null, passage]);
+  const reportedPassage = passage !== null ? passage.id : pendingPassage;
+  useEffect(() => { if (report !== null && view !== undefined && snapshot !== null) report({ view, at: topMessage.current, passage: reportedPassage }); }, [view, snapshot !== null, reportedPassage]);
   useEffect(() => {
     if (report === null || sourcePane === null || view === undefined) return;
     const settled = () => {
@@ -505,11 +513,11 @@ function ConversationSnapshot({ connection, stats, user, sessionId, archiveHead,
       const top = [...sourcePane.querySelectorAll<HTMLElement>('[data-message-id]')].find(element => element.getBoundingClientRect().bottom > bounds.top + SOURCE_SCROLL_GAP);
       const at = top === undefined ? null : top.dataset['messageId']!;
       if (at === topMessage.current) return;
-      topMessage.current = at; report({ view, at, passage: passage === null ? null : passage.id });
+      topMessage.current = at; report({ view, at, passage: reportedPassage });
     };
     sourcePane.addEventListener('scrollend', settled);
     return () => sourcePane.removeEventListener('scrollend', settled);
-  }, [report, sourcePane, view, passage]);
+  }, [report, sourcePane, view, reportedPassage]);
   // `/` opens Find on the routed page, as in the mockup; Escape inside the bar closes it.
   useEffect(() => {
     if (page === null) return;
