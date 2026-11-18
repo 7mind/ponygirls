@@ -161,13 +161,12 @@ class PostgresRetrievalContractTest extends RetrievalContractTest {
       }
     }
   }
-  test("BG: legacy endpoint-bound metadata migrates without re-embedding or changing publication and accepted work") {
+  test("BG: a publication under a retired v1 registry row is unavailable to semantic search until the source is projected again and re-embedded") {
     import ControlledFixtures.*
     import Jdbc.*
     import io.circe.Json
     val fixture=new PgFixture(Some(profile)); val ns=key(fixture.index.namespace)
     fixture.store.put(source("preserved","alpha",Set("reader"))); fixture.store.publishAll()
-    val before=fixture.store.search(query(RetrievalMode.Semantic)).hits.head
     val legacyDescriptor=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString("b"*64))++profile.space.json.asArray.get.tail)*)
     val legacySpace=RetrievalChecks.hash(legacyDescriptor.noSpaces)
     val legacyProfile=RetrievalChecks.hash(Json.arr(Json.fromString("retrieval-profile-v1"),Json.fromString(legacySpace),Json.fromString(profile.policy)).noSpaces)
@@ -178,16 +177,13 @@ class PostgresRetrievalContractTest extends RetrievalContractTest {
       exec(c,"UPDATE pony_retrieval_generations SET profile=?,space=? WHERE namespace=?",legacyProfile,legacySpace,ns)
       exec(c,"UPDATE pony_retrieval_chunks SET profile=? WHERE namespace=?",legacyProfile,ns)
     }
-    def accepted=fixture.tx(c=>rows(c,"SELECT embedding::text,digest FROM pony_retrieval_accepted WHERE namespace=? ORDER BY job_id,ordinal",ns)(r=>(r.getString(1),r.getString(2))))
-    val saved=accepted
     fixture.tx(fixture.index.initialize)
     assertEquals(intercept[RetrievalError](fixture.store.search(query(RetrievalMode.Semantic))).code,"unavailable")
-    fixture.tx(c=>fixture.index.migrateModelIdentities(c,Set(legacyProfile)))
-    assertEquals(fixture.store.search(query(RetrievalMode.Semantic)).hits.head,before)
-    assertEquals(accepted,saved)
+    assertEquals(fixture.store.search(query(RetrievalMode.Lexical)).hits.map(_.id),List("preserved"))
     assertEquals(fixture.tx(c=>fixture.index.claim(c,30)),None)
-    fixture.tx(c=>fixture.index.migrateModelIdentities(c,Set(legacyProfile)))
-    assertEquals(fixture.store.search(query(RetrievalMode.Semantic)).hits.head,before)
-    assertEquals(accepted,saved)
+    // Haystack and Manure project every source again at start-up: the source moves to the configured profile.
+    fixture.store.put(source("preserved","alpha",Set("reader"))); fixture.store.publishAll()
+    assertEquals(fixture.store.search(query(RetrievalMode.Semantic)).hits.map(hit=>(hit.id,hit.profile)),List(("preserved",Some(profile.id))))
+    assertEquals(fixture.tx(c=>one(c,"SELECT descriptor FROM pony_retrieval_profiles WHERE namespace=? AND id=?",ns,legacyProfile)(_.getString(1))),Some(legacyDescriptor.noSpaces))
   }
 }
