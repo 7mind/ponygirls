@@ -16,20 +16,13 @@ import TestSupport.*
 
 /** The retained post-deployment check haystack/scripts/check-legacy-free.sql, run exactly as the operator runs it
   * (psql -f), on copies of one fresh database of the current binary (its serving start-up with a configured retrieval
-  * profile). Every copy first receives migration 0007 of the legacy data retirement plan
-  * (docs/drafts/20261118-1100-legacy-data-retirement.md §6.6) as far as the check reads it, written here as idempotent
-  * SQL until the binary applies it; then one legacy shape, seeded with plain SQL.
+  * profile; its migrations include 0007, the clean-up of the legacy data retirement plan
+  * docs/drafts/20261118-1100-legacy-data-retirement.md §6.6). Every copy receives one legacy shape, seeded with plain SQL.
   */
 class LegacyFreeCheckTest extends ContractSuite {
   // The forked test JVM runs in haystack/server.
   private val check = Path.of("..", "scripts", "check-legacy-free.sql")
   private val replayConstraint = "write_requests_current_digest_format_check CHECK (digest_format = 'haystack-op-scala-v1')"
-  /** §6.6 0007: no Node-format column default, the current-format constraint, the marker (unless the binary did it). */
-  private val cleanup = List(
-    "ALTER TABLE write_requests ALTER COLUMN digest_format DROP DEFAULT",
-    "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'write_requests'::regclass AND conname = 'write_requests_current_digest_format_check') THEN " +
-      "ALTER TABLE write_requests ADD CONSTRAINT " + replayConstraint + "; END IF; END $$",
-    "INSERT INTO schema_migrations(version) VALUES ('0007-node-replay-retired') ON CONFLICT DO NOTHING")
   /** Every counter line of a passing run (the database name, the migration list and the verdict are asserted apart). */
   private val clean = Map("LP.replay.other_digest_format" -> "0", "LP.retrieval.profiles" -> "1", "LP.retrieval.not_proven_v2" -> "0",
     "LF.replay.column_default_present" -> "0", "LF.replay.current_format_constraint" -> "1", "LF.schema.node_replay_retired_marker" -> "1")
@@ -80,14 +73,14 @@ class LegacyFreeCheckTest extends ContractSuite {
     Checked(ran.exit, ran.out.linesIterator.toList, ran.err)
   }
   private val noProductWrites: String => IO[Unit] = _ => IO.unit
-  /** A copy of the fresh database with `writes` (product code), the clean-up schema and the seed applied, in this order. */
+  /** A copy of the fresh database with `writes` (product code) and the seed applied, in this order. */
   private def copy(writes: String => IO[Unit], seed: List[String]): IO[Checked] = {
     val name = "haystack_legacy_free_case_" + UUID.randomUUID().toString.replace("-", "")
     Resource.make(admin(maintenance, List(s"CREATE DATABASE $name TEMPLATE ${fresh()}")))(_ => admin(maintenance, List(s"DROP DATABASE $name WITH (FORCE)")))
-      .use(_ => writes(name) *> admin(name, cleanup ++ seed) *> checked(name))
+      .use(_ => writes(name) *> admin(name, seed) *> checked(name))
   }
 
-  test("a fresh database of the current binary with the clean-up schema: last line LF.result|legacy-free, exit 0, every counter clean") {
+  test("a fresh database of the current binary: last line LF.result|legacy-free, exit 0, every counter clean") {
     val ran = run(copy(noProductWrites, Nil))
     assertEquals((ran.exit, ran.last), (0, "LF.result|legacy-free"), ran.err)
     assertEquals(ran.counters, clean)

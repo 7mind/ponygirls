@@ -87,11 +87,11 @@ class MigrationsTest extends ContractSuite {
   test("eight concurrent startup migrations on an empty database converge once") { run(emptyDatabase.use { db => for {
     _ <- Vector.fill(8)(Migrations.initialize(db, Activity)).parSequence_
     versions <- db.transaction(c => Sql.rows(c, "SELECT version FROM schema_migrations ORDER BY version")(_.getString(1)))
-    _ = assertEquals(versions, Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion"))
+    _ = assertEquals(versions, Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion", "0007-node-replay-retired"))
     metadata <- db.transaction(c => Sql.rows(c, "SELECT activity_project_id FROM store_metadata")(_.getString(1)))
     _ = assertEquals(metadata, Vector(Activity))
-    cutovers <- db.transaction(c => Sql.rows(c, "SELECT contract FROM haystack_contract_cutovers")(_.getString(1)))
-    _ = assertEquals(cutovers, Vector("haystack.api/1.0.0"))
+    cutovers <- db.transaction(c => Sql.rows(c, "SELECT contract FROM haystack_contract_cutovers ORDER BY contract")(_.getString(1)))
+    _ = assertEquals(cutovers, Vector("haystack.api/1.0.0", "haystack.replay/node-retired"))
   } yield () }) }
 
   test("activity namespace mismatch fails closed without changing existing metadata or history") { run(initializedDatabase.use { db => for {
@@ -132,8 +132,8 @@ class MigrationsTest extends ContractSuite {
     } yield ()).guarantee(db.transaction { c => Sql.update(c, "DROP TRIGGER reject_test_migration ON schema_migrations"); Sql.update(c, "DROP FUNCTION reject_test_migration()"); () })
     _ <- Migrations.initialize(db, Activity)
     _ <- Migrations.initialize(db, Activity)
-    count <- db.transaction(c => Sql.rows(c, "SELECT count(*) FROM haystack_contract_cutovers")(_.getLong(1)).head)
-    _ = assertEquals(count, 1L)
+    cutovers <- db.transaction(c => Sql.rows(c, "SELECT contract FROM haystack_contract_cutovers ORDER BY contract")(_.getString(1)))
+    _ = assertEquals(cutovers, Vector("haystack.api/1.0.0", "haystack.replay/node-retired"))
   } yield () }) }
 
   test("coordinated current-contract cutover preserves all acknowledged documents, authors, history and links") {
@@ -162,15 +162,29 @@ class MigrationsTest extends ContractSuite {
     } yield () })
   }
 
-  test("a leftover Node-era replay row (schema through 0006) answers replay-conflict for its request id, its outcome undecoded, nothing written") {
+  test("0007 refuses a leftover Node-era replay row: startup fails and changes nothing; once the row is gone no insert may omit or misstate the format") {
+    val throughSix = throughFive :+ "0006-tag-completion"
     val nodeId = requestId()
+    def formatDefault(db: JdbcDatabase): IO[Boolean] = db.transaction(c => Sql.rows(c,
+      "SELECT column_default IS NOT NULL FROM information_schema.columns WHERE table_name='write_requests' AND column_name='digest_format'")(_.getBoolean(1)).head)
+    def refused(db: JdbcDatabase, insert: String): IO[Unit] = db.transaction(c => Sql.update(c, insert, requestId())).attempt
+      .map(result => assert(result.left.toOption.exists(_.isInstanceOf[JdbcFailure]), result))
     run(emptyDatabase.use { db => for {
-      _ <- legacy(db, throughFive :+ "0006-tag-completion")
-      // Decoding this outcome (no createdAt) would fail as unavailable.
+      _ <- legacy(db, throughSix)
       _ <- db.transaction(c => Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome,created_at) VALUES(?,?,?::uuid,'haystack-op-v1',?,?::jsonb,?)", Alice.userId, Alice.tokenId, nodeId, "f" * 64, "{\"kind\":\"committed\",\"revision\":1}", Now))
       before <- snapshot(db)
-      _ <- expectFault(new PostgresItemRepository(db).commit(op(id = nodeId), Alice, Later), "replay-conflict")
+      failure <- Migrations.initialize(db, Activity).attempt
+      _ = assert(failure.left.toOption.exists(_.isInstanceOf[JdbcFailure]), failure)
+      versions <- db.transaction(c => Sql.rows(c, "SELECT version FROM schema_migrations ORDER BY version")(_.getString(1)))
+      _ = assertEquals(versions, throughSix)
+      kept <- formatDefault(db); _ = assert(kept)
       after <- snapshot(db); _ = assertEquals(after, before)
+      _ <- db.transaction(c => Sql.update(c, "DELETE FROM write_requests WHERE request_id=?::uuid", nodeId))
+      _ <- Migrations.initialize(db, Activity)
+      dropped <- formatDefault(db); _ = assert(!dropped)
+      _ <- db.transaction(c => Sql.update(c, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome) VALUES('alice','t1',?::uuid,'haystack-op-scala-v1','f','{}')", requestId()))
+      _ <- refused(db, "INSERT INTO write_requests(principal_user,token_id,request_id,digest,outcome) VALUES('alice','t1',?::uuid,'f','{}')")
+      _ <- refused(db, "INSERT INTO write_requests(principal_user,token_id,request_id,digest_format,digest,outcome) VALUES('alice','t1',?::uuid,'haystack-op-v1','f','{}')")
     } yield () })
   }
 }

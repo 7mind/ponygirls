@@ -8,7 +8,7 @@ import ponygirls.runtime.JdbcDatabase
 import java.nio.charset.StandardCharsets
 
 object Migrations {
-  private val versions = Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion")
+  private val versions = Vector("0001-initial", "0002-search", "0003-tags", "0004-scala-current", "0005-exact-numeric-query", "0006-tag-completion", "0007-node-replay-retired")
   def initialize(database: JdbcDatabase, activityProjectId: String): IO[Unit] = database.transaction { c =>
     QualifiedId.encodeComponent(activityProjectId)
     Sql.lock(c,"haystack/migrate/",Vector("schema"))
