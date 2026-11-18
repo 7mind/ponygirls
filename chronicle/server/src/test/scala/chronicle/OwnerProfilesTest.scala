@@ -200,6 +200,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
       assertEquals(intercept[DomainError](search.searchLegacy("a",q,Some(List(1.0,0.0,0.0)))).code,"unavailable")
     }
     db.transaction(x => Sql.exec(x,"UPDATE ch_generations SET profile='opaque-same-dimensions' WHERE session_id=?",out.sessionId)); rejected()
+    assertEquals(intercept[DomainError](a.claim(Set("opaque-same-dimensions"),ClaimScope.Owner("a"),300)).code,"unavailable")
     val incompatible=c.copy(embedding=c.embedding.copy(revision="different-space-same-dimensions"))
     db.transaction { x => IndexProfileCatalog.legacyOnly(incompatible).register(x); Sql.exec(x,"UPDATE ch_generations SET profile=? WHERE session_id=?",incompatible.profile,out.sessionId) }
     rejected()

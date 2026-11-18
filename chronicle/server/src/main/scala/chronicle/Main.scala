@@ -17,12 +17,6 @@ object Main extends IOApp {
       Check(chars!=null && chars.nonEmpty && chars.length<=1024,"invalid","password required on stdin")
       try println(Password.hash(chars)) finally java.util.Arrays.fill(chars,'\u0000')
     }.as(ExitCode.Success)
-    case List("migrate-model-identities",path,planPath) =>
-      IO.blocking((Config.load(path),ModelIdentityPlan.load(planPath))).flatMap { (config,plan) =>
-        val catalog=IndexProfileCatalog.current(config)
-        cats.effect.Resource.make(IO.blocking(new Database(config,catalog)))(db => IO.blocking(db.close()))
-          .use(db => IO.blocking { db.initialize(); db.transaction(c=>ModelIdentityMigration(c,catalog,plan)) })
-      }.as(ExitCode.Success)
     case List("migrate",path) =>
       IO.blocking(Config.load(path)).flatMap { config =>
         cats.effect.Resource.make(IO.blocking(new Database(config,IndexProfileCatalog.current(config))))(db => IO.blocking(db.close()))
@@ -42,7 +36,7 @@ object Main extends IOApp {
           }
         }
       }.as(ExitCode.Success)
-    case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | migrate-model-identities CONFIG.json PLAN.json | password-hash (stdin)").as(ExitCode.Error)
+    case _ => IO.println("usage: chronicle-server serve CONFIG.json | serve-standby CONFIG.json (writable API, no background workers) | migrate CONFIG.json | password-hash (stdin)").as(ExitCode.Error)
   }
   private[chronicle] def background(workersEnabled: Boolean,worker: => IO[Unit]): IO[Unit] =
     if(workersEnabled) worker else IO.never[Unit]
