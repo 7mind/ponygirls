@@ -46,11 +46,15 @@ final class RootAuthoritySuite extends munit.FunSuite:
     }.unsafeRunSync()
   }
   test("body deadline includes a response whose headers have already arrived") {
-    RootAuthorityFixture.resource.use { fixture => fixture.authority.use { authority => IO {
+    val deadline=java.time.Duration.ofSeconds(1)
+    assertEquals(KubernetesRootAuthority.RequestTimeout,java.time.Duration.ofSeconds(5))
+    RootAuthorityFixture.resource.use { fixture => fixture.authorityWithin(deadline).use { authority => IO {
       fixture.fault.set(RootApiFault.StalledBody)
       val before=System.nanoTime()
       assertEquals(intercept[DomainError](authority.observe(fixture.backend.root)).code,"authority-unavailable")
-      assert((System.nanoTime()-before).nanos < 6500.millis)
+      val elapsed=(System.nanoTime()-before).nanos
+      assert(elapsed >= deadline.toNanos.nanos)
+      assert(elapsed < 3.seconds)
     }}}.unsafeRunSync()
   }
   test("an unknown TLS authority is rejected before an API request") {

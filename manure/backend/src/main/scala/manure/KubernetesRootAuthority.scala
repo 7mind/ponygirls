@@ -88,10 +88,9 @@ final class KernelRootMounts(mountInfoFile: Path) extends RootMountVerifier:
       entry.superOptions.contains("rw") && !entry.superOptions.contains("ro"),"authority-mismatch")
 
 final class KubernetesRootAuthority private (settings: KubernetesRootConfig,dataRoot: Path,
-  mounts: RootMountVerifier,client: HttpClient,executor: java.util.concurrent.ExecutorService) extends RootVolumeAuthority with AutoCloseable:
+  mounts: RootMountVerifier,client: HttpClient,executor: java.util.concurrent.ExecutorService,requestTimeout: Duration) extends RootVolumeAuthority with AutoCloseable:
   import RootAuthorityJson.*
   private val ResponseBytes=65536
-  private val RequestSeconds=5L
   private val ObservationSeconds=15L
   private def named(values: Vector[Json],name: String): Json =
     val selected=values.filter(value => text(value,"name") == name)
@@ -153,7 +152,7 @@ final class KubernetesRootAuthority private (settings: KubernetesRootConfig,data
     def onComplete(): Unit = { result.complete(output.toByteArray);() }
 
   private def get(path: String,token: String,end: Long): Json =
-    val remaining=math.min(TimeUnit.SECONDS.toNanos(RequestSeconds),end-System.nanoTime())
+    val remaining=math.min(requestTimeout.toNanos,end-System.nanoTime())
     Require(remaining > 0,"authority-unavailable")
     val request=HttpRequest.newBuilder(settings.apiOrigin.resolve(path)).timeout(Duration.ofNanos(remaining))
       .header("Accept","application/json").header("Authorization","Bearer " + token).GET().build()
@@ -206,7 +205,8 @@ final class KubernetesRootAuthority private (settings: KubernetesRootConfig,data
     client.shutdownNow();executor.shutdownNow();()
 
 object KubernetesRootAuthority:
-  def resource(settings: KubernetesRootConfig,dataRoot: Path,mounts: RootMountVerifier): Resource[IO,KubernetesRootAuthority] =
+  val RequestTimeout: Duration = Duration.ofSeconds(5)
+  def resource(settings: KubernetesRootConfig,dataRoot: Path,mounts: RootMountVerifier,requestTimeout: Duration = RequestTimeout): Resource[IO,KubernetesRootAuthority] =
     Resource.make(IO.blocking {
       val certificates=CertificateFactory.getInstance("X.509").generateCertificates(new java.io.ByteArrayInputStream(
         BoundedSecretFile.read(settings.caFile,65536).getBytes(StandardCharsets.UTF_8)))
@@ -222,7 +222,7 @@ object KubernetesRootAuthority:
           def connectFailed(uri: URI,address: SocketAddress,error: java.io.IOException): Unit = ()
         val client=HttpClient.newBuilder().sslContext(ssl).proxy(proxy).executor(executor)
           .connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build()
-        new KubernetesRootAuthority(settings,dataRoot,mounts,client,executor)
+        new KubernetesRootAuthority(settings,dataRoot,mounts,client,executor,requestTimeout)
       catch case NonFatal(error) =>
         executor.shutdownNow()
         throw error

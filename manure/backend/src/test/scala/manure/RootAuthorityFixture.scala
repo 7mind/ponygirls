@@ -28,7 +28,9 @@ final class RootAuthorityFixture(val backend: BackendFixture,val settings: Kuber
   val mounts: RootMountVerifier = new RootMountVerifier:
     def verify(root: ConfinedDirectory,dataRoot: Path,mount: Path): Unit =
       Require(root.physicalIdentity.nonEmpty && dataRoot == backend.rootPath && mount == backend.rootPath,"authority-mismatch")
-  def authority: Resource[IO,KubernetesRootAuthority] = KubernetesRootAuthority.resource(settings,backend.rootPath,mounts)
+  def authority: Resource[IO,KubernetesRootAuthority] = authorityWithin(KubernetesRootAuthority.RequestTimeout)
+  def authorityWithin(requestTimeout: java.time.Duration): Resource[IO,KubernetesRootAuthority] =
+    KubernetesRootAuthority.resource(settings,backend.rootPath,mounts,requestTimeout)
 
 object RootAuthorityFixture:
   val PodUid="11111111-1111-4111-8111-111111111111"
