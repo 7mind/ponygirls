@@ -3,6 +3,10 @@
 Measured 2026-10-29. These are retained first-attempt results, not an accepted
 answer-quality release or a population-accuracy estimate.
 
+The "Frozen V2" columns and the offline re-parsing of the captured runs were produced by `proposition_support.py`
+(rubric `semantic-propositions.json`), `assess_batch.py` and `reparse.mjs`; that tooling was removed from this
+tree in the commit "chronicle eval: delete the evaluation v2 layer", and the numbers below are kept as history.
+
 ## Controlled inputs
 
 - One immutable publication: 25 synthetic source sessions, 24 real Problem
@@ -167,7 +171,6 @@ cleaned up without errors; external embedding/model services were not managed.
 Parent regenerated the SQL report and confirmed every task field of the
 portable assessment against the frozen original operator across all 36 cells.
 
-Use [the workflow](README.md), [captured-batch assessment](BATCH_ASSESSMENT.md)
-and [the proposition policy](PROPOSITION_SUPPORT.md) to reproduce checks.
+Use [the workflow](README.md) and [evidence assessment v3](V3_ASSESSMENT.md) for new checks.
 A subsequent policy experiment is separate diagnostic/regression evidence:
 it cannot make this cohort untouched again or retroactively pass these gates.

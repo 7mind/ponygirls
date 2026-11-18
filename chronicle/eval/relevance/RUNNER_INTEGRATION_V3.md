@@ -37,8 +37,8 @@ be declared exactly once with its actual hash. The only source/fingerprint pairs
 are `archived-bridge-v1` / `full-state-v1` and `trusted-workflow-v3` /
 `digest-state-v3`. Catalog variants are exactly `baseline` (9 tools) or `context`
 (10). Fields are closed at workflow, codec, bound-file, batch and schedule-row
-boundaries. `batch` must be explicitly null for prepare. There is no V2 rubric or
-optional grading pipeline in these bindings.
+boundaries. `batch` must be explicitly null for prepare. There is no optional
+grading pipeline in these bindings.
 
 For run, master `trials` rows have exactly
 `{batchId,arm,repeat,mode,taskId,ordinal}`. Repeat is a positive integer; ordinal
@@ -100,8 +100,7 @@ answer and controller exit remain separate artifacts.
 
 `score.json` retains unchanged `score_task` historical-format metrics and an
 explicit scope label; summary status still reflects those strict metrics and
-controller exits, not V3 review success. V2 remains separate unchanged
-`assess_batch.py` postprocessing where applicable. `assessment-v3.json` is a
+controller exits, not V3 review success. `assessment-v3.json` is a
 separate sidecar using exact bound artifact bytes. No review is fabricated:
 factual/role judgments remain unavailable and grounded V3 success is false
 until an actual review is supplied to later assessment. Missing actual

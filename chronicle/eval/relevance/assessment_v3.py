@@ -384,7 +384,7 @@ def assess_cell(inputs: CellInputs):
                                           and review['available'] and review['factualCorrect'] and role_conformance and roles_supported and not violations and not acl_leak),
             'legacyAssessmentScope': 'separately supplied bound assessment; applicability must be established by caller; never recomputed on v3 traces',
             'legacyMetrics': inputs.legacy_metrics.json() if inputs.legacy_metrics is not None else {
-                'strict': None, 'v2': None, 'reason': 'not recomputed; old tools-only scorer is unsupported for v3 traces'}}
+                'strict': None, 'reason': 'not recomputed; old tools-only scorer is unsupported for v3 traces'}}
 
 
 def main():

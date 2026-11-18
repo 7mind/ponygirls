@@ -575,7 +575,7 @@ def main():
         summary.update(publicationNative=publication_native, executorNative=bindings['native'],
             fingerprintPolicy=policy.fingerprint_policy, sourcePolicy=policy.source_policy,
             protocolPolicy=policy.protocol_policy, catalogVariant=policy.catalog_variant,
-            strictMetricsScope='unchanged historical-format score_task; V2 remains separate assess_batch postprocessing; V3 sidecars have no invented reviews')
+            strictMetricsScope='unchanged historical-format score_task; V3 sidecars have no invented reviews')
     except BaseException as error:
         failure = {'type': type(error).__name__, 'message': str(error)}
         if isinstance(error, (TimeoutError, subprocess.TimeoutExpired)):

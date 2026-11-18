@@ -1,8 +1,9 @@
 # Evidence assessment v3
 
 Evaluator-only sidecar policy `evidence-assessment-v3`; agent helper protocol
-`evidence-navigation-v3`. This is not a replacement for the original strict or
-proposition-support-v2 operators. Those files, fixtures and rubrics are unchanged.
+`evidence-navigation-v3`. This is not a replacement for the original strict
+`score_task` operator, which is unchanged. The earlier proposition-support-v2
+operators were removed (see RESULTS.md).
 The original cohort was already running when this policy was authored: any v3
 assessment of it is **retrospective**, not preregistered or a fresh holdout.
 Freeze the complete new corpus, rubric, review method, schedule, prompts and

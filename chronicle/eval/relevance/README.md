@@ -7,10 +7,8 @@ can use the existing server MCP tester; no provider SDK or second tool-loop
 implementation is required. Never discover or mutate a production daemon.
 
 See [read-only retrieval diagnostics](SEARCH-DIAGNOSTICS.md) for the exact-cosine,
-candidate and fusion loss ladder, and [additive proposition support](PROPOSITION_SUPPORT.md)
-for the explicitly versioned assessment alongside unchanged legacy strict scores.
-[Batch assessment](BATCH_ASSESSMENT.md) applies that policy to captured runs without
-new model calls and retains native failures and original controller exits.
+candidate and fusion loss ladder and [evidence assessment v3](V3_ASSESSMENT.md) for the
+evaluator-only assessment of runs alongside the unchanged strict scores.
 [Measured first held-out results](RESULTS.md) separate retrieval gains from the
 unmet frozen answer/execution targets and document the limits of this corpus.
 
@@ -239,30 +237,3 @@ node --test chronicle/eval/relevance/tests/*.test.mjs
 
 Controlled real-server acceptance and live-provider cases are on demand: run them
 before claiming native behavior or semantic quality.
-
-
-### Offline recovery of captured runs
-
-A normalization defect does not require new model calls. Preserve the entire
-original batch and run the model-free sidecar converter into a fresh, disjoint
-output directory:
-
-```bash
-node chronicle/eval/relevance/reparse.mjs --source ORIGINAL_BATCH --out FRESH_SIDECARS
-```
-
-It validates every retained page against the exact persisted run identity,
-limits and event sequence, then requires equality with the original `events.json`.
-It joins results to validated ToolCall names by exact `callId`: generated
-ToolResult records have no tool-name field. It hashes all original inputs again
-at completion and snapshots the parser sources. Original answers are copied
-byte-for-byte when present and checked against the final response. Native failed
-states remain failed, including context-limit failures; an offline parser repair
-never turns the original nonzero controller exit into a successful execution.
-The sidecars contain normalized traces, original-answer copies, native outcomes
-and retained controller-failure provenance for evaluator-only rescoring.
-
-An unavailable or normalization-failed trace has **unavailable** ranking/ACL/
-citation-evidence metrics, not observed zero recall or an observed absence of
-leaks. A successfully repaired captured trace can supply those metrics without
-rerunning a model or modifying the original attempt.
