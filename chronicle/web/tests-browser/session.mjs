@@ -171,9 +171,10 @@ try {
     await page.evaluate(target => { location.hash = target; }, sessionHash(fixture, ''));
     await ready(page); await waitTop(page, 'm70');
     assert.match(await hash(page), /at=m70/, 'reopening the session from a list returns to its last reading place');
-    await page.goto(`${origin}/tests-browser/harness.html${sessionHash(fixture, rowPin(fixture, 0))}`); await ready(page);
-    await page.getByRole('button', { name: 'Back', exact: true }).click(); await page.getByRole('main', { name: 'Archive', exact: true }).waitFor();
-    assert.match(await hash(page), /^#\/archive/, 'Back from a session opened by an address goes to its parent list');
+    const fresh = await page.context().newPage(); await fixture.install(fresh);
+    await fresh.goto(`${origin}/tests-browser/harness.html${sessionHash(fixture, rowPin(fixture, 0))}`); await ready(fresh);
+    await fresh.getByRole('button', { name: 'Back', exact: true }).click(); await fresh.getByRole('main', { name: 'Archive', exact: true }).waitFor();
+    assert.match(await hash(fresh), /^#\/archive/, 'Back from a session opened by an address goes to its parent list');
   });
   await run('the side pane choice is remembered in the address and per browser', {}, async ({ context, page, fixture }) => {
     await ready(page); await sidePane(page).waitFor();
