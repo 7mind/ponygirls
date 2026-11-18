@@ -241,6 +241,9 @@ class TargetServer:
         library=os.environ.get('MANURE_POSIX_LIBRARY')
         self.config['native_mode']='shared' if library else 'linked'
         self.config['posix_library']=library
+        # `serve` refuses a viewer_dir that does not exist, and the default one is a build output a source tree lacks:
+        # fixtures serve raw bytes unless a test names a viewer directory.
+        self.config.setdefault('viewer_dir',None)
         path=Path(directory)/('target-config-'+uuid4().hex+'.json')
         path.write_text(json.dumps(self.config));path.chmod(0o600);self.config_path=path
         try:

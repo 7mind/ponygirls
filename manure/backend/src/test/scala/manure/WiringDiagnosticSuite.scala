@@ -21,17 +21,17 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
     val _ = try
       Using.resource(Files.walk(path))(_.iterator().asScala.toVector.sortBy(_.getNameCount).reverse.foreach(Files.deleteIfExists(_)))
     catch case _: Exception => ()
-  private def runMigrate(config: Path): (Int,String) =
+  private def runCommand(command: String,config: Path): (Int,String) =
     val captured = new ByteArrayOutputStream()
     val original = System.err
     val exit = try
       System.setErr(new PrintStream(captured,true,java.nio.charset.StandardCharsets.UTF_8))
-      Main.run(List("migrate",config.toString)).unsafeRunSync()
+      Main.run(List(command,config.toString)).unsafeRunSync()
     finally System.setErr(original)
     (exit.code,captured.toString(java.nio.charset.StandardCharsets.UTF_8))
   /** Deployment-shaped config: a human with login/passwordHashFile plus a token
     * and a token-only agent, never a live database. */
-  private def deploymentConfig(root: Path,passwordHash: String): Path =
+  private def deploymentConfig(root: Path,passwordHash: String,settings: Json): Path =
     val data = Files.createDirectory(root.resolve("data"))
     val token = root.resolve("token.hash"); Files.writeString(token,SecretCodec.sha256("token-secret")+"\n")
     val other = root.resolve("other.hash"); Files.writeString(other,SecretCodec.sha256("other-secret")+"\n")
@@ -55,15 +55,15 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
         "passwordFile" -> Json.fromString(database.toString),
         "limits" -> Json.obj("maxConnections" -> Json.fromInt(4),"maxQueued" -> Json.fromInt(16),"queueTimeoutMs" -> Json.fromInt(5000),
           "connectTimeoutMs" -> Json.fromInt(5000),"statementTimeoutMs" -> Json.fromInt(30000),"lockTimeoutMs" -> Json.fromInt(5000),
-          "idleTransactionTimeoutMs" -> Json.fromInt(30000),"socketTimeoutMs" -> Json.fromInt(30000)))).noSpaces)
+          "idleTransactionTimeoutMs" -> Json.fromInt(30000),"socketTimeoutMs" -> Json.fromInt(30000)))).deepMerge(settings).noSpaces)
     config
 
   test("sha256-hex password credential fails as config, never as a wiring failure") {
     val root = Files.createTempDirectory("manure-wiring-diagnostic-")
     try
       // The token digest codec (64 hex chars) is NOT the password hash codec.
-      val config = deploymentConfig(root,SecretCodec.sha256("deployment-password")+"\n")
-      val (exit,stderr) = runMigrate(config)
+      val config = deploymentConfig(root,SecretCodec.sha256("deployment-password")+"\n",Json.obj())
+      val (exit,stderr) = runCommand("migrate",config)
       assertEquals(exit,1)
       val lines = stderr.linesIterator.filter(_.startsWith("manure ")).toList
       assertEquals(lines,List("manure failure stage=wiring code=config"))
@@ -73,8 +73,8 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
   test("valid pbkdf2 password credentials acquire the wiring graph") {
     val root = Files.createTempDirectory("manure-wiring-diagnostic-")
     try
-      val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n")
-      val (exit,stderr) = runMigrate(config)
+      val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",Json.obj())
+      val (exit,stderr) = runCommand("migrate",config)
       assertEquals(exit,1)
       val lines = stderr.linesIterator.filter(_.startsWith("manure ")).toList
       // Wiring succeeds; startup proceeds to the schema stage and fails only on
@@ -82,6 +82,20 @@ final class WiringDiagnosticSuite extends munit.FunSuite:
       assert(!lines.exists(_.contains("stage=wiring")),stderr)
       assert(lines.exists(_.startsWith("manure failure stage=serve code=jdbc-")),stderr)
     finally cleanup(root)
+  }
+
+  test("serve refuses a configured asset directory that does not exist at startup, before it touches the database") {
+    Vector("dashboard_dir" -> "dashboard-dir-missing","unlock_shell_dir" -> "unlock-shell-dir-missing","viewer_dir" -> "viewer-dir-missing").foreach { (setting,code) =>
+      val root = Files.createTempDirectory("manure-wiring-diagnostic-")
+      try
+        val disabled = Json.obj("dashboard_dir" -> Json.Null,"unlock_shell_dir" -> Json.Null,"viewer_dir" -> Json.Null)
+        val config = deploymentConfig(root,Password.hash("fixture-password".toCharArray)+"\n",
+          disabled.deepMerge(Json.obj(setting -> Json.fromString(root.resolve("absent-assets").toString))))
+        val (exit,stderr) = runCommand("serve",config)
+        assertEquals(exit,1,setting)
+        assertEquals(stderr.linesIterator.filter(_.startsWith("manure ")).toList,List(s"manure failure stage=assets code=$code"),setting)
+      finally cleanup(root)
+    }
   }
 
   test("password readHash rejects token digests and accepts the pbkdf2 encoding") {

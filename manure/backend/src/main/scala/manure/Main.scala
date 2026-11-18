@@ -12,7 +12,7 @@ import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
 import scala.concurrent.duration.*
-import java.nio.file.{Path,NoSuchFileException}
+import java.nio.file.{Files,Path,NoSuchFileException}
 import scala.util.Using
 import io.circe.Json
 
@@ -174,7 +174,13 @@ object Main extends IOApp:
       case None => IO.unit
     }
     loop(None)
-  def runServer(path: Path): IO[Unit] = IO.blocking(Config.load(path)).flatMap { config => resources(config).use { services =>
+  /** A configured asset directory that does not exist would answer every request that needs it with a JSON not-found, so `serve`
+    * refuses to start. `check-config` stays free of filesystem access and does not look. */
+  private def requireAssetDirectories(config: Config): IO[Unit] = IO.blocking {
+    Vector("dashboard-dir-missing" -> config.dashboardDir,"unlock-shell-dir-missing" -> config.unlockShellDir,"viewer-dir-missing" -> config.viewerDir)
+      .foreach((code,directory) => directory.foreach(path => Require(Files.isDirectory(path),code)))
+  }
+  def runServer(path: Path): IO[Unit] = IO.blocking(Config.load(path)).flatMap { config => stage("assets",requireAssetDirectories(config)) *> resources(config).use { services =>
     val sweeper = (IO.sleep(config.sweepInterval) *> services.artifacts.sweep().void.handleErrorWith(_ => IO.unit)).foreverM
     val poll = config.embedding.map(_.pollInterval).getOrElse(1.second)
     val indexer = (services.worker.once().handleErrorWith(_ => IO.pure(false)).flatMap(worked => if worked then IO.cede else IO.sleep(poll))).foreverM

@@ -122,7 +122,7 @@ def main():
             database = OwnedDatabase(name)
             config = {'data_dir': str(payload), 'api_origin': 'http://127.0.0.1:0', 'listen_address': '127.0.0.1',
                       'port': 0, 'loopback_dev': True, 'content_mode': 'path', 'content_suffix': '',
-                      'dashboard_dir': None, 'unlock_shell_dir': None, 'sweep_interval_s': 3600,
+                      'dashboard_dir': None, 'unlock_shell_dir': None, 'viewer_dir': None, 'sweep_interval_s': 3600,
                       'users': [{'id': 'owned', 'type': 'human', 'tokens': [{'id': 'original', 'hashFile': str(manager)}]}]}
             with TargetServer(config, name, owned_database=database, close_database=False) as initial:
                 client = ManureClient(initial.api_url, token=token, cache_dir=str(root / 'cache'))
