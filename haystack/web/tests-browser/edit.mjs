@@ -609,6 +609,7 @@ try {
       await save(page).click();
       await sent;
       await page.evaluate(() => history.go(-2));
+      await page.getByRole("heading", { name: "Submitted first", exact: true }).waitFor();
       await draftNote(page).getByRole("button", { name: "Continue editing", exact: true }).click();
       await page.locator('[data-record="editing"]').waitFor();
       await title.fill("Edited after restoring");
@@ -624,11 +625,17 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("a save whose answer was lost, confirmed through the page's retry notice after the editor was left, ends its draft", async () => {
+  await check("a save whose answer was lost, confirmed through the page's retry notice after the editor was left without any live announcement, ends its draft", async () => {
     const { context, page } = await open();
     try {
       const key = "ui:draft-replay";
       const title = page.getByLabel("Title", { exact: true });
+      // The live connection stays up but announces no change: the page learns of the writes only through their confirmation.
+      let withheld = 0;
+      await page.routeWebSocket("**/api/v1/live", (socket) => {
+        const upstream = socket.connectToServer();
+        upstream.onMessage((message) => { if (JSON.parse(String(message)).kind === "changed") withheld++; else socket.send(message); });
+      });
       await page.goto(`${base}/${recordHash(key)}`);
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await page.locator('[data-record="editing"]').waitFor();
@@ -653,11 +660,12 @@ try {
       await save(page).click();
       await page.getByText("Saved as revision 3", { exact: true }).waitFor();
       assert.deepEqual(page.puts.map((request) => request.expectedRevision), [1, 1, 2], "the replay repeats the original; the next save builds on it");
+      assert.ok(withheld > 0, "the fault injection withheld a real announcement");
       await page.quiet();
     } finally { await context.close(); }
   });
 
-  await check("a draft survives a routine account invalidation and does not outlive the signed-in identity: signing out, or the account changing under an open page, leaves no draft", async () => {
+  await check("a draft survives a routine account invalidation and does not outlive the signed-in identity: signing out, a forced teardown the shell cannot follow up, or the account changing under an open page, leaves no draft", async () => {
     // Its own session: signing out ends the session on the server, which the shared sign-in of the other cases must not lose.
     const { context, page } = await open(DESKTOP, false);
     try {
@@ -699,6 +707,25 @@ try {
       await page.getByRole("menuitem", { name: "Account settings", exact: true }).click();
       await page.waitForFunction(() => location.hash.startsWith("#account"));
       await page.evaluate(() => { window.pageMarker = "same document"; });
+      // A forced teardown (the host's authoritative sign-out signal) ends the identity at once, even when the shell then
+      // cannot verify the next one (unreachable); op's session is still valid, so Retry returns as op in the same document.
+      await page.route("**/api/v1/whoami", (route) => route.abort("failed"), { times: 1 });
+      await page.evaluate(() => document.dispatchEvent(new CustomEvent("account:invalidate", { detail: { reason: "signed-out" } })));
+      await page.getByRole("heading", { name: "Server unreachable", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Retry", exact: true }).click();
+      await page.getByRole("button", { name: "op", exact: true }).waitFor();
+      await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
+      await page.locator('[data-record="ready"]').waitFor();
+      assert.equal(await page.evaluate(() => window.pageMarker), "same document");
+      assert.equal(await anyDraftNote.count(), 0, "a draft of an ended identity does not come back with the same user");
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await page.getByLabel("Title", { exact: true }).fill("Op's draft");
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).waitFor();
+      await page.getByRole("button", { name: "op", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Account settings", exact: true }).click();
+      await page.waitForFunction(() => location.hash.startsWith("#account"));
       // Alice signs in elsewhere and her session cookie replaces op's in this browser (op's session stays valid on the server).
       const elsewhere = await browser.newContext();
       const alicePage = await elsewhere.newPage();

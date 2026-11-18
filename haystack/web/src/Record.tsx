@@ -115,7 +115,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const links = useRef<HTMLElement>(null);
   /** The latest revision shown, for actions that run after a reload (the saved toast's "View changes"). */
   const latestItem = useRef<Item | null>(null);
-  /** A change was announced while the editor was open: the record is reloaded once the editor closes. */
+  /** The record changed (announced, or a confirmed write) while the editor was open: it is reloaded once the editor closes. */
   const stale = useRef(false);
 
   const reload = useCallback(async (refresh: boolean) => {
@@ -151,6 +151,15 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     else void reload(true);
   }, [live.version]);
   useEffect(() => { if (!editing && stale.current) void reload(true); }, [editing]);
+  // A confirmed write of this record (a save, or a replay through a retry notice) makes the page stale whether or not it is
+  // announced live; an open editor is not reloaded under.
+  const editingNow = useRef(editing);
+  editingNow.current = editing;
+  useEffect(() => api.subscribeConfirmedWrite((operation) => {
+    if (latestItem.current === null || operation.key !== latestItem.current.key) return;
+    if (editingNow.current) stale.current = true;
+    else void reload(true);
+  }), [reload]);
 
   const ready = load.kind === "ready";
   useEffect(() => {

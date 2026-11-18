@@ -5,7 +5,8 @@
 //
 // A draft ends only by a confirmed save of it, an explicit discard, reverting every change, the end of the signed-in identity
 // that wrote it, or a reload. Each draft is bound to that identity (its owner): only the same signed-in user sees it, and
-// observing anyone else, or nobody (signed out), ends it.
+// observing anyone else, or nobody (signed out, or an identity the account module ended), ends it. While no user is
+// known, nothing is kept: an open editor still holds its edit, but leaving it then loses the edit.
 //
 // Bound: there is at most one draft per record, each holds two copies of one document (the edit and what it started
 // from), and only a person's edits create one — editing a record and leaving it unsaved. Growth is therefore linear in
@@ -75,12 +76,12 @@ export class DraftStore {
   };
   /** A new line of edits, for an editor that restores no draft. */
   lineage(): number { return ++this.lineages; }
-  /** Writes the draft of `key` through for the signed-in user; returns its generation. */
+  /** Writes the draft of `key` through for the signed-in user (none known: not kept); returns its generation. */
   put(key: string, lineage: number, stored: StoredDraft): number {
     const owner = this.owner;
-    if (owner === null) throw new Error("A draft is written only while a signed-in user is known");
     const kept = this.drafts.get(key);
     const generation = kept !== undefined && kept.lineage === lineage && kept.draft === stored.draft ? kept.generation : ++this.generations;
+    if (owner === null) return generation;
     this.drafts.set(key, { ...stored, owner, lineage, generation });
     this.publish();
     return generation;
@@ -129,26 +130,44 @@ export class DraftStore {
 const OUTLET = "[data-account-outlet]";
 const USER_ATTRIBUTE = "data-account-user-id";
 const SIGNED_OUT = "[data-account-auth], form[data-account-login]";
+const ACCOUNT_CHANGED = "account:changed";
 
 /**
  * Tells `store` the signed-in user, as the shell publishes it for the shared account module (its host contract): the
  * outlet's `data-account-user-id` while signed in, the sign-in mount while signed out. The shell publishes a user only
  * after the server confirmed it, so a routine `account:invalidate`, after which the same user is confirmed again, changes
  * nothing. A page with neither (loading, server unreachable) tells nothing.
+ *
+ * The module's `account:changed` is authoritative: it is sent only after a sign-out, a forced teardown, or a response of
+ * another account. It ends the identity at once, whether or not the shell can then verify the next one; like the module
+ * (its `blocked` state), the outlet it ended names nobody until the shell shows another outlet or user.
  */
 export function observeOwner(store: DraftStore, root: Document): () => void {
+  let ended: { outlet: Element | null; owner: string | null } | null = null;
+  const ownerOf = (outlet: Element): string => {
+    const owner = outlet.getAttribute(USER_ATTRIBUTE);
+    if (owner === null) throw new Error(`${OUTLET} requires ${USER_ATTRIBUTE}`);
+    return owner;
+  };
   const read = () => {
     const outlet = root.querySelector(OUTLET);
     if (outlet !== null) {
-      const owner = outlet.getAttribute(USER_ATTRIBUTE);
-      if (owner === null) throw new Error(`${OUTLET} requires ${USER_ATTRIBUTE}`);
+      const owner = ownerOf(outlet);
+      if (ended !== null && ended.outlet === outlet && ended.owner === owner) return;
+      ended = null;
       store.observeOwner(owner);
     } else if (root.querySelector(SIGNED_OUT) !== null) store.observeOwner(null);
   };
+  const end = () => {
+    const outlet = root.querySelector(OUTLET);
+    ended = { outlet, owner: outlet === null ? null : ownerOf(outlet) };
+    store.observeOwner(null);
+  };
   const observer = new MutationObserver(read);
   observer.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: [USER_ATTRIBUTE] });
+  root.addEventListener(ACCOUNT_CHANGED, end);
   read();
-  return () => observer.disconnect();
+  return () => { observer.disconnect(); root.removeEventListener(ACCOUNT_CHANGED, end); };
 }
 
 /** The page's drafts. */

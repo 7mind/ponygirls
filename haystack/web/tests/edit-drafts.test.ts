@@ -8,9 +8,10 @@ const draft = (title: string) => ({ title }) as Draft;
 const original = draft("original");
 const stored = (edit: Draft, baseRevision: number, base: Draft = original): StoredDraft => ({ base, draft: edit, baseRevision, lastId: 7 });
 
-test("a draft is its owner's: confirming the same user keeps it, another user or signing out ends every draft", () => {
+test("a draft is its owner's: confirming the same user keeps it, another user or none ends every draft, and none keeps nothing", () => {
   const store = new DraftStore();
-  assert.throws(() => store.put("p:a", store.lineage(), stored(draft("a"), 1)), /signed-in user/);
+  store.put("p:a", store.lineage(), stored(draft("a"), 1));
+  assert.equal(store.get("p:a"), undefined, "nothing is kept while no user is known");
   store.observeOwner("op");
   store.put("p:a", store.lineage(), stored(draft("a"), 3));
   let published = 0;
