@@ -33,7 +33,7 @@ check() { # name, expectation (kept|dropped), database
 # drop attempt through the interface of the script under test; extra=1 adds the explicit flag (new interface only)
 attempt() { local name=$1 confirm=$2 expect_oid=$3
   if [[ $legacy_cli == t ]]; then sh "$script" drop "$name" --confirm-database "$confirm" --expect-oid "$expect_oid"
-  else PSQL=${attempt_psql:-psql} sh "$script" drop --drop "$name" --confirm-database "$confirm" --expect-oid "$expect_oid" --sample-seconds 2 "${bindings[@]}"; fi
+  else PSQL=psql sh "$script" drop --drop "$name" --confirm-database "$confirm" --expect-oid "$expect_oid" --sample-seconds 2 "${bindings[@]}"; fi
 } >"$base/out" 2>&1
 
 # 1. a live service database typed with its correct OID (the rehearsal incident)
@@ -99,7 +99,7 @@ CUT
   PSQL=$base/cut-psql sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
   [[ $(q -c "SELECT datname FROM pg_database WHERE oid = $o") == lr_drop_$o ]] && echo "     (cut left tombstone lr_drop_$o)"
   sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
-  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $o") == 0 ]] && [[ $(tail -1 "$base/out") == 'DB.result|dropped' ]]; then pass=$((pass + 1)); echo "PASS interrupted-drop-resumes"; else failed=$((failed + 1)); echo "FAIL interrupted-drop-resumes"; fi
+  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $o") == 0 ]] && [[ $(tail -1 "$base/out") == "DB.result|dropped|oid=$o" ]]; then pass=$((pass + 1)); echo "PASS interrupted-drop-resumes"; else failed=$((failed + 1)); echo "FAIL interrupted-drop-resumes"; fi
   # 13. "dropped but not confirmed": the same command again reports the OID as already gone (distinct result, exit 0)
   sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1; rc=$?
   if [[ $rc -eq 0 && $(tail -1 "$base/out") == "DB.result|already-gone|oid=$o" ]]; then pass=$((pass + 1)); echo "PASS already-gone-reported"; else failed=$((failed + 1)); echo "FAIL already-gone-reported (rc=$rc last=$(tail -1 "$base/out"))"; fi
@@ -107,18 +107,28 @@ CUT
   q -c "CREATE DATABASE r1_unrelated" >/dev/null; ro=$(oid r1_unrelated)
   q -c "ALTER DATABASE r1_unrelated RENAME TO lr_drop_$ro" -c "ALTER DATABASE lr_drop_$ro ALLOW_CONNECTIONS false CONNECTION LIMIT 0" >/dev/null
   sh "$script" drop --drop haystack_nex249_before_20261105a --confirm-database haystack_nex249_before_20261105a --expect-oid "$ro" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
-  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $ro") == 1 ]] && grep -q 'does not carry the provenance' "$base/out" && grep -q "^DB.manual|  BEGIN; DO .* AND oid = $ro AND shobj_description" "$base/out"; then pass=$((pass + 1)); echo "PASS r1-unrelated-tombstone-refused-with-manual-commands"; else failed=$((failed + 1)); echo "FAIL r1-unrelated-tombstone-refused-with-manual-commands"; fi
-  # R11: the printed restore commands of a refusal do NOT act on an unrelated tombstone ...
-  grep '^DB.manual|  ' "$base/out" | sed 's/^DB.manual|  //' >"$base/restore.sql"
-  psql -X -q -v ON_ERROR_STOP=1 -d postgres -f "$base/restore.sql" >/dev/null 2>&1
-  [[ $(q -c "SELECT datname FROM pg_database WHERE oid = $ro") == lr_drop_$ro ]] && { pass=$((pass + 1)); echo "PASS r11-printed-restore-refuses-unrelated-tombstone"; } || { failed=$((failed + 1)); echo "FAIL r11-printed-restore-refuses-unrelated-tombstone"; }
-  # ... and do restore this script's own tombstone (cut after the rename, plan prints the commands, run them)
+  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $ro") == 1 ]] && grep -q 'does not carry the provenance' "$base/out" && [[ $(tail -1 "$base/out") == 'DB.result|refused' ]]; then pass=$((pass + 1)); echo "PASS r1-unrelated-tombstone-refused"; else failed=$((failed + 1)); echo "FAIL r1-unrelated-tombstone-refused"; fi
+  # T3: no executable SQL is ever printed (refusals and plan print command lines of this script only)
+  sh "$script" plan --sample-seconds 2 "${bindings[@]}" >"$base/plan" 2>&1
+  if grep -qiE 'ALTER DATABASE|DROP DATABASE|COMMENT ON' "$base/out" "$base/plan"; then failed=$((failed + 1)); echo "FAIL t3-no-sql-printed"; else pass=$((pass + 1)); echo "PASS t3-no-sql-printed"; fi
+  grep -q "^DB.tombstone_unowned|lr_drop_$ro|" "$base/plan" && { pass=$((pass + 1)); echo "PASS t3-plan-unrelated-tombstone-unowned"; } || { failed=$((failed + 1)); echo "FAIL t3-plan-unrelated-tombstone-unowned"; }
+  # T3: restore is a mode of the script under the same guard: it refuses the unrelated tombstone ...
+  sh "$script" restore --oid "$ro" --confirm-database haystack_nex249_before_20261105a --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
+  [[ $(q -c "SELECT datname FROM pg_database WHERE oid = $ro") == lr_drop_$ro && $(tail -1 "$base/out") == 'DB.result|refused' ]] && { pass=$((pass + 1)); echo "PASS t3-restore-refuses-unrelated-tombstone"; } || { failed=$((failed + 1)); echo "FAIL t3-restore-refuses-unrelated-tombstone"; }
+  # ... and a provenance whose name differs only where LIKE would see a wildcard ('_' -> 'X') is not this copy's
+  q -c "COMMENT ON DATABASE lr_drop_$ro IS 'legacy-retirement drop: original=haystackXnex249_before_20261105a oid=$ro at=2026-11-18T00:00:00Z'" >/dev/null
+  sh "$script" restore --oid "$ro" --confirm-database haystack_nex249_before_20261105a --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
+  sh "$script" plan --sample-seconds 2 "${bindings[@]}" >"$base/plan" 2>&1
+  [[ $(q -c "SELECT datname FROM pg_database WHERE oid = $ro") == lr_drop_$ro ]] && grep -q "^DB.tombstone_unowned|lr_drop_$ro|" "$base/plan" && { pass=$((pass + 1)); echo "PASS t3-wildcard-lookalike-provenance-refused"; } || { failed=$((failed + 1)); echo "FAIL t3-wildcard-lookalike-provenance-refused"; }
+  q -c "COMMENT ON DATABASE lr_drop_$ro IS NULL" >/dev/null
+  # ... and restores this script's own tombstone (cut after the rename; plan names the owner and the command)
   co=$(oid chronicle_nex249_bootstrap_20261106)
   PSQL=$base/cut-psql sh "$script" drop --drop chronicle_nex249_bootstrap_20261106 --confirm-database chronicle_nex249_bootstrap_20261106 --expect-oid "$co" --sample-seconds 2 "${bindings[@]}" >/dev/null 2>&1
   sh "$script" plan --sample-seconds 2 "${bindings[@]}" >"$base/plan" 2>&1
-  grep '^DB.manual|  ' "$base/plan" | sed 's/^DB.manual|  //' >"$base/restore.sql"
-  psql -X -q -v ON_ERROR_STOP=1 -d postgres -f "$base/restore.sql" >"$base/restore.out" 2>&1 || sed 's/^/     restore: /' "$base/restore.out" | head -3; grep -c . "$base/restore.sql" | sed 's/^/     restore lines: /'
-  if [[ $(q -c "SELECT datname || ',' || datallowconn || ',' || datconnlimit || ',' || coalesce(shobj_description(oid, 'pg_database'), '-') FROM pg_database WHERE oid = $co") == 'chronicle_nex249_bootstrap_20261106,true,-1,-' ]]; then pass=$((pass + 1)); echo "PASS r11-printed-restore-restores-own-tombstone"; else failed=$((failed + 1)); echo "FAIL r11-printed-restore-restores-own-tombstone (state: $(q -c "SELECT datname || ',' || datallowconn || ',' || datconnlimit || ',' || coalesce(shobj_description(oid, 'pg_database'), '-') FROM pg_database WHERE oid = $co"))"; fi
+  grep -q "^DB.tombstone_of|chronicle_nex249_bootstrap_20261106|$co" "$base/plan" && grep -q "^DB.tombstone_command|restore|drop-databases.sh restore --oid $co --confirm-database chronicle_nex249_bootstrap_20261106" "$base/plan" \
+    && { pass=$((pass + 1)); echo "PASS t3-plan-names-owner-and-command"; } || { failed=$((failed + 1)); echo "FAIL t3-plan-names-owner-and-command"; }
+  sh "$script" restore --oid "$co" --confirm-database chronicle_nex249_bootstrap_20261106 --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
+  if [[ $(tail -1 "$base/out") == "DB.result|restored|oid=$co" && $(q -c "SELECT datname || ',' || datallowconn || ',' || datconnlimit || ',' || coalesce(shobj_description(oid, 'pg_database'), '-') FROM pg_database WHERE oid = $co") == 'chronicle_nex249_bootstrap_20261106,true,-1,-' ]]; then pass=$((pass + 1)); echo "PASS t3-restore-mode-restores-own-tombstone"; else failed=$((failed + 1)); echo "FAIL t3-restore-mode-restores-own-tombstone"; fi
   # R1 b. another copy's interrupted drop (provenance names another copy) is not resumed under this name
   q -c "COMMENT ON DATABASE lr_drop_$ro IS 'legacy-retirement drop: original=chronicle_nex249_import_20261105a oid=$ro at=2026-11-18T00:00:00Z'" >/dev/null
   sh "$script" drop --drop haystack_nex249_before_20261105a --confirm-database haystack_nex249_before_20261105a --expect-oid "$ro" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
@@ -128,11 +138,11 @@ CUT
   sh "$script" drop --drop haystack_nex249_before_20261105a --confirm-database haystack_nex249_before_20261105a --expect-oid "$ro" --sample-seconds 2 --configured-databases "chronicle,haystack,manure,lr_drop_$ro" >"$base/out" 2>&1
   [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $ro") == 1 ]] && grep -q 'service or configured database' "$base/out" && { pass=$((pass + 1)); echo "PASS r1-configured-tombstone-name-refused"; } || { failed=$((failed + 1)); echo "FAIL r1-configured-tombstone-name-refused"; }
   # R1 d. an idle service database renamed into a tombstone name (no provenance) is refused; the plan lists it as not ours
-  q -c "ALTER DATABASE manure RENAME TO lr_drop_$(oid manure)" -c "ALTER DATABASE lr_drop_$(oid lr_drop_$(oid manure) 2>/dev/null || true) ALLOW_CONNECTIONS false CONNECTION LIMIT 0" >/dev/null 2>&1
-  mo=$(q -c "SELECT oid FROM pg_database WHERE datname LIKE 'lr_drop_%' AND oid <> $ro")
+  mo=$(oid manure); q -c "ALTER DATABASE manure RENAME TO lr_drop_$mo" -c "ALTER DATABASE lr_drop_$mo ALLOW_CONNECTIONS false CONNECTION LIMIT 0" >/dev/null
+  :
   sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$mo" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
   sh "$script" plan --sample-seconds 2 "${bindings[@]}" >"$base/plan" 2>&1
-  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $mo") == 1 ]] && grep -q "has no provenance of this script" "$base/plan"; then pass=$((pass + 1)); echo "PASS r1-idle-service-database-under-tombstone-name-refused"; else failed=$((failed + 1)); echo "FAIL r1-idle-service-database-under-tombstone-name-refused"; fi
+  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $mo") == 1 ]] && grep -q "^DB.tombstone_unowned|lr_drop_$mo|" "$base/plan"; then pass=$((pass + 1)); echo "PASS r1-idle-service-database-under-tombstone-name-refused"; else failed=$((failed + 1)); echo "FAIL r1-idle-service-database-under-tombstone-name-refused"; fi
   q -c "ALTER DATABASE lr_drop_$mo RENAME TO manure" -c "ALTER DATABASE manure ALLOW_CONNECTIONS true CONNECTION LIMIT -1" >/dev/null
   q -c "ALTER DATABASE lr_drop_$ro ALLOW_CONNECTIONS true" -c "DROP DATABASE lr_drop_$ro" >/dev/null
 fi

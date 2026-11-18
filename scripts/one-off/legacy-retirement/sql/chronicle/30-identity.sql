@@ -174,10 +174,9 @@ DO $$ BEGIN RAISE EXCEPTION 'legacy-retirement refused: legacy counters of the s
 \if :lr_apply
 COMMIT;
 \if :lr_skip_formats
-\echo LR.result|applied-formats-skipped
-\else
-\echo LR.result|applied
+\echo LR.formats|skipped
 \endif
+\echo LR.result|applied
 \else
 ROLLBACK;
 \echo LR.result|dry-run-rolled-back

@@ -227,12 +227,12 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     assertEquals(dry.count("LR.step.profiles_relocated"),1L); assertEquals(dry.count("LR.step.retired_policy_profiles_rehomed"),1L); assertEquals(dry.count("LR.after.spaces.v1"),0L)
     assertEquals(s.everything(),untouched)
     val identity=apply("--expect-plan",token,"--skip-formats","--batch-size","1"); assertEquals(identity.exit,0,identity.err+identity.out)
-    assertEquals(identity.value("LR.result"),"applied-formats-skipped"); assertEquals(identity.value("LR.backup_reference"),"fixture-backup")
+    assertEquals(identity.value("LR.result"),"applied"); assertEquals(identity.value("LR.formats"),"skipped"); assertEquals(identity.value("LR.backup_reference"),"fixture-backup")
     assertEquals(identity.count("LR.step.profiles_relocated"),1L); assertEquals(identity.count("LR.step.retired_policy_profiles_rehomed"),1L)
     assertEquals(identity.count("LR.step.retained_profile_reads_deleted"),2L); assertEquals(identity.count("LR.step.model_identity_migrations_deleted"),1L)
     assertEquals(identity.count("LR.step.v1_embedding_spaces_deleted"),1L); assertEquals(identity.count("LR.step.sessions_made_persistent"),1L)
     assertEquals(identity.steps("history_generations_retired"),0L)
-    val identityVerified=s.run("verify","--skip-formats"); assertEquals(identityVerified.exit,0,identityVerified.out+identityVerified.err); assertEquals(identityVerified.value("LR.result"),"verify-zero-formats-skipped")
+    val identityVerified=s.run("verify","--skip-formats"); assertEquals(identityVerified.exit,0,identityVerified.out+identityVerified.err); assertEquals(identityVerified.value("LR.result"),"verify-zero"); assertEquals(identityVerified.value("LR.formats"),"skipped")
     assertEquals(s.run("verify").exit,3)
     // Nothing was deleted: every generation, job and rebuild receipt is still there; both old formats are still served.
     assertEquals(s.count("SELECT count(*) FROM ch_generations"),untouched.count(_.startsWith("ch_generations ")).toLong)
@@ -326,7 +326,7 @@ final class LegacyRetirementScriptsTest extends munit.FunSuite {
     assertEquals(s.psql(retainedCheck).exit,3)
     List("proposed-cleanup-identity.sql","proposed-cleanup-formats.sql").foreach { file=>val cleaned=s.psql(oneOff.resolve(file)); assertEquals(cleaned.exit,0,cleaned.err) }
     val legacyFree=s.psql(retainedCheck); assertEquals(legacyFree.exit,0,legacyFree.out+legacyFree.err); assertEquals(legacyFree.value("LF.result"),"legacy-free")
-    assertEquals(legacyFree.count("LF.legacy_tables_present"),0L); assertEquals(legacyFree.count("LF.generations.not_retired_old_format"),0L)
+    assertEquals(legacyFree.count("LF.legacy_tables_present"),0L); assertEquals(legacyFree.count("LP.generations.not_retired_old_format"),0L)
     val gone=s.run("verify"); assertEquals(gone.exit,3); assert(gone.err.contains("does not exist"),gone.err)
     val refusedSchema=s.run("dry-run","--allow-active-connections"); assertEquals(refusedSchema.exit,3)
     // The clean-up constraint holds: a non-retired generation in an old format can no longer be stored.

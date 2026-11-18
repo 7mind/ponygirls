@@ -14,20 +14,49 @@ SET lock_timeout = '5s';
 BEGIN TRANSACTION READ ONLY ISOLATION LEVEL REPEATABLE READ;
 SELECT 'LF.database', current_database();
 SELECT 'LF.schema_migrations', coalesce(string_agg(version, ',' ORDER BY version), '') FROM schema_migrations;
-SELECT count(*) AS lf_replay FROM write_requests WHERE digest_format IS DISTINCT FROM 'haystack-op-scala-v1' \gset
+-- The blocks "shared:haystack-replay" and "shared:retrieval" are the ONLY definition of these predicates: the one-off
+-- `run.sh haystack|manure preflight|verify` include them verbatim, so the checks cannot diverge.
+-- BEGIN shared:haystack-replay
+SELECT count(*) AS lp_replay FROM write_requests WHERE digest_format IS DISTINCT FROM 'haystack-op-scala-v1' \gset
+\echo LP.replay.other_digest_format|:lp_replay
+-- END shared:haystack-replay
+-- BEGIN shared:retrieval
+-- Shared retrieval registry (Haystack, Manure): every descriptor must be a proven embedding-space-v2 8-tuple
+-- ["embedding-space-v2", model, revision, dimensions 1..4000, sendDimensions, queryPrefix, documentPrefix, "cosine"]
+-- (what EmbeddingSpace.verified checks structurally); invalid JSON or any NULL/failed test counts as not proven.
+-- Not checked (not reproducible in SQL): the id equals the hash of the compact JSON; the product refuses such a row.
+SELECT to_regclass('pony_retrieval_profiles') IS NOT NULL AS lp_has_retrieval \gset
+\if :lp_has_retrieval
+SELECT count(*) AS lp_retrieval_profiles,
+  count(*) FILTER (WHERE (CASE WHEN pg_input_is_valid(descriptor, 'jsonb') THEN
+    CASE WHEN jsonb_typeof(descriptor::jsonb) = 'array' THEN
+      CASE WHEN jsonb_array_length(descriptor::jsonb) = 8 AND jsonb_typeof(descriptor::jsonb->3) = 'number' THEN
+        descriptor::jsonb->>0 = 'embedding-space-v2' AND jsonb_typeof(descriptor::jsonb->1) = 'string' AND descriptor::jsonb->>1 <> ''
+        AND jsonb_typeof(descriptor::jsonb->2) = 'string' AND descriptor::jsonb->>2 <> ''
+        AND (descriptor::jsonb->>3)::numeric BETWEEN 1 AND 4000 AND (descriptor::jsonb->>3)::numeric = trunc((descriptor::jsonb->>3)::numeric)
+        AND jsonb_typeof(descriptor::jsonb->4) = 'boolean' AND jsonb_typeof(descriptor::jsonb->5) = 'string'
+        AND jsonb_typeof(descriptor::jsonb->6) = 'string' AND jsonb_typeof(descriptor::jsonb->7) = 'string' AND descriptor::jsonb->>7 = 'cosine'
+      ELSE false END ELSE false END ELSE false END) IS NOT TRUE) AS lp_retrieval_not_v2
+FROM pony_retrieval_profiles \gset
+\else
+\set lp_retrieval_profiles 0
+\set lp_retrieval_not_v2 0
+\endif
+\echo LP.retrieval.profiles|:lp_retrieval_profiles
+\echo LP.retrieval.not_proven_v2|:lp_retrieval_not_v2
+-- END shared:retrieval
 SELECT count(*) AS lf_default FROM information_schema.columns
 WHERE table_schema = current_schema() AND table_name = 'write_requests' AND column_name = 'digest_format' AND column_default IS NOT NULL \gset
 SELECT count(*) AS lf_constraint FROM pg_constraint WHERE conrelid = 'write_requests'::regclass AND conname = 'write_requests_current_digest_format_check' \gset
 SELECT count(*) AS lf_marker FROM schema_migrations WHERE version = '0007-node-replay-retired' \gset
 ROLLBACK;
-\echo LF.replay.other_digest_format|:lf_replay
 \echo LF.replay.column_default_present|:lf_default
 \echo LF.replay.current_format_constraint|:lf_constraint
 \echo LF.schema.node_replay_retired_marker|:lf_marker
-SELECT (:lf_replay = 0 AND :lf_default = 0 AND :lf_constraint = 1 AND :lf_marker = 1) AS lf_ok \gset
+SELECT (:lp_replay = 0 AND :lp_retrieval_not_v2 = 0 AND :lf_default = 0 AND :lf_constraint = 1 AND :lf_marker = 1) AS lf_ok \gset
 \if :lf_ok
 \echo LF.result|legacy-free
 \else
 \echo LF.result|legacy-present
-DO $$ BEGIN RAISE EXCEPTION 'haystack legacy-free check failed (see LF.* lines above)'; END $$;
+DO $$ BEGIN RAISE EXCEPTION 'haystack legacy-free check failed (see LF.* / LP.* lines above)'; END $$;
 \endif

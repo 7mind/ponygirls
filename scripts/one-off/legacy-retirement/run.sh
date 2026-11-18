@@ -161,15 +161,31 @@ fi
 
 sql=$here/sql/$target
 # A line consisting of \ir_counts is replaced by the counters fragment (psql cannot include files on a remote stdin).
+# A line "\ir_shared COMPONENT BLOCK" is replaced by the block "-- BEGIN shared:BLOCK" … "-- END shared:BLOCK" of the
+# RETAINED check COMPONENT/scripts/check-legacy-free.sql: the one definition shared by the one-off and the retained
+# checks. A missing file or block fails the composition (nothing is sent).
+root=$(CDPATH= cd -- "$here/../../.." && pwd)
 fragment() {
-  awk -v counts="$sql/counts-cte.sql" '$0 == "\\ir_counts" { while ((getline line < counts) > 0) print line; close(counts); next } { print }' "$sql/$1"
+  awk -v counts="$sql/counts-cte.sql" -v root="$root" '
+    $0 == "\\ir_counts" { while ((getline line < counts) > 0) print line; close(counts); next }
+    $1 == "\\ir_shared" {
+      file = root "/" $2 "/scripts/check-legacy-free.sql"; inside = 0; found = 0
+      while ((getline line < file) > 0) {
+        if (line == "-- BEGIN shared:" $3) { inside = 1; found = 1; continue }
+        if (line == "-- END shared:" $3) { inside = 0; continue }
+        if (inside) print line
+      }
+      close(file)
+      if (!found) { print "shared block " $3 " not found in " file > "/dev/stderr"; exit 3 }
+      next }
+    { print }' "$sql/$1"
 }
 repeat() { i=0; while [ "$i" -lt "$max_batches" ]; do fragment "$1"; i=$((i + 1)); done; }
 flag() { printf '\\set %s %s\n' "$1" "$2"; }
 
 compose() {
   printf '%s\n' '\set ON_ERROR_STOP on' '\pset pager off' '\pset format unaligned' '\pset tuples_only on' "\\pset fieldsep '|'"
-  printf "\\\\echo LR.application_name|%s\nSET application_name = '%s';\n" "$application_name" "$application_name"
+  printf "SET application_name = '%s';\n" "$application_name"
   printf "SET idle_in_transaction_session_timeout = '%s';\nSET idle_session_timeout = '%s';\n" "$idle_timeout" "$idle_timeout"
   printf "\\\\set mode '%s'\n\\\\set confirm_database '%s'\n\\\\set expect_plan '%s'\n\\\\set allow_connections '%s'\n" "$mode" "$confirm_database" "$expect_plan" "$allow_connections"
   printf "\\\\set backup_reference '%s'\n\\\\set skip_formats '%s'\n\\\\set retire_history '%s'\n\\\\set confirm_retire_history '%s'\n" "${backup_reference:--}" "$skip_formats" "$retire_history" "$confirm_retire_history"
@@ -206,6 +222,8 @@ compose() {
 # Compose completely before anything is sent: a failure here must not reach psql as a truncated session.
 session=$(compose)
 if [ "$emit" = t ]; then printf '%s\n' "$session"; exit 0; fi
+# Printed locally BEFORE the remote session starts (T9): after a lost stream this is the name to look for.
+printf 'LR.application_name|%s\n' "$application_name"
 # PSQL may be a whole command line supplied by the operator; word splitting is intended.
 # shellcheck disable=SC2086
 printf '%s\n' "$session" | ${PSQL:-psql} -X -q -v ON_ERROR_STOP=1 -f -

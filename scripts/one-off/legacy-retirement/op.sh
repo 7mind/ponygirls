@@ -6,38 +6,40 @@
 #   LR_ROLE (maintenance role, peer authentication) LR_SYSTEM_IDENTIFIER (confirmed once with `op.sh identify`)
 #
 # Commands:
-#   op.sh identify                    prints pod, namespace and the PostgreSQL system identifier to confirm once
-#   op.sh ready                       container readiness and the pod's Ready condition
-#   op.sh restarts                    container restart counts
+#   op.sh identify | ready | restarts
 #   op.sh <chronicle|haystack|manure> <run.sh mode> [options]   run.sh against that target's own database
-#   op.sh drop [plan | drop --drop NAME --confirm-database NAME --expect-oid OID]   on the maintenance database,
-#                                     --configured-databases read from the services' ConfigMaps (strict; fail closed)
-#   op.sh backup-haystack FILE        pg_dump of haystack into a new local FILE; accepted only when it decodes completely
-#   op.sh backup-chronicle NAME       template copy (not part of the default sequence: decision Q102)
-#   op.sh codec-check                 check-stored-documents.sh against haystack (needs nix develop .#chronicle)
-#   op.sh check-legacy-free <chronicle|haystack> [psql -v options]   the retained post-deployment check (step 16)
+#   op.sh drop [plan | drop --drop NAME --confirm-database NAME --expect-oid OID | restore --oid OID --confirm-database NAME]
+#   op.sh backup-haystack FILE | backup-chronicle NAME | codec-check | check-legacy-free <chronicle|haystack> [-v require_formats=f]
 #
-# Fail closed. Every remote command runs through ONE function (`checked`): its output is captured and the
-# command succeeds only when it exited 0 AND its own success marker is the last non-empty line (a cut stream that
-# exits 0 without the marker, or a failure marker, is a failure). Before every command: pod identity, restart counts,
-# PostgreSQL system identifier and the Chronicle fence state are probed (a failed probe stops the command before
-# anything is sent); while the fence is on, the first output line is "FENCED since …". After every command the
-# restart counts are probed again; a failed probe or a changed count makes the command fail (exit 6 / 7).
-# Exit status: 0 success; 2 usage/settings; 3 command failed (no success marker); 5 before-probe failed (nothing
-# sent); 6 after-probe failed; 7 a container restarted during the command.
+# The LAST line of every invocation is ONE record of this wrapper:
+#   OP.result|ok|<the command's own success line>                          exit 0
+#   OP.result|ok-unmonitored|<success line>|pod not observable             exit 8 (emergency fence-status/unfence only)
+#   OP.result|failed|<exit code>|<reason>                                   exit 2, 3, 5, 6 or 7
+# Exit codes: 0 done and verified; 2 usage or settings (nothing sent); 3 the command did not end with its own success
+# line (refused, failed, or a cut stream — re-check with preflight/plan); 5 before-probe failed or the system
+# identifier differs (nothing sent); 6 the command's outcome is printed above but the pod could not be observed
+# afterwards (check `ready`); 7 a container restarted or the pod was replaced during the command (check the service
+# and the command's state); 8 emergency path succeeded without pod observation (see plan 7.2).
+# Output is streamed while it is captured; run.sh prints its session's application_name locally before it starts.
 set -uo pipefail
-here=$(cd "$(dirname "$0")" && pwd)
+here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 self=$here/op.sh
-fail() { printf 'op: %s\n' "$1" >&2; exit 2; }
+finish() { # code status detail
+  if [[ $1 -eq 0 ]]; then echo "OP.result|ok|$3"
+  elif [[ $1 -eq 8 ]]; then echo "OP.result|ok-unmonitored|$3|pod not observable"
+  else echo "OP.result|failed|$1|$3"; fi
+  exit "$1"
+}
+usage() { finish 2 failed "$1"; }
 single() { [[ $1 != *$'\n'* && $1 != *$'\r'* && $1 =~ ^$2$ ]]; }
-[[ $# -ge 1 ]] || fail 'usage: see the header of op.sh'
+[[ $# -ge 1 ]] || usage 'usage: see the header of op.sh'
 cmd=$1; shift
 for v in LR_CONTEXT LR_NAMESPACE LR_POD LR_CONTAINER LR_ROLE; do
-  single "${!v:-}" '[A-Za-z0-9][A-Za-z0-9._-]{0,252}' || fail "$v must be set (single line, [A-Za-z0-9._-])"
+  single "${!v:-}" '[A-Za-z0-9][A-Za-z0-9._-]{0,252}' || usage "$v must be set (single line, [A-Za-z0-9._-])"
 done
-single "${LR_SOCKET:-}" '/[A-Za-z0-9._/-]{1,200}' || fail 'LR_SOCKET must be an absolute socket directory path'
+single "${LR_SOCKET:-}" '/[A-Za-z0-9._/-]{1,200}' || usage 'LR_SOCKET must be an absolute socket directory path'
 if [[ $cmd != identify ]]; then
-  single "${LR_SYSTEM_IDENTIFIER:-}" '[0-9]{1,20}' || fail 'LR_SYSTEM_IDENTIFIER must be set to the value confirmed once with: op.sh identify'
+  single "${LR_SYSTEM_IDENTIFIER:-}" '[0-9]{1,20}' || usage 'LR_SYSTEM_IDENTIFIER must be set to the value confirmed once with: op.sh identify'
 fi
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 
@@ -46,34 +48,31 @@ kube_get() { kubectl "--context=$LR_CONTEXT" -n "$LR_NAMESPACE" --request-timeou
 psql_cmd() { printf 'kubectl --context=%s -n %s exec -i %s -c %s -- psql -h %s -U %s -d %s' "$LR_CONTEXT" "$LR_NAMESPACE" "$LR_POD" "$LR_CONTAINER" "$LR_SOCKET" "$LR_ROLE" "$1"; }
 pg_dump_stream() { kubectl "--context=$LR_CONTEXT" -n "$LR_NAMESPACE" exec "$LR_POD" -c "$LR_CONTAINER" -- env PGAPPNAME=lr:backup:haystack pg_dump -h "$LR_SOCKET" -U "$LR_ROLE" --lock-wait-timeout=10s --format=custom -d "$1"; }
 
-# --- THE gateway ------------------------------------------------------------------------------------------------------
-# checked QUIET MARKER_ERE LABEL CMD...: runs CMD, captures its output, prints it unless QUIET=quiet, and succeeds only
-# when CMD exited 0 and the last non-empty line matches ^MARKER_ERE$.
+# --- THE gateway: checked QUIET MARKER_ERE LABEL CMD… -----------------------------------------------------------------
+# Runs CMD, streams its output (unless quiet) while capturing it; succeeds only when CMD exited 0 AND the last
+# non-empty line matches ^MARKER_ERE$. The matched line is left in $tmp/LABEL.ok.
 checked() {
   local quiet=$1 marker=$2 label=$3; shift 3
-  "$@" >"$tmp/$label.out" 2>&1; local rc=$?
-  [[ $quiet == quiet ]] || cat "$tmp/$label.out"
-  local last; last=$(grep -v '^[[:space:]]*$' "$tmp/$label.out" | tail -n 1)
-  if [[ $rc -eq 0 && $last =~ ^($marker)$ ]]; then return 0; fi
-  echo "OP.fail|$label|exit=$rc|the last line is not the success marker of $label"
-  [[ $quiet == quiet ]] && { echo "OP.fail.output|$label:"; sed 's/^/  /' "$tmp/$label.out" | tail -n 20; }
+  if [[ $quiet == quiet ]]; then "$@" >"$tmp/$label.out" 2>&1; else "$@" 2>&1 | tee "$tmp/$label.out"; fi
+  local rc=${PIPESTATUS[0]} last; last=$(grep -v '^[[:space:]]*$' "$tmp/$label.out" | tail -n 1)
+  if [[ $rc -eq 0 && $last =~ ^($marker)$ ]]; then printf '%s' "$last" >"$tmp/$label.ok"; return 0; fi
+  # quiet probes are reported by their caller (finish/warning); shown commands get the failure line here
+  [[ $quiet == quiet ]] || echo "OP.fail|$label|exit=$rc|last line: ${last:0:160}"
   return 3
 }
-pod_probe() { # writes $tmp/pod.json and prints OP.pod… lines ending with OP.probe|ok
+pod_probe() { # prints OP.pod|uid|start, OP.restarts, OP.ready lines, ending with OP.probe|ok
   kube_get pod "$LR_POD" >"$tmp/pod.json" || return 1
   python3 - "$tmp/pod.json" "$LR_POD" "$LR_NAMESPACE" <<'PY'
 import json, sys
 pod = json.load(open(sys.argv[1]))
-meta = pod["metadata"]
+meta, status = pod["metadata"], pod["status"]
 if meta["name"] != sys.argv[2] or meta["namespace"] != sys.argv[3]:
     print("OP.pod.identity|mismatch|%s/%s" % (meta["namespace"], meta["name"])); sys.exit(1)
-statuses = pod["status"]["containerStatuses"]
-restarts = ",".join("%s=%d" % (c["name"], int(c["restartCount"])) for c in sorted(statuses, key=lambda c: c["name"]))
-ready = ",".join("%s=%s" % (c["name"], "ready" if c["ready"] else "NOT-ready") for c in sorted(statuses, key=lambda c: c["name"]))
-cond = [c["status"] for c in pod["status"].get("conditions", []) if c["type"] == "Ready"]
-print("OP.pod|%s/%s|uid=%s" % (meta["namespace"], meta["name"], meta.get("uid", "-")))
-print("OP.restarts|" + restarts)
-print("OP.ready|containers|" + ready)
+statuses = sorted(status["containerStatuses"], key=lambda c: c["name"])
+print("OP.pod|%s/%s|uid=%s|start=%s" % (meta["namespace"], meta["name"], meta["uid"], status["startTime"]))
+print("OP.restarts|" + ",".join("%s=%d" % (c["name"], int(c["restartCount"])) for c in statuses))
+print("OP.ready|containers|" + ",".join("%s=%s" % (c["name"], "ready" if c["ready"] else "NOT-ready") for c in statuses))
+cond = [c["status"] for c in status.get("conditions", []) if c["type"] == "Ready"]
 print("OP.ready|pod|" + (cond[0] if cond else "unknown"))
 print("OP.probe|ok")
 PY
@@ -85,36 +84,45 @@ db_probe() { # system identifier and Chronicle fence state, through the exec pat
     '\echo OP.probe|ok' | $(psql_cmd postgres) -X -q -At -v ON_ERROR_STOP=1 -f -
 }
 value() { grep "^$2" "$tmp/$1.out" | tail -n 1 | cut -d'|' -f2-; }
+pod_state() { printf '%s|%s' "$(value "$1" 'OP.pod|')" "$(value "$1" 'OP.restarts|')"; }
 
-before_probe() {
-  checked quiet 'OP\.probe\|ok' pod-before pod_probe || { echo 'OP.before-probe|failed|nothing was sent'; exit 5; }
-  checked quiet 'OP\.probe\|ok' db-before db_probe || { echo 'OP.before-probe|failed|nothing was sent'; exit 5; }
+unmonitored=0
+before_probe() { # $1 = allow-unmonitored for the emergency path (fence-status/unfence)
+  if ! checked quiet 'OP\.probe\|ok' pod-before pod_probe; then
+    [[ ${1:-} == allow-unmonitored ]] || finish 5 failed "before-probe: pod not observable ($(grep -v '^[[:space:]]*$' "$tmp/pod-before.out" | tail -n 1 | cut -c1-120)); nothing was sent"
+    unmonitored=1
+  fi
+  checked quiet 'OP\.probe\|ok' db-before db_probe || finish 5 failed 'before-probe: database not reachable; nothing was sent'
   local id; id=$(value db-before 'OP.identity|')
   if [[ $cmd != identify && $id != "$LR_SYSTEM_IDENTIFIER" ]]; then
-    echo "OP.before-probe|identity mismatch: system identifier $id, confirmed $LR_SYSTEM_IDENTIFIER|nothing was sent"; exit 5
+    finish 5 failed "system identifier $id differs from the confirmed $LR_SYSTEM_IDENTIFIER; nothing was sent"
   fi
   local fence; fence=$(value db-before 'OP.fence|')
   if [[ $fence == nologin\|legacy-retirement\ fence\ since\ * ]]; then
     echo "FENCED since ${fence#nologin|legacy-retirement fence since } (role chronicle NOLOGIN); status: $self chronicle fence-status --role chronicle; lift: $self chronicle unfence --role chronicle"
   fi
-  restarts_before=$(value pod-before 'OP.restarts|'); echo "LR.restarts|before|$restarts_before"
+  [[ $unmonitored -eq 1 ]] && echo 'OP.warning|emergency path: the pod cannot be observed; the database identity is still checked'
+  [[ $unmonitored -eq 1 ]] || { pod_before=$(pod_state pod-before); echo "LR.restarts|before|$(value pod-before 'OP.restarts|')"; }
 }
-after_probe() { # $1 = exit status of the command
-  local rc=$1
-  checked quiet 'OP\.probe\|ok' pod-after pod_probe || { echo 'OP.after-probe|failed|the restart counts after the command are unknown'; exit 6; }
-  local after; after=$(value pod-after 'OP.restarts|'); echo "LR.restarts|after|$after"
-  if [[ $after != "$restarts_before" ]]; then
-    echo "LR.restarts.changed|before:$restarts_before|after:$after"
-    echo 'op: a container restarted during this command: check the service before continuing' >&2; exit 7
+after() { # $1 = exit status of the command (0 or 3), $2 = label of the checked command
+  local rc=$1 line; line=$(cat "$tmp/$2.ok" 2>/dev/null)
+  if [[ $unmonitored -eq 1 ]]; then [[ $rc -eq 0 ]] && finish 8 ok "$line"; finish 3 failed "$2 did not end with its success line (pod not observable)"; fi
+  checked quiet 'OP\.probe\|ok' pod-after pod_probe || finish 6 failed "after-probe: pod not observable; the outcome of $2 is printed above"
+  echo "LR.restarts|after|$(value pod-after 'OP.restarts|')"
+  local now; now=$(pod_state pod-after)
+  if [[ $now != "$pod_before" ]]; then
+    echo "LR.pod.changed|before:$pod_before|after:$now"
+    finish 7 failed "a container restarted or the pod was replaced during $2; check the service and the command's state"
   fi
-  exit "$rc"
+  [[ $rc -eq 0 ]] && finish 0 ok "$line"
+  finish 3 failed "$2 did not end with its success line"
 }
-success_marker() { # run.sh target mode -> the ERE of its own success line
-  case $2 in
+success_marker() { # run.sh mode -> the ERE of its one success line
+  case $1 in
     preflight) echo 'LR\.result\|preflight-complete' ;;
-    verify) echo 'LR\.result\|verify-zero(-formats-skipped)?' ;;
+    verify) echo 'LR\.result\|verify-zero' ;;
     dry-run) echo 'LR\.result\|dry-run-rolled-back' ;;
-    apply) echo 'LR\.result\|applied(-formats-skipped)?' ;;
+    apply) echo 'LR\.result\|applied' ;;
     sessions) echo 'LR\.result\|sessions-listed' ;;
     terminate) echo 'LR\.result\|terminate-complete' ;;
     worklist) echo 'LR\.result\|worklist-complete' ;;
@@ -127,7 +135,7 @@ success_marker() { # run.sh target mode -> the ERE of its own success line
 configured_databases() { # strict: every PostgreSQL URL in each ConfigMap must parse; at least one per service
   local svc names=()
   for svc in chronicle haystack manure; do
-    kube_get configmap "$svc" >"$tmp/cm-$svc.json" || { echo "op: cannot read ConfigMap $svc" >&2; return 1; }
+    kube_get configmap "$svc" >"$tmp/cm-$svc.json" || { echo "op: cannot read ConfigMap $svc"; return 1; }
     local db; db=$(python3 - "$tmp/cm-$svc.json" <<'PY'
 import json, re, sys
 cfg = json.loads(json.load(open(sys.argv[1]))["data"]["server.json"])
@@ -146,7 +154,7 @@ walk(cfg)
 if bad or not found: sys.exit(1)
 print(",".join(sorted(found)))
 PY
-) || { echo "op: ConfigMap $svc holds no JDBC URL or one this wrapper cannot parse (refusing)" >&2; return 1; }
+) || { echo "op: ConfigMap $svc holds no JDBC URL or one this wrapper cannot parse (refusing)"; return 1; }
     names+=("$db")
   done
   (IFS=,; echo "OP.configured|${names[*]}")
@@ -157,17 +165,18 @@ case $cmd in
     before_probe
     echo "OP.confirm|pod=$LR_NAMESPACE/$LR_POD|system_identifier=$(value db-before 'OP.identity|')"
     echo 'OP.confirm|set LR_SYSTEM_IDENTIFIER to this value once the pod and cluster are confirmed'
-    after_probe 0 ;;
+    printf 'OP.confirm|identified' >"$tmp/identify.ok"; after 0 identify ;;
   ready)
-    before_probe; grep '^OP.ready|' "$tmp/pod-before.out"; after_probe 0 ;;
+    before_probe; grep '^OP.ready|' "$tmp/pod-before.out"; printf 'OP.ready|observed' >"$tmp/ready.ok"; after 0 ready ;;
   restarts)
-    before_probe; after_probe 0 ;;
+    before_probe; printf 'OP.restarts|observed' >"$tmp/restarts.ok"; after 0 restarts ;;
   chronicle|haystack|manure)
-    [[ $# -ge 1 ]] || fail "usage: op.sh $cmd <run.sh mode> [options]"
-    marker=$(success_marker "$cmd" "$1") || fail "mode $1 is not available through op.sh"
-    before_probe
+    [[ $# -ge 1 ]] || usage "usage: op.sh $cmd <run.sh mode> [options]"
+    marker=$(success_marker "$1") || usage "mode $1 is not available through op.sh"
+    emergency=''; [[ $cmd:$1 == chronicle:fence-status || $cmd:$1 == chronicle:unfence ]] && emergency=allow-unmonitored
+    before_probe $emergency
     if [[ $cmd:$1 == chronicle:fence ]]; then
-      # S5: say locally, before the fence is sent, what will persist and how to see and lift it.
+      # before the fence is sent: what will persist and how to see and lift it
       echo "OP.fence.warning|after this command role chronicle stays NOLOGIN until unfenced: Chronicle cannot connect,"
       echo "OP.fence.warning|its container restarts with back-off (up to 5 min), the core pod is not Ready (Haystack/Manure Service endpoints may drop)"
       echo "OP.fence.status|$self chronicle fence-status --role chronicle"
@@ -175,33 +184,38 @@ case $cmd in
     fi
     export PSQL; PSQL=$(psql_cmd "$cmd")
     checked show "$marker" "$cmd-$1" sh "$here/run.sh" "$cmd" "$@"; rc=$?
-    if [[ $cmd:$1 == chronicle:fence && $rc -ne 0 ]]; then
-      echo "OP.fence.unknown|the fence may or may not be in place; check: $self chronicle fence-status --role chronicle; lift: $self chronicle unfence --role chronicle"
-    fi
-    after_probe "$rc" ;;
+    [[ $cmd:$1 == chronicle:fence && $rc -ne 0 ]] && echo "OP.fence.unknown|check: $self chronicle fence-status --role chronicle; lift: $self chronicle unfence --role chronicle"
+    after "$rc" "$cmd-$1" ;;
   drop)
     before_probe
-    checked quiet 'OP\.configured\|[a-z0-9_,]+' configmaps configured_databases || { echo 'op: the configured service databases could not be read (refusing)'; after_probe 3; }
-    dbs=$(value configmaps 'OP.configured|')
-    echo "LR.configured_databases|$dbs"
+    checked quiet 'OP\.configured\|[a-z0-9_,]+' configmaps configured_databases || { cat "$tmp/configmaps.out"; after 3 configmaps; }
+    dbs=$(value configmaps 'OP.configured|'); echo "LR.configured_databases|$dbs"
     export PSQL; PSQL=$(psql_cmd postgres)
-    if [[ ${1:-plan} == drop ]]; then marker='DB\.result\|(dropped|already-gone\|oid=[0-9]+)'; else marker='DB\.result\|plan-complete-nothing-dropped'; fi
-    checked show "$marker" drop sh "$here/drop-databases.sh" "$@" --configured-databases "$dbs"; after_probe $? ;;
+    case ${1:-plan} in
+      drop) marker='DB\.result\|(dropped|already-gone)\|oid=[0-9]+' ;;
+      restore) marker='DB\.result\|restored\|oid=[0-9]+' ;;
+      *) marker='DB\.result\|plan-complete-nothing-dropped' ;;
+    esac
+    checked show "$marker" drop sh "$here/drop-databases.sh" "$@" --configured-databases "$dbs"; after $? drop ;;
   backup-haystack)
-    [[ $# -eq 1 ]] && single "$1" '/[A-Za-z0-9._/-]{1,200}' || fail 'backup-haystack FILE (absolute path of a new local file)'
-    file=$1; [[ ! -e $file && ! -e $file.partial ]] || fail "$file exists"
-    command -v pg_restore >/dev/null || fail 'pg_restore is required locally (nix develop .#chronicle)'
+    [[ $# -eq 1 ]] && single "$1" '/[A-Za-z0-9._/-]{1,200}' || usage 'backup-haystack FILE (absolute path of a new local file)'
+    file=$1; [[ ! -e $file && ! -e $file.partial ]] || usage "$file exists"
+    command -v pg_restore >/dev/null || usage 'pg_restore is required locally (nix develop .#chronicle)'
     before_probe
-    dump() {
+    publish() { # every step checked; the success line only after the final file re-reads as recorded
       (umask 077; pg_dump_stream haystack >"$file.partial") || { echo 'op: pg_dump failed'; return 3; }
       pg_restore --list "$file.partial" >/dev/null && pg_restore --exit-on-error --file=/dev/null "$file.partial" || { echo 'op: the archive does not decode to the end (incomplete): not a backup'; return 3; }
-      mv "$file.partial" "$file"
-      echo "LR.backup.file|$file|$(stat -c %s "$file")|$(sha256sum "$file" | cut -d' ' -f1)"
-      echo 'LR.result|backup-decoded-completely'
+      local size sum; size=$(stat -c %s "$file.partial") && sum=$(sha256sum "$file.partial" | cut -d' ' -f1) || { echo 'op: cannot measure the archive'; return 3; }
+      [[ $size =~ ^[1-9][0-9]*$ && $sum =~ ^[0-9a-f]{64}$ ]] || { echo 'op: implausible size or checksum'; return 3; }
+      mv -n -- "$file.partial" "$file" || { echo 'op: cannot publish the archive under its final name'; return 3; }
+      [[ ! -e $file.partial && -f $file ]] || { echo 'op: the final file is not in place'; return 3; }
+      [[ $(stat -c %s "$file") == "$size" && $(sha256sum "$file" | cut -d' ' -f1) == "$sum" ]] || { echo 'op: the final file differs from the decoded archive'; return 3; }
+      echo "LR.backup.file|$file|$size|$sum"
+      echo 'LR.result|backup-published'
     }
-    checked show 'LR\.result\|backup-decoded-completely' backup-haystack dump; after_probe $? ;;
+    checked show 'LR\.result\|backup-published' backup-haystack publish; after $? backup-haystack ;;
   backup-chronicle)
-    [[ $# -eq 1 ]] && single "$1" 'lr_backup_chronicle_[0-9]{12}' || fail 'backup-chronicle NAME, NAME = lr_backup_chronicle_<YYYYMMDDHHMM>'
+    [[ $# -eq 1 ]] && single "$1" 'lr_backup_chronicle_[0-9]{12}' || usage 'backup-chronicle NAME, NAME = lr_backup_chronicle_<YYYYMMDDHHMM>'
     before_probe
     copy() {
       printf '%s\n' '\set ON_ERROR_STOP on' "SET application_name = 'lr:backup:chronicle';" "SET statement_timeout = 0;" \
@@ -209,19 +223,19 @@ case $cmd in
         "SELECT 'LR.backup.copy|' || datname || '|' || oid || '|' || pg_database_size(oid) FROM pg_database WHERE datname = '$1';" \
         '\echo LR.result|backup-created' | $(psql_cmd postgres) -X -q -At -v ON_ERROR_STOP=1 -f -
     }
-    checked show 'LR\.result\|backup-created' backup-chronicle copy "$1"; after_probe $? ;;
+    checked show 'LR\.result\|backup-created' backup-chronicle copy "$1"; after $? backup-chronicle ;;
   codec-check)
     before_probe
     export PSQL; PSQL=$(psql_cmd haystack)
-    checked show 'LR\.result\|stored-documents-strict-ok' codec-check env TMPDIR="$tmp" sh "$here/check-stored-documents.sh"; after_probe $? ;;
+    checked show 'LR\.result\|stored-documents-strict-ok' codec-check env TMPDIR="$tmp" sh "$here/check-stored-documents.sh"; after $? codec-check ;;
   check-legacy-free)
-    [[ ${1:-} == chronicle || ${1:-} == haystack ]] || fail 'check-legacy-free <chronicle|haystack> [-v require_formats=f]'
+    [[ ${1:-} == chronicle || ${1:-} == haystack ]] || usage 'check-legacy-free <chronicle|haystack> [-v require_formats=f]'
     target=$1; shift
     file=$here/../../../$target/scripts/check-legacy-free.sql
-    [[ -f $file ]] || fail "retained check $file is absent"
-    for a in "$@"; do single "$a" '(-v|require_formats=[tf])' || fail 'only -v require_formats=t|f may be passed'; done
+    [[ -f $file ]] || usage "retained check $file is absent"
+    for a in "$@"; do single "$a" '(-v|require_formats=[tf])' || usage 'only -v require_formats=t|f may be passed'; done
     before_probe
     retained() { $(psql_cmd "$target") -X -q -v ON_ERROR_STOP=1 "$@" -f - <"$file"; }
-    checked show 'LF\.result\|legacy-free' "check-legacy-free-$target" retained "$@"; after_probe $? ;;
-  *) fail "unknown command $cmd" ;;
+    checked show 'LF\.result\|legacy-free' "check-legacy-free-$target" retained "$@"; after $? "check-legacy-free-$target" ;;
+  *) usage "unknown command $cmd" ;;
 esac

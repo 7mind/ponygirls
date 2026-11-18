@@ -107,6 +107,17 @@ predicate_case wrong-case '["Embedding-Space-V2","m","r",768,false,"q","d","cosi
 predicate_case inner-leading-space '[" embedding-space-v2","m","r",768,false,"q","d","cosine"]' nonzero
 predicate_case inner-trailing-space '["embedding-space-v2 ","m","r",768,false,"q","d","cosine"]' nonzero
 predicate_case number-tag '[2,"m"]' nonzero
+# T5: the right tag on an incomplete or ill-typed tuple is not a proven v2 descriptor
+predicate_case v2-incomplete-tuple '["embedding-space-v2"]' nonzero
+predicate_case v2-dimensions-out-of-range '["embedding-space-v2","m","r",4001,false,"q","d","cosine"]' nonzero
+predicate_case v2-dimensions-string '["embedding-space-v2","m","r","768",false,"q","d","cosine"]' nonzero
+predicate_case v2-not-cosine '["embedding-space-v2","m","r",768,false,"q","d","l2"]' nonzero
+# T5: one-off verify and the retained check print the SAME shared lines on the same rows (single definition)
+q -d haystack -c "TRUNCATE pony_retrieval_profiles" -c "INSERT INTO pony_retrieval_profiles VALUES ('ns', 'p1', 's', '$v2', ''), ('ns', 'p2', 's', '[\"embedding-space-v2\"]', '')" >/dev/null
+PGDATABASE=haystack sh "$dir/run.sh" haystack verify >"$base/v1" 2>&1
+psql -X -q -v ON_ERROR_STOP=1 -d haystack -f "$dir/../../../haystack/scripts/check-legacy-free.sql" >"$base/v2" 2>&1
+if [[ -n $(grep '^LP\.' "$base/v1") && $(grep '^LP\.' "$base/v1") == $(grep '^LP\.' "$base/v2") ]] && ! grep -q 'LR.result|verify-zero' "$base/v1" && ! grep -q 'LF.result|legacy-free' "$base/v2"; then ok t5-haystack-shared-lines-identical-and-both-reject; else ko t5-haystack-shared-lines-identical-and-both-reject; fi
+q -d haystack -c "TRUNCATE pony_retrieval_profiles" >/dev/null
 
 # --- S3 (Chronicle): the same shapes in ch_embedding_spaces / ch_index_profiles (jsonb) on the real schema --------
 q -d postgres -c 'CREATE DATABASE chronicle_t' >/dev/null
@@ -126,6 +137,24 @@ chronicle_case() { # name, space descriptor, profile descriptor, expected verify
 }
 okprof='["index-profile-descriptor-v2",["m","r","p","1"],"c"]'
 chronicle_case all-v2 "$cv2" "$okprof" zero
+chronicle_case space-incomplete-tuple '["embedding-space-v2"]' "$okprof" nonzero
+chronicle_case profile-incomplete '["index-profile-descriptor-v2",["m","r","p"],"c"]' "$cv2" nonzero
+chronicle_case profile-empty-element "$cv2" '["index-profile-descriptor-v2",["m","","p","1"],"c"]' nonzero
+# T5: the same rows give the same shared lines in the one-off verify and the retained check
+q -d chronicle_t -c "DELETE FROM ch_index_profiles" -c "DELETE FROM ch_embedding_spaces" -c "INSERT INTO ch_embedding_spaces(id, descriptor) VALUES ('sx', '[\"embedding-space-v2\"]')" >/dev/null
+PGDATABASE=chronicle_t sh "$dir/run.sh" chronicle verify >"$base/v1" 2>&1
+psql -X -q -v ON_ERROR_STOP=1 -d chronicle_t -f "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/v2" 2>&1
+if [[ -n $(grep '^LP\.' "$base/v1") && $(grep '^LP\.' "$base/v1") == $(grep '^LP\.' "$base/v2") ]] && grep -q '^LP.embedding_spaces.not_proven_v2|1' "$base/v1" && ! grep -q 'LR.result|verify-zero' "$base/v1" && ! grep -q 'LF.result|legacy-free' "$base/v2"; then ok t5-chronicle-shared-lines-identical-and-both-reject; else ko t5-chronicle-shared-lines-identical-and-both-reject; fi
+# T5: a retained file without the shared block makes the one-off composition fail (nothing is sent)
+mkdir -p "$base/tree/scripts/one-off" "$base/tree/chronicle/scripts"; cp -r "$dir" "$base/tree/scripts/one-off/legacy-retirement"
+grep -v "shared:chronicle" "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/tree/chronicle/scripts/check-legacy-free.sql"
+PSQL=$base/fake-psql sh "$base/tree/scripts/one-off/legacy-retirement/run.sh" chronicle verify >"$base/out" 2>&1 && ko t5-missing-shared-block-refused || ok t5-missing-shared-block-refused
+# T7: after the clean-up, the retained check ends with the one success line also with require_formats=f
+q -d postgres -c 'CREATE DATABASE chronicle_clean TEMPLATE chronicle_t' >/dev/null
+q -d chronicle_clean -c "DELETE FROM ch_embedding_spaces" -f "$dir/sql/chronicle/proposed-cleanup-identity.sql" -f "$dir/sql/chronicle/proposed-cleanup-formats.sql" >/dev/null 2>&1
+for rf in t f; do psql -X -q -v ON_ERROR_STOP=1 -v require_formats=$rf -d chronicle_clean -f "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/out" 2>&1
+  [[ $(tail -n 1 "$base/out") == 'LF.result|legacy-free' ]] && ok "t7-retained-one-success-line-require_formats=$rf" || ko "t7-retained-one-success-line-require_formats=$rf" "last=$(tail -n 1 "$base/out")"; done
+grep -q '^LF.formats|kept' "$base/out" && ok t7-formats-kept-recorded || ko t7-formats-kept-recorded
 for shape in '[]' '[null]' 'null' '{}' '"embedding-space-v2"' '42' '["Embedding-Space-V2"]' '[" embedding-space-v2"]' '["embedding-space-v1"]'; do
   chronicle_case "space-$(printf '%s' "$shape" | tr -c 'A-Za-z0-9' '_')" "$shape" "$okprof" nonzero
 done
@@ -159,11 +188,15 @@ case " $* " in
   *" get pod "*)
     n=$(( $(cat "$d/fake-pod-calls") + 1 )); echo $n >"$d/fake-pod-calls"
     [[ $mode == probe-before-fail && $n -eq 1 ]] && { echo 'error: You must be logged in to the server (Unauthorized)' >&2; exit 1; }
+    [[ $mode == pod-forbidden ]] && { echo 'Error from server (Forbidden): pods "test-pod" is forbidden' >&2; exit 1; }
     [[ $mode == probe-after-fail && $n -ge 2 ]] && { echo 'Unable to connect to the server: EOF' >&2; exit 1; }
     r=2; [[ $mode == restart-during && $n -ge 2 ]] && r=3
+    uid=0b6f0c8e-0000-4000-8000-000000000001; start=2026-11-17T17:13:24Z
+    [[ $mode == pod-replaced && $n -ge 2 ]] && { uid=0b6f0c8e-0000-4000-8000-000000000002; start=2026-11-18T19:00:00Z; r=0; }
+    [[ $mode == pod-replaced ]] && r=0
     cat <<JSON
-{"apiVersion":"v1","kind":"Pod","metadata":{"name":"test-pod","namespace":"test-ns","uid":"0b6f0c8e-0000-4000-8000-000000000001"},
- "status":{"phase":"Running","conditions":[{"type":"Initialized","status":"True"},{"type":"Ready","status":"True"},{"type":"ContainersReady","status":"True"}],
+{"apiVersion":"v1","kind":"Pod","metadata":{"name":"test-pod","namespace":"test-ns","uid":"$uid"},
+ "status":{"phase":"Running","startTime":"$start","conditions":[{"type":"Initialized","status":"True"},{"type":"Ready","status":"True"},{"type":"ContainersReady","status":"True"}],
   "containerStatuses":[{"name":"chronicle","ready":true,"restartCount":$r,"started":true},{"name":"haystack","ready":true,"restartCount":0},
    {"name":"manure","ready":true,"restartCount":0},{"name":"postgres","ready":true,"restartCount":0}]}}
 JSON
@@ -177,6 +210,7 @@ JSON
       psql) out=(); skip=0; for a in "${cmd[@]:1}"; do if [[ $skip == 1 ]]; then skip=0; continue; fi; case $a in -h|-U) skip=1 ;; *) out+=("$a") ;; esac; done
             in=$(mktemp "$d/stdin.XXXXXX"); cat >"$in"
             grep -q "lr:op:probe" "$in" && mode=normal   # the modes break the command under test, not op.sh's own probes
+            [[ $mode == exec-fail ]] && { echo 'error: unable to upgrade connection: container not found ("postgres")' >&2; exit 1; }
             exec <"$in"; rm -f "$in"
             if [[ $mode == cut-no-marker ]]; then psql -h "$d" -U postgres "${out[@]}" 2>&1 | head -n -1; exit 0
             elif [[ $mode == failure-marker ]]; then psql -h "$d" -U postgres "${out[@]}" 2>&1 | grep -vE '^(psql:|ERROR|CONTEXT|DETAIL)'; exit 0
@@ -187,9 +221,23 @@ JSON
 esac
 FAKE
 chmod +x "$base/bin/kubectl"
+# Fakes for the publication steps of backup-haystack (T4): mode mv-fail makes the rename fail; sha-drift makes the
+# checksum of the final file differ from the one recorded before the rename.
+cat >"$base/bin/mv" <<'FAKE'
+#!/usr/bin/env bash
+[[ $(cat "$LR_FAKE_DIR/fake-mode") == mv-fail ]] && { echo 'mv: cannot move: Input/output error' >&2; exit 1; }
+exec "$(PATH=${PATH#*:} command -v mv)" "$@"
+FAKE
+cat >"$base/bin/sha256sum" <<'FAKE'
+#!/usr/bin/env bash
+real=$(PATH=${PATH#*:} command -v sha256sum)
+if [[ $(cat "$LR_FAKE_DIR/fake-mode") == sha-drift && $1 != *.partial ]]; then echo "0000000000000000000000000000000000000000000000000000000000000000  $1"; exit 0; fi
+exec "$real" "$@"
+FAKE
+chmod +x "$base/bin/mv" "$base/bin/sha256sum"
 sysid=$(q -d postgres -c 'SELECT system_identifier FROM pg_control_system()')
 q -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'chronicle') THEN CREATE ROLE chronicle LOGIN; END IF; END \$\$" >/dev/null
-q -d postgres -c 'CREATE DATABASE chronicle' >/dev/null
+q -d postgres -c 'CREATE DATABASE chronicle TEMPLATE chronicle_clean' >/dev/null
 OP="$dir/op.sh"
 op() { # mode, op args… : the real file, executed by its path (so a missing exec bit fails), in a clean environment
   echo "$1" >"$base/fake-mode"; echo 0 >"$base/fake-pod-calls"; rm -f "$base/kubectl.calls"; shift
@@ -200,33 +248,52 @@ expect_op() { # name, want-rc, grep-pattern-or-empty, mode, op args…
   local name=$1 want=$2 pat=$3; shift 3; op "$@"; local rc=$?
   if [[ $rc == "$want" ]] && { [[ -z $pat ]] || grep -qE "$pat" "$base/op.out"; }; then ok "$name"; else ko "$name" "rc=$rc want=$want"; sed 's/^/     | /' "$base/op.out" | tail -n 4; fi
 }
+# expect_last NAME WANT_RC LAST_LINE_ERE MODE OP-ARGS…: the wrapper's ONE final record is the last line (T8)
+expect_last() {
+  local name=$1 want=$2 pat=$3; shift 3; op "$@"; local rc=$? last; last=$(grep -v '^[[:space:]]*$' "$base/op.out" | tail -n 1)
+  if [[ $rc == "$want" && $last =~ ^($pat)$ ]]; then ok "$name"; else ko "$name" "rc=$rc want=$want last='$last'"; fi
+}
 if [[ -f $OP ]]; then
   [[ -x $OP ]] && ok s4-op-executable || ko s4-op-executable "mode $(stat -c %a "$OP")"
   [[ $(grep -vE '^[[:space:]]*#' "$OP" | grep -c 'kubectl') == 3 ]] && ok s2-kubectl-named-only-in-the-three-helpers || ko s2-kubectl-named-only-in-the-three-helpers
   q -d manure -c "TRUNCATE pony_retrieval_profiles" >/dev/null
-  expect_op s4-op-preflight-target-database 0 'LR\.result\|preflight-complete' normal manure preflight
+  expect_last t8-success-record-is-last 0 'OP\.result\|ok\|LR\.result\|preflight-complete' normal manure preflight
   grep -q -- '-d manure' "$base/kubectl.calls" && ok s4-op-routes-to-target-database || ko s4-op-routes-to-target-database
-  expect_op s4-op-restart-lines 0 '^LR\.restarts\|after\|chronicle=2' normal manure preflight
-  expect_op s4-cut-stream-exit0-without-marker-fails 3 'OP\.fail\|manure-preflight' cut-no-marker manure preflight
+  grep -qE '^LR\.restarts\|after\|chronicle=2' "$base/op.out" && ok s4-op-restart-lines || ko s4-op-restart-lines
+  # T9: the invocation's application name is printed locally before the remote session (even if the exec fails)
+  expect_last t9-application-name-before-remote 3 'OP\.result\|failed\|3\|.*' exec-fail manure preflight
+  grep -q '^LR\.application_name|lr:manure:preflight:' "$base/op.out" && ok t9-application-name-printed || ko t9-application-name-printed
+  expect_last s4-cut-stream-exit0-without-marker-fails 3 'OP\.result\|failed\|3\|.*' cut-no-marker manure preflight
   q -d manure -c "INSERT INTO pony_retrieval_profiles VALUES ('ns', 'x', 's', '[]', '')" >/dev/null
-  expect_op s4-failure-marker-with-exit0-fails 3 'LR\.result\|verify-nonzero' failure-marker manure verify
+  expect_last s4-failure-marker-with-exit0-fails 3 'OP\.result\|failed\|3\|.*' failure-marker manure verify
   q -d manure -c "TRUNCATE pony_retrieval_profiles" >/dev/null
-  expect_op s4-before-probe-failure-sends-nothing 5 'OP\.before-probe\|failed' probe-before-fail manure preflight
+  expect_last s4-before-probe-failure-sends-nothing 5 'OP\.result\|failed\|5\|.*' probe-before-fail manure preflight
   if grep -q 'LR.tool' "$base/op.out" || grep -q ' exec ' "$base/kubectl.calls"; then ko s4-before-probe-failure-ran-nothing; else ok s4-before-probe-failure-ran-nothing; fi
-  expect_op s4-after-probe-failure-reported 6 'OP\.after-probe\|failed' probe-after-fail manure preflight
-  expect_op s4-restart-during-command-reported 7 'LR\.restarts\.changed' restart-during manure preflight
-  op_sysid=1 expect_op s4-identity-mismatch-refused 5 'identity mismatch' normal manure preflight
+  expect_last s4-after-probe-failure-reported 6 'OP\.result\|failed\|6\|.*' probe-after-fail manure preflight
+  expect_last s4-restart-during-command-reported 7 'OP\.result\|failed\|7\|.*' restart-during manure preflight
+  expect_last t6-pod-replaced-during-command-reported 7 'OP\.result\|failed\|7\|.*' pod-replaced manure preflight
+  op_sysid=1 expect_last s4-identity-mismatch-refused 5 'OP\.result\|failed\|5\|.*' normal manure preflight
   expect_op s4-identify 0 "OP\.confirm\|.*system_identifier=$sysid" normal identify
   expect_op s4-ready 0 '^OP\.ready\|pod\|True' normal ready
-  expect_op r7-unparseable-jdbc-url-refused 3 'cannot parse \(refusing\)' bad-url drop
+  expect_last r7-unparseable-jdbc-url-refused 3 'OP\.result\|failed\|3\|.*' bad-url drop
   grep -q '^DB\.' "$base/op.out" && ko r7-no-drop-session-after-refusal || ok r7-no-drop-session-after-refusal
-  expect_op s4-drop-plan-maintenance-database 0 'DB\.result\|plan-complete-nothing-dropped' normal drop
+  expect_last s4-drop-plan-maintenance-database 0 'OP\.result\|ok\|DB\.result\|plan-complete-nothing-dropped' normal drop
   expect_op s5-fence-prints-recovery-before 0 'OP\.fence\.lift\|.*unfence --role chronicle' normal chronicle fence --role chronicle
   op normal manure preflight; [[ $(head -n 1 "$base/op.out") == "FENCED since "* ]] && ok s5-fenced-banner-first-line || ko s5-fenced-banner-first-line "first: $(head -n 1 "$base/op.out")"
-  expect_op s5-unfence 0 'LR\.result\|unfenced' normal chronicle unfence --role chronicle
+  # T1: with pod reads forbidden, ordinary commands stop, but fence-status and unfence still run (identity checked)
+  expect_last t1-pod-forbidden-stops-ordinary-commands 5 'OP\.result\|failed\|5\|.*' pod-forbidden manure preflight
+  op_sysid=1 expect_last t1-emergency-still-checks-identity 5 'OP\.result\|failed\|5\|.*' pod-forbidden chronicle unfence --role chronicle
+  expect_last t1-emergency-fence-status 8 'OP\.result\|ok-unmonitored\|LR\.result\|fence-status-complete\|.*' pod-forbidden chronicle fence-status --role chronicle
+  [[ $(head -n 1 "$base/op.out") == "FENCED since "* ]] && ok t1-emergency-banner-first-line || ko t1-emergency-banner-first-line "first: $(head -n 1 "$base/op.out")"
+  expect_last t1-emergency-unfence 8 'OP\.result\|ok-unmonitored\|LR\.result\|unfenced\|.*' pod-forbidden chronicle unfence --role chronicle
+  [[ $(q -d postgres -c "SELECT rolcanlogin FROM pg_roles WHERE rolname = 'chronicle'") == t ]] && ok t1-role-login-again || ko t1-role-login-again
   op normal manure preflight; [[ $(head -n 1 "$base/op.out") != "FENCED since "* ]] && ok s5-banner-gone-after-unfence || ko s5-banner-gone-after-unfence
-  expect_op s4-backup-haystack-decoded 0 'LR\.result\|backup-decoded-completely' normal backup-haystack "$base/hs-backup.dump"
-  expect_op s6-check-legacy-free-remote 3 'LF\.result\|legacy-present' normal check-legacy-free haystack
+  expect_last s4-backup-haystack-decoded 0 'OP\.result\|ok\|LR\.result\|backup-published' normal backup-haystack "$base/hs-backup.dump"
+  grep -q "^LR.backup.file|$base/hs-backup.dump|" "$base/op.out" && ok t4-backup-record || ko t4-backup-record
+  expect_last t4-rename-failure-no-success 3 'OP\.result\|failed\|3\|.*' mv-fail backup-haystack "$base/hs-backup2.dump"
+  expect_last t4-checksum-drift-no-success 3 'OP\.result\|failed\|3\|.*' sha-drift backup-haystack "$base/hs-backup3.dump"
+  expect_last s6-check-legacy-free-remote 3 'OP\.result\|failed\|3\|.*' normal check-legacy-free haystack
+  expect_last t7-op-check-legacy-free-formats-kept 0 'OP\.result\|ok\|LF\.result\|legacy-free' normal check-legacy-free chronicle -v require_formats=f
 else
   ko s4-op-executable "no op.sh"
 fi
@@ -239,10 +306,18 @@ LR_CONTEXT=tavily-lne timeout 120 bash "$dir/test-drop-databases.sh" >"$base/out
 PGHOST=/run/pg-socket/private timeout 120 bash "$dir/test.sh" drop >"$base/out" 2>&1 && ko f8-test-sh-refuses-foreign-pghost || ok f8-test-sh-refuses-foreign-pghost
 
 # --- S4/R2: test isolation is derived from the scripts, in one place, and complete -----------------------------------
-guard=$dir/test-guard.sh
+guard=$(realpath "$dir/test-guard.sh")
 clean_env=(env -i PATH="$PATH" HOME="$HOME" POSTGRES_HOME="$POSTGRES_HOME")
 inputs=$("${clean_env[@]}" bash -c '. "$1" && declare -F lr_guard_inputs >/dev/null && lr_guard_inputs' _ "$guard" 2>/dev/null)
-if [[ -n $inputs ]] && grep -qx attempt_psql <<<"$inputs"; then ok r2-guard-derives-attempt_psql; else ko r2-guard-derives-attempt_psql; fi
+# T2: no connection override variable exists in any test; CDPATH cannot blind discovery; failed discovery refuses
+if grep -l 'attempt_psql' "$dir"/*.sh 2>/dev/null | grep -qv 'test-scripts.sh$'; then ko t2-no-connection-override-variable; else ok t2-no-connection-override-variable; fi
+# sourced by a relative path that does not start with "./": with CDPATH=. a plain `cd` prints the directory to stdout
+gparent=$(dirname "$guard"); gbase=$(basename "$gparent")
+cdpath_inputs=$("${clean_env[@]}" CDPATH=. bash -c 'builtin cd "$1" && . "$2/test-guard.sh" && lr_guard_inputs' _ "$(dirname "$gparent")" "$gbase" 2>/dev/null)
+[[ -n $cdpath_inputs && $cdpath_inputs == "$inputs" ]] && ok t2-cdpath-does-not-change-discovery || ko t2-cdpath-does-not-change-discovery
+"${clean_env[@]}" CDPATH=. SOURCE_PG_DUMP=x bash -c 'builtin cd "$1" && . "$2/test-guard.sh" && lr_guard_check' _ "$(dirname "$gparent")" "$gbase" >/dev/null 2>&1; [[ $? -eq 4 ]] && ok t2-cdpath-still-refuses-discovered-input || ko t2-cdpath-still-refuses-discovered-input
+mkdir -p "$base/lonely"; cp "$guard" "$base/lonely/test-guard.sh"
+"${clean_env[@]}" bash -c '. "$1"' _ "$base/lonely/test-guard.sh" >/dev/null 2>&1; [[ $? -eq 4 ]] && ok t2-failed-discovery-refuses || ko t2-failed-discovery-refuses
 exempt=$("${clean_env[@]}" bash -c '. "$1" && printf "%s" "${LR_GUARD_EXEMPT:-}"' _ "$guard" 2>/dev/null)
 if [[ -n $exempt ]] && ! grep -qE '(^| )(PG[A-Z]|LR_|KUBE|CLONE_|PSQL)' <<<"$exempt"; then ok s4-exempt-list-holds-no-target; else ko s4-exempt-list-holds-no-target "exempt='$exempt'"; fi
 missing=''
