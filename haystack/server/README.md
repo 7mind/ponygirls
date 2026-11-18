@@ -66,13 +66,11 @@ From repository root in the pinned Chronicle shell, run:
 
 ```
 HAYSTACK_SERVER_COMMAND=/absolute/path/haystack-server \
-HAYSTACK_SERVER_ARTIFACT_FILE=/absolute/path/haystack-server \
-HAYSTACK_ARTIFACT_KIND=native \
   bash haystack/scripts/test-current.sh
 ```
 
-For JVM use command `java -jar /absolute/path/haystack-server.jar`, artifact file
-that exact JAR, and kind `jvm`. This is explicit selection, never a native fallback.
+For JVM use command `java -jar /absolute/path/haystack-server.jar`. This is
+explicit selection, never a native fallback.
 Required tools: pinned Node24+, locked `haystack/package-lock.json` npm tree
 (`cd haystack && npm ci --offline --ignore-scripts`), PostgreSQL18 **with pgvector**
 (`initdb`, `pg_ctl`, `psql` on PATH), Python3, coreutils (including `timeout`). The
@@ -82,17 +80,20 @@ or production database is read; the script creates its own cluster/database and
 sets the guarded fixture environment itself. Never set that guard against an
 existing database.
 
-The runner has a 360-second whole-node deadline and 10-second forced cleanup;
-ordinary Node tests are bounded60seconds; the healthy-peer regression has an
-85-second fixture budget to observe two unchanged real30-second protocol heartbeat
-intervals (its heartbeat assertion is bounded62seconds). Readiness15seconds and
-ordinary WS assertions1second are separately bounded. It always stops its owned PG via EXIT trap. Child process
-fixtures stop their server on suite exit. Full test inventory is committed at
-`server/tests-current/inventory.json`; fresh JUnit names must match it exactly,
-with zero skips/errors/failures and nonempty cases. The full TAP and JUnit XML,
-runner log, source/artifact SHA256 binding and machine receipt are in a fresh
-`$HAYSTACK_REPORT_DIR`, or the printed disposable report directory. Existing
-nonempty reports are never overwritten. This is the HTTP/MCP/WS process leg,
+Test files run concurrently (at most four at a time, each with its own server,
+database, port and temp directory); `HAYSTACK_CURRENT_CONCURRENCY=1` runs them
+serially. The runner has a 150-second whole-node deadline (480 seconds serial)
+and 10-second forced cleanup; ordinary Node tests are bounded60seconds; the
+healthy-peer regression has an 85-second budget to observe two unchanged
+real30-second protocol heartbeat intervals (its heartbeat assertion is
+bounded62seconds). Readiness15seconds and ordinary WS assertions1second are
+separately bounded. It always stops its owned PG via EXIT trap. Child process
+fixtures stop their server on suite exit. `scripts/junit-gate.py` fails the run
+on any failure, error or skip and on an empty run. The JUnit XML and
+`counts.json` are in a fresh `$HAYSTACK_REPORT_DIR`, or the printed disposable
+report directory. Existing nonempty reports are never overwritten. With
+`HAYSTACK_TEST_JDBC` (and `HAYSTACK_OWNED_TEST_DB=1`) set, the runner uses that
+owned cluster instead of creating one, as the `haystack-native` check does. This is the HTTP/MCP/WS process leg,
 not a substitute for Scala dual-PG, browser, model-provider or downstream gates.
 
 ### Least-privilege fixture provisioning
@@ -104,7 +105,7 @@ exit0 and stdout UTF8 JSON exactly `{ "jdbcUrl": "jdbc:postgresql://127.0.0.1:PO
 Output is capped16KiB; invalid JSON/shape/nonloopback URL/wrong database/credential
 URL/nonabsolute or empty password file/nonzero/timeout fails without fallback.
 The helper's stdout/stderr are never copied into logs (they may contain sensitive
-paths); its executable SHA256 is included in the receipt. Runtime config gets
+paths). Runtime config gets
 **only** that returned descriptor, never the fixture admin credentials. Do not
 grant the runtime role CREATEDB, superuser or access to another service database.
 

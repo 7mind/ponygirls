@@ -20,9 +20,8 @@ in pkgs.runCommand "haystack-native-complete-browser" {
   timeout --signal=TERM --kill-after=10s 575s \
     ${fixtureTools}/bin/with-service-postgres \
     ${fixtureTools}/bin/with-browser-environment \
-    ${fixtureTools}/bin/validate-haystack-native browser \
-      ${native}/libexec/haystack-server ${native}/share/haystack/compiled-inputs.sha256 \
-      "$out" ${proxyFixture} || {
+    ${fixtureTools}/bin/validate-haystack-native \
+      ${native}/libexec/haystack-server "$out" ${proxyFixture} || {
         for log in "$out"/*.log; do [ ! -f "$log" ] || cat "$log"; done
         exit 1
       }
