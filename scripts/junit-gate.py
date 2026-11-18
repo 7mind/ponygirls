@@ -2,9 +2,9 @@
 """Gate a test run on its JUnit XML.
 
 Usage: junit-gate.py --counts FILE DIR [DIR...]
-Reads every *.xml below each DIR. Exits 1 when a DIR is missing or holds no test case, or when any report holds a
-failure, error or skipped element anywhere (or a suite reports one in its attributes); otherwise prints the counts
-over all DIRs and writes them to FILE.
+Reads every *.xml below each DIR. Exits 1 when a DIR is missing or holds no test case, when any report holds a
+failure, error or skipped element anywhere (or a suite reports one in its attributes), or when a test file defined no
+test; otherwise prints the counts over all DIRs and writes them to FILE.
 """
 import argparse
 import json
@@ -20,6 +20,12 @@ def owner(element: ET.Element) -> str:
     if element.tag == "testcase":
         return f"{element.get('classname', '')}.{element.get('name', '')}"
     return f"{element.tag} {element.get('name', '')}"
+
+
+def empty_test_file(case: ET.Element) -> bool:
+    """node --test reports a test file that defines no test as one passing case named after the file."""
+    path, name = case.get("file"), case.get("name", "")
+    return path is not None and (path == name or path.endswith("/" + name))
 
 
 def main() -> int:
@@ -41,6 +47,7 @@ def main() -> int:
     counts = {"suites": len(suites), "cases": len(cases)} | {key: len(rejected[outcome]) for outcome, key in OUTCOMES.items()}
     print(json.dumps(counts))
     problems += [f"{outcome}: {name}" for outcome, names in rejected.items() for name in names]
+    problems += [f"test file defined no test: {case.get('file')}" for case in cases if empty_test_file(case)]
     problems += [f"suite reports a failure, error or skip: {suite.get('name', '')}" for suite in suites
                  if any(int(suite.get(key, "0")) > 0 for key in OUTCOMES.values())]
     if problems:
