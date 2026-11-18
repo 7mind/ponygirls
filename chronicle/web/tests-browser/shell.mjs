@@ -45,7 +45,10 @@ const navLink = (page, name) => nav(page).getByRole('link', { name, exact: true 
 const hash = page => page.evaluate(() => location.hash);
 async function current(page) { return nav(page).locator('a[aria-current="page"]').allInnerTexts(); }
 async function signedIn(page) { await navLink(page, 'Search').waitFor(); }
-async function activityReady(page) { await page.getByRole('main', { name: 'Activity', exact: true }).waitFor(); await page.locator('.activity-job-row').first().waitFor(); }
+// The Activity Jobs list is the long Activity document these cases scroll (UX-C5: Activity is routed per section).
+async function activityReady(page) { await page.getByRole('main', { name: 'Activity', exact: true }).getByRole('region', { name: 'Jobs', exact: true }).locator('tbody tr[data-row-id]').first().waitFor(); }
+const ACTIVITY_JOBS = '#/activity/jobs';
+async function openActivityJobs(page) { await page.evaluate(hash => { location.hash = hash; }, ACTIVITY_JOBS); await activityReady(page); }
 async function userMenu(page, login) { await page.getByRole('button', { name: login, exact: true }).click(); return page.getByRole('menu', { name: login, exact: true }); }
 const archiveRows = page => page.getByRole('table', { name: 'Conversations', exact: true }).locator('tbody tr');
 const archiveReads = fixture => fixture.calls.filter(call => call.operation instanceof api.Operation_Archive);
@@ -79,8 +82,8 @@ try {
     await navLink(page, 'Archive').click(); await page.locator('.archive-row').first().waitFor();
     assert.equal(await hash(page), '#/archive');
     await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('project:"unsent draft" AND');
-    await navLink(page, 'Activity').click(); await activityReady(page);
-    assert.equal(await hash(page), '#/activity'); assert.deepEqual(await current(page), ['Activity']);
+    await openActivityJobs(page);
+    assert.equal(await hash(page), ACTIVITY_JOBS); assert.deepEqual(await current(page), ['Activity']);
     const scrollable = await page.evaluate(() => document.documentElement.scrollHeight - innerHeight);
     assert.ok(scrollable > 600, `Activity must scroll the document for this check (${scrollable})`);
     await page.evaluate(() => window.scrollTo(0, 600)); await page.waitForFunction(() => scrollY === 600);
@@ -113,7 +116,7 @@ try {
     const rows = await archiveRows(page).count(), reads = archiveReads(fixture).length;
     await navLink(page, 'Search').click(); await submitSearch(page, SEARCH_TEXT);
     const summary = await searchSummary(page).innerText();
-    await navLink(page, 'Activity').click(); await activityReady(page);
+    await openActivityJobs(page);
     await page.evaluate(() => window.scrollTo(0, 600)); await page.waitForFunction(() => scrollY === 600);
     await navLink(page, 'Access').click(); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
     assert.equal(await page.evaluate(() => scrollY), 0, 'a route shown for the first time starts at the top');
@@ -207,12 +210,12 @@ try {
   }
 
   await run('account degraded mode: sign in, Access tokens, mint, secret survives blur, acknowledge, revoke, sign out', { width: 1440, height: 900 }, fixture => { fixture.signedIn = false; }, async ({ page, fixture }) => {
-    await page.goto(`${origin}/${PAGE}#/activity`);
+    await page.goto(`${origin}/${PAGE}${ACTIVITY_JOBS}`);
     const auth = page.locator('main[data-account-auth]');
     await auth.getByRole('heading', { name: /^Sign in/ }).waitFor();
     await auth.getByLabel('Username', { exact: true }).fill('alice'); await auth.getByLabel('Password', { exact: true }).fill('synthetic-password');
     await auth.getByRole('button', { name: 'Sign in', exact: true }).click();
-    await activityReady(page); assert.equal(await hash(page), '#/activity', 'signing in keeps the requested route');
+    await activityReady(page); assert.equal(await hash(page), ACTIVITY_JOBS, 'signing in keeps the requested route');
 
     const menu = await userMenu(page, 'alice'); await menu.getByRole('menuitem', { name: 'Access tokens', exact: true }).click();
     await page.getByRole('heading', { name: 'Access tokens', exact: true }).waitFor();

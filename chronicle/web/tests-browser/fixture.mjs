@@ -205,8 +205,15 @@ export class ChronicleFixture {
       default: throw new Error('Unknown fixture job sort');
     }
   }
+  // Collector IDs an expression selects: the scripted ones, else a derived `freshness:"…"` (the Activity overview and its
+  // sub-navigation count stale and unreported collectors on every snapshot); undefined for an unsupported expression.
+  collectorSelection(expression) {
+    if (this.collectorExpressions.has(expression)) return this.collectorExpressions.get(expression);
+    const freshness = /^freshness:"(stale|recent|unknown)"$/.exec(expression);
+    return freshness === null ? undefined : this.collectorRows.filter(row => (row.status === undefined ? 'unknown' : row.status.stale ? 'stale' : 'recent') === freshness[1]).map(row => row.collectorId);
+  }
   activityResult(query) {
-    const all = this.collectorRows, selected = query.expression === '' ? all : all.filter(row => this.collectorExpressions.get(query.expression).includes(row.collectorId));
+    const all = this.collectorRows, selected = query.expression === '' ? all : all.filter(row => this.collectorSelection(query.expression).includes(row.collectorId));
     const rows = ordered(selected, row => this.collectorValue(row, query.sort), row => row.collectorId, query.direction);
     const page = fixturePage(rows, query.cursor, query.limit, JSON.stringify(['collectors', this.user.id, query.expression, query.sort, query.direction]));
     const current = this.jobRows.filter(item => item.classification === api.ActivityJobClass.Current), historical = this.jobRows.filter(item => item.classification !== api.ActivityJobClass.Current), owned = this.authorizedRows.filter(row => row.head.ownerId === this.user.id);
@@ -308,7 +315,7 @@ export class ChronicleFixture {
         }
         if (operation instanceof api.Operation_Activity) {
           if (this.collectionDenied) { send(new api.Result_Error(new api.Failure('forbidden', 'Collection status denied'))); return; }
-          if (this.activityFailure !== null || (operation.query.expression !== '' && !this.collectorExpressions.has(operation.query.expression))) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }
+          if (this.activityFailure !== null || (operation.query.expression !== '' && this.collectorSelection(operation.query.expression) === undefined)) { send(new api.Result_Error(new api.Failure('invalid', this.activityFailure ?? 'Unsupported synthetic metadata expression'))); return; }
           const result = this.activityResult(operation.query), reply = () => send(new api.Result_Activity(result));
           if (this.holdCollectorCursor && operation.query.cursor !== undefined) this.pendingCollectors.push(reply); else reply(); return;
         }
