@@ -1,12 +1,12 @@
-import { Popover } from './Popover.tsx';
+import { Anchored } from './Popover.tsx';
 import { useEffect, useId, useRef, useState } from 'react';
 import { McpTestState, Operation_McpTestTools, Operation_StartMcpTest, Operation_ReadMcpTest, Operation_CancelMcpTest, Result_McpTestTools, Result_McpTestRun, type McpTestCatalog, type McpTestEvent, type McpTestSnapshot } from './api.ts';
 import { read, type ChronicleConnection } from './client.ts';
 import { type ManagerStats } from './transport/types.ts';
 import { randomUUID } from './uuid.ts';
 import { scalarUtf8Bytes } from './completion.ts';
-import { appendMcpPage, traceItems, validateMcpPage, MCP_EVENT_PAGE_LIMIT } from './mcp-trace.ts';
-import { ErrorNotice } from './App.tsx';
+import { appendMcpPage, traceItems, traceRows, validateMcpPage, MCP_EVENT_PAGE_LIMIT, type TraceItem, type TraceRow } from './mcp-trace.ts';
+import { Glyph } from './Glyph.tsx';
 import { ToolCatalog } from './ToolCatalog.tsx';
 import './mcp-tester.css';
 const MCP_POLL_MS = 2_000, MAX_PROMPT_BYTES = 16 * 1024;
@@ -123,21 +123,95 @@ export function useMcpTester(connection: ChronicleConnection, stats: ManagerStat
     if (active(handle.state) && !acknowledged) return;
     handles.current.delete(owner); setPrompt(''); erase(null); setVersion(n => n + 1);
   }
-  const current = display.key === key ? display : { key, catalog: null, events: [], error: null, state: handle === null ? null : 'Uncertain', observedAt: null };
+  const current: Display = display.key === key ? display : { key, catalog: null, events: [], error: null, state: handle === null ? null : 'Uncertain', observedAt: null };
   return { ...current, handle, prompt: display.key === key ? prompt : '', setPrompt, starting, cancelling, connected: stats.activeId !== null, run, cancel, clear, retryRead: () => setPollRevision(n => n + 1) };
 }
 export type McpTesterState = ReturnType<typeof useMcpTester>;
+const TRACE_FOLD_LINES = 12;
+const STATUS_CLASS: Readonly<Record<McpTestState | 'Uncertain', string>> = {
+  [McpTestState.Queued]: 'status-run', [McpTestState.Running]: 'status-run', [McpTestState.Complete]: 'status-ok', [McpTestState.Failed]: 'status-danger',
+  [McpTestState.Cancelled]: 'status-idle', [McpTestState.AuthorizationLost]: 'status-danger', [McpTestState.Expired]: 'status-danger', Uncertain: 'status-warn',
+};
+/** Literal trace text: long output keeps its first lines until the reader asks for all of it. */
+function TraceText({ item, label }: { item: TraceItem; label: string }) {
+  const [all, setAll] = useState(false);
+  if (item.text === null) return <p className="xs muted" role="status">Receiving complete item · {item.received} / {item.total} parts. No partial item is presented as complete.</p>;
+  const lines = item.text.split('\n'), folded = !all && lines.length > TRACE_FOLD_LINES;
+  return <div className="mcp-text"><div className="xs muted">{label}</div><pre className="code-block">{folded ? lines.slice(0, TRACE_FOLD_LINES).join('\n') : item.text}</pre>
+    {folded && <p className="xs muted">… {lines.length - TRACE_FOLD_LINES} more lines · <button type="button" className="link-button" onClick={() => setAll(true)}>Show all</button></p>}</div>;
+}
+function ToolRow({ row, open }: { row: Extract<TraceRow, { kind: 'tool' }>; open: boolean }) {
+  const args = row.call?.text;
+  return <details className="mcp-call" open={open} data-trace-item={row.key}>
+    <summary><span className="mcp-call-tool">{row.tool ?? 'Tool result'}</span><code className="mcp-call-args">{args === undefined ? 'arguments not received' : args === null ? 'receiving arguments…' : args.replace(/\s+/g, ' ')}</code><span className="mcp-call-meta">call {row.callId}</span></summary>
+    <div className="mcp-call-body">
+      {row.call !== null && <TraceText item={row.call} label="Arguments"/>}
+      {row.result === null ? <p className="xs muted">No result yet.</p> : <TraceText item={row.result} label="Result"/>}
+    </div>
+  </details>;
+}
+function Trace({ rows }: { rows: readonly TraceRow[] }) {
+  const calls = rows.filter(row => row.kind === 'tool');
+  return <>{calls.length > 0 && <div className="mcp-tool-group">{calls.map((row, index) => <ToolRow key={row.key} row={row} open={index === 0}/>)}</div>}{rows.map(row => row.kind === 'tool' ? null
+    : <article key={row.key} className="mcp-response" data-trace-item="response"><div className="mcp-response-head">Response</div>
+      {row.response.text === null ? <p className="xs muted" role="status">Receiving complete item · {row.response.received} / {row.response.total} parts. No partial item is presented as complete.</p> : <div className="mcp-response-text">{row.response.text}</div>}</article>)}</>;
+}
 export function McpTester({ tester }: { tester: McpTesterState }) {
   const [acknowledged, setAcknowledged] = useState(false), promptId = useId();
   useEffect(() => setAcknowledged(false), [tester.handle?.runId, tester.state]);
-  const catalog = tester.catalog, handle = tester.handle;
-  const blocked = tester.starting || tester.cancelling || !tester.connected || (handle !== null && active(handle.state));
+  const catalog = tester.catalog, handle = tester.handle, state = tester.state ?? 'Uncertain';
+  const running = handle !== null && active(handle.state), blocked = tester.starting || tester.cancelling || !tester.connected || running;
   let bytes: number | null = null; try { bytes = scalarUtf8Bytes(tester.prompt); } catch { /* Invalid scalar input is explained at the boundary below. */ }
-  return <main className="dashboard-page management-page mcp-tester" aria-label="MCP tester">
-    {tester.error !== null && <ErrorNotice>{tester.error}</ErrorNotice>}
-    {catalog !== null && <section className="management-section" aria-label="Current MCP test catalog"><p>Model <code>{catalog.model}</code> · revision <code>{catalog.modelRevision}</code> · maximum output tokens {catalog.maximumOutputTokens} · reasoning {catalog.reasoningPolicy}</p><Popover label="Runtime limits"><p>Instance <code>{catalog.instanceId}</code></p><dl className="goal50-settings">{Object.entries(catalog.limits.toJSON()).map(([name, value]) => <div key={name}><dt>{name}</dt><dd>{String(value)}</dd></div>)}</dl></Popover><details className="mcp-tool-reference"><summary>Tool schemas ({catalog.tools.length})</summary><ToolCatalog key={catalog.instanceId} tools={catalog.tools}/></details></section>}
-    <form onSubmit={event => { event.preventDefault(); void tester.run(); }}><label htmlFor={promptId}>Fresh prompt</label><textarea id={promptId} value={tester.prompt} onChange={event => tester.setPrompt(event.target.value)} rows={5} disabled={tester.starting}/><p className="tiny">{bytes === null ? 'Invalid Unicode scalar input' : `${bytes} / ${MAX_PROMPT_BYTES} UTF-8 bytes`}</p><div className="button-row"><button className="primary" disabled={blocked || bytes === null || bytes > MAX_PROMPT_BYTES || tester.prompt.trim().length === 0}>{tester.starting ? 'Submitting once…' : 'Run fresh prompt'}</button><Popover className="context-help mcp-run-help" label="?" ariaLabel="About running prompts"><p>Run incurs model cost and may send authorized source data to the declared model through read-only tools. Each run uses only this prompt and a fresh tool catalog; no prior run is added. Starts are never replayed automatically.</p><p>Cancellation cannot recall data or guarantee the provider stopped or incurred no cost. Traces are temporary and reauthorized while displayed.</p></Popover></div></form>
-    {handle !== null && <section className="management-section" aria-label="MCP run controls"><h2>Run {tester.state ?? 'Uncertain'}</h2><p className="tiny">Original instance <code>{handle.instanceId}</code><br/>Run <code>{handle.runId}</code>{tester.observedAt !== null && <><br/>Observed {tester.observedAt}</>}</p><p className="tiny">Cancellation cannot guarantee the provider stopped or incurred no cost.</p><div className="button-row"><button disabled={tester.starting || !tester.connected} onClick={tester.retryRead}>Read original run</button><button disabled={tester.cancelling || tester.starting || !tester.connected} onClick={() => void tester.cancel()}>{tester.cancelling ? 'Requesting cancel…' : 'Request cancellation'}</button></div>{active(handle.state) && <label className="check-label"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)}/>I acknowledge that this run may still be active or have incurred cost. Clearing loses its controls; a new Run may incur additional cost.</label>}<button disabled={tester.starting || tester.cancelling || (active(handle.state) && !acknowledged)} onClick={() => tester.clear(acknowledged)}>Clear run and trace</button></section>}
-    <section className="mcp-trace" aria-label="MCP test trace" aria-live="polite">{traceItems(tester.events).map(item => <article key={item.key}><h3>{item.title}</h3>{item.text === null ? <p role="status">Receiving complete item · {item.received} / {item.total} parts. No partial item is presented as complete.</p> : <pre>{item.text}</pre>}</article>)}</section>
+  const rows = traceRows(traceItems(tester.events));
+  return <main className="page page-narrow stack-lg" aria-label="MCP tester">
+    <div className="page-head">
+      <div><h1 className="page-title">MCP tester</h1><p className="page-sub">Run one fresh prompt against the search tools exactly as an MCP client would, and inspect the trace.</p></div>
+      {catalog !== null && <Anchored className="" buttonClassName="btn" buttonState={undefined} ariaLabel={undefined} describedBy={undefined} panel="dialog" panelClassName="popover mcp-popover" panelLabel={undefined} label={<><Glyph name="info"/>Runtime limits</>}>
+        <p className="xs muted">Instance <code>{catalog.instanceId}</code></p>
+        <dl className="dl xs mcp-limits">{Object.entries(catalog.limits.toJSON()).map(([name, value]) => <div key={name} className="mcp-limit"><dt>{name}</dt><dd>{String(value)}</dd></div>)}</dl>
+      </Anchored>}
+    </div>
+    {tester.error !== null && <div className="notice notice-danger" role="alert"><Glyph name="alert"/><div>{tester.error}</div></div>}
+    <div className={catalog === null ? 'mcp mcp-single' : 'mcp'}>
+      {catalog !== null && <section className="card mcp-tools" aria-label="Current MCP test catalog">
+        <div className="card-head"><h2>Tool catalog</h2><span className="count">{catalog.tools.length}</span></div>
+        <div className="card-body"><dl className="dl xs"><dt>Model</dt><dd className="mono">{catalog.model}</dd><dt>Revision</dt><dd className="mono">{catalog.modelRevision}</dd><dt>Max output</dt><dd>{catalog.maximumOutputTokens} tokens</dd><dt>Reasoning</dt><dd>{catalog.reasoningPolicy}</dd></dl></div>
+        <div className="divider"/>
+        <ToolCatalog key={catalog.instanceId} tools={catalog.tools}/>
+      </section>}
+      <div className="stack-lg">
+        <section className="card">
+          <div className="card-head"><h2>Fresh prompt</h2><span className="xs muted">{bytes === null ? 'Invalid Unicode scalar input' : `${bytes} / ${MAX_PROMPT_BYTES} UTF-8 bytes`}</span></div>
+          <form className="card-body stack" onSubmit={event => { event.preventDefault(); void tester.run(); }}>
+            <textarea id={promptId} className="textarea" value={tester.prompt} onChange={event => tester.setPrompt(event.target.value)} rows={4} disabled={tester.starting} aria-label="Fresh prompt" placeholder="Ask something the archive should be able to answer, e.g. “Where did we decide the retry cap for the uploader?”"/>
+            <div className="form-actions">
+              {running
+                ? <button type="button" className="btn btn-danger-quiet" disabled={tester.cancelling || tester.starting || !tester.connected} onClick={() => void tester.cancel()}>{tester.cancelling ? 'Requesting cancel…' : 'Request cancellation'}</button>
+                : <button type="submit" className="btn btn-primary" disabled={blocked || bytes === null || bytes > MAX_PROMPT_BYTES || tester.prompt.trim().length === 0}><Glyph name="play"/>{tester.starting ? 'Submitting once…' : 'Run fresh prompt'}</button>}
+              <Anchored className="context-help mcp-run-help" buttonClassName="btn btn-ghost btn-icon" buttonState={undefined} ariaLabel="About running prompts" describedBy={undefined} panel="dialog" panelClassName="popover" panelLabel={undefined} label={<Glyph name="info"/>}>
+                <p>Run incurs model cost and may send authorized source data to the declared model through read-only tools. Each run uses only this prompt and a fresh tool catalog; no prior run is added. Starts are never replayed automatically.</p>
+                <p>Cancellation cannot recall data or guarantee the provider stopped or incurred no cost. Traces are temporary and reauthorized while displayed.</p>
+              </Anchored>
+              <span className="xs muted">Every run starts a new instance; nothing is remembered between runs.</span>
+            </div>
+          </form>
+        </section>
+        {handle !== null && <section className="card" aria-label="MCP run controls">
+          <div className="card-head"><h2>Run</h2><span className={`status ${STATUS_CLASS[state]}`} data-run-state={state}>{state}</span>
+            <button type="button" className="btn btn-sm" disabled={tester.starting || !tester.connected} onClick={tester.retryRead}>Read original run</button>
+            <button type="button" className="btn btn-sm btn-ghost" disabled={tester.starting || tester.cancelling || (running && !acknowledged)} onClick={() => tester.clear(acknowledged)}>Clear run and trace</button>
+            <Anchored className="" buttonClassName="btn btn-sm btn-ghost btn-icon" buttonState={undefined} ariaLabel="Run identifiers" describedBy={undefined} panel="dialog" panelClassName="popover mcp-popover" panelLabel={undefined} label={<Glyph name="more"/>}>
+              <dl className="dl dl-stack xs"><dt>Original instance</dt><dd className="mono">{handle.instanceId}</dd><dt>Run</dt><dd className="mono">{handle.runId}</dd>{tester.observedAt !== null && <><dt>Observed</dt><dd>{tester.observedAt}</dd></>}</dl>
+            </Anchored>
+          </div>
+          <div className="card-body stack-sm">
+            {running && <p className="xs muted">Cancellation cannot guarantee that the provider stopped or incurred no cost.</p>}
+            {running && <label className="check"><input type="checkbox" checked={acknowledged} onChange={event => setAcknowledged(event.target.checked)}/>I acknowledge that this run may still be active or have incurred cost. Clearing loses its controls; a new Run may incur additional cost.</label>}
+            <section className="mcp-trace stack-sm" aria-label="MCP test trace" aria-live="polite"><Trace rows={rows}/></section>
+            {running && <div className="list-foot"><span className="spinner" aria-hidden="true"/>Waiting for the model…</div>}
+          </div>
+        </section>}
+      </div>
+    </div>
   </main>;
 }

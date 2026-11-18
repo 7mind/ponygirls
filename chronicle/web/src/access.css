@@ -1,0 +1,20 @@
+/* Access view on the shared components (spec §3.1; mockup chronicle-access.html). */
+.access-invitation{display:flex;align-items:center;gap:var(--space-3);min-height:48px;padding:var(--space-2) var(--space-4);border-bottom:1px solid var(--border);font-size:var(--text-sm)}
+.access-invitation:last-child{border-bottom:0}
+.access-invitation code{font-size:var(--text-xs);overflow-wrap:anywhere}
+.access-group-id{display:block;min-width:0;overflow-wrap:anywhere}
+.access-invite-input{max-width:280px}
+.card[data-group-id] .table th:nth-child(1){width:40%}
+.card[data-group-id] .table th:nth-child(3){width:200px}
+.card[data-group-id] .table td:nth-child(3) .btn{max-width:100%}
+.card-foot .xs{margin-left:var(--space-2)}
+@media(max-width:720px){
+  .page-head{flex-wrap:wrap}
+  .card-head{flex-wrap:wrap}
+  .card[data-group-id] .table th:nth-child(1){width:auto}
+  .card[data-group-id] .table th:nth-child(2){width:84px}
+  .card[data-group-id] .table th:nth-child(3){width:96px}
+  .card-foot{flex-wrap:wrap}
+  .access-invite-input{max-width:none;flex:1 1 100%}
+  .access-invitation{flex-wrap:wrap}
+}

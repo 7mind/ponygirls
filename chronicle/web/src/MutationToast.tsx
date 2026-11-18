@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { Glyph } from './Glyph.tsx';
 import './mutation-toast.css';
 
 const NOTIFICATION_DURATION_MS = 6000;
@@ -26,8 +27,8 @@ export function MutationToast({ message, dismiss }: { message: string; dismiss()
     const started = performance.now(), timer = window.setTimeout(() => onDismiss.current(), remaining.current);
     return () => { window.clearTimeout(timer); remaining.current = Math.max(0, remaining.current - (performance.now() - started)); };
   }, [paused]);
-  return createPortal(<section className="mutation-toast" aria-label="Notifications" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocusCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
-    <p role="status" aria-live="polite" aria-atomic="true">{message}</p>
-    <button type="button" aria-label="Dismiss notification" onClick={dismiss}><span aria-hidden="true">×</span></button>
+  return createPortal(<section className="toasts" aria-label="Notifications" onMouseEnter={() => setHovered(true)} onMouseLeave={() => setHovered(false)} onFocusCapture={() => setFocused(true)} onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false); }}>
+    <div className="toast"><Glyph name="check"/><p role="status" aria-live="polite" aria-atomic="true">{message}</p>
+      <button type="button" className="btn btn-icon btn-sm" aria-label="Dismiss notification" onClick={dismiss}><Glyph name="x"/></button></div>
   </section>, host);
 }

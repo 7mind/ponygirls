@@ -1,4 +1,12 @@
-.mutation-toast{position:fixed;z-index:100;right:16px;bottom:16px;display:flex;align-items:center;gap:16px;box-sizing:border-box;width:max-content;max-width:min(440px,calc(100vw - 32px));padding:12px 16px;background:var(--paper);color:var(--ink);border:1px solid var(--control-border);border-radius:4px;box-shadow:0 8px 24px var(--shadow-soft);font-size:13px;line-height:1.5}
-.mutation-toast p{margin:0;min-width:0;overflow-wrap:anywhere}
-.mutation-toast button{flex:none;display:grid;place-items:center;min-width:32px;min-height:32px;padding:0;font-size:20px}
-@media(max-width:640px){.mutation-toast{right:8px;bottom:8px;max-width:calc(100vw - 16px);gap:8px;padding:12px}}
+/* Toast and notices on the shared components (.toasts/.toast, .notice). */
+.toasts{max-width:calc(100vw - var(--space-4))}
+.toast{max-width:100%}
+.toast p{min-width:0;overflow-wrap:anywhere}
+.mutation-notices{padding-top:var(--space-4)}
+/* The shell's legacy rules (styles.css) still restyle every button, paragraph and notice inside .global-mutation-notices;
+ * unlayered, they outrank the shared layer. Reverting to the shared layer here keeps notices on the design system. */
+.mutation-notices :is(.notice,h3,p,code,button){all:revert-layer}
+.mutation-notices .notice h3+p,.mutation-notices .notice p+p{margin-top:var(--space-2)}
+.mutation-notices .notice>div{min-width:0;overflow-wrap:anywhere}
+.mutation-notices .notice-actions{flex-wrap:wrap}
+.mutation-notices code{overflow-wrap:anywhere}
