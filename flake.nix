@@ -1187,6 +1187,10 @@
           inherit (import ./nix/tests/jvm-suites.nix { inherit pkgs; squishLib = inputs.squish.lib; })
             chronicle-backend-full haystack-jvm shared-jvm;
           chronicle-browser = pkgs.callPackage ./nix/tests/chronicle-browser.nix { };
+          chronicle-account-e2e = pkgs.callPackage ./nix/tests/chronicle-account-e2e.nix {
+            chroniclePackage = self.packages.${system}.chronicle;
+            fixtureTools = self.packages.${system}.service-test-fixture-tools;
+          };
           chronicle-eval = pkgs.callPackage ./nix/tests/chronicle-eval.nix { };
           account-web-browser = pkgs.callPackage ./nix/tests/account-web-browser.nix { };
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
@@ -1321,7 +1325,7 @@
             checks = self.checks.${system};
             packages = self.packages.${system};
             chronicle = {
-              inherit (checks) chronicle chronicle-backend-full chronicle-browser chronicle-web chronicle-collector chronicle-protocol
+              inherit (checks) chronicle chronicle-backend-full chronicle-browser chronicle-account-e2e chronicle-web chronicle-collector chronicle-protocol
                 chronicle-eval chronicle-modules chronicle-models chronicle-hm-server shared-jvm;
               inherit (packages) chronicle-cli;
             };

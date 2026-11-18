@@ -96,11 +96,13 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await waitForBoundary(purpose);
     }
   }
-  // The proof of a newly generated key: verified without the account's previous steps, then its step is the last one.
+  // The proof of a newly generated key is verified without the account's previous steps; the account then keeps the
+  // higher of its last step and the proving one (a reset does not lower it).
   function setupCode(account, secret) {
+    const previous = lastStep.has(account) ? lastStep.get(account) : -1;
     lastStep.delete(account);
     const step = usableStep(account);
-    lastStep.set(account, step);
+    lastStep.set(account, Math.max(previous, step));
     return remember(totpCode(secret, step));
   }
   // A code of a replaced key for a step the account has not used: it would be accepted if the key still counted.
@@ -291,6 +293,7 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       await button(userRow(adminPage, ALICE), `Approve ${ALICE}…`).click();
       const application = dialog(adminPage, `Application of “${ALICE}”`);
       await application.getByText(`${email} (not verified)`).waitFor();
+      await shot(adminPage, 'approve-application');
       await button(application, 'Approve').click();
       await toast(adminPage, `${ALICE} approved`);
       await userRow(adminPage, ALICE).getByText('Active', { exact: true }).waitFor();
@@ -316,6 +319,8 @@ export async function runAccountFlow({ baseUrl, service, admin, browserType, lau
       if (service === 'chronicle') await tokenForm.getByRole('checkbox', { name: /^Read —/ }).check();
       await button(tokenForm, 'Create token').click();
       const secretPanel = aliceLaptop.locator('[data-account-secret]');
+      await secretPanel.waitFor();
+      await shot(aliceLaptop, 'token-secret-shown-once');
       await button(secretPanel, 'Reveal').click();
       apiToken = remember(await secretPanel.getByLabel('One-time token secret', { exact: true }).inputValue());
       await button(secretPanel, 'I have saved it').click();
