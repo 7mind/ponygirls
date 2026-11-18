@@ -128,8 +128,6 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     label(PassageFormat.LegacyAnnotations)
     try body finally label(PassageFormat.ContextAwareProblems)
   }
-  private def requireCurrentFormat(stored: Publication): Unit =
-    Check(stored.format.contains(PassageFormat.ContextAwareProblems),"unavailable","generation is not in the current passage format")
   def share(owner: String,reader: String): Unit = synchronized { sharing+=((owner,reader)); () }
   def revokeSharing(owner: String,reader: String): Unit = synchronized { sharing-=((owner,reader)); () }
   def setEnabled(owner: String,value: Boolean): Unit = synchronized { if(value) disabled-=owner else disabled+=owner; () }
@@ -166,7 +164,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
   }
   private def head(reader: String,id: UUID): Head = sources.values.find(h => h.id==id && !removed(id) && enabled(h.owner) && enabled(reader) && (h.owner==reader || sharing((h.owner,reader)))).getOrElse(throw DomainError("not-found","not found"))
   def session(reader: String,id: UUID): SessionInfo = synchronized {
-    val h=head(reader,id); val value=published.get(id)
+    val h=head(reader,id); selectView(reader,id,None); val value=published.get(id)
     val (view,r)=value.map(x => (x._1,x._2)).getOrElse((ContentView(h.revision,None),h.request))
     SessionInfo(view,id,h.owner,h.revision,h.indexed,r.metadata,r.source,r.completion,r.redacted)
   }
@@ -230,6 +228,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     Check(view.revision>0,"invalid","content revision must be positive")
     Check(revisions.contains((id,view.revision)) && view.generationId.forall(g => generations.get(g).exists(p => p.sessionId==id && p.view==view)),"not-found","content view not found")
     Check(!view.generationId.exists(retired),"indexed-view-retired","indexed content view was retired by an explicit rebuild")
+    Check(view.generationId.forall(g => generations(g).format.contains(PassageFormat.ContextAwareProblems)),"unavailable","indexed content view is not in the current passage format")
     view
   }
   def raw(reader: String,id: UUID,revision: Option[Int]): RawResult = synchronized {
@@ -247,7 +246,7 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     view.generationId match {
       case None => PassagesResult(view,PassageFormat.Unindexed,Nil,0,offset)
       case Some(generation) =>
-        val stored=generations(generation); requireCurrentFormat(stored); val values=stored.problems.map(_.passages).getOrElse(Vector.empty)
+        val stored=generations(generation); val values=stored.problems.map(_.passages).getOrElse(Vector.empty)
         PassagesResult(view,PassageFormat.ContextAwareProblems,values.drop(offset).take(limit).map(ProblemsPublication.info).toList,values.size.toLong,offset)
     }
   }
@@ -255,7 +254,6 @@ final class DummyArchive(config: Config,catalog: IndexProfileCatalog) extends Se
     Check.contentPage(offset,limit); val view=selectView(reader,id,selector)
     val generation=view.generationId.getOrElse(throw DomainError("invalid","passage spans require an indexed content view"))
     val stored=generations(generation)
-    requireCurrentFormat(stored)
     val publication=stored.problems.getOrElse(throw DomainError("not-found","passage not found"))
     val passage=publication.passages.find(_.id==passageId).getOrElse(throw DomainError("not-found","passage not found"))
     val spans=publication.spans.iterator.filter(_.passageOrdinal==passage.ordinal).drop(offset).take(limit).map { span =>

@@ -142,6 +142,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
   def facets(reader: String,f: SearchFilter,materialization: ReadMaterialization): FacetsResult = db.transaction { c =>
     c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
     materialization.begin(c)
+    PassageStorage.requireCurrentPublications(c,archive.visible,reader)
     val source=facetCorpus(reader,f)
     val corpus=source.sql
     val args=source.args
@@ -174,6 +175,7 @@ final class PostgresSearch(db: Database, archive: PostgresArchive,config: Config
     db.transaction { c =>
       c.setTransactionIsolation(Connection.TRANSACTION_REPEATABLE_READ)
       materialization.begin(c)
+      PassageStorage.requireCurrentPublications(c,archive.visible,reader)
       materialization.selected(c,ReadSources.Selection(ReadSources.Query(selection,args),"value COLLATE \"C\"",q.limit)) { value =>
         val cursor=value.hcursor
         val text=cursor.get[String]("value").fold(_ => throw DomainError("projection","invalid tag value"),identity)

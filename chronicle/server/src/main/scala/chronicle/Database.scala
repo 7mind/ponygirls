@@ -165,8 +165,9 @@ final class PostgresArchive(db: Database, config: Config) extends SessionArchive
     val view=selector.getOrElse(ContentView(indexed.getOrElse(head),published))
     Check(view.revision>0,"invalid","content revision must be positive")
     view.generationId.foreach { generation =>
-      val retired=Sql.one(c,"SELECT retired FROM ch_generations WHERE id=? AND session_id=? AND revision=?",generation,id,view.revision)(_.getBoolean(1)).getOrElse(throw DomainError("not-found","content view not found"))
+      val (retired,current)=Sql.one(c,"SELECT retired,passage_format IS NOT DISTINCT FROM ? FROM ch_generations WHERE id=? AND session_id=? AND revision=?",PassageFormat.ContextAwareProblems.toString,generation,id,view.revision)(r => (r.getBoolean(1),r.getBoolean(2))).getOrElse(throw DomainError("not-found","content view not found"))
       Check(!retired,"indexed-view-retired","indexed content view was retired by an explicit rebuild")
+      Check(current,"unavailable","indexed content view is not in the current passage format")
     }
     Check(Sql.one(c,"SELECT 1 FROM ch_revisions WHERE session_id=? AND revision=?",id,view.revision)(_ => true).contains(true),"not-found","content view not found")
     view

@@ -105,6 +105,8 @@ final class PostgresExpressionHintIndex(db: Database,archive: PostgresArchive,cl
 private[chronicle] final class PostgresExpressionHintStore(db: Database,archive: PostgresArchive,clock: Clock) extends ExpressionHintStore {
   private val unicode="COLLATE pg_unicode_fast"
   private val statementMillis=5000
+  /** Archive hint fields whose values include the generated tags of publications. */
+  private val generatedTagFields: Set[HintField]=Set(HintField.Tag,HintField.Tags)
   private def archiveValues(reader: String,field: HintField): ActivitySql = {
     val heads=s"""WITH hint_heads AS MATERIALIZED(SELECT s.owner,s.published,i.metadata,i.source,i.last_timestamp
       FROM ch_sources s JOIN ch_revision_info i ON i.session_id=s.id AND i.revision=s.revision WHERE ${archive.visible})"""
@@ -119,7 +121,7 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case HintField.Tag | HintField.Tags => "jsonb_array_elements_text(metadata->'tags')"
       case _ => throw DomainError("internal","unsupported archive hint field")
     }
-    val tags=if(field==HintField.Tag || field==HintField.Tags) " UNION ALL SELECT tag AS value FROM hint_heads h JOIN ch_generation_tags t ON t.generation=h.published" else ""
+    val tags=if(generatedTagFields(field)) " UNION ALL SELECT tag AS value FROM hint_heads h JOIN ch_generation_tags t ON t.generation=h.published" else ""
     ActivitySql(heads+s", hint_universe AS (SELECT $scalar AS value FROM hint_heads$tags)",List(reader,reader,reader))
   }
   private def activityValues(reader: String,now: Instant,target: ExpressionHintTarget,field: HintField): ActivitySql = {
@@ -164,7 +166,9 @@ private[chronicle] final class PostgresExpressionHintStore(db: Database,archive:
       case None => HintValues(now,Nil,false)
       case Some(selected) =>
         val source=target match {
-          case _: ExpressionHintTarget.Archive => archiveValues(reader,selected)
+          case _: ExpressionHintTarget.Archive =>
+            if(generatedTagFields(selected)) PassageStorage.requireCurrentPublications(c,archive.visible,reader)
+            archiveValues(reader,selected)
           case _ => activityValues(reader,now,target,selected)
         }
         val ctes=source.text+s""", hint_distinct AS MATERIALIZED(SELECT DISTINCT value COLLATE "C" AS value FROM hint_universe

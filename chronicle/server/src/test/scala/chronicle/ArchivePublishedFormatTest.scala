@@ -59,4 +59,27 @@ class ArchivePublishedFormatTest extends munit.FunSuite {
     assertEquals(browse(index,"b").total,0L)
     assertEquals(archive.messages("a",receipt.sessionId,0,100,Some(published)).view,published)
   }}
+  test("Blackbox GoodCommunication: a published leftover in an old format is unavailable to its session, message, search, facet, tag and hint readers; revision-only reads stay") { OwnerProfilePostgres.withDatabase { (config,db,archive,catalog) =>
+    val request=Fixtures.snapshot(); val receipt=archive.ingest("a",request)
+    val claim=archive.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get
+    assert(archive.publish(claim,List(IndexedChunk(Fragments.split(claim.snapshot.messages).head.copy(sessionId=receipt.sessionId,tags=List("generated")),List(1.0,0.0,0.0)))))
+    val view=archive.session("a",receipt.sessionId).view
+    val search=new PostgresSearch(db,archive,config); val hints=new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC())
+    val noFilter=SearchFilter(None,None,None,None,Nil); val lexical=SearchQuery("synthetic",SearchMode.Lexical,noFilter,20,0)
+    val reads: List[() => Any]=List(
+      () => archive.readSession("a",receipt.sessionId,Some(view)),
+      () => archive.messages("a",receipt.sessionId,0,100,Some(view)),
+      () => search.search("a",lexical,None),
+      () => search.facets("a",noFilter),
+      () => search.tags("a",TagSearchQuery("",noFilter,None,100)),
+      () => hints.hints("a",ExpressionHintQuery(ExpressionHintTarget.Archive(),"tag:",4,20)))
+    reads.foreach(read => read())
+    Fixtures.leftover(db,view.generationId.get) {
+      reads.foreach(read => assertEquals(intercept[DomainError](read()).code,"unavailable"))
+      val revision=ContentView(1,None)
+      assertEquals(archive.messages("a",receipt.sessionId,0,100,Some(revision)).view,revision)
+      assertEquals(archive.raw("a",receipt.sessionId,Some(1)).files,request.files)
+    }
+    assertEquals(search.search("a",lexical,None).hits.map(_.session.id),List(receipt.sessionId))
+  }}
 }

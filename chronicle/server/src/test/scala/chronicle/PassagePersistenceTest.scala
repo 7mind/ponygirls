@@ -181,14 +181,19 @@ abstract class PassagePersistenceContract extends munit.FunSuite {
     val expiring=f.archive.claim(f.catalog.knownProfiles,ClaimScope.Owner("a"),0).get
     assert(!f.archive.publishProblems(expiring,oneProblem(expiring))); assertEquals(f.archive.session("a",expired.sessionId).indexedRevision,None)
   }}
-  test("BG/GoodCommunication: a leftover generation in an old format that is not retired is unavailable to passage reads only, never relabeled") { withFixture { f =>
-    val (receipt,_,publication,view)=publish(f,request(List("A🙂"))); val chunks=f.chunks("a",receipt.sessionId,view)
+  test("BG/GoodCommunication: a leftover generation in an old format that is not retired is unavailable to every indexed read, never relabeled; revision-only reads stay") { withFixture { f =>
+    val original=request(List("A🙂")); val (receipt,_,publication,view)=publish(f,original); val chunks=f.chunks("a",receipt.sessionId,view)
     f.leftover(view.generationId.get) {
-      assertEquals(intercept[DomainError](f.reader.passages("a",receipt.sessionId,0,100,Some(view))).code,"unavailable")
-      assertEquals(intercept[DomainError](f.reader.passageSpans("a",receipt.sessionId,publication.passages.head.id,0,100,Some(view))).code,"unavailable")
-      assertEquals(f.chunks("a",receipt.sessionId,view),chunks)
+      val indexed: List[() => Any]=List(
+        () => f.archive.session("a",receipt.sessionId),
+        () => f.chunks("a",receipt.sessionId,view),
+        () => f.reader.passages("a",receipt.sessionId,0,100,Some(view)),
+        () => f.reader.passageSpans("a",receipt.sessionId,publication.passages.head.id,0,100,Some(view)))
+      indexed.foreach(read => assertEquals(intercept[DomainError](read()).code,"unavailable"))
       assertEquals(f.reader.passages("a",receipt.sessionId,0,100,Some(ContentView(1,None))).format,PassageFormat.Unindexed)
+      assertEquals(f.raw("a",receipt.sessionId,1).files,original.files)
     }
+    assertEquals(f.chunks("a",receipt.sessionId,view),chunks)
   }}
 }
 final class PassagePersistenceDummyTest extends PassagePersistenceContract {
