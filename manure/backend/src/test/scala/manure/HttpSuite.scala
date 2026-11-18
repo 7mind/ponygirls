@@ -7,6 +7,8 @@ import org.http4s.{Header,Method,Request,Uri}
 import org.typelevel.ci.CIString
 import manure.{api => wire}
 import ponygirls.retrieval.postgres.PostgresRetrieval
+import ponygirls.auth.{AccountJson,CredentialGate,FastPasswordHasher,Secrets,Totp}
+import java.nio.file.Files
 import java.util.UUID
 import scala.concurrent.duration.*
 import munit.FunSuite
@@ -20,13 +22,16 @@ final class HttpSuite extends FunSuite:
     token.foreach(v => r = r.putHeaders(Header.Raw(CIString("Authorization"),"Bearer " + v)))
     origin.foreach(v => r = r.putHeaders(Header.Raw(CIString("Origin"),v)))
     r
+  private val gate = CredentialGate.resource.use(IO.pure).unsafeRunSync()
   private def app(f: BackendFixture,adjust: Config => Config = c => c): Http =
     val config = adjust(f.config.copy(apiOrigin=ApiOrigin.parse("http://127.0.0.1:47329"),port=47329))
     val engine = new PostgresRetrieval("manure",None)
     val projection = new SearchProjection(config,engine)
-    val auth = new Auth(config.users)
+    val auth = new Auth(config.users,config.accounts)
     val search = new Search(f.database.get,f.lease,config,auth,f.clock,engine,projection,None)
-    new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),auth,f.clock,search,new Accounts(f.metadata,auth))
+    val accounts = new Accounts(f.metadata,auth)
+    new Http(config,f.artifacts,new Catalogue(f.artifacts,config.limits,f.clock),auth,f.clock,search,accounts,
+      new AccountPlane(f.metadata,auth,accounts,gate,FastPasswordHasher,f.clock))
   private def command(c: wire.Command,token: Option[String],origin: Option[String] = None): Request[IO] =
     request(Method.POST,"/api/current",token,origin).withEntity(CurrentWire.encode(wire.ClientEnvelope.codecJson,
       wire.ClientEnvelope(UUID.fromString("01234567-89ab-4def-8123-456789abcdef"),"1.0.0",c)).noSpaces)
@@ -180,6 +185,51 @@ final class HttpSuite extends FunSuite:
         Vector(login,settings,issue,immutable,unknown,invalidScope,listed,revoke,logout,sessionReplay).foreach { response =>
           assert(response.headers.headers.exists(x => x.name == CIString("Cache-Control") && x.value == "no-store"))
         }
+      }
+    yield ()
+  }}
+  test("imperative signup, approval, login, profile, search and logout through the owner-key mapping in path mode") { run { (f,_) =>
+    val origin = "http://127.0.0.1:47329"
+    val key = Files.writeString(f.rootPath.resolveSibling("accounts.key"),Secrets.generate())
+    val h = app(f,c => c.copy(users=c.users.map(u => if u.login.contains("loginonly") then u.copy(admin=true) else u),
+      accounts=Some(AccountsConfig(true,Some(key),AccountSignupConfig(true,true,100),AccountsConfig.defaultEnrollment,"Manure (127.0.0.1)",Vector.empty))))
+    val secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    val code = Totp.code(Totp.decodeSecret(secret).get,Totp.stepAt(java.time.Instant.ofEpochSecond(f.clock.now.toLong)))
+    def account(method: Method,path: String,body: Option[String],cookie: Option[String],owner: Option[String]): Request[IO] =
+      val base = request(method,"/api/account/v1" + path,None,Some(origin))
+      val withBody = body.fold(base)(b => base.withEntity(b).putHeaders(Header.Raw(CIString("Content-Type"),"application/json")))
+      withBody.putHeaders((cookie.map(v => Header.Raw(CIString("Cookie"),v)) ++ owner.map(id => Header.Raw(CIString("X-Account-Actor"),AccountJson.actor(id)))).toSeq.map(Header.ToRaw.rawToRaw)*)
+    def setCookie(response: org.http4s.Response[IO]): Option[String] =
+      response.headers.headers.find(_.name == CIString("Set-Cookie")).map(_.value.takeWhile(_ != ';'))
+    val login = account(Method.POST,"/login",Some("""{"login":"alice","password":"synthetic alice password"}"""),None,None)
+    for
+      signup <- h.app.run(account(Method.POST,"/signup",Some(s"""{"username":"alice","email":"alice@example.test","password":"synthetic alice password","totpSecret":"$secret","totpCode":"$code","requireTotp":false}"""),None,None))
+      signupBody <- signup.as[String]
+      pending <- h.app.run(login)
+      pendingBody <- pending.as[String]
+      _ <- IO {
+        assertEquals((signup.status.code,signupBody,setCookie(signup)),(202,"""{"status":"pending"}""",None))
+        assertEquals((pending.status.code,CurrentWire.parse(pendingBody).hcursor.downField("error").get[String]("code").toOption),(403,Some("pending-approval")))
+      }
+      adminLogin <- h.app.run(account(Method.POST,"/login",Some("""{"login":"loginonly","password":"fixture-password"}"""),None,None))
+      approved <- h.app.run(account(Method.POST,"/admin/users/alice/approve",Some("{}"),setCookie(adminLogin),Some("loginonly")))
+      signedIn <- h.app.run(login)
+      cookie = setCookie(signedIn).get
+      profile <- h.app.run(account(Method.GET,"/profile",None,Some(cookie),None)).flatMap(_.as[String]).map(CurrentWire.parse(_).hcursor)
+      owners <- f.database.get.transaction(c => Jdbc.rows(c,"SELECT owner FROM ponygirls_account_sessions")(_.getString(1)))
+      initialized <- f.artifacts.init(f.identity,InitUpload("imperative needle",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
+      _ <- f.artifacts.finish(f.identity,initialized.artifact.id)
+      found <- h.app.run(command(wire.Command.Search(wire.SearchQuery("needle",wire.SearchMode.Lexical,wire.SearchFilter(None,None,None,Nil,None,None),1,None)),None,Some(origin))
+        .putHeaders(Header.Raw(CIString("Cookie"),cookie))).flatMap(_.as[String])
+      logout <- h.app.run(account(Method.POST,"/logout",Some("{}"),Some(cookie),Some("alice")))
+      replay <- h.app.run(account(Method.GET,"/profile",None,Some(cookie),None))
+      _ <- IO {
+        assertEquals((approved.status.code,signedIn.status.code),(200,200))
+        assertEquals((profile.downField("user").get[String]("id").toOption,profile.get[String]("source").toOption),(Some("alice"),Some("imperative")))
+        assert(owners.contains(SecretCodec.sha256("manure-account-owner-v1\u0000alice")) && !owners.contains("alice"),clue(owners))
+        val page = CurrentWire.decode(wire.ServerEnvelope.codecJson,CurrentWire.parse(found)).result.asInstanceOf[wire.Result.SearchResults].page
+        assertEquals(page.hits.map(_.artifact.artifactId),List(initialized.artifact.id))
+        assertEquals((logout.status.code,replay.status.code),(200,401))
       }
     yield ()
   }}

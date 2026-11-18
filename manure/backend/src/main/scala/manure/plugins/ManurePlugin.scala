@@ -9,6 +9,7 @@ import ponygirls.runtime.JdbcDatabase
 import ponygirls.retrieval.{EmbeddingClient,RetrievalProfile}
 import ponygirls.retrieval.postgres.PostgresRetrieval
 import manure.storage.{ConfinedDirectory,RootLease}
+import ponygirls.auth.PasswordHasher
 
 final class RuntimeTransactions(database: JdbcDatabase,root: RootLease) extends JdbcTransactions:
   def transaction[A](body: java.sql.Connection => A): IO[A] = database.transaction(c => root.run(body(c)))
@@ -27,6 +28,8 @@ object ManurePlugin extends PluginDef:
   make[Faults].fromValue(NoFaults)
   make[Auth]
   make[Vector[UserConfig]].from((config: Config) => config.users)
+  make[Option[AccountsConfig]].from((config: Config) => config.accounts)
+  make[PasswordHasher].fromValue(PasswordHasher.Pbkdf2)
   make[JdbcTransactions].from[RuntimeTransactions]
   make[PostgresRetrieval].from { (config: Config) =>
     new PostgresRetrieval("manure",config.embedding.map(e => RetrievalProfile(e.endpoint.space,"manure-metadata-paths-v1")))
@@ -36,6 +39,7 @@ object ManurePlugin extends PluginDef:
   make[Payloads].from[FilesystemPayloads]
   make[Artifacts]
   make[Accounts]
+  make[AccountPlane]
   make[Catalogue]
   make[Search]
   make[SearchWorker]

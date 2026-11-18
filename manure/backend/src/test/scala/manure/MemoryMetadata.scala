@@ -2,6 +2,7 @@ package manure
 
 import cats.effect.IO
 import manure.storage.RootLease
+import ponygirls.auth.MemoryImperativeUsers
 
 /** Handwritten contract dummy, not a second database/isolation emulator. Exact PG
   * lock contention and uncertain commit cases live in real-adapter-only suites.
@@ -10,9 +11,10 @@ final class MemoryMetadata(root: RootLease) extends Metadata:
   private case class State(artifacts: Map[String,Artifact],receipts: Map[(String,String,Long),Receipt],
     oneTime: Map[String,OneTimeGrant],content: Map[String,ContentGrant],passwords: Map[String,ExternalPasswordSecret],accounts: MemoryAccountState)
   private var committed = State(Map.empty,Map.empty,Map.empty,Map.empty,Map.empty,MemoryAccountState.empty)
-  def transaction[A](body: MetadataTxn => A): IO[A] = IO.blocking { synchronized { root.run {
+  private val imperativeUsers = new MemoryImperativeUsers
+  def transaction[A](body: MetadataTxn => A): IO[A] = IO.blocking { synchronized { root.run { imperativeUsers.transaction {
     var s = committed
-    val accountTx = new MemoryAuthTxn(s.accounts)
+    val accountTx = new MemoryAuthTxn(s.accounts,imperativeUsers,user => s.artifacts.values.exists(_.createdByUser == user))
     val tx = new MetadataTxn:
       val accounts: AuthTxn = accountTx
       def artifact(id: String): Option[Artifact] = s.artifacts.get(id)
@@ -55,4 +57,4 @@ final class MemoryMetadata(root: RootLease) extends Metadata:
     val result = body(tx)
     committed = s.copy(accounts=accountTx.state)
     result
-  }}}
+  }}}}

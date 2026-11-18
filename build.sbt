@@ -139,7 +139,7 @@ lazy val haystackServer = project.in(file("haystack/server")).dependsOn(haystack
   assembly / mainClass := Some("haystack.Main"),
   assembly / assemblyJarName := "haystack-server.jar"
 )
-lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContracts, manureStorage, serviceRuntime, serviceAuth, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings ++ manureTestChildSettings).settings(
+lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContracts, manureStorage, serviceRuntime, serviceAuth % "compile->compile;test->test", modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings ++ manureTestChildSettings).settings(
   name := "manure-server",
   Compile / mainClass := Some("manure.Main"),
   assembly / mainClass := Some("manure.Main"),

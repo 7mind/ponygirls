@@ -6,7 +6,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import java.nio.file.Files
 import munit.FunSuite
-import ponygirls.auth.{AccountFailure,Password}
+import ponygirls.auth.{AccountFailure,AccountRequest,CredentialGate,FastPasswordHasher,Password,Secrets,Totp}
 
 /** Specified-origin behavioral blackbox contract; same cases against the
   * handwritten metadata dummy and production PostgreSQL/root/FS adapter.
@@ -237,6 +237,32 @@ abstract class AccountsContract(postgres: Boolean) extends FunSuite:
       _ <- rejected(f.artifacts.contentInfo(id,Some(content),None,None),"grant-required")
       _ <- rejected(f.artifacts.openContent(id,"index.html",Some(content),None,None).use(_ => IO.unit),"grant-required")
     yield ()
+  }}
+
+  test("imperative names exclude artifact creators and retired ids; a declaration colliding with an account fails startup") { run { f =>
+    val key = Files.writeString(f.rootPath.resolveSibling("accounts.key"),Secrets.generate())
+    val settings = AccountsConfig(true,Some(key),AccountSignupConfig(true,false,100),AccountsConfig.defaultEnrollment,"Manure (fixture)",Vector.empty)
+    val users = f.config.users.filterNot(_.id == "other").map(u => if u.id == "loginonly" then u.copy(admin=true) else u)
+    val auth = new Auth(users,Some(settings))
+    val accounts = new Accounts(f.metadata,auth)
+    val secret = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+    val code = Totp.code(Totp.decodeSecret(secret).get,Totp.stepAt(java.time.Instant.ofEpochSecond(f.clock.now.toLong)))
+    def signup(plane: AccountPlane,name: String): IO[Int] = plane.handle(AccountRequest("POST","/signup",Some(io.circe.parser.parse(
+      s"""{"username":"$name","email":"$name@example.test","password":"synthetic account password","totpSecret":"$secret","totpCode":"$code","requireTotp":false}""").toOption.get),
+      Vector.empty,None,None,"192.0.2.1")).map(_.status)
+    CredentialGate.resource.use { gate =>
+      val plane = new AccountPlane(f.metadata,auth,accounts,gate,FastPasswordHasher,f.clock)
+      for
+        initialized <- f.artifacts.init(f.identity,InitUpload("creator",ArtifactKind.Directory,Visibility.Internal,Vector.empty,None,Vector.empty,None,None))
+        _ <- f.metadata.transaction(_.put(initialized.artifact.copy(id=SecretCodec.artifactId(),createdByUser="carol")))
+        _ <- accounts.initialize()
+        statuses <- Vector("carol","other","dave").traverse(signup(plane,_))
+        _ <- IO(assertEquals(statuses,Vector(409,409,200)))
+        dave = UserConfig("dave","human",Vector.empty,"",login=Some("dave-login"),passwordHashFile=users.head.passwordHashFile)
+        _ <- rejected(new Accounts(f.metadata,new Auth(users :+ dave,Some(settings))).initialize(),"config")
+        _ <- rejected(new Accounts(f.metadata,new Auth(users :+ dave)).initialize(),"config")
+      yield ()
+    }
   }}
 
 final class AccountsMemorySuite extends AccountsContract(false)
