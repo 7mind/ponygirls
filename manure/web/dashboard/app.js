@@ -2,7 +2,9 @@
  * Credentials and one-time passwords stay transient. No HTML injection or browser storage.
  */
 import * as current from "./current-protocol.js";
-import { FileUpload } from "./quick-upload.js";
+import { ID_RE, domHelpers, errorLabel, bytes, dateText, expired, contentUrl } from "./common.js";
+import { createDetail } from "./detail.js";
+import { createUpload } from "./upload.js";
 import { parseExpression, serializeExpression, completeExpression, acceptCompletion } from "./current-protocol.js";
 
 "use strict";
@@ -74,16 +76,8 @@ function expressionInput(input, list, change, compositionChange) {
 
 
 (function (document, window, fetch) {
-  var API = "/api/current";
-  var ID_RE = /^[0-9a-f]{32}$/;
   var PAGE_LIMIT = 25;
-  var sessionEpoch = 0;
-  var authenticated = false;
   var listGeneration = 0;
-  var detailGeneration = 0;
-  var revealGeneration = 0;
-  var passwordRead = null;
-  var openGeneration = 0;
   var pendingPage = null;
   var readBusy = false;
   var queuedRead = null;
@@ -99,61 +93,24 @@ function expressionInput(input, list, change, compositionChange) {
   var summaries = [];
   var listError = false;
   var observer = null;
-  var currentDetailId = null;
-  var currentDetailInfo = null;
   var state = readRoute().state;
-  var deleting = new Set();
-  var accessMutations = new Map();
+  var ctx = Object.assign({ document: document, window: window, fetch: fetch, apiFetch: apiFetch,
+    sessionEpoch: 0, authenticated: false, deleting: new Set(), accessMutations: new Map() }, domHelpers(document));
+  var $ = ctx.$, setText = ctx.setText, element = ctx.element;
+  var detail = createDetail(ctx, { readRoute: readRoute, routeHash: routeHash, renderList: renderList, invalidateCatalogue: invalidateCatalogue,
+    failVisible: failVisible, invalidateNavigation: invalidateNavigation, suspendForDetail: suspendForDetail, detailFailed: detailFailed });
+  var upload = createUpload(ctx, { showLoggedOut: showLoggedOut, reloadAfterUpload: reloadAfterUpload }, detail.copy);
 
-  function $(id) { return document.getElementById(id); }
-  function setText(id, text) { $(id).textContent = text; }
-  function element(tag, text, className) {
-    var node = document.createElement(tag);
-    if (text !== null) { node.textContent = text; }
-    if (className !== null) { node.className = className; }
-    return node;
-  }
-  function errorLabel(error) {
-    return error && /^[a-z0-9-]+$/.test(error.message) ? error.message : "network-error";
-  }
   function apiFetch(descriptor) {
-    var epoch = sessionEpoch;
+    var epoch = ctx.sessionEpoch;
     return current.request(fetch, descriptor).catch(function (error) {
       if (error.status === 401) {
-        if (epoch === sessionEpoch) { showLoggedOut(); }
+        if (epoch === ctx.sessionEpoch) { showLoggedOut(); }
         throw new Error("unauthorized");
       }
       throw error;
     });
   }
-  function bytes(value) {
-    if (typeof value === "bigint") { value = Number(value); }
-    if (typeof value !== "number" || !Number.isFinite(value) || value < 0) { return "—"; }
-    var units = ["B", "KiB", "MiB", "GiB", "TiB"];
-    var index = 0;
-    while (value >= 1024 && index < units.length - 1) { value /= 1024; index++; }
-    return (index === 0 ? String(value) : value.toFixed(1)) + " " + units[index];
-  }
-  function dateText(value, empty) {
-    if (value === null || value === undefined) { return empty; }
-    var date = new Date(value);
-    return Number.isFinite(date.getTime()) ? date.toLocaleString() : "Unknown";
-  }
-  function expired(item) { return typeof item.expires_at === "string" && Date.parse(item.expires_at) <= Date.now(); }
-  function contentUrl(info) {
-    if (typeof info.content_url !== "string" || info.content_url === "") { return null; }
-    try {
-      var url = new URL(info.content_url);
-      if ((url.protocol !== "http:" && url.protocol !== "https:") || url.username || url.password ||
-          !ID_RE.test(info.artifact_id) || url.search || url.hash) { return null; }
-      var subdomain = url.hostname.split(".")[0] === info.artifact_id && url.pathname === "/";
-      var pathMode = url.origin === window.location.origin &&
-        (url.pathname === "/view/" + info.artifact_id || url.pathname === "/view/" + info.artifact_id + "/");
-      if (!subdomain && !pathMode) { return null; }
-      return url.href;
-    } catch (_error) { return null; }
-  }
-
   function checkHostingMode() {
     var notice = $("path-mode-warning");
     // Hosting capabilities are public, site-wide state: a concurrent session
@@ -166,7 +123,7 @@ function expressionInput(input, list, change, compositionChange) {
       capabilities = result; capabilitiesError = false;
       notice.hidden = result.content_mode !== "path";
       updateDraft();
-      if (authenticated && readRoute().id === null) { handleRoute(true); }
+      if (ctx.authenticated && readRoute().id === null) { handleRoute(true); }
     }).catch(function () {
       if (generation !== capabilityGeneration) { return; }
       capabilities = null; capabilitiesError = true;
@@ -174,7 +131,7 @@ function expressionInput(input, list, change, compositionChange) {
       notice.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
       notice.setAttribute("aria-label", notice.title);
       updateDraft();
-      if (authenticated && readRoute().id === null) { handleRoute(true); }
+      if (ctx.authenticated && readRoute().id === null) { handleRoute(true); }
     });
   }
   function supported(value) {
@@ -258,9 +215,9 @@ function expressionInput(input, list, change, compositionChange) {
   }
 
   function invalidateNavigation() {
-    listGeneration++; pendingPage = null; queuedRead = null; detailGeneration++; openGeneration++;
+    listGeneration++; pendingPage = null; queuedRead = null;
     if (observer !== null) { observer.disconnect(); }
-    hideRotateOutput();
+    detail.invalidate();
   }
   function navigateList(next, submitted) {
     var query = stateParams(next).toString();
@@ -274,7 +231,7 @@ function expressionInput(input, list, change, compositionChange) {
     else { window.location.hash = hash; }
   }
   function handleRoute(keepDraft) {
-    if (!authenticated) { return; }
+    if (!ctx.authenticated) { return; }
     var route = readRoute();
     var changed = JSON.stringify(route.state) !== JSON.stringify(state);
     var currentDraft = keepDraft === true || !changed ? $("filter-text").value : null;
@@ -294,10 +251,8 @@ function expressionInput(input, list, change, compositionChange) {
       setText("list-status", "Invalid URL query. Edit the visible expression and press Search; no request was sent.");
       return;
     }
-    if (route.id !== null) { showDetail(route.id); return; }
-    detailGeneration++; openGeneration++; hideRotateOutput();
-    currentDetailId = null; currentDetailInfo = null;
-    $("detail-section").hidden = true;
+    if (route.id !== null) { detail.showDetail(route.id); return; }
+    detail.leave();
     $("dashboard-section").hidden = false;
     if (loadedKey !== JSON.stringify(state)) {
       summaries = []; searchPage = null; nextCursor = null; renderList();
@@ -321,23 +276,19 @@ function expressionInput(input, list, change, compositionChange) {
   function clearAccount() {
     document.dispatchEvent(new window.Event('account:invalidate'));
     delete $("account-settings").dataset.accountUserId;
-    clearUploads();
-    var hadAccount = authenticated;
-    sessionEpoch++; invalidateNavigation(); authenticated = false;
+    upload.clearUploads();
+    var hadAccount = ctx.authenticated;
+    ctx.sessionEpoch++; invalidateNavigation(); ctx.authenticated = false;
     // A URL fragment is visible to the next identity in this tab. On the
     // session boundary remove applied queries, owner filters and unsent input.
     if (hadAccount) { window.history.replaceState(null, "", "#/artifacts"); }
     state = readRoute().state;
     updateControls();
     summaries = []; searchPage = null; submittedKey = null; queuedRead = null; loadedKey = ""; nextCursor = null; listError = false;
-    currentDetailId = null; currentDetailInfo = null;
     if (observer !== null) { observer.disconnect(); }
     $("artifact-list").textContent = ""; $("retrieval-results").textContent = "";
-    $("detail-list").textContent = "";
-    $("file-list").textContent = "";
-    setText("detail-name", "Artifact"); setText("detail-subtitle", "");
-    setText("whoami-text", ""); setText("detail-status", ""); setText("list-status", "");
-    setText("access-status", ""); $("access-refresh-button").hidden = true; updateDetailActions();
+    detail.clear();
+    setText("whoami-text", ""); setText("list-status", "");
     $("list-error").hidden = true;
     $("detail-section").hidden = true;
     $("dashboard-section").hidden = true;
@@ -350,15 +301,15 @@ function expressionInput(input, list, change, compositionChange) {
     $("login-section").hidden = false;
   }
   function checkSession() {
-    var epoch = sessionEpoch;
+    var epoch = ctx.sessionEpoch;
     $("session-section").hidden = false;
     $("session-retry-button").disabled = true;
     $("session-retry-button").hidden = true;
     setText("session-status", "Checking dashboard session…");
     return apiFetch(current.whoami()).then(function (body) {
-      if (epoch !== sessionEpoch) { return false; }
+      if (epoch !== ctx.sessionEpoch) { return false; }
       if (typeof body.user_id !== "string" || !body.user_id) { throw new Error("bad-response"); }
-      authenticated = true;
+      ctx.authenticated = true;
       $("session-section").hidden = true;
       $("login-section").hidden = true;
       $("workspace-shell").hidden = false;
@@ -370,7 +321,7 @@ function expressionInput(input, list, change, compositionChange) {
       if (capabilities === null) { checkHostingMode(); }
       return true;
     }).catch(function (error) {
-      if (epoch !== sessionEpoch || error.message === "unauthorized") { return false; }
+      if (epoch !== ctx.sessionEpoch || error.message === "unauthorized") { return false; }
       $("login-section").hidden = true;
       $("session-section").hidden = false;
       setText("session-status", "The service is unavailable (" + errorLabel(error) + "). This does not mean your session expired.");
@@ -380,15 +331,14 @@ function expressionInput(input, list, change, compositionChange) {
   }
   function onLogout() {
     document.dispatchEvent(new window.Event('account:invalidate'));
-    clearUploads();
-    openGeneration++;
-    hideRotateOutput();
-    var epoch = sessionEpoch;
+    upload.clearUploads();
+    detail.cancelOpen();
+    var epoch = ctx.sessionEpoch;
     $("logout-button").disabled = true;
     apiFetch(current.logout()).then(function () {
-      if (epoch === sessionEpoch) { showLoggedOut(); }
+      if (epoch === ctx.sessionEpoch) { showLoggedOut(); }
     }).catch(function (error) {
-      if (epoch === sessionEpoch) { failVisible("Sign out could not be confirmed (" + errorLabel(error) + "). Retry to confirm sign out."); }
+      if (epoch === ctx.sessionEpoch) { failVisible("Sign out could not be confirmed (" + errorLabel(error) + "). Retry to confirm sign out."); }
     }).finally(function () { $("logout-button").disabled = false; });
   }
 
@@ -399,11 +349,11 @@ function expressionInput(input, list, change, compositionChange) {
     return button;
   }
   function appendCopyLink(container, item) {
-    var url = contentUrl(item);
+    var url = contentUrl(item, window.location.origin);
     var label = item.name || item.artifact_id;
     function unavailable() {
-      return contentUrl(item) === null ? "Content link unavailable" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" :
-        accessMutations.has(item.artifact_id) || deleting.has(item.artifact_id) ? "Artifact update in progress" : null;
+      return contentUrl(item, window.location.origin) === null ? "Content link unavailable" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" :
+        ctx.accessMutations.has(item.artifact_id) || ctx.deleting.has(item.artifact_id) ? "Artifact update in progress" : null;
     }
     var button = rowAction("", "copy-link", item, function (event) {
       event.preventDefault(); event.stopPropagation();
@@ -413,8 +363,8 @@ function expressionInput(input, list, change, compositionChange) {
         button.disabled = true; button.title = reason;
         status.textContent = reason + ". Content link unavailable."; fallback.hidden = true; return;
       }
-      var epoch = sessionEpoch, generation = listGeneration;
-      function active() { return epoch === sessionEpoch && generation === listGeneration && button.isConnected; }
+      var epoch = ctx.sessionEpoch, generation = listGeneration;
+      function active() { return epoch === ctx.sessionEpoch && generation === listGeneration && button.isConnected; }
       function manual(message) {
         if (!active()) { return; }
         var reason = unavailable();
@@ -516,13 +466,13 @@ function expressionInput(input, list, change, compositionChange) {
       row.appendChild(element("td", item.created_by_user, "owner-cell"));
       var actions = element("td", null, null);
       var group = element("div", null, "row-actions");
-      var open = rowAction("Open", "open", item, function () { openArtifact(item.artifact_id, item); });
+      var open = rowAction("Open", "open", item, function () { detail.openArtifact(item.artifact_id, item); });
       open.dataset.visibility = item.visibility;
-      open.disabled = item.state !== "ready" || expired(item) || contentUrl(item) === null || accessMutations.has(item.artifact_id);
-      open.title = contentUrl(item) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open on its isolated content origin";
+      open.disabled = item.state !== "ready" || expired(item) || contentUrl(item, window.location.origin) === null || ctx.accessMutations.has(item.artifact_id);
+      open.title = contentUrl(item, window.location.origin) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open on its isolated content origin";
       group.appendChild(open);
-      var remove = rowAction("Delete", "delete", item, function () { deleteArtifact(item.artifact_id); });
-      remove.disabled = deleting.has(item.artifact_id) || accessMutations.has(item.artifact_id);
+      var remove = rowAction("Delete", "delete", item, function () { detail.deleteArtifact(item.artifact_id); });
+      remove.disabled = ctx.deleting.has(item.artifact_id) || ctx.accessMutations.has(item.artifact_id);
       group.appendChild(remove);
       actions.appendChild(group); row.appendChild(actions);
       ["Name", "Kind", "Access", "State", "Size", "Files", "Created", "Expires", "Owner", "Actions"].forEach(function (label, index) {
@@ -542,7 +492,7 @@ function expressionInput(input, list, change, compositionChange) {
   }
   function watchList() {
     if (observer !== null) { observer.disconnect(); }
-    if (state.mode !== "catalogue" || typeof IntersectionObserver === "undefined" || nextCursor === null || listError || pendingPage !== null || !authenticated || $("dashboard-section").hidden) { return; }
+    if (state.mode !== "catalogue" || typeof IntersectionObserver === "undefined" || nextCursor === null || listError || pendingPage !== null || !ctx.authenticated || $("dashboard-section").hidden) { return; }
     var cursor = nextCursor;
     observer = new IntersectionObserver(function (entries) {
       if (entries.some(function (entry) { return entry.isIntersecting; }) && cursor === nextCursor) { loadPage(false); }
@@ -550,12 +500,12 @@ function expressionInput(input, list, change, compositionChange) {
     observer.observe($("list-sentinel"));
   }
   function loadPage(reset) {
-    if (!authenticated || readRoute().id !== null || readRoute().error !== null || capabilities === null ||
+    if (!ctx.authenticated || readRoute().id !== null || readRoute().error !== null || capabilities === null ||
         (state.mode !== "catalogue" && (!supported(state.mode) || submittedKey !== JSON.stringify(state))) ||
         (!reset && (state.mode !== "catalogue" || nextCursor === null || listError || loadedKey !== JSON.stringify(state)))) { return; }
     // Capture the entire intent now. A superseding request replaces only an
     // unsent intent, never launches another physical list/Search request.
-    var intent = { generation: ++listGeneration, epoch: sessionEpoch, cursor: reset ? null : nextCursor,
+    var intent = { generation: ++listGeneration, epoch: ctx.sessionEpoch, cursor: reset ? null : nextCursor,
       reset: reset, value: Object.assign({}, state), limit: Math.min(PAGE_LIMIT, capabilities.max_list_limit) };
     pendingPage = intent.generation; listError = false;
     $("list-error").hidden = true; $("retry-list-button").hidden = true;
@@ -576,7 +526,7 @@ function expressionInput(input, list, change, compositionChange) {
     var generation = intent.generation, epoch = intent.epoch, value = intent.value, cursor = intent.cursor;
     var descriptor = value.mode === "catalogue" ? current.catalogue(cursor,value,intent.limit) : current.search(value,intent.limit);
     apiFetch(descriptor).then(function (body) {
-      if (epoch !== sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
+      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
       if (value.mode !== "catalogue") {
         if (!Array.isArray(body.hits) || (body.next_cursor !== null && body.next_cursor !== undefined) ||
             !["exactmatches", "candidatewindow"].includes(body.count_scope) ||
@@ -601,14 +551,14 @@ function expressionInput(input, list, change, compositionChange) {
       }
       setText("list-status", resultStatus());
     }).catch(function (error) {
-      if (epoch !== sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
+      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
       listError = true;
       setText("list-status", (value.mode === "catalogue" ? "List" : "Retrieval") + " failed (" + errorLabel(error) + "). No alternate search was sent.");
       setText("list-error", "Could not load " + (value.mode === "catalogue" ? "artifacts" : "retrieval") + " (" + errorLabel(error) + "). Retry when ready.");
       $("list-error").hidden = false; $("retry-list-button").hidden = false;
     }).finally(function () {
       readBusy = false;
-      if (epoch === sessionEpoch && generation === listGeneration) { pendingPage = null; renderList(); watchList(); }
+      if (epoch === ctx.sessionEpoch && generation === listGeneration) { pendingPage = null; renderList(); watchList(); }
       pumpRead();
     });
   }
@@ -618,443 +568,29 @@ function expressionInput(input, list, change, compositionChange) {
     setText("list-error", message); $("list-error").hidden = false;
   }
 
-  function addDetailRow(term, value) {
-    $("detail-list").appendChild(element("dt", term, null));
-    $("detail-list").appendChild(element("dd", value, null));
-  }
-  function updateDetailActions() {
-    var info = currentDetailInfo;
-    var busy = currentDetailId !== null && (accessMutations.has(currentDetailId) || deleting.has(currentDetailId) ||
-      passwordRead !== null && passwordRead.id === currentDetailId);
-    var ready = info !== null && info.state === "ready";
-    var selected = $("access-mode").value;
-    $("access-mode").disabled = info === null || !ready || busy;
-    $("access-save-button").disabled = info === null || !ready || busy || selected === info.visibility;
-    $("rotate-button").hidden = info === null || info.visibility !== "external";
-    $("rotate-button").disabled = info === null || busy;
-    $("get-password-button").hidden = info === null || info.visibility !== "external";
-    $("get-password-button").disabled = info === null || busy;
-    $("delete-button").disabled = info === null || busy;
-    $("open-button").disabled = info === null || !ready || busy || contentUrl(info) === null;
-    var description = selected === "internal" ? "Only authenticated users can read this artifact, through the API or an internal access grant." : selected === "external" ? "Readers need the external password. All signed-in users can copy the current password. Older hash-only passwords require one rotation first." : "No Manure authentication is required for anyone who can reach the content URL.";
-    setText("access-description", info !== null && !ready ? "Access changes are available after the upload is ready. " + description : description);
-  }
-  function renderDetail(info, id) {
-    if (!info || info.artifact_id !== id || ["internal", "external", "public"].indexOf(info.visibility) === -1 ||
-        ["uploading", "publishing", "ready"].indexOf(info.state) === -1) { throw new Error("bad-response"); }
-    delete info.external_password;
-    currentDetailId = id; currentDetailInfo = info;
-    $("copy-id-button").disabled = false;
-    $("detail-list").textContent = "";
-    setText("detail-name", info.name || id);
-    setText("detail-subtitle", id);
-    [["Artifact ID", id], ["Kind", info.kind], ["Access", info.visibility], ["State", info.state], ["Created by", info.created_by_user],
-      ["Created", dateText(info.created_at, "Unknown")], ["Expires", dateText(info.expires_at, "Never")], ["Size", bytes(info.total_bytes)], ["Files", String(info.file_count)]].forEach(function (pair) { addDetailRow(pair[0], pair[1]); });
-    addDetailRow("Tags", info.tags.length === 0 ? "None supplied" : "");
-    if (info.tags.length !== 0) {
-      var tags = $("detail-list").lastElementChild; tags.className = "metadata-tags";
-      info.tags.forEach(function (tag) { tags.appendChild(element("span", tag, "type-badge")); });
-    }
-    addDetailRow("Hostname (supplied)", info.hostname === null || info.hostname === undefined ? "Not supplied" : info.hostname);
-    $("detail-list").lastElementChild.className = "metadata-literal";
-    addDetailRow("Project path (supplied)", info.project_path === null || info.project_path === undefined ? "Not supplied" : info.project_path);
-    $("detail-list").lastElementChild.className = "metadata-literal";
-    var url = contentUrl(info);
-    if (url !== null) { addDetailRow("Content URL", url); }
-    $("copy-link-button").disabled = url === null;
-    $("access-mode").value = info.visibility;
-    if (info.visibility !== "external") { hideRotateOutput(); }
-    updateDetailActions();
-    setText("content-note", url === null ? "Content hosting is not configured. Use the file downloads below or the CLI; no content link is available." : info.visibility === "internal" ? "Internal content opens through a single-use grant. The dashboard credential never leaves this origin." : info.visibility === "external" ? "This link requires its external password. Rotation revokes the old password and existing grants." : "No Manure authentication is required for anyone who can reach this content URL.");
-    $("dashboard-section").hidden = true; $("detail-section").hidden = false;
-  }
-  function showDetail(id) {
-    var generation = ++detailGeneration;
-    var epoch = sessionEpoch;
+  // Opening a detail cancels pending list reads; a catalogue reloads on return.
+  function suspendForDetail() {
     listGeneration++; pendingPage = null; queuedRead = null;
     if (state.mode === "catalogue") { loadedKey = ""; }
     else if (searchPage === null) { submittedKey = null; }
     if (observer !== null) { observer.disconnect(); }
-    openGeneration++; hideRotateOutput();
-    currentDetailId = null; currentDetailInfo = null;
-    setText("detail-name", "Loading artifact…");
-    setText("detail-subtitle", id);
-    $("detail-list").textContent = ""; $("file-list").textContent = "";
-    ["delete-button", "open-button", "copy-id-button", "copy-link-button"].forEach(function (key) { $(key).disabled = true; });
-    updateDetailActions();
-    setText("access-status", "Loading access settings…");
-    $("access-refresh-button").hidden = true;
-    $("files-retry-button").hidden = true;
-    setText("files-status", "Waiting for artifact metadata…");
-    setText("detail-status", "Loading artifact details…");
-    setText("list-status", "Loading artifact details…");
-    apiFetch(current.artifact(id)).then(function (info) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration) { return; }
-      renderDetail(info, id);
-      setText("access-status", accessMutations.has(id) ? "An access or password update is still in progress. Wait for its status to be refreshed." : "");
-      setText("detail-status", "");
-      loadFiles();
-    }).catch(function (error) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration) { return; }
-      currentDetailId = null; currentDetailInfo = null;
-      $("detail-section").hidden = true; $("dashboard-section").hidden = false;
-      window.history.replaceState(null, "", routeHash(null));
-      summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true;
-      renderList();
-      $("retry-list-button").hidden = false;
-      failVisible("Detail failed (" + errorLabel(error) + "). The artifact may have expired or been deleted. Retry loading to return to the catalogue.");
-    });
   }
-  function loadFiles() {
-    var id = currentDetailId;
-    if (id === null || currentDetailInfo === null) { return; }
-    var generation = detailGeneration;
-    var epoch = sessionEpoch;
-    $("file-list").textContent = "";
-    $("files-retry-button").hidden = true;
-    setText("files-status", "Loading file manifest…");
-    apiFetch(current.manifest(id)).then(function (body) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration || id !== currentDetailId) { return; }
-      if (!Array.isArray(body.files)) { throw new Error("bad-response"); }
-      var fragment = document.createDocumentFragment();
-      body.files.forEach(function (file) {
-        var row = element("tr", null, null);
-        row.appendChild(element("td", file.path + (file.kind === "dir" ? "/" : ""), "path-cell"));
-        row.appendChild(element("td", file.kind, null));
-        row.appendChild(element("td", file.kind === "dir" ? "—" : bytes(file.size), "numeric-cell"));
-        var action = element("td", "—", null);
-        if (file.kind === "file" && currentDetailInfo.state === "ready") {
-          var link = element("a", "Download", null);
-          link.href = API + "/artifacts/" + id + "/files/" + file.path.split("/").map(encodeURIComponent).join("/") + "/content";
-          action.replaceChildren(link);
-        }
-        row.appendChild(action); fragment.appendChild(row);
-      });
-      $("file-list").replaceChildren(fragment);
-      setText("files-status", body.files.length + " manifest entries. Downloads use the authenticated API and are served as attachments.");
-    }).catch(function (error) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration || id !== currentDetailId) { return; }
-      setText("files-status", "Files could not be loaded (" + errorLabel(error) + ").");
-      $("files-retry-button").hidden = false;
-    });
+  function detailFailed() {
+    summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true;
+    renderList();
+    $("retry-list-button").hidden = false;
   }
-
-  /* Internal artifacts use a single-use form POST to their content endpoint. */
-  function openArtifact(id, knownInfo) {
-    if (!ID_RE.test(id) || accessMutations.has(id)) { return; }
-    var epoch = sessionEpoch;
-    var generation = ++openGeneration;
-    var infoRequest = knownInfo === null ? apiFetch(current.artifact(id)) : Promise.resolve(knownInfo);
-    setText("detail-status", "Opening content…");
-    infoRequest.then(function (info) {
-      if (epoch !== sessionEpoch || generation !== openGeneration) { return; }
-      var url = contentUrl(info);
-      if (url === null) { throw new Error("content-unavailable"); }
-      if (info.visibility !== "internal") { window.location.assign(url); return; }
-      return apiFetch(current.grant(id)).then(function (body) {
-        if (epoch === sessionEpoch && generation === openGeneration) { postGrantHandoff(url, body.grant); }
-      });
-    }).catch(function (error) {
-      if (epoch === sessionEpoch && generation === openGeneration) { failVisible("Open failed (" + errorLabel(error) + ")."); }
-    });
-  }
-  function postGrantHandoff(content, grant) {
-    var form = document.createElement("form");
-    form.method = "POST";
-    form.action = content.replace(/\/$/, "") + "/__manure/grant";
-    form.enctype = "application/x-www-form-urlencoded";
-    var field = document.createElement("input");
-    field.type = "hidden";
-    field.name = "grant";
-    field.value = grant;
-    form.appendChild(field); document.body.appendChild(form);
-    form.submit(); form.remove();
-  }
-  function deleteArtifact(id) {
-    if (!ID_RE.test(id) || deleting.has(id) || accessMutations.has(id) || !window.confirm("Delete artifact " + id + "? This cannot be undone.")) { return; }
-    var epoch = sessionEpoch;
-    deleting.add(id);
-    document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = true; });
-    if (currentDetailId === id) { updateDetailActions(); setText("detail-status", "Deleting artifact…"); }
-    setText("list-status", "Deleting artifact…");
-    apiFetch(current.remove(id)).then(function () {
-      if (epoch !== sessionEpoch) { return; }
-      if (currentDetailId === id) {
-        detailGeneration++; openGeneration++; hideRotateOutput();
-        currentDetailId = null; currentDetailInfo = null;
-        $("detail-section").hidden = true; $("dashboard-section").hidden = false;
-        window.history.replaceState(null, "", routeHash(null));
-      }
-      invalidateCatalogue();
-    }).catch(function (error) {
-      if (epoch === sessionEpoch) { failVisible("Delete failed (" + errorLabel(error) + ")."); }
-    }).finally(function () {
-      deleting.delete(id);
-      if (epoch === sessionEpoch) {
-        document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = false; });
-        if (currentDetailId === id) { updateDetailActions(); }
-      }
-    });
-  }
-  function hideRotateOutput() {
-    revealGeneration++;
-    passwordRead = null;
-    $("rotate-output").hidden = true;
-    setText("rotate-password", "");
-    $("rotate-copy-button").disabled = true;
+  function reloadAfterUpload() {
+    loadedKey = "";
+    if (!$("dashboard-section").hidden) { if (state.mode === "catalogue") { loadPage(true); } else { invalidateCatalogue(); } }
   }
   function invalidateCatalogue() {
     listGeneration++; pendingPage = null; queuedRead = null; summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; listError = false;
     if (state.mode !== "catalogue") { submittedKey = null; setText("list-status", "Results invalidated. Press Search to run retrieval again."); }
     if (observer !== null) { observer.disconnect(); }
     renderList();
-    if (authenticated && readRoute().id === null && state.mode === "catalogue") { loadPage(true); }
+    if (ctx.authenticated && readRoute().id === null && state.mode === "catalogue") { loadPage(true); }
   }
-  function beginAccessMutation(id, message) {
-    openGeneration++; hideRotateOutput();
-    var mutation = { epoch: sessionEpoch, generation: detailGeneration, reveal: revealGeneration, refreshNeeded: true };
-    accessMutations.set(id, mutation);
-    invalidateCatalogue(); updateDetailActions();
-    setText("access-status", message); setText("detail-status", message);
-    return mutation;
-  }
-  function isMutationView(id, mutation) {
-    return mutation.epoch === sessionEpoch && mutation.generation === detailGeneration &&
-      id === currentDetailId && readRoute().id === id;
-  }
-  function canReveal(id, mutation) {
-    return isMutationView(id, mutation) && mutation.reveal === revealGeneration;
-  }
-  function takeExternalPassword(body, required) {
-    if (!body || typeof body !== "object" || Array.isArray(body)) { throw new Error("bad-response"); }
-    var password = body.external_password;
-    delete body.external_password;
-    if (!required) { return null; }
-    if (typeof password !== "string" || password.length !== 43 || !/^[A-Za-z0-9_-]{42}[AEIMQUYcgkosw048]$/.test(password)) { throw new Error("bad-response"); }
-    return password;
-  }
-  function revealPassword(password) {
-    setText("rotate-password", password);
-    $("rotate-output").hidden = false; $("rotate-copy-button").disabled = false;
-    $("rotate-dismiss-button").focus();
-  }
-  function settleAccessMutation(id, mutation, message) {
-    invalidateCatalogue();
-    if (!authenticated || readRoute().id !== id) { return Promise.resolve(); }
-    var epoch = sessionEpoch;
-    if (!mutation.refreshNeeded && epoch === mutation.epoch && currentDetailId === id) {
-      setText("access-status", message); setText("detail-status", message);
-      return Promise.resolve();
-    }
-    var generation = ++detailGeneration;
-    if (epoch !== mutation.epoch) { message = "A previous access request finished. Use Copy current password if the external password was not shown."; }
-    $("access-refresh-button").hidden = true;
-    setText("access-status", message + " Refreshing current metadata…");
-    return apiFetch(current.artifact(id)).then(function (info) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration || readRoute().id !== id) { return; }
-      renderDetail(info, id); loadFiles();
-      setText("access-status", message); setText("detail-status", message);
-    }).catch(function (error) {
-      if (epoch !== sessionEpoch || generation !== detailGeneration || readRoute().id !== id) { return; }
-      currentDetailInfo = null; updateDetailActions();
-      $("access-refresh-button").hidden = false;
-      var failure = message + " Current metadata could not be refreshed (" + errorLabel(error) + "). Reload access status before changing access again. If External is enabled, use Copy current password to retrieve it.";
-      setText("access-status", failure); setText("detail-status", failure);
-    });
-  }
-  function releaseAccessMutation(id, mutation) {
-    if (accessMutations.get(id) === mutation) { accessMutations.delete(id); }
-    if (currentDetailId === id) { updateDetailActions(); }
-    if (authenticated && readRoute().id === null) { renderList(); }
-  }
-  function onAccessSubmit(event) {
-    event.preventDefault();
-    var id = currentDetailId;
-    var info = currentDetailInfo;
-    var visibility = $("access-mode").value;
-    if (id === null || info === null || info.state !== "ready" || accessMutations.has(id) || deleting.has(id) ||
-        ["internal", "external", "public"].indexOf(visibility) === -1 || visibility === info.visibility) { return; }
-    if (visibility === "public" && !window.confirm("Make artifact " + id + " public? No Manure authentication will be required for anyone who can reach its content URL. Existing content grants will be revoked.")) { return; }
-    var mutation = beginAccessMutation(id, "Saving access mode… You can retrieve the generated password later with Copy current password.");
-    apiFetch(current.access(id, visibility)).then(function (body) {
-      var password = takeExternalPassword(body, visibility === "external");
-      if (body.artifact_id !== id || body.visibility !== visibility || body.state !== "ready") { throw new Error("bad-response"); }
-      var sameView = isMutationView(id, mutation);
-      var showPassword = canReveal(id, mutation);
-      if (sameView) {
-        renderDetail(body, id);
-        if (password !== null && showPassword) { revealPassword(password); }
-      }
-      password = null;
-      mutation.refreshNeeded = !sameView;
-      return visibility === "external" ? showPassword ? "Access changed to External. Share the password securely; all signed-in users can retrieve it later." : "Access changed to External. Use Copy current password to retrieve its password." : "Access changed to " + visibility + ". Existing content grants were revoked.";
-    }).catch(function (error) {
-      mutation.refreshNeeded = true;
-      return "Access change could not be confirmed (" + errorLabel(error) + "). It may have been applied; no change was retried. If External is enabled, use Copy current password to retrieve it.";
-    }).then(function (message) {
-      return settleAccessMutation(id, mutation, message);
-    }).finally(function () { releaseAccessMutation(id, mutation); });
-  }
-  function onCopyCurrentPassword() {
-    var id = currentDetailId;
-    if (id === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external" ||
-        accessMutations.has(id) || deleting.has(id) || passwordRead !== null) { return; }
-    hideRotateOutput();
-    var request = { id: id, epoch: sessionEpoch, generation: detailGeneration, reveal: revealGeneration };
-    passwordRead = request; updateDetailActions();
-    setText("detail-status", "Loading current external password…");
-    apiFetch(current.externalPassword(id)).then(function (body) {
-      var password = takeExternalPassword(body, body.external_password !== null);
-      if (!canReveal(id, request)) { return; }
-      if (password === null) {
-        setText("detail-status", "This older password was stored as a hash only. Rotate once to make the new password available for copying.");
-        return;
-      }
-      revealPassword(password);
-      setText("detail-status", "Current password loaded. Copying does not rotate it or revoke existing grants.");
-      copy(password, "detail-status", "Password copied. Dismiss the reveal when finished.");
-      password = null;
-    }).catch(function (error) {
-      if (canReveal(id, request)) { setText("detail-status", "Current password could not be loaded (" + errorLabel(error) + "). No password was rotated."); }
-    }).finally(function () {
-      if (passwordRead === request) { passwordRead = null; updateDetailActions(); }
-    });
-  }
-  function onRotate() {
-    if (currentDetailId === null || currentDetailInfo === null || currentDetailInfo.visibility !== "external" ||
-        accessMutations.has(currentDetailId) || deleting.has(currentDetailId)) { return; }
-    var id = currentDetailId;
-    var mutation = beginAccessMutation(id, "Rotating external password…");
-    apiFetch(current.rotate(id)).then(function (body) {
-      var password = takeExternalPassword(body, true);
-      var showPassword = canReveal(id, mutation);
-      if (showPassword) { revealPassword(password); }
-      password = null;
-      mutation.refreshNeeded = !isMutationView(id, mutation);
-      return showPassword ? "Password rotated. Share it securely; all signed-in users can retrieve it later." : "Password rotated, but it was not displayed in this view. Use Copy current password to retrieve it.";
-    }).catch(function (error) {
-      mutation.refreshNeeded = true;
-      return "Rotation could not be confirmed (" + errorLabel(error) + "). The old password may have been revoked. Refresh status, then use Copy current password to retrieve the current value.";
-    }).then(function (message) {
-      return settleAccessMutation(id, mutation, message);
-    }).finally(function () { releaseAccessMutation(id, mutation); });
-  }
-  function copy(value, statusId, message) {
-    if (!value) { return; }
-    if (!window.navigator.clipboard || typeof window.navigator.clipboard.writeText !== "function") {
-      setText(statusId, "Clipboard is unavailable here. Select the value and copy it manually."); return;
-    }
-    var epoch = sessionEpoch;
-    var generation = detailGeneration;
-    window.navigator.clipboard.writeText(value).then(function () {
-      if (epoch === sessionEpoch && generation === detailGeneration) { setText(statusId, message); }
-    }).catch(function () {
-      if (epoch === sessionEpoch && generation === detailGeneration) { setText(statusId, "Clipboard access was denied. Select the value and copy it manually."); }
-    });
-  }
-
-  var uploads = [];
-  var uploadGeneration = 0;
-  var uploadBusy = false;
-  var uploadAbort = null;
-  function uploadVisibility() { return document.querySelector('input[name="upload-access"]:checked').value; }
-  function clearUploads() {
-    uploadGeneration++;
-    if (uploadAbort !== null) { uploadAbort.abort(); uploadAbort = null; }
-    uploads.forEach(function (item) { item.clear(); });
-    uploads = []; uploadBusy = false;
-    $("upload-files").value = "";
-    $("upload-internal").checked = true;
-    setText("upload-status", ""); renderUploads();
-  }
-  function renderUploads() {
-    var list = $("upload-list"); list.textContent = "";
-    uploads.forEach(function (item) {
-      var row = element("li", null, "upload-result");
-      row.appendChild(element("strong", item.file.name + " · " + bytes(item.file.size) + " · " + item.visibility, null));
-      var phase = item.phase === "init-uncertain" ? "Initialization could not be confirmed. Do not retry as a new upload without checking the catalogue for an incomplete artifact." : item.phase;
-      row.appendChild(element("p", phase + " · " + bytes(item.offset) + " sent" + (item.id ? " · ID " + item.id : ""), null));
-      if (item.error) { row.appendChild(element("p", item.error, "error")); }
-      if (item.phase === "ready") {
-        var url = contentUrl({ artifact_id: item.id, content_url: item.link });
-        if (url !== null) {
-          var link = element("input", null, null); link.type = "text"; link.readOnly = true; link.value = url;
-          link.setAttribute("aria-label", "Content link for " + item.file.name);
-          link.addEventListener("click", function () { link.select(); }); row.appendChild(link);
-          var button = element("button", "Copy content link", null); button.type = "button";
-          button.addEventListener("click", function () { copy(url, "upload-status", "Content link copied."); }); row.appendChild(button);
-        } else { row.appendChild(element("p", "Ready, but no validated content link is configured. Open the artifact in the catalogue.", null)); }
-      }
-      if (item.password !== null) {
-        row.appendChild(element("p", "External password — share securely; signed-in users can retrieve it later:", null));
-        row.appendChild(element("code", item.password, "password-value"));
-        var copyPassword = element("button", "Copy password", null); copyPassword.type = "button";
-        copyPassword.addEventListener("click", function () { copy(item.password, "upload-status", "Password copied. Dismiss the reveal when finished."); }); row.appendChild(copyPassword);
-        var dismiss = element("button", "Dismiss password", null); dismiss.type = "button";
-        dismiss.addEventListener("click", function () { item.password = null; renderUploads(); }); row.appendChild(dismiss);
-      }
-      list.appendChild(row);
-    });
-    $("upload-submit").disabled = uploadBusy || !uploads.some(function (item) { return item.phase !== "ready" && item.phase !== "init-uncertain"; });
-    $("upload-files").disabled = uploadBusy;
-    $("upload-visibility").disabled = uploadBusy;
-    $("upload-access-help").hidden = uploadVisibility() !== "external";
-  }
-  function stageFiles(files) {
-    if (!authenticated || uploadBusy || $("logout-button").disabled) { return; }
-    Array.from(files).forEach(function (file) {
-      if (!file.name || /[\\/\x00-\x1f\x7f]/.test(file.name) || file.name === "." || file.name === "..") {
-        setText("upload-status", "Rejected an unsupported file name. Rename it before uploading."); return;
-      }
-      uploads.push(new FileUpload(file, uploadVisibility()));
-    });
-    $("upload-files").value = ""; renderUploads();
-  }
-  $("upload-visibility").addEventListener("change", renderUploads);
-  $("upload-files").addEventListener("change", function (event) { stageFiles(event.target.files); });
-  document.addEventListener("paste", function (event) {
-    if (authenticated && event.clipboardData && event.clipboardData.files.length) {
-      event.preventDefault(); stageFiles(event.clipboardData.files);
-    }
-  });
-  $("quick-upload").addEventListener("dragover", function (event) { if (authenticated) { event.preventDefault(); } });
-  $("quick-upload").addEventListener("drop", function (event) {
-    if (authenticated) { event.preventDefault(); stageFiles(event.dataTransfer.files); }
-  });
-  $("upload-clear").addEventListener("click", clearUploads);
-  $("upload-form").addEventListener("submit", async function (event) {
-    event.preventDefault();
-    if (!authenticated || uploadBusy || $("logout-button").disabled) { return; }
-    var generation = uploadGeneration, epoch = sessionEpoch;
-    uploads.forEach(function (item) {
-      if (item.id === null && item.phase !== "init-uncertain") { item.visibility = uploadVisibility(); }
-    });
-    var controller = new AbortController(); uploadAbort = controller; uploadBusy = true;
-    function check() { if (!authenticated || generation !== uploadGeneration || epoch !== sessionEpoch) { throw new Error("cancelled"); } }
-    renderUploads();
-    try {
-      for (var item of uploads) {
-        check(); item.error = null;
-        try {
-          await item.run(apiFetch, fetch, check, controller.signal, renderUploads);
-        } catch (error) {
-          check();
-          if (error.status === 401) { showLoggedOut(); return; }
-          item.error = "Upload failed (" + errorLabel(error) + "). " +
-            (item.phase === "finalizing" ? "Publication is uncertain. Retry checks the same artifact; do not start a duplicate." :
-              item.id ? "Retry continues the same artifact. Dismissing does not delete the incomplete upload." : "Check the status above before retrying.");
-          renderUploads(); break;
-        }
-      }
-      check(); setText("upload-status", "Finished this upload attempt. Ready links are shown below. Internal links require authenticated readers.");
-      loadedKey = "";
-      if (!$("dashboard-section").hidden) { if (state.mode === "catalogue") { loadPage(true); } else { invalidateCatalogue(); } }
-    } catch (_error) {
-      // Logout/dismiss invalidates this operation; never restore its secrets or UI.
-    } finally {
-      if (generation === uploadGeneration && epoch === sessionEpoch) { uploadBusy = false; uploadAbort = null; renderUploads(); }
-    }
-  });
 
   $("logout-button").addEventListener("click", onLogout);
   $("session-retry-button").addEventListener("click", checkSession);
@@ -1088,7 +624,7 @@ function expressionInput(input, list, change, compositionChange) {
   });
   document.addEventListener("keydown", function (event) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !event.altKey &&
-        !event.isComposing && !composing && authenticated && !$("workspace-shell").hidden &&
+        !event.isComposing && !composing && ctx.authenticated && !$("workspace-shell").hidden &&
         $("detail-section").hidden && !document.querySelector("dialog[open], [role=dialog]:not([hidden])")) {
       event.preventDefault(); $("filter-text").focus(); $("filter-text").select();
     }
@@ -1121,22 +657,6 @@ function expressionInput(input, list, change, compositionChange) {
       queryEditor.close(); updateDraft();
     });
   });
-  $("open-button").addEventListener("click", function () { if (currentDetailId !== null) { openArtifact(currentDetailId, currentDetailInfo); } });
-  $("delete-button").addEventListener("click", function () { if (currentDetailId !== null) { deleteArtifact(currentDetailId); } });
-  $("access-form").addEventListener("submit", onAccessSubmit);
-  $("access-mode").addEventListener("change", function () { setText("access-status", ""); updateDetailActions(); });
-  $("access-refresh-button").addEventListener("click", function () {
-    var id = readRoute().id;
-    if (id !== null && !accessMutations.has(id) && !deleting.has(id)) { showDetail(id); }
-  });
-  $("rotate-button").addEventListener("click", onRotate);
-  $("rotate-dismiss-button").addEventListener("click", function () { hideRotateOutput(); setText("detail-status", ""); });
-  $("get-password-button").addEventListener("click", onCopyCurrentPassword);
-  $("rotate-copy-button").addEventListener("click", function () { copy($("rotate-password").textContent, "detail-status", "Password copied. Dismiss the reveal when finished."); });
-  $("copy-id-button").addEventListener("click", function () { copy(currentDetailId, "detail-status", "Artifact ID copied."); });
-  $("copy-link-button").addEventListener("click", function () { if (currentDetailInfo !== null) { copy(contentUrl(currentDetailInfo), "detail-status", "Content link copied."); } });
-  $("files-retry-button").addEventListener("click", loadFiles);
-  $("detail-back-button").addEventListener("click", function () { invalidateNavigation(); window.location.hash = routeHash(null); });
   document.addEventListener('account:changed', function () { clearAccount(); checkSession(); });
   window.addEventListener("hashchange", handleRoute);
   checkHostingMode();
