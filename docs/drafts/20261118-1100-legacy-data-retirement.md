@@ -607,7 +607,9 @@ batch size 16); the fixed binary is re-checked on the clone (retry of a Failed j
 - **Descriptor checks are structural:** the shared predicates prove the full v2 tuple shape (8 elements for
   `embedding-space-v2`, 3 for `index-profile-descriptor-v2`, typed and range-checked); they do not recompute the
   identifier hash. A row with a well-formed tuple whose id hash does not match is reported by the products at run
-  time (Chronicle: space "unavailable"; Haystack/Manure: profile decode refusal), not by these checks.
+  time, not by these checks: Chronicle refuses an unverified space descriptor (`IndexProfiles`: "unavailable");
+  Haystack/Manure compare the configured profile's row byte-for-byte at start-up ("immutable retrieval profile
+  mismatch") and do not use unconfigured profile rows.
 
 Order note for steps 13–16: `run.sh … verify` reads the tables that the clean-up drops and is bound to the
 pre-clean-up schema, and it is deleted in step 15. It is therefore the **pre-removal** check (step 13) only. After
