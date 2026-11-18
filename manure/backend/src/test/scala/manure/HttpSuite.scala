@@ -833,7 +833,8 @@ final class HttpSuite extends FunSuite:
         Vector("/","/nested/","/__manure/view/README.md").traverse_ { path =>
           h.app.run(req(path)).flatMap { response => response.as[String].map { html =>
             assertEquals(response.status.code,200)
-            assert(html.contains("Uploaded <time class=\"uploaded-at\" datetime=\"" + a.artifact.createdAt + "\">" + a.artifact.createdAt + "</time>"))
+            assert(html.contains("uploaded <time"),path)
+            assert(html.contains("datetime=\"" + a.artifact.createdAt + "\" title=\"" + a.artifact.createdAt + "\">" + a.artifact.createdAt + "</time>"),path)
             assert(!html.contains("__MANURE_CREATED_AT__"))
             assert(!html.contains(Exact.displayTime(f.clock.now)))
           }}
@@ -934,6 +935,74 @@ final class HttpSuite extends FunSuite:
     yield ()
   }}
 
+  // Specified (UX-M4): the listing is styled only by Manure's own reserved assets - the shared design system and the
+  // viewer sheet - under a policy that admits nothing else of the content origin, which also serves uploaded files.
+  test("directory listing links the shared design system under a CSP limited to Manure's reserved assets") { run { (f,_) =>
+    val source = java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"))
+    val files = Vector("docs/notes.txt" -> "plain", "docs/a\"<b>.py" -> "print(1)")
+    val stylesheets = Vector("/__manure/ui/tokens.css","/__manure/ui/components.css","/__manure/viewer/styles.css")
+    def value(r: org.http4s.Response[IO],name: String) = r.headers.headers.find(_.name == CIString(name)).map(_.value).getOrElse("")
+    for
+      dashboard <- IO.blocking {
+        val directory = f.rootPath.resolve("listing-dashboard")
+        java.nio.file.Files.createDirectories(directory.resolve("ui"))
+        Vector("tokens.css","components.css").foreach(name => java.nio.file.Files.writeString(directory.resolve("ui").resolve(name),":root {}"))
+        java.nio.file.Files.writeString(directory.resolve("ui/README.md"),"not a served asset")
+        directory
+      }
+      a <- f.artifacts.init(f.identity,InitUpload("listing",ArtifactKind.Directory,Visibility.Public,
+        files.map { (p,b) => ManifestEntry(p,false,Exact.utf8(b).length,SecretCodec.sha256(Exact.utf8(b))) },None,Vector.empty,None,None))
+      _ <- files.traverse_ { (p,b) => f.artifacts.putChunk(f.identity,a.artifact.id,p,0,Exact.utf8(b),SecretCodec.sha256(Exact.utf8(b))) }
+      _ <- f.artifacts.finish(f.identity,a.artifact.id)
+      _ <- Vector("path","subdomain").traverse_ { mode =>
+        val h = app(f,_.copy(viewerDir=Some(source.resolve("manure/web/viewer")),dashboardDir=Some(dashboard),contentMode=mode,contentSuffix="localhost"))
+        val mount = if mode == "path" then s"/view/${a.artifact.id}" else ""
+        val host = if mode == "path" then "127.0.0.1:47329" else a.artifact.id + ".localhost:47329"
+        def req(path: String) = request(Method.GET,mount + path).putHeaders(Header.Raw(CIString("Host"),host))
+        val reserved = "http://" + host + mount + "/__manure/"
+        for
+          listing <- h.app.run(req("/docs/"))
+          html <- listing.as[String]
+          _ <- IO {
+            assertEquals(listing.status.code,200)
+            stylesheets.foreach(css => assert(html.contains("<link rel=\"stylesheet\" href=\"" + mount + css + "\">"),s"$mode listing lacks $css"))
+            val policy = value(listing,"Content-Security-Policy").split(";").map(_.trim).toVector
+            assertEquals(policy.find(_.startsWith("default-src ")),Some("default-src 'none'"))
+            assertEquals(policy.find(_.startsWith("style-src ")),Some(s"style-src ${reserved}ui/ ${reserved}viewer/"))
+            assertEquals(policy.find(_.startsWith("script-src ")),Some(s"script-src ${reserved}ui/ ${reserved}viewer/"))
+            assert(!policy.exists(d => d.contains("'self'") || d.contains("unsafe")),policy)
+            assert(html.contains("a&quot;&lt;b&gt;.py") && !html.contains("a\"<b>.py"),"listing names are escaped")
+          }
+          _ <- stylesheets.traverse_ { css => h.app.run(req(css)).flatMap(r => IO {
+            assertEquals(r.status.code,200,css)
+            assertEquals(value(r,"Content-Type"),"text/css; charset=utf-8")
+          })}
+          hidden <- h.app.run(req("/__manure/ui/README.md"))
+          _ <- IO(assertEquals(hidden.status.code,404))
+        yield ()
+      }
+    yield ()
+  }}
+  // Regression (UX-M4): source files downloaded instead of previewing; archives stay downloads behind an explicit card.
+  test("file artifacts negotiate a text preview for source files, an archive card, and raw bytes for HTML") { run { (f,_) =>
+    val h = app(f,_.copy(viewerDir=Some(java.nio.file.Path.of(sys.env("MANURE_SOURCE_ROOT"),"manure/web/viewer"))))
+    Vector("summarise.py" -> Some("text"),"bundle.zip" -> Some("archive"),"page.html" -> None).traverse_ { (name,kind) =>
+      val bytes = Exact.utf8("payload of " + name)
+      for
+        a <- f.artifacts.init(f.identity,InitUpload(name,ArtifactKind.File,Visibility.Public,Vector(ManifestEntry(name,false,bytes.length,SecretCodec.sha256(bytes))),None,Vector.empty,None,None))
+        _ <- f.artifacts.putChunk(f.identity,a.artifact.id,name,0,bytes,SecretCodec.sha256(bytes))
+        _ <- f.artifacts.finish(f.identity,a.artifact.id)
+        response <- h.app.run(request(Method.GET,s"/view/${a.artifact.id}/").putHeaders(Header.Raw(CIString("Accept"),"text/html")))
+        body <- response.as[String]
+        _ <- IO {
+          assertEquals(response.status.code,200)
+          kind match
+            case Some(value) => assert(body.contains("data-kind=\"" + value + "\""),name)
+            case None => assertEquals(body,Exact.string(bytes))
+        }
+      yield ()
+    }
+  }}
   // Regression: directories without an index were inaccessible, including empty uploads.
   // Behavioral-Active / Blackbox / Good Communication (owned PostgreSQL + filesystem).
   test("no-index directories browse immediate children, nested and empty directories") { run { (f,h) =>

@@ -341,7 +341,8 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def logout(c: Credentials): IO[Unit] =
     if c.kind == "cookie" then accounts.logout(c.raw.getOrElse(throw DomainError("unauthorized")))
     else artifacts.logout(required(c))
-  // Shared design system (shared/ui-web), copied into the dashboard directory as ui/ at packaging time.
+  // Shared design system (shared/ui-web), copied into the dashboard directory as ui/ at packaging time;
+  // also served on the content origin under /__manure/ui/ for the viewer, listing and unlock pages.
   private val dashboardUiAssets = Set("ui/tokens.css","ui/components.css","ui/theme-init.js","ui/icons.js","ui/fonts/InterVariable.woff2")
   private def dashboardAsset(req: Request[IO]): Boolean =
     val path = req.uri.path.renderString
@@ -394,7 +395,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def asset(directory: Option[Path],name: String,ctx: Context,dashboard: Boolean): IO[Response[IO]] = IO.blocking {
     val root = directory.getOrElse(throw DomainError(if dashboard then "dashboard-disabled" else "not-found"))
     val generated = name.matches("current/(?:manure/api/)?[A-Za-z][A-Za-z0-9_]*\\.js")
-    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","common.js","detail.js","upload.js","upload.css","overlays.js","account.js","account-client.js","account.css")(name) || dashboard && (generated || dashboardUiAssets(name)), "not-found")
+    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","common.js","detail.js","upload.js","upload.css","overlays.js","account.js","account-client.js","account.css")(name) || dashboard && generated || dashboardUiAssets(name), "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 2097152, "not-found")
     var bytes = Files.readAllBytes(file)
@@ -466,15 +467,41 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         q.drop(2).toDoubleOption.exists(v => v > 0 && v <= 1)
       }
     })
-  private def viewerKind(path: String): Option[String] =
-    path.toLowerCase(java.util.Locale.ROOT).split('.').lastOption.flatMap {
-      case "md" | "markdown" => Some("markdown")
-      case "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "svg" | "ico" => Some("image")
-      case "pdf" => Some("pdf")
-      case "mmd" | "mermaid" => Some("mermaid")
-      case "dot" | "gv" => Some("graphviz")
-      case _ => None
-    }
+  /** Display label and preview renderer of a file, by extension. `viewer` is the viewer shell's `data-kind`. */
+  private final case class FileType(label: String,viewer: Option[String])
+  private val fileTypes: Map[String,FileType] =
+    def group(viewer: Option[String],labels: (String,Seq[String])*): Seq[(String,FileType)] =
+      labels.flatMap((label,extensions) => extensions.map(_ -> FileType(label,viewer)))
+    (group(Some("markdown"),"Markdown" -> Seq("md","markdown")) ++
+      group(Some("image"),"PNG image" -> Seq("png"),"JPEG image" -> Seq("jpg","jpeg"),"GIF image" -> Seq("gif"),"WebP image" -> Seq("webp"),
+        "AVIF image" -> Seq("avif"),"BMP image" -> Seq("bmp"),"SVG image" -> Seq("svg"),"Icon" -> Seq("ico")) ++
+      group(Some("pdf"),"PDF document" -> Seq("pdf")) ++
+      group(Some("mermaid"),"Mermaid source" -> Seq("mmd","mermaid")) ++
+      group(Some("graphviz"),"Graphviz source" -> Seq("dot","gv")) ++
+      group(Some("text"),"Text" -> Seq("txt","text"),"Log" -> Seq("log"),"CSV" -> Seq("csv"),"TSV" -> Seq("tsv"),"JSON" -> Seq("json"),
+        "JSON lines" -> Seq("jsonl","ndjson"),"YAML" -> Seq("yaml","yml"),"TOML" -> Seq("toml"),"Configuration" -> Seq("ini","cfg","conf"),
+        "XML" -> Seq("xml"),"Python" -> Seq("py"),"JavaScript" -> Seq("js","mjs","cjs"),"TypeScript" -> Seq("ts","tsx"),"JSX" -> Seq("jsx"),
+        "Shell script" -> Seq("sh","bash","zsh"),"Nix" -> Seq("nix"),"Scala" -> Seq("scala","sc","sbt"),"Java" -> Seq("java"),
+        "Kotlin" -> Seq("kt","kts"),"Go" -> Seq("go"),"Rust" -> Seq("rs"),"C" -> Seq("c","h"),"C++" -> Seq("cc","cpp","cxx","hh","hpp"),
+        "Ruby" -> Seq("rb"),"SQL" -> Seq("sql"),"Lua" -> Seq("lua"),"R" -> Seq("r"),"CSS" -> Seq("css"),"Diff" -> Seq("diff","patch"),
+        "reStructuredText" -> Seq("rst"),"LaTeX" -> Seq("tex"),"Protocol Buffers" -> Seq("proto")) ++
+      group(Some("archive"),"ZIP archive" -> Seq("zip"),"Tar archive" -> Seq("tar"),"Gzip archive" -> Seq("gz","tgz"),
+        "Bzip2 archive" -> Seq("bz2"),"XZ archive" -> Seq("xz"),"Zstandard archive" -> Seq("zst"),"7-Zip archive" -> Seq("7z"),
+        "Java archive" -> Seq("jar"),"Python wheel" -> Seq("whl")) ++
+      group(None,"HTML" -> Seq("html","htm"))).toMap
+  private def fileType(path: String): FileType =
+    val name = path.split('/').last
+    val extension = if name.contains('.') then name.substring(name.lastIndexOf('.') + 1).toLowerCase(java.util.Locale.ROOT) else ""
+    fileTypes.getOrElse(extension,FileType(if extension.isEmpty then "File" else extension.toUpperCase(java.util.Locale.ROOT) + " file",None))
+  private def viewerKind(path: String): Option[String] = fileType(path).viewer
+  private val sizeUnits = Vector("KiB","MiB","GiB","TiB")
+  private val sizeStep = 1024L
+  private def displaySize(bytes: Long): String =
+    if bytes < sizeStep then bytes.toString + " B"
+    else
+      val unit = Iterator.iterate(0)(_ + 1).find(u => u == sizeUnits.size - 1 || bytes.toDouble / math.pow(sizeStep.toDouble,u + 2) < 1).get
+      String.format(java.util.Locale.ROOT,"%.1f %s",Double.box(bytes.toDouble / math.pow(sizeStep.toDouble,unit + 1)),sizeUnits(unit))
+  private def counted(count: Int,noun: String): String = count.toString + " " + noun + (if count == 1 then "" else "s")
   private def htmlAttribute(value: String): String = value.flatMap {
     case '&' => "&amp;"
     case '<' => "&lt;"
@@ -489,7 +516,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
     "<link rel=\"icon\" type=\"image/svg+xml\" href=\"" + ctx.mount + "/__manure/viewer/favicon.svg\">"
   private def viewerBytes(name: String): IO[Array[Byte]] = IO.blocking {
     val root = config.viewerDir.getOrElse(throw DomainError("not-found"))
-    Require(Set("index.html","viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+    Require(Set("index.html","viewer.js","chrome.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 16777216L, "not-found")
     // Bound the read too: a concurrently replaced asset cannot bypass the cap.
@@ -500,19 +527,36 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       bytes
     finally input.close()
   }
-  private def viewerShell(ctx: Context,a: Artifact,path: String,directory: String): IO[Response[IO]] =
+  /** Viewer CSP; also used by directory listings that render a README with the viewer bundle. */
+  private val viewerPolicy = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self'; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
+  /** Listing CSP: only Manure's own static assets under the reserved prefix, never artifact content of the same origin. */
+  private def listingPolicy(ctx: Context): String =
+    val reserved = ctx.contentOrigin + ctx.mount + "/__manure/"
+    "default-src 'none'; script-src " + reserved + "ui/ " + reserved + "viewer/; style-src " + reserved + "ui/ " + reserved + "viewer/; font-src " +
+      reserved + "ui/fonts/; img-src " + reserved + "viewer/favicon.svg; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+  private def viewerShell(ctx: Context,a: Artifact,path: String): IO[Response[IO]] =
     val kind = viewerKind(path).getOrElse(throw DomainError("not-found"))
+    val entry = a.manifest.find(e => !e.directory && e.path == path).getOrElse(throw DomainError("not-found"))
     viewerBytes("index.html").map { bytes =>
-      val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),
+      val values = Map("__MANURE_ASSET_BASE__" -> (ctx.mount + "/__manure/viewer"),"__MANURE_UI_BASE__" -> (ctx.mount + "/__manure/ui"),
+        "__MANURE_ROOT_URL__" -> (ctx.mount + "/"),"__MANURE_ARTIFACT_NAME__" -> a.name,
         "__MANURE_CREATED_AT__" -> a.createdAt,"__MANURE_PATH__" -> path,"__MANURE_RAW_URL__" -> (ctx.mount + "/__manure/raw/" + encoded(path)),
-        "__MANURE_DOWNLOAD_URL__" -> (ctx.mount + "/__manure/files/" + encoded(path) + "/content"),"__MANURE_KIND__" -> kind)
+        "__MANURE_DOWNLOAD_URL__" -> (ctx.mount + "/__manure/files/" + encoded(path) + "/content"),"__MANURE_KIND__" -> kind,
+        "__MANURE_SIZE__" -> displaySize(entry.size),"__MANURE_TYPE__" -> fileType(path).label)
       // A single pass prevents filenames containing placeholder text from being re-expanded.
-      val html = "__MANURE_(?:ASSET_BASE|CREATED_AT|PATH|RAW_URL|DOWNLOAD_URL|KIND)__".r.replaceAllIn(Exact.string(bytes),
+      val html = "__MANURE_(?:ASSET_BASE|UI_BASE|ROOT_URL|ARTIFACT_NAME|CREATED_AT|PATH|RAW_URL|DOWNLOAD_URL|KIND|SIZE|TYPE)__".r.replaceAllIn(Exact.string(bytes),
         m => java.util.regex.Matcher.quoteReplacement(htmlAttribute(values(m.matched))))
-      val page = if directory.isEmpty then html else html.replace("<main>","<main>" + directory)
-      Response[IO](Status.Ok).withEntity(page).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
-        raw("Content-Security-Policy","default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; worker-src 'self'; connect-src 'self' blob:; object-src 'none'; frame-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"))
+      Response[IO](Status.Ok).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),raw("Content-Security-Policy",viewerPolicy))
     }
+  private def icon(name: String,classes: String): String =
+    "<span class=\"icon" + classes + "\" data-icon=\"" + name + "\" aria-hidden=\"true\"></span>"
+  private val themeMenu =
+    "<div class=\"anchor\" data-theme-control hidden><button class=\"btn btn-ghost btn-icon\" type=\"button\" aria-label=\"Theme\" aria-haspopup=\"menu\" aria-expanded=\"false\">" +
+      icon("sun","") + "</button><div class=\"menu\" role=\"menu\" aria-label=\"Theme\" hidden>" +
+      Vector("system" -> ("monitor","System"),"light" -> ("sun","Light"),"dark" -> ("moon","Dark")).map { case (value,(glyph,label)) =>
+        "<button class=\"menu-item\" type=\"button\" role=\"menuitemradio\" aria-checked=\"false\" data-theme-set=\"" + value + "\">" + icon(glyph,"") + label + "</button>"
+      }.mkString + "</div></div>"
+  private val cliDestination = "[^A-Za-z0-9._-]+".r
   /** Manifest-only immediate children: no filesystem traversal and no hidden recursive listing. */
   private def directoryPage(ctx: Context,a: Artifact,path: String): IO[Response[IO]] =
     val prefix = if path.isEmpty then "" else path + "/"
@@ -521,29 +565,84 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       if rest.isEmpty then None
       else Some((rest.takeWhile(_ != '/'),entry.directory || rest.contains('/')))
     }.groupMapReduce(_._1)(_._2)(_ || _).toVector.sortBy((name,dir) => (if dir then 0 else 1,name))
-    def link(url: String,label: String): String = "<a href=\"" + htmlAttribute(url) + "\">" + htmlAttribute(label) + "</a>"
+    def filesUnder(directory: String): Vector[ManifestEntry] = a.manifest.filter(e => !e.directory && e.path.startsWith(directory))
+    def directoryUrl(directory: String): String = ctx.mount + "/" + (if directory.isEmpty then "" else encoded(directory) + "/")
+    def text(value: String): String = htmlAttribute(value)
+    def link(url: String,label: String,attributes: String): String = "<a href=\"" + text(url) + "\"" + attributes + ">" + label + "</a>"
+    val segments = if path.isEmpty then Vector.empty else path.split("/").toVector
+    val crumbs = (if segments.isEmpty then "<span class=\"crumb-here\" aria-current=\"page\">" + text(a.name) + "</span>"
+      else link(directoryUrl(""),text(a.name),"")) + "<span class=\"crumb-sep\">/</span>" +
+      segments.zipWithIndex.map { (segment,index) =>
+        (if index == segments.size - 1 then "<span class=\"crumb-here\" aria-current=\"page\">" + text(segment) + "</span>"
+          else link(directoryUrl(segments.take(index + 1).mkString("/")),text(segment),"")) + "<span class=\"crumb-sep\">/</span>"
+      }.mkString
+    def row(entry: String,name: String,nameAttributes: String,href: String,kind: String,size: String,action: String): String =
+      "<tr data-entry=\"" + entry + "\"><td><div class=\"path-cell" + (if entry == "folder" then " is-dir" else "") + "\">" +
+        icon(if entry == "parent" then "arrow-up" else entry,"") + link(href,name,nameAttributes) +
+        (if entry == "parent" then "<span class=\"xs muted\">Parent directory</span>" else "") + "</div></td><td class=\"col-v-type hide-sm muted\">" + kind +
+        "</td><td class=\"col-v-size col-num\">" + size + "</td><td class=\"col-v-dl col-actions\">" + action + "</td></tr>"
+    def open(href: String,label: String): String =
+      link(href,"Open" + icon("chevron-right"," icon-sm")," class=\"btn btn-sm btn-ghost\" aria-label=\"" + text(label) + "\"")
     val parent = if path.isEmpty then "" else
-      val up = path.split("/").dropRight(1).mkString("/")
-      "<p>" + link(ctx.mount + "/" + (if up.isEmpty then "" else encoded(up) + "/"),"Parent directory") + "</p>"
+      val up = directoryUrl(segments.dropRight(1).mkString("/"))
+      row("parent","..", " aria-label=\"Parent directory\"",up,"","",open(up,"Open parent directory"))
     val rows = children.map { (name,dir) =>
       val full = prefix + name
-      val href = if dir then ctx.mount + "/" + encoded(full) + "/"
-        else if config.viewerDir.nonEmpty && viewerKind(full).nonEmpty then ctx.mount + "/__manure/view/" + encoded(full)
-        else ctx.mount + "/" + encoded(full)
-      val download = if dir then "" else " · " + link(ctx.mount + "/__manure/files/" + encoded(full) + "/content","Download")
-      "<li>" + link(href,name + (if dir then "/" else "")) + download + "</li>"
+      if dir then
+        val inside = filesUnder(full + "/")
+        row("folder",text(name + "/"),"",directoryUrl(full),"Folder · " + (if inside.isEmpty then "empty" else counted(inside.size,"file")),
+          if inside.isEmpty then "—" else displaySize(inside.map(_.size).sum),open(directoryUrl(full),"Open " + name + "/"))
+      else
+        val href = if config.viewerDir.nonEmpty && viewerKind(full).nonEmpty then ctx.mount + "/__manure/view/" + encoded(full)
+          else ctx.mount + "/" + encoded(full)
+        val size = a.manifest.find(e => !e.directory && e.path == full).map(e => displaySize(e.size)).getOrElse("")
+        row("file",text(name),"",href,text(fileType(full).label),size,link(ctx.mount + "/__manure/files/" + encoded(full) + "/content",
+          icon("download"," icon-sm") + "Download"," class=\"btn btn-sm btn-ghost\" download aria-label=\"" + text("Download " + name) + "\""))
     }.mkString
-    val listing = "<section aria-label=\"Directory contents\"><h1>" + htmlAttribute(a.name) + " /" + htmlAttribute(path) +
-      "</h1>" + parent + (if children.isEmpty then "<p>Empty directory</p>" else "<ul>" + rows + "</ul>") + "</section>"
+    val table = "<div class=\"card\"><table class=\"table table-inset table-static listing-table\" aria-label=\"Directory contents\"><thead><tr>" +
+      "<th scope=\"col\">Name</th><th scope=\"col\" class=\"col-v-type hide-sm\">Type</th><th scope=\"col\" class=\"col-v-size col-num\">Size</th>" +
+      "<th scope=\"col\" class=\"col-v-dl col-actions\"><span class=\"sr-only\">Actions</span></th></tr></thead><tbody>" + parent + rows + "</tbody></table></div>"
+    val empty = if children.nonEmpty then "" else
+      "<div class=\"empty\">" + icon("folder","") + "<h2>Empty directory</h2><p>This folder contains no files.</p></div>"
     val readme = a.manifest.filter(e => !e.directory && e.path.startsWith(prefix)).map(_.path.stripPrefix(prefix))
       .filter(name => !name.contains('/') && name.equalsIgnoreCase("readme.md"))
       .sortBy(name => (if name == "README.md" then 0 else if name == "readme.md" then 1 else 2,name))
-      .headOption.map(prefix + _)
-    if config.viewerDir.nonEmpty && readme.nonEmpty then viewerShell(ctx,a,readme.get,listing)
-    else IO.pure(Response[IO](Status.Ok).withEntity(
-      "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><title>Manure · Directory</title>" + faviconLink(ctx) + "</head><body><main>" +
-        listing + "</main></body></html>").putHeaders(raw("Content-Type","text/html; charset=utf-8"),
-        raw("Content-Security-Policy","default-src 'none'; img-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'")))
+      .headOption.map(prefix + _).filter(_ => config.viewerDir.nonEmpty)
+    val readmeSection = readme.fold("") { file =>
+      val size = a.manifest.find(e => !e.directory && e.path == file).map(_.size).getOrElse(0L)
+      "<div class=\"section-head\"><h2>" + icon("file","") + text(file.stripPrefix(prefix)) + "</h2><span class=\"xs muted hide-sm\">" + displaySize(size) +
+        " · rendered from this directory</span>" + link(ctx.mount + "/__manure/view/" + encoded(file),"Open file" + icon("chevron-right"," icon-sm"),
+          " class=\"btn btn-sm btn-ghost\"") + "</div><p id=\"status\" class=\"viewer-status\" role=\"status\" aria-live=\"polite\">Loading preview…</p>" +
+        "<section id=\"content\" class=\"readme\" aria-label=\"README preview\"></section>"
+    }
+    val readmeMeta = readme.fold("") { file =>
+      "<meta id=\"manure-viewer\" data-embed=\"readme\" data-kind=\"markdown\" data-path=\"" + text(file) + "\" data-raw-url=\"" +
+        text(ctx.mount + "/__manure/raw/" + encoded(file)) + "\" data-download-url=\"" + text(ctx.mount + "/__manure/files/" + encoded(file) + "/content") + "\">"
+    }
+    val script = if readme.nonEmpty then "viewer.js" else "chrome.js"
+    val directFiles = children.count(!_._2)
+    val destination = cliDestination.replaceAllIn(a.name,"-").stripPrefix("-").stripSuffix("-")
+    val command = "manure fetch " + url(ctx,a.id) + " ./" + (if destination.isEmpty then "artifact" else destination) +
+      (if a.visibility == Visibility.External then " --password-file ./password.txt" else "")
+    val ui = ctx.mount + "/__manure/ui"
+    val html = "<!doctype html><html lang=\"en\" data-app=\"manure\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+      readmeMeta + "<title>" + text((if path.isEmpty then a.name else segments.last) + "/") + " · Manure</title>" + faviconLink(ctx) +
+      "<script src=\"" + ui + "/theme-init.js\"></script><link rel=\"stylesheet\" href=\"" + ui + "/tokens.css\"><link rel=\"stylesheet\" href=\"" + ui +
+      "/components.css\"><link rel=\"stylesheet\" href=\"" + ctx.mount + "/__manure/viewer/styles.css\"><script type=\"module\" src=\"" + ctx.mount +
+      "/__manure/viewer/" + script + "\"></script></head><body data-viewer data-page=\"directory\"><a class=\"skip-link\" href=\"#main\">Skip to content</a>" +
+      "<header class=\"masthead viewer-bar\">" + link(directoryUrl(""),"<span class=\"brand-mark\">" + icon("box","") + "</span><span class=\"brand-name\">manure</span><small>viewer</small>",
+        " class=\"brand\" aria-label=\"Artifact root\"") + "<span class=\"vr\"></span><nav class=\"crumbs crumbs-mono\" aria-label=\"Path\">" + crumbs +
+      "</nav><div class=\"masthead-end\"><details class=\"anchor cli-fetch\"><summary class=\"btn\" aria-label=\"Download all (CLI)\">" + icon("terminal","") +
+      "<span class=\"hide-sm\">Download all (CLI)…</span></summary><div class=\"popover\"><div class=\"stack-sm\"><strong>Download the whole artifact</strong>" +
+      "<p class=\"xs muted\">The browser downloads single files. The CLI fetches every file and verifies its checksum.</p><div class=\"code-block\" id=\"cli-command\">" +
+      text(command) + "</div><div><button class=\"btn btn-sm\" type=\"button\" data-copy-from=\"cli-command\" data-copied=\"Command copied\" hidden>" + icon("copy"," icon-sm") +
+      "Copy command</button></div></div></div></details>" + themeMenu + "</div></header><div class=\"viewer-meta\"><span>" +
+      counted(children.size - directFiles,"folder") + " · " + counted(directFiles,"file") + " · " + displaySize(filesUnder(prefix).map(_.size).sum) +
+      " · uploaded <time class=\"uploaded-at\" data-local datetime=\"" + text(a.createdAt) + "\" title=\"" + text(a.createdAt) + "\">" + text(a.createdAt) + "</time></span></div>" +
+      "<main id=\"main\" class=\"viewer-wide\">" + (if parent.nonEmpty || rows.nonEmpty then table else "") + empty + readmeSection +
+      "</main><div class=\"toasts\" role=\"status\" aria-live=\"polite\" id=\"toasts\"></div></body></html>"
+    IO.pure(Response[IO](Status.Ok).withEntity(html).putHeaders(raw("Content-Type","text/html; charset=utf-8"),
+      raw("Content-Security-Policy",if readme.nonEmpty then viewerPolicy else listingPolicy(ctx))))
   private def form(req: Request[IO]): IO[Map[String,String]] =
     IO(Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/x-www-form-urlencoded"), "bad-envelope")) *>
       body(req,config.limits.maxRequestBodyBytes).map { bytes =>
@@ -608,10 +707,13 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       }
     else if req.method == Method.GET && path == "/__manure/viewer/favicon.svg" then
       IO.pure(Response[IO](Status.Ok).withEntity(faviconSvg).putHeaders(raw("Content-Type","image/svg+xml")))
+    else if req.method == Method.GET && path.startsWith("/__manure/ui/") then
+      // The shared design system styles Manure's own content-origin pages, including the locked unlock page.
+      asset(config.dashboardDir,"ui/" + path.stripPrefix("/__manure/ui/"),ctx,false)
     else if req.method == Method.GET && path.startsWith("/__manure/viewer/") then
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { _ =>
         val name = path.stripPrefix("/__manure/viewer/")
-        Require(Set("viewer.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
+        Require(Set("viewer.js","chrome.js","graphviz-worker.js","pdf.worker.min.mjs","pdf.renderer.min.mjs","styles.css")(name), "not-found")
         viewerBytes(name).map(bytes => Response[IO](Status.Ok).withEntity(bytes).putHeaders(raw("Content-Type",mime(name))))
       }
     else if req.method == Method.GET && path.startsWith("/__manure/raw/") then
@@ -623,7 +725,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       artifacts.contentInfo(id,presented(req,ctx,id),header(req,"X-Manure-Password"),None).flatMap { a =>
         Require(!trailing && a.manifest.exists(e => !e.directory && e.path == file) && viewerKind(file).nonEmpty, "not-found")
         if header(req,"Range").nonEmpty || config.viewerDir.isEmpty then serveFile(req,ctx,id,file,false,None)
-        else viewerShell(ctx,a,file,"")
+        else viewerShell(ctx,a,file)
       }
     else if req.method == Method.GET && path.startsWith("/__manure/files/") && path.endsWith("/content") then
       val (file,_) = decoded("/" + path.stripPrefix("/__manure/files/").stripSuffix("/content"))
@@ -647,7 +749,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
               else if trailing then file + "/index.html" else file
             val negotiates = file.isEmpty && a.kind == ArtifactKind.File && viewerKind(target).nonEmpty && config.viewerDir.nonEmpty
             val response = if negotiates && header(req,"Range").isEmpty && acceptsViewer(req) then
-              viewerShell(ctx,a,target,"")
+              viewerShell(ctx,a,target)
             else serveFile(req,ctx,id,target,false,None)
             response.map(r => if negotiates then r.putHeaders(raw("Vary","Accept")) else r)
       }.handleErrorWith {
