@@ -43,16 +43,19 @@ in pkgs.runCommand "manure-complete-jvm-backend-filesystem" {
   fd=os.open(sys.argv[1],os.O_WRONLY|os.O_CREAT|os.O_EXCL,0o600)
   with os.fdopen(fd,'w') as f:f.write(secrets.token_urlsafe(48)+'\n')
   PY
+  starts=()
   stop_clusters() {
+    for start in "''${starts[@]}"; do wait "$start" 2>/dev/null || true; done
     for data in "$base"/data*; do pg_ctl -D "$data" -m immediate -w -t 30 stop >/dev/null 2>&1 || true; done
   }
   trap stop_clusters EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
   # One initdb, copied per group. The clusters are discarded with the sandbox, so they skip crash durability;
   # scram_iterations=1 keeps the verifiers of the per-case runtime roles cheap.
   fixture_settings='-c fsync=off -c synchronous_commit=off -c full_page_writes=off -c scram_iterations=1'
   initdb -D "$base/data" -U postgres -A scram-sha-256 --pwfile="$base/password" --no-locale --encoding=UTF8 > "$base/init.log"
   urls=()
-  starts=()
   for (( i = 0; i < groups; i++ )); do
     (
       cp -a "$base/data" "$base/data$i"
@@ -61,7 +64,9 @@ in pkgs.runCommand "manure-complete-jvm-backend-filesystem" {
     starts+=($!)
     urls+=("jdbc:postgresql://127.0.0.1:''${ports[i]}/postgres")
   done
-  for start in "''${starts[@]}"; do wait "$start"; done
+  startup_failed=0
+  for start in "''${starts[@]}"; do wait "$start" || startup_failed=1; done
+  if (( startup_failed )); then echo 'PostgreSQL cluster startup failed' >&2; exit 1; fi
   # Every group JVM receives its own MANURE_TEST_JDBC_URL from the sbt grouping.
   export MANURE_TEST_GROUP_JDBC="''${urls[*]}"
   export MANURE_TEST_JDBC_USER=postgres MANURE_TEST_JDBC_PASSWORD_FILE="$base/password" MANURE_TEST_ALLOW_CREATEDB=1

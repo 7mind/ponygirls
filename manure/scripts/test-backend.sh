@@ -24,11 +24,15 @@ else
 fi
 if [[ ! "$groups" =~ ^[1-9][0-9]*$ ]]; then echo 'MANURE_TEST_GROUPS must be a positive integer' >&2; exit 2; fi
 base=$(mktemp -d "${TMPDIR:-/tmp}/manure-backend-pg.XXXXXXXX")
+starts=()
 stop_clusters() {
+  for start in "${starts[@]}"; do wait "$start" 2>/dev/null || true; done
   for data in "$base"/data*; do "$POSTGRES_HOME/bin/pg_ctl" -D "$data" -m immediate -w stop >/dev/null 2>&1 || true; done
   rm -rf "$base"
 }
 trap stop_clusters EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 read -r -a ports <<<"$(python3 -c 'import socket,sys
 s=[socket.socket() for _ in range(int(sys.argv[1]))]
 for x in s: x.bind(("127.0.0.1",0))
@@ -40,7 +44,6 @@ chmod 600 "$base/password"
 fixture_settings='-c fsync=off -c synchronous_commit=off -c full_page_writes=off -c scram_iterations=1'
 "$POSTGRES_HOME/bin/initdb" -D "$base/data" -U postgres -A scram-sha-256 --pwfile="$base/password" --no-locale --encoding=UTF8 > "$base/init.log"
 urls=()
-starts=()
 for (( i = 0; i < groups; i++ )); do
   (
     cp -a "$base/data" "$base/data$i"
@@ -49,7 +52,9 @@ for (( i = 0; i < groups; i++ )); do
   starts+=($!)
   urls+=("jdbc:postgresql://127.0.0.1:${ports[i]}/postgres")
 done
-for start in "${starts[@]}"; do wait "$start"; done
+startup_failed=0
+for start in "${starts[@]}"; do wait "$start" || startup_failed=1; done
+if (( startup_failed )); then echo 'PostgreSQL cluster startup failed' >&2; exit 1; fi
 # Every group JVM receives its own MANURE_TEST_JDBC_URL from the sbt grouping.
 export MANURE_TEST_GROUP_JDBC="${urls[*]}"
 unset MANURE_TEST_JDBC_URL
