@@ -269,8 +269,12 @@ version change: no response carries them. Generations in those formats exist
 only as retired tombstones (row, revision, historical format and profile
 labels); a pin of one answers `indexed-view-retired`. A generation stored in
 another format regardless (only a manual schema change admits one) is never
-relabeled: its passage pages and spans are `unavailable`, and an Archive page
-that would show it as a publication fails with `projection`.
+relabeled or served: every read of its content view (session, chunks, pinned
+messages, passages, spans, search hits) and, as its generated tags are derived
+content too, every facet, tag-catalog or tag-hint read of a reader who can see
+it is `unavailable`, and an Archive
+page that would show it as a publication fails with `projection`.
+Revision-only views and raw revisions stay readable.
 
 Historical wire fixtures remain frozen. No migration, re-ingestion, owner retargeting or generation rewrite is implicit in the single-API consolidation.
 
