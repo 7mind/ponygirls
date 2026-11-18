@@ -19,7 +19,6 @@ in pkgs.runCommand "manure-complete-jvm-backend-filesystem" {
   cd source
   cmp manure/migration/schema.sql manure/backend/src/main/resources/manure-schema.sql
   mkdir "$out"
-  find . -type f -print0 | sort -z | xargs -0 sha256sum > "$out/source.sha256"
   export JAVA_TOOL_OPTIONS="''${JAVA_TOOL_OPTIONS:-}" SBT_OPTS="''${SBT_OPTS:-}"
   ${environment.setup}
   export JAVA_TOOL_OPTIONS="''${JAVA_TOOL_OPTIONS:-} -Xmx4g -XX:ActiveProcessorCount=4"
@@ -71,13 +70,18 @@ in pkgs.runCommand "manure-complete-jvm-backend-filesystem" {
   export MANURE_TEST_GROUP_JDBC="''${urls[*]}"
   export MANURE_TEST_JDBC_USER=postgres MANURE_TEST_JDBC_PASSWORD_FILE="$base/password" MANURE_TEST_ALLOW_CREATEDB=1
   echo "MANURE JVM SUITES: $groups test groups, one PostgreSQL cluster each, deadline $deadline s."
+  status=0
   timeout --signal=TERM --kill-after=15s "$deadline" bash scripts/backend-sbt.sh \
-    'manureStorage/Test/validationInventory' 'manureStorage/testFull' \
-    'manureServer/Test/validationInventory' 'manureServer/testFull' > "$out/run.log" 2>&1 || { cat "$out/run.log"; exit 1; }
-  python3 ${./jvm-inventory-receipt.py} --module manure/server --module manure/backend --source ${source} --output "$out/receipt.json"
-  for module in backend server; do
-    mkdir "$out/$module"
-    cp -r manure/$module/target/test-reports manure/$module/target/validation-inventory.txt "$out/$module/"
+    'manureStorage/testFull' 'manureServer/testFull' > "$out/run.log" 2>&1 || { status=$?; cat "$out/run.log"; }
+  # One gate directory per module: one module's empty run cannot hide behind the other.
+  gated=()
+  for module in server backend; do
+    mkdir -p "$out/manure/$module/target/test-reports"
+    if [[ -d manure/$module/target/test-reports ]]; then
+      find manure/$module/target/test-reports -maxdepth 1 -name '*.xml' -exec cp -t "$out/manure/$module/target/test-reports" {} +
+    fi
+    gated+=("$out/manure/$module/target/test-reports")
   done
-  sha256sum "$MANURE_POSIX_LIBRARY" > "$out/jni.sha256"
+  python3 ${../../scripts/junit-gate.py} --counts "$out/counts.json" "''${gated[@]}"
+  exit "$status"
 ''

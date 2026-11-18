@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Full Scala contract verification: same memory/PG suites plus exact PG semantics.
-# JUnit XML lands in haystack/server/target/test-reports; the haystack-jvm check
-# gates it with scripts/junit-gate.py (failure, error, skip or empty run).
+# JUnit XML lands in haystack/server/target/test-reports; scripts/junit-gate.py
+# fails the run on any failure, error or skip and on an empty run.
 # Owned, synthetic PostgreSQL only by default. An explicit external test database
 # must be disposable and permit CREATE/DROP DATABASE for migration/cutover cases.
 set -euo pipefail
@@ -34,4 +34,7 @@ fi
 xml=haystack/server/target/test-reports
 if [[ -d "$xml" ]]; then mv "$xml" "$report/previous-test-reports"; fi
 printf 'Reports: %s\n' "$report"
-bash scripts/backend-sbt.sh "$@" 'haystackServer/testFull'
+status=0
+bash scripts/backend-sbt.sh "$@" 'haystackServer/testFull' || status=$?
+python3 scripts/junit-gate.py --counts "$report/counts.json" "$xml" || status=1
+exit "$status"

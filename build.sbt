@@ -36,19 +36,22 @@ lazy val manureContracts = project.in(file("manure/generated/.build")).dependsOn
 lazy val ritesContracts = project.in(file("rites/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val ontologyContracts = project.in(file("ontology/generated/.build")).dependsOn(baboonRuntime).settings(contractSettings)
 lazy val validationInventory = taskKey[File]("Write the discovered, unfiltered release test inventory")
-lazy val testChildClasspath = taskKey[String]("Export the physical classpath for isolated test children")
-// Libraries use only artifacts already present in the common dependency lock.
-lazy val scala3LibrarySettings = Seq(
-  cleanFiles += baseDirectory.value / "target",
-  Test / fork := true,
-  Test / testReportsDirectory := baseDirectory.value / "target" / "test-reports",
+// Read only by rites/scripts/test-postgres.sh and ontology/scripts/test-postgres.sh.
+lazy val validationInventorySettings = Seq(
   Test / validationInventory := Def.uncached {
     val names = (Test / definedTests).value.map(_.name).sorted
     require(names.nonEmpty && names.distinct.size == names.size, "empty or duplicate foundation test inventory")
     val output = baseDirectory.value / "target" / "validation-inventory.txt"
     IO.writeLines(output, names)
     output
-  },
+  }
+)
+lazy val testChildClasspath = taskKey[String]("Export the physical classpath for isolated test children")
+// Libraries use only artifacts already present in the common dependency lock.
+lazy val scala3LibrarySettings = Seq(
+  cleanFiles += baseDirectory.value / "target",
+  Test / fork := true,
+  Test / testReportsDirectory := baseDirectory.value / "target" / "test-reports",
   libraryDependencies += "org.scalameta" %% "munit" % "1.3.6" % Test
 )
 lazy val manureTestChildSettings = Seq(
@@ -164,14 +167,14 @@ lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContr
   assembly / mainClass := Some("manure.Main"),
   assembly / assemblyJarName := "manure-server.jar"
 ).settings(manureTestGroupingSettings(manureIsolatedSuites, manureSerialSuites))
-lazy val ritesServer = project.in(file("rites/server")).dependsOn(ritesContracts, serviceRuntime).settings(serviceSettings ++ baboonAssemblySettings).settings(
+lazy val ritesServer = project.in(file("rites/server")).dependsOn(ritesContracts, serviceRuntime).settings(serviceSettings ++ baboonAssemblySettings ++ validationInventorySettings).settings(
   name := "rites-server",
   Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
   Compile / mainClass := Some("rites.Main"),
   assembly / mainClass := Some("rites.Main"),
   assembly / assemblyJarName := "rites-server.jar",
 )
-lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontologyContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings).settings(
+lazy val ontologyServer = project.in(file("ontology/server")).dependsOn(ontologyContracts, serviceRuntime, losslessJson, modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings ++ validationInventorySettings).settings(
   name := "ontology-server",
   libraryDependencies ++= Seq(
     "org.eclipse.rdf4j" % "rdf4j-repository-sail" % "6.1.0",

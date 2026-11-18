@@ -1,8 +1,17 @@
 #!/usr/bin/env bash
 # Full suites of the six shared JVM modules: one sbt process, modules in sequence, one owned PostgreSQL cluster with a
-# database per module. Run from the repository root with POSTGRES_HOME (nix develop .#chronicle).
+# database per module. Run from the repository root with POSTGRES_HOME (nix develop .#chronicle). scripts/junit-gate.py fails
+# the run on any failure, error or skip and on a module without test cases.
 set -euo pipefail
 : "${POSTGRES_HOME:?set POSTGRES_HOME to PostgreSQL with pgvector (nix develop .#chronicle)}"
+modules=(lossless-json service-runtime service-auth model-http retrieval-core retrieval-postgres)
+report=$(mktemp -d "${TMPDIR:-/tmp}/shared-jvm-report.XXXXXX")
+# Earlier XML is moved aside: it must not count for this run.
+reports=()
+for module in "${modules[@]}"; do
+  reports+=("shared/$module/target/test-reports")
+  if [[ -d shared/$module/target/test-reports ]]; then mv "shared/$module/target/test-reports" "$report/previous-$module"; fi
+done
 base=$(mktemp -d "${TMPDIR:-/tmp}/shared-jvm-pg.XXXXXX")
 trap '"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/null 2>&1 || true; rm -rf "$base"' EXIT
 port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
@@ -22,5 +31,9 @@ PGPASSWORD=runtime-test-password "$POSTGRES_HOME/bin/psql" -X -q -v ON_ERROR_STO
 export RUNTIME_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/runtime"
 export ACCOUNT_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/accounts" ACCOUNT_REQUIRE_POSTGRES=1
 export CHRONICLE_TEST_JDBC="jdbc:postgresql://127.0.0.1:$port/retrieval"
+status=0
 bash scripts/backend-sbt.sh losslessJson/testFull serviceRuntime/testFull serviceAuth/testFull modelHttp/testFull \
-  retrievalCore/testFull retrievalPostgres/testFull
+  retrievalCore/testFull retrievalPostgres/testFull || status=$?
+python3 scripts/junit-gate.py --counts "$report/counts.json" "${reports[@]}" || status=1
+echo "Shared JVM test report: $report"
+exit "$status"
