@@ -1,100 +1,74 @@
-import { VARIANTS, withScene, gotoTab, archiveReady, settle, inspect, scrollTo, scrollEnd, rowCount } from './lib.mjs';
+// Archive (UX-C2, spec §3.1): the states of the mockup `chronicle-archive.html`, named like its shots
+// (`chronicle-archive[-state][-dark]-<width>.png`, spec §8 item 10) so that each pairs with its mockup for `look`.
+import { PRIMARY, SECONDARY, PHONE, withScene, gotoTab, settle, inspect } from './lib.mjs';
 import { seededFixture } from './seed.mjs';
 
-const SCROLLER = '.archive-table-scroll';
-async function archive(page) { await gotoTab(page, 'archive'); await archiveReady(page); await settle(page); }
+const VIEWPORTS = [[PRIMARY, 'light'], [SECONDARY, 'light'], [PHONE, 'light'], [PRIMARY, 'dark'], [SECONDARY, 'dark']];
+const variantOf = (viewport, scheme) => ({ viewport, scheme, suffix: '', deep: false });
+const named = (state, variant) => `chronicle-archive${state === '' ? '' : `-${state}`}${variant.scheme === 'dark' ? '-dark' : ''}-${variant.viewport.tag}.png`;
+const main = page => page.getByRole('main', { name: 'Archive', exact: true });
+const rows = page => main(page).getByRole('table', { name: 'Conversations', exact: true }).locator('tbody tr[data-row-id]');
+const listState = (page, state) => main(page).locator(`[data-list-state="${state}"]`);
+async function archive(page) { await gotoTab(page, 'archive'); await main(page).waitFor(); await rows(page).first().waitFor(); await main(page).locator('table[data-list="archive"][aria-busy="false"]').waitFor(); }
+async function submit(page, expression) {
+  await main(page).getByRole('combobox', { name: 'Search conversations', exact: true }).fill(expression);
+  await main(page).getByRole('button', { name: 'Search', exact: true }).click();
+}
+async function scrollToEnd(page) {
+  for (let step = 0; step < 20 && await listState(page, 'end').count() === 0; step++) {
+    const before = await rows(page).count();
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+    await page.waitForFunction(count => document.querySelectorAll('table[data-list="archive"] tbody tr[data-row-id]').length > count || document.querySelector('[data-list-state="end"]') !== null, before);
+  }
+  await listState(page, 'end').waitFor();
+}
 
 export function registerArchive(scenario) {
-  for (const [key, variant] of Object.entries(VARIANTS)) {
-    scenario(`archive-${key}`, async ctx => {
-      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
-        await archive(page);
-        await shot('archive', 'first-render', 'Archive tab as first rendered: expression editor, status line and the 50-row first page inside a bordered scroll region', 'sign in as alice, click nav button "archive"');
-        await shot('archive', 'first-render', 'Archive, whole document (full-page capture)', 'same as above, full-page', { full: true });
-        await inspect(page, ctx.recorder, `archive-${key}`);
-        if (!variant.deep) return;
-        // ---- nested scrolling evidence
-        await scrollTo(page, SCROLLER, 2400);
-        await shot('archive', 'inner-table-scrolled', 'Inner table scrolled 2400 px; header row sticks, page itself has not moved', 'wheel/scrollTop on .archive-table-scroll');
-        for (let i = 0; i < 6 && await rowCount(page, '.archive-row') < 150; i++) await scrollEnd(page, SCROLLER);
-        await shot('archive', 'after-infinite-load', `Inner table scrolled to the end repeatedly; ${await rowCount(page, '.archive-row')} rows loaded by the infinite trigger`, 'scrollTop = scrollHeight x N on .archive-table-scroll');
-        const chaining = await page.evaluate(async () => {
-          const scroller = document.querySelector('.archive-table-scroll'), doc = document.documentElement;
-          const before = { pageY: scrollY, tableTop: scroller.scrollTop, docHeight: doc.scrollHeight, viewport: innerHeight, tableHeight: scroller.clientHeight, tableTopOffset: scroller.getBoundingClientRect().top };
-          return before;
-        });
-        // wheel over the table end: does the page scroll (overscroll-behavior: contain)?
-        const box = await page.locator(SCROLLER).boundingBox();
-        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-        const pageBefore = await page.evaluate(() => scrollY);
-        await scrollEnd(page, SCROLLER);
-        await page.mouse.wheel(0, 1500); await page.waitForTimeout(500);
-        const afterWheelOverTable = await page.evaluate(() => ({ pageY: scrollY, tableTop: document.querySelector('.archive-table-scroll').scrollTop }));
-        await page.mouse.move(box.x + box.width / 2, 40);
-        await page.mouse.wheel(0, 1500); await page.waitForTimeout(500);
-        const afterWheelOverHeader = await page.evaluate(() => scrollY);
-        await ctx.recorder.dump('archive-scroll-chaining', { measured: 'Playwright mouse.wheel at 1440x900', before: chaining, pageYBeforeWheel: pageBefore, afterWheelOverTableAtItsEnd: afterWheelOverTable, afterWheelOverMastheadPageY: afterWheelOverHeader });
-        await shot('archive', 'page-scrolled-bottom', 'Page scrolled to its bottom (wheel over the masthead): footer visible, table partly scrolled out of view', 'mouse wheel over masthead after table end');
-        await page.evaluate(() => scrollTo(0, 0));
-        await scrollTo(page, SCROLLER, 900);
-        await page.evaluate(() => scrollTo(0, 60));
-        await settle(page);
-        await shot('archive', 'both-scrolled', 'Both regions scrolled: page by 60 px and table by 900 px', 'window.scrollTo(0,60) + table scrollTop=900');
-        await page.evaluate(() => scrollTo(0, 0)); await scrollTo(page, SCROLLER, 0);
-        // ---- sorting
-        await page.getByRole('button', { name: 'Sort by Messages', exact: true }).click(); await archiveReady(page); await settle(page);
-        await shot('archive', 'sorted-messages-asc', 'Sorted by Messages ascending: header highlight, order status text, relevance toggle', 'click header "Messages"');
-        await page.getByRole('button', { name: 'Sort by Messages', exact: true }).click(); await archiveReady(page); await settle(page);
-        // ---- search
-        const box2 = page.getByRole('combobox', { name: 'Search conversations' });
-        await box2.fill('migration'); await page.getByRole('button', { name: 'Search', exact: true }).click(); await archiveReady(page); await settle(page, 500);
-        await shot('archive', 'text-search-relevance', 'Archive after the text search "migration": count line, ordered by relevance', 'type "migration" + Search');
-        await box2.fill('status:failed producer:pi'); await page.getByRole('button', { name: 'Search', exact: true }).click(); await archiveReady(page); await settle(page, 500);
-        await shot('archive', 'field-filter', 'Archive with a field filter (status:failed producer:pi)', 'type expression + Search');
-        await box2.fill('zzzz-nothing-matches'); await page.getByRole('button', { name: 'Search', exact: true }).click(); await page.getByText('No matching conversations').waitFor(); await settle(page);
-        await shot('archive', 'empty-result', 'Empty state: "No matching conversations"', 'type unmatched expression + Search');
-        await box2.fill('');  await page.getByRole('button', { name: 'Search', exact: true }).click(); await archiveReady(page);
-        // ---- error state
-        fixture.archiveFailure = 'Expression error at offset 7: unbalanced parenthesis.';
-        await page.getByRole('button', { name: 'Refresh archive' }).click(); await page.locator('.notice.error').waitFor(); await settle(page);
-        await shot('archive', 'error', 'Archive error state: error notice above an empty table frame', 'fixture returns Failure for Archive RPC; click Refresh');
-        fixture.archiveFailure = null; await page.getByRole('button', { name: 'Refresh archive' }).click(); await archiveReady(page);
-        // ---- popovers / controls
-        await page.getByRole('button', { name: 'Search syntax' }).click(); await page.waitForTimeout(300);
-        await shot('archive', 'syntax-popover', 'Search syntax popover', 'click "Search syntax"');
-        await page.keyboard.press('Escape');
-        await page.getByRole('button', { name: 'Conversations table options' }).click(); await page.waitForTimeout(300);
-        await shot('archive', 'table-options-popover', 'Table options popover (fit / columns)', 'click the three-dot control in the Conversation header');
-        await page.getByText('Columns', { exact: true }).click(); await page.waitForTimeout(300);
-        await shot('archive', 'column-chooser', 'Column chooser expanded inside the options popover', 'table options > Columns');
-        await page.getByRole('button', { name: 'Show all columns' }).click(); await page.waitForTimeout(500);
-        await page.keyboard.press('Escape');
-        await shot('archive', 'all-columns', 'All 11 columns shown: the table is fitted to the 1379 px region, so every column is squeezed (Conversation drops to its 180 px minimum) instead of scrolling horizontally', 'table options > Columns > Show all columns');
-        await inspect(page, ctx.recorder, 'archive-all-columns');
-        await scrollTo(page, SCROLLER, 1200); await page.locator(SCROLLER).evaluate(element => { element.scrollLeft = element.scrollWidth; });
-        await shot('archive', 'all-columns-scrolled-xy', 'Table with all columns scrolled vertically (1200 px); horizontal scroll is not possible because the columns were fitted to the width', 'scrollTop=1200, scrollLeft=max (no effect)');
-        // ---- hints
-        await page.locator(SCROLLER).evaluate(element => { element.scrollLeft = 0; element.scrollTop = 0; });
-        await box2.fill('proj'); await page.waitForTimeout(900);
-        await shot('archive', 'completion-hints', 'Typing a partial field name: completion dropdown (scripted hint)', 'type "proj" in the expression input');
-        await box2.fill('');
+  for (const [viewport, scheme] of VIEWPORTS) {
+    const variant = variantOf(viewport, scheme);
+    scenario(`archive-${scheme}-${viewport.tag}`, async ctx => {
+      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, shot }) => {
+        await archive(page); await settle(page, 400);
+        await shot('archive', '', 'Archive: view bar (query bar, counter, refresh, table options), shortcut row, document table with the first 50 rows', 'nav link Archive', { file: named('', variant) });
+        await inspect(page, ctx.recorder, `archive-${scheme}-${viewport.tag}`);
       });
     });
   }
-  scenario('archive-loading', async ctx => {
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture(f => { f.holdArchive = true; }) }, async ({ page, fixture, shot }) => {
-      await gotoTab(page, 'archive'); await page.locator('.loading-line').first().waitFor(); await settle(page);
-      await shot('archive', 'loading', 'Archive while the first page is in flight: status "Loading conversations…" and loading line', 'server holds the Archive reply');
-      fixture.holdArchive = false;
-    });
-  });
-  scenario('archive-resize', async ctx => {
-    await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {
+  scenario('archive-states', async ctx => {
+    const variant = variantOf(PRIMARY, 'light');
+    await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, fixture, shot }) => {
       await archive(page);
-      const handle = page.getByRole('separator', { name: 'Resize Conversation column' });
-      const box = await handle.boundingBox();
-      await page.mouse.move(box.x + 5, box.y + 10); await page.mouse.down(); await page.mouse.move(box.x + 260, box.y + 10, { steps: 6 }); await page.mouse.up(); await settle(page);
-      await shot('archive', 'column-resized', 'Conversation column dragged 250 px wider; other columns shrink to their minimum', 'drag the column separator');
+      const [newest] = fixture.archiveRows, arrival = fixture.archiveAt(fixture.archiveRows.length + 1);
+      fixture.archiveRows = [arrival.with({ lastTimestamp: new Date(Date.parse(newest.lastTimestamp) + 60_000).toISOString(), head: arrival.head.with({ metadata: newest.head.metadata.with({ title: 'Arrival announced by the pill' }) }) }), ...fixture.archiveRows];
+      await main(page).getByRole('button', { name: 'Refresh archive', exact: true }).click(); await page.mouse.move(700, 24); await page.evaluate(() => { document.activeElement.blur(); });
+      await main(page).getByRole('button', { name: 'Updates available · show latest', exact: true }).waitFor(); await settle(page, 400);
+      await shot('archive', '', 'A refresh found a new arrival: the floating pill announces it; the rows stay until it is applied', 'add a newer fixture row, click Refresh', { file: named('updates', variant) });
+      await main(page).getByRole('button', { name: 'Updates available · show latest', exact: true }).click();
+      await page.mouse.move(700, 24); await page.evaluate(() => window.scrollTo(0, 1500)); await settle(page, 400);
+      await shot('archive', '', 'Document scrolled 1500 px: masthead, view bar and table header stick; the shortcut row scrolled away', 'window.scrollTo(0, 1500)', { file: named('scrolled', variant) });
+      await scrollToEnd(page); await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight)); await settle(page, 400);
+      await shot('archive', '', 'Every batch loaded: the end marker closes the list, the counter reads "all loaded"', 'scroll the document to its end until the end marker', { file: named('end', variant) });
+      await inspect(page, ctx.recorder, 'archive-end');
+      await page.evaluate(() => window.scrollTo(0, 0));
+      await submit(page, 'status:failed producer:pi'); await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('q') === 'status:failed producer:pi'); await main(page).locator('table[data-list="archive"][aria-busy="false"]').waitFor(); await settle(page, 400);
+      await shot('archive', '', 'Field filter applied: counter with the filtered total', 'type "status:failed producer:pi" + Search', { file: named('filtered', variant) });
+      await submit(page, 'migration'); await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('q') === 'migration'); await main(page).locator('table[data-list="archive"][aria-busy="false"]').waitFor(); await settle(page, 400);
+      await shot('archive', '', 'Text query: the Relevance | Last activity order toggle appears in the shortcut row, the headers claim no order', 'type "migration" + Search', { file: named('text', variant) });
+      await submit(page, 'project:"atlantis" status:failed'); await listState(page, 'empty').waitFor(); await page.evaluate(() => { document.activeElement.blur(); }); await settle(page, 400);
+      await shot('archive', '', 'Empty result: icon, heading, the query, Clear filter', 'type an unmatched expression + Search', { file: named('empty', variant) });
+      await main(page).getByRole('button', { name: 'Clear filter', exact: true }).click(); await rows(page).first().waitFor();
+      fixture.archiveFailure = 'The server answered with an error (archive-unavailable). Nothing was changed.';
+      await main(page).getByRole('button', { name: 'Refresh archive', exact: true }).click(); await page.mouse.move(700, 24); await main(page).getByRole('alert').waitFor(); await settle(page, 400);
+      await shot('archive', '', 'Load failure: inline danger notice with Retry instead of an empty table frame', 'fixture fails the Archive read; click Refresh', { file: named('error', variant) });
+      fixture.archiveFailure = null; await main(page).getByRole('button', { name: 'Retry', exact: true }).click(); await rows(page).first().waitFor(); await settle(page);
+      await main(page).getByRole('button', { name: 'Conversations table options', exact: true }).click(); await page.getByRole('menu', { name: 'Conversations table options', exact: true }).waitFor(); await settle(page);
+      await shot('archive', '', 'Table options menu: column checkboxes and fit modes', 'view-bar columns button', { file: named('table-options', variant) });
+      await page.keyboard.press('Escape');
+    });
+    await withScene(ctx, variant, { fixture: seededFixture(fixture => { fixture.holdArchive = true; }) }, async ({ page, fixture, shot }) => {
+      await gotoTab(page, 'archive'); await main(page).locator('table.archive-skeleton').waitFor(); await settle(page, 400);
+      await shot('archive', '', 'First page in flight: skeleton rows under the table header, counter "Loading conversations…"', 'server holds the Archive reply', { file: named('loading', variant) });
+      fixture.holdArchive = false; fixture.releaseArchive();
     });
   });
 }
