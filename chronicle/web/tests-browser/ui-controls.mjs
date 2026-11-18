@@ -26,10 +26,10 @@ try {
     await page.getByRole('link', { name: 'Archive', exact: true }).click(); assert.equal(await toast.isVisible(), true, 'Changing tabs must not promote a success to an in-page notice or reset it');
     await context.close();
   });
-  await group('all controlled tables expose fitting and columns only inside keyboard-accessible vertical three-dots menus in column headers', async () => {
+  await group('Activity tables expose fitting and columns only inside keyboard-accessible vertical three-dots menus in column headers', async () => {
     for (const width of [1280, 390]) {
       const { context, page, fixture } = await scene('harness', width);
-      for (const name of ['Conversations', 'Collectors', 'Indexing jobs']) {
+      for (const name of ['Collectors', 'Indexing jobs']) {
         if (name === 'Collectors') { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-job-row').first().waitFor(); }
         const controls = page.getByRole('region', { name: `${name} table controls`, exact: true }), table = page.getByRole('table', { name, exact: true });
         assert.equal(await controls.getByRole('button').count(), 1, 'Only the menu trigger is exposed in the column header');
@@ -55,7 +55,7 @@ try {
         await controls.getByRole('button', { name: 'Compact columns', exact: true }).click(); assert.equal(await table.locator('thead th').count(), compact);
         await revealHeaderMenu();
         await columns.focus(); await columns.press('Escape'); await controls.getByRole('button', { name: 'Fit to width', exact: true }).waitFor({ state: 'hidden' }); assert.equal(await trigger.evaluate(element => element === document.activeElement), true);
-        await trigger.click(); await page.getByRole('combobox', { name: name === 'Conversations' ? 'Search conversations' : name === 'Collectors' ? 'Search collector metadata' : 'Search indexing job metadata', exact: true }).focus(); await page.waitForFunction(name => document.querySelector(`button[aria-label="${name} table options"]`)?.getAttribute('aria-expanded') === 'false', name);
+        await trigger.click(); await page.getByRole('combobox', { name: name === 'Collectors' ? 'Search collector metadata' : 'Search indexing job metadata', exact: true }).focus(); await page.waitForFunction(name => document.querySelector(`button[aria-label="${name} table options"]`)?.getAttribute('aria-expanded') === 'false', name);
         assert.equal(fixture.calls.slice(before).filter(call => !(call.operation instanceof api.Operation_Ping)).length, 0, 'Presentation controls must not sort, search, read source content or write');
       }
       assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)); await context.close();

@@ -162,8 +162,10 @@ try {
   const fixture = new ChronicleFixture();
   await fixture.install(page);
   await page.goto(`http://127.0.0.1:${address.port}/tests-browser/harness.html`); await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: 'Archive', exact: true }).click();
-  await page.getByRole('combobox', { name: 'Search conversations' }).fill('original source');
-  await page.getByRole('button', { name: 'Search', exact: true }).click();
+  // The retained Search view has the same controls: address the Archive's once it is shown.
+  const archive = page.getByRole('main', { name: 'Archive', exact: true }); await archive.waitFor();
+  await archive.getByRole('combobox', { name: 'Search conversations' }).fill('original source');
+  await archive.getByRole('button', { name: 'Search', exact: true }).click();
   await page.locator('.archive-row .table-title').first().click();
   await page.locator('#message-m1 pre').waitFor();
   await page.locator('.passage-list').getByRole('button', { name: /Keep original source independent/ }).click();

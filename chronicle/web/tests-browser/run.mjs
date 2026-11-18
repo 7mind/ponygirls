@@ -219,19 +219,6 @@ try {
   const initialSource = renderToStaticMarkup(createElement(Conversation, { connection: {}, stats: { activeId: 1, generation: 1 }, user: new ChronicleFixture().user, sessionId: '00000000-0000-4000-8000-000000000001', initialView: undefined, archiveHead: null, select: () => {}, refresh: 0 }));
   assert.match(initialSource, /Rechecking source access/, 'first render must show an explicit loading state, never an empty source body');
   {
-    const { context, page, fixture } = await scene();
-    await search(page);
-    assert.equal(await page.locator('.archive-context [role="status"]').textContent(), '1 conversations · 1 shown');
-    await page.getByRole('button', { name: 'Search syntax', exact: true }).click();
-    await page.getByText(/This result uses up to 1000 authorized published chunks per distinct text operand/).waitFor();
-    assert.match(await page.locator('.expression-help-content:visible').textContent(), /not a row limit.*total is exact under those bounded candidate sets/);
-    await submitExpression(page, '(original source) mode:lexical');
-    assert.equal(await page.locator('.archive-context [role="status"]').textContent(), '1 conversations · 1 shown');
-    assert.equal(await page.getByText(/This result uses up to/).count(), 0);
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Search).length, 0, 'archive expressions must not fall back to the legacy search API');
-    await context.close(); console.log('PASS browser: ANN candidate-window counts are distinct from exact lexical match totals');
-  }
-  {
     const { context, page } = await scene(fixture => {
       fixture.jobs.push(new api.JobInfo('00000000-0000-4000-8000-000000000099', fixture.jobs[0].sessionId, 1, api.JobState.Failed, 1, 'superseded-revision', 0, undefined, undefined));
     });

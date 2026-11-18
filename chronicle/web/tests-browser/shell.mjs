@@ -54,7 +54,7 @@ async function loadArchiveRows(page, count) {
   await archiveRows(page).first().waitFor();
   while (await archiveRows(page).count() < count) {
     const before = await archiveRows(page).count();
-    await page.getByRole('region', { name: 'Archive conversations', exact: true }).evaluate(element => element.scrollTo({ top: element.scrollHeight }));
+    await page.evaluate(() => window.scrollTo({ top: document.documentElement.scrollHeight }));
     await page.waitForFunction(before => document.querySelectorAll('table[aria-label="Conversations"] tbody tr').length > before, before);
   }
 }
