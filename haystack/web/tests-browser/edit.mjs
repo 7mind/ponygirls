@@ -124,6 +124,13 @@ try {
   const field = (page, name) => page.locator(`[data-field-editor="${name}"]`);
   const summary = (page) => page.getByRole("alert").filter({ hasText: /prevents? saving/ });
   const dialog = (page, name) => page.getByRole("dialog", { name, exact: true });
+  /** A traversal started by the browser itself (the Back button, the history menu), without waiting for a navigation that a guard cancels. */
+  const browserTraversal = async (page, steps) => {
+    const session = await page.context().newCDPSession(page);
+    const { currentIndex, entries } = await session.send("Page.getNavigationHistory");
+    await session.send("Page.navigateToHistoryEntry", { entryId: entries[currentIndex + steps].id });
+    await session.detach();
+  };
   const check = async (name, run) => {
     console.log(`# check - ${name}`);
     try { await run(); results.push(`ok - ${name}`); console.log(`ok - ${name}`); }
@@ -405,14 +412,14 @@ try {
       await page.goForward();
       await page.locator('[data-record="editing"]').waitFor();
       await title.fill("Changed by the history case");
-      await page.goBack();
+      await browserTraversal(page, -1);
       await confirm.waitFor();
       assert.match(page.url(), /#\/item\/ui%3Ahistnav\/edit$/, "the route did not change");
       assert.equal(await title.inputValue(), "Changed by the history case", "the editor is still mounted with its draft");
       await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
       await confirm.waitFor({ state: "detached" });
-      // Staying re-arms the guard: the next Back asks again.
-      await page.goBack();
+      // Staying keeps the guard: the next Back asks again.
+      await browserTraversal(page, -1);
       await confirm.waitFor();
       assert.equal(await title.inputValue(), "Changed by the history case");
       await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
@@ -431,6 +438,79 @@ try {
       await page.locator('[data-record="editing"]').waitFor();
       assert.equal(await title.inputValue(), "Saved after the guard");
       assert.equal(page.puts.length, 1, "only the save was sent");
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("browser history: repeated Back with the dialog open and traversals of several entries keep the editor, route and draft until the reader confirms", async () => {
+    const { context, page } = await open();
+    try {
+      const route = /#\/item\/ui%3Ahistnav\/edit$/;
+      const confirm = dialog(page, "Discard unsaved changes?");
+      const title = page.getByLabel("Title", { exact: true });
+      const stays = async (what) => {
+        assert.match(page.url(), route, `${what}: the route did not change`);
+        assert.equal(await title.inputValue(), "Draft under history traversal", `${what}: the editor is mounted with its draft`);
+        assert.equal(await page.evaluate(() => location.hash.endsWith("/edit")), true);
+      };
+      await page.goto(`${base}/#/browse`);
+      await page.goto(`${base}/#/item/${encodeURIComponent("ui:histnav")}`);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await title.fill("Draft under history traversal");
+      // The Back button, again and again with the dialog open.
+      await browserTraversal(page, -1);
+      await confirm.waitFor();
+      await stays("Back");
+      await browserTraversal(page, -1);
+      await browserTraversal(page, -1);
+      await stays("repeated Back");
+      assert.equal(await confirm.count(), 1, "one dialog");
+      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await stays("Keep editing");
+      // Several entries at once: the list and record routes are never shown.
+      await page.evaluate(() => history.go(-2));
+      await confirm.waitFor();
+      await stays("history.go(-2)");
+      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await stays("Keep editing after history.go(-2)");
+      await browserTraversal(page, -3);
+      await confirm.waitFor();
+      await stays("three entries back from the history menu");
+      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await stays("Keep editing after the history menu");
+      // Confirming leaves for the entry that was asked for.
+      await browserTraversal(page, -3);
+      await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await page.waitForFunction(() => location.hash === "#/browse");
+      assert.equal(page.puts.length, 0);
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("browser history without the Navigation API: Back and repeated Back are guarded by the history entry, and confirmed Back lands on the record", async () => {
+    const { context, page } = await open();
+    try {
+      await context.addInitScript(() => { Object.defineProperty(window, "navigation", { value: undefined }); });
+      const confirm = dialog(page, "Discard unsaved changes?");
+      const title = page.getByLabel("Title", { exact: true });
+      await page.goto(`${base}/#/item/${encodeURIComponent("ui:histnav")}`);
+      assert.equal(await page.evaluate(() => window.navigation), undefined, "the Navigation API is absent");
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await title.fill("Draft under history traversal");
+      for (let back = 0; back < 3; back++) {
+        await page.goBack();
+        await confirm.waitFor();
+        assert.match(page.url(), /#\/item\/ui%3Ahistnav\/edit$/);
+        assert.equal(await title.inputValue(), "Draft under history traversal");
+      }
+      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
+      await page.goBack();
+      await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
+      assert.match(page.url(), /#\/item\/ui%3Ahistnav$/);
+      assert.equal(page.puts.length, 0);
       await page.quiet();
     } finally { await context.close(); }
   });
@@ -460,5 +540,5 @@ try {
   });
 } finally { await cleanup(); }
 console.log(`# ${results.length} checks; ${results.filter((line) => line.startsWith("FAIL")).length} failures; 0 skipped`);
-assert.equal(results.length, 8);
+assert.equal(results.length, 10);
 process.exit(process.exitCode ?? 0);

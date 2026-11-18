@@ -90,10 +90,9 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   }, [focusId]);
 
   // Every way out first removes the guard's history entry, so that the router's own history arithmetic is undisturbed.
-  const guard = useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }), () => setLeaving({ run: () => history.back() }));
+  const guard = useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }), (steps) => setLeaving({ run: () => history.go(steps) }));
   const exit = (action: () => void) => { void guard.release().then(action); };
   const leave = (action: () => void) => { if (dirty) setLeaving({ run: action }); else exit(action); };
-  const stay = () => { setLeaving(null); guard.rearm(); };
 
   async function submit(revision: number) {
     setSaving(true); setFailure(null); setReconciled(null);
@@ -203,7 +202,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
       </aside>
     </div></div>
     {leaving !== null && <ConfirmDialog title="Discard unsaved changes?" confirmLabel="Discard changes" cancelLabel="Keep editing" danger busy={false}
-      onConfirm={() => { const { run } = leaving; setLeaving(null); exit(run); }} onCancel={stay}>
+      onConfirm={() => { const { run } = leaving; setLeaving(null); exit(run); }} onCancel={() => setLeaving(null)}>
       <p>You changed <strong>{listOf(parts)}</strong> of <span className="mono nowrap">{itemKey}</span>. Leaving now loses these changes; nothing has been saved.</p>
     </ConfirmDialog>}
     {discarding && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft and reload" cancelLabel="Keep my draft" danger busy={false}
