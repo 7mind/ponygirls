@@ -90,7 +90,7 @@ function GroupCard({ group, user, owner, blocked, ask, invite }: { group: GroupI
     <div className="card-head">
       <div className="grow"><h3 id={titleId}>{group.name}</h3><code className="xs muted access-group-id">{group.id}</code></div>
       <span className={owner ? 'chip chip-accent' : 'chip'}>{owner ? 'Owner' : 'Member'}</span>
-      {owner ? <span className="xs muted">{count}</span> : <><span className="xs muted">owner {group.ownerId} ·</span><button type="button" className="link-button xs" aria-expanded={listed} aria-controls={membersId} onClick={() => setListed(open => !open)}>{count}</button></>}
+      {owner ? <span className="xs muted">{count}</span> : <span className="xs muted"><button type="button" className="link-button access-members-toggle" aria-expanded={listed} aria-controls={membersId} onClick={() => setListed(open => !open)}>{count}</button> · owner {group.ownerId}</span>}
       {owner
         ? <button type="button" className="btn btn-sm btn-danger-quiet" disabled={blocked} onClick={() => ask({ kind: 'delete', group })}>Delete group…</button>
         : <button type="button" className="btn btn-sm" disabled={blocked} onClick={() => ask({ kind: 'leave', group })}>Leave group…</button>}
