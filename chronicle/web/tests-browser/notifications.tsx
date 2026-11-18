@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { MutationReceipt, Operation_ApplyRetryFailed, Operation_MintToken, Operation_Receipt, Operation_RetryJob, Result_Mutation, Result_RetryFailed, Result_Token, RetryFailedCounts, RetryFailedResult, Scope, TokenInfo, TokenResult, type Operation, type Result } from '../src/api.ts';
 import { MutationNotice } from '../src/MutationNotice.tsx';
-import { Dialog } from '../src/Dialog.tsx';
+import { ConfirmDialog } from '../src/ConfirmDialog.tsx';
 import { dismissPopoverOnExternalFocus } from '../src/Popover.tsx';
 import { useMutations, type MutationConnection } from '../src/mutations.ts';
 import { RequestFailure, type RequestOptions } from '../src/transport/types.ts';
@@ -28,7 +28,7 @@ function Notifications() {
       <button onClick={() => void actions.run(new Operation_RetryJob('00000000-0000-4000-8000-000000000001'), 'Retry indexing job')}>Retry job</button>
       <button onClick={() => void actions.run(new Operation_ApplyRetryFailed('target-profile', 'selection-hash', true), 'Retry indexing jobs')}>Retry bulk</button>
       <button onClick={() => void actions.run(new Operation_MintToken('Synthetic token', [Scope.Read]), 'Mint token')}>Mint token</button>
-      <button onClick={success}>Return success</button><button onClick={() => setConversation(true)}>Open conversation</button>
+      <button onClick={success}>Return success</button><button onClick={() => setConversation(true)}>Open modal</button>
       <button onClick={() => pending!.reject(new RequestFailure('Synthetic unknown delivery', 'timeout', 'uncertain', pending!.options.receiptId))}>Lose acknowledgement</button>
       <button onClick={() => pending!.reject(new RequestFailure('No receipt', 'not-found', 'failed', null))}>Receipt absent</button>
       <button onClick={() => pending!.reject(new RequestFailure('Rejected', 'conflict', 'failed', null))}>Receipt rejected</button>
@@ -36,7 +36,7 @@ function Notifications() {
       <button onClick={() => connection.invalidate()}>Invalidate</button><button onClick={() => setOwner('bob')}>Change account</button><button onClick={() => setOwner(null)}>Sign out</button><button onClick={() => setOwner('alice')}>Sign in original</button>
       <output aria-label="Delivered requests">{requests.length}</output><output aria-label="Request ID">{pending === undefined ? 'none' : id(pending)}</output>
     </main>
-    {conversation && <Dialog title="Source conversation" close={() => setConversation(false)}><p>Synthetic conversation content</p><button onClick={success}>Return modal success</button></Dialog>}
+    {conversation && <ConfirmDialog title="Modal fixture" wide={false} confirmLabel="Return modal success" danger={false} confirmDisabled={false} onConfirm={success} onCancel={() => setConversation(false)}><p>Synthetic modal content</p></ConfirmDialog>}
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<Notifications/>);

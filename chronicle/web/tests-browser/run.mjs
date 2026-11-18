@@ -106,8 +106,6 @@ try {
     assert.equal(await page.getByRole('dialog').count(), 0, 'the default archive is browsable without an unsolicited source modal');
     assert.equal(await page.getByRole('heading', { name: /Search sessions|No search submitted|No session selected/ }).count(), 0);
     assert.equal(await page.getByRole('link', { name: 'Chronicle home', exact: true }).textContent(), 'chronicle');
-    await page.getByRole('link', { name: 'Access', exact: true }).click();
-    await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
     await page.getByRole('link', { name: 'Activity', exact: true }).click();
     await page.getByRole('main', { name: 'Activity', exact: true }).waitFor();
     await context.close(); console.log('PASS browser: neutral task headings, empty states and branding');
@@ -119,17 +117,12 @@ try {
     assert.deepEqual(await page.evaluate(() => ({ secure: isSecureContext, uuid: typeof crypto.randomUUID, random: typeof crypto.getRandomValues })), { secure: false, uuid: 'undefined', random: 'function' });
     await page.locator('.connection-widget[data-state="live"]').waitFor({ timeout: 5000 });
     await search(page);
-    await page.getByRole('link', { name: 'Access', exact: true }).click();
-    await page.getByRole('textbox', { name: 'New group name' }).fill('Private HTTP group');
-    await page.getByRole('button', { name: 'Create group', exact: true }).click();
-    await page.getByRole('heading', { name: 'Private HTTP group', exact: true }).waitFor({ timeout: 5000 });
     await openTokens(page); await mint(page, 'Private HTTP token');
     await page.getByLabel('One-time token secret', { exact: true }).waitFor({ timeout: 5000 });
     assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_Hello));
-    assert.ok(fixture.calls.some(envelope => envelope.operation instanceof api.Operation_CreateGroup));
     assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
     for (const envelope of fixture.calls) assert.match(envelope.requestId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    await context.close(); console.log('PASS browser: non-loopback insecure HTTP supports Hello, reads and mutation UUIDs without randomUUID');
+    await context.close(); console.log('PASS browser: non-loopback insecure HTTP supports Hello and reads without randomUUID');
   }
   // Specified: Blackbox / Good Communication, real UI + generated codecs with a controlled owner-scoped API.
   {
@@ -443,20 +436,10 @@ try {
   await page.getByRole('button', { name: 'I have saved it', exact: true }).click(); await page.getByRole('button', { name: 'Yes, I have saved it', exact: true }).click();
   await page.getByLabel('One-time token secret', { exact: true }).waitFor({ state: 'detached' });
   await page.goBack(); await page.getByRole('main', { name: 'Access management', exact: true }).waitFor();
-  await page.getByRole('textbox', { name: 'New group name' }).fill('Synthetic group'); await page.getByRole('button', { name: 'Create group', exact: true }).click();
-  await page.getByRole('heading', { name: 'Synthetic group', exact: true }).waitFor();
-  const owner = page.locator('.group-card').filter({ has: page.getByRole('heading', { name: 'Systems workshop' }) });
-  await owner.getByRole('textbox', { name: 'Existing user ID' }).fill('carol'); await owner.getByRole('button', { name: 'Invite', exact: true }).click();
-  await page.getByRole('checkbox', { name: /I understand: joining shares ALL/ }).first().check();
-  await page.getByRole('button', { name: 'Accept invitation & share' }).first().click();
-  await owner.getByRole('button', { name: 'Remove', exact: true }).click();
-  page.on('dialog', dialog => dialog.accept());
-  await page.locator('.group-card').filter({ has: page.getByRole('heading', { name: 'Research circle' }) }).getByRole('button', { name: 'Leave group', exact: true }).click();
-  await page.locator('.group-card').filter({ has: page.getByRole('heading', { name: 'Synthetic group', exact: true }) }).getByRole('button', { name: 'Delete group', exact: true }).click();
   await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.getByRole('button', { name: 'Retry indexing', exact: true }).click();
   await page.locator('.activity-job-row .job-state').getByText('Queued', { exact: true }).waitFor();
   assert.equal(fixture.accountRequests.filter(request => request.path.endsWith('/tokens')).length, 1);
-  for (const Operation of [api.Operation_CreateGroup, api.Operation_Invite, api.Operation_AcceptInvite, api.Operation_RemoveMember, api.Operation_LeaveGroup, api.Operation_DeleteGroup, api.Operation_RetryJob]) assert.ok(fixture.calls.some(call => call.operation instanceof Operation));
+  assert.ok(fixture.calls.some(call => call.operation instanceof api.Operation_RetryJob));
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByRole('link', { name: 'Archive', exact: true }).click();
   await archiveReady(page); await openConversation(page);
@@ -464,7 +447,7 @@ try {
   await page.locator('.conversation-intro').getByRole('heading', { name: 'Following the migration thread' }).waitFor();
   await page.locator('.transcript .original-message pre').first().waitFor();
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'mobile layout must not overflow');
-  await context.close(); console.log('PASS browser: keyboard search, UTF-8 locator navigation, bounded paging, normalized-only source, literal source, management forms, indexing retry, silent blackhole resync, lifecycle/server restart, responsive modal');
+  await context.close(); console.log('PASS browser: keyboard search, UTF-8 locator navigation, bounded paging, normalized-only source, literal source, indexing retry, silent blackhole resync, lifecycle/server restart, responsive modal');
   for (const mode of ['unauthorized', 'version']) {
     const { context, page, fixture } = await scene(); await search(page); await openConversation(page); fixture.mode = mode; fixture.restart();
     const state = mode === 'version' ? 'update-required' : 'unauthorized';

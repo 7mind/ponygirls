@@ -1,9 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdir, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
-import { Goal50Fixture, api, NOW, INSTANCE } from './goal50-fixture.mjs';
+import { Goal50Fixture, api, NOW } from './goal50-fixture.mjs';
 import { runActivityLayoutCases } from './activity-layout.mjs';
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set provisioned PLAYWRIGHT_BROWSERS_PATH; no downloads.');
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' }); await server.listen();
@@ -16,7 +15,6 @@ async function scene(configure, viewport, deviceScaleFactor) {
 }
 async function group(name, body) { if (process.env.CHRONICLE_GOAL50_CASE !== undefined && !name.includes(process.env.CHRONICLE_GOAL50_CASE)) return; await body(); console.log(`PASS browser goal50: ${name}`); }
 async function activity(page) { await page.getByRole('link', { name: 'Activity', exact: true }).click(); await page.locator('.activity-overview .section-heading time').waitFor(); }
-async function tester(page) { await page.getByRole('link', { name: 'MCP', exact: true }).click(); await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).waitFor(); }
 async function openSource(page) { await page.locator('.archive-row .table-title').first().click(); await page.locator('.conversation-intro h2').waitFor(); }
 async function caret(input, position) { await input.evaluate((element, offset) => element.setSelectionRange(offset, offset), position); await input.press('ArrowLeft'); await input.press('ArrowRight'); }
 try {
@@ -25,7 +23,7 @@ try {
   await group('tab content omits generic banners and retains actionable controls', async () => {
     const { context, page, fixture } = await scene();
     const banned = /Search updates after you pause|Enter searches now|Edits clear results|Semantic and hybrid text searches use query embeddings|The same conversation expression language as Archive|Manage agent tokens and sharing groups|Each explicit Run starts empty model history|Maximum context, source, result, trace and execution limits are declared above|Controls and run identity survive navigation in this tab|Owner-only, all non-tombstone source HEADs/;
-    for (const [tab, label] of [['Archive', 'Archive'], ['Search', 'Search'], ['Activity', 'Activity'], ['Access', 'Access management'], ['MCP', 'MCP tester']]) {
+    for (const [tab, label] of [['Archive', 'Archive'], ['Search', 'Search'], ['Activity', 'Activity']]) {
       await page.getByRole('navigation', { name: 'Main navigation', exact: true }).getByRole('link', { name: tab, exact: true }).click();
       const main = page.getByRole('main');
       assert.doesNotMatch(await main.innerText(), banned, `${tab}: no generic tutorial banner`);
@@ -42,45 +40,13 @@ try {
         assert.equal(await main.getByRole('button', { name: 'About these snapshots', exact: true }).isVisible(), true);
         assert.equal(await main.getByRole('button', { name: 'Rebuild archive index', exact: true }).isVisible(), true);
         assert.equal(await main.getByRole('button', { name: 'Retry all current failed indexing jobs', exact: true }).isVisible(), true);
-      } else if (tab === 'Access') {
-        assert.equal(await main.getByRole('button', { name: 'Open token settings', exact: true }).isVisible(), true);
-        assert.equal(await main.getByRole('textbox', { name: 'Token name', exact: true }).count(), 0, 'token creation belongs to account settings, not a competing Access form');
-        await main.getByText('all your eligible existing and future sessions', { exact: true }).waitFor();
-      } else {
-        assert.equal(await main.getByRole('textbox', { name: 'Fresh prompt', exact: true }).isVisible(), true);
-        assert.equal(await main.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true);
-        await main.getByRole('button', { name: 'About running prompts', exact: true }).click();
-        const help = main.locator('.mcp-run-help [popover]');
-        await help.waitFor(); assert.match(await help.innerText(), /cost/i); assert.match(await help.innerText(), /authorized source data/); assert.match(await help.innerText(), /never replayed/);
-        await page.keyboard.press('Escape');
       }
     }
     assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest || call.operation instanceof api.Operation_MintToken || call.operation instanceof api.Operation_ApplyOwnerReindex || call.operation instanceof api.Operation_ApplyRetryFailed).length, 0, 'Reading optional help never executes a task');
     await context.close();
   });
-  // Regression: schemas previously pushed the actual prompt and Run below the fold.
-  await group('MCP prompt and Run precede optional schema reference at 390px', async () => {
-    const { context, page, fixture } = await scene(undefined, { width: 390, height: 844 }); await tester(page);
-    for (const control of [page.getByRole('textbox', { name: 'Fresh prompt', exact: true }), page.getByRole('button', { name: 'Run fresh prompt', exact: true })]) {
-      const bounds = await control.boundingBox();
-      assert.ok(bounds.y >= 0 && bounds.y + bounds.height <= 844, `Prompt and Run must be visible before scrolling: ${JSON.stringify(bounds)}`);
-    }
-    const schemas = page.getByText(`Tool schemas (${fixture.tools.length})`, { exact: true });
-    assert.equal(await page.getByRole('group', { name: 'MCP tools', exact: true }).isVisible(), false);
-    await schemas.click(); await page.getByRole('group', { name: 'MCP tools', exact: true }).waitFor();
-    await page.getByRole('heading', { name: `Tools (${fixture.tools.length})`, exact: true }).waitFor();
-    await schemas.click(); assert.equal(await page.getByRole('group', { name: 'MCP tools', exact: true }).isVisible(), false);
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 0);
-    await context.close();
-  });
   await group('regression malformed owner Apply response never claims it was not submitted', async () => {
     const { context, page, fixture } = await scene(fixture => { fixture.reindexMalformed = true; }); await activity(page); await page.getByRole('button', { name: 'Rebuild archive index', exact: true }).click(); const preview = page.getByRole('region', { name: 'Archive rebuild preview', exact: true }); await preview.getByRole('checkbox').check(); await preview.getByRole('button', { name: 'Confirm archive index rebuild', exact: true }).click(); await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).waitFor(); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyOwnerReindex).length, 1); assert.equal(await page.getByText('No new apply was submitted.', { exact: false }).count(), 0); await context.close();
-  });
-  await group('regression mismatched terminal snapshot cannot unlock another cost-bearing Start', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.mcpWrongTerminal = true; }); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Synthetic identity check'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMcpTest, 1); await page.getByRole('heading', { name: /Run / }).waitFor(); await page.getByLabel('Fresh prompt', { exact: true }).fill('Do not admit another cost'); assert.equal(await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true); await page.getByRole('alert').filter({ hasText: /identity changed/ }).waitFor(); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); await context.close();
-  });
-  await group('regression cancel authority loss erases trace immediately without waiting for Read', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Synthetic cancellation authority'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); fixture.mcpHoldReads = true; fixture.cancelAuthorityLost = true; await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await page.getByRole('heading', { name: 'Run AuthorizationLost', exact: true }).waitFor(); assert.equal(await page.locator('.mcp-trace pre').count(), 0); await context.close();
   });
   await group('controlled completion preserves Unicode/midtoken/escaped outside text and changes only the draft', async () => {
     const expression = '猫🦄 AND project:old OR tag:"retained\\:value"', replacement = '"new\\\\path\\\"quoted"', start = expression.indexOf('old'), end = start + 3;
@@ -148,43 +114,10 @@ try {
     await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).waitFor(); await page.getByRole('button', { name: 'Look up receipt', exact: true }).click(); await page.getByRole('button', { name: 'Retry confirmed-absent request', exact: true }).waitFor(); fixture.reindexDrop = false; fixture.reindexConflict = true; await page.getByRole('button', { name: 'Retry confirmed-absent request', exact: true }).click(); await fixture.waitCall(api.Operation_ApplyOwnerReindex, 2); assert.equal(await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).count(), 1, 'direct conflict is not final');
     const retry = fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyOwnerReindex)[1]; assert.equal(retry.requestId, original.requestId); assert.equal(retry.operation.selectionHash, original.operation.selectionHash); await page.getByRole('button', { name: 'Look up receipt', exact: true }).click(); await page.getByText(/confirms that this archive rebuild was rejected/).waitFor(); assert.equal(await page.getByRole('region', { name: 'Uncertain mutation', exact: true }).count(), 0); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_ApplyOwnerReindex).length, 2); await context.close();
   });
-  await group('MCP fresh catalog dynamic tools full multipart pages and literal output with terminal reauthorization', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.tools.push('new_registry_tool'); }); await tester(page); await page.getByText('Tool schemas (4)', { exact: true }).click(); await page.getByRole('heading', { name: 'Tools (4)', exact: true }).waitFor(); await page.getByLabel('Fresh prompt', { exact: true }).fill('Only this fresh prompt 猫🦄'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor();
-    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_McpTestTools).length, 2); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); const reads = fixture.calls.filter(call => call.operation instanceof api.Operation_ReadMcpTest); assert.equal(reads[0].operation.afterSequence, 0n); assert.equal(reads[1].operation.afterSequence, 40n); assert.ok(reads.every(call => call.operation.limit <= 40));
-    const texts = await page.locator('.mcp-trace pre').allTextContents(); assert.equal(texts[0], '{"query":"fresh 猫🦄"}'); assert.ok(texts[1].startsWith('{"source":"part1🦄')); assert.ok(texts[1].endsWith('END"}')); assert.equal(texts[2], '<script>literal-not-executed</script>猫🦄 final response'); assert.equal(await page.locator('.mcp-trace script').count(), 0);
-    fixture.mcpAuthorityLost = true; await page.clock.runFor(2100); await page.getByRole('alert').filter({ hasText: 'MCP source authorization lost' }).waitFor(); assert.equal(await page.locator('.mcp-trace pre').count(), 0); assert.equal(await page.evaluate(() => Object.keys(localStorage).filter(key => key !== 'chronicle.theme.preference').length), 0); await context.close();
-  });
-  await group('MCP unknown Start is never replayed, IDs survive navigation and explicit acknowledgement allows new cost', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.mcpDropStart = true; fixture.mcpReadFailure = 'mcp-run-not-found'; }); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('First prompt only'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await fixture.waitCall(api.Operation_StartMcpTest, 1); const original = fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest)[0].operation; fixture.restart();
-    await page.getByRole('alert').filter({ hasText: /Outcome unknown/ }).waitFor(); assert.equal(await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true); await activity(page); await tester(page); assert.ok((await page.getByRole('region', { name: 'MCP run controls', exact: true }).textContent()).includes(original.runId)); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1);
-    await page.getByRole('region', { name: 'MCP run controls', exact: true }).getByRole('checkbox').check(); await page.getByRole('button', { name: 'Clear run and trace', exact: true }).click(); fixture.mcpDropStart = false; fixture.mcpReadFailure = null; fixture.incarnation = '00000000-0000-4000-8000-000000060001'; await page.getByLabel('Fresh prompt', { exact: true }).fill('Second prompt only'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); const next = fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest)[1].operation; assert.equal(next.prompt, 'Second prompt only'); assert.notEqual(next.runId, original.runId); assert.notEqual(next.instanceId, original.instanceId); assert.equal(fixture.calls.some(call => call.operation instanceof api.Operation_Receipt), false); await context.close();
-  });
-  await group('MCP run-changed retries only Read and cancellation reconciles a completion race', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.mcpReadFailure = 'mcp-run-changed'; }); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Read retry, not model retry'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.getByRole('alert').filter({ hasText: /Registry changed/ }).waitFor(); fixture.mcpReadFailure = null; fixture.mcpHoldReads = true; await page.getByRole('button', { name: 'Read original run', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMcpTest, 2); fixture.cancelComplete = true; await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await fixture.waitCall(api.Operation_CancelMcpTest, 1); fixture.mcpHoldReads = false; for (const reply of fixture.mcpPending.splice(0)) reply(); await page.getByRole('heading', { name: 'Run Complete', exact: true }).waitFor(); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); await context.close();
-  });
-  await group('MCP validates scalar UTF8 prompt limit before Start and displays declared context/output/deadline limits', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('🦄'.repeat(4097)); assert.equal(await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true); assert.equal(fixture.calls.some(call => call.operation instanceof api.Operation_StartMcpTest), false); await page.getByRole('button', { name: 'Runtime limits', exact: true }).click(); const catalog = await page.getByRole('region', { name: 'Current MCP test catalog', exact: true }).innerText(); for (const value of ['65536', 'MAX', '524288', '131072', '900', '600', 'maximumRequestBytes', 'maximumResultBytes']) assert.ok(catalog.includes(value)); await context.close();
-  });
-  await group('320px light/dark and zoom keep autocomplete and tester surfaces inside viewport', async () => {
+  await group('320px light/dark and zoom keep autocomplete surfaces inside viewport', async () => {
     for (const colorScheme of ['light', 'dark']) {
-      const { context, page } = await scene(undefined, { width: 320, height: 844 }); await page.emulateMedia({ colorScheme }); const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await input.fill('p'); await page.clock.runFor(200); await page.getByRole('listbox').waitFor(); let bounds = await page.getByRole('listbox').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 320); await input.press('Escape'); await tester(page); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-      for (const label of ['Runtime limits', 'About running prompts']) {
-        const button = page.getByRole('button', { name: label, exact: true }); await button.click();
-        const panel = page.locator(`[id="${await button.getAttribute('aria-controls')}"]`); await panel.waitFor();
-        bounds = await panel.boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 320 && bounds.y >= 0 && bounds.y + bounds.height <= 844, `${label} remains readable in the viewport`);
-        await page.getByRole('button', { name: label, exact: true, expanded: true }).waitFor(); await panel.getByRole('button', { name: 'Close', exact: true }).click();
-        await page.getByRole('button', { name: label, exact: true, expanded: false }).waitFor();
-      }
+      const { context, page } = await scene(undefined, { width: 320, height: 844 }); await page.emulateMedia({ colorScheme }); const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await input.fill('p'); await page.clock.runFor(200); await page.getByRole('listbox').waitFor(); let bounds = await page.getByRole('listbox').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 320); await input.press('Escape'); assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
       await page.setViewportSize({ width: 640, height: 1000 }); await page.evaluate(() => { document.documentElement.style.zoom = '2'; }); const metrics = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: innerWidth, main: document.querySelector('main').getBoundingClientRect().toJSON(), zoom: getComputedStyle(document.documentElement).zoom })); assert.ok(metrics.document <= metrics.viewport, JSON.stringify(metrics)); await page.getByRole('link', { name: 'Archive', exact: true }).click(); await page.getByRole('combobox', { name: 'Search conversations', exact: true }).fill('zoom'); await page.clock.runFor(200); await page.getByRole('listbox').waitFor(); bounds = await page.getByRole('listbox').boundingBox(); assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= 640); await context.close();
-    }
-  });
-  await group('security epoch and account change erase private prompt and MCP trace before retained refresh', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Private synthetic owner prompt'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); await page.getByLabel('Fresh prompt', { exact: true }).fill('Never retain this unsent prompt');
-    fixture.mcpHoldReads = true; fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]); fixture.restart(); await page.getByRole('link', { name: 'Archive', exact: true }).waitFor(); await page.getByRole('link', { name: 'MCP', exact: true }).click(); await page.getByRole('main', { name: 'MCP tester', exact: true }).waitFor(); assert.equal(await page.locator('.mcp-trace pre').count(), 0); assert.equal(await page.getByLabel('Fresh prompt', { exact: true }).inputValue(), ''); assert.equal(await page.getByRole('region', { name: 'MCP run controls', exact: true }).count(), 0); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); await context.close();
-  });
-  await group('server MCP context output source and deadline errors are explicit without Start retries or silent truncation', async () => {
-    for (const code of ['mcp-request-limit', 'mcp-output-limit', 'mcp-source-limit', 'mcp-deadline']) {
-      const { context, page, fixture } = await scene(fixture => { fixture.mcpReadFailure = code; }); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill(`Synthetic ${code}`); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.getByRole('alert').filter({ hasText: /Outcome unknown/ }).waitFor(); assert.equal(await page.locator('.mcp-trace pre').count(), 0); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); assert.equal(await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true); await context.close();
     }
   });
   await group('changed owner reprocess selection requires explicit fresh preview and a renewed unchecked confirmation', async () => {
@@ -194,57 +127,14 @@ try {
     const { context, page, fixture } = await scene(fixture => { fixture.holdHints = true; }); const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await input.fill('private-owner-draft'); await page.clock.runFor(200); await fixture.waitCall(api.Operation_ExpressionHints, 1); const old = fixture.hintPending.shift(); fixture.user = new api.UserInfo('bob', 'bob', [api.Scope.Read, api.Scope.Raw]); fixture.restart(); await page.getByRole('combobox', { name: 'Search conversations', exact: true }).filter({ hasText: '' }).waitFor(); old(); assert.equal(await page.getByRole('listbox').count(), 0); await page.waitForFunction(() => document.querySelector('input[aria-label="Search conversations"]').value === '');
     await activity(page); await page.getByText('Model usage and indexing settings', { exact: true }).click(); await page.getByRole('table', { name: 'Completed model call usage', exact: true }).waitFor(); fixture.holdUsage = true; fixture.restart(); await page.getByRole('table', { name: 'Completed model call usage', exact: true }).waitFor({ state: 'detached' }); assert.equal(await page.getByRole('listbox').count(), 0); await context.close();
   });
-  await group('completed MCP trace is reauthorized and erased even while another tab is selected', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Terminal reauthorization across navigation'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); await activity(page); fixture.mcpAuthorityLost = true; await page.clock.runFor(2100); await fixture.waitCall(api.Operation_ReadMcpTest, 3); await page.getByRole('link', { name: 'MCP', exact: true }).click(); await page.getByRole('main', { name: 'MCP tester', exact: true }).waitFor(); assert.equal(await page.locator('.mcp-trace pre').count(), 0); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); await context.close();
-  });
-  await group('regression MCP authority error clears an unsent private prompt as well as the trace', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Run then type a separate draft'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); await page.getByLabel('Fresh prompt', { exact: true }).fill('Private unsent draft must erase'); fixture.mcpAuthorityLost = true; await page.getByRole('button', { name: 'Read original run', exact: true }).click(); await page.getByRole('alert').filter({ hasText: /MCP source authorization lost/ }).waitFor(); assert.equal(await page.locator('.mcp-tester textarea').inputValue(), ''); assert.equal(await page.locator('.mcp-trace pre').count(), 0); await context.close();
-  });
-  await group('regression fresh catalog authority denial erases retained trace before another run Read', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Catalog authorization boundary'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); await activity(page); fixture.mcpHoldReads = true; fixture.catalogDenied = true; await page.getByRole('link', { name: 'MCP', exact: true }).click(); await page.getByRole('alert').filter({ hasText: /MCP tool catalog authority removed/ }).waitFor(); assert.equal(await page.locator('.mcp-trace pre').count(), 0); await context.close();
-  });
-  await group('regression controlled MCP prompt retains its accessible name after typing', async () => {
-    const { context, page } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Typed controlled scalar prompt'); assert.equal(await page.getByLabel('Fresh prompt', { exact: true }).count(), 1); await context.close();
-  });
   await group('regression same-text completion applies caret immediately without leaking the command into later typing', async () => {
     const { context, page } = await scene(fixture => { fixture.hintResult = () => new api.ExpressionHintsResult('hash', NOW, 0, 8, [new api.ExpressionHint(api.ExpressionHintKind.Field, 'project:', 'project:', 8)], false); }); const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }); await input.fill('project:'); await caret(input, 3); await page.clock.runFor(200); await page.getByRole('option', { name: /project:/ }).waitFor(); await input.press('Enter'); assert.equal(await input.evaluate(element => element.selectionStart), 8); await input.press('X'); assert.equal(await input.inputValue(), 'project:X'); assert.equal(await input.evaluate(element => element.selectionStart), 9); await context.close();
   });
   await group('inline field shortcuts focus the single authoritative completion input with unique linked IDs', async () => {
     const { context, page, fixture } = await scene(); const before = fixture.searchCount; await page.getByRole('button', { name: 'Add Project filter', exact: true }).click(); const input = page.getByRole('combobox', { name: 'Search conversations', exact: true }); assert.equal(await input.inputValue(), 'project:'); await page.clock.runFor(200); await page.getByRole('listbox').waitFor(); const linked = await input.evaluate(element => ({ id: element.getAttribute('aria-controls'), matching: document.querySelectorAll(`[id="${element.getAttribute('aria-controls')}"]`).length, focused: element === document.activeElement })); assert.equal(linked.matching, 1); assert.equal(linked.focused, true); assert.equal(fixture.searchCount, before); await context.close();
   });
-  await group('regression catalog denial fences a pre-denial captured run Read from restoring private trace or finality', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.mcpHoldReads = true; fixture.mcpCaptureReads = true; }); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Captured authority race'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await fixture.waitCall(api.Operation_ReadMcpTest, 1); const captured = fixture.mcpPending.shift(); await activity(page); fixture.catalogDenied = true; await page.getByRole('link', { name: 'MCP', exact: true }).click(); await page.getByRole('alert').filter({ hasText: /MCP tool catalog authority removed/ }).waitFor(); captured(); await page.clock.runFor(150); assert.equal(await page.locator('.mcp-trace pre').count(), 0); await page.getByRole('heading', { name: 'Run Uncertain', exact: true }).waitFor(); await context.close();
-  });
-  await group('authority denial fences a captured preflight catalog before any cost-bearing Start submission', async () => {
-    const { context, page, fixture } = await scene(fixture => { fixture.holdCatalogs = true; }); await page.getByRole('link', { name: 'MCP', exact: true }).click(); await page.getByRole('main', { name: 'MCP tester', exact: true }).waitFor(); await fixture.waitCall(api.Operation_McpTestTools, 1); await page.getByLabel('Fresh prompt', { exact: true }).fill('Do not submit after newer authority denial'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await fixture.waitCall(api.Operation_McpTestTools, 2); const initial = fixture.catalogPending.shift(), preflight = fixture.catalogPending.shift(); initial.send(new api.Result_Error(new api.Failure('forbidden', 'Newer authority denial fences pending Start'))); await page.getByRole('alert').filter({ hasText: /Newer authority denial/ }).waitFor(); preflight.send(new api.Result_McpTestTools(preflight.catalog)); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).waitFor(); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 0); await context.close();
-  });
-  await group('regression pending cancellation cannot overlap a new cost-bearing run admission', async () => {
-    const { context, page, fixture } = await scene(); await tester(page); await page.getByLabel('Fresh prompt', { exact: true }).fill('Complete before cancellation'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click(); await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); fixture.holdCancels = true; await page.getByRole('button', { name: 'Request cancellation', exact: true }).click(); await fixture.waitCall(api.Operation_CancelMcpTest, 1); await page.getByLabel('Fresh prompt', { exact: true }).fill('No new admission while old Cancel is pending'); assert.equal(await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).isDisabled(), true); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); fixture.cancelPending.shift()(new api.Result_Error(new api.Failure('mcp-run-not-found', 'Original cancel outcome unknown'))); await page.getByRole('heading', { name: 'Run Uncertain', exact: true }).waitFor(); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1); await context.close();
-  });
   await group('regression expanded Activity usage and owner preview keep the page viewport-contained with internal table scrolling', async () => {
     await runActivityLayoutCases(scene, activity);
-  });
-  await group('regression immediate MCP Start and Complete retain the freshly validated catalog and declared limits', async () => {
-    const output = fileURLToPath(new URL(`../test-results/goal50-activity-layout/mcp-${new Date().toISOString().replaceAll(':', '-')}/`, import.meta.url)), records = []; await mkdir(output, { recursive: true });
-    for (const held of [false, true]) {
-      const { context, page, fixture } = await scene(fixture => { fixture.mcpHoldReads = held; });
-      try {
-        await page.emulateMedia({ colorScheme: 'dark' }); await tester(page); const initial = fixture.incarnation; fixture.incarnation = '00000000-0000-4000-8000-000000060099'; fixture.tools.push('fresh_registry_tool'); await page.getByLabel('Fresh prompt', { exact: true }).fill('Synthetic fast catalog publication'); await page.getByRole('button', { name: 'Run fresh prompt', exact: true }).click();
-        const catalog = page.getByRole('region', { name: 'Current MCP test catalog', exact: true });
-        async function verifyCatalog(stage) {
-          assert.equal(await catalog.isVisible(), true, `validated catalog must remain visible after ${stage}`);
-          const reference = catalog.locator('.mcp-tool-reference');
-          if (!await reference.evaluate(element => element.open)) await catalog.getByText('Tool schemas (4)', { exact: true }).click();
-          await catalog.getByRole('heading', { name: 'Tools (4)', exact: true }).waitFor();
-          await catalog.getByRole('button', { name: 'Runtime limits', exact: true }).click();
-          const content = await catalog.innerText(); for (const value of [fixture.incarnation, 'declared-model', 'declared-revision', '65536', 'MAX', '524288', '131072', '900', '600', 'Tools (4)']) assert.ok(content.includes(value)); assert.equal(content.includes(initial), false);
-          await page.keyboard.press('Escape'); records.push({ held, stage, catalogVisible: true, instanceId: fixture.incarnation, tools: fixture.tools.length });
-        }
-        if (held) { await fixture.waitCall(api.Operation_ReadMcpTest, 1); await page.getByRole('heading', { name: 'Run Queued', exact: true }).waitFor(); await verifyCatalog('immediate Start acknowledgement'); fixture.mcpHoldReads = false; for (const reply of fixture.mcpPending.splice(0)) reply(); }
-        await page.locator('.mcp-trace pre').filter({ hasText: /final response$/ }).waitFor(); await verifyCatalog('Complete snapshot'); await page.screenshot({ path: `${output}/dark-1440-${held ? 'read-held' : 'fast'}-catalog.png`, fullPage: true }); assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_StartMcpTest).length, 1);
-      } finally { await context.close(); }
-    }
-    await writeFile(`${output}/metrics.json`, JSON.stringify({ syntheticOnly: true, providerCalls: 0, records }, null, 2)); console.log(`MCP catalog evidence: ${output}`);
   });
   for (const recover of [false, true]) await group(`partial rebuild ${recover ? 'correlated Receipt' : 'direct result'} remains uncertain rather than accepting an unqueued HEAD`, async () => {
     let applySignals = 0;
