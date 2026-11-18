@@ -488,7 +488,9 @@ function ConversationSnapshot({ connection, stats, user, sessionId, relatedHref,
     pendingScroll.current = { operation, origin: 'place', messageId: null, position, focus: false };
     setMessageStart(Math.floor(position / MESSAGE_PAGE_SIZE) * MESSAGE_PAGE_SIZE);
   }
-  useEffect(() => {
+  // A layout effect: the arrival place's navigation starts before the arrival Find (`find=`, a child's passive effect) captures
+  // the navigation it belongs to, so that a link's `at` and `find` together do not discard the Find result.
+  useLayoutEffect(() => {
     if (initialAttempted.current || snapshot === null || view === undefined) return;
     if (initial !== null && initial.at !== null) {
       initialAttempted.current = true;

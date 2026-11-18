@@ -738,6 +738,8 @@ try {
     assert.equal(located.messageId, 'm65'); assert.ok(pinnedTo(located, fixture.view), 'the linked message is located in the linked view');
     await fixture.waitCall(api.Operation_SearchSessionMessages, 1); const literal = calls(fixture, api.Operation_SearchSessionMessages)[0].operation;
     assert.equal(literal.literal, 'source'); assert.ok(pinnedTo(literal, fixture.view), 'the Find text runs once on arrival, in the linked view'); assert.equal(await findInput(page).inputValue(), 'source');
+    await page.waitForFunction(() => /matching messages/.test(document.querySelector('[aria-label="Find status"]')?.textContent ?? ''));
+    assert.match(await findStatus(page).textContent(), /^0 matching messages · end of matches$/, 'the arrival Find keeps its result: the landing at `at` does not discard it');
     assert.doesNotMatch(await hash(page), /find=/, 'the Find text is not kept in the address');
   });
   await run('a link to a retired generation shows the unavailable state, never stale or default-view content', fromSearch(fixture => { fixture.conversationFailure = operation => operation.view !== undefined && operation.view.generationId !== undefined ? 'indexed-view-retired' : null; }), async ({ page, fixture }) => {
