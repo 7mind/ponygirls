@@ -32,6 +32,20 @@ Environment (all optional): `HAYSTACK_SERVER_COMMAND` (default: `bin/haystack-se
 `HAYSTACK_UI_CAPTURE_SKIP_BUILD=1` (reuse `web/dist`), `HAYSTACK_CAPTURE_ONLY=auth,browse,…` (run only the
 named scenarios; note that `index.md`/`manifest.json` then list only those shots).
 
+### Scenarios that match the redesigned dashboard
+
+Observed at 0f0f00a7: the default run (every scenario) stalls in `browse` (it still drives the pre-redesign
+selectors; no shot after `07-boot-unreachable`). The scenarios written for the redesign are `shell`, `browse-h2`,
+`browse-fin` (filters applied, offline warning), `record` and `edit`; use
+
+```sh
+HAYSTACK_UI_CAPTURE_SKIP_BUILD=1 HAYSTACK_CAPTURE_ONLY=shell,browse-h2,browse-fin,record,edit \
+  nix develop .#chronicle --command bash haystack/web/ui-capture/run.sh /absolute/out/dir
+```
+
+The remaining named scenarios (`browse`, `query`, `nav`, `errors`, `account`, `live`, `focus`, `responsive`, `dark`) record how the
+"before" captures were made and are not maintained against the new views.
+
 ## Files
 
 - `run.sh` — infrastructure (PostgreSQL, build, env) and entry point.
