@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { AssistantMessage, AssistantMessageEvent, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
+import type { AssistantMessage, SimpleStreamOptions, TranscriptContext } from "@earendil-works/pi-ai";
 import { NATIVE_DELEGATION, type NativeBinding, type NativeRequestContext } from "./native-contract.ts";
 import type { IpcEnvelope } from "ponygirls-subagents/src/protocol.ts";
 import type { RunClaudeInput, RunClaudeOutput } from "../executor/claude-cli.ts";
 import { NativeSessions, type DelegatedRequest } from "./execution-lifecycle.ts";
-import { NativeFrameServer } from "./native-framing.ts";
+import { NativeFrameServer, tryPrepareNativeResponse } from "./native-framing.ts";
 import { NativeEventQueue, observeNativeOriginal } from "./native-stream.ts";
 
 const MAX_NATIVE_INVOCATIONS = 8;
@@ -25,7 +25,7 @@ export interface NativeUsage {
 interface Invocation {
   readonly owner: string;
   readonly abort: AbortController;
-  readonly iterator: AsyncIterator<AssistantMessageEvent>;
+  readonly iterator: NativeEventQueue;
   readonly result: Promise<AssistantMessage>;
   readonly receiptFailed: () => boolean;
   readonly originalFailure: () => Error | null;
@@ -188,12 +188,16 @@ export class NativeInferenceService {
         if (invocation.nextPending || invocation.iteratorDone) throw new Error("INVALID: concurrent or completed native iterator");
         invocation.nextPending = true;
         try {
-          const event = await invocation.iterator.next();
+          let prepared: ReturnType<typeof tryPrepareNativeResponse>;
+          const event = await invocation.iterator.next((batch) => {
+            prepared = tryPrepareNativeResponse({ done: false, event: structuredClone(batch) });
+            return prepared !== undefined;
+          });
           const failure = invocation.originalFailure();
           if (failure !== null) throw failure;
           if (invocation.receiptFailed()) throw new Error("STORE_FAILED: native usage receipt is not durably committed");
           invocation.iteratorDone = event.done === true || event.value.type === "done" || event.value.type === "error";
-          return event.done === true ? { done: true } : { done: false, event: structuredClone(event.value) };
+          return event.done === true ? { done: true } : prepared ?? { done: false, event: structuredClone(event.value) };
         } catch (e) { invocation.iteratorDone = true; throw e; }
         finally { invocation.nextPending = false; }
       }

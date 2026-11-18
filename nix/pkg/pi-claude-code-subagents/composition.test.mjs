@@ -180,6 +180,34 @@ for (const paths of [originalPaths, [...originalPaths].reverse()]) {
   });
 }
 
+test("BG Claude Code worker completes a CLI thinking burst without dropping content or duplicating usage", { timeout: 60_000 }, async (t) => {
+  const f = await fixture(t, originalPaths, null);
+  const thinkingDeltas = 2048;
+  const answer = "Claude thinking burst complete.";
+  await writeFile(join(f.config, "fixture.json"), JSON.stringify({ answer, thinkingDeltas }));
+  assert.deepEqual([...(await f.registry.refresh({ providers: ["claude-code"], allowNetwork: true, force: true })).errors], []);
+  const child = await f.call("spawn_agent", { task_name: "thinking-burst", message: "Think and give a short answer.", profile: "reader", isolation: "none", model: { ...CLAUDE, thinkingLevel: "high" } });
+  const result = await f.terminal(child);
+  assert.equal(result.outcome, "succeeded", result.detail);
+  assert.equal(result.text, answer);
+  const sessionsDirectory = join(f.agentDir, "subagents", f.session.sessionManager.getSessionId(), "sessions", child.agentId);
+  const files = (await readdir(sessionsDirectory)).filter((name) => name.endsWith(".jsonl"));
+  assert.equal(files.length, 1);
+  const assistants = (await lines(join(sessionsDirectory, files[0]))).filter((entry) => entry.type === "message" && entry.message.role === "assistant");
+  assert.equal(assistants.length, 1);
+  const { message } = assistants[0];
+  assert.equal(message.stopReason, "stop");
+  const thinking = Array.from({ length: thinkingDeltas }, (_, i) => i.toString(16).padStart(4, "0")).join("");
+  assert.deepEqual(message.content, [{ type: "thinking", thinking, thinkingSignature: "fixture-signature" }, { type: "text", text: answer }]);
+  const { status } = await f.call("read_agent", { target: child.agentId, view: "status" });
+  assert.equal(status.taskOutcome, "succeeded");
+  assert.ok(message.usage.cost.total > 0);
+  assert.deepEqual(status.usage, { inputTokens: 10, outputTokens: 1237, cacheReadTokens: 2, cacheWriteTokens: 1, reasoningTokens: 1234, cost: message.usage.cost.total, unknown: false });
+  const launches = await lines(join(f.config, "launch.jsonl"));
+  assert.deepEqual(launches.map(({ cwd, model, effort }) => ({ cwd, model, effort })), [{ cwd: f.root, model: "fixture-opus-route", effort: "high" }]);
+  assert.deepEqual(f.errors, []);
+});
+
 for (const missing of ["core", "provider"]) {
   test(`BG actual loader reports missing ${missing} without unsolicited CLI work`, async (t) => {
     const paths = originalPaths.filter((_path, index) => index !== (missing === "core" ? 1 : 0));

@@ -28,11 +28,24 @@ test("BA malformed canonical JSON errors never disclose transferred content", as
   assert.equal(reply.error.includes("private"), false);
 });
 
-test("BA native framing denies oversize before invoking inference", async () => {
-  let invocations = 0;
-  const server = new NativeFrameServer<string>(async () => { invocations++; return {}; }, (owner) => owner);
-  await assert.rejects(new NativeRpcClient().call((frame) => server.handle(frame, "owner"), { text: "a".repeat(NATIVE_LOGICAL_BYTES) }), /PAYLOAD_TOO_LARGE/);
-  assert.equal(invocations, 0);
+const requestTooLarge = /^PAYLOAD_TOO_LARGE: native request exceeds the 64 MiB serialized UTF-8 limit; shorten the conversation or reduce attachments and tool output$/;
+const responseTooLarge = /^PAYLOAD_TOO_LARGE: native response exceeds the 64 MiB serialized UTF-8 limit; request a shorter response or split the task into smaller turns$/;
+
+test("BA native framing denies oversized requests before invoking inference", async () => {
+  await assert.rejects(new NativeRpcClient().call(async () => assert.fail("must not upload"), { text: "a".repeat(NATIVE_LOGICAL_BYTES) }), { message: requestTooLarge });
+});
+
+test("BA native framing denies serialized responses over the wire limit", async () => {
+  const server = new NativeFrameServer<string>(async () => { return { text: "🦄".repeat(NATIVE_LOGICAL_BYTES / 4) }; }, (owner) => owner);
+  await assert.rejects(new NativeRpcClient().call((frame) => server.handle(frame, "owner"), {}), { message: responseTooLarge });
+});
+
+test("BA native framing rejects oversized declared requests and responses before allocating", async () => {
+  const chunk = { id: "0", type: "canonical-json-v1", index: 0, length: NATIVE_LOGICAL_BYTES + 1, digest: "0".repeat(64), data: "e30=" };
+  const server = new NativeFrameServer<string>(async () => assert.fail("must not invoke"), (owner) => owner);
+  const reply = await server.handle({ kind: "upload", chunk }, "owner");
+  assert.match((reply as { error: string }).error, requestTooLarge);
+  await assert.rejects(new NativeRpcClient().call(async () => ({ ok: true, chunk }), {}), { message: responseTooLarge });
 });
 
 for (const defect of ["duplicate", "index", "digest", "scope", "retired"] as const) {

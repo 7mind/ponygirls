@@ -20,14 +20,37 @@ interface Transfer {
   owner: string;
 }
 
-function encode(value: unknown): Buffer {
+type NativeDirection = "request" | "response";
+
+class PreparedNativeResponse {
+  readonly bytes: Buffer;
+  constructor(bytes: Buffer) { this.bytes = bytes; }
+}
+
+function tooLarge(direction: NativeDirection): Error {
+  const remedy = direction === "request"
+    ? "shorten the conversation or reduce attachments and tool output"
+    : "request a shorter response or split the task into smaller turns";
+  return new Error(`PAYLOAD_TOO_LARGE: native ${direction} exceeds the 64 MiB serialized UTF-8 limit; ${remedy}`);
+}
+
+function encodeWithinLimit(value: unknown, limit: number): Buffer | undefined {
   let json: string | undefined;
   try { json = JSON.stringify(value); }
   catch { throw new Error("INVALID: native message is not canonical JSON"); }
   if (json === undefined) throw new Error("INVALID: native message is not JSON");
-  const bytes = Buffer.from(json, "utf8");
-  if (bytes.length > NATIVE_LOGICAL_BYTES) throw new Error("PAYLOAD_TOO_LARGE: native logical message exceeds 64 MiB");
+  return Buffer.byteLength(json, "utf8") <= limit ? Buffer.from(json, "utf8") : undefined;
+}
+
+function encode(value: unknown, direction: NativeDirection): Buffer {
+  const bytes = encodeWithinLimit(value, NATIVE_LOGICAL_BYTES);
+  if (bytes === undefined) throw tooLarge(direction);
   return bytes;
+}
+
+export function tryPrepareNativeResponse(value: unknown, limit = NATIVE_LOGICAL_BYTES): PreparedNativeResponse | undefined {
+  const bytes = encodeWithinLimit(value, Math.min(limit, NATIVE_LOGICAL_BYTES));
+  return bytes === undefined ? undefined : new PreparedNativeResponse(bytes);
 }
 function digest(bytes: Buffer): string { return createHash("sha256").update(bytes).digest("hex"); }
 function transfer(bytes: Buffer): Transfer { return { bytes, offset: 0, index: 0, digest: digest(bytes), owner: "" }; }
@@ -37,10 +60,11 @@ function chunk(id: string, entry: Transfer): Chunk {
   entry.offset += data.length;
   return frame;
 }
-function receive(value: unknown, entries: Map<string, Transfer>, owner: string): { id: string; complete: boolean; value?: unknown } {
+function receive(value: unknown, entries: Map<string, Transfer>, owner: string, direction: NativeDirection): { id: string; complete: boolean; value?: unknown } {
   if (typeof value !== "object" || value === null) throw new Error("INVALID: missing native chunk");
   const c = value as Chunk;
-  if (typeof c.id !== "string" || c.id.length > 128 || c.type !== "canonical-json-v1" || !Number.isSafeInteger(c.index) || c.index < 0 || !Number.isSafeInteger(c.length) || c.length <= 0 || c.length > NATIVE_LOGICAL_BYTES || typeof c.digest !== "string" || !/^[a-f0-9]{64}$/.test(c.digest) || typeof c.data !== "string" || c.data.length > Math.ceil(NATIVE_CHUNK_BYTES / 3) * 4) throw new Error("INVALID: malformed native chunk");
+  if (typeof c.id !== "string" || c.id.length > 128 || c.type !== "canonical-json-v1" || !Number.isSafeInteger(c.index) || c.index < 0 || !Number.isSafeInteger(c.length) || c.length <= 0 || typeof c.digest !== "string" || !/^[a-f0-9]{64}$/.test(c.digest) || typeof c.data !== "string" || c.data.length > Math.ceil(NATIVE_CHUNK_BYTES / 3) * 4) throw new Error("INVALID: malformed native chunk");
+  if (c.length > NATIVE_LOGICAL_BYTES) throw tooLarge(direction);
   const data = Buffer.from(c.data, "base64");
   if (data.toString("base64") !== c.data || data.length === 0 || data.length > NATIVE_CHUNK_BYTES) throw new Error("INVALID: native chunk encoding");
   let entry = entries.get(c.id);
@@ -65,7 +89,7 @@ function receive(value: unknown, entries: Map<string, Transfer>, owner: string):
 export type NativeRoundTrip = (frame: unknown) => Promise<unknown>;
 
 async function nativeCall(roundTrip: NativeRoundTrip, value: unknown, id: string): Promise<unknown> {
-  const entry = transfer(encode(value));
+  const entry = transfer(encode(value, "request"));
   let reply: unknown;
   do {
     reply = await roundTrip({ kind: "upload", chunk: chunk(id, entry) });
@@ -75,7 +99,7 @@ async function nativeCall(roundTrip: NativeRoundTrip, value: unknown, id: string
   for (;;) {
     const frame = reply as { ok: boolean; error?: string; chunk?: unknown };
     if (frame.ok !== true) throw new Error(typeof frame.error === "string" ? frame.error : "INVALID: native transport rejected message");
-    const decoded = receive(frame.chunk, received, "");
+    const decoded = receive(frame.chunk, received, "", "response");
     if (decoded.complete) return decoded.value;
     reply = await roundTrip({ kind: "download", id: decoded.id });
   }
@@ -121,9 +145,10 @@ export class NativeFrameServer<Owner> {
         if (!Number.isSafeInteger(id) || String(id) !== incoming.id || id <= this.highestIncoming) throw new Error("INVALID: replayed native transfer");
         this.highestIncoming = id;
       }
-      const input = receive(frame.chunk, this.incoming, this.ownerKey(owner));
+      const input = receive(frame.chunk, this.incoming, this.ownerKey(owner), "request");
       if (!input.complete) return { ok: true };
-      const output = transfer(encode(await this.invoke(input.value, owner)));
+      const response = await this.invoke(input.value, owner);
+      const output = transfer(response instanceof PreparedNativeResponse ? response.bytes : encode(response, "response"));
       if (this.retired) throw new Error("STALE_INSTANCE: native transport retired");
       output.owner = this.ownerKey(owner);
       const next = chunk(input.id, output);
