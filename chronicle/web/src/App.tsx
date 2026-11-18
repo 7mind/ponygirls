@@ -13,10 +13,9 @@ import { ConnectionHealth } from './ConnectionHealth.tsx';
 import { Search } from './Search.tsx';
 import { Archive, emptyArchive } from './Archive.tsx';
 import type { ArchiveState } from './Archive.tsx';
-import { Dialog } from './Dialog.tsx';
-import { Conversation } from './Conversation.tsx';
+import { SessionPage } from './Conversation.tsx';
 import { Icon } from './Icon.tsx';
-import { DEFAULT_ROUTE, HashRouter, RouteParams, RouteStateCache, RouteStateContext, formatRoute, routeSlot, sessionIdOf, sessionRoute, useRouteState, useRouteSync, useRouter, viewRoute, viewRouteWith, type Route, type View } from './router.ts';
+import { DEFAULT_ROUTE, HashRouter, RouteParams, RouteStateCache, RouteStateContext, formatRoute, routeSlot, sessionIdOf, useRouteState, useRouteSync, useRouter, viewRoute, viewRouteWith, type Route, type View } from './router.ts';
 import type { ManagerStats } from './transport/types.ts';
 import { ArchiveReadLane } from './archive-requests.ts';
 import { SessionFindReadGate } from './session-find.ts';
@@ -213,6 +212,8 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
   const accountShown = user !== null && accountSection !== null;
   const canvas = user === null || CANVAS_VIEWS.includes(route.view);
   useEffect(() => { document.body.classList.toggle('on-canvas', canvas); }, [canvas]);
+  const split = user !== null && !accountShown && route.view === 'session';
+  useEffect(() => { document.body.classList.toggle('split-shell', split); }, [split]);
   function skipToContent(event: React.MouseEvent) {
     event.preventDefault();
     const target = document.getElementById(MAIN_CONTENT_ID);
@@ -220,6 +221,8 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     target.focus();
   }
   const current: NavView = route.view === 'session' ? 'archive' : route.view;
+  // The session is a routed page (scroll model B): it covers its parent list, which stays mounted with its state.
+  const sessionShown = route.view === 'session';
   // Visited views stay mounted (hidden) for the owner, so their loaded lists, drafts, selection and scroll survive
   // tab switches and Back/Forward (spec §5 rule 2); a new owner starts with none.
   const [visited, setVisited] = useState<{ owner: string | null; views: ReadonlySet<NavView> }>({ owner: null, views: new Set() });
@@ -246,7 +249,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     return () => window.removeEventListener('keydown', shortcut, true);
   }, [current]);
   function view(item: NavView, user: UserInfo) {
-    const routing: ViewRouting = { active: item === current, route, router };
+    const routing: ViewRouting = { active: item === current && !sessionShown, route, router };
     switch (item) {
       case 'archive': return <ArchiveView connection={connection} requests={archiveRequests} findReads={findReads} stats={stats} user={user} routing={routing}/>;
       case 'search': return <SearchView connection={connection} stats={stats} user={user} findReads={findReads} routing={routing}/>;
@@ -256,13 +259,11 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     }
   }
   function views(user: UserInfo) {
-    return NAV_ITEMS.filter(item => mounted.has(item.view)).map(item => <div key={`${scope.owner ?? ''}:${item.view}`} className="app-route" data-view={item.view} hidden={item.view !== current} ref={element => { if (element === null) panels.current.delete(item.view); else panels.current.set(item.view, element); }}><RetainedView active={item.view === current} render={() => view(item.view, user)}/></div>);
+    return NAV_ITEMS.filter(item => mounted.has(item.view)).map(item => <div key={`${scope.owner ?? ''}:${item.view}`} className="app-route" data-view={item.view} hidden={item.view !== current || sessionShown} ref={element => { if (element === null) panels.current.delete(item.view); else panels.current.set(item.view, element); }}><RetainedView active={item.view === current && !sessionShown} render={() => view(item.view, user)}/></div>);
   }
-  // Until the session becomes a routed page (UX-C3) a session route opens the dialog over its parent list.
-  function sessionDialog(user: UserInfo) {
-    if (route.view !== 'session') return null;
-    const sessionId = sessionIdOf(route);
-    return <div className="legacy-view"><Dialog title="Source conversation" close={() => router.back(retainedRoute('archive', scope.cache))}><Conversation key={sessionId} connection={connection} stats={stats} user={user} sessionId={sessionId} initialView={undefined} archiveHead={null} select={id => router.navigate(sessionRoute(id), 'push')} refresh={0} findReads={findReads}/></Dialog></div>;
+  function sessionPage(user: UserInfo) {
+    if (!sessionShown) return null;
+    return <SessionPage key={`${scope.owner ?? ""}:${sessionIdOf(route)}`} connection={connection} stats={stats} user={user} findReads={findReads} route={route} router={router} parent={formatRoute(retainedRoute('archive', scope.cache))} back={() => router.back(retainedRoute('archive', scope.cache))}/>;
   }
   return <RouteStateContext.Provider value={scope.cache}><div className="app-shell" onFocusCapture={dismissPopoverOnExternalFocus}><a className="skip-link" href={`#${MAIN_CONTENT_ID}`} onClick={skipToContent}>Skip to content</a>
     <header className="masthead"><Brand/>
@@ -271,7 +272,7 @@ export function App({ connection, theme }: { connection: ChronicleConnection; th
     <div id={MAIN_CONTENT_ID} className="app-views" tabIndex={-1}><div className="global-mutation-notices"><MutationNotice actions={actions}/><ReindexProgress progress={rebuild}/></div>
       {identity.error && stats.terminal !== 'unauthorized' && <div className="page shell-notice"><div className="notice notice-danger" role="alert">{identity.error}</div></div>}
       {renewal.error && <div className="page shell-notice"><div className="notice notice-danger" role="alert"><div>{renewal.error}. Your credentials have not been rejected. <div className="notice-actions"><button type="button" className="btn btn-sm" onClick={renewal.retry}>Retry session renewal</button></div></div></div></div>}
-      {stats.terminal === 'unauthorized' ? <main data-account-auth=""/> : stats.terminal === 'update-required' ? <ShellState title="Dashboard update required" status="This dashboard version is no longer supported. Reload to update before checking your session." action="Reload dashboard" run={() => window.location.reload()}/> : identity.data === null ? <ShellState title={identity.error || stats.terminal !== null ? 'Session unavailable' : stats.activeId === null ? 'Reconnecting' : 'Checking session'} status={identity.error || stats.terminal !== null ? 'Session unavailable. Retry without entering credentials.' : stats.activeId === null ? 'Reconnecting and checking your existing session…' : 'Checking your existing session…'} action="Retry session" run={() => connection.retry()}/> : user === null ? <main className="page shell-state"><p className="muted" role="status">Preparing an account-scoped archive…</p></main> : <><div className="app-view" hidden={accountShown}>{views(user)}{sessionDialog(user)}</div><div data-account-outlet="" data-account-user-id={user.id} hidden/></>}</div>
+      {stats.terminal === 'unauthorized' ? <main data-account-auth=""/> : stats.terminal === 'update-required' ? <ShellState title="Dashboard update required" status="This dashboard version is no longer supported. Reload to update before checking your session." action="Reload dashboard" run={() => window.location.reload()}/> : identity.data === null ? <ShellState title={identity.error || stats.terminal !== null ? 'Session unavailable' : stats.activeId === null ? 'Reconnecting' : 'Checking session'} status={identity.error || stats.terminal !== null ? 'Session unavailable. Retry without entering credentials.' : stats.activeId === null ? 'Reconnecting and checking your existing session…' : 'Checking your existing session…'} action="Retry session" run={() => connection.retry()}/> : user === null ? <main className="page shell-state"><p className="muted" role="status">Preparing an account-scoped archive…</p></main> : <><div className="app-view" hidden={accountShown}>{views(user)}{sessionPage(user)}</div><div data-account-outlet="" data-account-user-id={user.id} hidden/></>}</div>
   </div></RouteStateContext.Provider>;
 }
 function ShellState({ title, status, action, run }: { title: string; status: string; action: string; run: () => void }) {

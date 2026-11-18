@@ -1,18 +1,11 @@
 import { closePopovers } from './Popover.tsx';
-import { createContext, useContext, useEffect, useId, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import './dialog.css';
 
-const TopBar = createContext<HTMLDivElement | null>(null);
-// Live snapshot chrome belongs in the modal header, but is owned by the pinned read.
-export function DialogTopBar({ children }: { children: ReactNode }) {
-  const target = useContext(TopBar);
-  return target === null ? null : createPortal(children, target);
-}
-
+// Legacy modal of the Archive and Search views; the session itself is a routed page (Conversation.tsx SessionPage).
 export function Dialog({ title, close, children }: { title: string; close: () => void; children: ReactNode }) {
-  const ref = useRef<HTMLDialogElement>(null), titleId = useId(), [topBar, setTopBar] = useState<HTMLDivElement | null>(null);
+  const ref = useRef<HTMLDialogElement>(null), titleId = useId();
   useEffect(() => {
     const dialog = ref.current;
     if (dialog === null) throw new Error('Dialog was not mounted');
@@ -43,5 +36,5 @@ export function Dialog({ title, close, children }: { title: string; close: () =>
     if (event.target !== event.currentTarget) return;
     const rect = event.currentTarget.getBoundingClientRect();
     if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) close();
-  }}><header className="dialog-heading"><h2 id={titleId} hidden>{title}</h2><div className="dialog-top-bar" ref={setTopBar}/><button className="dialog-close" onClick={close} aria-label="Close conversation" title="Close conversation">×</button></header><div className="dialog-content"><TopBar.Provider value={topBar}>{children}</TopBar.Provider></div></dialog>;
+  }}><header className="dialog-heading"><h2 id={titleId} hidden>{title}</h2><button className="dialog-close" onClick={close} aria-label="Close conversation" title="Close conversation">×</button></header><div className="dialog-content">{children}</div></dialog>;
 }

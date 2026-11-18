@@ -57,3 +57,9 @@ export function inlineParts(text: string): InlinePart[] {
   // Code bodies are opaque: emphasis delimiters inside them are literal source.
   return delimiterParts(text, 'code').flatMap(part => part.kind === 'text' ? delimiterParts(part.text, 'emphasis') : [part]);
 }
+
+export interface DiffLine { text: string; kind: 'added' | 'deleted' | 'plain' }
+/** Lines of tool output (each with its line break) marked as unified-diff additions or deletions; file headers stay plain. */
+export function diffLines(text: string): DiffLine[] {
+  return (text.match(/[^\n]*\n|[^\n]+$/g) ?? []).map(line => ({ text: line, kind: /^\+(?!\+\+ )/.test(line) ? 'added' : /^-(?!-- )/.test(line) ? 'deleted' : 'plain' }));
+}

@@ -33,6 +33,36 @@ export function sessionIdOf(route: Route): string {
   if (route.view !== 'session' || sessionId === undefined) throw new Error('Not a session route');
   return sessionId;
 }
+/**
+ * Reading place of a session route (spec §5): the pinned source view (`rev`, and `gen` for an annotation generation), the
+ * message at the top of the transcript (`at`, a message id), a Find literal to run on arrival (`find`), the side pane
+ * (`pane`) and the selected passage (`passage`). Absent or malformed values are null.
+ */
+export const SESSION_PANES = ['outline', 'find', 'related', 'info', 'closed'] as const;
+export type SessionPane = (typeof SESSION_PANES)[number];
+export interface SessionPin { readonly revision: number; readonly generationId: string | null }
+export interface SessionPlace { readonly pin: SessionPin | null; readonly at: string | null; readonly find: string | null; readonly pane: SessionPane | null; readonly passage: string | null }
+const SESSION_PARAM = { revision: 'rev', generation: 'gen', at: 'at', find: 'find', pane: 'pane', passage: 'passage' } as const;
+export function sessionPlaceRoute(sessionId: string, place: SessionPlace): Route {
+  const entries: [string, string][] = [];
+  if (place.pin !== null) {
+    if (!Number.isSafeInteger(place.pin.revision) || place.pin.revision < 0) throw new Error('A session pin needs a source revision');
+    entries.push([SESSION_PARAM.revision, String(place.pin.revision)]);
+    if (place.pin.generationId !== null) entries.push([SESSION_PARAM.generation, place.pin.generationId]);
+  }
+  for (const [name, value] of [[SESSION_PARAM.at, place.at], [SESSION_PARAM.find, place.find], [SESSION_PARAM.pane, place.pane], [SESSION_PARAM.passage, place.passage]] as const) if (value !== null) entries.push([name, value]);
+  return { ...sessionRoute(sessionId), params: new RouteParams(entries) };
+}
+export function sessionPlaceOf(route: Route): SessionPlace {
+  const text = (name: string) => { const value = route.params.get(name); return value === null || value.length === 0 ? null : value; };
+  const revision = text(SESSION_PARAM.revision), pane = text(SESSION_PARAM.pane);
+  const parsed = revision !== null && /^(0|[1-9][0-9]*)$/.test(revision) ? Number(revision) : null;
+  return {
+    pin: parsed === null || !Number.isSafeInteger(parsed) ? null : { revision: parsed, generationId: text(SESSION_PARAM.generation) },
+    at: text(SESSION_PARAM.at), find: text(SESSION_PARAM.find), passage: text(SESSION_PARAM.passage),
+    pane: SESSION_PANES.find(value => value === pane) ?? null,
+  };
+}
 export const DEFAULT_ROUTE = viewRoute('search');
 
 export type Fragment = { readonly kind: 'route'; readonly route: Route } | { readonly kind: 'account' } | { readonly kind: 'empty' } | { readonly kind: 'invalid' };
@@ -72,7 +102,7 @@ function historyIndex(state: unknown): number | null {
 
 export type NavigationMode = 'push' | 'replace';
 type Arrival = NavigationMode | 'traversal';
-/** The scroll identity of a route: its view (and Activity section); null for a session, which overlays its list. */
+/** The scroll identity of a route: its view (and Activity section); null for a session page, whose panes scroll instead of the document. */
 function scrollKey(route: Route): string | null { return route.view === 'session' ? null : [route.view, ...route.segments].join('/'); }
 export interface RouterSnapshot { readonly route: Route; readonly account: boolean }
 const USER_SCROLL_EVENTS = ['wheel', 'touchstart', 'keydown', 'mousedown'] as const;
