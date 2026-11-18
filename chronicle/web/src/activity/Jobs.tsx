@@ -13,7 +13,7 @@ import { Icon } from '../Icon.tsx';
 import { Glyph } from '../Glyph.tsx';
 import { windowProgress } from '../progress.ts';
 import { recordedYoloProfile } from '../recorded-yolo-profile.ts';
-import { ACTIVITY_INSTANCE, JOB_CHAINS, JOBS_DRAFT, JOBS_OPENED, JOBS_STATE, jobsRouteFor, type JobScope, type JobsState } from './state.ts';
+import { ACTIVITY_INSTANCE, JOB_CHAINS, JOBS_DRAFT, JOBS_OPENED, JOBS_STATE, collectorsRouteFor, type JobScope, type JobsState } from './state.ts';
 import { collectorFilter, withCollector } from './collector-filter.ts';
 import { ListTable, count, nextOrder, useListTable, type Column } from './list.tsx';
 import { When } from './time.tsx';
@@ -84,7 +84,7 @@ function JobDetail({ row, scope, blocked, retry }: { row: ActivityJob; scope: Jo
         <dt>Revision</dt><dd>job r{job.revision} (metadata of this revision) · current HEAD r{session.revision} · profile <code>{row.profile}</code> · {classificationLabel(row.classification)}</dd>
         <dt>Windows</dt><dd>{windowProgress(job)}{job.state === JobState.Complete ? ' · job complete' : ' · job not Complete at this snapshot'}</dd>
         <dt>Lease</dt><dd className={job.state === JobState.Running && !row.leaseActive ? 'activity-warning' : undefined}>{leaseText(row)}</dd>
-        <dt>Collector</dt><dd><a className="mono" href={formatRoute(jobsRouteFor(withCollector('', row.collectorId), scope))}>{row.collectorId}</a></dd>
+        <dt>Collector</dt><dd><a className="mono" href={formatRoute(collectorsRouteFor(withCollector('', row.collectorId)))}>{row.collectorId}</a></dd>
       </dl>
       <dl className="dl activity-detail-list" aria-label={`Job-revision metadata · r${job.revision}`}>
         <dt>Source</dt><dd>{metadata.producer} / {session.source.format} · model {metadata.model === undefined ? 'unknown' : metadata.model}</dd>
@@ -134,8 +134,10 @@ export function Jobs({ connection, stats, user, actions, refresh, refreshNow }: 
   function scope(value: JobScope) { setState(previous => previous.scope === value ? previous : { ...previous, scope: value, expanded: null }); }
   function clear() { setDraft(''); submit(''); }
   const retry = (id: string) => { void actions.run(new Operation_RetryJob(id), 'Retry indexing job'); };
-  const counter = resource.loading ? `Loading ${noun} jobs…` : meta === null ? 'Not loaded' : <><strong>{meta.total.toLocaleString()}</strong> {noun} job{meta.total === 1n ? '' : 's'} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
-  return <section className="activity-list" aria-label="Jobs" data-view="activity-jobs" ref={region} onClickCapture={event => { const row = event.target instanceof Element && event.target.closest('a.cell-title') !== null ? event.target.closest('tr[data-row-id]') : null; if (row instanceof HTMLElement && row.dataset.rowId !== undefined) setOpened(row.dataset.rowId); }}>
+  // Editing keeps the rows of the submitted expression, dimmed and labelled, until the edit is submitted (spec §1 principle 5).
+  const editing = draft !== state.submitted;
+  const counter = editing ? <span data-state="pending">Expression edited · Filter to update</span> : resource.loading ? `Loading ${noun} jobs…` : meta === null ? 'Not loaded' : <><strong>{meta.total.toLocaleString()}</strong> {noun} job{meta.total === 1n ? '' : 's'} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
+  return <section className="activity-list" data-editing={editing ? '' : undefined} aria-label="Jobs" data-view="activity-jobs" ref={region} onClickCapture={event => { const row = event.target instanceof Element && event.target.closest('a.cell-title') !== null ? event.target.closest('tr[data-row-id]') : null; if (row instanceof HTMLElement && row.dataset.rowId !== undefined) setOpened(row.dataset.rowId); }}>
     <div className="viewbar activity-viewbar" data-view-bar="">
       <div className="segmented" role="group" aria-label="Indexing job scope">{([[ActivityJobScope.Current, 'Current'], [ActivityJobScope.Historical, 'History']] as const).map(([value, label]) => <button key={value} type="button" aria-pressed={state.scope === value} onClick={() => scope(value)}>{label}</button>)}</div>
       <MetadataQueryBar inputRef={input} name="Indexing job" placeholder={PLACEHOLDER} value={draft} applied={state.submitted} change={setDraft} submit={submit} disabled={stats.activeId === null} completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityJobs(state.scope, undefined) }}/>

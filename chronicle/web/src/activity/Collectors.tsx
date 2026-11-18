@@ -94,8 +94,10 @@ export function Collectors({ connection, stats, user, refresh, refreshNow }: { c
   const table = useListTable(columns, COLUMN_CHOICES_KEY, ACTIONS_WIDTH, resource.items.length);
   const meta = resource.meta, failed = resource.error !== null && resource.appendError === null;
   function submit(expression: string) { setState(value => ({ ...value, submitted: expression, expanded: null })); if (expression === state.submitted) refreshNow(); }
-  const counter = resource.loading ? 'Loading collectors…' : meta === null ? 'Not loaded' : <><strong>{meta.totalCollectors.toLocaleString()}</strong>{state.submitted === '' ? ` collector${meta.allCollectors === 1n ? '' : 's'}` : ` of ${count(meta.allCollectors, 'collector', 'collectors')}`} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
-  return <section className="activity-list" aria-label="Collectors" data-view="activity-collectors">
+  // Editing keeps the rows of the submitted expression, dimmed and labelled, until the edit is submitted (spec §1 principle 5).
+  const editing = draft !== state.submitted;
+  const counter = editing ? <span data-state="pending">Expression edited · Filter to update</span> : resource.loading ? 'Loading collectors…' : meta === null ? 'Not loaded' : <><strong>{meta.totalCollectors.toLocaleString()}</strong>{state.submitted === '' ? ` collector${meta.allCollectors === 1n ? '' : 's'}` : ` of ${count(meta.allCollectors, 'collector', 'collectors')}`} · {resource.hasMore ? `${resource.items.length.toLocaleString()} loaded` : 'all loaded'}</>;
+  return <section className="activity-list" data-editing={editing ? '' : undefined} aria-label="Collectors" data-view="activity-collectors">
     <div className="viewbar activity-viewbar" data-view-bar="">
       <MetadataQueryBar inputRef={input} name="Collector" placeholder={PLACEHOLDER} value={draft} applied={state.submitted} change={setDraft} submit={submit} disabled={stats.activeId === null} completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_ActivityCollectors() }}/>
       <div className="viewbar-meta" role="status" aria-label="Collectors status">{counter}</div>

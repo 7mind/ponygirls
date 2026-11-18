@@ -272,7 +272,10 @@ try {
     const body = 'project:"project-1" OR status:failed', expression = `(${body}) AND branch:"branch-1"`;
     scriptJobs(fixture, expression, item => (item.session.metadata.project === 'project-1' || item.job.state === api.JobState.Failed) && item.session.metadata.gitBranch === 'branch-1');
     await page.keyboard.press('Control+k'); assert.equal(await combobox(page, 'jobs').evaluate(element => element === document.activeElement), true, 'Ctrl K focuses the job expression');
-    await combobox(page, 'jobs').fill(body); await button(region(page, 'Jobs'), 'Add Branch filter').click();
+    await combobox(page, 'jobs').fill(body);
+    assert.equal(await status(page, 'jobs').textContent(), 'Expression edited · Filter to update', 'an unsubmitted edit is labelled');
+    assert.equal(await region(page, 'Jobs').getAttribute('data-editing'), '', 'the rows of the submitted expression stay, dimmed'); assert.ok(await rows(page, 'jobs').count() > 0);
+    await button(region(page, 'Jobs'), 'Add Branch filter').click();
     assert.equal(await combobox(page, 'jobs').inputValue(), `(${body}) AND branch:`, 'a field shortcut conjoins the whole Boolean body');
     await combobox(page, 'jobs').fill('producer:"synthetic-harness" OR format:"historian"'); await button(region(page, 'Jobs'), 'Subagents').click();
     assert.equal(await combobox(page, 'jobs').inputValue(), '(producer:"synthetic-harness" OR format:"historian") AND agent:"subagent"', 'a preset conjoins the recorded-agent claim');
@@ -381,6 +384,46 @@ try {
     await button(region(page, 'Jobs'), 'History').click(); await table(page, 'jobs').locator('thead th[data-sort="Attempts"] button.th-sort').click(); await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('sort') === 'Attempts');
     await page.reload(); await region(page, 'Jobs').waitFor(); await idle(page, 'jobs');
     assert.deepEqual({ scope: await button(region(page, 'Jobs'), 'History').getAttribute('aria-pressed'), sort: await table(page, 'jobs').locator('thead th[data-sort="Attempts"]').getAttribute('aria-sort') }, { scope: 'true', sort: 'ascending' }, 'reload restores section, scope and order');
+    await context.close();
+  });
+
+  await rig.run('a malformed quoted collector filter is an inline query error that clearing the filter recovers from', async () => {
+    for (const expression of ['collector:"\\q"', '(status:"failed") AND collector:"\\q"']) {
+      const { context, page } = await scene(rig, { route: '/activity/jobs' });
+      await idle(page, 'jobs'); const ids = await rowIds(page, 'jobs');
+      await filter(page, 'jobs', expression);
+      await region(page, 'Jobs').getByRole('alert').waitFor(); assert.equal(await main(page).isVisible(), true, `${expression}: the view stays mounted`);
+      assert.equal(await region(page, 'Jobs').locator('.activity-chip').count(), 0, 'a malformed value shows no collector chip');
+      await button(region(page, 'Jobs'), 'Clear Search indexing job metadata').click(); await row(page, 'jobs', ids[0]).waitFor();
+      assert.equal(await region(page, 'Jobs').getByRole('alert').count(), 0); assert.deepEqual(await rowIds(page, 'jobs'), ids);
+      await context.close();
+    }
+  });
+
+  await rig.run('the collector of a job opens its row in Collectors, and Back returns to the open job', async () => {
+    const { context, page, fixture } = await scene(rig, { route: '/activity/jobs', configure: largeFixture });
+    await idle(page, 'jobs'); const id = (await rowIds(page, 'jobs'))[0], collector = fixture.jobRows.find(item => item.job.id === id).collectorId;
+    await (await expand(page, 'jobs', id)).getByRole('link', { name: collector, exact: true }).click();
+    await region(page, 'Collectors').waitFor(); await idle(page, 'collectors');
+    assert.equal(await hashParam(page, 'q'), `collector:${JSON.stringify(collector)}`); assert.deepEqual(await rowIds(page, 'collectors'), [collector]);
+    assert.match(await (await expand(page, 'collectors', collector)).innerText(), /Last report/, 'the collector report is one click away');
+    await page.goBack(); await region(page, 'Jobs').waitFor(); await detail(page, 'jobs', id).waitFor();
+    assert.equal(await page.evaluate(() => location.hash), '#/activity/jobs');
+    await context.close();
+  });
+
+  await rig.run('with a clean summary but an unknown stale-collector count the overview never claims that nothing needs attention', async () => {
+    const { context, page, fixture } = await scene(rig, { route: '/activity', configure: fixture => {
+      const complete = fixture.jobs[0].with({ state: api.JobState.Complete, error: undefined });
+      fixture.jobs = [complete]; fixture.archiveRows = fixture.authorizedRows.map(item => item.with({ headJob: complete }));
+      const select = fixture.collectorSelection.bind(fixture); fixture.collectorSelection = expression => expression === STALE ? undefined : select(expression);
+    } });
+    const summary = fixture.activityResult(new api.ActivityQuery('', api.ActivityCollectorSort.CollectorId, api.SortDirection.Asc, undefined, 1));
+    assert.deepEqual([summary.current.failed, summary.current.expiredRunning, summary.headsWithoutTargetJob], [0n, 0n, 0n], 'the scenario has a clean owner summary');
+    const overview = region(page, 'Overview'); await overview.getByRole('alert').filter({ hasText: 'Stale collector count unavailable' }).waitFor();
+    await overview.locator('[data-attention="unknown-stale"]').waitFor();
+    assert.equal(await overview.getByText('Nothing needs attention', { exact: true }).count(), 0, 'no all-clear while a required count is unknown');
+    assert.match(await overview.getByRole('heading', { name: 'Needs attention', exact: true }).locator('xpath=..').innerText(), /incomplete/);
     await context.close();
   });
 

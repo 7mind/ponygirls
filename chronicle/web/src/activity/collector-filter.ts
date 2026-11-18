@@ -6,11 +6,18 @@ import { addMetadataFilter, validateMetadataExpression } from '../expression.ts'
 const QUOTED = '"(?:[^"\\\\]|\\\\.)*"';
 const ALONE = new RegExp(`^collector:(${QUOTED})$`, 's'), CONJOINED = new RegExp(`^\\((.*)\\) AND collector:(${QUOTED})$`, 's');
 export interface CollectorFilter { readonly collector: string; readonly rest: string }
+// Runs while rendering the submitted expression: malformed input yields no chip, and the query read reports the error inline.
 export function collectorFilter(expression: string): CollectorFilter | null {
   const trimmed = expression.trim(), alone = ALONE.exec(trimmed);
-  if (alone !== null) return { collector: JSON.parse(alone[1]!) as string, rest: '' };
+  if (alone !== null) { const collector = quotedValue(alone[1]!); return collector === null ? null : { collector, rest: '' }; }
   const conjoined = CONJOINED.exec(trimmed);
-  return conjoined === null || !wellFormed(conjoined[1]!) ? null : { collector: JSON.parse(conjoined[2]!) as string, rest: conjoined[1]! };
+  if (conjoined === null || !wellFormed(conjoined[1]!)) return null;
+  const collector = quotedValue(conjoined[2]!);
+  return collector === null ? null : { collector, rest: conjoined[1]! };
+}
+// The value of a quoted literal, or null when its escapes are not the ones the shortcut row writes (JSON string escapes).
+function quotedValue(literal: string): string | null {
+  try { return JSON.parse(literal) as string; } catch { return null; }
 }
 // `(a) OR (b) AND collector:"x"` matches the pattern with a rest of `a) OR (b`, which is not one group.
 function wellFormed(rest: string): boolean {

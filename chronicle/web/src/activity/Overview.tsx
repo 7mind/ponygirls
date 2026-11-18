@@ -94,7 +94,10 @@ function Notice({ children }: { children: ReactNode }) { return <div className="
 export function Overview({ user, snapshots, usage }: { user: UserInfo; snapshots: Snapshots; usage: ModelUsageState }) {
   const { summary: summaryResource, stale: staleResource, unreported: unreportedResource } = snapshots;
   const summary = summaryResource.meta, stale = staleResource.meta, current = summary === null ? null : summary.current;
-  const items = summary === null ? null : attention(summary, stale, user.id);
+  // The all-clear needs every count it summarises: an unread or failed stale count leaves the list incomplete, never clear.
+  const staleKnown = stale !== null && staleResource.error === null, items = summary === null ? null : attention(summary, staleKnown ? stale : null, user.id);
+  const unknownStale: Attention = { key: 'unknown-stale', status: 'status status-idle', label: 'Stale collectors unknown', detail: staleResource.error === null ? 'reading the stale collector count…' : `count unavailable: ${staleResource.error}`, link: href(collectorsRouteFor(STALE_EXPRESSION)) };
+  const attentionNote = items === null ? 'summary unknown' : !staleKnown ? `${items.length === 0 ? 'no known issues' : count(BigInt(items.length), 'known issue', 'known issues')} · incomplete` : items.length === 0 ? 'nothing to do' : `${count(BigInt(items.length), 'issue', 'issues')} · most severe first`;
   return <section className="page page-narrow stack-lg activity-overview" aria-label="Overview" data-view="activity-overview">
     {summaryResource.error !== null && <Notice>Owner summary unavailable: {summaryResource.error}</Notice>}
     {staleResource.error !== null && <Notice>Stale collector count unavailable: {staleResource.error}</Notice>}
@@ -108,9 +111,10 @@ export function Overview({ user, snapshots, usage }: { user: UserInfo; snapshots
       <Tile label="Complete" value={current === null ? null : current.complete} note={current === null ? 'current jobs' : `of ${current.total.toLocaleString()} current jobs`} link={jobsWith('status', 'complete')} variant=""/>
     </div>
     <div className="grid-2">
-      <section className="card" aria-labelledby="activity-attention"><div className="card-head"><h2 id="activity-attention">Needs attention</h2><span className="xs muted">{items === null ? 'summary unknown' : items.length === 0 ? 'nothing to do' : `${count(BigInt(items.length), 'issue', 'issues')} · most severe first`}</span></div>
+      <section className="card" aria-labelledby="activity-attention"><div className="card-head"><h2 id="activity-attention">Needs attention</h2><span className="xs muted">{attentionNote}</span></div>
         <div className="attention-list" data-list="attention">{items === null ? <p className="attention-item muted">{summaryResource.loading ? 'Reading the owner summary…' : 'Unknown: the owner summary is not loaded.'}</p>
-          : items.length === 0 ? <p className="attention-item"><span className="status status-ok">Nothing needs attention</span><span className="grow muted truncate">no failed jobs, expired leases{stale === null ? '' : ', stale collectors'} or unscheduled conversations</span></p>
+          : !staleKnown ? [...items, unknownStale].map(item => <AttentionItem key={item.key} item={item}/>)
+          : items.length === 0 ? <p className="attention-item"><span className="status status-ok">Nothing needs attention</span><span className="grow muted truncate">no failed jobs, expired leases, stale collectors or unscheduled conversations</span></p>
           : items.map(item => <AttentionItem key={item.key} item={item}/>)}</div></section>
       <section className="card" aria-labelledby="activity-job-totals"><div className="card-head"><h2 id="activity-job-totals">Indexing jobs</h2><span className="xs muted">unfiltered totals</span></div>
         <div className="card-body stack">{summary === null ? <p className="muted small">Totals unknown.</p> : <>

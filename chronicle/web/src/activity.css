@@ -15,6 +15,8 @@
 /* The column menus list up to 22 columns: the menu scrolls within the viewport under the sticky view bar. */
 .activity-viewbar .column-menu-panel{max-height:calc(100dvh - var(--masthead-h) - var(--subnav-h) - var(--viewbar-h) - var(--space-4));overflow-y:auto}
 .activity-notice{padding-bottom:var(--space-3)}
+.activity-viewbar [data-state=pending]{color:var(--text-faint);overflow:hidden;text-overflow:ellipsis}
+.activity-list[data-editing] .activity-table tbody{opacity:.6}
 .activity-notice .notice>.icon{color:var(--danger-fg)}
 .activity-table-frame{min-width:0}
 .activity-table .th-sort{max-width:100%;overflow:hidden;text-overflow:ellipsis}

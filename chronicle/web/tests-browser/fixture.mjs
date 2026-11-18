@@ -206,11 +206,13 @@ export class ChronicleFixture {
     }
   }
   // Collector IDs an expression selects: the scripted ones, else a derived `freshness:"…"` (the Activity overview and its
-  // sub-navigation count stale and unreported collectors on every snapshot); undefined for an unsupported expression.
+  // sub-navigation count stale and unreported collectors on every snapshot) or `collector:"<id>"` (a job's collector link);
+  // undefined for an unsupported expression.
   collectorSelection(expression) {
     if (this.collectorExpressions.has(expression)) return this.collectorExpressions.get(expression);
-    const freshness = /^freshness:"(stale|recent|unknown)"$/.exec(expression);
-    return freshness === null ? undefined : this.collectorRows.filter(row => (row.status === undefined ? 'unknown' : row.status.stale ? 'stale' : 'recent') === freshness[1]).map(row => row.collectorId);
+    const freshness = /^freshness:"(stale|recent|unknown)"$/.exec(expression), collector = /^collector:("(?:[^"\\]|\\.)*")$/.exec(expression);
+    if (freshness !== null) return this.collectorRows.filter(row => (row.status === undefined ? 'unknown' : row.status.stale ? 'stale' : 'recent') === freshness[1]).map(row => row.collectorId);
+    return collector === null ? undefined : this.collectorRows.filter(row => row.collectorId === JSON.parse(collector[1])).map(row => row.collectorId);
   }
   activityResult(query) {
     const all = this.collectorRows, selected = query.expression === '' ? all : all.filter(row => this.collectorSelection(query.expression).includes(row.collectorId));
