@@ -19,6 +19,7 @@
 @supports not (field-sizing: content) { .textarea-auto { resize: vertical; overflow: auto; } }
 .textarea[aria-invalid="true"], .select[aria-invalid="true"] { border-color: var(--danger-fg); }
 .error-list { list-style: disc; padding-left: var(--space-4); margin-top: var(--space-1); }
+.edit-page .link-button { display: inline-flex; align-items: center; min-height: var(--control-h-sm); }
 .error-list .link-button { color: var(--text); text-decoration: underline; text-align: left; }
 .notice-detail { margin-top: var(--space-1); overflow-wrap: anywhere; }
 .rail-form { display: flex; flex-direction: column; gap: var(--space-4); }
