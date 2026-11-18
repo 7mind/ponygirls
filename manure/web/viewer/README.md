@@ -6,7 +6,15 @@ uploaded HTML execution is involved. Markdown uses a source-positioned mdast/has
 GFM pipeline + DOMPurify;
 Mermaid uses strict mode; Graphviz runs its embedded WASM in a disposable worker;
 PDF.js renders pages to canvas without annotation, scripting or action handlers.
-Images (including SVG) are displayed only in browser image context.
+Images (including SVG) are displayed only in browser image context. Source and other
+text files (`.py`, `.json`, `.csv`, `.log`, …) are shown as exact, line-numbered text;
+archives (`.zip`, `.tar`, `.gz`, …) get a card that offers the original download.
+
+The page chrome (bar, breadcrumb, meta line, theme menu, toasts) is built on the shared
+design system `shared/ui-web`, which the server serves on the content origin under
+`<mount>/__manure/ui/` (spec `docs/drafts/20261117-2130-dashboard-redesign-spec.md` §3.3).
+`src/chrome.js` holds the chrome shared with the server-rendered directory listing; the
+listing loads it as `chrome.js`, the viewer bundles it.
 
 ## Build and check
 
@@ -32,29 +40,31 @@ or `dist`. The source directory is not directly browser-usable; build first.
 
 ## Upload timestamp
 
-The preview heading shows **Uploaded** followed by the artifact's server-recorded
-creation timestamp in UTC (ISO 8601). This is the same `created_at` shown in
-artifact metadata, not the file modification, upload-completion or preview-request
-time. All files and directory README previews in an artifact share that timestamp.
-The server renders the semantic `<time datetime="…">` after ordinary content
-authorization; no additional browser API request is needed.
+The meta line under the bar shows size · type · **uploaded** followed by the artifact's
+server-recorded creation time in the browser's time zone (`Nov 17, 21:14 · 16 min ago`);
+the tooltip and the `datetime` attribute keep the exact UTC ISO 8601 value. This is the
+same `created_at` shown in artifact metadata, not the file modification, upload-completion
+or preview-request time. All files and directory listings in an artifact share it. The
+server renders the semantic `<time datetime="…">` after ordinary content authorization;
+no additional browser API request is needed.
 
 ## Markdown source
 
-Markdown previews (including directory READMEs) have **Preview** and **Show raw**
-tabs. Show raw displays the fetched UTF-8 source as inert, selectable text, with
-local highlighting for headings, quotes, lists and fenced blocks. Tabs support
-arrow keys, Home and End. Switching views does not refetch or rerender the file.
-**Copy raw**, beside **Download original**, copies that same source text; clipboard
-failure is reported with guidance to select the raw text manually. Clipboard
+Markdown previews have a **Rendered | Raw** switch in the bar. Raw displays the
+fetched UTF-8 source as inert, selectable, line-numbered text, with local highlighting
+for headings, quotes, lists and fenced blocks. Switching views does not refetch or
+rerender the file. **Copy raw**, beside **Download original**, copies that same source
+text and confirms with a toast; clipboard failure is reported with guidance to select
+the raw text manually. Directory READMEs are rendered only; their section head links to
+the full viewer. Clipboard
 access requires a secure browser context and permission. Download original remains
 available for byte-exact downloads, including files outside the text preview limit.
 Source/copy controls remain usable if Markdown rendering fails after loading.
 
 ## Markdown section links
 
-Every Markdown heading (levels 1–6) has a visible, keyboard-accessible `#`
-permalink. Click it or copy its link address to share that section. Unique
+Every Markdown heading (levels 1–6) has a keyboard-accessible `#` permalink; the
+section tools appear on hover or keyboard focus and reserve no space. Click it or copy its link address to share that section. Unique
 sanitized authored heading IDs are preserved. Otherwise, generated IDs use
 lowercase heading text with punctuation removed and whitespace replaced by
 hyphens, preserving Unicode letters and numbers. Empty slugs use `section`;
@@ -69,8 +79,7 @@ higher rank, including subsections. Sections inside lists, blockquotes or HTML
 containers stop at their container boundary. Original syntax, container prefixes,
 Unicode and line endings are retained; content is not reconstructed from HTML.
 
-Every table has top-right **#** and **Copy** controls, outside its horizontal
-scroll area. Copy includes only the table's original source (HTML source for an
+Every table has top-right **#** and **Copy** controls (shown on hover or focus). Copy includes only the table's original source (HTML source for an
 HTML table). Table links use `table-1`, `table-2`, … in document order, with the
 same collision suffix rules as headings. Unique authored table IDs are retained.
 Existing section IDs are allocated first and remain unchanged. Direct links and
@@ -82,9 +91,12 @@ failure uses the same Show raw guidance as Copy raw.
 ## Directory browsing
 
 Directories without `index.html`/`index.htm` show an escaped, manifest-backed
-immediate-child listing. If an immediate regular `readme.md` file exists (case-insensitive) and viewers are enabled,
-the backend inserts the listing before the preview in the existing shell; the
-same Markdown metadata, local renderer and safety rules apply. Selection prefers
+immediate-child listing: a table of Name, Type, Size and Open/Download, a breadcrumb,
+and a "Download all (CLI)" disclosure with the `manure fetch` command. The backend renders
+the page under a CSP that admits only Manure's reserved assets (`/__manure/ui/`,
+`/__manure/viewer/`). If an immediate regular `readme.md` file exists (case-insensitive)
+and viewers are enabled, the page also loads the viewer and renders it beneath the table
+under the viewer CSP; the same Markdown metadata, local renderer and safety rules apply. Selection prefers
 `README.md`, then `readme.md`, then lexicographic order for other case variants. No iframe or
 additional renderer is used. Static-site index paths and ordinary file URLs
 remain byte-exact. Disabling viewers preserves listing/raw navigation without
@@ -99,8 +111,11 @@ quotes, ampersands and angle brackets):
 - `__MANURE_PATH__`: original artifact-relative path, not URL-encoded
 - `__MANURE_RAW_URL__`: same-origin `/<mount>/__manure/raw/<encoded path>`
 - `__MANURE_DOWNLOAD_URL__`: original attachment download URL
-- `__MANURE_KIND__`: `markdown`, `image`, `pdf`, `mermaid`, `graphviz`
+- `__MANURE_KIND__`: `markdown`, `image`, `pdf`, `mermaid`, `graphviz`, `text`, `archive`
 - `__MANURE_ASSET_BASE__`: reserved local asset route, without trailing slash
+- `__MANURE_UI_BASE__`: the shared design system route (`<mount>/__manure/ui`)
+- `__MANURE_ROOT_URL__`: the artifact root (`<mount>/`), for the brand link and breadcrumb
+- `__MANURE_ARTIFACT_NAME__`, `__MANURE_SIZE__`, `__MANURE_TYPE__`: breadcrumb root and meta line
 
 The four metadata values live on `meta#manure-viewer` in `data-path`,
 `data-raw-url`, `data-download-url`, `data-kind`. No inline JS is needed.
@@ -129,6 +144,7 @@ Allowlist exactly these outputs (no directory listing or arbitrary path serving)
 | --- | --- |
 | `index.html` | `text/html; charset=utf-8` (template only) |
 | `viewer.js` | `text/javascript; charset=utf-8` |
+| `chrome.js` | `text/javascript; charset=utf-8` |
 | `graphviz-worker.js` | `text/javascript; charset=utf-8` |
 | `pdf.worker.min.mjs` | `text/javascript; charset=utf-8` |
 | `pdf.renderer.min.mjs` | `text/javascript; charset=utf-8` |
@@ -158,7 +174,8 @@ output or an uploaded file, so uploaded site favicons and raw bytes are unchange
   one canvas at a time, at most 12 million pixels, 15 s parse/render deadlines.
   PDF WASM/JIT and document font injection are disabled; no external font/CMap
   asset URLs are configured. Some unusual fonts/images may not preview faithfully.
-- Image: native browser decode, fit/actual size/zoom and scroll-to-pan controls.
+- Image: native browser decode; − / % / + zoom and Fit | Actual size; a zoomed image
+  scrolls the page (no inner scroll box).
 - Invalid/oversized/unsupported content produces an explicit visible alert;
   failed diagrams do not silently fall back to raw source. The original download
   link stays available, regardless of renderer success.

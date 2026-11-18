@@ -1,4 +1,5 @@
 import { test } from 'node:test';
+import { serveUi, UI_BASE } from './shared-ui.mjs';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { readFile, mkdtemp, rm } from 'node:fs/promises';
@@ -42,7 +43,8 @@ test('Markdown heading permalinks support direct URLs, clicks and history', asyn
         }
       }
       check(headings[0].querySelector('em').textContent === 'world', 'inline formatting lost');
-      const aligned = heading => Math.abs(heading.getBoundingClientRect().top) < 3;
+      // Headings scroll to just below the sticky viewer bar (their scroll-margin-top).
+      const aligned = heading => Math.abs(heading.getBoundingClientRect().top - parseFloat(getComputedStyle(heading).scrollMarginTop)) < 3;
       if (location.hash.includes('%ZZ')) {
         check(!document.querySelector('[role="alert"]'), 'malformed fragment prevented rendering');
       } else {
@@ -66,7 +68,7 @@ test('Markdown heading permalinks support direct URLs, clicks and history', asyn
       document.body.dataset.result = 'pass';
     } catch (error) { document.body.dataset.result = error.message; }
   `;
-  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
+  const html = template.replaceAll('__MANURE_ASSET_BASE__', '/assets').replaceAll('__MANURE_UI_BASE__', UI_BASE).replaceAll('__MANURE_PATH__', 'readme.md').replaceAll('__MANURE_RAW_URL__', '/__manure/raw/readme.md').replaceAll('__MANURE_DOWNLOAD_URL__', '/download').replaceAll('__MANURE_CREATED_AT__', '2026-01-02T03:04:05Z').replaceAll('__MANURE_KIND__', 'markdown').replace('</body>', '<script type="module" src="/probe.js"></script></body>');
   const server = createServer(async (req, res) => {
     try {
       if (req.url === '/') {
@@ -75,6 +77,7 @@ test('Markdown heading permalinks support direct URLs, clicks and history', asyn
         res.end(html);
       } else if (req.url === '/probe.js') { res.setHeader('content-type', 'text/javascript'); res.end(probe); }
       else if (req.url === '/__manure/raw/readme.md') { setTimeout(() => res.end(markdown), 100); }
+      else if (await serveUi(req, res)) { /* shared design system */ }
       else if (/^\/assets\/[\w.-]+$/.test(req.url)) {
         res.setHeader('content-type', req.url.endsWith('.css') ? 'text/css' : 'text/javascript');
         res.end(await readFile(new URL(`../dist/${req.url.split('/').pop()}`, import.meta.url)));

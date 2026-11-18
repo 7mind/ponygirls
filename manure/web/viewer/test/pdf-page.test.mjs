@@ -14,8 +14,10 @@ function harness(getPage) {
   const timers = new Map(); let serial = 0; let destroyed = 0;
   const errors = [];
   const context = {
-    doc: {numPages:2, getPage, destroy:() => { destroyed++; return Promise.resolve(); }},
-    busy:false, pageNumber:1, previous:{}, next:{}, canvas:{getContext:() => ({})}, label:{},
+    doc: {numPages:2, getPage},
+    // pdf.js 6 documents have no destroy(); the loading task owns the document and its workers.
+    task: {destroy:() => { destroyed++; return Promise.resolve(); }},
+    busy:false, pageNumber:1, pageWidth:0, previous:{}, next:{}, canvas:{getContext:() => ({})}, label:{},
     fail:error => errors.push(error.message),
     setTimeout:(callback, ms) => { const id = ++serial; timers.set(id,{callback,ms}); return id; },
     clearTimeout:id => timers.delete(id),
@@ -40,7 +42,7 @@ test('production page navigation has a deadline while GetPage never resolves', a
   const pending = h.context.renderPage(1);
   expire(h);
   await settled(pending);
-  assert.equal(h.destroyed,1,'timeout must destroy the document/worker');
+  assert.equal(h.destroyed,1,'timeout must destroy the loading task and its workers');
   assert.match(h.errors.join(' '), /15 second.*deadline/i);
   assert.equal(h.context.busy,false,'navigation must leave the busy state');
   assert.equal(h.timers.size,0);

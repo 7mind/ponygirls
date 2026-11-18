@@ -1,42 +1,57 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-app="manure">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>manure — unlock artifact</title>
+<title>Protected artifact · Manure</title>
 <link rel="icon" type="image/svg+xml" href="/__manure/viewer/favicon.svg">
 <!--
-  External assets only (no inline script/style): the server serves these
-  trusted sibling files from unlock_shell_dir while locked. The server
-  prefixes absolute paths in path mode, including the password entry page.
-  No secrets, no item data, nothing to cache.
+  External assets only (no inline script/style): the server serves the sibling
+  files from unlock_shell_dir and the shared design system under /__manure/ui/
+  while locked. The server prefixes absolute paths in path mode, including the
+  password entry page. No secrets, no item data, nothing to cache.
 -->
+<script src="/__manure/ui/theme-init.js"></script>
+<link rel="stylesheet" href="/__manure/ui/tokens.css">
+<link rel="stylesheet" href="/__manure/ui/components.css">
 <link rel="stylesheet" href="/styles.css">
-<script src="/unlock.js" defer></script>
+<script type="module" src="/unlock.js"></script>
 </head>
-<body>
-<main class="unlock-screen">
-<section class="unlock-card" aria-labelledby="unlock-heading">
-<div class="brand"><span class="brand-mark" aria-hidden="true"></span><span>manure<small>artifact access</small></span><span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span></div>
-<div class="card-content">
-<p class="eyebrow">EXTERNAL ARTIFACT</p>
-<h1 id="unlock-heading">Protected artifact</h1>
-<p class="intro">This artifact is shared with a password. Enter the external password provided by its owner to continue.</p>
-<form id="unlock-form" method="post" action="/__manure/unlock"
-enctype="application/x-www-form-urlencoded">
-<label for="password-input">External password</label>
-<input type="password" id="password-input" name="password"
-required autocomplete="current-password"
-spellcheck="false" autocapitalize="off" aria-describedby="password-note">
-<button type="submit">Unlock artifact <span aria-hidden="true">→</span></button>
-</form>
-<p id="unlock-error" class="error" role="alert" hidden></p>
-<p id="password-note" class="security-note">Your password is sent only to this artifact’s content endpoint, in the request body — never in the URL.</p>
+<body class="on-canvas">
+<header class="masthead">
+<span class="brand"><span class="brand-mark"><span class="icon" data-icon="box" aria-hidden="true"></span></span><span class="brand-name">manure</span></span>
+<span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span>
+<div class="masthead-end"><div class="anchor" data-theme-control hidden><button class="btn btn-ghost btn-icon" type="button" aria-label="Theme" aria-haspopup="menu" aria-expanded="false"><span class="icon" data-icon="sun" aria-hidden="true"></span></button><div class="menu" role="menu" aria-label="Theme" hidden><button class="menu-item" type="button" role="menuitemradio" aria-checked="false" data-theme-set="system"><span class="icon" data-icon="monitor" aria-hidden="true"></span>System</button><button class="menu-item" type="button" role="menuitemradio" aria-checked="false" data-theme-set="light"><span class="icon" data-icon="sun" aria-hidden="true"></span>Light</button><button class="menu-item" type="button" role="menuitemradio" aria-checked="false" data-theme-set="dark"><span class="icon" data-icon="moon" aria-hidden="true"></span>Dark</button></div></div></div>
+</header>
+<main id="main" class="auth-page">
+<section class="auth-card" id="unlock-card" aria-labelledby="unlock-heading">
+<span class="auth-icon"><span class="icon" data-icon="lock" aria-hidden="true"></span></span>
+<div>
+<h1 class="auth-title" id="unlock-heading">Protected artifact</h1>
+<p class="auth-sub">This artifact is shared with a password. Enter the external password you received from the person who shared it.</p>
 </div>
-<footer class="card-footer"><span class="small-mark" aria-hidden="true"></span> Need access? Ask the person who shared this artifact.</footer>
+<div class="notice notice-warn" id="unlock-throttled" role="alert" hidden><span class="icon" data-icon="clock" aria-hidden="true"></span><div><div class="notice-title">Too many attempts</div>Unlocking is paused for this network address. Try again in a minute.</div></div>
+<!-- The Show toggle stays outside the form: the form's only button is its submit button. -->
+<div class="field">
+<label class="label" for="password-input">External password</label>
+<div class="password-field"><input class="input input-lg input-mono" type="password" id="password-input" name="password" form="unlock-form" required autocomplete="current-password" spellcheck="false" autocapitalize="off" aria-describedby="unlock-error password-note"><button class="btn btn-lg" type="button" id="show-password" aria-pressed="false" aria-controls="password-input" hidden><span class="icon" data-icon="eye" aria-hidden="true"></span>Show</button></div>
+<p class="field-error" id="unlock-error" role="alert" hidden></p>
+</div>
+<form id="unlock-form" method="post" action="/__manure/unlock" enctype="application/x-www-form-urlencoded">
+<button class="btn btn-primary btn-lg btn-block" type="submit">Unlock</button>
+</form>
+<p class="auth-fine" id="password-note">The password is sent only to this artifact’s address, in the request body — never in the URL. Unlocking is remembered in this browser until the password is rotated.</p>
+<p class="auth-fine auth-card-foot">Need access? Ask the person who shared this link.</p>
 </section>
-<p class="workspace-note">File and directory sharing.</p>
+<section class="auth-card" id="unlock-gone" aria-labelledby="gone-heading" hidden>
+<span class="auth-icon is-muted"><span class="icon" data-icon="clock" aria-hidden="true"></span></span>
+<div>
+<h1 class="auth-title" id="gone-heading">This artifact is no longer available</h1>
+<p class="auth-sub">It has expired or was deleted by its owner, so there is nothing to unlock. Ask the person who shared the link for a new one.</p>
+</div>
+</section>
+<p class="auth-foot">Shared with manure · file and directory hosting</p>
+<noscript><p class="auth-fine">JavaScript is off; the form above still works with a plain form post.</p></noscript>
 </main>
-<noscript><p class="noscript-note">JavaScript is off; the form above still works with a plain form post.</p></noscript>
 </body>
 </html>

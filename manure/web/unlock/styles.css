@@ -1,83 +1,12 @@
-:root {
-  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  font-synthesis: none;
-  color-scheme: light;
-  color: var(--ink);
-  background: var(--background);
-  --ink: #1c2938;
-  --muted: #4f6073;
-  --line: #bcc9d6;
-  --line-strong: #8097ae;
-  --input-line: #6a7e93;
-  --background: #f1f5f9;
-  --surface: #fff;
-  --surface-muted: #e7eef6;
-  --selected: #caddf2;
-  --accent: #245b88;
-  --accent-hover: #173f63;
-  --on-accent: #fff;
-  --focus: #1f5fa0;
-  --positive: #386c9f;
-  --danger: #a34d3a;
-  --danger-surface: #f9ece7;
-}
-@media (prefers-color-scheme: dark) {
-  :root {
-    color-scheme: dark;
-    --ink: #f4f7fb;
-    --muted: #d0dbe8;
-    --line: #70839a;
-    --line-strong: #8ea4be;
-    --input-line: #91a5bd;
-    --background: #242c37;
-    --surface: #323d4b;
-    --surface-muted: #3a485a;
-    --selected: #50627b;
-    --accent: #a5cfff;
-    --accent-hover: #c4e0ff;
-    --on-accent: #142c48;
-    --focus: #ffd185;
-    --positive: #b4d7ff;
-    --danger: #eba68e;
-    --danger-surface: #382820;
-  }
-}
-* { box-sizing: border-box; }
-[hidden] { display: none !important; }
-body { margin: 0; font-size: 14px; line-height: 1.5; }
-:focus-visible { outline: 2px solid var(--focus); outline-offset: 3px; }
-.unlock-screen { min-height: 100dvh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 32px 18px; }
-.unlock-card { width: 100%; max-width: 460px; background: var(--surface); border: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: 11px; padding: 22px 28px; border-bottom: 1px solid var(--line); font-size: 21px; line-height: 1.2; font-weight: 650; letter-spacing: -.8px; }
-.brand small { display: block; margin-top: 4px; color: var(--muted); font-size: 10px; font-weight: 400; letter-spacing: .2px; }
-.path-mode-indicator { margin-left: auto; color: var(--muted); font-size: 16px; font-weight: 400; letter-spacing: normal; cursor: help; }
-.brand-mark { display: inline-block; position: relative; width: 32px; height: 34px; flex: none; background: var(--accent); color: var(--on-accent); }
-.brand-mark::before, .brand-mark::after { content: ''; position: absolute; width: 14px; height: 15px; border: 1.5px solid currentColor; }
-.brand-mark::before { left: 6px; top: 7px; }
-.brand-mark::after { left: 11px; top: 12px; background: var(--accent); }
-.card-content { padding: 28px; }
-p { margin-top: 0; line-height: 1.7; }
-.eyebrow { color: var(--muted); font-size: 10px; line-height: 1.4; font-weight: 650; letter-spacing: 1.7px; margin-bottom: 9px; }
-h1 { font-size: 27px; line-height: 1.25; letter-spacing: -.5px; font-weight: 600; margin: 0 0 12px; }
-.intro { color: var(--muted); font-size: 13px; margin-bottom: 0; }
-form { display: grid; gap: 8px; margin: 24px 0 19px; }
-label { font-size: 12px; font-weight: 500; }
-input, button { font: inherit; border-radius: 0; -webkit-tap-highlight-color: transparent; }
-input { width: 100%; min-width: 0; padding: 11px; border: 1px solid var(--input-line); color: var(--ink); background: var(--surface); font-size: 14px; }
-input:hover { border-color: var(--accent); }
-button { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 11px; margin-top: 8px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 550; line-height: 1.5; cursor: pointer; }
-button:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-button:disabled { opacity: .45; cursor: default; }
-.error { padding: 10px 12px; color: var(--danger); background: var(--danger-surface); border: 1px solid var(--danger); font-size: 12px; }
-.security-note { color: var(--muted); font-size: 11px; line-height: 1.8; margin-bottom: 0; }
-.card-footer { display: flex; align-items: baseline; gap: 8px; padding: 16px 28px; border-top: 1px solid var(--line); background: var(--surface-muted); color: var(--muted); font-size: 10px; line-height: 1.7; }
-.small-mark { width: 5px; height: 5px; background: var(--positive); flex: none; }
-.workspace-note { max-width: 380px; color: var(--muted); text-align: center; font-size: 10px; margin: 17px 0 0; }
-.noscript-note { padding: 13px 18px; margin: 0; border-top: 1px solid var(--line); background: var(--surface-muted); color: var(--muted); font-size: 12px; }
-@media (max-width: 480px) {
-  .unlock-screen { padding: 24px 14px; }
-  .brand { padding: 20px 22px; }
-  .card-content { padding: 24px 22px; }
-  .card-footer { padding: 15px 22px; }
-  h1 { font-size: 25px; }
-}
+/* Manure unlock card on top of /__manure/ui/tokens.css + components.css (tokens only). */
+.path-mode-indicator { display: inline-grid; place-items: center; width: 24px; height: 24px; color: var(--warn-fg); font-size: var(--text-lg); line-height: 1; cursor: help; }
+.auth-icon { width: 40px; height: 40px; display: grid; place-items: center; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--accent); }
+.auth-icon .icon { width: 20px; height: 20px; }
+.auth-icon.is-muted { background: var(--neutral-bg); color: var(--neutral-fg); }
+.auth-card .field { display: flex; flex-direction: column; gap: var(--space-1); }
+.auth-fine { font-size: var(--text-xs); color: var(--text-muted); line-height: var(--leading-normal); }
+.auth-card-foot { margin: var(--space-2) calc(-1 * var(--space-6)) calc(-1 * var(--space-6)); padding: var(--space-3) var(--space-6); border-top: 1px solid var(--border); background: var(--bg-sunken); border-radius: 0 0 var(--radius-lg) var(--radius-lg); }
+.password-field { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.password-field .input { flex: 1; min-width: 0; text-overflow: ellipsis; }
+.input:disabled { background-color: var(--bg-sunken); color: var(--text-faint); cursor: not-allowed; }
+span[data-icon] { display: inline-block; }
