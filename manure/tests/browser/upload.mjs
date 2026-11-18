@@ -257,6 +257,23 @@ await check("public multi-chunk binary: chunk sizes, copy link, link readable wi
   return { link, chunk, size };
 });
 
+await check("keyboard focus inside a password panel survives the progress of the next upload", async (page) => {
+  await goUpload(page);
+  await access(page, "External");
+  await files(page, [["first.txt", Buffer.from("first")]]);
+  await uploadButton(page).click();
+  await rowStates(page, "ready", 1);
+  const reveal = row(page, "first.txt").getByRole("button", { name: "Reveal" });
+  await files(page, [["second.txt", Buffer.from("second")]]);
+  await page.evaluate(() => { window.__upload.holdChunk = true; });
+  await uploadButton(page).click();
+  await page.waitForFunction(() => typeof window.__upload.releaseChunk === "function");
+  await reveal.focus();
+  await page.evaluate(() => window.__upload.releaseChunk());
+  await rowStates(page, "ready", 2);
+  assert.equal(await reveal.evaluate((node) => node === document.activeElement), true, "focus stays on the control");
+});
+
 await check("without a clipboard the link is offered for manual copy in an in-app dialog", async (page) => {
   await goUpload(page);
   await files(page, [["manual.txt", Buffer.from("manual")]]);
@@ -299,7 +316,7 @@ await check("expiry and tags are sent and validated; settings lock while uploadi
   });
   await page.getByText("Files can be added once the current upload has finished.").waitFor();
   assert.equal(await page.locator("tbody[data-upload-row]").count(), 1);
-  await page.getByRole("button", { name: "Cancel upload" }).click();
+  await page.getByRole("button", { name: "Cancel upload", exact: true }).click();
   await page.evaluate(() => window.__upload.releaseChunk());
   await rowStates(page, "stopped", 1);
   await page.getByText("Locked until the failed upload is retried or removed").waitFor();

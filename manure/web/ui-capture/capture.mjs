@@ -718,7 +718,7 @@ async function snap(page, name, what) {
   await sleep(250);
   const file = name + ".png";
   await page.screenshot({ path: path.join(OUT, file) });
-  index.push({ n: index.length + 1, file, what, how: "UX-M1 scene", scene: currentScene });
+  index.push({ n: index.length + 1, file, what, how: currentScene === "m2" ? "UX-M2 scene" : "UX-M1 scene", scene: currentScene });
   log(`snap ${file}`);
 }
 async function themed(page, scheme) {
@@ -806,10 +806,94 @@ SCENES.m1 = async () => {
   }
 };
 
+// ---------------------------------------------------------------- Upload page and CLI view (UX-M2)
+// Named like the mockup shots (manure-upload-<state>-<width>[-dark].png). Each state is reached through the real
+// upload protocol; chunk requests are held or aborted at the network layer to reach progress and failure.
+SCENES.m2 = async () => {
+  const away = async (page, name, what) => { await page.mouse.move(0, 0); await snap(page, name, what); };
+  const names = ["screenshot 2026-11-17 at 10.41.22.png", "a-very-long-file-name-that-keeps-going-and-going-for-the-purpose-of-layout-testing-0123456789.log", "notes.md"];
+  const stage = async (page, sizes) => page.locator("#upload-files").setInputFiles(names.map((name, i) => ({ name, mimeType: "application/octet-stream", buffer: Buffer.alloc(sizes[i], 0x61 + i) })));
+  const states = async (page, state, n) => page.waitForFunction(([wanted, count]) => document.querySelectorAll(`tbody[data-upload-row][data-state="${wanted}"]`).length === count, [state, n]);
+  async function uploadPage(vp, scheme, chunkHold) {
+    const page = await newPage({ vp, scheme, storageState: AUTH, clipboard: true });
+    page.__held = { release: null };
+    await page.route("**/api/current/artifacts/*/chunks*", async (route) => {
+      if (chunkHold && chunkHold(route.request().url(), page.__held)) { await new Promise((resolve) => { page.__held.release = resolve; }); }
+      await route.continue().catch(() => {});
+    });
+    await page.goto(BASE + "/#/upload", { waitUntil: "load" });
+    await page.getByRole("button", { name: "Choose files…" }).waitFor(); await themed(page, scheme);
+    return page;
+  }
+  const settings = async (page, access) => {
+    if (access) await page.getByRole("group", { name: "Access" }).getByRole("button", { name: access, exact: true }).click();
+    await page.getByLabel("Expires", { exact: true }).selectOption("7");
+    await page.getByLabel(/^Tags/).fill("release, report");
+  };
+  const press = (page) => page.getByRole("button", { name: /^Upload \d+ files?$/ }).click();
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"], [VP.m, "dark"]]) {
+    const suffix = (state) => `manure-upload${state ? "-" + state : ""}${scheme === "dark" ? "-dark" : ""}-${vp.width}`;
+    let page = await uploadPage(vp, scheme, null);
+    await away(page, suffix(""), "Upload page, nothing staged");
+    await stage(page, [70, 300 * 1024, 15]); await settings(page, null);
+    await away(page, suffix("staged"), "Three files staged; settings and the summary line");
+    if (vp === VP.s) { await page.context().close(); continue; }
+    await press(page); await states(page, "ready", 3);
+    await away(page, suffix("done"), "Three internal uploads ready: content links");
+    await page.context().close();
+  }
+  // 1440 light only: external done, progress, failed, locked settings.
+  let page = await uploadPage(VP.d, "light", null);
+  await stage(page, [70, 300 * 1024, 15]); await settings(page, "External"); await press(page); await states(page, "ready", 3);
+  await away(page, "manure-upload-done-external-1440", "Three external uploads ready: each with its one-time password panel");
+  await page.locator("[data-upload-secret]").first().getByRole("button", { name: "Reveal" }).click();
+  await away(page, "manure-upload-done-external-revealed-1440", "First password revealed: Copy and 'I have saved it' enabled");
+  await page.locator("[data-upload-secret]").first().getByRole("button", { name: "I have saved it" }).click();
+  await page.getByRole("dialog").waitFor();
+  await away(page, "manure-upload-done-external-confirm-1440", "Dismissing a password asks first; Cancel has the focus");
+  await page.context().close();
+  const chunkBytes = await (async () => { const p = await newPage({ storageState: AUTH }); await p.goto(BASE + "/#/upload"); const value = await p.evaluate(async () => (await (await fetch("/api/current", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ requestId: "00000000-0000-4000-8000-000000000001", apiVersion: "1.0.0", command: { GetCapabilities: {} } }) })).json()).result.CapabilityInfo.capabilities.chunkBytes); await p.context().close(); return value; })();
+  // progress: file 2 spans two chunks; its second chunk is held.
+  page = await uploadPage(VP.d, "light", (url, held) => /offset=[1-9]/.test(url) && held.release === null);
+  await page.locator("#upload-files").setInputFiles(names.map((name, i) => ({ name, mimeType: "application/octet-stream", buffer: Buffer.alloc([70, Math.floor(chunkBytes * 1.4), 15][i], 0x61 + i) })));
+  await settings(page, null); await press(page); await states(page, "uploading", 1);
+  while (page.__held.release === null) await sleep(100);
+  await away(page, "manure-upload-progress-1440", "File 2 of 3 uploading: settings locked, Cancel upload");
+  await page.getByRole("button", { name: "Cancel upload" }).click(); page.__held.release(); await states(page, "stopped", 1);
+  await away(page, "manure-upload-stopped-1440", "Cancelled: the reserved artifact keeps its offset; Retry continues it");
+  await page.context().close();
+  // failed: the connection resets on the first chunk of file 2.
+  page = await newPage({ storageState: AUTH, clipboard: true });
+  let failed = false;
+  await page.route("**/api/current/artifacts/*/chunks*", async (route) => {
+    if (!failed && /offset=0/.test(route.request().url()) && (await page.locator('tbody[data-upload-row][data-state="uploading"] .cell-title').textContent()).startsWith("a-very-long")) { failed = true; await route.abort("connectionreset"); }
+    else await route.continue().catch(() => {});
+  });
+  await page.goto(BASE + "/#/upload", { waitUntil: "load" }); await page.getByRole("button", { name: "Choose files…" }).waitFor();
+  await stage(page, [70, 300 * 1024, 15]); await settings(page, null); await press(page); await states(page, "failed", 1);
+  await away(page, "manure-upload-failed-1440", "File 2 failed: the reason, Retry on the same artifact; later files stay staged");
+  await page.context().close();
+  // CLI view
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"]]) {
+    const cli = await newPage({ vp, scheme, storageState: AUTH, clipboard: true });
+    await cli.goto(BASE + "/#/cli", { waitUntil: "load" }); await cli.getByRole("heading", { name: "Command-line client", level: 1 }).waitFor(); await themed(cli, scheme);
+    await away(cli, `manure-upload-cli${scheme === "dark" ? "-dark" : ""}-${vp.width}`, "CLI view: copyable commands");
+    await cli.context().close();
+  }
+  // drop overlay over the catalogue, then the staged hand-off
+  const drop = await catalogue(VP.d, "light");
+  await drop.evaluate(() => { const t = new DataTransfer(); t.items.add(new File(["x"], "a.txt")); t.items.add(new File(["y"], "b.txt")); document.dispatchEvent(new DragEvent("dragenter", { dataTransfer: t, bubbles: true })); });
+  await away(drop, "manure-catalogue-drop-1440", "Drop overlay: files continue on the Upload page");
+  await drop.evaluate(() => { const t = new DataTransfer(); t.items.add(new File(["x"], "a.txt")); t.items.add(new File(["y"], "b.txt")); document.dispatchEvent(new DragEvent("drop", { dataTransfer: t, bubbles: true, cancelable: true })); });
+  await states(drop, "staged", 2);
+  await away(drop, "manure-upload-handoff-1440", "After the drop: the Upload page with the two files staged");
+  await drop.context().close();
+};
+
 // ---------------------------------------------------------------- main
 // The scenes after "m1" capture the pre-redesign dashboard (ids and dialogs that UX-M1 replaced); they are
 // kept as the record of the "before" captures and are not run by default.
-const ORDER = ["auth", "m1", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
+const ORDER = ["auth", "m1", "m2", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
 const DEFAULT_SCENES = ["auth", "m1", "unlock", "viewer"];
 const only = new Set(input.scenes && input.scenes.length ? ["auth", ...input.scenes] : DEFAULT_SCENES);
 for (const name of ORDER) {

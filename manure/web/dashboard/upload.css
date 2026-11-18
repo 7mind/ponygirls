@@ -12,23 +12,28 @@
 .upload-hint { margin-top: var(--space-3); }
 .card-head > [hidden] { display: none; }
 .input:disabled, .select:disabled { background-color: var(--bg-sunken); color: var(--text-faint); cursor: not-allowed; }
-.segmented > button:disabled { cursor: not-allowed; opacity: 0.6; }
+.segmented > button:disabled { cursor: not-allowed; }
+.segmented > button:disabled:not([aria-pressed="true"]) { opacity: 0.6; }
 
 /* ── Files ──────────────────────────────────────────────────────────────── */
 .col-up-size { width: 110px; }
 .col-up-status { width: 200px; }
 .col-up-actions { width: 120px; }
-#upload-table td { height: auto; padding-top: var(--space-2); padding-bottom: var(--space-2); vertical-align: top; }
-#upload-table tbody:last-of-type tr:last-child td { border-bottom: 0; }
-#upload-table .up-extra-row td { padding-top: 0; white-space: normal; overflow: visible; }
+#upload-table td { vertical-align: top; }
+#upload-table tbody:hover td { background: var(--bg-hover); }
+#upload-table tbody tr:last-child td { border-bottom: 1px solid var(--border); }
+#upload-table tbody:last-of-type:has(.up-extra-row:not([hidden])) .up-extra-row td { border-bottom: 0; }
+#upload-table tbody:last-of-type:not(:has(.up-extra-row:not([hidden]))) > tr:first-child td { border-bottom: 0; }
+#upload-table .up-extra-row td { height: auto; padding-top: 0; padding-bottom: var(--space-3); white-space: normal; overflow: visible; }
 #upload-table tbody:has(.up-extra-row:not([hidden])) > tr:first-child td { border-bottom: 0; }
-.up-line { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-h-sm); }
+.up-line { display: flex; align-items: center; gap: var(--space-2); min-height: var(--control-h); }
 .col-num > .up-line, .col-actions > .up-line { justify-content: flex-end; }
 .up-line > .name-cell { flex: 1; }
 .kind-sm { width: 24px; height: 24px; border-radius: var(--radius-sm); }
 .up-bar { display: block; width: 100%; height: 6px; margin-top: var(--space-2); border-radius: var(--radius-full); background: var(--bg-sunken); overflow: hidden; }
 .up-bar > span { display: block; height: 100%; background: var(--info-fg); border-radius: var(--radius-full); }
 .up-sub { display: block; color: var(--text-muted); font-size: var(--text-xs); overflow: hidden; text-overflow: ellipsis; }
+.up-size-inline { display: none; margin-left: calc(var(--space-6) + var(--space-3)); }
 .up-extra { display: flex; flex-direction: column; gap: var(--space-2); max-width: var(--measure); }
 .up-extra .field-error { align-items: flex-start; white-space: normal; }
 .up-link { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
@@ -50,12 +55,16 @@
 .code-row { position: relative; }
 .code-row .btn { position: absolute; top: var(--space-2); right: var(--space-2); background: var(--bg-surface); }
 .code-row .code-block { margin: 0; padding-right: var(--space-7); }
+.code-comment { color: var(--text-muted); }
 
 @media (max-width: 1100px) {
   .cli-grid { grid-template-columns: 1fr; }
   .upload-settings { grid-template-columns: 1fr; gap: var(--space-3); }
 }
 @media (max-width: 720px) {
+  .up-size-inline { display: block; }
   .col-up-status { width: 128px; }
   .col-up-actions { width: 96px; }
+  #upload-section .card-head { flex-wrap: wrap; }
+  #upload-section .card-head > .xs { flex-basis: 100%; }
 }

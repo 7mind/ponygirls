@@ -10,6 +10,8 @@ import { errorLabel, bytes, contentUrl } from "./common.js";
 
 var SECONDS_PER_DAY = 86400;
 var MIN_CUSTOM_DAYS = 1, MAX_CUSTOM_DAYS = 365;
+var PHONE_QUERY = "(max-width: 720px)";
+var VISIBLE_COLUMNS = 4, VISIBLE_COLUMNS_PHONE = 3;
 var SECRET_VISIBLE_TAIL = 4;
 var MASK_CHAR = "•";
 var ACCESS_LABEL = { internal: "Internal", external: "External", public: "Public" };
@@ -36,6 +38,9 @@ var FAILURE_TEXT = {
   "quota-exceeded": "The storage quota is exhausted.",
   "session-limit": "Too many uploads are incomplete."
 };
+var NETWORK_FAILURE = "network-error";
+var SECRET_FIRST = "Copy or reveal the password first. It stays here until you confirm.";
+var SECRET_STAYS = "Stays here until you confirm. Share it separately from the link.";
 var UNCERTAIN_TEXT = "Initialization could not be confirmed. Do not retry as a new upload without checking the catalogue for an incomplete artifact.";
 var FILE_NAME_REJECTED = /[\\/\x00-\x1f\x7f]/;
 
@@ -96,7 +101,9 @@ export function createUpload(ctx, catalogue) {
   function partial(item) { return item.phase === "init-uncertain" || item.id !== null && item.phase !== "ready"; }
   function unacknowledged() { return uploads.filter(function (item) { return item.password !== null; }); }
   function failureText(item, error) {
-    var label = FAILURE_TEXT[errorLabel(error)] || "Upload failed (" + errorLabel(error) + ").";
+    var code = errorLabel(error);
+    var label = code === NETWORK_FAILURE ? "The connection was interrupted" + (item.offset > 0 ? " after " + bytes(item.offset) : "") + "." :
+      FAILURE_TEXT[code] || "Upload failed (" + code + ").";
     if (item.phase === "init-uncertain") { return label + " " + UNCERTAIN_TEXT; }
     if (item.phase === "finalizing") { return label + " Publication is uncertain. Retry checks the same artifact; do not start a duplicate."; }
     if (item.id !== null) { return label + " Retry continues the same artifact at the same offset; no second artifact is created."; }
@@ -149,7 +156,7 @@ export function createUpload(ctx, catalogue) {
   // The one-time password: masked, copied or revealed before it may be dismissed, and dismissed only on confirmation.
   function secretPanel(item, release) {
     var name = item.file.name;
-    var state = { revealed: false, copied: false, seen: false };
+    var state = { revealed: false, copied: false, seen: false, failure: null };
     var panel = node("div", "up-secret", null);
     panel.setAttribute("role", "group"); panel.setAttribute("aria-label", "External password for " + name); panel.dataset.uploadSecret = "";
     var value = node("input", "input input-mono", null);
@@ -158,7 +165,7 @@ export function createUpload(ctx, catalogue) {
     var reveal = button("Reveal", "btn btn-sm", "eye"); reveal.setAttribute("aria-pressed", "false");
     var copy = button("Copy", "btn btn-sm", "copy"); copy.setAttribute("aria-label", "Copy password for " + name);
     var chip = node("span", "chip chip-outline", "Not copied yet");
-    var status = node("span", null, "Stays here until you confirm. Share it separately from the link.");
+    var status = node("span", null, null);
     status.setAttribute("role", "status");
     var saved = button("I have saved it", "btn btn-sm", null); saved.disabled = true;
     function update() {
@@ -167,6 +174,7 @@ export function createUpload(ctx, catalogue) {
       chip.className = state.copied ? "chip chip-ok" : "chip chip-outline";
       chip.textContent = state.copied ? "Copied" : "Not copied yet";
       saved.disabled = !(state.copied || state.seen);
+      status.textContent = state.failure !== null ? state.failure : saved.disabled ? SECRET_FIRST : SECRET_STAYS;
     }
     reveal.addEventListener("click", function () { state.revealed = !state.revealed; state.seen = true; update(); });
     copy.addEventListener("click", function () {
@@ -174,8 +182,8 @@ export function createUpload(ctx, catalogue) {
       try { pending = clipboard.writeText(item.password); } catch (_error) { pending = Promise.reject(new Error("unavailable")); }
       Promise.resolve(pending).then(function () {
         if (item.password === null) { return; }
-        state.copied = true; overlays.toast("Password copied."); update();
-      }, function () { status.textContent = "Clipboard unavailable. Reveal the password and copy it manually."; });
+        state.copied = true; state.failure = null; overlays.toast("Password copied."); update();
+      }, function () { state.failure = "Clipboard unavailable. Reveal the password and copy it manually."; update(); });
     });
     saved.addEventListener("click", function () { confirmHide([item], function () { release(); }); });
     var line = node("div", "up-secret-line", null);
@@ -194,6 +202,11 @@ export function createUpload(ctx, catalogue) {
     }).then(function (confirmed) { if (confirmed) { proceed(); } });
   }
 
+  // The Size column is hidden on phones; the extras row spans the columns that are left.
+  var narrow = window.matchMedia(PHONE_QUERY);
+  function columnCount() { return narrow.matches ? VISIBLE_COLUMNS_PHONE : VISIBLE_COLUMNS; }
+  narrow.addEventListener("change", function () { rows.forEach(function (view) { view.extraCell.colSpan = columnCount(); }); });
+
   function createRow(item) {
     var body = node("tbody", null, null); body.dataset.uploadRow = "";
     var main = node("tr", null, null), extraRow = node("tr", "up-extra-row", null);
@@ -201,7 +214,7 @@ export function createUpload(ctx, catalogue) {
     var title = node("span", "cell-title truncate grow", item.file.name); title.title = item.file.name;
     var kind = node("span", "kind kind-sm", null); kind.appendChild(overlays.iconNode("file", ""));
     var nameLine = node("div", "up-line", null), nameCell = node("div", "name-cell", null);
-    nameCell.append(kind, title); nameLine.appendChild(nameCell); name.appendChild(nameLine);
+    nameCell.append(kind, title); nameLine.appendChild(nameCell); name.append(nameLine, node("span", "up-sub up-size-inline", bytes(item.file.size)));
     var sizeLine = node("div", "up-line", bytes(item.file.size)); size.appendChild(sizeLine);
     var statusLine = node("div", "up-line", null), statusLabel = node("span", null, null);
     var bar = node("span", "up-bar", null), fill = node("span", null, null), sub = node("span", "up-sub", null);
@@ -210,10 +223,11 @@ export function createUpload(ctx, catalogue) {
     statusLine.appendChild(statusLabel); status.append(statusLine, bar, sub);
     var actionLine = node("div", "up-line", null);
     var retry = button("Retry", "btn btn-sm", "refresh"); retry.setAttribute("aria-label", "Retry " + item.file.name);
+    var stop = button("Cancel", "btn btn-sm btn-ghost", null); stop.setAttribute("aria-label", "Cancel " + item.file.name);
     var remove = button(null, "btn btn-sm btn-ghost btn-icon", "x"); remove.setAttribute("aria-label", "Remove " + item.file.name + " from the list");
-    actionLine.append(retry, remove); actions.appendChild(actionLine);
+    actionLine.append(retry, stop, remove); actions.appendChild(actionLine);
     main.append(name, size, status, actions);
-    var extraCell = node("td", null, null); extraCell.colSpan = 4;
+    var extraCell = node("td", null, null); extraCell.colSpan = columnCount();
     var extra = node("div", "up-extra", null);
     var error = node("p", "field-error", null); error.setAttribute("role", "alert");
     var catalogueLink = node("a", "link-button", "Check the catalogue for incomplete uploads"); catalogueLink.href = "#/artifacts?query=state%3Auploading";
@@ -222,6 +236,7 @@ export function createUpload(ctx, catalogue) {
     var link = null, secret = null, noted = false;
     retry.addEventListener("click", function () { start(item); });
     remove.addEventListener("click", function () { removeItem(item); });
+    stop.addEventListener("click", cancel);
 
     function update() {
       var state = stateOf(item), view = STATE_VIEW[state];
@@ -235,11 +250,12 @@ export function createUpload(ctx, catalogue) {
         fill.style.setProperty("width", (percent === null ? 0 : percent) + "%");
         bar.setAttribute("aria-valuenow", String(percent === null ? 0 : percent));
       }
-      sub.hidden = !(state === "uploading" || state === "ready");
-      sub.textContent = state === "uploading" ? bytes(item.offset) + " of " + bytes(item.file.size) : ACCESS_LABEL[item.visibility];
+      sub.hidden = state !== "uploading";
+      sub.textContent = bytes(item.offset) + " of " + bytes(item.file.size);
       retry.hidden = !(state === "failed" || state === "stopped");
       retry.disabled = uploadBusy;
-      remove.disabled = uploadBusy;
+      stop.hidden = !item.busy; stop.disabled = cancelRequested;
+      remove.hidden = item.busy;
       var message = state === "uncertain" ? (item.error !== null ? item.error : UNCERTAIN_TEXT) : item.error;
       error.hidden = message === null || state === "ready"; error.textContent = message === null ? "" : message;
       if (!error.hidden) { error.prepend(overlays.iconNode("alert", "icon-sm")); }
@@ -252,10 +268,12 @@ export function createUpload(ctx, catalogue) {
         secret.remove(); secret = null;
         note.textContent = "Password hidden. Signed-in users can retrieve it from the artifact page."; noted = true;
       }
-      extra.replaceChildren.apply(extra, [error, catalogueLink].concat(link === null ? [] : [link], secret === null ? [] : [secret], noted ? [note] : []));
+      var wanted = [error, catalogueLink].concat(link === null ? [] : [link], secret === null ? [] : [secret], noted ? [note] : []);
+      // Re-parenting would drop the focus from a control inside the password panel; touch the list only when it changed.
+      if (wanted.length !== extra.children.length || wanted.some(function (child, at) { return extra.children[at] !== child; })) { extra.replaceChildren.apply(extra, wanted); }
       extraRow.hidden = extra.querySelector(":scope > :not([hidden])") === null;
     }
-    return { body: body, update: update };
+    return { body: body, extraCell: extraCell, update: update };
   }
 
   // ── Page rendering ──────────────────────────────────────────────────────
@@ -275,6 +293,7 @@ export function createUpload(ctx, catalogue) {
       view.update();
     });
     $("upload-files-card").hidden = uploads.length === 0;
+    $("upload-clear").hidden = uploadBusy;
     $("upload-drop-title").textContent = uploads.length === 0 ? "Drop or paste files here" : "Drop or paste more files";
     $("upload-choose").className = uploads.length === 0 ? "btn btn-primary" : "btn";
     $("upload-choose").disabled = uploadBusy;
@@ -304,7 +323,7 @@ export function createUpload(ctx, catalogue) {
     var parts = [];
     if (ready.length > 0) { parts.push(ready.length === total ? total + " ready" : ready.length + " of " + total + " ready"); }
     if (failed + uncertain > 0) { parts.push(failed + uncertain + " failed"); }
-    if (staged > 0) { parts.push(staged + " staged" + (ready.length === 0 && failed + uncertain === 0 ? " · " + bytes(uploads.reduce(function (sum, item) { return sum + item.file.size; }, 0)) : "")); }
+    if (staged > 0 && ready.length === 0 && failed + uncertain === 0) { parts.push(staged + " staged · " + bytes(uploads.reduce(function (sum, item) { return sum + item.file.size; }, 0))); }
     setText("upload-summary", parts.length === 0 ? "" : "· " + parts.join(" · "));
     var foot;
     if (uploadBusy) {
@@ -343,7 +362,7 @@ export function createUpload(ctx, catalogue) {
     $("upload-files").value = ""; renderAll();
   }
   function removeItem(item) {
-    if (uploadBusy) { return; }
+    if (item.busy) { return; }
     var drop = function () { var at = uploads.indexOf(item); if (at !== -1) { uploads.splice(at, 1); item.clear(); renderAll(); } };
     if (item.password !== null) { confirmHide([item], drop); } else { drop(); }
   }
@@ -377,7 +396,7 @@ export function createUpload(ctx, catalogue) {
     try {
       for (var item of queue) {
         if (cancelRequested) { break; }
-        if (!runnable(item)) { continue; }
+        if (!runnable(item) || !uploads.includes(item)) { continue; }
         check(); item.error = null; item.stopped = false;
         try {
           await item.run(apiFetch, fetch, check, controller.signal, renderAll);
