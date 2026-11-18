@@ -584,14 +584,16 @@ try {
       await page.getByRole("menuitem", { name: "Account settings", exact: true }).click();
       await page.waitForFunction(() => location.hash.startsWith("#account"));
       await page.evaluate(() => { window.pageMarker = "same document"; });
-      // In another tab of the same browser alice signs in over op's session cookie (op's session itself stays valid on the server).
-      const other = await context.newPage();
-      await context.clearCookies();
-      await other.goto(base);
-      await other.getByLabel("Username", { exact: true }).fill("alice");
-      await other.getByLabel("Password", { exact: true }).fill(alicePassword);
-      await other.getByRole("button", { name: "Sign in", exact: true }).click();
-      await other.getByRole("button", { name: "alice", exact: true }).waitFor();
+      // Alice signs in elsewhere and her session cookie replaces op's in this browser (op's session stays valid on the server).
+      const elsewhere = await browser.newContext();
+      const alicePage = await elsewhere.newPage();
+      await alicePage.goto(base);
+      await alicePage.getByLabel("Username", { exact: true }).fill("alice");
+      await alicePage.getByLabel("Password", { exact: true }).fill(alicePassword);
+      await alicePage.getByRole("button", { name: "Sign in", exact: true }).click();
+      await alicePage.getByRole("button", { name: "alice", exact: true }).waitFor();
+      await context.addCookies(await elsewhere.cookies());
+      await elsewhere.close();
       await page.evaluate(() => window.dispatchEvent(new Event("focus")));
       // Behind the account page: attached, not visible.
       await page.locator('[role="status"]', { hasText: "Signed-in identity changed" }).waitFor({ state: "attached" });
