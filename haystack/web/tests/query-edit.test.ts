@@ -51,6 +51,10 @@ test("filter shortcuts toggle a top-level conjunct and append field prefixes to 
   assert.equal(hasConjunct("type:todo human-attention:required", "human-attention:required"), true);
   assert.equal(hasConjunct("type:todo OR human-attention:required", "human-attention:required"), false, "a disjunct is not a filter");
   assert.equal(hasConjunct("NOT human-attention:required", "human-attention:required"), false);
+  assert.equal(hasConjunct("- human-attention:required", "human-attention:required"), false, "unary minus negates");
+  assert.equal(hasConjunct("type:todo -archived:true", "archived:true"), false);
+  assert.equal(toggleConjunct("- archived:true", "archived:true"), "- archived:true archived:true", "a negated filter is not removed as a positive one");
+  assert.equal(toggleConjunct("archived:true - tag:x", "archived:true"), "- tag:x", "a minus negates only the term after it");
   assert.equal(hasConjunct('tag:"human-attention:required"', "human-attention:required"), false);
   assert.equal(hasConjunct("(type:todo human-attention:required)", "human-attention:required"), false);
   assert.equal(appendField("", "type"), "type:");

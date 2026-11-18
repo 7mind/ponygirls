@@ -359,9 +359,9 @@ try {
       assert.equal(await rowCount(page), PAGE * 3, "rows are kept");
       assert.equal(await page.evaluate(() => window.scrollY), 900, "scroll is kept");
       assert.equal(listSearches(), searches, "the list is not reloaded until the reader asks");
-      // The first row below the sticky table header.
+      // The first row below the sticky table header (its cells stick, not <thead>).
       const firstVisible = () => records(page).evaluate((element) => {
-        const top = element.querySelector("thead").getBoundingClientRect().bottom;
+        const top = element.querySelector("thead th").getBoundingClientRect().bottom;
         const row = [...element.querySelectorAll("tbody tr")].find((candidate) => candidate.getBoundingClientRect().bottom > top);
         return { key: row.dataset.rowId, top: row.getBoundingClientRect().top };
       });

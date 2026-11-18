@@ -53,13 +53,17 @@ function topLevelTerms(query: string): string[] {
   if (term !== "") terms.push(term);
   return terms;
 }
-const OPERAND_PREFIX = /^(?:NOT|!=|<=|>=|=|<|>)$/i;
+
+/** Negation of the following term: `NOT` or a standalone unary minus. */
+const NEGATION = /^(?:NOT|-)$/i;
+const COMPARISON = /^(?:!=|<=|>=|=|<|>)$/;
 
 /** Index of `term` as an unnegated conjunct of a complete expression without a top-level OR, else -1. */
 function conjunctIndex(terms: readonly string[], term: string): number {
   if (terms.some((candidate) => /^OR$/i.test(candidate))) return -1;
-  return terms.findIndex((candidate, index) => candidate === term && (index === 0 || !OPERAND_PREFIX.test(terms[index - 1]!)) &&
-    (index + 1 === terms.length || !OPERAND_PREFIX.test(terms[index + 1]!)));
+  return terms.findIndex((candidate, index) => candidate === term &&
+    (index === 0 || !(NEGATION.test(terms[index - 1]!) || COMPARISON.test(terms[index - 1]!))) &&
+    (index + 1 === terms.length || !COMPARISON.test(terms[index + 1]!)));
 }
 
 /** A filter shortcut is on when its exact term is a top-level conjunct of the expression. */

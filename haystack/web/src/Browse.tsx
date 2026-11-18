@@ -199,11 +199,12 @@ export function Browse({ initial, preset, onOpen, onAuthLost }: {
   const syntaxId = useId();
   const live = useLiveUpdates();
 
-  // The first row below the sticky table header and its offset, so that a refreshed chain keeps it in place.
+  // The first row below the sticky table header and its offset, so that a refreshed chain keeps it in place. The
+  // header cells are what sticks (components.css `.table th`); <thead> itself scrolls away with the table.
   function captureAnchor(): Anchor | null {
     const element = table.current;
     if (element === null || !visible(element) || window.scrollY === 0) return null;
-    const top = element.tHead!.getBoundingClientRect().bottom;
+    const top = element.tHead!.rows[0]!.cells[0]!.getBoundingClientRect().bottom;
     for (const row of element.querySelectorAll<HTMLElement>("tbody tr[data-row-id]")) {
       const rect = row.getBoundingClientRect();
       if (rect.bottom > top) return { key: row.dataset.rowId!, top: rect.top };

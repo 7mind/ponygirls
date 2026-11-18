@@ -335,24 +335,43 @@ try {
     await done();
   });
 
-  await check("browse: a live change while scrolled shows the pill, keeps rows and scroll until Show merges it in place", async () => {
+  await check("browse: a live change while scrolled shows the pill, keeps rows and scroll until Show merges it in place, keeping the row being read", async () => {
     const { page, done } = await open({ hash: scrollList });
     await waitRows(page, PAGE);
     await toEnd(page);
     await waitRows(page, 2 * PAGE);
     await page.evaluate(() => window.scrollTo(0, 700));
     const before = await page.evaluate(() => window.scrollY);
-    await put("scroll:44", { title: "Record 00 changed", tags: ["even"] }, 1);
+    // The first row fully or partly visible below the sticky table header (the header cells stick, not <thead>).
+    const firstVisible = () => page.evaluate(() => {
+      const view = [...document.querySelectorAll("section.browse")].find((element) => element.getClientRects().length > 0);
+      const boundary = view.querySelector("thead th").getBoundingClientRect().bottom;
+      const row = [...view.querySelectorAll("tbody tr[data-row-id]")].find((candidate) => candidate.getBoundingClientRect().bottom > boundary);
+      return { key: row.dataset.rowId, top: row.getBoundingClientRect().top };
+    });
+    // The list's own anchor is under test: Chromium's native scroll anchoring would otherwise mask it (browsers
+    // without it rely on the list's anchor alone).
+    await page.evaluate(() => document.documentElement.style.setProperty("overflow-anchor", "none"));
+    // Archiving the fifth row removes a row above the viewport; the first table row stays.
+    const removed = "scroll:04";
+    await put(removed, { title: "Record 40", tags: ["even"], status: "archived" }, 1);
     const pill = list(page).getByRole("button", { name: "Records changed · Show", exact: true });
     await pill.waitFor();
     await frames(page);
     assert.equal((await rowKeys(page)).length, 2 * PAGE, "rows are kept until the reader applies the change");
     assert.equal(await page.evaluate(() => window.scrollY), before, "the scroll position is kept");
-    assert.equal(await list(page).getByText("Record 00 changed", { exact: true }).count(), 0);
+    const anchor = await firstVisible();
+    const firstRow = (await rowKeys(page))[0];
+    const shown = await rowKeys(page);
+    assert.ok(shown.indexOf(removed) > 0 && shown.indexOf(removed) < shown.indexOf(anchor.key), `the removed row lies between the first row and the row being read (${anchor.key})`);
     await pill.click();
-    await list(page).getByText("Record 00 changed", { exact: true }).waitFor({ state: "attached" });
+    await page.waitForFunction((key) => document.querySelector(`section.browse tbody tr[data-row-id="${key}"]`) === null, removed);
+    await frames(page);
     assert.equal(await pill.count(), 0);
+    assert.equal((await rowKeys(page))[0], firstRow, "the first table row is unchanged");
     assert.equal((await rowKeys(page)).length, 2 * PAGE, "Show reloads the loaded chain in place");
+    const after = await page.evaluate((key) => document.querySelector(`section.browse tbody tr[data-row-id="${key}"]`).getBoundingClientRect().top, anchor.key);
+    assert.ok(Math.abs(after - anchor.top) <= 2, `the row being read keeps its place: ${anchor.top} → ${after}`);
     await done();
   });
 
@@ -421,14 +440,20 @@ try {
 
   await check("delayed search navigation preserves a newer query draft", async () => {
     const context = await browser.newContext();
+    // Route changes (hashchange) are held while `holdRoutes()` is in effect and delivered by `releaseRoutes()`.
     await context.addInitScript(() => {
+      let holding = false;
+      const held = [];
+      window.heldRoutes = () => held.length;
+      window.holdRoutes = () => { holding = true; };
+      window.releaseRoutes = () => { holding = false; for (const deliver of held.splice(0)) deliver(); };
       const add = window.addEventListener.bind(window);
       window.addEventListener = (type, listener, options) => {
         if (type !== "hashchange") { add(type, listener, options); return; }
-        add(type, (event) => window.setTimeout(() => {
-          if (typeof listener === "function") listener.call(window, event);
-          else if (listener !== null) listener.handleEvent(event);
-        }, 250), options);
+        add(type, (event) => {
+          const deliver = () => { if (typeof listener === "function") listener.call(window, event); else if (listener !== null) listener.handleEvent(event); };
+          if (holding) held.push(deliver); else deliver();
+        }, options);
       };
     });
     const page = await context.newPage();
@@ -439,11 +464,14 @@ try {
       await page.getByRole("button", { name: "Sign in", exact: true }).click();
       await page.getByRole("button", { name: "Connection: Live", exact: true }).waitFor();
       await query(page).fill("hello");
-      const response = page.waitForResponse((value) => value.url().endsWith("/api/v1/search") && value.request().postDataJSON().query === "hello");
+      await page.evaluate(() => window.holdRoutes());
       await searchButton(page).click();
+      await page.waitForFunction(() => window.heldRoutes() > 0);
+      // The submitted route reaches the list only after the newer draft exists.
       await query(page).fill("bogus:1");
-      await response;
-      await list(page).getByRole("button", { name: "ui:note", exact: true }).waitFor();
+      await page.evaluate(() => window.releaseRoutes());
+      await counter(page).getByText("All 1 record loaded", { exact: true }).waitFor();
+      assert.deepEqual(await rowKeys(page), ["ui:note"], "the submitted route was applied");
       assert.equal(await query(page).inputValue(), "bogus:1", "the submitted route must not overwrite a newer query draft");
     } finally { await context.close(); }
   });
