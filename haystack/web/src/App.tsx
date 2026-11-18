@@ -270,7 +270,7 @@ function Workspace({ identity, notice, onAuthLost }: { identity: Identity; notic
         {view.lists.map((entry) => <div key={entry.id} hidden={route.name !== "list" || entry.id !== view.shown} data-list={entry.route.preset} data-list-entry={entry.id}>
           <Browse preset={entry.route.preset} initial={entry.route.state} onOpen={openItem} onAuthLost={onAuthLost} />
         </div>)}
-        {route.name === "item" && <RecordPage key={route.key} itemKey={route.key} edit={route.edit} onAuthLost={onAuthLost}
+        {route.name === "item" && <RecordPage key={route.key} itemKey={route.key} edit={route.edit} origin={presetOf(route.origin)} onAuthLost={onAuthLost}
           onBack={leaveItem}
           onEdit={() => { pushEdit(route.key); sync(); }}
           onEditDone={() => { if (closeEdit(route.key) === "replaced") sync(); }} />}

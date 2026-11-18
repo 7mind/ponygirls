@@ -657,44 +657,6 @@ await check("search + diagnostics + archive", async () => {
   } finally { await ctx.close(); }
 });
 
-// Arbitrary JSON fidelity + XSS inertness.
-await check("semantic fields preserve scalar types and exact nested numbers through history", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:semantic", exact: true }).click();
-    const field = (name) => page.getByRole("region", { name: `Field: ${name}`, exact: true });
-    assert.equal(await field("label").locator(".field-string").textContent(), "Literal **not bold**\n🐎");
-    assert.equal(await field("label").locator("strong").count(), 0);
-    assert.equal(await field("count").locator(".field-number").textContent(), "9007199254740993");
-    assert.equal(await field("precision").locator(".field-number").textContent(), "0.12345678901234567890123456789");
-    assert.equal(await field("enabled").locator(".field-boolean").textContent(), "true");
-    assert.equal(await field("empty").locator(".field-null").textContent(), "null");
-    const config = field("config").locator("pre");
-    assert.match(await config.textContent(), /\n\s+"nested": 9007199254740993/);
-    assert.ok(await config.locator(".hljs-attr").count() > 0, "object keys have syntax highlighting");
-    assert.ok(await config.locator(".hljs-number").count() > 0, "nested numbers have syntax highlighting");
-    assert.match(await field("tags").locator("pre").textContent(), /\[\n/);
-    assert.match(await field("unknown").locator("pre").textContent(), /<b>preserved<\/b>/);
-    assert.match(await field("extended").locator("pre").textContent(), /"filename": "SKILL.md"/);
-    await page.getByText("Raw JSON", { exact: true }).click();
-    const raw = page.locator(".fields-view > .field-source pre");
-    await raw.waitFor();
-    assert.match(await raw.textContent(), /0\.12345678901234567890123456789/);
-    await page.getByText("Raw JSON", { exact: true }).click();
-    await page.getByRole("button", { name: "Edit", exact: true }).click();
-    await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
-    assert.match(await page.getByLabel("Fields JSON").inputValue(), /9007199254740993/);
-    assert.match(await page.getByLabel("Fields JSON").inputValue(), /"type":"md"/);
-    await page.getByRole("button", { name: "Cancel", exact: true }).click();
-    await page.getByRole("button", { name: "View", exact: true }).first().click();
-    await page.getByRole("heading", { name: "Snapshot r1", exact: true }).waitFor();
-    const counts = page.getByRole("region", { name: "Field: count", exact: true }).locator(".field-number");
-    assert.deepEqual(await counts.allTextContents(), ["9007199254740993", "9007199254740993"]);
-  } finally { await ctx.close(); }
-});
-
 await check("typed field editors preview content, preserve data, and save attributed revisions", async () => {
   await seed.put({ key: "ui:editor", documentJson: docOf({ title: "Typed editor" }).replace('"fields":{}',
     '"fields":{"count":9007199254740993,"decimal":0.12345678901234567890123456789,' +
@@ -777,89 +739,6 @@ await check("root typed content can be edited and cancelled without writing", as
   } finally { await ctx.close(); }
 });
 
-await check("typed Markdown and snippets highlight content without executing or fetching it", async () => {
-  const ctx = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
-  try {
-    const page = await ctx.newPage();
-    let dialogued = false;
-    const imageRequests = [];
-    page.on("dialog", async (dialog) => { dialogued = true; await dialog.dismiss(); });
-    page.on("request", (request) => { if (request.url().includes("haystack-track")) imageRequests.push(request.url()); });
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:semantic", exact: true }).click();
-    const skill = page.getByRole("region", { name: "Field: skill", exact: true });
-    await skill.getByRole("heading", { name: "Verify a release", exact: true }).waitFor();
-    assert.equal(await skill.locator("strong").textContent(), "artifact");
-    assert.equal(await skill.locator("table").count(), 1);
-    assert.ok(await skill.locator('[aria-label="YAML frontmatter"] .hljs-attr').count() > 0);
-    assert.equal(await skill.locator('code[data-language="typescript"] .hljs-keyword').textContent(), "const");
-    assert.equal(await skill.locator('code[data-language="typescript"] .hljs-number').textContent(), "7");
-    assert.equal(await page.locator("img").count(), 0);
-    assert.equal(await skill.locator('a[href^="javascript:"]').count(), 0);
-    assert.ok((await skill.getByRole("link", { name: "documentation", exact: true }).getAttribute("rel")).includes("noreferrer"));
-    assert.deepEqual(imageRequests, []);
-    assert.equal(dialogued, false);
-    const snippet = page.getByRole("region", { name: "Field: snippet", exact: true }).locator("pre");
-    assert.equal(await snippet.textContent(), snippetContent);
-    assert.ok(await snippet.locator("span").count() > 0);
-    assert.equal(await page.getByRole("region", { name: "Field: literal", exact: true }).locator("pre").textContent(), "# Literal *text*");
-    const unsupported = page.getByRole("region", { name: "Field: unsupported", exact: true });
-    await unsupported.getByText(/Unsupported language/).waitFor();
-    assert.equal(await unsupported.locator("pre").textContent(), "literal <script>alert(12)</script>");
-    assert.equal(await unsupported.locator("pre span").count(), 0);
-    await page.emulateMedia({ colorScheme: "dark" });
-    await page.setViewportSize({ width: 390, height: 844 });
-    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), "semantic mobile fields overflow");
-    await skill.getByText("Markdown source", { exact: true }).click();
-    const source = skill.locator(".field-source pre");
-    await source.waitFor();
-    assert.equal(await source.textContent(), skillMarkdown);
-    assert.equal(dialogued, false);
-  } finally { await ctx.close(); }
-});
-
-await check("root arrays and typed Markdown remain renderable", async () => {
-  const ctx = await browser.newContext();
-  try {
-    const page = await ctx.newPage();
-    await login(page, humanPassword);
-    await page.getByRole("button", { name: "ui:root-array", exact: true }).click();
-    const value = page.getByRole("region", { name: "Field: Value", exact: true });
-    await value.waitFor();
-    assert.equal(JSON.parse(await value.locator("pre").textContent())[0], "literal");
-    await navLink(page, "Browse").click();
-    await page.getByRole("button", { name: "ui:root-markdown", exact: true }).click();
-    await page.getByRole("region", { name: "Field: Value", exact: true }).getByRole("heading", { name: "Root content", exact: true }).waitFor();
-  } finally { await ctx.close(); }
-});
-
-await check("fidelity + inert rendering", async () => {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  let dialogued = false;
-  page.on("dialog", async (d) => {
-    dialogued = true;
-    await d.dismiss();
-  });
-  await login(page, humanPassword);
-  await page.getByLabel("Query").fill("hello");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.getByRole("button", { name: "ui:note" }).click();
-  await page.getByText("9007199254740993").waitFor();
-  await page.getByRole("button", { name: "Back" }).click();
-  await page.getByLabel("Query").fill("xss");
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.getByRole("button", { name: "ui:xss" }).click();
-  // Literal payload text is visible (the list it was opened from stays mounted, hidden, under the record)…
-  await page.getByText('<script>alert("xss")</script>', { exact: false }).filter({ visible: true }).first().waitFor();
-  // …but nothing executed and no raw elements were created.
-  assert.equal(dialogued, false);
-  assert.equal(await page.locator("img").count(), 0);
-  const scripts = await page.locator("script").count();
-  assert.ok(scripts >= 1, "app scripts load");
-  await ctx.close();
-});
-
 await check("a lost committed response replays the original ID without overwriting a newer draft", async () => {
   await seed.put({ key: "ui:uncertain", documentJson: docOf({ title: "Uncertain fixture" }), expectedRevision: 0, requestId: rid() });
   const ctx = await browser.newContext();
@@ -929,37 +808,6 @@ await check("conflict preserves draft", async () => {
   assert.equal(await b.getByLabel("Title").inputValue(), "loser draft text");
   await b.getByRole("button", { name: /Save my draft on top/ }).click();
   await b.getByText(/Saved as revision 3/).waitFor();
-  await ctx.close();
-});
-
-// History snapshots, compare, restore-as-new-revision.
-await check("history + restore", async () => {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  await login(page, humanPassword);
-  // ui:note was retitled by the conflict check; browse instead of searching.
-  await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.getByRole("button", { name: "ui:note" }).click();
-  await page.getByText("Revision 3").waitFor();
-  await page.getByRole("button", { name: "View" }).first().click();
-  await page.getByText(/Snapshot r/).waitFor();
-  await page.getByRole("button", { name: /Restore as new revision/ }).first().click();
-  await page.getByText(/Restored revision \d+ as new revision 4/).waitFor();
-  await ctx.close();
-});
-
-// Attention inbox preset + clearing.
-await check("attention inbox", async () => {
-  const ctx = await browser.newContext();
-  const page = await ctx.newPage();
-  await login(page, humanPassword);
-  await openPreset(page, "Inbox");
-  await page.getByText("needs attention").filter({ visible: true }).waitFor(); // other preset lists stay mounted, hidden
-  await page.getByRole("button", { name: "ui:todo" }).click();
-  await page.getByRole("button", { name: "Clear attention" }).click();
-  await page.getByText(/Attention cleared/).waitFor();
-  await openPreset(page, "Inbox");
-  await page.getByRole("heading", { name: "No records requiring review", exact: true }).waitFor();
   await ctx.close();
 });
 

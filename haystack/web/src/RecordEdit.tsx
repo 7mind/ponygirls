@@ -30,8 +30,8 @@ export function RecordEdit({ itemKey, item, onItem, onStatus, onSaved, onCancel,
   item: Item;
   onItem: (item: Item) => void;
   onStatus: (status: string) => void;
-  /** A save succeeded: `status` reports the new revision. */
-  onSaved: (status: string) => Promise<void>;
+  /** A save succeeded as `revision`. */
+  onSaved: (revision: number) => Promise<void>;
   onCancel: () => void;
   onDiscard: () => void;
   onAuthLost: () => void;
@@ -103,7 +103,7 @@ export function RecordEdit({ itemKey, item, onItem, onStatus, onSaved, onCancel,
       const out = await api.put(item.key, documentJson, editRevision.current, uuidv7());
       setConflict(null);
       setRemoteUpdate(false);
-      await onSaved(`Saved as revision ${out.revision}.`);
+      await onSaved(out.revision);
     } catch (err) {
       if (err instanceof AuthError) {
         onAuthLost();
@@ -168,7 +168,7 @@ export function RecordEdit({ itemKey, item, onItem, onStatus, onSaved, onCancel,
       const out = await api.put(item.key, documentJson, revision, uuidv7());
       setConflict(null);
       setRemoteUpdate(false);
-      await onSaved(`Saved as revision ${out.revision}.`);
+      await onSaved(out.revision);
     } catch (err) {
       if (err instanceof AuthError) { onAuthLost(); return; }
       if (err instanceof ApiError && err.code === "conflict") {

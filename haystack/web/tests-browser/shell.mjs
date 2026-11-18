@@ -179,7 +179,7 @@ try {
       assert.equal(new URL(page.url()).hash, "#/item/notes%3Arecord-45");
       assert.deepEqual(await current(page), ["Browse"], "the record keeps its originating entry current");
       assert.equal(await page.evaluate(() => window.scrollY), 0, "a record opens at its top");
-      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Back to Browse", exact: true }).click();
       await waitRows(page, before.rows);
       assert.equal(new URL(page.url()).hash, "#/browse");
       const panelAfter = await records(page).evaluate((element) => element.scrollTop);
@@ -248,7 +248,7 @@ try {
       await page.getByRole("button", { name: "Cancel", exact: true }).click();
       await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
       assert.equal(new URL(page.url()).hash, "#/item/notes%3Arecord-03");
-      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await page.getByRole("button", { name: "Back to Browse", exact: true }).click();
       await page.waitForFunction(() => location.hash === "#/browse");
       await waitRows(page, PAGE); // the reload above started a new document: the list loads afresh
       // Browser Back and Forward between a preset and a record.

@@ -29,3 +29,8 @@
   .editor-panel { grid-template-columns: 1fr; padding: 12px; }
   .editor-panel label { grid-column: 1 / -1; }
 }
+/* Legacy rules of the edit page moved from record.css when the record view was rebuilt (UX-H3); UX-H4 replaces them. */
+.back-button { display: flex; align-items: center; gap: 6px; margin: 0 0 12px; border: 0; padding-left: 0; color: var(--muted); }
+.editor-panel { padding: 12px 14px; border: 1px solid var(--line); border-radius: 0; background: var(--surface); margin-bottom: 14px; }
+.field-heading h4 { margin: 0 0 4px; font: 600 12px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+.field-heading > span { color: var(--muted); font-size: 10px; }
