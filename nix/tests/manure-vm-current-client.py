@@ -5,8 +5,7 @@ Behavioral-Active / Blackbox-GoodCommunication (installed native service).
 The portable client and generated current_protocol own requests/codecs. TLS
 connections go only to the private guest loopback; CERT_NONE proves transport
 and Host routing, NOT SAN trust (the VM retains separate curl --cacert controls).
-No credential/body values are printed. Pure receipt/observer checks are also
-exercised independently by test_manure_vm_current_client.py.
+No credential/body values are printed.
 """
 from __future__ import annotations
 
