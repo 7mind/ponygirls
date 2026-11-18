@@ -6,6 +6,7 @@ resets an existing DB; every instance gets a fresh database and physical root.
 """
 from __future__ import annotations
 
+import base64
 from collections import deque
 import json
 import os
@@ -180,6 +181,25 @@ class OwnedDatabase:
         if result.returncode or len(result.stdout)>65536 or len(result.stderr)>8192:
             raise RuntimeError('owned runtime SQL probe failed (private diagnostics withheld)')
         return result.stdout.decode('utf-8').strip()
+
+    def set_artifact_expiry(self,artifact_id,expires_at_s):
+        """Store an expiry the API cannot express (its minimum TTL is 60 s).
+
+        Writes the authoritative row and the retrieval projection exactly as a
+        creation-time expiry stores them; the server reads both on every request.
+        """
+        if not re.fullmatch('[0-9a-f]{32}',artifact_id) or type(expires_at_s) is not int:
+            raise RuntimeError('invalid owned expiry fixture input')
+        source=base64.urlsafe_b64encode(artifact_id.encode('ascii')).rstrip(b'=').decode('ascii')
+        namespace=base64.urlsafe_b64encode(b'manure').rstrip(b'=').decode('ascii')
+        updated=self.runtime_sql(f"""WITH artifact AS (UPDATE manure.artifacts SET
+             expires_at=convert_to(to_char(to_timestamp({expires_at_s}) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"'),'UTF8'),
+             expires_at_s=float8send({expires_at_s}::float8),expires_at_s_value={expires_at_s}
+             WHERE id=convert_to('{artifact_id}','UTF8') RETURNING 1),
+           projection AS (UPDATE pony_retrieval_sources SET expires_at={expires_at_s}
+             WHERE namespace='{namespace}' AND id='{source}' RETURNING 1)
+           SELECT (SELECT count(*) FROM artifact)||' '||(SELECT count(*) FROM projection)""")
+        if updated!='1 1':raise RuntimeError('owned expiry fixture did not update exactly one artifact and projection: '+updated)
 
     def close(self):
         try:

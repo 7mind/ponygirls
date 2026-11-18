@@ -26,6 +26,9 @@ from manure.client import ManureClient,ManureError
 from target_server import OwnedDatabase,TargetServer
 import browser_fixtures as bf
 
+# Below the slow query's five-second model delay, above its start latency.
+EXPIRY_LEAD_S=4
+
 
 class ControlledEmbedding:
     def __init__(self):
@@ -219,12 +222,11 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertNotEqual(replacement['embedding_space'],hit['embedding_space'])
                 self.assertNotEqual(replacement['generation_id'],hit['generation_id'])
                 self.assertEqual(replacement['source_version'],hit['source_version'])
-                # Real API TTL (minimum sixty seconds), real elapsed wall time:
-                # no metadata/projection mutation or fake service clock. Read the
-                # exact owned timestamp only to schedule a model call spanning it.
-                expires=float(database.runtime_sql(f"SELECT expires_at_s_value FROM manure.artifacts WHERE id=convert_to('{aid}','UTF8')"))
-                remaining=expires-time.time();self.assertGreater(remaining,3);self.assertLessEqual(remaining,60)
-                time.sleep(max(0,remaining-3))
+                # The API's minimum TTL is sixty seconds: store an expiry a few
+                # seconds ahead through the owned database (row and retrieval
+                # projection) so that one slow model call spans it.
+                expires=int(time.time())+EXPIRY_LEAD_S
+                database.set_artifact_expiry(aid,expires)
                 model.query_started.clear();model.slow_query_once=5;delivered=[]
                 def expiring_query():
                     try:delivered.append(client.search('hayneedle','semantic'))

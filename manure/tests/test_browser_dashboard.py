@@ -685,8 +685,10 @@ class DashboardFlows:
 class ExpiredDeleteCase(unittest.TestCase):
     """A2: expired artifacts listed via include-expired stay deletable
     from the list (their info reads 410, so detail-only delete strands
-    them). Uses the private test clock; sibling suffix is enough (the
-    flow is origin-independent once listed)."""
+    them). The only native case asserting the product's 410 for a stored
+    past expiry, written through the owned database because the API's
+    minimum TTL is 60 s; sibling suffix is enough (the flow is
+    origin-independent once listed)."""
 
     @classmethod
     def setUpClass(cls):
@@ -706,7 +708,7 @@ class ExpiredDeleteCase(unittest.TestCase):
             visibility="internal", files={"note.txt": b"a2exp"},
             expires_in_s=60)
         aid = created["artifact_id"]
-        bf.wait_for_expiry(self.fix,aid)
+        bf.expire_artifact(self.fix,aid)
         info = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers=bearer)
         self.assertEqual(info.status, 410, info.body[:300])
         out = bf.run_steps([
