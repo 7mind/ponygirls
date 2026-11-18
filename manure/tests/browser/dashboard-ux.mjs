@@ -211,6 +211,7 @@ await check("access tokens open in the account outlet: issue, reveal, acknowledg
   await page.getByRole("heading", { name: "Access tokens", exact: true }).waitFor();
   assert.equal(await page.locator("#main").isHidden(), true, "the account page replaces the workspace view");
   assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).locator('[aria-current="page"]').count(), 0, "no workspace view is highlighted on the account page");
+  assert.equal((await page.getByRole("navigation", { name: "Account sections" }).textContent()).includes("null"), false, "sections this server does not offer are left out");
   const table = page.getByRole("table", { name: "Access tokens" });
   await table.locator("tr[data-row-id]").first().waitFor();
   const configured = table.locator("tr[data-row-id]").filter({ hasText: "Configuration" });
