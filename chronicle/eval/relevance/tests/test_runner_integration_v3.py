@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import runner_integration_v3 as integration
 import run_real
 from v3_cases import cell
+from workflow_cases_v3 import current_model_catalog
 
 
 def binding():
@@ -144,6 +145,21 @@ class RunnerIntegrationContracts(unittest.TestCase):
                 integration.validate_seed_policy(proof, prior, policy)
         fresh = integration.validate_seed_policy({'fingerprintPolicy':'digest-state-v3','sourcePolicy':'trusted-workflow-v3'}, {'workflow':dict(binding(),sourcePolicy='trusted-workflow-v3',fingerprintPolicy='digest-state-v3')}, trusted)
         self.assertEqual(fresh['evidenceFormat'], 'policy-labelled-seed')
+
+    def test_model_catalog_check_expects_the_identity_the_current_server_registers(self):
+        profiles={'embedding':{'endpoint':'http://127.0.0.1:1/embed','model':'embedding','revision':'pinned','dimensions':768,'sendDimensions':False,
+                               'queryPrefix':'query: ','documentPrefix':'document: '},
+                  'annotation':{'requestPolicy':'glm-max-reasoning','endpoint':'http://127.0.0.1:2/annotate','model':'annotation','revision':'pinned','maxResponseBytes':65536}}
+        kernel='problem-context-coverage-v1:'+'0'*64
+        current=current_model_catalog(profiles['embedding'],profiles['annotation'],kernel)
+        run_real.verify_model_catalog(current,profiles,kernel)
+        v1=copy.deepcopy(current); v1['spaces'][0]['descriptor']=['embedding-space-v1','0'*64]+v1['spaces'][0]['descriptor'][1:]
+        stale_annotation=copy.deepcopy(current); stale_annotation['profiles'][0]['descriptor'][1][2]='strict-json-schema:responseTokens2048'
+        for bad,expected in ((v1,'bound-embedding-space-mismatch'),(stale_annotation,'bound-annotation-descriptor-mismatch')):
+            with self.subTest(expected=expected),self.assertRaisesRegex(ValueError,expected):
+                run_real.verify_model_catalog(bad,profiles,kernel)
+        with self.assertRaisesRegex(ValueError,'source policy identity'):
+            run_real.verify_model_catalog(current,profiles,'problem-context-coverage-v1:'+'1'*64)
 
     def test_seed_policy_mismatch_stops_offline_clone_before_any_data_copy(self):
         with tempfile.TemporaryDirectory() as temp:

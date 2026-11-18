@@ -30,6 +30,23 @@ def fixture():
         'fixedQueries':{'lexical':'approved port','semantic':'Which approved port?','hybrid':'Which approved port?'}}]}
 
 
+SOURCE_POLICY_IDENTITY = 'source-policy'
+
+
+def current_model_catalog(embedding, annotation, source_policy):
+    """The ch_embedding_spaces / ch_index_profiles rows the current server registers, from the documented tuple shapes
+    (Retrieval.scala EmbeddingSpace.json and IndexProfiles.scala); the endpoint is not part of either identity."""
+    request_policy = {'strict-json-schema':'strict-json-schema:responseTokens2048',
+                      'glm-max-reasoning':'glm-max-reasoning:responseTokens65536'}[annotation['requestPolicy']]
+    space_desc = ['embedding-space-v2',embedding['model'],embedding['revision'],embedding['dimensions'],embedding['sendDimensions'],
+                  embedding['queryPrefix'],embedding['documentPrefix'],'cosine']
+    space = sha(json.dumps(space_desc,separators=(',',':')).encode())
+    profile_desc = ['index-profile-descriptor-v2',[annotation['model'],annotation['revision'],request_policy,str(annotation['maxResponseBytes'])],source_policy]
+    profile = sha(json.dumps(['context-aware-problems-profile-v2',space,profile_desc],separators=(',',':')).encode())
+    return {'spaces':[{'id':space,'descriptor':space_desc}],
+            'profiles':[{'profile':profile,'embedding_space':space,'policy':'ContextAwareProblemsV1','descriptor':profile_desc}]}
+
+
 class Case:
     def __init__(self, root):
         self.root = root; self.fixture = fixture(); fixture_binding = bound_file(root,'fixture.json',self.fixture)
@@ -37,13 +54,10 @@ class Case:
           {'id':'port','valueIndex':0,'anchorsAny':[{'document':'a','messageId':'fact','start':14,'end':18}],
            'qualifiersAll':[{'document':'a','messageId':'fact','start':0,'end':19}], 'factualCriteria':'4319 is approved port.'}]}}}
         embedding = {'endpoint':'http://127.0.0.1:9/embed','model':'embedding','revision':'pinned','dimensions':2,'sendDimensions':True,'queryPrefix':'','documentPrefix':''}
-        annotation = {'endpoint':'http://127.0.0.1:9/annotate','model':'annotation','revision':'pinned','maxResponseBytes':65536}
-        space_desc = ['embedding-space-v1',sha(embedding['endpoint'].encode()),'embedding','pinned',2,True,'','','cosine']
-        self.space = sha(json.dumps(space_desc,separators=(',',':')).encode())
-        profile_desc = ['index-profile-descriptor-v1',[sha(annotation['endpoint'].encode()),'annotation','pinned','request-policy','65536'],'source-policy']
-        self.profile = sha(json.dumps(['context-aware-problems-profile-v1',self.space,profile_desc],separators=(',',':')).encode())
-        catalog = bound_file(root,'models.json',{'spaces':[{'id':self.space,'descriptor':space_desc}],
-          'profiles':[{'profile':self.profile,'embedding_space':self.space,'policy':'ContextAwareProblemsV1','descriptor':profile_desc}]})
+        annotation = {'requestPolicy':'strict-json-schema','endpoint':'http://127.0.0.1:9/annotate','model':'annotation','revision':'pinned','maxResponseBytes':65536}
+        models = current_model_catalog(embedding,annotation,SOURCE_POLICY_IDENTITY)
+        self.space = models['spaces'][0]['id']; self.profile = models['profiles'][0]['profile']
+        catalog = bound_file(root,'models.json',models)
         tokens = {}; ingest_tokens = {}; static = []
         for principal in ('reader','restricted'):
             for scope, store in [('Read',tokens),('Ingest',ingest_tokens)]:

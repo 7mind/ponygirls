@@ -27,6 +27,14 @@ INGEST_SECONDS = 30
 MIN_ELIGIBLE_PIECES = 1001
 PRINCIPALS = frozenset({'reader', 'restricted'})
 MODES = frozenset({'lexical', 'semantic', 'hybrid'})
+EMBEDDING_SPACE_VERSION = 'embedding-space-v2'
+EMBEDDING_NORMALIZATION = 'cosine'
+PROFILE_DESCRIPTOR_VERSION = 'index-profile-descriptor-v2'
+PROFILE_IDENTITY_VERSION = 'context-aware-problems-profile-v2'
+INDEX_POLICY = 'ContextAwareProblemsV1'
+# Models.scala AnnotationRequestPolicy: the configuration name of each policy and the identity the server puts in the profile descriptor.
+ANNOTATION_REQUEST_POLICY_IDENTITIES = {'strict-json-schema': 'strict-json-schema:responseTokens2048',
+                                        'glm-max-reasoning': 'glm-max-reasoning:responseTokens65536'}
 
 
 class SetupFailure(ValueError):
@@ -433,21 +441,28 @@ def literal(value):
     return "'" + value.replace("'", "''") + "'"
 
 
-def models(manifest):
-    owned, config = manifest.configuration(); catalog = manifest.model_catalog.json()
+def verify_model_catalog(catalog, embedding, annotation):
+    """Registry rows against what the current server registers for these `embedding`/`annotation` configuration objects:
+    Retrieval.scala EmbeddingSpace.json/id and IndexProfiles.scala IndexProfileCatalog.current. Neither identity contains an endpoint."""
     require(len(catalog['spaces']) == len(catalog['profiles']) == 1, 'single-bound-model-profile-required')
-    embedding = config['embedding']; annotation = config['annotation']
-    descriptor = ['embedding-space-v1',digest(utf8(embedding['endpoint'])),embedding['model'],embedding['revision'],embedding['dimensions'],
-                  embedding['sendDimensions'],embedding['queryPrefix'],embedding['documentPrefix'],'cosine']
     require(type(embedding['dimensions']) is int and 1 <= embedding['dimensions'] <= 4000, 'invalid-embedding-dimensions')
+    require(annotation['requestPolicy'] in ANNOTATION_REQUEST_POLICY_IDENTITIES, 'unsupported-annotation-request-policy')
+    descriptor = [EMBEDDING_SPACE_VERSION,embedding['model'],embedding['revision'],embedding['dimensions'],
+                  embedding['sendDimensions'],embedding['queryPrefix'],embedding['documentPrefix'],EMBEDDING_NORMALIZATION]
     space = catalog['spaces'][0]; profile = catalog['profiles'][0]
     require(space['descriptor'] == descriptor and space['id'] == digest(json_bytes(descriptor)), 'bound-embedding-space-mismatch')
-    require(profile['embedding_space'] == space['id'] and profile['policy'] == 'ContextAwareProblemsV1', 'bound-profile-policy-mismatch')
+    require(profile['embedding_space'] == space['id'] and profile['policy'] == INDEX_POLICY, 'bound-profile-policy-mismatch')
     desc = profile['descriptor']
-    require(len(desc) == 3 and desc[0] == 'index-profile-descriptor-v1' and type(desc[2]) is str and bool(desc[2]), 'bound-profile-descriptor-mismatch')
-    require(desc[1][:3] == [digest(utf8(annotation['endpoint'])),annotation['model'],annotation['revision']]
-            and len(desc[1]) == 5 and desc[1][4] == str(annotation['maxResponseBytes']), 'bound-annotation-descriptor-mismatch')
-    require(profile['profile'] == digest(json_bytes(['context-aware-problems-profile-v1',space['id'],desc])), 'bound-profile-identity-mismatch')
+    require(type(desc) is list and len(desc) == 3 and desc[0] == PROFILE_DESCRIPTOR_VERSION and type(desc[2]) is str and bool(desc[2]), 'bound-profile-descriptor-mismatch')
+    require(desc[1] == [annotation['model'],annotation['revision'],ANNOTATION_REQUEST_POLICY_IDENTITIES[annotation['requestPolicy']],
+                        str(annotation['maxResponseBytes'])], 'bound-annotation-descriptor-mismatch')
+    require(profile['profile'] == digest(json_bytes([PROFILE_IDENTITY_VERSION,space['id'],desc])), 'bound-profile-identity-mismatch')
+    return space, profile
+
+
+def models(manifest):
+    owned, config = manifest.configuration()
+    space, profile = verify_model_catalog(manifest.model_catalog.json(), config['embedding'], config['annotation'])
     return owned, config, profile, space
 
 

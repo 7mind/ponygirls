@@ -91,20 +91,9 @@ def trial_schedule(fixture, modes, split):
 
 
 def verify_model_catalog(catalog, profiles, policy_identity):
-    embedding = profiles['embedding']; annotation = profiles['annotation']
-    expected_space = ['embedding-space-v1', hashlib.sha256(embedding['endpoint'].encode()).hexdigest(),
-        embedding['model'], embedding['revision'], embedding['dimensions'], embedding['sendDimensions'],
-        embedding['queryPrefix'], embedding['documentPrefix'], 'cosine']
-    if len(catalog['spaces']) != 1 or catalog['spaces'][0]['descriptor'] != expected_space:
-        raise ValueError('actual embedding descriptor differs from bound real profile')
-    if len(catalog['profiles']) != 1:
-        raise ValueError('exactly one declared index profile required')
-    profile = catalog['profiles'][0]; descriptor = profile['descriptor']
-    if descriptor[2] != policy_identity or profile['policy'] != 'ContextAwareProblemsV1':
+    _, profile = trusted.verify_model_catalog(catalog, profiles['embedding'], profiles['annotation'])
+    if profile['descriptor'][2] != policy_identity:
         raise ValueError('actual annotation source policy identity mismatch')
-    actual_annotation = descriptor[1]
-    if actual_annotation[:3] != [hashlib.sha256(annotation['endpoint'].encode()).hexdigest(), annotation['model'], annotation['revision']] or actual_annotation[4] != str(annotation['maxResponseBytes']):
-        raise ValueError('actual annotation descriptor differs from bound real profile')
 
 
 def wait(run, label, seconds, inspect):

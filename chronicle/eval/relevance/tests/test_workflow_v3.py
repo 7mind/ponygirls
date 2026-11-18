@@ -10,8 +10,9 @@ import unittest
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from workflow_v3 import (BoundFile, WorkflowManifest, IngestLimits, SetupFailure, PreparedIngest, TrustedIngestClient,
     prepare_ingest, source_fingerprints, validate_candidate_stats, validate_coverage, fixed_with_bridge,
-    provision_with_client, verify_with_bridge, fingerprint, provenance, FINGERPRINT_TABLES, literal)
-from workflow_cases_v3 import Case, MemoryIngest, MemoryOpener, MemoryPublication, MemoryReadBridge, MemoryFingerprint, bound_file, sha
+    provision_with_client, verify_with_bridge, fingerprint, provenance, FINGERPRINT_TABLES, literal, models)
+from workflow_cases_v3 import (Case, MemoryIngest, MemoryOpener, MemoryPublication, MemoryReadBridge, MemoryFingerprint, bound_file, sha,
+    current_model_catalog, SOURCE_POLICY_IDENTITY)
 
 
 class TrustedWorkflowContract(unittest.TestCase):
@@ -256,6 +257,41 @@ class TrustedWorkflowContract(unittest.TestCase):
         Path(self.case.owned['ingestTokenFiles']['reader']).write_text(expected[0]); client.submit(self.prepared())
         self.assertEqual(len(opener.requests),2)
         self.assertTrue(all(call[0].endswith('/api/ingest') and call[2]==30 for call in opener.requests))
+
+    def bound_models(self,catalog,config=None):
+        model_catalog=bound_file(self.case.root,'mutated-models.json',catalog)
+        owned=bound_file(self.case.root,'mutated-owned.json',dict(self.case.owned,modelCatalogSha256=model_catalog.sha256))
+        native=self.case.manifest.native_config if config is None else bound_file(self.case.root,'mutated-config.json',config)
+        return models(replace(self.case.manifest,owned=owned,native_config=native,model_catalog=model_catalog))
+
+    def test_bound_model_catalog_is_the_identity_the_current_server_registers(self):
+        embedding=dict(self.case.config['embedding'],sendDimensions=False,dimensions=768,queryPrefix='query: ',documentPrefix='document: ')
+        annotation=dict(self.case.config['annotation'],requestPolicy='glm-max-reasoning')
+        config=dict(self.case.config,embedding=embedding,annotation=annotation)
+        current=current_model_catalog(embedding,annotation,SOURCE_POLICY_IDENTITY)
+        _,_,profile,space=self.bound_models(current,config)
+        self.assertEqual((profile,space),(current['profiles'][0],current['spaces'][0]))
+        def rehash(space_descriptor,profile_descriptor,profile_label):
+            space_id=sha(json.dumps(space_descriptor,separators=(',',':')).encode())
+            profile_id=sha(json.dumps([profile_label,space_id,profile_descriptor],separators=(',',':')).encode())
+            return {'spaces':[{'id':space_id,'descriptor':space_descriptor}],
+                    'profiles':[{'profile':profile_id,'embedding_space':space_id,'policy':'ContextAwareProblemsV1','descriptor':profile_descriptor}]}
+        space_descriptor=current['spaces'][0]['descriptor']; profile_descriptor=current['profiles'][0]['descriptor']
+        v1_space=['embedding-space-v1',sha(embedding['endpoint'].encode())]+space_descriptor[1:]
+        cases={'bound-embedding-space-mismatch':[rehash(v1_space,profile_descriptor,'context-aware-problems-profile-v2'),
+                   rehash(space_descriptor[:5]+['document: ','query: ','cosine'],profile_descriptor,'context-aware-problems-profile-v2')],
+               'bound-profile-descriptor-mismatch':[rehash(space_descriptor,['index-profile-descriptor-v1']+profile_descriptor[1:],'context-aware-problems-profile-v2')],
+               'bound-profile-identity-mismatch':[rehash(space_descriptor,profile_descriptor,'context-aware-problems-profile-v1')],
+               'bound-annotation-descriptor-mismatch':[
+                   rehash(space_descriptor,[profile_descriptor[0],profile_descriptor[1][:2]+['strict-json-schema:responseTokens2048']+profile_descriptor[1][3:],profile_descriptor[2]],'context-aware-problems-profile-v2'),
+                   rehash(space_descriptor,[profile_descriptor[0],profile_descriptor[1][:3]+['1'],profile_descriptor[2]],'context-aware-problems-profile-v2'),
+                   rehash(space_descriptor,[profile_descriptor[0],[sha(annotation['endpoint'].encode())]+profile_descriptor[1],profile_descriptor[2]],'context-aware-problems-profile-v2')]}
+        for code,catalogs in cases.items():
+            for catalog in catalogs:
+                with self.subTest(code=code),self.assertRaisesRegex(SetupFailure,code):
+                    self.bound_models(catalog,config)
+        with self.assertRaisesRegex(SetupFailure,'single-bound-model-profile-required'):
+            self.bound_models(dict(current,profiles=current['profiles']*2),config)
 
     def test_fixture_semantics_ignore_object_order_but_keep_raw_digest(self):
         reordered={k:self.case.fixture[k] for k in reversed(self.case.fixture)}

@@ -128,7 +128,13 @@ these bindings do not change server model/limit configuration or infer a policy.
 The 900-second deadline and all existing execution/protocol guards are unchanged.
 
 Profile files contain the exact server `annotation`/`embedding` JSON objects,
-**without** `credentialFile`. Credential paths live in the bindings only; each
+**without** `credentialFile`. From them the runner derives the identities the
+current server registers and compares them with the actual database rows: the
+embedding space `["embedding-space-v2", model, revision, dimensions, sendDimensions,
+queryPrefix, documentPrefix, "cosine"]`, the profile descriptor
+`["index-profile-descriptor-v2", [model, revision, request-policy identity,
+maxResponseBytes], source policy]` and the profile id, each hashed as SHA-256 of its
+compact JSON; endpoints are part of neither identity. Credential paths live in the bindings only; each
 file must have mode 0600. `authPolicy:bearer` requires a nonempty credential and
 HTTPS. `authPolicy:token-free` requires a numeric HTTP loopback endpoint and an
 exactly empty credential file. There is no credential fallback. Never include
