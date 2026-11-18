@@ -35,8 +35,13 @@ in pkgs.runCommand "manure-native-full-target" ({
   export MANURE_TEST_JDBC_PASSWORD_FILE=$(python3 -c 'import json,os;print(json.loads(os.environ["PONYGIRLS_TEST_DATABASE_MANURE"])["passwordFile"])')
   export PYTHONPATH="$PWD/manure:$PWD/manure/tests"
   # Class shards in NIX_BUILD_CORES (at most 8) worker processes against the one
-  # owned cluster; the slowest shard (~145 s under load 150) bounds the run.
-  timeout --signal=TERM --kill-after=15s 420s python3 manure/scripts/target-suite.py --report "$REPORT" > "$REPORT/run.log" 2>&1
+  # owned cluster. Measured under load 150-190: serial 659 s; the isolated viewer
+  # class 131-145 s; the other ~80 % of the serial work splits over shards-1.
+  # Deadline ~2.3x that estimate (serial 1500 s), at least 420 s (~3x the viewer).
+  cores=''${NIX_BUILD_CORES:-0}; (( cores > 0 )) || cores=$(nproc)
+  shards=$(( cores < 8 ? cores : 8 ))
+  if (( shards == 1 )); then deadline=1500; else deadline=$(( 1200 / (shards - 1) )); (( deadline > 420 )) || deadline=420; fi
+  timeout --signal=TERM --kill-after=15s "$deadline" python3 manure/scripts/target-suite.py --report "$REPORT" --shards "$shards" > "$REPORT/run.log" 2>&1
   SH
   python3 ${./with-owned-postgres.py} ${pkgs.runtimeShell} run-target.sh || { cat "$out/run.log"; exit 1; }
 ''
