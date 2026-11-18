@@ -1,11 +1,11 @@
 import { PassageFormat, type ContentView, type PassagesResult, type PassageSpansResult } from './api.ts';
 import { requireContentView } from './source-view.ts';
 export const PASSAGE_PAGE_SIZE = 40;
+const RENDERED_FORMATS: ReadonlySet<PassageFormat> = new Set([PassageFormat.ContextAwareProblems, PassageFormat.Unindexed]);
 function point(position: number, offset: number) { if (!Number.isInteger(position) || position < 0 || !Number.isInteger(offset) || offset < 0) throw new Error('Invalid passage source point.'); }
 export function validatePassages(result: PassagesResult, view: ContentView, offset: number): PassagesResult {
   requireContentView(view, result.view);
-  if (!Object.values(PassageFormat).includes(result.format) || result.total < 0n || result.offset !== offset || result.passages.length > PASSAGE_PAGE_SIZE || BigInt(offset + result.passages.length) > result.total) throw new Error('Unverified passage metadata format or page.');
-  if (result.format !== PassageFormat.ContextAwareProblems && result.format !== PassageFormat.Unindexed) throw new Error('This derived passage format is no longer supported. No legacy annotation fallback is used.');
+  if (!RENDERED_FORMATS.has(result.format) || result.total < 0n || result.offset !== offset || result.passages.length > PASSAGE_PAGE_SIZE || BigInt(offset + result.passages.length) > result.total) throw new Error('Unverified passage metadata format or page.');
   if (result.format === PassageFormat.Unindexed && (result.passages.length !== 0 || result.total !== 0n)) throw new Error('Unexpected problem metadata in an unindexed source view.');
   for (const passage of result.passages) {
     point(passage.start.messagePosition, passage.start.byteOffset); point(passage.end.messagePosition, passage.end.byteOffset);

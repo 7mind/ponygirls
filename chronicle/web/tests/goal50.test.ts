@@ -36,7 +36,7 @@ test('BA specified: passage pages retain exact pins and reject unverified format
   assert.equal(validatePassages(page, view, 0), page);
   for (const invalid of [page.with({ view: new ContentView(2, ID) }), page.with({ offset: 40 }), page.with({ passages: Array.from({ length: 41 }, passage), total: 41n }), page.with({ format: 'Unknown' as PassageFormat }), page.with({ passages: [passage().with({ end: new PassagePoint('m1', 0, 0) })] })]) assert.throws(() => validatePassages(invalid, view, 0));
   for (const format of [PassageFormat.ContextAwareProblems, PassageFormat.Unindexed]) assert.equal(validatePassages(new PassagesResult(view, format, [], 0n, 0), view, 0).passages.length, 0);
-  for (const format of [PassageFormat.LegacyAnnotations, PassageFormat.ContiguousProblems]) assert.throws(() => validatePassages(new PassagesResult(view, format, [], 0n, 0), view, 0), /no longer supported/);
+  for (const format of [PassageFormat.LegacyAnnotations, PassageFormat.ContiguousProblems]) assert.throws(() => validatePassages(new PassagesResult(view, format, [], 0n, 0), view, 0), /Unverified passage metadata format/);
 });
 test('BA specified: bounded span pages cannot cross passage/view identity or fabricate empty ranges', () => {
   const page = new PassageSpansResult(view, OTHER, [new PassageSourceSpan('m1', 0, 29, 36)], 85n, 0);
