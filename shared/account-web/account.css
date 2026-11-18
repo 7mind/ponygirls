@@ -40,7 +40,8 @@
 .secret-title { display: flex; align-items: center; gap: var(--space-2); font-weight: var(--weight-semibold); }
 .secret-title .icon { color: var(--warn-fg); }
 .secret-value { display: flex; gap: var(--space-2); }
-.secret-value .input { height: var(--control-h-lg); font-family: var(--font-mono); font-size: var(--text-md); background: var(--bg-surface); }
+/* Every character of a one-time value must be drawn: hinted DejaVu Sans Mono at 14 px loses '_' inside an <input>. */
+.secret-value .input { height: var(--control-h-lg); font-family: var(--font-mono); font-size: var(--text-md); background: var(--bg-surface); text-rendering: geometricPrecision; }
 .secret-foot { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; font-size: var(--text-sm); }
 
 /* ── TOTP set-up block (signup, enrollment, replacement) ────────────────── */
