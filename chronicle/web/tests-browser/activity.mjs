@@ -92,6 +92,7 @@ try {
   await rig.run('collectors append four pages by document scroll without duplicates, end with a marker and filter by metadata without touching owner totals', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/collectors', configure: largeFixture });
     await idle(page, 'collectors'); assert.match(await status(page, 'collectors').textContent(), /155 collectors · 50 loaded/);
+    assert.match(await (await expand(page, 'collectors', 'collector-000')).innerText(), /No stored report · collection progress unknown/); await button(row(page, 'collectors', 'collector-000'), 'Details').click();
     await appendUntil(page, 'collectors', 155);
     await listState(page, 'collectors', 'end').waitFor(); assert.equal(await listState(page, 'collectors', 'end').innerText(), 'End of list · 155 collectors');
     assert.match(await status(page, 'collectors').textContent(), /155 collectors · all loaded/);
@@ -153,6 +154,16 @@ try {
     await context.close();
   });
 
+  await rig.run('a timer pause alone renews the authorization epoch without moving the document or the rows', async () => {
+    const { context, page, fixture } = await scene(rig, { route: '/activity/collectors', configure: largeFixture });
+    await idle(page, 'collectors'); const before = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length, ids = await rowIds(page, 'collectors');
+    // One jump of a pong deadline: longer than the timer-pause threshold, so the transport treats it as a long resume.
+    await page.clock.fastForward(connectionConfig.pongTimeout);
+    await fixture.waitUntil(() => fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length > before, 'a timer pause alone must refresh the authorization');
+    await idle(page, 'collectors'); assert.deepEqual(await rowIds(page, 'collectors'), ids); assert.equal(await page.evaluate(() => scrollY), 0);
+    await context.close();
+  });
+
   await rig.run('every visible header requests its typed server order in both directions from the first page', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/collectors', configure: largeFixture });
     async function check(kind, Type, fields, expected) {
@@ -189,7 +200,8 @@ try {
 
   await rig.run('jobs append by document scroll, keep Current and History apart, and never offer retry for historical failures', async () => {
     const { context, page, fixture } = await scene(rig, { route: '/activity/jobs', configure: largeFixture });
-    await idle(page, 'jobs'); await appendUntil(page, 'jobs', 165);
+    await idle(page, 'jobs'); const identities = fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length; await appendUntil(page, 'jobs', 165);
+    assert.equal(fixture.calls.filter(call => call.operation instanceof api.Operation_Whoami).length, identities, 'infinite scrolling never forces a security-epoch reset');
     await listState(page, 'jobs', 'end').waitFor(); assert.equal(await listState(page, 'jobs', 'end').innerText(), 'End of list · 165 current jobs');
     assert.equal(new Set(await rowIds(page, 'jobs')).size, 165);
     assert.ok(new Set(activityQueries(fixture, api.Operation_ActivityJobs).map(query => query.cursor)).size >= 4);
@@ -244,6 +256,8 @@ try {
     await running.getByText(/3 \/ 3 windows processed · job not Complete at this snapshot/).waitFor();
     fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === stageIds[1] ? item.with({ job: item.job.with({ state: api.JobState.Complete }) }) : item); await poll(page);
     await running.getByText(/3 \/ 3 windows processed · job complete/).waitFor();
+    fixture.activityJobs = fixture.activityJobs.map(item => item.job.id === CURRENT_FAILED ? item.with({ classification: api.ActivityJobClass.SupersededRevision, retryable: false }) : item); await poll(page);
+    await row(page, 'jobs', CURRENT_FAILED).waitFor({ state: 'detached' }); assert.match(await tab(page, 'Jobs').textContent(), /^Jobs3 failed$/, 'a job that became historical leaves the current failures');
     await filter(page, 'jobs', 'lease:"unleased"'); await page.waitForFunction(() => new URLSearchParams(location.hash.split('?')[1]).get('q') === 'lease:"unleased"'); await idle(page, 'jobs');
     const unleased = fixture.jobRows.filter(item => item.leaseExpiresAt === undefined && item.classification === api.ActivityJobClass.Current).map(item => item.job.id);
     assert.deepEqual([...await rowIds(page, 'jobs')].sort(), [...unleased].sort());
@@ -402,8 +416,11 @@ try {
   });
 
   await rig.run('the column menus open from the keyboard, protect required columns, change only the presentation and return focus', async () => {
+    // Fitting measures the rendered text: a monospace collector ID and a title whose newlines collapse (filter-table-ux.mjs).
+    const long = { collectors: fixture => { const result = fixture.activityResult(new api.ActivityQuery('', api.ActivityCollectorSort.CollectorId, api.SortDirection.Asc, undefined, PAGE_SIZE)); fixture.activityCollectors = [result.collectors[0].with({ collectorId: 'i'.repeat(40) })]; },
+      jobs: fixture => { fixture.activityJobs = fixture.jobRows.map(item => item.with({ session: item.session.with({ metadata: item.session.metadata.with({ title: 'word\n'.repeat(18) }) }) })); } };
     for (const [viewport, kind] of [[DESKTOP, 'collectors'], [DESKTOP, 'jobs'], [PHONE, 'jobs']]) {
-      const { context, page, fixture } = await scene(rig, { route: `/activity/${kind}`, viewport });
+      const { context, page, fixture } = await scene(rig, { route: `/activity/${kind}`, viewport, configure: long[kind] });
       await idle(page, kind); const name = { collectors: 'Collectors', jobs: 'Indexing jobs' }[kind], scope = region(page, { collectors: 'Collectors', jobs: 'Jobs' }[kind]);
       const trigger = button(scope, `${name} table options`), menu = page.getByRole('menu', { name: `${name} table options`, exact: true }), headers = () => table(page, kind).locator('thead th').count();
       const sent = fixture.calls.length, compact = await headers();
@@ -412,6 +429,8 @@ try {
       assert.equal(await menu.getByRole('menuitemcheckbox', { name: kind === 'jobs' ? 'Conversation' : 'Collector', exact: true }).getAttribute('aria-disabled'), 'true', 'the required column cannot be hidden');
       await menu.getByRole('menuitem', { name: 'Show all columns', exact: true }).click(); assert.ok(await headers() > compact);
       await trigger.click(); await menu.getByRole('menuitem', { name: 'Fit columns to content', exact: true }).click();
+      const fitted = await rows(page, kind).first().locator('.cell-title').evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+      assert.ok(fitted.scroll <= fitted.client + 1, `fit to content follows the rendered text: ${JSON.stringify(fitted)}`);
       await trigger.click(); await menu.getByRole('menuitem', { name: 'Reset columns', exact: true }).click(); assert.equal(await headers(), compact);
       await trigger.click(); await menu.waitFor(); await page.keyboard.press('Escape'); await menu.waitFor({ state: 'hidden' });
       assert.equal(await trigger.evaluate(element => element === document.activeElement), true, 'Escape returns focus to the trigger');
