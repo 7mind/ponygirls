@@ -44,7 +44,10 @@ SIBLING_API_HOST = "dashboard.artifacts.localhost"
 SEPARATE_SUFFIX = "manure-files.localhost"
 SEPARATE_API_HOST = "127.0.0.1"
 
+# Fixture servers listen on 127.0.0.1 only; plain `localhost` would otherwise
+# reach any process on [::1] with the same port number.
 HOST_RESOLVER_RULES = (
+    "MAP localhost 127.0.0.1, "
     "MAP dashboard.artifacts.localhost 127.0.0.1, "
     "MAP *.artifacts.localhost 127.0.0.1, "
     "MAP *.manure-files.localhost 127.0.0.1"
