@@ -8,17 +8,14 @@ class RetrievalCoreTest extends munit.FunSuite {
     changes.foreach(s => assertNotEquals(s.id,space.id))
     assertEquals(space.id,RetrievalChecks.hash(space.json.noSpaces))
   }
-  test("BA: verified legacy descriptors canonicalize only matching model artifacts and reject corruption") {
+  test("BA: verified accepts only v2 descriptors; a retired v1 descriptor of the same model and corruption are unavailable") {
     import io.circe.Json
-    def legacy(endpoint: String): Json=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString(endpoint))++space.json.asArray.get.tail)*)
-    val first=legacy("a"*64); val second=legacy("b"*64)
-    assertEquals(EmbeddingSpace.verified(RetrievalChecks.hash(first.noSpaces),first),space)
-    assertEquals(EmbeddingSpace.verified(RetrievalChecks.hash(second.noSpaces),second).id,space.id)
+    val v1=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString("a"*64))++space.json.asArray.get.tail)*)
     assertEquals(EmbeddingSpace.verified(space.id,space.json),space)
-    List(Json.Null,Json.arr(Json.fromInt(3)),legacy("not-a-hash")).foreach { value=>
+    List(v1,Json.Null,Json.arr(Json.fromInt(3)),Json.arr(space.json.asArray.get.init*)).foreach { value=>
       assertEquals(intercept[RetrievalError](EmbeddingSpace.verified(RetrievalChecks.hash(value.noSpaces),value)).code,"unavailable")
     }
-    assertEquals(intercept[RetrievalError](EmbeddingSpace.verified("0"*64,first)).code,"unavailable")
+    assertEquals(intercept[RetrievalError](EmbeddingSpace.verified("0"*64,space.json)).code,"unavailable")
   }
   test("BA: vectors reject malformed dimensions, float overflow/underflow, non-finite, zero") {
     List(List(1.0,0.0),List(Double.NaN,0.0,1.0),List(Double.PositiveInfinity,0.0,1.0),List(1e100,0.0,0.0),List(1e-200,0.0,0.0),List(0.0,0.0,0.0)).foreach(v => intercept[RetrievalError](Vectors.validate(v,3)))

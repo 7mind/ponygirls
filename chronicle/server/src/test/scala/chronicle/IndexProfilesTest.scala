@@ -29,10 +29,11 @@ final class IndexProfilesTest extends munit.FunSuite {
     assert(!space.json.noSpaces.contains(embedding.endpoint))
     assert(!space.json.noSpaces.contains(embedding.credentialFile))
   }
-  test("Blackbox Atomic: missing or dimension-only embedding descriptors are unverified") {
+  test("Blackbox Atomic: missing, dimension-only or retired v1 embedding descriptors are unverified") {
     val c=Fixtures.config(); val verified=EmbeddingSpaceDescriptor.from(c.embedding)
     IndexProfiles.verifiedSpace(verified.id,verified.json)
-    List(Json.obj("dimensions"->Json.fromInt(c.embedding.dimensions)),Json.arr(Json.fromInt(c.embedding.dimensions)),Json.Null).foreach { descriptor =>
+    val v1=Json.arr((Vector(Json.fromString("embedding-space-v1"),Json.fromString("e"*64))++verified.json.asArray.get.tail)*)
+    List(Json.obj("dimensions"->Json.fromInt(c.embedding.dimensions)),Json.arr(Json.fromInt(c.embedding.dimensions)),Json.Null,v1).foreach { descriptor =>
       assertEquals(intercept[DomainError](IndexProfiles.verifiedSpace(Wire.hash(descriptor.noSpaces),descriptor)).code,"unavailable")
     }
     assertEquals(intercept[DomainError](IndexProfiles.verifiedSpace("0"*64,verified.json)).code,"unavailable")

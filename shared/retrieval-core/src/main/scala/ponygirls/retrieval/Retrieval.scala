@@ -25,18 +25,14 @@ final case class EmbeddingSpace(model: String, revision: String, dimensions: Int
 object EmbeddingSpace {
   def verified(id: String, descriptor: Json): EmbeddingSpace = {
     val values=descriptor.asArray.getOrElse(Vector.empty)
-    val legacy=values.headOption.flatMap(_.asString).contains("embedding-space-v1")
-    val offset=if(legacy) 2 else 1
-    val version=if(legacy) "embedding-space-v1" else "embedding-space-v2"
-    RetrievalChecks(values.size==offset+7 && values.head.asString.contains(version) &&
-      (!legacy || values(1).asString.exists(_.matches("[0-9a-f]{64}"))) &&
-      List(offset,offset+1,offset+4,offset+5,offset+6).forall(i=>values(i).asString.nonEmpty) &&
-      values(offset).asString.exists(_.nonEmpty) && values(offset+1).asString.exists(_.nonEmpty) &&
-      values(offset+2).asNumber.flatMap(_.toInt).exists(n=>n>=1 && n<=Vectors.maxDimensions) &&
-      values(offset+3).asBoolean.nonEmpty && values(offset+6).asString.contains("cosine") &&
+    RetrievalChecks(values.size==8 && values.head.asString.contains("embedding-space-v2") &&
+      List(1,2,5,6,7).forall(i=>values(i).asString.nonEmpty) &&
+      values(1).asString.exists(_.nonEmpty) && values(2).asString.exists(_.nonEmpty) &&
+      values(3).asNumber.flatMap(_.toInt).exists(n=>n>=1 && n<=Vectors.maxDimensions) &&
+      values(4).asBoolean.nonEmpty && values(7).asString.contains("cosine") &&
       RetrievalChecks.hash(descriptor.noSpaces)==id,"unavailable","embedding space descriptor is unverified")
-    EmbeddingSpace(values(offset).asString.get,values(offset+1).asString.get,values(offset+2).asNumber.get.toInt.get,
-      values(offset+3).asBoolean.get,values(offset+4).asString.get,values(offset+5).asString.get,values(offset+6).asString.get)
+    EmbeddingSpace(values(1).asString.get,values(2).asString.get,values(3).asNumber.get.toInt.get,
+      values(4).asBoolean.get,values(5).asString.get,values(6).asString.get,values(7).asString.get)
   }
 }
 final case class RetrievalProfile(space: EmbeddingSpace, policy: String) {

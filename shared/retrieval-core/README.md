@@ -3,7 +3,7 @@
 Namespace `ponygirls.retrieval`; all public arguments are explicit.
 
 - `EmbeddingSpace(model,revision,dimensions,sendDimensions,queryPrefix,documentPrefix,normalization)`: immutable v2 model/semantic identity, byte-identical to Chronicle. Endpoints and credentials are transport, not model identity. `revision` must identify the immutable artifact and any runtime/quantization/pooling semantics.
-- `EmbeddingSpace.verified(id,descriptor)` verifies stored v1/v2 descriptors and returns the model-only identity; it does not attest provider weights or authorize a metadata migration. See [the explicit migration procedure](../../docs/drafts/20261105-2142-model-identity-migration.md).
+- `EmbeddingSpace.verified(id,descriptor)` verifies a stored v2 descriptor and returns the model-only identity; anything else, including a retired v1 descriptor, is `unavailable`. It does not attest provider weights.
 - `RetrievalProfile(space,policy)`; service owns corpus/projection policy.
 - `InputChunk(id,text,ChunkProvenance(field,pointer,start,end))`.
 - `SourceProjection(id,version,chunks,attributes,audience,eligible,archived,expiresAt)`.
