@@ -9,7 +9,7 @@ final case class HistoricalFixture(name: String, file: String, accepted: Boolean
   def text: String = {
     val resource = Option(getClass.getResourceAsStream("/haystack/historical/" + file)).getOrElse(throw new IllegalStateException("missing historical fixture"))
     val stream = new GZIPInputStream(resource)
-    val bytes = try stream.readNBytes(DocumentCodec.StoredLimits.maxBytes + 1) finally stream.close()
+    val bytes = try stream.readNBytes(DocumentCodec.DocumentMaxBytes + 1) finally stream.close()
     require(bytes.length == utf8Bytes, "historical fixture byte length differs from old-validator manifest")
     val actual = MessageDigest.getInstance("SHA-256").digest(bytes).map(b => f"${b & 255}%02x").mkString
     require(actual == sha256, "historical fixture bytes differ from actual old-validator input")
@@ -40,10 +40,13 @@ class HistoricalAdmissionTest extends munit.FunSuite {
       if (fixture.accepted) {
         val document = DocumentCodec.decodeStored(text)
         assertEquals(document.title, "historical synthetic")
-        val value = LosslessJson.parse(text, DocumentCodec.StoredLimits).toOption.get.asInstanceOf[LosslessJson.Obj]
+        val value = LosslessJson.parse(text, DocumentCodec.Limits).toOption.get.asInstanceOf[LosslessJson.Obj]
         val expectedFields = value.fields.find(_._1 == "fields").get._2
         assertEquals(LosslessJson.encode(document.fields), LosslessJson.encode(expectedFields))
-      } else assertEquals(intercept[Fault](DocumentCodec.decodeStored(text)).code, "invalid-document")
+      } else {
+        val outsideEnvelope = LosslessJson.parse(text, DocumentCodec.Limits).isLeft
+        assertEquals(intercept[Fault](DocumentCodec.decodeStored(text)).code, if (outsideEnvelope) "unavailable" else "invalid-document")
+      }
     }
     test("new write has explicit current bounds without narrowing old field semantics: " + fixture.name) {
       val text = fixture.text
@@ -53,8 +56,7 @@ class HistoricalAdmissionTest extends munit.FunSuite {
         assertEquals(accepted.documentCanonical, text)
       } else {
         val failure = intercept[Fault](DocumentCodec.parse(text))
-        if (fixture.utf8Bytes > DocumentCodec.DocumentMaxBytes) assertEquals(failure.code, "bad-envelope")
-        else assert(Set("bad-envelope", "invalid-document").contains(failure.code))
+        assert(Set("bad-envelope", "invalid-document").contains(failure.code))
       }
     }
   }
@@ -63,23 +65,22 @@ class HistoricalAdmissionTest extends munit.FunSuite {
     val number = document.fields.asInstanceOf[LosslessJson.Obj].fields.find(_._1 == "n").get._2.asInstanceOf[LosslessJson.Number]
     assertEquals(number.lexeme, "9" * 100000)
   }
-  test("stored Unicode envelope is wider than new admission but still bounded and validated") {
-    values.filter(f => f.accepted && !f.newWrite).foreach { fixture =>
-      assert(fixture.utf8Bytes > DocumentCodec.DocumentMaxBytes)
-      assert(fixture.utf16Chars < DocumentCodec.DocumentMaxBytes)
-      DocumentCodec.decodeStored(fixture.text)
-      val parsed = LosslessJson.parse(fixture.text, DocumentCodec.StoredLimits).toOption.get
-      assertEquals(intercept[Fault](DocumentCodec.validate(parsed)).code, "invalid-document")
+  test("stored decoding applies the write envelope: outside it unavailable, where a write of the same text is bad-envelope") {
+    val base = DomainFixtures.document()
+    val overBytes = base + " " * (DocumentCodec.DocumentMaxBytes - base.length + 1)
+    val tooDeep = DomainFixtures.document("[" * 66 + "]" * 66)
+    Vector(overBytes, tooDeep).foreach { text =>
+      assertEquals(intercept[Fault](DocumentCodec.decodeStored(text)).code, "unavailable")
+      assertEquals(intercept[Fault](DocumentCodec.parse(text)).code, "bad-envelope")
     }
-    assertEquals(intercept[Fault](DocumentCodec.decodeStored(" " * (DocumentCodec.StoredLimits.maxBytes + 1))).code, "unavailable")
-    val tooDeep = DomainFixtures.document("[" * 126 + "]" * 126)
-    assertEquals(intercept[Fault](DocumentCodec.decodeStored(tooDeep)).code, "invalid-document")
   }
-  test("stored decoder checks original shape and duplicate-key invariants without ID re-admission") {
+  test("stored decoder checks shape, duplicate keys and canonical link targets") {
     assertEquals(intercept[Fault](DocumentCodec.decodeStored("{}")).code, "invalid-document")
     assertEquals(intercept[Fault](DocumentCodec.decodeStored("{\"a\":1,\"a\":2}")).code, "unavailable")
-    val oldShapeOnly = DomainFixtures.document(tail = ",\"links\":[[\"ref\",\"" + ("x" * 257) + ":i\"]]")
-    assertEquals(DocumentCodec.decodeStored(oldShapeOnly).links.head._2, ("x" * 257) + ":i")
-    assertEquals(intercept[Fault](DocumentCodec.parse(oldShapeOnly)).code, "invalid-document")
+    Vector(("x" * 257) + ":i", "p:%FF", "p:%00").foreach { target =>
+      val nonCanonical = DomainFixtures.document(tail = ",\"links\":[[\"ref\",\"" + target + "\"]]")
+      assertEquals(intercept[Fault](DocumentCodec.decodeStored(nonCanonical)).code, "invalid-document")
+      assertEquals(intercept[Fault](DocumentCodec.parse(nonCanonical)).code, "invalid-document")
+    }
   }
 }

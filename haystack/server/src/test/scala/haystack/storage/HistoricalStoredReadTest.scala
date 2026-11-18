@@ -3,6 +3,8 @@ package haystack.storage
 import cats.effect.IO
 import cats.syntax.all.*
 import haystack.domain.*
+import haystack.retrieval.{HaystackRetrieval, ProjectionPolicy}
+import ponygirls.retrieval.postgres.PostgresRetrieval
 import ponygirls.runtime.JdbcDatabase
 import TestSupport.*
 
@@ -78,21 +80,29 @@ class HistoricalStoredReadTest extends ContractSuite {
       } yield ()
     })
   }
-  test("old Unicode document stays readable after current new-write byte admission explicitly rejects it") {
-    val fixture = HistoricalFixtures.values.find(_.name == "unicode-bmp-over-new-byte-envelope").get
-    run(initializedDatabase.use { db =>
-      val repo = new PostgresItemRepository(db)
-      val key = ItemKey("historical", "wide-unicode")
+  test("leftover stored text outside the current codec is refused, bytes unchanged: over the envelope unavailable (as a write: bad-envelope), non-canonical link target invalid-document") {
+    // The deleted wide read's shape: within the old validator's UTF-16 bound, over today's 1 MiB UTF-8 envelope.
+    val wide = doc("wide", "{\"a\":\"" + "\u20ac" * 200000 + "\",\"b\":\"" + "\u20ac" * 200000 + "\"}")
+    val badLink = doc("bad-link").replace("\"links\":[]", "\"links\":[[\"ref\",\"p:%FF\"]]")
+    val wideKey = ItemKey("historical", "wide"); val badLinkKey = ItemKey("historical", "bad-link")
+    run(emptyDatabase.use { db =>
+      val repo = new PostgresItemRepository(db, Some(new HaystackRetrieval(db, ProjectionPolicy("leftover-test", true, Vector.empty, 4096), new PostgresRetrieval("haystack", None), None, 4)))
       for {
-        _ <- seed(db, key, fixture.text)
+        _ <- Migrations.initialize(db, Activity)
+        _ <- seed(db, wideKey, wide)
         before <- bytes(db)
-        rejected <- IO(OperationEnvelope.accept(key.qualified, fixture.text, 2L, requestId())).attempt
+        rejected <- IO(OperationEnvelope.accept(wideKey.qualified, wide, 2L, requestId())).attempt
         _ = assertEquals(rejected.left.toOption.collect { case f: Fault => f.code }, Some("bad-envelope"))
-        current <- repo.current(key); saved <- repo.revision(key, 1L)
-        _ = assertEquals(current.get.documentCanonical, fixture.text); _ = assertEquals(saved.get.documentCanonical, fixture.text)
+        _ <- expectFault(repo.current(wideKey), "unavailable")
+        _ <- expectFault(repo.revision(wideKey, 1L), "unavailable")
+        _ <- expectFault(repo.commit(op(key = wideKey.qualified, revision = 2L, document = doc("replacement")), Alice, Later), "unavailable")
+        _ <- expectFault(repo.initializeProjection(), "unavailable")
         after <- bytes(db); _ = assertEquals(after, before)
         replayCount <- db.transaction(c => Sql.rows(c, "SELECT count(*) FROM write_requests")(_.getLong(1)).head)
         _ = assertEquals(replayCount, 0L)
+        _ <- seed(db, badLinkKey, badLink)
+        _ <- expectFault(repo.current(badLinkKey), "invalid-document")
+        _ <- expectFault(repo.revision(badLinkKey, 2L), "invalid-document")
       } yield ()
     })
   }

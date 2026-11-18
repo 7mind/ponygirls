@@ -131,8 +131,6 @@ class DocumentCodecTest extends munit.FunSuite {
     DocumentCodec.parse(document("1" * 65537))
     DocumentCodec.parseRaw("1" * DocumentCodec.DocumentMaxBytes)
     assertEquals(intercept[Fault](DocumentCodec.parseRaw("1" * (DocumentCodec.DocumentMaxBytes + 1))).code, "bad-envelope")
-    val oversizedToken = LosslessJson.parse("1" * (DocumentCodec.DocumentMaxBytes + 1), DocumentCodec.StoredLimits)
-    assertEquals(oversizedToken.left.toOption.map(_.code), Some("number-limit"))
   }
   test("PostgreSQL integral and scale admission is explicit and exact") {
     DocumentCodec.parse(document("1e131071"))

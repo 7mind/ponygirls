@@ -67,24 +67,6 @@
       "utf8Bytes": 313
     },
     {
-      "name": "unicode-bmp-over-new-byte-envelope",
-      "file": "unicode-bmp-over-new-byte-envelope.json.gz",
-      "accepted": true,
-      "newWrite": false,
-      "sha256": "cccedeeee18b80d3e3d26d794d851b39b073922b507c0d527526181b752c7840",
-      "utf16Chars": 600191,
-      "utf8Bytes": 1800191
-    },
-    {
-      "name": "unicode-astral-over-new-byte-envelope",
-      "file": "unicode-astral-over-new-byte-envelope.json.gz",
-      "accepted": true,
-      "newWrite": false,
-      "sha256": "f8d1927f63df8e7cbad3af95ede92fd4adce44186463d81e4390e485084436ff",
-      "utf16Chars": 720191,
-      "utf8Bytes": 1440191
-    },
-    {
       "name": "tag-non-whitespace-control",
       "file": "tag-non-whitespace-control.json.gz",
       "accepted": true,

@@ -8,8 +8,8 @@ import ponygirls.losslessjson.LosslessJson.*
   * The shared parser rejects duplicate decoded keys, NUL and non-scalar Unicode.
   * New-write admission is bounded: 1 MiB source and canonical text, fields
   * depth starting at zero and capped at 64, numeric tokens up to 1 MiB, and
-  * explicit exponents within +/-999999. Stored decoding has a separate wider
-  * envelope so acknowledged historical text is never re-admitted as a new write.
+  * explicit exponents within +/-999999. Stored decoding uses the same envelope
+  * and shape rules, without the new-write projection admission.
   */
 object DocumentCodec {
   val DocumentMaxBytes = 1024 * 1024
@@ -21,7 +21,6 @@ object DocumentCodec {
   val MetaValueMax = 128
   val FieldsDepthMax = 64
   val Limits: LosslessJson.Limits = LosslessJson.Limits(DocumentMaxBytes, 66, DocumentMaxBytes, 999999)
-  val StoredLimits: LosslessJson.Limits = LosslessJson.Limits(16 * 1024 * 1024, 128, DocumentMaxBytes, 999999)
   private val Allowed = Set("title", "description", "fields", "type", "status", "importance", "human-attention", "links", "tags")
   private def invalid(message: String): Nothing = throw Fault("invalid-document", message)
 
@@ -32,24 +31,24 @@ object DocumentCodec {
   def parse(text: String): ItemDocument = validate(parseRaw(text))
   def canonical(document: ItemDocument): String = LosslessJson.encode(toJson(document))
 
-  /** Read historical acknowledged content without applying today's write envelope,
-    * PG numeric admission or qualified-ID admission again. Shape and the actual
-    * original fields-depth/string-leaf rules still apply; text is never rewritten.
+  /** Read acknowledged content within the write envelope, shape and link-target
+    * rules, without PG numeric admission again; text is never rewritten. Text
+    * outside the envelope is a broken store invariant: unavailable, not bad-envelope.
     */
   def decodeStored(text: String): ItemDocument = {
-    val value = LosslessJson.parse(text, StoredLimits).fold(
+    val value = LosslessJson.parse(text, Limits).fold(
       error => throw Fault("unavailable", "invalid stored document JSON: " + error.code), identity)
-    validateShape(value, validateLinkKeys = false)
+    validateShape(value)
   }
 
   def validate(value: Value): ItemDocument = {
     if (LosslessJson.encodeUtf8(value).length > DocumentMaxBytes) invalid("document exceeds byte limit")
-    val document = validateShape(value, validateLinkKeys = true)
+    val document = validateShape(value)
     PostgresAdmission.validate(value)
     document
   }
 
-  private def validateShape(value: Value, validateLinkKeys: Boolean): ItemDocument = {
+  private def validateShape(value: Value): ItemDocument = {
     val obj = value match {
       case o: Obj => o.fields.toMap
       case _ => invalid("document must be an object")
@@ -74,10 +73,8 @@ object DocumentCodec {
         case pair: Arr if pair.values.size == 2 => (pair.values(0), pair.values(1)) match {
           case (kind: Str, target: Str) if kind.value.nonEmpty && kind.value.length <= MetaValueMax =>
             if (target.value.isEmpty) invalid("invalid link target")
-            if (validateLinkKeys) {
-              try QualifiedId.decodeKey(target.value)
-              catch { case _: Fault => invalid("link target is not a canonical qualified id") }
-            }
+            try QualifiedId.decodeKey(target.value)
+            catch { case _: Fault => invalid("link target is not a canonical qualified id") }
             kind.value -> target.value
           case _ => invalid("invalid link tuple")
         }

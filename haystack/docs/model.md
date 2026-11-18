@@ -132,10 +132,11 @@ bounds them. Numeric tokens such as100000-digit coefficients are accepted when
 PG can project them. Query-number exponents need not fit PG numeric;0005 compares
 sign/magnitude/digits exactly without casting those query literals.
 
-`decodeStored` uses16MiB/128containers/1MiB-number absolute safety ceilings and
-original shape/fields rules, not today's write envelope or projection re-admission.
-Actual old MCP admitted UTF16-bounded Unicode envelopes larger than1MiB UTF8.
-Synthetic fixtures from the actual frozen validator/service and real PG prove
-those current/history texts, numeric lexemes, keys, metadata and acknowledgements
-remain byte-for-byte readable. Reads never rewrite text/history. Inputs beyond
-absolute read ceilings fail closed for explicit offline audit, never get dropped.
+`decodeStored` parses within the same envelope and applies the same shape, fields
+and link-target rules, without projection re-admission. Synthetic fixtures from
+the actual frozen validator/service and real PG prove that acknowledged
+current/history texts, numeric lexemes, keys, metadata and acknowledgements remain
+byte-for-byte readable. Reads never rewrite text/history. A stored text outside the
+envelope fails closed as `unavailable` (a write of it is `bad-envelope`); the wider
+historical read envelope was removed after every stored document was verified
+against the current codec.
