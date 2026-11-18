@@ -259,6 +259,8 @@ Paths relative to `chronicle/web/tests-browser/`. Nothing here was edited by thi
 
 ## 8. Acceptance status (what was requested, what is incomplete)
 
+Causes A and D are addressed and remeasured by unit U03c; current status in §10.
+
 | Requested | Status |
 |---|---|
 | Report under `docs/drafts/` | done (this file) |
@@ -337,6 +339,68 @@ once (timing and the fix), so the bundle result shows the combination works, not
 **For the unit that makes the change properly:** start from `intervention-a.patch` but replace its environment switches with the
 §6 item 1 design (production values in the fixture pages; the eight subjects above and `activity-tables.mjs:218` driven by
 `page.clock` or a dedicated liveness page), then measure 15 consecutive pooled runs, 5 serial runs, and bundle mode ≥ 10 runs.
+
+## 10. Status after U03c (production timing in fixture pages)
+
+Commits `49c65de6`, `5e511e19`, `a5f62eb3`, `c4d22768`, `b1f9285b` on top of `51623600` (the redesigned shell).
+
+**Changes.** `harness.tsx` and `goal50.tsx` build their connection from `tests-browser/connection-timing.tsx`: the production
+`connectionConfig`, with per-page-load overrides from the query string (`fixture.mjs` `connectionTiming`); one page load uses one
+(theme-retry, the Activity heartbeat case: `heartbeatInterval` = `ACTIVITY_POLL_INTERVAL_MS / 2`, because Activity polls every
+4 s and the case asserts that exactly one transport Ping follows the clock step). The eight subjects of §9 and
+`activity-tables.mjs:218` run against production timing on the page clock (`fixture.mjs` `pauseClock`, `advanceClock`,
+`advanceClockUntil`; steps of one transport tick, so advancing time is not itself a timer pause, also on a running clock).
+Deadline cases gained a "not before" step (no uncertainty at `requestTimeout − 1`), the heartbeat cases a "no Ping at
+`heartbeatInterval − 1`" step, the finite-retry case a clock-driven "no new socket within the longest back-off plus both connect
+deadlines" step (it was 1 s of real time). The race of §6 item 3 waits for the rendered rows. The dropped-logout step of
+`run.mjs` is an aborted HTTP request since the account v1 change (no deadline) and is unchanged. The case-name set is
+unchanged: 296 `PASS` lines in a green run before and after, `diff` empty.
+
+**Mutation checks** (scratch tree, `src/transport/manager.ts`): no heartbeat → theme-retry "theme changes retain Archive draft…"
+fails ("no heartbeat after its interval") and `run.mjs` fails at the silent-blackhole step; request deadline ignored →
+`activity-tables` "bulk lost success reply…" and theme-retry "…cannot clear delivered retry uncertainty…" fail (uncertainty never
+shown); deadline at half the production value → the "not before" step fails; retry budget removed → persistent-login "transient
+disconnect…" fails at the retry-budget bound. A first version stepped the clock by the pause threshold (3 s); on a running clock
+each step then was itself a timer pause, and the no-heartbeat mutation still passed `run.mjs`; fixed (`a5f62eb3`).
+
+**Runs** [M] (traced as in §9; pool 7; consecutive; host load average 131–186; no network namespace):
+
+| Series | Runs | Green | Script failures | Liveness events from the app's event log (sampled 1/s) | Wall |
+|---|---|---|---|---|---|
+| dev serving (default) | 15 | **11** | C 8 in 3 runs (search-serp 3, live-archive 2, rebuild, tool-catalog, source-filters; the trace of every failing script shows `ERR_NETWORK_CHANGED` module aborts, 1,392 aborted requests in those 3 runs); refresh-regression 1 (race R-b below) | timer pauses: only the deliberate `Timer pause: 5000ms` of the counterfactual case (15/15); STALE only in deliberate steps (request deadlines in activity-tables, rebuild, theme-retry; blackhole in run) | 97–113 s |
+| `CHRONICLE_BROWSER_SERVE=bundle` | 15 | **7** | refresh-regression 7 (R-b 6, R-a 1); goal50 `:153` 1 | as dev; 0 `ERR_NETWORK_CHANGED` | 76–85 s |
+| before (base `51623600`, dev, untraced) | 2 | 1 | refresh-regression 1 (R-b) | — | 98–104 s |
+
+Cause A no longer occurs: no timer pause other than the scenario's own, no pong-deadline or request-deadline reconnect outside the
+steps that test them. The ≥ 14/15 target is **not** met in either mode, so `dev` stays the default. The remaining failures are:
+
+- **C** (dev only), unchanged by this unit: `CHRONICLE_BROWSER_NETNS=1` or the bundle (≈ 7 requests per page) removes the exposure.
+  persistent-login "periodic renewal…" also failed once in 5 standalone runs with "Main navigation" missing (untraced, C by
+  symptom); 5/5 green in a private network namespace.
+- **R-b**, `refresh-regression.mjs:164-166` (not edited here): the scene clicks the Archive link and immediately fills
+  `getByRole('combobox', { name: 'Search conversations' })` and clicks `getByRole('button', { name: 'Search', exact: true })`. The
+  default route is `#/search`, whose retained view has the same controls; when they resolve before the route switches, the Search
+  view is hidden next and Playwright keeps waiting on its zero-size button [I]. Reproduced with a probe of those three lines against the bundle:
+  23 of 120 iterations, each with `#/archive` shown, the Search view `hidden`, and the unusable button inside it. Robust form: wait
+  for `getByRole('main', { name: 'Archive' })` after the click (or scope the locators to it), as the other scenes do.
+- **Real 20 s deadline left**: `activity-tables` "bulk confirmed-absent retry conflict…" (`bulkDropBeforeCommit`, not in the
+  list of §9) now waits the production request deadline in real time; `activity-tables.mjs` became the longest script (≈ 92–103 s
+  against ≈ 75 s). The same `pauseClock` + `advanceClock(requestTimeout)` treatment as the lost-reply case applies.
+- **R-a**, `refresh-regression.mjs:152` (resources.html modal, no connection): page scroll after Escape is 282 instead of 1000,
+  read right after the dialog detaches; untraced. 1 in 15 bundle runs, 1 dev run earlier in this unit.
+- **goal50 `:153`** (§6 item 4), mechanism found [M], fix is application code: a probe of the MCP case against the bundle
+  (6 × 40 iterations, ≈ 2 % failing) showed `ReadMcpTest` cursors `0, 0, 40` with a single `Hello` and no STALE, timer pause or new
+  socket in the event log, so it is not a reconnect. In `McpTester.tsx` the read-pump effect depends on `version`/`starting`; when
+  it re-runs while the first read is in flight, the old instance discards that reply (`!mounted`) and its `finally` re-pumps
+  from the unchanged cursor 0 [I: ordering inferred from the code; the duplicate read and the absent reconnect are measured]. A
+  reconnect during the first read produces the same signature (scratch probe: `0, 0, 40`), which the production timing now makes
+  rare. Not changed here (application code); a fix belongs to the dashboard unit (e.g. accept a reply whose key, authority epoch
+  and handle are still current even if the effect instance re-ran).
+
+Standalone, 5 consecutive runs each (dev, load 136–156): activity-tables 5/5, theme-retry 5/5, run 5/5, persistent-login
+4/5 (the C-like failure above). Not measured: bundle or dev with `CHRONICLE_BROWSER_NETNS=1` over 15 runs; serial runs. The Nix check
+(`checks.x86_64-linux.chronicle-browser`, dev serving, sandbox network) passed 19/19 scripts in 1 build and 3 `--rebuild`s; each
+`--rebuild` exits 1 only because the output (JUnit times) is not bit-reproducible.
 
 ## Data
 
