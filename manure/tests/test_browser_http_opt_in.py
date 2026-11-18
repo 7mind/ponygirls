@@ -24,10 +24,10 @@ class HttpOptInBrowserCase(unittest.TestCase):
         out = bf.run_steps([
             {'op': 'goto', 'url': fix.api_base + '/'},
             {'op': 'waitForEval', 'fn': '() => !window.isSecureContext && typeof crypto.subtle === "undefined"'},
-            {'op': 'fill', 'selector': '#login-input', 'value': fix.identity.login},
-            {'op': 'fill', 'selector': '#password-input', 'value': fix.identity.password},
-            {'op': 'click', 'selector': '#login-form button[type=submit]'},
-            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
+            {'op': 'fill', 'selector': '[data-account-login] input[name=login]', 'value': fix.identity.login},
+            {'op': 'fill', 'selector': '[data-account-login] input[name=password]', 'value': fix.identity.password},
+            {'op': 'click', 'selector': '[data-account-login] button[type=submit]'},
+            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
             {'op': 'click', 'selector': 'button[data-action=open][data-artifact-id="' + internal + '"]'},
             {'op': 'waitForEval', 'fn': '() => document.title === "HTTP-INTERNAL"'},
             {'op': 'cookies', 'urls': [fix.api_base + '/', fix.api_base + '/view/' + internal + '/']},
@@ -38,7 +38,7 @@ class HttpOptInBrowserCase(unittest.TestCase):
             {'op': 'goto', 'url': fix.api_base + '/view/' + public + '/'},
             {'op': 'waitForEval', 'fn': '() => document.title === "HTTP-PUBLIC"'},
             {'op': 'goto', 'url': fix.api_base + '/'},
-            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
+            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
             {'op': 'eval', 'fn': 'async () => (await fetch("/api/current", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:"00000000-0000-4000-8000-000000000001",apiVersion:"1.0.0",command:{Logout:{}}})})).status'},
             {'op': 'eval', 'fn': 'async () => (await fetch("/api/current", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({requestId:"00000000-0000-4000-8000-000000000001",apiVersion:"1.0.0",command:{Whoami:{}}})})).status'},
         ], host_resolver_rules='MAP manure-http.test 127.0.0.1')

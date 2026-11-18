@@ -1,7 +1,6 @@
 // Behavioral-Active / Effectual-GoodCommunication: real Chromium/current API,
 // owned PostgreSQL, controlled model only; no content bytes or external provider.
 import assert from 'node:assert/strict';
-import fs from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 let raw='';for await(const chunk of process.stdin) raw+=chunk;
@@ -32,17 +31,17 @@ await page.addInitScript(() => {
 page.on('request',request=>requests.push(request.url()));
 try{
   await page.goto(input.base+'/',{waitUntil:'domcontentloaded'});
-  await page.locator('#login-input').fill(input.login);
-  await page.locator('#password-input').fill(input.loginPassword);
-  await page.locator('#login-form button[type=submit]').click();
+  await page.locator('[data-account-login] input[name=login]').fill(input.login);
+  await page.locator('[data-account-login] input[name=password]').fill(input.loginPassword);
+  await page.locator('[data-account-login] button[type=submit]').click();
   await page.locator('#whoami-text').waitFor({state:'visible',timeout:15000});
-  await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('shown'),null,{timeout:15000});
+  await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('loaded'),null,{timeout:15000});
   const query=page.locator('#filter-text');
   assert.equal(await query.inputValue(),'');
   if(input.stage==='outage'){
     await query.fill('mode:hybrid hayneedle');
     await page.locator('#list-form button[type=submit]').click();
-    await page.waitForFunction(()=>document.querySelector('#list-error').textContent.includes('search-unavailable'),null,{timeout:15000});
+    await page.waitForFunction(()=>document.querySelector('#list-notice').textContent.includes('search-unavailable'),null,{timeout:15000});
     assert.equal(await page.locator('#retrieval-results').textContent(),'');
     assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode)),['Hybrid'],
       'hybrid failure must not fall back to lexical');
@@ -52,7 +51,7 @@ try{
     assert.deepEqual(await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode!=='Catalogue').map(c=>c.mode)),['Hybrid','Lexical']);
   } else if(input.stage==='no-provider'){
     await page.goto(input.base+'/#/artifacts?mode=semantic&q=hayneedle',{waitUntil:'domcontentloaded'});
-    await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('unavailable'),null,{timeout:15000});
+    await page.waitForFunction(()=>document.querySelector('#list-notice').textContent.includes('unavailable'),null,{timeout:15000});
     assert.equal(await query.inputValue(),'mode:semantic hayneedle');
     assert.match(await page.locator('#query-diagnostic').textContent(),/unavailable/);
     assert.equal(await page.locator('#retrieval-results').textContent(),'');
@@ -68,31 +67,20 @@ try{
     await page.waitForFunction(()=>document.querySelector('#retrieval-results').textContent.includes('hayneedle'),null,{timeout:15000});
     assert.equal(await page.locator('#retrieval-results img, #retrieval-results script').count(),0,'metadata evidence inert');
     assert.match(await page.locator('#retrieval-results').textContent(),/Name: .*hayneedle/);
-    assert.match(await page.locator('#list-status').textContent(),/exact matches/);
-    assert.equal(await page.locator('#load-more-button').isVisible(),false);
+    assert.match(await page.locator('#sort-summary').textContent(),/exact matches/);
+    assert.equal(await page.getByRole('button',{name:/Load more/}).count(),0);
     const command=await page.evaluate(()=>window.__retrieval.commands.filter(c=>c.mode==='Lexical')[0]);
     assert.deepEqual(command.filter,{visibility:'External',kind:'Directory',createdByUser:'search-manager',tags:[],hostname:null,projectPath:null});
     assert.ok(command.limit<=25 && command.limit>0);assert.equal(command.cursor,null);
     if(input.stage==='semantic'){
       const record=async selected=>{
         await query.fill('mode:'+selected+' access:external kind:dir owner:search-manager hayneedle');await page.locator('#list-form button[type=submit]').click();
-        await page.waitForFunction((wanted)=>document.querySelector('#list-status').textContent.includes('candidate-window') &&
+        await page.waitForFunction((wanted)=>document.querySelector('#sort-summary').textContent.includes('candidate-window') &&
           window.__retrieval.commands.at(-1)?.mode===wanted,selected[0].toUpperCase()+selected.slice(1),{timeout:15000});
-        assert.match(await page.locator('#list-status').textContent(),/not a corpus-wide total/);
+        assert.match(await page.locator('#sort-summary').textContent(),/not a corpus-wide total/);
         assert.match(await page.locator('#retrieval-results').textContent(),/hayneedle/);
       };
       await record('semantic');await record('hybrid');
-      if(input.artifacts){
-        await fs.mkdir(input.artifacts,{recursive:true});
-        await page.screenshot({path:path.join(input.artifacts,'manure-retrieval-desktop.png'),fullPage:true});
-        await page.setViewportSize({width:390,height:844});
-        assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),true);
-        await page.screenshot({path:path.join(input.artifacts,'manure-retrieval-mobile.png'),fullPage:true});
-        await page.emulateMedia({colorScheme:'dark'});
-        await page.screenshot({path:path.join(input.artifacts,'manure-retrieval-dark-mobile.png'),fullPage:true});
-        await page.setViewportSize({width:1440,height:1000});
-        await page.emulateMedia({colorScheme:'light'});
-      }
       await page.locator('#retrieval-results [data-action=details]').first().click();
       await page.locator('#detail-section').waitFor({state:'visible',timeout:15000});
       assert.match(await page.locator('#detail-list').textContent(),/search-manager/);

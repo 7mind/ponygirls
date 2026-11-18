@@ -21,10 +21,11 @@ class QuickUploadBrowserTests(unittest.TestCase):
 
     def login(self, fix):
         return [
-            {"op": "fill", "selector": "#login-input", "value": fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
-            {"op": "waitForText", "selector": "#list-status", "contains": "shown"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
+            {"op": "waitForEval", "fn": "() => / loaded|No matches/.test(document.querySelector('#list-status').textContent)"},
+            {"op": "click", "selector": "#main-nav a[data-nav=upload]"},
         ]
 
     def test_http_paste_picker_drop_stage_then_publish_exact_bytes(self):
@@ -75,6 +76,7 @@ class QuickUploadBrowserTests(unittest.TestCase):
             {"op": "eval", "fn": verify, "arg": [base64.b64encode(png).decode(), base64.b64encode(pdf).decode(), ""]},
             {"op": "click", "selector": "#upload-list button:has-text('Dismiss password') >> nth=0"},
             {"op": "eval", "fn": "() => document.querySelectorAll('#upload-list code').length"},
+            {"op": "click", "selector": "#user-menu-button"},
             {"op": "click", "selector": "#logout-button"},
             {"op": "waitForEval", "fn": "() => !document.querySelector('#login-section').hidden"},
             {"op": "eval", "fn": "() => ({rows:document.querySelectorAll('#upload-list li').length,storage:localStorage.length+sessionStorage.length})"},
@@ -114,6 +116,7 @@ class QuickUploadBrowserTests(unittest.TestCase):
             {"op": "setInputFiles", "selector": "#upload-files", "files": [{"name": "late.txt", "mimeType": "text/plain", "base64": "bGF0ZQ=="}]},
             {"op": "click", "selector": "#upload-submit"},
             {"op": "waitForEval", "fn": "() => typeof window.__uploadTest.release==='function'"},
+            {"op": "click", "selector": "#user-menu-button"},
             {"op": "click", "selector": "#logout-button"},
             {"op": "waitForEval", "fn": "() => !document.querySelector('#login-section').hidden"},
             {"op": "eval", "fn": "async () => {window.__uploadTest.release();await new Promise(resolve=>setTimeout(resolve,150));return {rows:document.querySelectorAll('#upload-list li').length,passwords:document.querySelectorAll('#upload-list code').length};}"},

@@ -16,7 +16,7 @@ class DashboardAccessModeTests(unittest.TestCase):
             "rate_limit_per_min": 10000, "login_rate_per_min_per_ip": 1000,
         })
         self.addCleanup(fix.close)
-        names = ("transition", "controls", "navigation", "logout", "failed-logout", "lost", "pending-list", "other")
+        names = ("transition", "controls", "navigation", "logout", "lost", "pending-list", "other")
         artifacts = {}
         for name in names:
             artifacts[name] = bf.upload_fixture(fix, name="access-" + name, kind="dir",
@@ -30,7 +30,7 @@ class DashboardAccessModeTests(unittest.TestCase):
             input=json.dumps(payload).encode(), capture_output=True, timeout=240)
         self.assertEqual(result.returncode, 0, result.stderr.decode()[-3000:])
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 9 if include_races else 1)
+        self.assertEqual(len(report), 8 if include_races else 1)
         self.assertTrue(all(check["ok"] for check in report), report)
         for check in report:
             print("ok - " + check["name"])

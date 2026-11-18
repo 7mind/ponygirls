@@ -32,10 +32,10 @@ class PathBrowserCase(unittest.TestCase):
             {'op': 'reload'},
             {'op': 'waitForEval', 'fn': '() => !document.querySelector("meta[http-equiv=refresh]") && document.querySelector("a").getAttribute("href") === ' + json.dumps('/#/artifact/' + direct['artifact_id'])},
             {'op': 'goto', 'url': fix.api_base + '/'},
-            {'op': 'fill', 'selector': '#login-input', 'value': fix.identity.login},
-            {'op': 'fill', 'selector': '#password-input', 'value': fix.identity.password},
-            {'op': 'click', 'selector': '#login-form button[type=submit]'},
-            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
+            {'op': 'fill', 'selector': '[data-account-login] input[name=login]', 'value': fix.identity.login},
+            {'op': 'fill', 'selector': '[data-account-login] input[name=password]', 'value': fix.identity.password},
+            {'op': 'click', 'selector': '[data-account-login] button[type=submit]'},
+            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
         ]
         # Regression (blackbox/controlled Chromium + server): Strict management
         # cookies are withheld on a real anchor click from a different site.
@@ -74,7 +74,7 @@ class PathBrowserCase(unittest.TestCase):
             {'op': 'goto', 'url': direct['content_url'] + '/nested/'},
             {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK" && location.pathname.endsWith("/nested/")'},
             {'op': 'goto', 'url': fix.api_base + '/'},
-            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
+            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
         ])
         for item in (a, b):
             steps.extend([
@@ -82,7 +82,7 @@ class PathBrowserCase(unittest.TestCase):
                 {'op': 'waitForEval', 'fn': '() => document.title === "PATH-OK"'},
                 {'op': 'waitForEval', 'fn': '() => getComputedStyle(document.querySelector("h1")).color === "rgb(1, 2, 3)"'},
                 {'op': 'goto', 'url': fix.api_base + '/'},
-                {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
+                {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
             ])
         steps.extend([
             {'op': 'goto', 'url': a['content_url'] + '/nested'},
@@ -154,15 +154,17 @@ class PathTlsBrowserCase(unittest.TestCase):
         external = bf.upload_fixture(fix, name='tls-path-external', kind='dir', visibility='external', files=FILES)
         out = bf.run_steps([
             {'op': 'goto', 'url': fix.api_base + '/'},
-            {'op': 'waitForEval', 'fn': '() => { const icon = document.getElementById("path-mode-warning"); return !icon.hidden && icon.tagName === "SPAN" && icon.getAttribute("role") === "img" && icon.title.includes("share") && icon.textContent === "ⓘ"; }'},
             # Regression: public hosting safety must survive the unauthenticated
-            # session check and be visible outside the hidden workspace shell.
-            {'op': 'waitForEval', 'fn': '() => { const icon = document.getElementById("path-mode-warning"); const rect = icon.getBoundingClientRect(); return !document.getElementById("login-section").hidden && !icon.hidden && rect.width > 0 && rect.width <= 24 && rect.height > 0 && rect.height <= 24; }'},
-            {'op': 'fill', 'selector': '#login-input', 'value': fix.identity.login},
-            {'op': 'fill', 'selector': '#password-input', 'value': fix.identity.password},
-            {'op': 'click', 'selector': '#login-form button[type=submit]'},
-            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'shown'},
-            {'op': 'waitForEval', 'fn': '() => { const rect = document.getElementById("path-mode-warning").getBoundingClientRect(); return rect.width > 0 && rect.width <= 24 && rect.height > 0 && rect.height <= 24; }'},
+            # session check and be visible in the masthead outside the hidden workspace.
+            {'op': 'waitForEval', 'fn': '() => { const chip = document.getElementById("path-mode-warning"); const rect = chip.getBoundingClientRect(); return !document.getElementById("login-section").hidden && chip.closest("header") !== null && chip.textContent === "Path-mode hosting" && chip.title.includes("share") && rect.width > 0 && rect.height > 0; }'},
+            {'op': 'click', 'selector': '#path-mode-warning'},
+            {'op': 'waitForEval', 'fn': '() => document.querySelector("dialog[open]")?.textContent.includes("same origin as the dashboard")'},
+            {'op': 'click', 'selector': 'dialog[open] .dialog-foot button'},
+            {'op': 'fill', 'selector': '[data-account-login] input[name=login]', 'value': fix.identity.login},
+            {'op': 'fill', 'selector': '[data-account-login] input[name=password]', 'value': fix.identity.password},
+            {'op': 'click', 'selector': '[data-account-login] button[type=submit]'},
+            {'op': 'waitForText', 'selector': '#list-status', 'contains': 'loaded'},
+            {'op': 'waitForEval', 'fn': '() => { const rect = document.getElementById("path-mode-warning").getBoundingClientRect(); return rect.width > 0 && rect.height > 0; }'},
             # A bookmarked content URL must exchange the existing dashboard session
             # for its own scoped grant, without first clicking dashboard Open.
             {'op': 'goto', 'url': internal['content_url']},

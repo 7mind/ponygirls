@@ -95,7 +95,6 @@ export function createDetail(ctx, catalogue) {
     }).catch(function (error) {
       if (epoch !== ctx.sessionEpoch || generation !== detailGeneration) { return; }
       currentDetailId = null; currentDetailInfo = null;
-      $("detail-section").hidden = true; $("dashboard-section").hidden = false;
       window.history.replaceState(null, "", routeHash(null));
       catalogue.detailFailed();
       failVisible("Detail failed (" + errorLabel(error) + "). The artifact may have expired or been deleted. Retry loading to return to the catalogue.");
@@ -166,9 +165,18 @@ export function createDetail(ctx, catalogue) {
     form.appendChild(field); document.body.appendChild(form);
     form.submit(); form.remove();
   }
-  function deleteArtifact(id) {
-    if (!ID_RE.test(id) || deleting.has(id) || accessMutations.has(id) || !window.confirm("Delete artifact " + id + "? This cannot be undone.")) { return; }
+  // info: the artifact as last observed (catalogue row or detail), named in the confirmation.
+  function deleteArtifact(id, info) {
+    if (!ID_RE.test(id) || deleting.has(id) || accessMutations.has(id)) { return; }
     var epoch = ctx.sessionEpoch;
+    ctx.overlays.confirmAction({ title: "Delete artifact?", danger: true, icon: "trash", confirmLabel: "Delete artifact", paragraphs: [
+      [{ strong: info.name || id }, { sub: id }],
+      "The artifact, its " + (info.file_count === 1 ? "1 file" : info.file_count + " files") + " (" + bytes(info.total_bytes) + ") and every link to it stop working immediately. This cannot be undone."
+    ] }).then(function (confirmed) {
+      if (confirmed && epoch === ctx.sessionEpoch && !deleting.has(id) && !accessMutations.has(id)) { removeArtifact(id, epoch); }
+    });
+  }
+  function removeArtifact(id, epoch) {
     deleting.add(id);
     document.querySelectorAll('button[data-action="delete"][data-artifact-id="' + id + '"]').forEach(function (button) { button.disabled = true; });
     if (currentDetailId === id) { updateDetailActions(); setText("detail-status", "Deleting artifact…"); }
@@ -178,7 +186,7 @@ export function createDetail(ctx, catalogue) {
       if (currentDetailId === id) {
         detailGeneration++; openGeneration++; hideRotateOutput();
         currentDetailId = null; currentDetailInfo = null;
-        $("detail-section").hidden = true; $("dashboard-section").hidden = false;
+        catalogue.showCatalogue();
         window.history.replaceState(null, "", routeHash(null));
       }
       invalidateCatalogue();
@@ -263,7 +271,17 @@ export function createDetail(ctx, catalogue) {
     var visibility = $("access-mode").value;
     if (id === null || info === null || info.state !== "ready" || accessMutations.has(id) || deleting.has(id) ||
         ["internal", "external", "public"].indexOf(visibility) === -1 || visibility === info.visibility) { return; }
-    if (visibility === "public" && !window.confirm("Make artifact " + id + " public? No Manure authentication will be required for anyone who can reach its content URL. Existing content grants will be revoked.")) { return; }
+    if (visibility !== "public") { saveAccess(id, visibility); return; }
+    var epoch = ctx.sessionEpoch, generation = detailGeneration;
+    ctx.overlays.confirmAction({ title: "Make artifact public?", danger: true, icon: null, confirmLabel: "Make public", paragraphs: [
+      [{ strong: info.name || id }, { sub: id }],
+      "No Manure authentication will be required for anyone who can reach its content URL. Existing content grants will be revoked."
+    ] }).then(function (confirmed) {
+      if (confirmed && epoch === ctx.sessionEpoch && generation === detailGeneration && currentDetailId === id &&
+          !accessMutations.has(id) && !deleting.has(id)) { saveAccess(id, visibility); }
+    });
+  }
+  function saveAccess(id, visibility) {
     var mutation = beginAccessMutation(id, "Saving access mode… You can retrieve the generated password later with Copy current password.");
     apiFetch(current.access(id, visibility)).then(function (body) {
       var password = takeExternalPassword(body, visibility === "external");
@@ -342,7 +360,7 @@ export function createDetail(ctx, catalogue) {
     });
   }
   $("open-button").addEventListener("click", function () { if (currentDetailId !== null) { openArtifact(currentDetailId, currentDetailInfo); } });
-  $("delete-button").addEventListener("click", function () { if (currentDetailId !== null) { deleteArtifact(currentDetailId); } });
+  $("delete-button").addEventListener("click", function () { if (currentDetailId !== null && currentDetailInfo !== null) { deleteArtifact(currentDetailId, currentDetailInfo); } });
   $("access-form").addEventListener("submit", onAccessSubmit);
   $("access-mode").addEventListener("change", function () { setText("access-status", ""); updateDetailActions(); });
   $("access-refresh-button").addEventListener("click", function () {
@@ -356,7 +374,7 @@ export function createDetail(ctx, catalogue) {
   $("copy-id-button").addEventListener("click", function () { copy(currentDetailId, "detail-status", "Artifact ID copied."); });
   $("copy-link-button").addEventListener("click", function () { if (currentDetailInfo !== null) { copy(contentUrl(currentDetailInfo, window.location.origin), "detail-status", "Content link copied."); } });
   $("files-retry-button").addEventListener("click", loadFiles);
-  $("detail-back-button").addEventListener("click", function () { catalogue.invalidateNavigation(); window.location.hash = routeHash(null); });
+  $("detail-back-button").addEventListener("click", catalogue.backToList);
 
   // Fences every in-flight detail, open and reveal result (navigation, sign-out).
   function invalidate() { detailGeneration++; openGeneration++; hideRotateOutput(); }

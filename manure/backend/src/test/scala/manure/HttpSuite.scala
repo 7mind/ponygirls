@@ -288,8 +288,7 @@ final class HttpSuite extends FunSuite:
         java.nio.file.Files.createDirectories(directory)
         java.nio.file.Files.writeString(directory.resolve("favicon.svg"),svg)
         java.nio.file.Files.writeString(directory.resolve("private.txt"),"not a dashboard asset")
-        java.nio.file.Files.writeString(directory.resolve("account.js"),"export {};")
-        java.nio.file.Files.writeString(directory.resolve("account-client.js"),"export {};")
+        Vector("account.js","account-client.js","common.js","overlays.js","detail.js","upload.js").foreach(name => java.nio.file.Files.writeString(directory.resolve(name),"export {};"))
         java.nio.file.Files.writeString(directory.resolve("account.css"),"dialog { display: block; }")
         java.nio.file.Files.createDirectories(directory.resolve("ui/fonts"))
         java.nio.file.Files.writeString(directory.resolve("ui/tokens.css"),":root { --text: #000; }")
@@ -307,7 +306,7 @@ final class HttpSuite extends FunSuite:
         Vector("default-src 'self'","script-src 'self'","object-src 'none'","base-uri 'none'","frame-ancestors 'none'","form-action 'self'")
           .foreach(directive => assert(policy.contains(directive),policy))
       }
-      _ <- Vector("/account.js","/account-client.js","/account.css").traverse_(path => h.app.run(request(Method.GET,path)).flatMap(r => IO {
+      _ <- Vector("/account.js","/account-client.js","/account.css","/common.js","/overlays.js","/detail.js","/upload.js").traverse_(path => h.app.run(request(Method.GET,path)).flatMap(r => IO {
         assertEquals(r.status.code,200,path)
         assertEquals(r.headers.headers.find(_.name == CIString("Cache-Control")).map(_.value),Some("no-store"),path)
       }))

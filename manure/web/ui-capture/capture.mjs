@@ -159,16 +159,17 @@ async function domProbe(page) {
 const isList = (route) => (route.request().postData() || "").includes('"ListArtifacts"');
 const errorBody = (route, code) => JSON.stringify({ requestId: route.request().postDataJSON().requestId, result: { Error: { failure: { code, message: "controlled fixture", retryAfterSeconds: null } } } });
 
+// Settled catalogue: the counter reports loaded rows, no matches or a failure (notice).
 async function waitList(page) {
-  await page.waitForFunction(() => { const t = document.getElementById("list-status").textContent; return /artifacts shown|failed|Invalid URL|Press Search|hits shown|unavailable/.test(t); }, null, { timeout: 30000 });
+  await page.waitForFunction(() => /loaded|No matches|Not loaded|Not searched|hits ·/.test(document.getElementById("list-status").textContent), null, { timeout: 30000 });
   await sleep(200);
 }
 async function login(page, user = input.alice) {
   await page.goto(BASE + "/", { waitUntil: "load" });
-  await page.fill("#login-input", user.login);
-  await page.fill("#password-input", user.password);
-  await page.click("#login-form button[type=submit]");
-  await page.waitForSelector("#workspace-shell:not([hidden])", { timeout: 20000 });
+  await page.fill("[data-account-login] input[name=login]", user.login);
+  await page.fill("[data-account-login] input[name=password]", user.password);
+  await page.click("[data-account-login] button[type=submit]");
+  await page.waitForSelector("#main:not([hidden])", { timeout: 20000 });
   await waitList(page);
 }
 async function authState() {
@@ -711,11 +712,107 @@ SCENES.dark = async () => {
   await page.context().close();
 };
 
+// ---------------------------------------------------------------- redesigned shell + catalogue (UX-M1)
+// Files are named like the mockup shots (<app>-<view>-<state>-<width>[-dark].png) for side-by-side review.
+async function snap(page, name, what) {
+  await sleep(250);
+  const file = name + ".png";
+  await page.screenshot({ path: path.join(OUT, file) });
+  index.push({ n: index.length + 1, file, what, how: "UX-M1 scene", scene: currentScene });
+  log(`snap ${file}`);
+}
+async function themed(page, scheme) {
+  await page.evaluate((choice) => document.dispatchEvent(new CustomEvent("ui:theme-choice", { detail: choice })), scheme);
+}
+async function catalogue(vp, scheme) {
+  const page = await newPage({ vp, scheme, storageState: AUTH, clipboard: true });
+  await page.goto(BASE + "/#/artifacts", { waitUntil: "load" });
+  await page.waitForSelector("#main:not([hidden])"); await waitList(page);
+  await themed(page, scheme);
+  return page;
+}
+SCENES.m1 = async () => {
+  const width = (vp) => String(vp.width);
+  for (const [vp, scheme] of [[VP.d, "light"], [VP.s, "light"], [VP.m, "light"], [VP.d, "dark"], [VP.s, "dark"], [VP.m, "dark"]]) {
+    const page = await catalogue(vp, scheme);
+    await snap(page, `manure-catalogue${scheme === "dark" ? "-dark" : ""}-${width(vp)}`, "Catalogue first render");
+    if (vp === VP.d) {
+      await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await sleep(1200);
+      await page.evaluate(() => window.scrollTo(0, 1500)); await sleep(300);
+      await snap(page, `manure-catalogue-scrolled${scheme === "dark" ? "-dark" : ""}-1440`, "Catalogue scrolled: sticky view bar and table header");
+    }
+    await page.context().close();
+  }
+  const page = await catalogue(VP.d, "light");
+  // end of a filtered list
+  await page.fill("#filter-text", "access:external"); await page.press("#filter-text", "Enter"); await waitList(page);
+  for (let i = 0; i < 10 && !/All /.test(await page.textContent("#list-status")); i++) { await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await sleep(800); }
+  await page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight)); await sleep(300);
+  await snap(page, "manure-catalogue-end-1440", "Filtered list scrolled to its end marker");
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await snap(page, "manure-catalogue-filtered-1440", "access:external applied through the scope control");
+  // draft states
+  await page.fill("#filter-text", "access:external tag:release"); await page.click("body", { position: { x: 5, y: 600 } }).catch(() => {});
+  await snap(page, "manure-catalogue-stale-draft-1440", "Changed draft: results kept, draft hint in the query bar");
+  await page.fill("#filter-text", "access:bogus tag:release");
+  await snap(page, "manure-catalogue-diagnostic-1440", "Invalid draft: anchored diagnostic, nothing sent");
+  await page.fill("#filter-text", ""); await page.click("#filter-text"); await page.keyboard.type("tag:release state:"); await sleep(300);
+  await snap(page, "manure-catalogue-suggestions-1440", "Completion suggestions under the query bar");
+  await page.keyboard.press("Escape"); await page.keyboard.press("Escape");
+  await page.goto(BASE + "/#/artifacts", { waitUntil: "load" }); await waitList(page);
+  // row menu, delete dialog, syntax dialog, drop overlay
+  const second = page.locator("#artifact-list > tr").nth(2);
+  await second.hover(); await second.locator("[data-action=more]").click();
+  await snap(page, "manure-catalogue-row-menu-1440", "Row actions menu (Copy ID, Copy content link, Details, Delete…)");
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await page.waitForSelector("dialog[open]");
+  await snap(page, "manure-catalogue-delete-confirm-1440", "In-app delete confirmation, Cancel focused");
+  await page.keyboard.press("Escape"); await sleep(200);
+  await page.click("#syntax-button"); await page.waitForSelector("dialog[open]");
+  await snap(page, "manure-catalogue-syntax-1440", "Query syntax dialog");
+  await page.keyboard.press("Escape"); await sleep(200);
+  await page.evaluate(() => { const t = new DataTransfer(); t.items.add(new File(["x"], "a.txt")); document.dispatchEvent(new DragEvent("dragenter", { dataTransfer: t, bubbles: true })); });
+  await snap(page, "manure-catalogue-drop-1440", "Drop overlay while files are dragged over the page");
+  await page.context().close();
+  // empty, error, loading
+  const empty = await catalogue(VP.d, "light");
+  await empty.fill("#filter-text", 'tag:release hostname:"atlantis"'); await empty.press("#filter-text", "Enter"); await waitList(empty);
+  await snap(empty, "manure-catalogue-empty-1440", "No matching artifacts");
+  await empty.context().close();
+  const failing = await newPage({ storageState: AUTH });
+  await failing.route("**/api/current", async (route) => { if (isList(route)) await route.fulfill({ status: 503, contentType: "application/json", body: errorBody(route, "Unavailable") }); else await route.continue().catch(() => {}); });
+  await failing.goto(BASE + "/#/artifacts", { waitUntil: "load" }); await waitList(failing);
+  await snap(failing, "manure-catalogue-error-1440", "First page failed: notice with Retry, nothing else");
+  await failing.context().close();
+  const loading = await newPage({ storageState: AUTH });
+  await loading.route("**/api/current", async (route) => { if (isList(route)) await sleep(5000); await route.continue().catch(() => {}); });
+  await loading.goto(BASE + "/#/artifacts", { waitUntil: "load" }); await loading.waitForSelector("#main:not([hidden])"); await sleep(800);
+  await snap(loading, "manure-catalogue-loading-1440", "First page pending: skeleton rows");
+  await loading.context().close();
+  // account outlet and login
+  for (const scheme of ["light", "dark"]) {
+    const account = await catalogue(VP.d, scheme);
+    await account.click("#user-menu-button"); await account.getByRole("menuitem", { name: "Access tokens" }).click();
+    await account.getByRole("heading", { name: "Access tokens", exact: true }).waitFor(); await account.locator("table[data-list=tokens] tr[data-row-id]").first().waitFor();
+    await snap(account, `account-settings-tokens-manure${scheme === "dark" ? "-dark" : ""}-1440`, "Access tokens in the account outlet (degraded mode: no profile endpoint)");
+    await account.context().close();
+  }
+  for (const scheme of ["light", "dark"]) {
+    const out = await newPage({ scheme });
+    await out.goto(BASE + "/", { waitUntil: "load" }); await out.waitForSelector("[data-account-login]"); await themed(out, scheme);
+    await snap(out, `account-login-default-manure${scheme === "dark" ? "-dark" : ""}-1440`, "Signed out: login card in the auth mount");
+    await out.context().close();
+  }
+};
+
 // ---------------------------------------------------------------- main
-const ORDER = ["auth", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
-const only = input.scenes && input.scenes.length ? new Set(["auth", ...input.scenes]) : null;
+// The scenes after "m1" capture the pre-redesign dashboard (ids and dialogs that UX-M1 replaced); they are
+// kept as the record of the "before" captures and are not run by default.
+const ORDER = ["auth", "m1", "login", "catalogue", "upload", "detail", "account", "unlock", "viewer", "keyboard", "dark"];
+const DEFAULT_SCENES = ["auth", "m1", "unlock", "viewer"];
+const only = new Set(input.scenes && input.scenes.length ? ["auth", ...input.scenes] : DEFAULT_SCENES);
 for (const name of ORDER) {
-  if (only && !only.has(name)) continue;
+  if (!only.has(name)) continue;
   currentScene = name;
   log(`scene ${name}`);
   try { await SCENES[name](); } catch (error) {

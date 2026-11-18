@@ -101,6 +101,20 @@ const errorVisible = async (page) => {
   await page.waitForFunction(() => /fail|error|could not|unable|unavailable|network|reload|refresh|confirm/i.test(document.querySelector("#access-status").textContent));
   assert.equal(await page.locator("#access-status").isVisible(), true);
 };
+// Saving the access mode; Public asks first in the in-app dialog (counted, accepted or cancelled per `dialogs`).
+const save = async (page, target, dialogs) => {
+  await page.locator("#access-save-button").click();
+  if (target !== "public") return;
+  const confirm = page.getByRole("dialog", { name: "Make artifact public?" });
+  await confirm.waitFor();
+  dialogs.count++;
+  await confirm.getByRole("button", { name: dialogs.accept ? "Make public" : "Cancel", exact: true }).click();
+  await confirm.waitFor({ state: "detached" });
+};
+const signOut = async (page) => {
+  await page.locator("#user-menu-button").click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+};
 const release = async (page) => {
   await page.evaluate(() => window.__accessProbe.release());
   await page.waitForFunction(() => window.__accessProbe.completed > 0);
@@ -116,17 +130,16 @@ const check = async (name, run) => {
   const pageErrors = [];
   page.on("request", (request) => urls.push(request.url()));
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  page.on("dialog", (dialog) => { dialogs.count++; (dialogs.accept ? dialog.accept() : dialog.dismiss()).catch(() => {}); });
+  page.on("dialog", (dialog) => { pageErrors.push("native dialog: " + dialog.type()); dialog.dismiss().catch(() => {}); });
   try {
     await page.addInitScript(() => {
       const realFetch = window.fetch.bind(window);
-      const state = window.__accessProbe = { patches: [], completed: 0, metadataPending: 0, fault: null, hold: null, release: null, failLogout: false, failMetadata: false, lost: false };
+      const state = window.__accessProbe = { patches: [], completed: 0, metadataPending: 0, fault: null, hold: null, release: null, failMetadata: false, lost: false };
       window.fetch = (url, options = {}) => {
         const target = new URL(String(url), location.href);
         let envelope;
         try { envelope=JSON.parse(options.body || "null"); } catch (_) { envelope=null; }
         const command=target.pathname==="/api/current" ? envelope?.command : null;
-        if (state.failLogout && command?.Logout) return Promise.reject(new Error("test-offline"));
         if (!command?.PatchArtifact) {
           if (command?.GetArtifact) {
             if (state.failMetadata) { state.failMetadata = false; return Promise.reject(new Error("test-metadata-offline")); }
@@ -157,10 +170,10 @@ const check = async (name, run) => {
       };
     });
     await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
-    await page.locator("#login-input").fill(input.login);
-    await page.locator("#password-input").fill(input.loginPassword);
-    await page.locator("#login-form button[type=submit]").click();
-    await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("shown"));
+    await page.locator("[data-account-login] input[name=login]").fill(input.login);
+    await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
+    await page.locator("[data-account-login] button[type=submit]").click();
+    await page.waitForFunction(() => document.querySelector("#list-status")?.textContent.includes("loaded"));
     await run(page, context, dialogs);
     assert.deepEqual(pageErrors, []);
     assert.equal(await page.evaluate(() => Object.keys(localStorage).length + Object.keys(sessionStorage).length), 0);
@@ -203,7 +216,7 @@ await check("all six access transitions preserve metadata and enforce real acces
     const confirmations = dialogs.count;
     await selectMode(page, target);
     assert.ok((await page.locator("#access-description").textContent()).trim().length > 0);
-    await page.locator("#access-save-button").click();
+    await save(page, target, dialogs);
     await savedMode(page, target);
     assert.equal(dialogs.count - confirmations, target === "public" ? 1 : 0);
     const patches = await page.evaluate(() => window.__accessProbe.patches);
@@ -245,7 +258,7 @@ await check("all six access transitions preserve metadata and enforce real acces
     } else assert.equal(await page.locator("#rotate-button").isVisible(), false);
     await hiddenPassword(page);
     await page.locator("#detail-back-button").click();
-    await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("shown"));
+    await page.waitForFunction(() => / loaded|No matches/.test(document.querySelector("#list-status").textContent));
     assert.equal(await page.locator("#filter-text").inputValue(), "access:"+source+" sort:visibility direction:asc");
     assert.equal(await page.locator('[data-sort="visibility"]').evaluate((node) => node.closest("th").getAttribute("aria-sort")), "ascending");
     assert.equal(await page.locator(`#artifact-list tr[data-artifact-id="${original.artifact_id}"]`).count(), 0, "old filtered catalogue must not retain changed access");
@@ -253,9 +266,9 @@ await check("all six access transitions preserve metadata and enforce real acces
     await page.locator("#search-submit").click();
     await page.waitForFunction(({ id, target }) => {
       const row = document.querySelector(`#artifact-list tr[data-artifact-id="${id}"]`);
-      return document.querySelector("#list-status").textContent.includes("shown") && row?.children[2].textContent === target;
+      return document.querySelector("#list-status").textContent.includes("loaded") && row?.dataset.visibility === target;
     }, { id: original.artifact_id, target });
-    await page.locator(`button[data-action=details][data-artifact-id="${original.artifact_id}"]`).click();
+    await page.locator(`#catalogue-table a[data-action=details][data-artifact-id="${original.artifact_id}"]`).click();
     await savedMode(page, target);
     await hiddenPassword(page);
     source = target;
@@ -282,7 +295,7 @@ if (input.includeRaces) {
     assert.equal(await page.evaluate(() => window.__accessProbe.patches.length), 0);
     dialogs.accept = false;
     await selectMode(page, "public");
-    await page.locator("#access-save-button").click();
+    await save(page, "public", dialogs);
     await settle(page);
     assert.equal(dialogs.count, 1);
     assert.equal(await page.evaluate(() => window.__accessProbe.patches.length), 0);
@@ -331,12 +344,12 @@ if (input.includeRaces) {
     await page.locator("#access-save-button").click();
     await savedMode(page, "external");
     await password(page);
-    await page.locator("#logout-button").click();
+    await signOut(page);
     await page.locator("#login-section").waitFor({ state: "visible" });
     await hiddenPassword(page);
   });
 
-  for (const action of ["navigation", "logout", "failed-logout"]) {
+  for (const action of ["navigation", "logout"]) {
     await check("late access response is inert after " + action, async (page) => {
       const name = action === "navigation" ? "controls" : action;
       // Each scenario starts from a fresh internal mode without bypassing the UI.
@@ -353,10 +366,8 @@ if (input.includeRaces) {
       assert.equal((await info(page, name)).visibility, "external");
       if (action === "navigation") await openDetail(page, "other");
       else {
-        if (action === "failed-logout") await page.evaluate(() => { window.__accessProbe.failLogout = true; });
-        await page.locator("#logout-button").click();
-        if (action === "logout") await page.locator("#login-section").waitFor({ state: "visible" });
-        else await page.waitForFunction(() => /Sign out could not be confirmed/.test(document.querySelector("#detail-status").textContent));
+        await signOut(page);
+        await page.locator("#login-section").waitFor({ state: "visible" });
       }
       await release(page);
       await hiddenPassword(page);
@@ -364,7 +375,7 @@ if (input.includeRaces) {
         assert.equal(await metadataMode(page), "internal");
         assert.equal(await page.locator("#access-mode").inputValue(), "internal");
         assert.equal((await info(page, "other")).visibility, "internal");
-      } else if (action === "logout") assert.equal(await page.locator("#workspace-shell").isVisible(), false);
+      } else assert.equal(await page.locator("#main").isVisible(), false);
     });
   }
 
@@ -400,7 +411,7 @@ if (input.includeRaces) {
     await page.waitForFunction(() => window.__accessProbe.release !== null);
     await page.locator("#detail-back-button").click();
     const id = input.artifacts["pending-list"].artifact_id;
-    await page.waitForFunction((id) => document.querySelector("#list-status").textContent.includes("shown") &&
+    await page.waitForFunction((id) => document.querySelector("#list-status").textContent.includes("loaded") &&
       document.querySelector(`#artifact-list tr[data-artifact-id="${id}"]`) !== null, id);
     assert.equal((await info(page, "pending-list")).visibility, "internal");
     await release(page);
@@ -408,7 +419,7 @@ if (input.includeRaces) {
     await hiddenPassword(page);
     await openDetail(page, "other", "?access=internal&sort=visibility&direction=asc");
     await page.locator("#detail-back-button").click();
-    await page.waitForFunction((id) => document.querySelector("#list-status").textContent.includes("shown") &&
+    await page.waitForFunction((id) => document.querySelector("#list-status").textContent.includes("loaded") &&
       document.querySelector(`#artifact-list tr[data-artifact-id="${id}"]`) === null, id);
   });
 

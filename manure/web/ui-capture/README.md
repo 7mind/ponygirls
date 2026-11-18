@@ -24,6 +24,20 @@ Static design-token census (no server/browser needed):
 nix develop .#chronicle --command node manure/web/ui-capture/token-census.mjs /abs/output/dir
 ```
 
+### Redesign scenes
+
+`--scenes m1` captures the redesigned shell and catalogue (unit UX-M1) and names every file like the
+mockup shot it is compared with (`manure-catalogue-<state>-<width>[-dark].png`,
+`account-settings-tokens-manure-1440.png`, `account-login-default-manure-1440.png`), e.g.
+
+```sh
+nix develop .#chronicle --command bash manure/web/ui-capture/run.sh /abs/out --scenes m1 --count 40
+```
+
+The default run is `auth`, `m1`, `unlock`, `viewer`. The scenes `login`, `catalogue`, `upload`, `detail`,
+`account`, `keyboard` and `dark` drive the pre-redesign dashboard (its ids, the account dialog and native
+confirms) and only record how the "before" captures were made; they no longer run against this dashboard.
+
 ## Prerequisites
 
 * the pinned `chronicle` dev shell (provides JDK/sbt, PostgreSQL, Node 24, `cc`);

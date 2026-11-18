@@ -7,57 +7,118 @@
 <link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <script src="./ui/theme-init.js"></script>
 <link rel="stylesheet" href="./ui/tokens.css">
-<link rel="stylesheet" href="./ui/components.css" media="not all">
+<link rel="stylesheet" href="./ui/components.css">
 <link rel="stylesheet" href="./styles.css">
 <link rel="stylesheet" href="/account.css">
 <script type="module" src="/account.js"></script>
 <script type="module" src="./app.js"></script>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="masthead">
+<a class="brand" href="#/artifacts"><span class="brand-mark" aria-hidden="true"><span data-icon="box"></span></span>manure</a>
+<nav id="main-nav" class="nav" aria-label="Main navigation" hidden>
+<a href="#/artifacts" data-nav="artifacts">Artifacts</a>
+<a href="#/upload" data-nav="upload">Upload</a>
+<a href="#/cli" data-nav="cli">CLI</a>
+</nav>
+<div class="masthead-end">
 <!-- Hosting safety applies before login as well as inside the workspace. -->
-<span id="path-mode-warning" hidden class="path-mode-indicator" role="img" tabindex="0" title="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only." aria-label="Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.">ⓘ</span>
-<section id="session-section" class="auth-screen" role="main" aria-label="Dashboard session">
-<div class="auth-card session-card">
-<span class="brand-mark" aria-hidden="true"></span>
-<p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
-<h1>Checking session</h1>
-<p id="session-status" role="status">Checking your session…</p>
-<button type="button" id="session-retry-button" class="primary" hidden>Retry connection</button>
+<button type="button" id="path-mode-warning" hidden class="chip chip-warn path-mode-chip" aria-haspopup="dialog"><span data-icon="alert" data-icon-class="icon-sm"></span><span id="path-mode-label">Path-mode hosting</span></button>
+<div class="anchor">
+<button type="button" id="theme-button" class="btn btn-ghost btn-icon" aria-label="Theme" title="Theme" aria-haspopup="menu" aria-controls="theme-menu" aria-expanded="false"><span data-icon="sun" data-icon-class="theme-light"></span><span data-icon="moon" data-icon-class="theme-dark"></span></button>
+<div id="theme-menu" class="menu" role="menu" aria-label="Theme" hidden>
+<button type="button" class="menu-item" role="menuitemradio" data-theme-set="system" aria-checked="false"><span data-icon="monitor"></span>System</button>
+<button type="button" class="menu-item" role="menuitemradio" data-theme-set="light" aria-checked="false"><span data-icon="sun"></span>Light</button>
+<button type="button" class="menu-item" role="menuitemradio" data-theme-set="dark" aria-checked="false"><span data-icon="moon"></span>Dark</button>
 </div>
-</section>
-
-<section id="login-section" class="auth-screen" role="main" aria-labelledby="login-heading" hidden>
-<div class="auth-card">
-<span class="brand-mark" aria-hidden="true"></span>
-<p class="eyebrow">MANURE / ARTIFACT WORKSPACE</p>
-<h1 id="login-heading">Log in</h1>
-<p>Log in to manage files, directories, and published artifacts.</p>
-<form id="login-form" data-account-login method="post" action="/api/account/v1/login">
-<label for="login-input">Login</label>
-<input type="text" id="login-input" name="login" required maxlength="200"
-spellcheck="false" autocapitalize="off" autocomplete="username">
-<label for="password-input">Password</label>
-<input type="password" id="password-input" name="password" maxlength="1000"
-required autocomplete="current-password" aria-describedby="login-note">
-<button type="submit" class="primary">Log in</button>
-</form>
-<p id="login-note" class="auth-note">Your password is sent only to sign in, then cleared from the input. Your session uses a host-only HttpOnly cookie, not web storage or a URL. Create API access tokens in Settings after signing in.</p>
-<div class="auth-footer"><span class="small-mark" aria-hidden="true"></span> File and directory uploads.</div>
 </div>
-</section>
-
-<div id="workspace-shell" class="app-shell" hidden>
-<a class="skip" href="#main">Skip to main content</a>
-<main id="main" class="workspace-main" tabindex="-1">
-<header class="topbar">
-<span class="brand"><span class="brand-mark" aria-hidden="true"></span>manure</span>
-<div id="whoami" class="identity" hidden>
-<span id="whoami-text"></span>
-<button type="button" id="account-settings" data-account-settings class="quiet">Settings</button>
-<button type="button" id="logout-button" class="quiet">Log out</button>
+<div id="user-menu-anchor" class="anchor" hidden>
+<button type="button" id="user-menu-button" class="user-button" aria-haspopup="menu" aria-controls="user-menu" aria-expanded="false"><span id="whoami-avatar" class="avatar" aria-hidden="true"></span><span id="whoami-text"></span><span data-icon="chevron-down" data-icon-class="icon-sm"></span></button>
+<div id="user-menu" class="menu" role="menu" aria-label="Account" hidden>
+<div class="menu-label">Signed in as <strong id="whoami-label"></strong></div>
+<button type="button" class="menu-item" role="menuitem" data-account-settings><span data-icon="user"></span>Account settings</button>
+<button type="button" class="menu-item" role="menuitem" data-account-settings="tokens"><span data-icon="key"></span>Access tokens</button>
+<a id="users-menu-item" class="menu-item" role="menuitem" href="#account/users" hidden><span data-icon="users"></span>Users</a>
+<div class="menu-sep" role="separator"></div>
+<button type="button" id="logout-button" class="menu-item" role="menuitem" data-account-logout><span data-icon="arrow-right"></span>Sign out</button>
+</div>
+</div>
 </div>
 </header>
-<div class="workspace-content">
+
+<section id="session-section" class="auth-page" aria-label="Dashboard session">
+<div class="auth-card">
+<div><h1 class="auth-title">Checking session</h1><p id="session-status" class="auth-sub" role="status">Checking your session…</p></div>
+<button type="button" id="session-retry-button" class="btn btn-primary btn-lg btn-block" hidden>Retry connection</button>
+</div>
+</section>
+<div id="login-section" hidden></div>
+
+<main id="main" tabindex="-1" hidden>
+<section id="dashboard-section" data-view="catalogue" aria-label="Artifacts" hidden>
+<div class="viewbar">
+<form id="list-form" class="querybar" role="search" aria-label="Search artifacts">
+<span data-icon="search"></span>
+<input type="text" id="filter-text" role="combobox" aria-label="Search artifacts" aria-autocomplete="list" aria-expanded="false" aria-controls="query-suggestions" aria-describedby="query-diagnostic draft-status" maxlength="131072" placeholder="Search or filter — access:public tag:release" autocomplete="off" spellcheck="false">
+<span id="draft-status" class="draft-hint" role="status"><span data-icon="edit" data-icon-class="icon-sm"></span><span id="draft-status-text"></span></span>
+<button type="button" id="clear-search-button" class="btn btn-ghost btn-icon btn-sm" aria-label="Clear search query and focus search" title="Clear draft · Escape after closing suggestions"><span data-icon="x"></span></button>
+<span id="search-shortcut" class="kbd hide-md">Ctrl K</span>
+<button type="submit" id="search-submit" class="btn btn-primary">Search</button>
+<div id="query-suggestions" class="query-suggest" role="listbox" aria-label="Expression suggestions" hidden></div>
+<p id="query-diagnostic" class="query-diag" role="status" hidden></p>
+</form>
+<div class="viewbar-meta"><span id="list-status" role="status" aria-live="polite"></span></div>
+<button type="button" id="refresh-button" class="btn btn-ghost btn-icon" aria-label="Refresh" title="Refresh the applied query (not the draft)"><span data-icon="refresh"></span></button>
+<a class="btn btn-primary" href="#/upload"><span data-icon="upload"></span>Upload</a>
+</div>
+<div class="filterbar" role="group" aria-label="Scope and filter shortcuts">
+<div class="segmented" role="group" aria-label="Access" title="Applies immediately (sets access: in the query)">
+<button type="button" data-visibility-preset="" aria-pressed="true">All</button>
+<button type="button" data-visibility-preset="internal" aria-pressed="false">Internal</button>
+<button type="button" data-visibility-preset="external" aria-pressed="false">External</button>
+<button type="button" data-visibility-preset="public" aria-pressed="false">Public</button>
+</div>
+<span class="filter-divider"></span>
+<button type="button" class="filter" data-toggle-preset="uploading" aria-pressed="false" title="state:uploading">Unfinished uploads</button>
+<button type="button" class="filter" data-toggle-preset="expired" aria-pressed="false" title="expired:true">Include expired</button>
+<span class="filter-divider"></span>
+<button type="button" class="filter filter-field" data-insert-field="tag:">tag:</button>
+<button type="button" class="filter filter-field hide-md" data-insert-field="hostname:">hostname:</button>
+<button type="button" class="filter filter-field hide-md" data-insert-field="project:">project:</button>
+<button type="button" class="filter filter-field hide-md" data-insert-field="state:">state:</button>
+<button type="button" class="filter filter-field hide-md" data-insert-field="sort:">sort:</button>
+<button type="button" class="filter filter-field" data-insert-field="mode:">mode:</button>
+<div class="sortline"><span id="sort-summary"></span><button type="button" id="syntax-button" class="link-button" aria-haspopup="dialog">Query syntax</button></div>
+</div>
+<div id="list-notice" class="notice list-notice" role="status" hidden><span></span><div><div id="list-notice-title" class="notice-title" hidden></div><div id="list-notice-text"></div><div class="notice-actions"><button type="button" id="retry-list-button" class="btn btn-sm" hidden>Retry</button></div></div></div>
+<table id="catalogue-table" class="table table-2line" aria-label="Artifacts">
+<colgroup><col><col class="col-access"><col class="col-size hide-sm"><col class="col-files hide-md"><col class="col-created hide-sm"><col class="col-expires hide-md"><col class="col-owner hide-md"><col class="col-row-actions"></colgroup>
+<thead><tr>
+<th scope="col"><button type="button" class="th-sort" data-sort="name" aria-label="Sort by Name">Name</button></th>
+<th scope="col"><button type="button" class="th-sort" data-sort="visibility" aria-label="Sort by Access">Access</button></th>
+<th scope="col" class="col-num hide-sm"><button type="button" class="th-sort" data-sort="total_bytes" aria-label="Sort by Size">Size</button></th>
+<th scope="col" class="col-num hide-md"><button type="button" class="th-sort" data-sort="file_count" aria-label="Sort by Files">Files</button></th>
+<th scope="col" class="hide-sm" aria-sort="descending"><button type="button" class="th-sort" data-sort="created_at" aria-label="Sort by Created">Created</button></th>
+<th scope="col" class="hide-md"><button type="button" class="th-sort" data-sort="expires_at" aria-label="Sort by Expires">Expires</button></th>
+<th scope="col" class="hide-md"><button type="button" class="th-sort" data-sort="created_by_user" aria-label="Sort by Owner">Owner</button></th>
+<th scope="col" class="col-actions"><span class="sr-only">Actions</span></th>
+</tr></thead>
+<tbody id="artifact-list" data-list="artifacts"></tbody>
+<tbody id="retrieval-results" data-list="hits" hidden></tbody>
+<tbody id="skeleton-rows" aria-hidden="true" hidden></tbody>
+</table>
+<div id="empty-state" class="empty" hidden>
+<span data-icon="search"></span>
+<h2>No matching artifacts</h2>
+<p id="empty-text">Nothing matches the applied query. Field values are exact and case-sensitive; expired artifacts are hidden unless you add <code>expired:true</code>.</p>
+<div class="row"><button type="button" id="empty-clear-button" class="btn">Clear search</button><button type="button" class="btn btn-ghost" data-open-syntax>Query syntax</button><a class="btn btn-ghost" href="#/upload"><span data-icon="upload"></span>Upload an artifact</a></div>
+</div>
+<div id="list-foot" class="list-foot" data-state="idle"><span id="list-foot-text"></span></div>
+</section>
+
+<section id="upload-section" data-view="upload" class="page page-narrow stack" aria-labelledby="upload-heading" hidden>
+<div class="page-head"><div><h1 id="upload-heading" class="page-title">Upload</h1><p class="page-sub">Each file becomes its own artifact; nothing is published until you press Upload. Directories and resumable uploads go through the <a href="#/cli">CLI</a>.</p></div></div>
 <section id="quick-upload" class="detail-panel quick-upload" aria-label="Quick upload" title="Paste or drop files to stage; Upload publishes each file. Directories use the CLI.">
 <form id="upload-form">
 <label for="upload-files" class="sr-only">Stage files</label>
@@ -75,62 +136,15 @@ required autocomplete="current-password" aria-describedby="login-note">
 <p id="upload-status" role="status" aria-live="polite"></p>
 <ul id="upload-list" aria-label="Staged uploads"></ul>
 </section>
-<section id="dashboard-section" aria-labelledby="artifacts-heading" hidden>
-<div class="page-heading">
-<div><p class="eyebrow">ARTIFACT CATALOGUE</p><h1 id="artifacts-heading">Artifacts</h1><p>Find, inspect, and manage files and directories.</p></div>
-<details class="upload-guide">
-<summary>Upload with the CLI</summary>
-<div class="upload-guide-body"><p>For directories, resumable uploads across sessions, and advanced options, use the CLI.</p><pre><code>manure upload ./path --access internal</code></pre><p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p></div>
-</details>
-</div>
+</section>
 
-<form id="list-form" class="search-panel">
-<div class="query-control query-text"><label for="filter-text">Search artifacts</label>
-<div class="expression-composer"><div class="query-input"><input type="text" id="filter-text" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="query-suggestions" aria-describedby="query-diagnostic draft-status" maxlength="131072" placeholder="Search or filter · access:public" autocomplete="off" spellcheck="false"><button type="button" id="clear-search-button" aria-label="Clear search query and focus search" title="Clear draft · Escape after closing suggestions">×</button></div>
-<div id="query-suggestions" class="expression-hints" role="listbox" aria-label="Expression suggestions" hidden></div></div></div>
-<div class="search-actions"><button type="submit" id="search-submit" class="primary">Search</button><button type="button" id="refresh-button" title="Refresh applied query, not the draft">Refresh</button></div>
-<div class="visibility-presets" role="group" aria-label="Access query presets">
-<button type="button" data-visibility-preset="" aria-pressed="true">All</button>
-<button type="button" data-visibility-preset="internal" aria-pressed="false">Internal</button>
-<button type="button" data-visibility-preset="external" aria-pressed="false">External</button>
-<button type="button" data-visibility-preset="public" aria-pressed="false">Public</button>
-</div>
-<p id="query-diagnostic" class="query-diagnostic" role="status" hidden></p>
-<p id="draft-status" class="search-help" role="status">Draft matches applied query.</p>
-<details id="query-syntax" class="search-help"><summary>Query syntax</summary>
-<p>Press Search to apply. Typing and suggestions never run retrieval. Fields are conjunctions: <code>access:internal|external|public</code>, <code>mode:catalogue|lexical|semantic|hybrid</code>.</p>
-<p>In all modes: <code>tag:release tag:reviewed</code> requires all tags; <code>hostname:build-host</code>, <code>project:"/work/repo"</code> match exact explicit metadata.</p>
-<p>Catalogue: literal name/ID text; <code>state:ready|uploading|publishing</code>, <code>expired:true|false</code>, <code>sort:name</code>, <code>direction:asc|desc</code>. Defaults: unexpired, created_at descending.</p>
-<p>Retrieval: names, tags, supplied provenance and manifest paths, never file bytes; <code>kind:file|dir</code>, <code>owner:"Exact User"</code>. Ready, unexpired artifacts; relevance order. Lexical uses English words/stems, quoted phrases, OR and -negation. Semantic/hybrid call the model only on Search or Refresh.</p>
-<p>Use <code>text:"exact text: with spaces"</code> for literal colons, JSON escapes, or arbitrary retrieval syntax. Do not combine text: with bare terms. Field names ignore case; closed values are lowercase; metadata values keep their exact case and whitespace. ↑↓ select · Enter insert · Escape close, then clear · Ctrl/⌘ K focus.</p>
-</details>
-</form>
-
-<div class="results-heading"><h2>Results <span id="loaded-count" class="count-badge">0 loaded</span></h2><span id="sort-summary">Created · newest first</span></div>
-<p id="results-help" class="scroll-help">Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width.</p>
-<p id="list-error" class="error" role="alert" hidden></p>
-<div id="results-panel" class="records-panel" role="region" aria-label="Artifact results" aria-describedby="results-help" tabindex="0">
-<table id="catalogue-table" class="artifacts">
-<caption class="sr-only">Artifact library. Column heading buttons sort all matching artifacts.</caption>
-<thead><tr>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="name" aria-label="Sort by Name">Name<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="kind" aria-label="Sort by Kind">Kind<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="visibility" aria-label="Sort by Access">Access<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="state" aria-label="Sort by State">State<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="total_bytes" aria-label="Sort by Size">Size<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="file_count" aria-label="Sort by Files">Files<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="descending"><button type="button" class="sort-header" data-sort="created_at" aria-label="Sort by Created">Created<span class="sort-indicator" aria-hidden="true">↓</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="expires_at" aria-label="Sort by Expires">Expires<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col" aria-sort="none"><button type="button" class="sort-header" data-sort="created_by_user" aria-label="Sort by Owner">Owner<span class="sort-indicator" aria-hidden="true">↕</span></button></th>
-<th scope="col">Actions</th>
-</tr></thead>
-<tbody id="artifact-list"></tbody>
-</table>
-<div id="retrieval-results" class="retrieval-results" hidden></div>
-<div id="empty-state" class="empty-state" hidden><span class="empty-mark" aria-hidden="true"></span><h3>No matching artifacts</h3><p>Try another search or access filter.<br>To add an artifact, paste or choose files above, or use the <code>manure</code> CLI.</p></div>
-<div id="list-sentinel" class="scroll-sentinel" aria-hidden="true"></div>
-</div>
-<div class="results-footer"><p id="list-status" role="status">Loading artifacts…</p><div class="results-actions"><button type="button" id="retry-list-button" hidden>Retry loading</button><button type="button" id="load-more-button" hidden>Load more</button></div></div>
+<section id="cli-section" data-view="cli" class="page page-narrow stack" aria-labelledby="cli-heading" hidden>
+<div class="page-head"><div><h1 id="cli-heading" class="page-title">Command-line client</h1><p class="page-sub">For directories, resumable uploads across sessions, and advanced options, use the CLI.</p></div><button type="button" class="btn" data-account-settings="tokens"><span data-icon="key"></span>Access tokens</button></div>
+<section class="card"><div class="card-body stack">
+<pre class="code-block"><code>manure upload ./path --access internal</code></pre>
+<p>Access modes: <code>internal</code>, <code>external</code>, or <code>public</code>.</p>
+<p class="muted">All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p>
+</div></section>
 </section>
 
 <section id="detail-section" aria-labelledby="detail-name" hidden>
@@ -150,7 +164,7 @@ required autocomplete="current-password" aria-describedby="login-note">
 <section class="detail-panel" aria-labelledby="detail-heading"><div class="panel-heading"><h2 id="detail-heading">Overview</h2><span class="muted">Artifact metadata</span></div><dl id="detail-list" class="metadata-list"></dl></section>
 <section class="detail-panel manifest-section" aria-labelledby="manifest-heading">
 <div class="panel-heading"><h2 id="manifest-heading">Content manifest</h2><span class="muted">Files &amp; directories</span></div>
-<div class="manifest-panel" role="region" aria-label="Content manifest" tabindex="0"><table><caption class="sr-only">Paths contained in this artifact</caption><thead><tr><th scope="col">Path</th><th scope="col">Kind</th><th scope="col">Size</th><th scope="col">Download</th></tr></thead><tbody id="file-list"></tbody></table></div>
+<div class="manifest-panel"><table><caption class="sr-only">Paths contained in this artifact</caption><thead><tr><th scope="col">Path</th><th scope="col">Kind</th><th scope="col" class="numeric-cell">Size</th><th scope="col">Download</th></tr></thead><tbody id="file-list"></tbody></table></div>
 <div class="manifest-footer"><p id="files-status" role="status">Loading file manifest…</p><button type="button" id="files-retry-button" hidden>Retry manifest</button></div>
 </section>
 </div>
@@ -159,7 +173,7 @@ required autocomplete="current-password" aria-describedby="login-note">
 <section class="detail-panel action-panel"><h2>Access &amp; sharing</h2>
 <form id="access-form" class="access-form">
 <label for="access-mode">Access mode</label>
-<select id="access-mode" aria-describedby="access-description" disabled><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select>
+<select id="access-mode" class="select" aria-describedby="access-description" disabled><option value="internal">Internal</option><option value="external">External</option><option value="public">Public</option></select>
 <p id="access-description">Access changes are available after the upload is ready.</p>
 <button type="submit" id="access-save-button" class="primary" disabled>Save access mode</button>
 <p id="access-status" role="status" aria-live="polite"></p>
@@ -172,9 +186,15 @@ required autocomplete="current-password" aria-describedby="login-note">
 </aside>
 </div>
 </section>
-</div>
-<footer class="workspace-footer"><p>Upload files here or use the <code>manure</code> CLI for directories and resumable uploads. This workspace also manages artifact access.</p><p>All configured users can manage all artifacts. Subdomain mode isolates artifact origins; path mode does not.</p></footer>
 </main>
+
+<div id="drop-overlay" class="drop-overlay" aria-live="assertive" hidden>
+<div class="drop-card">
+<span class="drop-icon"><span data-icon="upload"></span></span>
+<h2>Drop to upload</h2>
+<p id="drop-summary" class="muted">Files are staged on the Upload page; access can be changed there.</p>
+<p class="xs muted">Nothing is published until you press Upload there. Directories go through the CLI.</p>
+</div>
 </div>
 <noscript><p class="noscript-note">This dashboard requires JavaScript; the API and <code>manure</code> CLI remain usable without it.</p></noscript>
 </body>

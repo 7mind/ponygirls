@@ -269,11 +269,11 @@ async function main() {
       } catch (e) {
         ctx.console.push(`warning: cdp-attach-failed ${String(e).slice(0, 120)}`);
       }
-      // Auto-accept confirms (dashboard delete flow); every dialog is
-      // recorded so tests can assert it appeared.
+      // The dashboards use in-app dialogs only: a native dialog is recorded
+      // (so tests can assert none appeared) and dismissed.
       p.on("dialog", (d) => {
         ctx.dialogs.push({ type: d.type(), message: d.message(), url: p.url() });
-        d.accept().catch(() => {});
+        d.dismiss().catch(() => {});
       });
       p.on("pageerror", (e) => ctx.errors.push(`pageerror: ${String(e).slice(0, 300)}`));
       p.on("console", (msg) => {

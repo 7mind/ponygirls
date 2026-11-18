@@ -312,15 +312,19 @@ secret ever goes in a URL, log, or error.
 
 ## Artifact workspace
 
-The dashboard uses a responsive workspace layout with light/dark themes,
-access-mode navigation, full-catalogue search and sortable columns. The slate/blue
-palette follows Chronicle. Catalogue rows wrap into labeled metadata cards on
-narrower screens; every field, sort and action remains available without
-horizontal scrolling. Manifest paths and metadata wrap within their columns. Newest
-artifacts appear first. The table loads batches of 25 while scrolling;
-**Load more** provides keyboard access and works without IntersectionObserver.
-Search, filters and sort persist in the URL fragment, never in web storage.
-Failed batches preserve loaded rows and offer an explicit retry.
+The dashboard uses the shared design system (`shared/ui-web`): a masthead with
+Artifacts / Upload / CLI views (fragment routes `#/artifacts`, `#/artifact/<id>`,
+`#/upload`, `#/cli`), a System / Light / Dark theme menu and a user menu with the
+account pages, Access tokens and Sign out. The catalogue is a table in the document
+(one page scroller; the view bar and the table header stick), stays a table down to
+tablet widths, and shows newest artifacts first. It loads batches of 25 as the page
+is scrolled; the counter says how many rows are loaded and the list ends with an
+explicit end marker. Failed batches preserve loaded rows and offer an explicit
+retry. Back from an artifact returns to the same loaded rows and scroll position.
+The access scope (All / Internal / External / Public) and the shortcut toggles apply
+at once; field shortcuts only insert text. Search, filters and sort persist in the
+URL fragment, never in web storage. Deleting and making an artifact public ask in
+an in-app dialog.
 
 One query field holds search text, mode and filters, with caret-aware completion
 and an in-field clear button. The same expression is accepted by the MCP `search`
@@ -375,8 +379,9 @@ internal grant handoff (isolated origin in default subdomain mode only); when co
 is advertised. All configured users can manage all
 artifacts; the sidebar is an access filter, not an ownership boundary.
 
-**Quick upload:** after logging in, paste a screenshot (Ctrl+V), drop files
-onto the upload panel, or choose files (including PDFs). These actions only
+**Quick upload:** after logging in, paste a screenshot (Ctrl+V) or drop files
+anywhere in the dashboard (both continue on the Upload view), or choose files there
+(including PDFs). These actions only
 stage files; **Upload** explicitly publishes each file as a separate artifact.
 The compact upload row contains the file picker, three adjacent access choices,
 and Upload/Dismiss buttons. Choose access before clicking Upload: **Internal**

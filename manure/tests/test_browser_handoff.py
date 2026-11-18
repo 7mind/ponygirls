@@ -47,11 +47,11 @@ class HandoffFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             # Plain click (no waitForUrl: localhost navigations can settle
             # before a waiter attaches; the title poll below proves the
             # landing without any race).

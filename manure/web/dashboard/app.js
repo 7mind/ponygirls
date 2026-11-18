@@ -1,10 +1,13 @@
-/* Manure dashboard: same-origin management only; uploaded bytes never render here.
- * Credentials and one-time passwords stay transient. No HTML injection or browser storage.
+/* Manure dashboard shell: session, masthead, fragment routes and the artifact catalogue.
+ * Same-origin management only; uploaded bytes never render here. Credentials and one-time
+ * passwords stay transient. No HTML injection; account surfaces belong to account.js.
  */
 import * as current from "./current-protocol.js";
-import { ID_RE, domHelpers, errorLabel, bytes, dateText, expired, contentUrl } from "./common.js";
+import { ID_RE, domHelpers, errorLabel, bytes, expired, contentUrl } from "./common.js";
+import { createOverlays } from "./overlays.js";
 import { createDetail } from "./detail.js";
 import { createUpload } from "./upload.js";
+import { createAccountClient, ACCOUNT_REQUEST_TIMEOUT_MS } from "./account-client.js";
 import { parseExpression, serializeExpression, completeExpression, acceptCompletion } from "./current-protocol.js";
 
 "use strict";
@@ -77,8 +80,17 @@ function expressionInput(input, list, change, compositionChange) {
 
 (function (document, window, fetch) {
   var PAGE_LIMIT = 25;
+  var SKELETON_ROWS = 14;
+  var SOON_MS = 48 * 3600 * 1000;
+  var MINUTE_MS = 60 * 1000, HOUR_MS = 60 * MINUTE_MS, DAY_MS = 24 * HOUR_MS;
+  var ACCOUNT_PREFIX = "#account";
+  var VIEWS = { catalogue: "dashboard-section", upload: "upload-section", cli: "cli-section", detail: "detail-section" };
+  var ACCESS_CHIPS = { internal: ["chip", "lock", "Internal"], external: ["chip chip-warn", "key", "External"], public: ["chip chip-info", "external", "Public"] };
+  var STATES = { uploading: ["status status-run", "Uploading"], publishing: ["status status-run", "Publishing"] };
+  var EVIDENCE = { name: "Name", manifestpath: "Manifest path", tag: "Tag", hostname: "Hostname", projectpath: "Project path" };
   var listGeneration = 0;
   var pendingPage = null;
+  var pendingReset = false;
   var readBusy = false;
   var queuedRead = null;
   var capabilities = null;
@@ -93,13 +105,22 @@ function expressionInput(input, list, change, compositionChange) {
   var summaries = [];
   var listError = false;
   var observer = null;
+  var view = null;
+  // Where the catalogue was left (rows stay cached): restored on return, keyed by the applied query.
+  var listPlace = null;
+  var detailFromList = false;
+  var dragDepth = 0;
   var state = readRoute().state;
-  var ctx = Object.assign({ document: document, window: window, fetch: fetch, apiFetch: apiFetch,
+  var dateFormat = new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+  var overlays = createOverlays(document, window);
+  var ctx = Object.assign({ document: document, window: window, fetch: fetch, apiFetch: apiFetch, overlays: overlays,
     sessionEpoch: 0, authenticated: false, deleting: new Set(), accessMutations: new Map() }, domHelpers(document));
   var $ = ctx.$, setText = ctx.setText, element = ctx.element;
+  var accountClient = createAccountClient({ fetch: fetch, requestTimeoutMs: ACCOUNT_REQUEST_TIMEOUT_MS, signal: null });
   var detail = createDetail(ctx, { readRoute: readRoute, routeHash: routeHash, renderList: renderList, invalidateCatalogue: invalidateCatalogue,
-    failVisible: failVisible, invalidateNavigation: invalidateNavigation, suspendForDetail: suspendForDetail, detailFailed: detailFailed });
+    failVisible: failVisible, backToList: backToList, showCatalogue: function () { showView("catalogue"); }, suspendForDetail: suspendForDetail, detailFailed: detailFailed });
   var upload = createUpload(ctx, { showLoggedOut: showLoggedOut, reloadAfterUpload: reloadAfterUpload }, detail.copy);
+  overlays.hydrateIcons(document);
 
   function apiFetch(descriptor) {
     var epoch = ctx.sessionEpoch;
@@ -112,7 +133,7 @@ function expressionInput(input, list, change, compositionChange) {
     });
   }
   function checkHostingMode() {
-    var notice = $("path-mode-warning");
+    var chip = $("path-mode-warning");
     // Hosting capabilities are public, site-wide state: a concurrent session
     // check/login/logout must not discard the warning response.
     var generation = ++capabilityGeneration;
@@ -121,38 +142,36 @@ function expressionInput(input, list, change, compositionChange) {
       if (!Number.isInteger(result.max_list_limit) || result.max_list_limit < 1 ||
           !Array.isArray(result.search_modes) || typeof result.metadata_only_search !== "boolean") { throw new Error("bad-response"); }
       capabilities = result; capabilitiesError = false;
-      notice.hidden = result.content_mode !== "path";
+      chip.hidden = result.content_mode !== "path";
+      chip.dataset.hosting = "path";
+      setText("path-mode-label", "Path-mode hosting");
+      chip.title = "Low-security path hosting: artifacts share the dashboard/API origin and can exercise your browser session permissions. Trusted content only.";
       updateDraft();
-      if (ctx.authenticated && readRoute().id === null) { handleRoute(true); }
+      if (ctx.authenticated && readRoute().view === "catalogue") { handleRoute(true); }
     }).catch(function () {
       if (generation !== capabilityGeneration) { return; }
       capabilities = null; capabilitiesError = true;
-      notice.hidden = false;
-      notice.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
-      notice.setAttribute("aria-label", notice.title);
+      chip.hidden = false;
+      chip.dataset.hosting = "unknown";
+      setText("path-mode-label", "Isolation unknown");
+      chip.title = "Content-origin isolation could not be determined. Verify hosting configuration before opening untrusted content.";
       updateDraft();
-      if (ctx.authenticated && readRoute().id === null) { handleRoute(true); }
+      if (ctx.authenticated && readRoute().view === "catalogue") { handleRoute(true); }
     });
   }
   function supported(value) {
     return capabilities !== null && capabilities.search_modes.includes(value) && capabilities.metadata_only_search;
   }
-  function resultStatus() {
-    if (state.mode === "catalogue") {
-      return summaries.length + " artifacts shown" + (nextCursor !== null ? " · scroll to load more" : " · all matching artifacts loaded");
-    }
-    if (searchPage === null) { return "Press Search to run retrieval. No model query has been sent."; }
-    var scope = searchPage.count_scope === "exactmatches" ? "matching artifacts" : "candidate-window artifacts";
-    return searchPage.hits.length + " hits shown · " + searchPage.total + " " + scope +
-      (searchPage.count_scope === "candidatewindow" ? " (ranked candidate window " + searchPage.ranking_limit + "; not a corpus-wide total)" : " (exact matches)") +
-      " · one page, up to " + Math.min(PAGE_LIMIT,capabilities.max_list_limit) + " hits";
-  }
 
+  // ── Routes ─────────────────────────────────────────────────────────────
+  // #/artifacts?query=… (catalogue) · #/artifact/<id>?query=… · #/upload · #/cli; #account… belongs to account.js.
   function readRoute() {
     var hash = window.location.hash;
     var queryAt = hash.indexOf("?");
     var params = new URLSearchParams(queryAt === -1 ? "" : hash.slice(queryAt + 1));
     var match = /^#\/artifact\/([0-9a-f]{32})(?:\?|$)/.exec(hash);
+    var page = /^#\/(upload|cli)(?:\?|$)/.exec(hash);
+    var routeView = match ? "detail" : page ? page[1] : "catalogue";
     var parts = [];
     params.forEach(function (value,key) {
       if (["mode","access","state","expired","kind","owner","sort","direction","tag","hostname","project","q"].includes(key)) {
@@ -162,11 +181,10 @@ function expressionInput(input, list, change, compositionChange) {
     var expression = [params.get("query"),parts.join(" ")].filter(function (value) { return value; }).join(" ");
     try {
       if (params.getAll("query").length > 1) { throw new current.ExpressionError("Duplicate query URL parameter.",0,expression.length); }
-      return { id: match ? match[1] : null, state: parseExpression(expression), error: null, expression: expression };
+      return { view: routeView, id: match ? match[1] : null, state: parseExpression(expression), error: null, expression: expression };
     }
-    catch (error) { return { id: match ? match[1] : null, state: parseExpression(""), error: error, expression: expression }; }
+    catch (error) { return { view: routeView, id: match ? match[1] : null, state: parseExpression(""), error: error, expression: expression }; }
   }
-
   function stateParams(value) {
     var params = new URLSearchParams();
     var expression = serializeExpression(value);
@@ -177,7 +195,34 @@ function expressionInput(input, list, change, compositionChange) {
     var query = stateParams(state).toString();
     return (id ? "#/artifact/" + id : "#/artifacts") + (query ? "?" + query : "");
   }
+  function showView(name) {
+    view = name;
+    $("main").dataset.currentView = name;
+    Object.keys(VIEWS).forEach(function (key) { $(VIEWS[key]).hidden = key !== name; });
+    markNav(navName(name));
+  }
+  function navName(name) { return name === "detail" || name === "catalogue" ? "artifacts" : name; }
+  function markNav(current) {
+    document.querySelectorAll("[data-nav]").forEach(function (link) {
+      if (link.dataset.nav === current) { link.setAttribute("aria-current", "page"); }
+      else { link.removeAttribute("aria-current"); }
+    });
+  }
+  // The Artifacts link and the brand return to the applied query, not to an empty catalogue.
+  function updateListLinks() {
+    var hash = routeHash(null);
+    document.querySelectorAll('[data-nav="artifacts"], .brand').forEach(function (link) { link.setAttribute("href", hash); });
+  }
+  function backToList() {
+    if (detailFromList) { window.history.back(); return; }
+    invalidateNavigation(); window.location.hash = routeHash(null);
+  }
+
+  // ── Query bar ──────────────────────────────────────────────────────────
   function draftState() { return parseExpression($("filter-text").value); }
+  function draftDiffers() {
+    try { return JSON.stringify(draftState()) !== JSON.stringify(state); } catch (_error) { return true; }
+  }
   function updateDraft() {
     var draft = null, diagnostic = null;
     try { draft = draftState(); } catch (error) { diagnostic = error; }
@@ -186,34 +231,50 @@ function expressionInput(input, list, change, compositionChange) {
     $("query-diagnostic").hidden = diagnostic === null && !unavailable;
     $("query-diagnostic").textContent = diagnostic !== null ? diagnostic.message : unavailable ? "Retrieval mode " + draft.mode + " unavailable; no fallback will be sent." : "";
     $("filter-text").setAttribute("aria-invalid", String(diagnostic !== null));
+    $("list-form").dataset.invalid = String(diagnostic !== null);
     $("refresh-button").disabled = readRoute().error !== null;
-    $("clear-search-button").disabled = composing || $("filter-text").value.length === 0;
-    setText("draft-status", differs ? "Draft changed · press Search to apply. Sort is disabled. Applied: " + (serializeExpression(state) || "all unexpired artifacts · created_at descending") : "Draft matches applied query · Search to run. Typing never sends a request.");
+    $("clear-search-button").hidden = $("filter-text").value.length === 0;
+    $("clear-search-button").disabled = composing;
+    $("draft-status").hidden = !differs;
+    $("search-shortcut").hidden = differs;
+    setText("draft-status-text", differs ? "Draft changed — press Enter to apply" : "Draft matches applied query");
+    $("draft-status").title = differs ? "Applied: " + (serializeExpression(state) || "all unexpired artifacts · created_at descending") + ". Sorting and shortcuts wait until the draft is applied or cleared." : "";
     document.querySelectorAll("[data-sort]").forEach(function (button) {
       button.disabled = state.mode !== "catalogue" || differs;
-      button.title = differs ? "Apply or clear the changed draft before sorting" : "Sort applied query";
+      button.title = state.mode !== "catalogue" ? "Retrieval results are ordered by relevance" : differs ? "Apply or clear the changed draft before sorting" : "Sort applied query";
     });
-    setText("sort-summary", state.mode !== "catalogue" ? "Relevance order · not sortable" : "Sorted by " + document.querySelector('[data-sort="' + state.sort + '"]').getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓"));
-    setText("results-help", state.mode === "catalogue" ? "Sort all matching artifacts by any column. Scroll down within results to load more. All metadata and actions fit the available width." : "One bounded page in relevance order. Evidence is pinned artifact metadata or a manifest path, not file contents; opening details fetches fresh metadata.");
-    $("catalogue-table").hidden = state.mode !== "catalogue";
-    $("retrieval-results").hidden = state.mode === "catalogue";
+    document.querySelectorAll("[data-visibility-preset], [data-toggle-preset]").forEach(function (button) {
+      button.disabled = differs || button.dataset.togglePreset !== undefined && state.mode !== "catalogue";
+    });
+    $("sort-summary").hidden = state.mode === "catalogue";
+    setText("sort-summary", state.mode === "catalogue" ? "Sorted by " + document.querySelector('[data-sort="' + state.sort + '"]').getAttribute("aria-label").replace(/^Sort by /, "") + (state.direction === "asc" ? " ↑" : " ↓") : retrievalSummary());
+  }
+  function retrievalSummary() {
+    if (searchPage === null) { return "Relevance order · not sortable"; }
+    var scope = searchPage.count_scope === "exactmatches" ? searchPage.total + " exact matches" :
+      searchPage.total + " candidate-window artifacts (ranked candidate window " + searchPage.ranking_limit + "; not a corpus-wide total)";
+    return "Relevance order · " + scope + " · one page, up to " + Math.min(PAGE_LIMIT, capabilities.max_list_limit) + " hits";
   }
   function updateControls() {
     $("filter-text").value = serializeExpression(state);
     if (typeof queryEditor !== "undefined") { queryEditor.close(); }
     document.querySelectorAll("[data-sort]").forEach(function (button) {
       var selected = button.dataset.sort === state.sort && state.mode === "catalogue";
-      button.disabled = state.mode !== "catalogue";
-      button.closest("th").setAttribute("aria-sort", selected ? state.direction === "asc" ? "ascending" : "descending" : "none");
-      var arrow = button.querySelector(".sort-indicator");
-      if (arrow !== null) { arrow.textContent = selected ? state.direction === "asc" ? "↑" : "↓" : "↕"; }
+      // Only the sorted column carries aria-sort (the shared header style draws its arrow).
+      if (selected) { button.closest("th").setAttribute("aria-sort", state.direction === "asc" ? "ascending" : "descending"); }
+      else { button.closest("th").removeAttribute("aria-sort"); }
     });
     document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {
       button.setAttribute("aria-pressed", String(button.dataset.visibilityPreset === (state.visibility || "")));
     });
+    document.querySelector('[data-toggle-preset="uploading"]').setAttribute("aria-pressed", String(state.mode === "catalogue" && state.itemState === "uploading"));
+    document.querySelector('[data-toggle-preset="expired"]').setAttribute("aria-pressed", String(state.mode === "catalogue" && state.includeExpired));
+    $("catalogue-table").dataset.mode = state.mode;
+    updateListLinks();
     updateDraft();
   }
 
+  // ── Navigation and list state ──────────────────────────────────────────
   function invalidateNavigation() {
     listGeneration++; pendingPage = null; queuedRead = null;
     if (observer !== null) { observer.disconnect(); }
@@ -230,15 +291,43 @@ function expressionInput(input, list, change, compositionChange) {
     if (window.location.hash === hash) { handleRoute(); }
     else { window.location.hash = hash; }
   }
+  // Applies a shortcut to the applied query at once (catalogue reads; retrieval waits for Search).
+  function applyShortcut(change) {
+    if (composing || draftDiffers()) { return; }
+    var next = Object.assign({}, state, change);
+    try { serializeExpression(next); }
+    catch (error) {
+      if (!(error instanceof current.ExpressionError)) { throw error; }
+      notice("danger", error.message + " Query and results unchanged.", false); return;
+    }
+    navigateList(next, next.mode === "catalogue");
+  }
+  // Leaving the catalogue keeps its rows; only pending reads are fenced. A cancelled first page reloads on return.
+  function leaveCatalogue() {
+    if (view === "catalogue") { listPlace = { key: loadedKey, y: window.scrollY, focus: listPlace !== null && listPlace.pendingFocus ? listPlace.pendingFocus : null }; }
+    listGeneration++; pendingPage = null; queuedRead = null;
+    if (observer !== null) { observer.disconnect(); }
+    if (pendingReset) { loadedKey = ""; pendingReset = false; }
+    if (state.mode !== "catalogue" && searchPage === null) { submittedKey = null; }
+  }
+  function suspendForDetail() { leaveCatalogue(); }
   function handleRoute(keepDraft) {
     if (!ctx.authenticated) { return; }
+    if (window.location.hash.startsWith(ACCOUNT_PREFIX)) { markNav(null); return; }
     var route = readRoute();
+    if (route.view === "upload" || route.view === "cli") {
+      if (view !== route.view) {
+        leaveCatalogue(); detail.leave(); detailFromList = false;
+        showView(route.view); window.scrollTo(0, 0);
+      }
+      return;
+    }
     var changed = JSON.stringify(route.state) !== JSON.stringify(state);
     var currentDraft = keepDraft === true || !changed ? $("filter-text").value : null;
     if (changed) {
       // Direct hash/history navigation bypasses navigateList. Fence both a held
       // result and any queued unsent intent before changing the owner of rows.
-      invalidateNavigation(); loadedKey = ""; submittedKey = null;
+      invalidateNavigation(); loadedKey = ""; submittedKey = null; listPlace = null;
     }
     state = route.state;
     updateControls();
@@ -246,36 +335,75 @@ function expressionInput(input, list, change, compositionChange) {
     if (route.error !== null) {
       invalidateNavigation(); loadedKey = ""; summaries = []; searchPage = null; nextCursor = null;
       $("filter-text").value = route.expression; updateDraft(); renderList();
-      $("detail-section").hidden = true; $("dashboard-section").hidden = false;
-      $("retry-list-button").hidden = true;
-      setText("list-status", "Invalid URL query. Edit the visible expression and press Search; no request was sent.");
+      detail.leave(); showView("catalogue");
+      notice("warn", "Invalid URL query. Edit the visible expression and press Search; no request was sent.", false);
+      setCounter("Not loaded");
       return;
     }
-    if (route.id !== null) { detail.showDetail(route.id); return; }
-    detail.leave();
-    $("dashboard-section").hidden = false;
+    if (route.id !== null) {
+      if (view === "catalogue") { leaveCatalogue(); } else { detailFromList = false; }
+      // The detail section replaces the list once the artifact has loaded (detail.js); other views close now.
+      view = "detail"; $("main").dataset.currentView = "detail"; markNav("artifacts");
+      $("upload-section").hidden = true; $("cli-section").hidden = true;
+      window.scrollTo(0, 0);
+      detail.showDetail(route.id); return;
+    }
+    detail.leave(); detailFromList = false;
+    var returning = view !== "catalogue";
+    showView("catalogue");
     if (loadedKey !== JSON.stringify(state)) {
+      listPlace = null;
       summaries = []; searchPage = null; nextCursor = null; renderList();
       if (capabilities === null) {
-        setText("list-status", capabilitiesError ? "Capabilities unavailable. Retry connection; no search was sent." : "Checking search capabilities…");
-        $("retry-list-button").hidden = !capabilitiesError;
+        setCounter(capabilitiesError ? "Not loaded" : "Loading artifacts…");
+        if (capabilitiesError) { notice("danger", "Capabilities unavailable. Retry connection; no search was sent.", true); }
+        else { notice("info", "Checking search capabilities…", false); }
       } else if (state.mode !== "catalogue" && !supported(state.mode)) {
-        setText("list-status", "Retrieval mode " + state.mode + " unavailable on this server. No fallback was sent.");
-        $("retry-list-button").hidden = false;
+        setCounter("Not loaded");
+        notice("warn", "Retrieval mode " + state.mode + " unavailable on this server. No fallback was sent.", true);
       } else if (state.mode !== "catalogue" && submittedKey !== JSON.stringify(state)) {
-        setText("list-status", resultStatus());
+        setCounter("Not searched");
+        notice("info", "Press Search to run retrieval. No model query has been sent.", false);
       } else { loadPage(true); }
     }
     else {
       renderList();
-      if (!listError) { setText("list-status", resultStatus()); }
+      if (returning) { restorePlace(); }
       watchList();
     }
   }
+  // Back from a detail (or another view): same rows, same scroll position, focus on the originating row.
+  function restorePlace() {
+    var place = listPlace;
+    listPlace = null;
+    if (place === null || place.key !== loadedKey) { return; }
+    window.scrollTo(0, place.y);
+    if (place.focus !== null) {
+      var target = document.querySelector('#catalogue-table [data-action="details"][data-artifact-id="' + place.focus + '"]');
+      if (target !== null) { target.focus({ preventScroll: true }); }
+    }
+  }
+  function openFromList(event, id) {
+    if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) { return; }
+    event.preventDefault();
+    listPlace = { pendingFocus: id };
+    detailFromList = true;
+    window.location.hash = routeHash(id);
+  }
 
+  // ── Session ────────────────────────────────────────────────────────────
+  // The signed-out view: account.js renders the login card into main[data-account-auth].
+  function removeAuthMount() {
+    $("login-section").hidden = true;
+    $("login-section").replaceChildren();
+  }
+  function removeOutlet() {
+    var outlet = document.querySelector("[data-account-outlet]");
+    if (outlet !== null) { outlet.remove(); }
+  }
   function clearAccount() {
-    document.dispatchEvent(new window.Event('account:invalidate'));
-    delete $("account-settings").dataset.accountUserId;
+    // Removing the outlet tears the account area down (account.js observes it).
+    removeOutlet();
     upload.clearUploads();
     var hadAccount = ctx.authenticated;
     ctx.sessionEpoch++; invalidateNavigation(); ctx.authenticated = false;
@@ -285,19 +413,26 @@ function expressionInput(input, list, change, compositionChange) {
     state = readRoute().state;
     updateControls();
     summaries = []; searchPage = null; submittedKey = null; queuedRead = null; loadedKey = ""; nextCursor = null; listError = false;
+    listPlace = null; detailFromList = false; view = null;
     if (observer !== null) { observer.disconnect(); }
     $("artifact-list").textContent = ""; $("retrieval-results").textContent = "";
     detail.clear();
-    setText("whoami-text", ""); setText("list-status", "");
-    $("list-error").hidden = true;
-    $("detail-section").hidden = true;
-    $("dashboard-section").hidden = true;
-    $("whoami").hidden = true;
-    $("workspace-shell").hidden = true;
+    setText("whoami-text", ""); setText("whoami-label", ""); setText("whoami-avatar", "");
+    setCounter(""); clearNotice();
+    $("users-menu-item").hidden = true;
+    Object.keys(VIEWS).forEach(function (key) { $(VIEWS[key]).hidden = true; });
+    $("main-nav").hidden = true;
+    $("user-menu-anchor").hidden = true;
+    $("main").hidden = true;
   }
   function showLoggedOut() {
     clearAccount();
     $("session-section").hidden = true;
+    if ($("login-section").children.length === 0) {
+      var mount = element("main", null, null);
+      mount.setAttribute("data-account-auth", "");
+      $("login-section").appendChild(mount);
+    }
     $("login-section").hidden = false;
   }
   function checkSession() {
@@ -310,211 +445,259 @@ function expressionInput(input, list, change, compositionChange) {
       if (epoch !== ctx.sessionEpoch) { return false; }
       if (typeof body.user_id !== "string" || !body.user_id) { throw new Error("bad-response"); }
       ctx.authenticated = true;
+      removeAuthMount();
       $("session-section").hidden = true;
-      $("login-section").hidden = true;
-      $("workspace-shell").hidden = false;
-      $("whoami").hidden = false;
-      $("dashboard-section").hidden = false;
+      $("main").hidden = false;
+      $("main-nav").hidden = false;
+      $("user-menu-anchor").hidden = false;
       setText("whoami-text", body.user_id);
-      $("account-settings").dataset.accountUserId = body.user_id;
+      setText("whoami-label", body.user_id);
+      setText("whoami-avatar", Array.from(body.user_id)[0].toUpperCase());
+      var outlet = element("div", null, null);
+      outlet.setAttribute("data-account-outlet", "");
+      outlet.dataset.accountUserId = body.user_id;
+      outlet.hidden = true;
+      $("main").after(outlet);
+      showUsersEntry(epoch, body.user_id);
       updateControls(); handleRoute();
       if (capabilities === null) { checkHostingMode(); }
       return true;
     }).catch(function (error) {
       if (epoch !== ctx.sessionEpoch || error.message === "unauthorized") { return false; }
-      $("login-section").hidden = true;
+      removeAuthMount();
       $("session-section").hidden = false;
       setText("session-status", "The service is unavailable (" + errorLabel(error) + "). This does not mean your session expired.");
       $("session-retry-button").hidden = false;
       return false;
     }).finally(function () { $("session-retry-button").disabled = false; });
   }
-  function onLogout() {
-    document.dispatchEvent(new window.Event('account:invalidate'));
-    upload.clearUploads();
-    detail.cancelOpen();
-    var epoch = ctx.sessionEpoch;
-    $("logout-button").disabled = true;
-    apiFetch(current.logout()).then(function () {
-      if (epoch === ctx.sessionEpoch) { showLoggedOut(); }
-    }).catch(function (error) {
-      if (epoch === ctx.sessionEpoch) { failVisible("Sign out could not be confirmed (" + errorLabel(error) + "). Retry to confirm sign out."); }
-    }).finally(function () { $("logout-button").disabled = false; });
+  // The Users entry is for administrators only; servers without the account profile endpoint have none.
+  function showUsersEntry(epoch, userId) {
+    accountClient.profile().then(function (profile) {
+      if (epoch === ctx.sessionEpoch) { $("users-menu-item").hidden = !(profile.user.id === userId && profile.manage.users); }
+    }, function () {
+      if (epoch === ctx.sessionEpoch) { $("users-menu-item").hidden = true; }
+    });
   }
 
-  function rowAction(label, action, item, handler) {
-    var button = element("button", label, action === "delete" ? "danger" : null);
-    button.type = "button"; button.dataset.action = action; button.dataset.artifactId = item.artifact_id;
-    button.addEventListener("click", handler);
-    return button;
+  // ── Catalogue rendering ────────────────────────────────────────────────
+  function setCounter(text) { setText("list-status", text); }
+  // One persistent inline notice for the list (spec §1.8); kind: info | warn | danger; title may be null.
+  function notice(kind, text, retry, title) {
+    var box = $("list-notice");
+    box.className = "notice list-notice" + (kind === "info" ? "" : " notice-" + kind);
+    box.setAttribute("role", kind === "danger" ? "alert" : "status");
+    box.firstElementChild.replaceWith(overlays.iconNode(kind === "info" ? "info" : "alert", ""));
+    $("list-notice-title").hidden = title === undefined || title === null;
+    setText("list-notice-title", title === undefined || title === null ? "" : title);
+    setText("list-notice-text", text);
+    $("retry-list-button").hidden = !retry;
+    box.hidden = false;
   }
-  function appendCopyLink(container, item) {
-    var url = contentUrl(item, window.location.origin);
-    var label = item.name || item.artifact_id;
-    function unavailable() {
-      return contentUrl(item, window.location.origin) === null ? "Content link unavailable" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" :
-        ctx.accessMutations.has(item.artifact_id) || ctx.deleting.has(item.artifact_id) ? "Artifact update in progress" : null;
+  function clearNotice() { $("list-notice").hidden = true; $("retry-list-button").hidden = true; }
+  function failVisible(message) {
+    setText("detail-status", message);
+    notice("danger", message, $("retry-list-button").hidden === false || listError);
+  }
+  function relative(time) {
+    var delta = time - Date.now(), span = Math.abs(delta);
+    var text = span < HOUR_MS ? Math.max(1, Math.round(span / MINUTE_MS)) + " min" : span < DAY_MS ? Math.round(span / HOUR_MS) + " h" : Math.round(span / DAY_MS) + " d";
+    return delta < 0 ? text + " ago" : "in " + text;
+  }
+  function timeCell(value, className) {
+    var cell = element("td", null, className);
+    var date = new Date(value);
+    if (!Number.isFinite(date.getTime())) { cell.textContent = "Unknown"; return cell; }
+    cell.title = date.toISOString();
+    cell.append(dateFormat.format(date), element("span", relative(date.getTime()), "sub"));
+    return cell;
+  }
+  function expiryCell(item) {
+    var cell = element("td", null, "hide-md");
+    if (item.expires_at === null || item.expires_at === undefined) { cell.appendChild(element("span", "Never", "faint")); return cell; }
+    var date = new Date(item.expires_at);
+    if (!Number.isFinite(date.getTime())) { cell.textContent = "Unknown"; return cell; }
+    var delta = date.getTime() - Date.now();
+    cell.title = date.toISOString();
+    cell.append(delta > 0 && delta < SOON_MS ? element("span", relative(date.getTime()), "status status-warn") : relative(date.getTime()),
+      element("span", dateFormat.format(date), "sub"));
+    return cell;
+  }
+  function artifactRow(item, evidence) {
+    var id = item.artifact_id, label = item.name || id, isExpired = expired(item);
+    var row = element("tr", null, isExpired ? "is-expired" : null);
+    row.dataset.artifactId = id;
+    row.dataset.visibility = item.visibility;
+    var kind = element("span", null, item.kind === "dir" ? "kind kind-dir" : "kind");
+    kind.title = item.kind === "dir" ? "Directory" : "File";
+    kind.append(overlays.iconNode(item.kind === "dir" ? "folder" : "file", ""), element("span", kind.title, "sr-only"));
+    var link = element("a", label, "cell-title");
+    link.href = routeHash(id); link.title = label;
+    link.dataset.action = "details"; link.dataset.artifactId = id;
+    link.addEventListener("click", function (event) { openFromList(event, id); });
+    var sub = element("div", null, "cell-sub");
+    if (isExpired) { sub.appendChild(element("span", "Expired", "status status-danger")); }
+    else if (STATES[item.state]) { sub.appendChild(element("span", STATES[item.state][1], STATES[item.state][0])); }
+    if (evidence === null) { sub.appendChild(element("span", id, "hex")); }
+    else {
+      var matched = element("span", "Matched · " + evidence.text, "evidence");
+      matched.title = evidence.source;
+      sub.appendChild(matched);
     }
-    var button = rowAction("", "copy-link", item, function (event) {
-      event.preventDefault(); event.stopPropagation();
-      if (button.disabled) { return; }
-      var reason = unavailable();
-      if (reason !== null) {
-        button.disabled = true; button.title = reason;
-        status.textContent = reason + ". Content link unavailable."; fallback.hidden = true; return;
-      }
-      var epoch = ctx.sessionEpoch, generation = listGeneration;
-      function active() { return epoch === ctx.sessionEpoch && generation === listGeneration && button.isConnected; }
-      function manual(message) {
-        if (!active()) { return; }
-        var reason = unavailable();
-        if (reason !== null) { status.textContent = reason + ". Content link unavailable."; fallback.hidden = true; return; }
-        status.textContent = message + " Select the content link and copy it manually.";
-        fallback.hidden = false; field.focus(); field.select();
-      }
-      fallback.hidden = true;
-      button.setAttribute("aria-label", "Copy content link for " + label);
-      button.title = "Copy content link (no password or access grant)";
-      if (!window.navigator.clipboard || typeof window.navigator.clipboard.writeText !== "function") {
-        manual("Clipboard is unavailable."); return;
-      }
-      button.disabled = true;
-      status.textContent = "Copying content link…";
-      var pending;
-      try { pending = window.navigator.clipboard.writeText(url); }
-      catch (_error) { pending = Promise.reject(_error); }
-      Promise.resolve(pending).then(function () {
-        if (!active()) { return; }
-        status.textContent = "Content link copied.";
-        button.setAttribute("aria-label", "Content link copied for " + label);
-        button.title = "Content link copied";
-      }).catch(function () { manual("Clipboard access was denied."); }).finally(function () {
-        if (active()) { button.disabled = unavailable() !== null; if (button.disabled) { button.title = unavailable(); } }
-      });
-    });
-    button.className = "record-copy";
-    button.setAttribute("aria-label", "Copy content link for " + label);
-    button.title = unavailable() || "Copy content link (no password or access grant)";
-    button.disabled = unavailable() !== null;
-    var icon = element("span", "⧉", null); icon.setAttribute("aria-hidden", "true"); button.appendChild(icon);
-    container.appendChild(button);
-    var status = element("span", "", "record-copy-status"); status.setAttribute("role", "status");
-    var fallback = element("span", null, "record-copy-fallback"); fallback.hidden = true;
-    var field = element("input", null, null); field.type = "text"; field.readOnly = true; field.value = url || "";
-    field.setAttribute("aria-label", "Content link for " + label);
-    var dismiss = element("button", "Dismiss link", null); dismiss.type = "button";
-    dismiss.addEventListener("click", function () { fallback.hidden = true; status.textContent = ""; button.focus(); });
-    fallback.append(field, dismiss);
-    container.append(status, fallback);
+    var grow = element("div", null, "grow"); grow.append(link, sub);
+    var nameCell = element("td", null, null);
+    var nameBox = element("div", null, "name-cell"); nameBox.append(kind, grow); nameCell.appendChild(nameBox);
+    var access = ACCESS_CHIPS[item.visibility];
+    var chip = element("span", null, access[0]); chip.append(overlays.iconNode(access[1], "icon-sm"), access[2]);
+    var accessCell = element("td", null, null); accessCell.appendChild(chip);
+    row.append(nameCell, accessCell, element("td", bytes(item.total_bytes), "col-num hide-sm"), element("td", String(item.file_count), "col-num hide-md"),
+      timeCell(item.created_at, "hide-sm"), expiryCell(item), element("td", item.created_by_user, "hide-md"), actionsCell(item, label));
+    return row;
   }
-  function renderRetrieval() {
-    var list = $("retrieval-results");
-    var fragment = document.createDocumentFragment();
-    if (searchPage !== null) { searchPage.hits.forEach(function (hit) {
-      var item = hit.artifact;
-      var card = element("article", null, "retrieval-hit");
-      var heading = element("h3", null, null);
-      heading.appendChild(rowAction(item.name || item.artifact_id, "details", item, function () {
-        invalidateNavigation(); window.location.hash = routeHash(item.artifact_id);
-      }));
-      heading.className = "record-heading"; appendCopyLink(heading, item);
-      card.appendChild(heading);
-      card.appendChild(element("p", item.artifact_id + " · " + item.kind + " · " + item.visibility + " · created by " + item.created_by_user, null));
-      card.appendChild(element("p", "Pinned source " + hit.source_version + " · generation " + hit.generation_id + " · policy " + hit.policy_id, "source-note"));
-      var evidence = element("ul", null, "evidence-list");
-      hit.evidence.forEach(function (entry) {
-        evidence.appendChild(element("li", ({name:"Name", manifestpath:"Manifest path", tag:"Tag", hostname:"Hostname", projectpath:"Project path"})[entry.field] + ": " + (entry.field === "manifestpath" ? entry.path : entry.text), null));
-      });
-      card.appendChild(evidence);
-      card.appendChild(element("p", "Representative metadata/path evidence only; not file bytes. Details fetch current artifact metadata.", "source-note"));
-      fragment.appendChild(card);
-    }); }
-    list.replaceChildren(fragment);
+  function linkUnavailable(item) {
+    return contentUrl(item, window.location.origin) === null ? "Content link unavailable" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" :
+      ctx.accessMutations.has(item.artifact_id) || ctx.deleting.has(item.artifact_id) ? "Artifact update in progress" : null;
+  }
+  function copyLink(item, label) {
+    var reason = linkUnavailable(item);
+    if (reason !== null) { overlays.toast(reason + ". Content link unavailable."); return; }
+    overlays.copyText("Content link · " + label, contentUrl(item, window.location.origin), "Content link copied");
+  }
+  function actionsCell(item, label) {
+    var id = item.artifact_id;
+    var cell = element("td", null, "col-actions");
+    var end = element("span", null, "row-end");
+    var open = element("button", "Open", "btn btn-sm btn-ghost");
+    open.type = "button"; open.dataset.action = "open"; open.dataset.artifactId = id; open.dataset.visibility = item.visibility;
+    open.disabled = item.state !== "ready" || expired(item) || contentUrl(item, window.location.origin) === null || ctx.accessMutations.has(id);
+    open.title = contentUrl(item, window.location.origin) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open on its isolated content origin";
+    open.addEventListener("click", function () { detail.openArtifact(id, item); });
+    var hover = element("span", null, "row-actions");
+    var copy = element("button", null, "btn btn-sm btn-ghost btn-icon");
+    copy.type = "button"; copy.dataset.action = "copy-link"; copy.dataset.artifactId = id;
+    copy.setAttribute("aria-label", "Copy content link for " + label);
+    copy.title = linkUnavailable(item) || "Copy content link (no password or access grant)";
+    copy.disabled = linkUnavailable(item) !== null;
+    copy.appendChild(overlays.iconNode("link", ""));
+    copy.addEventListener("click", function () { copyLink(item, label); });
+    var anchor = element("span", null, "anchor");
+    var more = element("button", null, "btn btn-sm btn-ghost btn-icon");
+    more.type = "button"; more.dataset.artifactId = id; more.dataset.action = "more";
+    more.setAttribute("aria-label", "More actions for " + label);
+    more.setAttribute("aria-haspopup", "menu"); more.setAttribute("aria-expanded", "false");
+    more.setAttribute("aria-controls", "row-menu-" + id);
+    more.appendChild(overlays.iconNode("more", ""));
+    var menu = element("div", null, "menu"); menu.id = "row-menu-" + id; menu.setAttribute("role", "menu"); menu.hidden = true;
+    menu.setAttribute("aria-label", "Actions for " + label);
+    function item_(text, iconName, action, handler) {
+      var entry = element("button", null, "menu-item" + (action === "delete" ? " is-danger" : ""));
+      entry.type = "button"; entry.setAttribute("role", "menuitem"); entry.dataset.action = action; entry.dataset.artifactId = id;
+      entry.append(overlays.iconNode(iconName, ""), text);
+      entry.addEventListener("click", handler);
+      return entry;
+    }
+    var remove = item_("Delete…", "trash", "delete", function () { detail.deleteArtifact(id, item); });
+    remove.disabled = ctx.deleting.has(id) || ctx.accessMutations.has(id);
+    menu.append(
+      item_("Copy ID", "copy", "copy-id", function () { overlays.copyText("Artifact ID · " + label, id, "Artifact ID copied"); }),
+      item_("Copy content link", "link", "copy-link-menu", function () { copyLink(item, label); }),
+      item_("Details", "info", "details-menu", function () { listPlace = { pendingFocus: id }; detailFromList = true; window.location.hash = routeHash(id); }),
+      element("div", null, "menu-sep"), remove);
+    anchor.append(more, menu);
+    hover.append(copy, anchor);
+    end.append(open, hover);
+    cell.appendChild(end);
+    return cell;
+  }
+  function hitEvidence(hit) {
+    return { text: hit.evidence.map(function (entry) { return EVIDENCE[entry.field] + ": " + (entry.field === "manifestpath" ? entry.path : entry.text); }).join(" · "),
+      source: "Representative metadata/path evidence, not file bytes · pinned source " + hit.source_version + " · generation " + hit.generation_id + " · policy " + hit.policy_id };
   }
   function renderList() {
-    renderRetrieval();
-    var list = $("artifact-list");
+    var retrieval = state.mode !== "catalogue";
+    var list = retrieval ? $("retrieval-results") : $("artifact-list");
     var active = document.activeElement;
-    var focused = active !== null && list.contains(active) ? { id: active.dataset.artifactId, action: active.dataset.action } : null;
+    var focused = active !== null && $("catalogue-table").contains(active) && active.dataset.artifactId ? { id: active.dataset.artifactId, action: active.dataset.action } : null;
     var fragment = document.createDocumentFragment();
-    summaries.forEach(function (item) {
-      var row = element("tr", null, null);
-      row.dataset.artifactId = item.artifact_id;
-      var name = element("td", null, null);
-      var details = rowAction("", "details", item, function () {
-        invalidateNavigation(); window.location.hash = routeHash(item.artifact_id);
-      });
-      details.className = "record-open";
-      var icon = element("span", item.kind === "dir" ? "▤" : "◇", "record-icon");
-      icon.setAttribute("aria-hidden", "true");
-      details.appendChild(icon);
-      var title = element("span", null, null);
-      title.appendChild(element("strong", item.name || item.artifact_id, null));
-      title.appendChild(element("small", item.artifact_id, null));
-      details.appendChild(title);
-      var nameLine = element("div", null, "record-heading"); nameLine.appendChild(details); appendCopyLink(nameLine, item);
-      name.appendChild(nameLine); row.appendChild(name);
-      [[item.kind, "type-badge"], [item.visibility, "type-badge"], [item.state, "status-badge " + item.state]].forEach(function (cell) {
-        var td = element("td", null, null); td.appendChild(element("span", cell[0], cell[1])); row.appendChild(td);
-      });
-      row.appendChild(element("td", bytes(item.total_bytes), "numeric-cell"));
-      row.appendChild(element("td", String(item.file_count), "numeric-cell"));
-      row.appendChild(element("td", dateText(item.created_at, "Unknown"), "date-cell"));
-      var expiry = element("td", dateText(item.expires_at, "Never"), "date-cell");
-      if (expired(item)) { expiry.appendChild(element("span", "Expired", "status-badge expired")); }
-      row.appendChild(expiry);
-      row.appendChild(element("td", item.created_by_user, "owner-cell"));
-      var actions = element("td", null, null);
-      var group = element("div", null, "row-actions");
-      var open = rowAction("Open", "open", item, function () { detail.openArtifact(item.artifact_id, item); });
-      open.dataset.visibility = item.visibility;
-      open.disabled = item.state !== "ready" || expired(item) || contentUrl(item, window.location.origin) === null || ctx.accessMutations.has(item.artifact_id);
-      open.title = contentUrl(item, window.location.origin) === null ? "Content hosting is not configured" : item.state !== "ready" ? "Upload is not ready" : expired(item) ? "Artifact expired" : "Open on its isolated content origin";
-      group.appendChild(open);
-      var remove = rowAction("Delete", "delete", item, function () { detail.deleteArtifact(item.artifact_id); });
-      remove.disabled = ctx.deleting.has(item.artifact_id) || ctx.accessMutations.has(item.artifact_id);
-      group.appendChild(remove);
-      actions.appendChild(group); row.appendChild(actions);
-      ["Name", "Kind", "Access", "State", "Size", "Files", "Created", "Expires", "Owner", "Actions"].forEach(function (label, index) {
-        row.children[index].dataset.label = label;
-      });
-      fragment.appendChild(row);
-    });
+    if (retrieval) { if (searchPage !== null) { searchPage.hits.forEach(function (hit) { fragment.appendChild(artifactRow(hit.artifact, hitEvidence(hit))); }); } }
+    else { summaries.forEach(function (item) { fragment.appendChild(artifactRow(item, null)); }); }
     list.replaceChildren(fragment);
-    if (focused !== null && focused.id) {
-      var target = list.querySelector('button[data-artifact-id="' + focused.id + '"][data-action="' + focused.action + '"]');
-      (target || $("results-panel")).focus({ preventScroll: true });
+    (retrieval ? $("artifact-list") : $("retrieval-results")).replaceChildren();
+    $("artifact-list").hidden = retrieval; $("retrieval-results").hidden = !retrieval;
+    if (focused !== null) {
+      var target = list.querySelector('[data-artifact-id="' + focused.id + '"][data-action="' + focused.action + '"]');
+      if (target !== null) { target.focus({ preventScroll: true }); }
     }
-    setText("loaded-count", state.mode === "catalogue" ? String(summaries.length) + (nextCursor !== null ? "+" : "") : String(searchPage === null ? 0 : searchPage.hits.length));
-    $("empty-state").hidden = (state.mode === "catalogue" ? summaries.length !== 0 : searchPage === null || searchPage.hits.length !== 0) || pendingPage !== null || listError;
-    $("load-more-button").hidden = state.mode !== "catalogue" || nextCursor === null || listError;
-    $("load-more-button").disabled = pendingPage !== null;
+    var count = retrieval ? searchPage === null ? 0 : searchPage.hits.length : summaries.length;
+    var loading = pendingPage !== null && pendingReset;
+    var skeleton = $("skeleton-rows");
+    skeleton.hidden = !loading;
+    if (loading && skeleton.children.length === 0) {
+      for (var index = 0; index < SKELETON_ROWS; index++) {
+        var row = element("tr", null, null);
+        var name = element("td", null, null);
+        name.append(element("span", null, "skeleton sk-60"), element("span", null, "skeleton sk-30"));
+        row.appendChild(name);
+        [null, "col-num hide-sm", "col-num hide-md", "hide-sm", "hide-md", "hide-md"].forEach(function (className) {
+          var cell = element("td", null, className); cell.appendChild(element("span", null, "skeleton")); row.appendChild(cell);
+        });
+        row.appendChild(element("td", null, null));
+        skeleton.appendChild(row);
+      }
+    }
+    var settled = pendingPage === null && !listError && (retrieval ? searchPage !== null : loadedKey === JSON.stringify(state) && loadedKey !== "");
+    var empty = settled && count === 0;
+    $("empty-state").hidden = !empty;
+    if (empty) {
+      var applied = serializeExpression(state);
+      $("empty-text").replaceChildren(applied ? "Nothing matches " : "There are no artifacts yet", applied ? element("code", applied, null) : "",
+        ". Field values are exact and case-sensitive; expired artifacts are hidden unless you add ", element("code", "expired:true", null), ".");
+    }
+    $("catalogue-table").hidden = listError && count === 0;
+    renderFoot(retrieval, count, settled);
+    if (settled) {
+      setCounter(retrieval ? count + " hits · " + state.mode : count === 0 ? "No matches" : nextCursor !== null ? count + " loaded · more available" : "All " + count + " artifacts loaded");
+      if (!listError) { clearNotice(); }
+    }
+    updateDraft();
+  }
+  function renderFoot(retrieval, count, settled) {
+    var foot = $("list-foot");
+    var text;
+    if (pendingPage !== null && !pendingReset) { text = "Loading more artifacts… (" + count + " loaded)"; foot.dataset.state = "loading"; }
+    else if (settled && count > 0 && (retrieval || nextCursor === null)) { text = retrieval ? "End of results · " + count + " hits" : "End of list · " + count + " artifacts"; foot.dataset.state = "end"; }
+    else if (settled && nextCursor !== null) { text = count + " loaded · scroll to load more"; foot.dataset.state = "more"; }
+    else { text = ""; foot.dataset.state = "idle"; }
+    foot.className = "list-foot" + (foot.dataset.state === "end" ? " list-end" : "");
+    foot.replaceChildren();
+    if (foot.dataset.state === "loading") { foot.appendChild(element("span", null, "spinner")); }
+    foot.appendChild(element("span", text, null));
   }
   function watchList() {
     if (observer !== null) { observer.disconnect(); }
-    if (state.mode !== "catalogue" || typeof IntersectionObserver === "undefined" || nextCursor === null || listError || pendingPage !== null || !ctx.authenticated || $("dashboard-section").hidden) { return; }
+    if (state.mode !== "catalogue" || typeof IntersectionObserver === "undefined" || nextCursor === null || listError || pendingPage !== null || !ctx.authenticated || view !== "catalogue") { return; }
     var cursor = nextCursor;
     observer = new IntersectionObserver(function (entries) {
       if (entries.some(function (entry) { return entry.isIntersecting; }) && cursor === nextCursor) { loadPage(false); }
-    }, { root: $("results-panel"), rootMargin: "200px" });
-    observer.observe($("list-sentinel"));
+    }, { root: null, rootMargin: "0px 0px 240px 0px" });
+    observer.observe($("list-foot"));
   }
   function loadPage(reset) {
-    if (!ctx.authenticated || readRoute().id !== null || readRoute().error !== null || capabilities === null ||
+    if (!ctx.authenticated || readRoute().view !== "catalogue" || readRoute().error !== null || capabilities === null ||
         (state.mode !== "catalogue" && (!supported(state.mode) || submittedKey !== JSON.stringify(state))) ||
         (!reset && (state.mode !== "catalogue" || nextCursor === null || listError || loadedKey !== JSON.stringify(state)))) { return; }
     // Capture the entire intent now. A superseding request replaces only an
     // unsent intent, never launches another physical list/Search request.
     var intent = { generation: ++listGeneration, epoch: ctx.sessionEpoch, cursor: reset ? null : nextCursor,
       reset: reset, value: Object.assign({}, state), limit: Math.min(PAGE_LIMIT, capabilities.max_list_limit) };
-    pendingPage = intent.generation; listError = false;
-    $("list-error").hidden = true; $("retry-list-button").hidden = true;
+    pendingPage = intent.generation; pendingReset = reset; listError = false;
+    clearNotice();
     if (reset) {
       summaries = []; searchPage = null; nextCursor = null;
       loadedKey = JSON.stringify(intent.value);
-      $("results-panel").scrollTop = 0;
+      window.scrollTo(0, 0);
+      setCounter(state.mode === "catalogue" ? "Loading artifacts…" : "Searching metadata and manifest paths…");
     }
-    setText("list-status", reset ? state.mode === "catalogue" ? "Loading artifacts…" : "Searching metadata and manifest paths…" : "Loading more artifacts…");
     renderList();
     queuedRead = intent;
     pumpRead();
@@ -526,7 +709,7 @@ function expressionInput(input, list, change, compositionChange) {
     var generation = intent.generation, epoch = intent.epoch, value = intent.value, cursor = intent.cursor;
     var descriptor = value.mode === "catalogue" ? current.catalogue(cursor,value,intent.limit) : current.search(value,intent.limit);
     apiFetch(descriptor).then(function (body) {
-      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
+      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().view !== "catalogue") { return; }
       if (value.mode !== "catalogue") {
         if (!Array.isArray(body.hits) || (body.next_cursor !== null && body.next_cursor !== undefined) ||
             !["exactmatches", "candidatewindow"].includes(body.count_scope) ||
@@ -549,51 +732,94 @@ function expressionInput(input, list, change, compositionChange) {
         });
         summaries = Array.from(merged.values()); nextCursor = next;
       }
-      setText("list-status", resultStatus());
     }).catch(function (error) {
-      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().id !== null) { return; }
+      if (epoch !== ctx.sessionEpoch || generation !== listGeneration || readRoute().view !== "catalogue") { return; }
       listError = true;
-      setText("list-status", (value.mode === "catalogue" ? "List" : "Retrieval") + " failed (" + errorLabel(error) + "). No alternate search was sent.");
-      setText("list-error", "Could not load " + (value.mode === "catalogue" ? "artifacts" : "retrieval") + " (" + errorLabel(error) + "). Retry when ready.");
-      $("list-error").hidden = false; $("retry-list-button").hidden = false;
+      var rows = value.mode === "catalogue" ? summaries.length : 0;
+      if (rows === 0) { setCounter("Not loaded"); }
+      notice("danger", "The request failed (" + errorLabel(error) + "). " + (rows > 0 ? "The loaded rows are kept." : "No alternate search was sent; the applied query is unchanged.") + " Retry when ready.", true,
+        rows > 0 ? "More artifacts could not be loaded" : value.mode === "catalogue" ? "Artifacts could not be loaded" : "Retrieval failed");
     }).finally(function () {
       readBusy = false;
-      if (epoch === ctx.sessionEpoch && generation === listGeneration) { pendingPage = null; renderList(); watchList(); }
+      if (epoch === ctx.sessionEpoch && generation === listGeneration) { pendingPage = null; pendingReset = false; renderList(); watchList(); }
       pumpRead();
     });
   }
-
-  function failVisible(message) {
-    setText("detail-status", message); setText("list-status", message);
-    setText("list-error", message); $("list-error").hidden = false;
-  }
-
-  // Opening a detail cancels pending list reads; a catalogue reloads on return.
-  function suspendForDetail() {
-    listGeneration++; pendingPage = null; queuedRead = null;
-    if (state.mode === "catalogue") { loadedKey = ""; }
-    else if (searchPage === null) { submittedKey = null; }
-    if (observer !== null) { observer.disconnect(); }
-  }
   function detailFailed() {
     summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; submittedKey = null; listError = true;
+    showView("catalogue");
     renderList();
+    setCounter("Not loaded");
     $("retry-list-button").hidden = false;
   }
   function reloadAfterUpload() {
     loadedKey = "";
-    if (!$("dashboard-section").hidden) { if (state.mode === "catalogue") { loadPage(true); } else { invalidateCatalogue(); } }
+    if (view === "catalogue") { if (state.mode === "catalogue") { loadPage(true); } else { invalidateCatalogue(); } }
   }
   function invalidateCatalogue() {
-    listGeneration++; pendingPage = null; queuedRead = null; summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; listError = false;
-    if (state.mode !== "catalogue") { submittedKey = null; setText("list-status", "Results invalidated. Press Search to run retrieval again."); }
+    listGeneration++; pendingPage = null; pendingReset = false; queuedRead = null; summaries = []; searchPage = null; nextCursor = null; loadedKey = ""; listError = false;
+    listPlace = null;
     if (observer !== null) { observer.disconnect(); }
     renderList();
-    if (ctx.authenticated && readRoute().id === null && state.mode === "catalogue") { loadPage(true); }
+    if (state.mode !== "catalogue") { submittedKey = null; setCounter("Not searched"); notice("info", "Results invalidated. Press Search to run retrieval again.", false); }
+    if (ctx.authenticated && readRoute().view === "catalogue" && state.mode === "catalogue") { loadPage(true); }
   }
 
-  $("logout-button").addEventListener("click", onLogout);
+  // ── Theme ──────────────────────────────────────────────────────────────
+  function syncTheme() {
+    var choice = document.documentElement.dataset.themeChoice;
+    document.querySelectorAll("[data-theme-set]").forEach(function (item) { item.setAttribute("aria-checked", String(item.dataset.themeSet === choice)); });
+  }
+  document.querySelectorAll("[data-theme-set]").forEach(function (item) {
+    item.addEventListener("click", function () {
+      document.dispatchEvent(new window.CustomEvent("ui:theme-choice", { detail: item.dataset.themeSet }));
+      syncTheme();
+    });
+  });
+  new window.MutationObserver(syncTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme-choice"] });
+  syncTheme();
+
+  // ── Files dropped or pasted anywhere continue on the Upload page ───────
+  function hasFiles(event) { return event.dataTransfer !== null && Array.from(event.dataTransfer.types).includes("Files"); }
+  function handOff(files) {
+    if (!files.length) { return; }
+    if (readRoute().view !== "upload") { window.location.hash = "#/upload"; }
+    upload.stageFiles(files);
+  }
+  document.addEventListener("dragenter", function (event) {
+    if (!ctx.authenticated || !hasFiles(event)) { return; }
+    var files = Array.from(event.dataTransfer.items).filter(function (item) { return item.kind === "file"; }).length;
+    setText("drop-summary", (files === 1 ? "1 file" : files + " files") + " · staged on the Upload page, where access can be changed");
+    dragDepth++; $("drop-overlay").hidden = false;
+  });
+  document.addEventListener("dragleave", function (event) {
+    if (!ctx.authenticated || !hasFiles(event)) { return; }
+    dragDepth = Math.max(0, dragDepth - 1);
+    if (dragDepth === 0) { $("drop-overlay").hidden = true; }
+  });
+  document.addEventListener("dragover", function (event) { if (ctx.authenticated && hasFiles(event)) { event.preventDefault(); } });
+  document.addEventListener("drop", function (event) {
+    dragDepth = 0; $("drop-overlay").hidden = true;
+    if (!ctx.authenticated || event.dataTransfer === null) { return; }
+    event.preventDefault(); handOff(event.dataTransfer.files);
+  });
+  document.addEventListener("paste", function (event) {
+    if (ctx.authenticated && event.clipboardData && event.clipboardData.files.length) {
+      event.preventDefault(); handOff(event.clipboardData.files);
+    }
+  });
+
+  // ── Wiring ─────────────────────────────────────────────────────────────
+  // The skip link moves focus only: its #main fragment must not replace the route.
+  document.querySelector(".skip-link").addEventListener("click", function (event) { event.preventDefault(); $("main").focus(); });
   $("session-retry-button").addEventListener("click", checkSession);
+  $("path-mode-warning").addEventListener("click", function () {
+    if ($("path-mode-warning").dataset.hosting === "unknown") {
+      overlays.inform("Content isolation unknown", ["The dashboard could not determine how artifacts are hosted. Verify the hosting configuration before opening untrusted content."], false);
+    } else {
+      overlays.inform("Path-mode hosting", ["This server hosts artifacts on the same origin as the dashboard and API. Opened content can act with your browser session, so open trusted content only. Subdomain mode isolates every artifact on its own origin."], false);
+    }
+  });
   $("list-form").addEventListener("submit", function (event) {
     event.preventDefault();
     if (composing || event.isComposing || pointerCompositionBlocked) { return; }
@@ -619,18 +845,18 @@ function expressionInput(input, list, change, compositionChange) {
     if (!event.composedPath().includes($("search-submit"))) { pointerCompositionBlocked = false; }
   });
   $("clear-search-button").addEventListener("click", queryEditor.reset);
+  $("empty-clear-button").addEventListener("click", function () { navigateList(parseExpression(""), true); });
   $("query-diagnostic").addEventListener("click", function () {
     try { draftState(); } catch (error) { $("filter-text").focus(); $("filter-text").setSelectionRange(error.start,error.end); }
   });
   document.addEventListener("keydown", function (event) {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k" && !event.altKey &&
-        !event.isComposing && !composing && ctx.authenticated && !$("workspace-shell").hidden &&
-        $("detail-section").hidden && !document.querySelector("dialog[open], [role=dialog]:not([hidden])")) {
+        !event.isComposing && !composing && ctx.authenticated && view === "catalogue" && !$("main").hidden &&
+        !document.querySelector("dialog[open], [role=dialog]:not([hidden])")) {
       event.preventDefault(); $("filter-text").focus(); $("filter-text").select();
     }
   });
   $("refresh-button").addEventListener("click", function () { if (state.mode !== "catalogue") { submittedKey = JSON.stringify(state); } loadPage(true); });
-  $("load-more-button").addEventListener("click", function () { loadPage(false); });
   $("retry-list-button").addEventListener("click", function () {
     if (capabilities === null || state.mode !== "catalogue" && !supported(state.mode)) { checkHostingMode(); return; }
     var reset = nextCursor === null; listError = false;
@@ -645,20 +871,58 @@ function expressionInput(input, list, change, compositionChange) {
         navigateList(Object.assign({}, state, { sort: sort, direction: state.sort === sort ? state.direction === "asc" ? "desc" : "asc" : ["created_at", "total_bytes", "file_count"].indexOf(sort) !== -1 ? "desc" : "asc" }), false);
       } catch (error) {
         if (!(error instanceof current.ExpressionError)) { throw error; }
-        setText("draft-status", error.message + " Query and results unchanged; shorten the query before sorting.");
+        notice("danger", error.message + " Query and results unchanged; shorten the query before sorting.", false);
       }
     });
   });
   document.querySelectorAll("[data-visibility-preset]").forEach(function (button) {
+    button.addEventListener("click", function () { applyShortcut({ visibility: button.dataset.visibilityPreset || null }); });
+  });
+  document.querySelector('[data-toggle-preset="uploading"]').addEventListener("click", function () {
+    applyShortcut({ itemState: state.itemState === "uploading" ? null : "uploading" });
+  });
+  document.querySelector('[data-toggle-preset="expired"]').addEventListener("click", function () {
+    applyShortcut({ includeExpired: !state.includeExpired });
+  });
+  // Field inserters edit the draft at the caret and open completion; they never send a request.
+  document.querySelectorAll("[data-insert-field]").forEach(function (button) {
     button.addEventListener("click", function () {
       if (composing) { return; }
-      $("filter-text").value = button.dataset.visibilityPreset ? "access:" + button.dataset.visibilityPreset + " " : "";
-      $("filter-text").focus(); $("filter-text").setSelectionRange($("filter-text").value.length,$("filter-text").value.length);
-      queryEditor.close(); updateDraft();
+      var input = $("filter-text"), text = button.dataset.insertField;
+      var at = input.selectionStart === null ? input.value.length : input.selectionStart;
+      var before = input.value.slice(0, at), after = input.value.slice(input.selectionEnd === null ? at : input.selectionEnd);
+      var prefix = before === "" || /\s$/.test(before) ? "" : " ";
+      input.value = before + prefix + text + after;
+      input.focus();
+      var caret = before.length + prefix.length + text.length;
+      input.setSelectionRange(caret, caret);
+      input.dispatchEvent(new window.Event("input", { bubbles: true }));
     });
   });
-  document.addEventListener('account:changed', function () { clearAccount(); checkSession(); });
-  window.addEventListener("hashchange", handleRoute);
+  function openSyntax() {
+    overlays.inform("Query syntax", [
+      "Plain words match artifact names and IDs. Fields narrow the list and are combined with AND. Press Enter or Search to apply; typing and suggestions never send a request.",
+      { definitions: [
+        ["access:internal|external|public", "access mode"],
+        ["tag:release tag:reviewed", "has every listed tag (exact, case-sensitive)"],
+        ["hostname:build-host", "exact supplied hostname"],
+        ["project:\"/work/repo\"", "exact supplied project path"],
+        ["state:ready|uploading|publishing", "publication state (catalogue)"],
+        ["expired:true", "also list expired artifacts (catalogue; hidden by default)"],
+        ["sort:name direction:asc", "same as clicking a column header (catalogue; default created_at descending)"],
+        ["mode:lexical|semantic|hybrid", "ranked retrieval over names, tags, supplied provenance and manifest paths, never file bytes; adds kind:file|dir and owner:\"Exact User\""],
+        ["text:\"exact: text\"", "literal search text with colons, JSON escapes or retrieval syntax; not combined with bare terms"]
+      ] },
+      "Lexical uses English words/stems, quoted phrases, OR and -negation; semantic and hybrid call the model only on Search or Refresh. Field names ignore case; closed values are lowercase; metadata values keep their exact case and whitespace.",
+      "↑↓ select · Enter insert · Escape closes suggestions, then clears the draft · Ctrl/⌘ K focuses the search field."
+    ], true);
+  }
+  $("syntax-button").addEventListener("click", openSyntax);
+  document.querySelectorAll("[data-open-syntax]").forEach(function (button) { button.addEventListener("click", openSyntax); });
+  document.addEventListener("account:changed", function () { clearAccount(); checkSession(); });
+  // The account page replaces the workspace view: no view is current while it is shown.
+  document.addEventListener("account:route", function (event) { markNav(event.detail.section !== null || view === null ? null : navName(view)); });
+  window.addEventListener("hashchange", function () { handleRoute(); });
   checkHostingMode();
   checkSession();
 })(document, window, window.fetch.bind(window));

@@ -345,7 +345,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private val dashboardUiAssets = Set("ui/tokens.css","ui/components.css","ui/theme-init.js","ui/icons.js","ui/fonts/InterVariable.woff2")
   private def dashboardAsset(req: Request[IO]): Boolean =
     val path = req.uri.path.renderString
-    req.method == Method.GET && (path == "/" || Set("/favicon.svg","/app.js","/styles.css","/current-protocol.js","/current-schema.js","/quick-upload.js","/sha256.js","/common.js","/detail.js","/upload.js","/account.js","/account-client.js","/account.css")(path) || dashboardUiAssets(path.drop(1)) || path.startsWith("/current/"))
+    req.method == Method.GET && (path == "/" || Set("/favicon.svg","/app.js","/styles.css","/current-protocol.js","/current-schema.js","/quick-upload.js","/sha256.js","/common.js","/detail.js","/upload.js","/overlays.js","/account.js","/account-client.js","/account.css")(path) || dashboardUiAssets(path.drop(1)) || path.startsWith("/current/"))
   private def api(req: Request[IO],ctx: Context): IO[Response[IO]] = credentials(req,ctx,dashboardAsset(req)).flatMap { c =>
     apiRequest(req,ctx,c).map { response =>
       if c.kind == "cookie" && response.status != Status.Unauthorized && !response.headers.headers.exists(_.name == CIString("Set-Cookie")) then
@@ -394,7 +394,7 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
   private def asset(directory: Option[Path],name: String,ctx: Context,dashboard: Boolean): IO[Response[IO]] = IO.blocking {
     val root = directory.getOrElse(throw DomainError(if dashboard then "dashboard-disabled" else "not-found"))
     val generated = name.matches("current/(?:manure/api/)?[A-Za-z][A-Za-z0-9_]*\\.js")
-    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","common.js","detail.js","upload.js","account.js","account-client.js","account.css")(name) || dashboard && (generated || dashboardUiAssets(name)), "not-found")
+    Require(Set("index.html","favicon.svg","app.js","styles.css","unlock.js","current-protocol.js","current-schema.js","quick-upload.js","sha256.js","common.js","detail.js","upload.js","overlays.js","account.js","account-client.js","account.css")(name) || dashboard && (generated || dashboardUiAssets(name)), "not-found")
     val file = root.resolve(name)
     Require(Files.isRegularFile(file) && Files.size(file) <= 2097152, "not-found")
     var bytes = Files.readAllBytes(file)

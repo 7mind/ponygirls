@@ -49,9 +49,9 @@ class TlsSmokeCase(unittest.TestCase):
     def _login_steps(self, token):
         return [
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
         ]
@@ -94,8 +94,8 @@ class TlsSmokeCase(unittest.TestCase):
     def test_tls_login_sets_secure_host_cookies(self):
         token = self.fix.identity.token
         out = self._browser(self._login_steps(token) + [
-            {"op": "eval", "fn": "(s) => document.querySelector(s).value",
-             "arg": "#password-input"},
+            {"op": "eval", "fn": "(s) => document.querySelector(s)?.value ?? ''",
+             "arg": "[data-account-login] input[name=password]"},
             {"op": "localStorageKeys"},
             {"op": "cookies", "urls": [self.api + "/"]},
         ])
@@ -131,7 +131,7 @@ class TlsSmokeCase(unittest.TestCase):
         token = self.fix.identity.token
         out = self._browser(self._login_steps(token) + [
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "click",
              "selector": "button[data-action=open][data-artifact-id=\"" + aid + "\"]"},
             {"op": "waitForEval",
@@ -323,12 +323,12 @@ class TlsSmokeCase(unittest.TestCase):
         out_strict = self._browser([
             {"op": "networkPhase", "phase": "victim-login"},
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
-            {"op": "waitForText", "selector": "#list-status", "contains": "shown"},
+            {"op": "waitForText", "selector": "#list-status", "contains": "loaded"},
             {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
@@ -348,9 +348,9 @@ class TlsSmokeCase(unittest.TestCase):
         out_login = self._browser([
             {"op": "networkPhase", "phase": "victim-login"},
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
             {"op": "cookies", "urls": [self.api + "/"]},

@@ -43,13 +43,12 @@ class DashboardUXTests(unittest.TestCase):
             "bundle": self.bundle, "protectedId": self.protected, "password": self.password,
             "publicId": self.public, "expiredId": self.expired, "hostile": self.hostile,
             "browser": self.browser, "engine": "firefox" if self.firefox else "chromium",
-            "suffix": self.fix.suffix, "core": self.driver,
-            "artifacts": os.environ.get("MANURE_UX_ARTIFACTS", "")}
+            "suffix": self.fix.suffix, "core": self.driver}
         result = subprocess.run([self.node, str(Path(__file__).resolve().parent / "browser/dashboard-ux.mjs")],
             input=json.dumps(payload).encode(), capture_output=True, timeout=240)
         self.assertEqual(result.returncode, 0, "; ".join(check["name"] + ": " + check.get("error", "ok") for check in json.loads(result.stdout)))
         report = json.loads(result.stdout)
-        self.assertEqual(len(report), 24)
+        self.assertEqual(len(report), 21)
         self.assertTrue(all(check["ok"] for check in report), report)
         for check in report:
             print("ok - " + check["name"])

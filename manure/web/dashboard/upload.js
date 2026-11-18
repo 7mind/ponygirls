@@ -58,7 +58,7 @@ export function createUpload(ctx, catalogue, copy) {
     $("upload-access-help").hidden = uploadVisibility() !== "external";
   }
   function stageFiles(files) {
-    if (!ctx.authenticated || uploadBusy || $("logout-button").disabled) { return; }
+    if (!ctx.authenticated || uploadBusy) { return; }
     Array.from(files).forEach(function (file) {
       if (!file.name || /[\\/\x00-\x1f\x7f]/.test(file.name) || file.name === "." || file.name === "..") {
         setText("upload-status", "Rejected an unsupported file name. Rename it before uploading."); return;
@@ -69,19 +69,10 @@ export function createUpload(ctx, catalogue, copy) {
   }
   $("upload-visibility").addEventListener("change", renderUploads);
   $("upload-files").addEventListener("change", function (event) { stageFiles(event.target.files); });
-  document.addEventListener("paste", function (event) {
-    if (ctx.authenticated && event.clipboardData && event.clipboardData.files.length) {
-      event.preventDefault(); stageFiles(event.clipboardData.files);
-    }
-  });
-  $("quick-upload").addEventListener("dragover", function (event) { if (ctx.authenticated) { event.preventDefault(); } });
-  $("quick-upload").addEventListener("drop", function (event) {
-    if (ctx.authenticated) { event.preventDefault(); stageFiles(event.dataTransfer.files); }
-  });
   $("upload-clear").addEventListener("click", clearUploads);
   $("upload-form").addEventListener("submit", async function (event) {
     event.preventDefault();
-    if (!ctx.authenticated || uploadBusy || $("logout-button").disabled) { return; }
+    if (!ctx.authenticated || uploadBusy) { return; }
     var generation = uploadGeneration, epoch = ctx.sessionEpoch;
     uploads.forEach(function (item) {
       if (item.id === null && item.phase !== "init-uncertain") { item.visibility = uploadVisibility(); }
@@ -112,5 +103,6 @@ export function createUpload(ctx, catalogue, copy) {
     }
   });
 
-  return { clearUploads: clearUploads };
+  // Files dropped or pasted anywhere in the dashboard arrive here (the shell routes to the upload view).
+  return { clearUploads: clearUploads, stageFiles: stageFiles };
 }

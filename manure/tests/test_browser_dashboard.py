@@ -38,14 +38,14 @@ class DashboardFlows:
     def login_steps(self, token):
         return [
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#whoami-text",
              "contains": self.fix.identity.user_id},
             {"op": "text", "selector": "#whoami-text"},
-            {"op": "eval", "fn": "(s) => document.querySelector(s).value",
-             "arg": "#password-input"},
+            {"op": "eval", "fn": "(s) => document.querySelector(s)?.value ?? ''",
+             "arg": "[data-account-login] input[name=password]"},
             {"op": "localStorageKeys"},
             {"op": "cookies", "urls": [self.api + "/"]},
         ]
@@ -170,11 +170,11 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "text", "selector": "#list-status"},
             # The hostile name must render as inert text: no img element
             # is created anywhere in the list.
@@ -182,18 +182,19 @@ class DashboardFlows:
             {"op": "count", "selector": "#artifact-list script"},
             {"op": "text", "selector": "#artifact-list"},
             {"op": "eval", "fn": "(id) => !!document.querySelector("
-                                 "`button[data-action=details][data-artifact-id=\"${id}\"]`)",
+                                 "`a[data-action=details][data-artifact-id=\"${id}\"]`)",
              "arg": aid},
             {"op": "eval", "fn": "(id) => { document.querySelector("
-                                 "`button[data-action=details][data-artifact-id=\"${id}\"]`).click();"
+                                 "`a[data-action=details][data-artifact-id=\"${id}\"]`).click();"
                                  " return true; }",
              "arg": aid},
             {"op": "waitForText", "selector": "#detail-list",
              "contains": aid},
             {"op": "text", "selector": "#detail-list"},
             {"op": "click", "selector": "#delete-button"},
+            {"op": "click", "selector": "dialog[open] >> role=button[name=\"Delete artifact\"]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "text", "selector": "#list-status"},
         ])
         by_op = {r["op"] + str(i): r for i, r in enumerate(out)}
@@ -206,9 +207,9 @@ class DashboardFlows:
         texts = [r for r in out if r.get("op") == "text"]
         self.assertIn(hostile, texts[1]["text"], "hostile name missing from list text")
         self.assertIn(aid, texts[2]["text"], "artifact id missing from detail")
-        # A delete confirmation dialog appeared and was accepted.
+        # Deletion was confirmed in the in-app dialog; no native dialog appeared.
         dialogs = [r for r in out if r.get("op") == "dialogs"][0]["dialogs"]
-        self.assertTrue(any("Delete artifact" in d["message"] for d in dialogs), dialogs)
+        self.assertEqual(dialogs, [])
         # Server state: the artifact is gone.
         info = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers={"Authorization": f"Bearer {self.fix.identity.token}"})
         self.assertEqual(info.status, 404, info.body[:300])
@@ -223,13 +224,13 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "eval", "fn": "(id) => { document.querySelector("
-                                 "`button[data-action=details][data-artifact-id=\"${id}\"]`).click();"
+                                 "`a[data-action=details][data-artifact-id=\"${id}\"]`).click();"
                                  " return true; }",
              "arg": aid},
             {"op": "waitForText", "selector": "#detail-list",
@@ -264,13 +265,13 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "eval", "fn": "(id) => { document.querySelector("
-                                 "`button[data-action=details][data-artifact-id=\"${id}\"]`).click();"
+                                 "`a[data-action=details][data-artifact-id=\"${id}\"]`).click();"
                                  " return true; }",
              "arg": aid},
             {"op": "waitForText", "selector": "#detail-list",
@@ -279,9 +280,10 @@ class DashboardFlows:
             {"op": "waitForEval",
              "fn": "() => document.querySelector('#rotate-password')"
                    " .textContent.length === 43"},
+            {"op": "click", "selector": "#user-menu-button"},
             {"op": "click", "selector": "#logout-button"},
-            {"op": "waitForText", "selector": "#login-heading",
-             "contains": "Log in"},
+            {"op": "waitForText", "selector": "#login-section h1",
+             "contains": "Sign in"},
             {"op": "eval", "fn": "() => JSON.stringify({"
                                  "pw: document.querySelector('#rotate-password').textContent,"
                                  " detailHidden: document.querySelector('#detail-section').hidden,"
@@ -304,11 +306,11 @@ class DashboardFlows:
         token = self.fix.identity.token
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             # Vanish between list and click: delete via same-origin
             # fetch, then open details that can no longer load.
             {"op": "eval", "fn": "(id) => fetch('/api/current',"
@@ -316,12 +318,12 @@ class DashboardFlows:
                                  " body:JSON.stringify({requestId:crypto.randomUUID(),apiVersion:'1.0.0',command:{DeleteArtifact:{artifactId:id}}})})"
                                  ".then((r) => { if (!r.ok) throw new Error('delete:'+r.status);"
                                  " document.querySelector("
-                                 "`button[data-action=details][data-artifact-id=\"${id}\"]`).click();"
+                                 "`a[data-action=details][data-artifact-id=\"${id}\"]`).click();"
                                  " return true; })",
              "arg": aid},
-            {"op": "waitForText", "selector": "#list-status",
+            {"op": "waitForText", "selector": "#list-notice",
              "contains": "Detail failed"},
-            {"op": "text", "selector": "#list-status"},
+            {"op": "text", "selector": "#list-notice"},
             {"op": "eval", "fn": "() => JSON.stringify({"
                                  " dashVisible: !document.querySelector('#dashboard-section').hidden,"
                                  " detailHidden: document.querySelector('#detail-section').hidden})"},
@@ -500,12 +502,12 @@ class DashboardFlows:
         out = bf.run_steps([
             {"op": "networkPhase", "phase": "setup"},
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
             {"op": "networkPhase", "phase": "victim-login"},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "networkPhase", "phase": "hostile-auth"},
             {"op": "goto", "url": hurl},
             {"op": "waitForEval",
@@ -649,11 +651,11 @@ class DashboardFlows:
         ext_url = bf.content_url_for(self.fix, ext["artifact_id"])
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "click",
              "selector": "button[data-action=open][data-artifact-id=\"" +
                          pub["artifact_id"] + "\"]"},
@@ -662,7 +664,7 @@ class DashboardFlows:
             {"op": "eval", "fn": "() => location.href"},
             {"op": "goto", "url": self.api + "/"},
             {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+             "contains": "loaded"},
             {"op": "click",
              "selector": "button[data-action=open][data-artifact-id=\"" +
                          ext["artifact_id"] + "\"]"},
@@ -713,27 +715,26 @@ class ExpiredDeleteCase(unittest.TestCase):
         self.assertEqual(info.status, 410, info.body[:300])
         out = bf.run_steps([
             {"op": "goto", "url": self.api + "/"},
-            {"op": "fill", "selector": "#login-input", "value": self.fix.identity.login},
-            {"op": "fill", "selector": "#password-input", "value": self.fix.identity.password},
-            {"op": "click", "selector": "#login-form button[type=submit]"},
-            {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+            {"op": "fill", "selector": "[data-account-login] input[name=login]", "value": self.fix.identity.login},
+            {"op": "fill", "selector": "[data-account-login] input[name=password]", "value": self.fix.identity.password},
+            {"op": "click", "selector": "[data-account-login] button[type=submit]"},
+            {"op": "waitForEval", "fn": "() => / loaded|No matches/.test(document.querySelector('#list-status').textContent)"},
             {"op": "fill", "selector": "#filter-text", "value": "expired:true"},
             {"op": "click", "selector": "#search-submit"},
             {"op": "waitForText", "selector": "#artifact-list",
              "contains": aid},
+            {"op": "click", "selector": "button[data-action=more][data-artifact-id=\"" + aid + "\"]"},
             {"op": "click",
              "selector": "button[data-action=delete][data-artifact-id=\"" + aid + "\"]"},
-            {"op": "waitForText", "selector": "#list-status",
-             "contains": "shown"},
+            {"op": "click", "selector": "dialog[open] >> role=button[name=\"Delete artifact\"]"},
+            {"op": "waitForEval", "fn": "(id) => !document.querySelector(`#artifact-list tr[data-artifact-id=\"${id}\"]`)", "arg": aid},
         ])
         results = [r for r in out if r.get("op") not in ("pageerrors", "dialogs",
                                                            "requests", "console")]
         self.assertTrue(all(r.get("ok") for r in results),
                         [r for r in results if not r.get("ok")])
         dialogs = [r for r in out if r.get("op") == "dialogs"][0]["dialogs"]
-        self.assertTrue(any("Delete artifact" in d["message"] for d in dialogs),
-                        dialogs)
+        self.assertEqual(dialogs, [])
         gone = self.http.current((self.api), bf.cp.Command_GetArtifact(aid), headers=bearer)
         self.assertEqual(gone.status, 404, gone.body[:300])
 

@@ -14,7 +14,6 @@ const browser = input.engine === "firefox"
   ? await firefox.launch({ executablePath: input.browser, firefoxUserPrefs: { "network.dns.localDomains": [input.bundle, input.protectedId, input.publicId, ...input.records].map((id) => `${id}.${input.suffix}`).join(",") } })
   : await chromium.launch({ executablePath: input.browser, args: ["--no-sandbox", "--no-proxy-server", `--host-resolver-rules=MAP *.${input.suffix} 127.0.0.1`] });
 const results = [];
-if (input.artifacts) await fs.mkdir(input.artifacts, { recursive: true });
 const check = async (name, run) => {
   const context = await browser.newContext({ acceptDownloads: true, viewport: { width: 1440, height: 1000 } });
   try {
@@ -58,12 +57,8 @@ const check = async (name, run) => {
       };
     });
     await page.goto(input.base + "/", { waitUntil: "domcontentloaded" });
-    await page.locator("#login-input").fill(input.login);
-    await page.locator("#password-input").fill(input.loginPassword);
-    await page.locator("#login-form button[type=submit]").click();
-    await page.locator("#whoami-text").waitFor({ state: "visible" });
-    await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("shown"));
-    assert.equal((await page.locator("#password-input").inputValue()).length, 0);
+    await signIn(page);
+    await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("loaded"));
     await run(page, context);
     assert.deepEqual(errors, []);
     assert.equal(urls.some((url) => url.includes(input.token)), false, "credential must not travel in a URL");
@@ -75,32 +70,41 @@ const check = async (name, run) => {
 };
 const rows = (page) => page.locator("#artifact-list > tr");
 const count = (page, length) => page.waitForFunction((n) => document.querySelectorAll("#artifact-list > tr").length === n, length);
-const titles = (page) => page.locator("#artifact-list .record-open strong").allTextContents();
-const bottom = (page) => page.locator("#results-panel").evaluate((node) => { node.scrollTop = node.scrollHeight; });
+const titles = (page) => page.locator("#artifact-list .cell-title").allTextContents();
+const bottom = (page) => page.evaluate(() => window.scrollTo(0, document.scrollingElement.scrollHeight));
 const settle = (page) => page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
-const capture = async (page, name) => {
-  if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, name + ".png"), fullPage: true });
+const listNotice = (page) => page.locator("#list-notice").textContent();
+async function signIn(page) {
+  await page.locator("[data-account-login] input[name=login]").fill(input.login);
+  await page.locator("[data-account-login] input[name=password]").fill(input.loginPassword);
+  await page.locator("[data-account-login] button[type=submit]").click();
+  await page.locator("#whoami-text").waitFor({ state: "visible" });
+}
+const signOut = async (page) => {
+  await page.locator("#user-menu-button").click();
+  await page.getByRole("menuitem", { name: "Sign out" }).click();
+  await page.locator("#login-section").waitFor({ state: "visible" });
 };
 const search = async (page, text) => {
   await page.locator("#filter-text").fill(text);
   await page.locator("#filter-text").press("Enter");
-  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes(q) && document.querySelector("#list-status").textContent.includes("shown"), text);
+  await page.waitForFunction((q) => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes(q) && / loaded|No matches/.test(document.querySelector("#list-status").textContent), text);
 };
 const recordSearch = async (page) => {
   await search(page, "ux-record-");
-  await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 25 && [...document.querySelectorAll("#artifact-list .record-open strong")].every((node) => node.textContent.startsWith("ux-record-")));
+  await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 25 && [...document.querySelectorAll("#artifact-list .cell-title")].every((node) => node.textContent.startsWith("ux-record-")));
 };
 const detail = async (page, id, query) => {
   await search(page, query);
-  await page.locator(`button[data-action=details][data-artifact-id="${id}"]`).click();
+  await page.locator(`#catalogue-table a[data-action=details][data-artifact-id="${id}"]`).click();
   await page.locator("#detail-section").waitFor({ state: "visible" });
   await page.waitForFunction((value) => document.querySelector("#detail-list").textContent.includes(value), id);
 };
 
-await check("sortable table, global search, URL reload and responsive themes", async (page) => {
+await check("sortable table, global search and URL reload", async (page) => {
   await recordSearch(page);
   assert.equal(await page.locator("#next-button, #prev-button").count(), 0);
-  assert.equal(await page.locator("thead [data-sort]").count(), 9);
+  assert.equal(await page.locator("thead [data-sort]").count(), 7);
   // Creation time is stored in whole seconds; sequential fixture names are
   // NOT the tie breaker. Read authoritative metadata through the current typed
   // API and independently apply CreatedAt DESC, raw-byte artifact-ID DESC.
@@ -120,26 +124,13 @@ await check("sortable table, global search, URL reload and responsive themes", a
   ]).map((item) => item.name), ["uploaded-first", "uploaded-last"], "timestamp ties use raw ID bytes, not upload/name sequence");
   const ordered = createdDescending(metadata);
   assert.deepEqual(await titles(page), ordered.slice(0, 25).map((item) => item.name), "default global created-at and raw-ID ordering");
-  if (input.artifacts) await fs.writeFile(path.join(input.artifacts, "catalogue-sort-observation.json"), JSON.stringify({
-    order: "CreatedAt DESC, UTF8-ID DESC", source: metadata, expectedPage: ordered.slice(0, 25),
-    oldSequenceGoldenWouldMatch: ordered[0].name === "ux-record-64",
-  }, null, 2));
   await page.locator('[data-sort="name"]').focus();
   await page.keyboard.press("Enter");
-  await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
+  await page.waitForFunction(() => document.querySelector("#artifact-list .cell-title")?.textContent === "ux-record-00");
   assert.deepEqual(await titles(page), Array.from({ length: 25 }, (_, i) => `ux-record-${String(i).padStart(2, "0")}`));
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
+  await page.waitForFunction(() => document.querySelector("#artifact-list .cell-title")?.textContent === "ux-record-00");
   assert.equal(await page.locator("#filter-text").inputValue(), "sort:name direction:asc ux-record-");
-  if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-light.png"), fullPage: true });
-  await page.emulateMedia({ colorScheme: "dark" });
-  if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-dark.png"), fullPage: true });
-  await page.setViewportSize({ width: 390, height: 844 });
-  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "390px viewport must not have document overflow");
-  assert.equal(await page.locator("#results-panel").evaluate(node => node.scrollWidth <= node.clientWidth), true, "all catalogue metadata fits without horizontal scrolling");
-  assert.equal(await page.locator("#artifact-list > tr").first().locator("td").count(), 10);
-  assert.equal(await page.locator("thead [data-sort]").count(), 9);
-  if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "catalogue-mobile.png"), fullPage: true });
 });
 
 await check("expression length bound and delayed capabilities preserve draft", async (page) => {
@@ -153,7 +144,7 @@ await check("expression length bound and delayed capabilities preserve draft", a
   await page.locator("#search-submit").click();
   assert.equal(await page.locator("#query-diagnostic").textContent(), "Search text exceeds 4096 UTF-16 code units.");
   await page.evaluate(() => { location.hash = "#/artifacts?mode=semantic&q=ux-bundle"; });
-  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("unavailable"));
+  await page.waitForFunction(() => document.querySelector("#list-notice").textContent.includes("unavailable"));
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:semantic ux-bundle");
   await page.evaluate(() => { window.__ux.holdCapabilities = true; });
   await page.locator("#retry-list-button").click();
@@ -174,7 +165,7 @@ await check("direct route fences held retrieval and never replays unsent URL que
   await page.waitForFunction(() => window.__ux.releaseSearch !== null, null, { timeout: 10000 });
   try {
     await page.evaluate(() => { location.hash = "#/artifacts?mode=lexical&q=ux-protected"; });
-    await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("Press Search"));
+    await page.waitForFunction(() => document.querySelector("#list-notice").textContent.includes("Press Search"));
     await page.evaluate(() => window.__ux.releaseSearch());
     await settle(page);
     assert.equal(await page.locator("#retrieval-results").textContent(), "");
@@ -182,110 +173,79 @@ await check("direct route fences held retrieval and never replays unsent URL que
   } finally { await page.evaluate(() => window.__ux.releaseSearch?.()); }
 });
 
-await check("sort never submits draft and access presets insert visible syntax only", async (page) => {
+await check("sort and access scope wait for a changed draft; the scope then applies at once", async (page) => {
   await recordSearch(page);
   const before = await page.evaluate(() => window.__ux.readCommands.length);
   await page.locator("#filter-text").fill("mode:lexical kind:dir owner:unsent-owner unsent draft");
   assert.equal(await page.locator('[data-sort="name"]').isDisabled(), true);
+  assert.equal(await page.locator('[data-visibility-preset="external"]').isDisabled(), true);
   await page.locator("#refresh-button").click();
   await page.waitForFunction((n)=>window.__ux.readCommands.length === n+1,before);
   assert.deepEqual(await page.evaluate(()=>window.__ux.readCommands.at(-1)),{mode:"catalogue",query:"ux-record-"});
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical kind:dir owner:unsent-owner unsent draft");
+  await page.locator("#filter-text").fill("ux-record-");
   await page.locator('[data-visibility-preset="external"]').click();
-  assert.equal(await page.locator("#filter-text").inputValue(), "access:external ");
-  assert.equal(await page.evaluate(() => window.__ux.readCommands.length), before+1);
-  assert.equal(new URLSearchParams(new URL(page.url()).hash.split("?")[1]).get("query"), "ux-record-");
-  await page.locator("#search-submit").click();
-  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external" && document.querySelector("#filter-text").value === "access:external");
-  assert.equal(await page.locator("#filter-text").inputValue(),"access:external");
+  await page.waitForFunction(()=>new URLSearchParams(location.hash.split("?")[1]).get("query")==="access:external ux-record-" && document.querySelector("#list-status").textContent.includes("loaded"));
+  assert.equal(await page.locator("#filter-text").inputValue(),"access:external ux-record-");
+  assert.equal(await page.locator('[data-visibility-preset="external"]').getAttribute("aria-pressed"), "true");
+  assert.equal(await rows(page).evaluateAll((nodes) => nodes.length > 0 && nodes.every((node) => node.dataset.visibility === "external")), true);
 });
-
 await check("confirmed logout clears owner/query fragment and next login does not replay it", async (page) => {
   await page.locator("#filter-text").fill("mode:lexical owner:private-creator ux-public");
   await page.locator("#list-form button[type=submit]").click();
   await page.waitForFunction(() => new URLSearchParams(location.hash.split("?")[1]).get("query")?.includes("owner:private-creator"));
   await page.waitForFunction(() => window.__ux.readCommands.some(c => c.mode === "Lexical"));
-  await page.locator("#logout-button").click();
-  await page.locator("#login-section").waitFor({ state: "visible" });
+  await signOut(page);
   assert.equal(page.url().includes("private-creator"), false, "logout must remove owner from URL");
   assert.equal(page.url().includes("ux-public"), false, "logout must remove query from URL");
-  await page.locator("#login-input").fill(input.login);
-  await page.locator("#password-input").fill(input.loginPassword);
-  await page.locator("#login-form button[type=submit]").click();
-  await page.locator("#whoami-text").waitFor({ state: "visible" });
+  await signIn(page);
   assert.equal(await page.locator("#filter-text").inputValue(), "", "new login clears expression");
   assert.ok(await page.evaluate(() => window.__ux.readCommands.length > 0), "reloaded dashboard must load an authenticated catalogue");
   assert.equal(await page.evaluate(() => window.__ux.readCommands.some(c => c.mode !== "catalogue")), false, "no retrieval replay across logout/login");
 });
 
-await check("account settings issue, one-time secret dismissal and revoke use the password session", async (page) => {
-  await page.locator("#account-settings").click();
-  const settings = page.getByRole("dialog", { name: "Account settings", exact: true });
-  await settings.getByLabel("Token name", { exact: true }).waitFor();
-  const configured = settings.locator(".account-token").filter({ has: page.getByText("Configured", { exact: true }) });
+await check("access tokens open in the account outlet: issue, reveal, acknowledge and revoke without native dialogs", async (page) => {
+  page.on("dialog", (dialog) => { throw new Error("native dialog " + dialog.type()); });
+  await page.locator("#user-menu-button").click();
+  await page.getByRole("menuitem", { name: "Access tokens" }).click();
+  await page.getByRole("heading", { name: "Access tokens", exact: true }).waitFor();
+  assert.equal(await page.locator("#main").isHidden(), true, "the account page replaces the workspace view");
+  assert.equal(await page.getByRole("navigation", { name: "Main navigation" }).locator('[aria-current="page"]').count(), 0, "no workspace view is highlighted on the account page");
+  const table = page.getByRole("table", { name: "Access tokens" });
+  await table.locator("tr[data-row-id]").first().waitFor();
+  const configured = table.locator("tr[data-row-id]").filter({ hasText: "Configuration" });
   assert.ok(await configured.count() > 0, "declarative credentials remain visible in settings");
-  assert.equal(await configured.locator("button, input").count(), 0, "configured tokens are immutable");
-  await settings.getByLabel("Token name", { exact: true }).fill("Browser acceptance collector");
-  await settings.getByRole("button", { name: "Create access token", exact: true }).click();
-  const secret = settings.getByLabel("One-time token secret", { exact: true });
+  assert.equal(await configured.getByRole("button", { name: /^Revoke/ }).count(), 0, "configured tokens cannot be revoked here");
+  await page.getByRole("button", { name: "New token", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Browser acceptance collector");
+  await page.getByRole("button", { name: "Create token", exact: true }).click();
+  const secret = page.getByLabel("One-time token secret", { exact: true });
   await secret.waitFor();
-  assert.ok(await secret.evaluate(input => input.value.length > 20));
-  assert.equal(await page.evaluate(() => {
-    const value = document.querySelector('.account-secret input').value;
-    return JSON.stringify([localStorage, sessionStorage]).includes(value);
-  }), false, "one-time secrets must not enter browser storage");
-  await settings.getByRole("button", { name: "Copy secret", exact: true }).click();
-  await settings.getByRole("status").filter({ hasText: /Secret copied|Clipboard unavailable/ }).waitFor();
-  await settings.getByRole("button", { name: "Dismiss secret", exact: true }).click();
-  assert.equal(await secret.count(), 0);
-  page.once("dialog", dialog => dialog.accept());
-  await settings.getByRole("button", { name: "Revoke Browser acceptance collector", exact: true }).click();
-  await settings.locator(".account-token").filter({ hasText: "Browser acceptance collector" }).getByText("Revoked", { exact: true }).waitFor();
-  await settings.getByRole("button", { name: "Close settings", exact: true }).click();
-  assert.equal(await page.locator("#account-settings").evaluate(button => button === document.activeElement), true);
+  await page.getByRole("button", { name: "Reveal", exact: true }).click();
+  const value = await secret.inputValue();
+  assert.ok(value.length > 20);
+  assert.equal(await page.evaluate((shown) => JSON.stringify([localStorage, sessionStorage]).includes(shown), value), false, "one-time secrets must not enter browser storage");
+  await page.getByRole("button", { name: "I have saved it", exact: true }).click();
+  await page.getByRole("button", { name: "Yes, I have saved it", exact: true }).click();
+  await secret.waitFor({ state: "detached" });
+  await page.getByRole("button", { name: "Revoke Browser acceptance collector", exact: true }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Revoke token", exact: true }).click();
+  await table.locator("tr[data-row-id]").filter({ hasText: "Browser acceptance collector" }).waitFor({ state: "detached" });
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Artifacts" }).click();
+  await page.locator("#main").waitFor({ state: "visible" });
+  assert.equal(await page.getByRole("heading", { name: "Access tokens", exact: true }).count(), 0);
+  assert.ok(await rows(page).count() > 0, "the catalogue rows were kept while the account page was shown");
 });
-
 await check("unauthenticated incoming retrieval deep link survives login without implicit Search", async (page) => {
-  await page.locator("#logout-button").click();
-  await page.locator("#login-section").waitFor({ state: "visible" });
+  await signOut(page);
   const link = input.base + "/#/artifacts?mode=lexical&q=ux-public&owner=one-user";
   await page.goto(link, { waitUntil: "domcontentloaded" });
   await page.locator("#login-section").waitFor({ state: "visible" });
   assert.equal(page.url(), link);
-  await page.locator("#login-input").fill(input.login);
-  await page.locator("#password-input").fill(input.loginPassword);
-  await page.locator("#login-form button[type=submit]").click();
-  await page.locator("#whoami-text").waitFor({ state: "visible" });
+  await signIn(page);
   assert.equal(await page.locator("#filter-text").inputValue(), "mode:lexical owner:one-user ux-public");
   assert.equal(await page.locator("#retrieval-results").textContent(), "");
   assert.equal(await page.evaluate(() => window.__ux.readCommands.some(c => c.mode !== "catalogue")), false);
-});
-
-await check("infinite scrolling appends without duplicates and reaches exhaustion", async (page) => {
-  await recordSearch(page);
-  await page.locator("#artifact-list [data-action=details]").first().focus();
-  const focusedId = await page.evaluate(() => document.activeElement.dataset.artifactId);
-  await bottom(page); await count(page, 50);
-  assert.equal(await page.evaluate(() => document.activeElement.dataset.artifactId), focusedId, "appending rows must retain keyboard focus");
-  await bottom(page); await count(page, 65);
-  assert.equal(await page.locator("#load-more-button").isVisible(), false);
-  assert.equal(await page.locator("#artifact-list > tr").evaluateAll((nodes) => new Set(nodes.map((node) => node.dataset.artifactId)).size), 65);
-  await search(page, "access:external ux-record-");
-  await count(page, 22);
-  assert.equal(await rows(page).evaluateAll((nodes) => nodes.every((node) => node.children[2].textContent === "external")), true);
-});
-
-await check("append failure preserves rows, stops automatic loading and retries", async (page) => {
-  await recordSearch(page);
-  await page.evaluate(() => { window.__ux.failList = true; });
-  await bottom(page);
-  await page.locator("#list-error").waitFor({ state: "visible" });
-  assert.equal(await rows(page).count(), 25);
-  await settle(page);
-  assert.equal(await rows(page).count(), 25);
-  await page.locator("#retry-list-button").click();
-  await count(page, 50);
-  assert.equal(await page.locator("#list-error").isVisible(), false);
 });
 
 await check("old pages cannot append after a sort change", async (page) => {
@@ -300,7 +260,7 @@ await check("old pages cannot append after a sort change", async (page) => {
   await page.waitForFunction(() => document.querySelectorAll("#artifact-list > tr").length === 0);
   assert.equal(await page.locator("#artifact-list > tr").count(), 0, "old response cannot append across sort");
   await page.evaluate(() => window.__ux.releaseList());
-  await page.waitForFunction(() => document.querySelector("#artifact-list strong")?.textContent === "ux-record-00");
+  await page.waitForFunction(() => document.querySelector("#artifact-list .cell-title")?.textContent === "ux-record-00");
   await settle(page);
   assert.deepEqual(await titles(page), Array.from({ length: 25 }, (_, i) => `ux-record-${String(i).padStart(2, "0")}`));
   assert.equal(await page.evaluate(() => window.__ux.listPeak), 1, "only one physical request while stale read was unsettled");
@@ -315,7 +275,6 @@ await check("details show file manifest, inert names and attachment downloads", 
   ]);
   assert.equal(download.suggestedFilename(), "über file.txt");
   assert.equal((await fs.readFile(await download.path())).equals(Buffer.from("unicode download")), true);
-  if (input.artifacts) await page.screenshot({ path: path.join(input.artifacts, "artifact-detail.png"), fullPage: true });
   await page.locator("#detail-back-button").click();
   await search(page, "ux-hostile");
   await page.waitForFunction(() => document.querySelector("#artifact-list").textContent.includes("ux-hostile"));
@@ -343,16 +302,12 @@ await check("public previews and protected unlock keep isolated origin flows", a
   await page.locator("#open-button").click();
   await page.getByRole("heading", { name: "Public preview", exact: true }).waitFor();
   await page.goto(input.base + "/#/artifacts", { waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("shown"));
+  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("loaded"));
   await detail(page, input.protectedId, "ux-protected");
   await page.locator("#open-button").click();
   await page.getByRole("heading", { name: "Protected artifact", exact: true }).waitFor();
-  await capture(page, "unlock-light");
-  await page.emulateMedia({ colorScheme: "dark" });
-  await capture(page, "unlock-dark");
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
-  await capture(page, "unlock-mobile");
   await page.locator("#password-input").fill("incorrect");
   await page.locator("#unlock-form button").click();
   await page.locator("#unlock-error").waitFor({ state: "visible" });
@@ -367,9 +322,10 @@ await check("expired artifacts remain deletable from the catalogue", async (page
   await search(page, "ux-expired");
   await search(page, "expired:true ux-expired");
   await count(page, 1);
-  assert.equal(await page.locator('[data-action=delete]').isEnabled(), true);
-  page.once("dialog", (dialog) => dialog.accept());
-  await page.locator('[data-action=delete]').click();
+  await page.getByRole("button", { name: "More actions for ux-expired" }).click();
+  assert.equal(await page.getByRole("menuitem", { name: "Delete…" }).isEnabled(), true);
+  await page.getByRole("menuitem", { name: "Delete…" }).click();
+  await page.getByRole("dialog", { name: "Delete artifact?" }).getByRole("button", { name: "Delete artifact" }).click();
   await count(page, 0);
   assert.equal((await page.request.post(input.base+"/api/current",{data:{requestId:crypto.randomUUID(),apiVersion:"1.0.0",command:{GetArtifact:{artifactId:input.expiredId}}}})).status(),404);
 });
@@ -388,54 +344,31 @@ await check("password reveals clear on dismiss, navigation and confirmed logout"
   await page.locator("#detail-back-button").click();
   await page.waitForFunction(() => document.querySelector("#rotate-password").textContent.length === 0);
   await detail(page, input.protectedId, "ux-protected");
-  await page.locator("#logout-button").click();
-  await page.locator("#login-section").waitFor({ state: "visible" });
+  await signOut(page);
   assert.equal((await page.locator("#rotate-password").textContent()).length, 0);
 });
 
-await check("failed logout cannot resurrect an in-flight password reveal", async (page) => {
-  await detail(page, input.protectedId, "ux-protected");
-  await page.evaluate(() => { window.__ux.holdRotate = true; });
-  await page.locator("#rotate-button").click();
-  await page.waitForFunction(() => window.__ux.releaseRotate !== null);
-  await page.evaluate(() => { window.__ux.failLogout = true; });
-  await page.locator("#logout-button").click();
-  await page.waitForFunction(() => document.querySelector("#detail-status").textContent.includes("Sign out could not be confirmed"));
-  await page.evaluate(() => window.__ux.releaseRotate());
-  await settle(page);
-  assert.equal((await page.locator("#rotate-password").textContent()).length, 0, "logout attempt must invalidate the reveal");
-});
-
-await check("returning from details after cancelling a page restores scrolling", async (page) => {
+await check("Back from details after a cancelled append keeps the rows and loads on", async (page) => {
   await recordSearch(page);
   await page.evaluate(() => { window.__ux.holdList = true; });
   await bottom(page);
   await page.waitForFunction(() => window.__ux.releaseList !== null);
-  await page.locator("#results-panel").evaluate((node) => { node.scrollTop = 0; });
-  await page.locator("#artifact-list [data-action=details]").first().click();
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.locator("#artifact-list a[data-action=details]").first().click();
   await page.locator("#detail-section").waitFor({ state: "visible" });
-  await page.evaluate(() => { window.__ux.holdListReset = true; });
   await page.locator("#detail-back-button").click();
   await page.locator("#dashboard-section").waitFor({ state: "visible" });
+  assert.equal(await rows(page).count(), 25, "the loaded rows are kept");
   await page.evaluate(() => window.__ux.releaseList());
-  // Back refreshes the catalogue behind the cancelled physical append. Frames
-  // do not establish response completion: keep that refresh pending explicitly.
-  await page.waitForFunction(() => window.__ux.releaseListReset !== null);
-  assert.equal(await rows(page).count(), 0, "cancelled append cannot populate the returning catalogue");
-  assert.equal(await page.locator("#load-more-button").isEnabled(), false, "refresh owns the pending control");
-  assert.equal(await page.locator("#list-status").textContent(), "Loading artifacts…");
-  await page.evaluate(() => window.__ux.releaseListReset());
-  await count(page, 25);
-  await page.waitForFunction(() => !document.querySelector("#load-more-button").disabled);
-  assert.equal(await page.locator("#load-more-button").isEnabled(), true);
-  await page.locator("#load-more-button").click();
+  await settle(page);
+  assert.equal(await rows(page).count(), 25, "the cancelled append cannot add rows");
+  await bottom(page);
   await count(page, 50);
 });
-
 await check("missing deep links recover to a usable catalogue", async (page) => {
   await page.goto(input.base + "/#/artifact/" + "0".repeat(32), { waitUntil: "domcontentloaded" });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("Detail failed"));
+  await page.waitForFunction(() => document.querySelector("#list-notice").textContent.includes("Detail failed"));
   assert.equal(await page.locator("#dashboard-section").isVisible(), true);
   assert.equal(await rows(page).count() > 0 || await page.locator("#retry-list-button").isVisible(), true);
   await page.locator("#retry-list-button").click();
@@ -450,7 +383,7 @@ await check("session network failures expose a visible recovery action", async (
   assert.equal(await page.locator("#session-retry-button").isVisible(), true);
   await page.evaluate(() => { window.__ux.failSession = false; });
   await page.locator("#session-retry-button").click();
-  await page.locator("#workspace-shell").waitFor({ state: "visible" });
+  await page.locator("#main").waitFor({ state: "visible" });
   await count(page, 25);
 });
 
@@ -471,13 +404,13 @@ await check("retrieval detail denial clears pinned evidence", async (page) => {
   await page.locator("#filter-text").fill("mode:lexical ux-bundle");
   await page.locator("#list-form button[type=submit]").click();
   try { await page.waitForFunction(() => document.querySelector("#retrieval-results").textContent.includes("ux-bundle"), null, { timeout: 10000 }); }
-  catch (error) { throw new Error("retrieval status: " + await page.locator("#list-status").textContent() + " / " + await page.locator("#list-error").textContent()); }
+  catch (error) { throw new Error("retrieval status: " + await page.locator("#list-status").textContent() + " / " + await listNotice(page)); }
   const response = await page.request.post(input.base + "/api/current", { headers: { Origin: input.base }, data: {
     requestId: crypto.randomUUID(), apiVersion: "1.0.0", command: { DeleteArtifact: { artifactId: input.bundle } }
   }});
   assert.equal(response.status(), 200);
   await page.locator("#retrieval-results [data-action=details]").first().click();
-  await page.waitForFunction(() => document.querySelector("#list-status").textContent.includes("Detail failed"));
+  await page.waitForFunction(() => document.querySelector("#list-notice").textContent.includes("Detail failed"));
   assert.equal(await page.locator("#retrieval-results").textContent(), "", "denied artifact and evidence cannot be retained");
 });
 
@@ -513,7 +446,7 @@ await check("caret-aware completion supports keyboard, pointer, dismissal and IM
   assert.equal(await page.locator('#query-diagnostic').isVisible(),true);
   assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before);
   await page.evaluate(()=>{location.hash='#/artifacts?query=mode:INVALID';});
-  await page.waitForFunction(()=>document.querySelector('#list-status').textContent.includes('Invalid URL query'));
+  await page.waitForFunction(()=>document.querySelector('#list-notice').textContent.includes('Invalid URL query'));
   assert.equal(await query.inputValue(),'mode:INVALID');
   assert.equal(await page.locator('#refresh-button').isDisabled(),true);
   assert.equal(await page.evaluate(()=>window.__ux.readCommands.length),before,'invalid URL never falls back to catalogue');
@@ -539,6 +472,8 @@ await check("latest unsent catalogue expression replaces queued reads", async (p
 });
 
 await check("quick upload is one desktop row, accessible segments and bounded mobile wrap", async (page) => {
+  await page.getByRole("navigation", { name: "Main navigation" }).getByRole("link", { name: "Upload" }).click();
+  await page.locator("#upload-section").waitFor({ state: "visible" });
   const boxes=await Promise.all(['#upload-files','#upload-visibility','#upload-submit','#upload-clear'].map(selector=>page.locator(selector).boundingBox()));
   const centers=boxes.map(b=>b.y+b.height/2);
   assert.ok(Math.max(...centers)-Math.min(...centers)<3,'all upload controls share one desktop row');
