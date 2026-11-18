@@ -126,25 +126,29 @@ for m in 001.sql 002.sql 003_index_progress.sql 004_collector_progress.sql 005_s
   q -d chronicle_t -f "chronicle/migrations/$m" >/dev/null 2>&1 || { echo "setup: chronicle migration $m failed" >&2; exit 5; }
 done
 cv2='["embedding-space-v2","m","r",768,false,"q","d","cosine"]'
-chronicle_case() { # name, space descriptor, profile descriptor, expected verify outcome
+chronicle_case() { # name, space descriptor, profile descriptor, expected verify outcome[, LP counter that must be 1 (the reason)]
   q -d chronicle_t -c "DELETE FROM ch_index_profiles" -c "DELETE FROM ch_embedding_spaces" \
     -c "INSERT INTO ch_embedding_spaces(id, descriptor) VALUES ('s2', \$d\$$cv2\$d\$), ('sx', \$d\$$2\$d\$)" \
     -c "INSERT INTO ch_index_profiles(profile, embedding_space, policy, descriptor) VALUES ('p2', 's2', 'ContextAwareProblemsV1', \$d\$$3\$d\$)" >/dev/null 2>"$base/err" \
     || { ko "s3-chronicle-$1" "setup: $(head -1 "$base/err")"; return; }
   PGDATABASE=chronicle_t sh "$dir/run.sh" chronicle verify >"$base/out" 2>&1; local rc=$? got=nonzero
   [[ $rc -eq 0 ]] && grep -q 'LR.result|verify-zero' "$base/out" && got=zero
-  [[ $got == "$4" ]] && ok "s3-chronicle-$1" || ko "s3-chronicle-$1" "verify=$got want=$4"
+  local reason=ok; [[ -z ${5:-} ]] || grep -qx "LP.$5|1" "$base/out" || reason="no LP.$5|1"
+  [[ $got == "$4" && $reason == ok ]] && ok "s3-chronicle-$1" || ko "s3-chronicle-$1" "verify=$got want=$4; reason: $reason"
 }
 okprof='["index-profile-descriptor-v2",["m","r","p","1"],"c"]'
 chronicle_case all-v2 "$cv2" "$okprof" zero
-chronicle_case space-incomplete-tuple '["embedding-space-v2"]' "$okprof" nonzero
-chronicle_case profile-incomplete '["index-profile-descriptor-v2",["m","r","p"],"c"]' "$cv2" nonzero
-chronicle_case profile-empty-element "$cv2" '["index-profile-descriptor-v2",["m","","p","1"],"c"]' nonzero
+chronicle_case space-incomplete-tuple '["embedding-space-v2"]' "$okprof" nonzero embedding_spaces.not_proven_v2
+chronicle_case profile-incomplete "$cv2" '["index-profile-descriptor-v2",["m","r","p"],"c"]' nonzero index_profiles.current_policy_not_proven_v2
+chronicle_case profile-empty-element "$cv2" '["index-profile-descriptor-v2",["m","","p","1"],"c"]' nonzero index_profiles.current_policy_not_proven_v2
 # T5: the same rows give the same shared lines in the one-off verify and the retained check
 q -d chronicle_t -c "DELETE FROM ch_index_profiles" -c "DELETE FROM ch_embedding_spaces" -c "INSERT INTO ch_embedding_spaces(id, descriptor) VALUES ('sx', '[\"embedding-space-v2\"]')" >/dev/null
 PGDATABASE=chronicle_t sh "$dir/run.sh" chronicle verify >"$base/v1" 2>&1
 psql -X -q -v ON_ERROR_STOP=1 -d chronicle_t -f "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/v2" 2>&1
 if [[ -n $(grep '^LP\.' "$base/v1") && $(grep '^LP\.' "$base/v1") == $(grep '^LP\.' "$base/v2") ]] && grep -q '^LP.embedding_spaces.not_proven_v2|1' "$base/v1" && ! grep -q 'LR.result|verify-zero' "$base/v1" && ! grep -q 'LF.result|legacy-free' "$base/v2"; then ok t5-chronicle-shared-lines-identical-and-both-reject; else ko t5-chronicle-shared-lines-identical-and-both-reject; fi
+# U4: preflight prints the same shared structural lines on the same rows (a tag-only v2 descriptor is not proven)
+PGDATABASE=chronicle_t sh "$dir/run.sh" chronicle preflight >"$base/v3" 2>&1; rc=$?
+if [[ $rc -eq 0 && $(tail -n 1 "$base/v3") == 'LR.result|preflight-complete' && $(grep '^LP\.' "$base/v3") == $(grep '^LP\.' "$base/v1") ]] && grep -qx 'LP.embedding_spaces.not_proven_v2|1' "$base/v3"; then ok u4-preflight-prints-shared-lines; else ko u4-preflight-prints-shared-lines "rc=$rc last=$(tail -n 1 "$base/v3")"; fi
 # T5: a retained file without the shared block makes the one-off composition fail (nothing is sent)
 mkdir -p "$base/tree/scripts/one-off" "$base/tree/chronicle/scripts"; cp -r "$dir" "$base/tree/scripts/one-off/legacy-retirement"
 grep -v "shared:chronicle" "$dir/../../../chronicle/scripts/check-legacy-free.sql" >"$base/tree/chronicle/scripts/check-legacy-free.sql"
@@ -318,6 +322,27 @@ cdpath_inputs=$("${clean_env[@]}" CDPATH=. bash -c 'builtin cd "$1" && . "$2/tes
 "${clean_env[@]}" CDPATH=. SOURCE_PG_DUMP=x bash -c 'builtin cd "$1" && . "$2/test-guard.sh" && lr_guard_check' _ "$(dirname "$gparent")" "$gbase" >/dev/null 2>&1; [[ $? -eq 4 ]] && ok t2-cdpath-still-refuses-discovered-input || ko t2-cdpath-still-refuses-discovered-input
 mkdir -p "$base/lonely"; cp "$guard" "$base/lonely/test-guard.sh"
 "${clean_env[@]}" bash -c '. "$1"' _ "$base/lonely/test-guard.sh" >/dev/null 2>&1; [[ $? -eq 4 ]] && ok t2-failed-discovery-refuses || ko t2-failed-discovery-refuses
+# U1: a failing extraction stage for ONE file refuses, even when the other files supply every sentinel. A copy of the
+# scripts gains extra.sh, the only reader of U1_ONLY_INPUT; a grep wrapper fails (exit 2) only on that file's text.
+mkdir -p "$base/u1/bin"; cp -r "$(dirname "$guard")" "$base/u1/lr"; u1name=U1_ONLY_INPUT   # named indirectly here, so that this file does not itself read it
+printf '#!/bin/sh\n: U1_MARKER\necho "%s"\n' "\${$u1name}" >"$base/u1/lr/extra.sh"
+real_grep=$(command -v grep)
+cat >"$base/u1/bin/grep" <<GREP
+#!$BASH
+last=\${@: -1}
+if [[ -f \$last ]]; then exec $real_grep "\$@"; fi
+data=\$(cat; echo x); data=\${data%x}
+[[ \$data == *U1_MARKER* ]] && exit 2
+printf '%s' "\$data" | exec $real_grep "\$@"
+GREP
+chmod +x "$base/u1/bin/grep"
+env -i PATH="$base/u1/bin:$PATH" HOME="$HOME" POSTGRES_HOME="$POSTGRES_HOME" bash -c '. "$1"' _ "$base/u1/lr/test-guard.sh" >/dev/null 2>&1; rc_plain=$?
+env -i PATH="$base/u1/bin:$PATH" HOME="$HOME" POSTGRES_HOME="$POSTGRES_HOME" "$u1name=x" bash -c '. "$1"' _ "$base/u1/lr/test-guard.sh" >/dev/null 2>&1; rc_set=$?
+[[ $rc_plain -eq 4 && $rc_set -eq 4 ]] && ok u1-one-file-extraction-failure-refuses || ko u1-one-file-extraction-failure-refuses "rc without/with the input: $rc_plain/$rc_set"
+env -i PATH="$PATH" HOME="$HOME" POSTGRES_HOME="$POSTGRES_HOME" "$u1name=x" bash -c '. "$1"' _ "$base/u1/lr/test-guard.sh" >/dev/null 2>&1; [[ $? -eq 4 ]] && ok u1-extra-input-discovered || ko u1-extra-input-discovered
+chmod 000 "$base/u1/lr/extra.sh"
+env -i PATH="$PATH" HOME="$HOME" POSTGRES_HOME="$POSTGRES_HOME" bash -c '. "$1"' _ "$base/u1/lr/test-guard.sh" >/dev/null 2>&1; rc=$?; chmod 600 "$base/u1/lr/extra.sh"
+[[ $rc -eq 4 ]] && ok u1-unreadable-script-refuses || ko u1-unreadable-script-refuses "rc=$rc"
 exempt=$("${clean_env[@]}" bash -c '. "$1" && printf "%s" "${LR_GUARD_EXEMPT:-}"' _ "$guard" 2>/dev/null)
 if [[ -n $exempt ]] && ! grep -qE '(^| )(PG[A-Z]|LR_|KUBE|CLONE_|PSQL)' <<<"$exempt"; then ok s4-exempt-list-holds-no-target; else ko s4-exempt-list-holds-no-target "exempt='$exempt'"; fi
 missing=''

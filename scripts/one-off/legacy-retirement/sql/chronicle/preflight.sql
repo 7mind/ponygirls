@@ -9,6 +9,9 @@ SELECT 'LR.schema_migrations', coalesce(string_agg(version::text, ',' ORDER BY v
 SELECT 'LR.' || key, value FROM counts ORDER BY key;
 \ir_counts
 SELECT 'LR.plan', string_agg(value::text, '.' ORDER BY key) FROM counts WHERE in_plan;
+-- The structural predicates shared with verify and the retained post-deployment check (block shared:chronicle).
+-- Diagnostics only here: the migration selects its rows by the counters above, not by these lines.
+\ir_shared chronicle chronicle
 -- Generations in a retired output format, by format and state. `history` rows are readable pinned views.
 SELECT 'LR.old_format', coalesce(g.passage_format, '<null>'),
        CASE WHEN g.retired THEN 'retired-tombstone' WHEN EXISTS (SELECT 1 FROM ch_sources s WHERE s.published = g.id) THEN 'published' ELSE 'history' END, count(*)

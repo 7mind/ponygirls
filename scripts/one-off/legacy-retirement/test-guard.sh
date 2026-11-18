@@ -15,21 +15,30 @@ lr_guard_dir=$(builtin cd -P -- "$(dirname -- "${BASH_SOURCE[0]}")" >/dev/null 2
 # Files whose inputs must be covered, and names that a correct extraction must find (each is read by a script).
 LR_GUARD_FILES='run.sh drop-databases.sh op.sh check-stored-documents.sh test.sh test-drop-databases.sh test-scripts.sh rehearsal/clone.sh'
 LR_GUARD_SENTINELS='PSQL POSTGRES_HOME LR_CONTEXT LR_SYSTEM_IDENTIFIER SOURCE_PG_DUMP CLONE_PORT'
-lr_guard_inputs() {
-  local f
-  for f in "$lr_guard_dir"/*.sh "$lr_guard_dir"/rehearsal/*.sh; do
-    [[ -f $f ]] || return 1
-    # names referenced as $NAME / ${NAME…} / ${!NAME} (not escaped), minus names the same file assigns
-    local code; code=$(grep -vE '^[[:space:]]*#' "$f")   # comments are not code
-    comm -23 \
-      <(grep -oE '(^|[^\\])\$\{?!?[A-Za-z_][A-Za-z0-9_]*' <<<"$code" | sed -E 's/^.?\$\{?!?//' | sort -u) \
-      <({ grep -oE '(^|[;[:space:](])(export |local |readonly )?[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=' <<<"$code" | sed -E 's/^[;[:space:](]//; s/^(export |local |readonly )//; s/(\[[^]]*\])?\+?=$//'
-          grep -oE '(^|[;[:space:]])for [A-Za-z_][A-Za-z0-9_]*' <<<"$code" | sed -E 's/^.*for //'
-          grep -oE 'read( -[a-z]+)*( [A-Za-z_][A-Za-z0-9_]*)+' <<<"$code" | sed -E 's/^read( -[a-z]+)* //' | tr ' ' '\n'
-          grep -oE '(local|declare)( -[a-z]+)?( [A-Za-z_][A-Za-z0-9_]*)+' <<<"$code" | sed -E 's/^(local|declare)( -[a-z]+)? //' | tr ' ' '\n'
-        } | sort -u)
-  done | grep -vE '^(BASH_SOURCE|BASH_REMATCH|LINENO|FUNCNAME|PIPESTATUS|RANDOM|SECONDS|IFS|OPTIND|OPTARG|REPLY|PWD|LR_GUARD_[A-Z_]*|lr_guard_[a-z_]*)$' | sort -u
+lr_guard_match() { # grep that fails on a read or pattern error (exit > 1), not on "no line matched" (exit 1)
+  local rc=0; grep "$@" || rc=$?; [[ $rc -le 1 ]]
 }
+# Runs in a subshell with pipefail: every stage of every file is checked; any failure fails the whole extraction.
+lr_guard_inputs() (
+  set -o pipefail
+  f='' code='' refs='' assigned='' name='' rc=0
+  for f in "$lr_guard_dir"/*.sh "$lr_guard_dir"/rehearsal/*.sh; do
+    [[ -f $f && -r $f ]] || exit 1
+    # names referenced as $NAME / ${NAME…} / ${!NAME} (not escaped), minus names the same file assigns
+    code=$(lr_guard_match -vE '^[[:space:]]*#' "$f") || exit 1   # comments are not code
+    refs=$(lr_guard_match -oE '(^|[^\\])\$\{?!?[A-Za-z_][A-Za-z0-9_]*' <<<"$code" | sed -E 's/^.?\$\{?!?//' | sort -u) || exit 1
+    [[ -n $refs ]] || exit 1   # every script reads some variable: an empty result is a failed extraction
+    assigned=$(lr_guard_match -oE '(^|[;[:space:](])(export |local |readonly )?[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?\+?=' <<<"$code" | sed -E 's/^[;[:space:](]//; s/^(export |local |readonly )//; s/(\[[^]]*\])?\+?=$//') || exit 1
+    assigned+=$'\n'$(lr_guard_match -oE '(^|[;[:space:]])for [A-Za-z_][A-Za-z0-9_]*' <<<"$code" | sed -E 's/^.*for //') || exit 1
+    assigned+=$'\n'$(lr_guard_match -oE 'read( -[a-z]+)*( [A-Za-z_][A-Za-z0-9_]*)+' <<<"$code" | sed -E 's/^read( -[a-z]+)* //' | tr ' ' '\n') || exit 1
+    assigned+=$'\n'$(lr_guard_match -oE '(local|declare)( -[a-z]+)?( [A-Za-z_][A-Za-z0-9_]*)+' <<<"$code" | sed -E 's/^(local|declare)( -[a-z]+)? //' | tr ' ' '\n') || exit 1
+    while IFS= read -r name; do
+      [[ -n $name ]] || continue
+      rc=0; grep -qxF -- "$name" <<<"$assigned" || rc=$?
+      case $rc in 0) ;; 1) printf '%s\n' "$name" ;; *) exit 1 ;; esac
+    done <<<"$refs"
+  done | lr_guard_match -vE '^(BASH_SOURCE|BASH_REMATCH|LINENO|FUNCNAME|PIPESTATUS|RANDOM|SECONDS|IFS|OPTIND|OPTARG|REPLY|PWD|LR_GUARD_[A-Z_]*|lr_guard_[a-z_]*)$' | sort -u
+)
 lr_guard_refused() { # 0 when the named variable must not be inherited
   case " $LR_GUARD_EXEMPT " in *" $1 "*) return 1 ;; esac
   return 0
@@ -39,7 +48,7 @@ lr_guard_check() {
   if [[ -z $lr_guard_dir || ${#lr_guard_dir} -lt 2 || $lr_guard_dir == *$'\n'* ]]; then
     echo 'test refused: the guard cannot locate the scripts it protects' >&2; return 4; fi
   for f in $LR_GUARD_FILES; do [[ -f $lr_guard_dir/$f ]] || { echo "test refused: guard discovery found no $f in $lr_guard_dir" >&2; return 4; }; done
-  inputs=$(set -o pipefail; lr_guard_inputs) || { echo 'test refused: the guard could not extract the script inputs' >&2; return 4; }
+  inputs=$(lr_guard_inputs) || { echo 'test refused: the guard could not extract the script inputs' >&2; return 4; }
   for name in $LR_GUARD_SENTINELS; do
     grep -qx -- "$name" <<<"$inputs" || { echo "test refused: input extraction is implausible (no $name)" >&2; return 4; }
   done

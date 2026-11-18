@@ -97,9 +97,10 @@ awk '/^[\\]echo DB[.]phase[|]between-rename-and-drop/ { printf "%cq\n", 92 } { p
 CUT
   chmod +x "$base/cut-psql"
   PSQL=$base/cut-psql sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
-  [[ $(q -c "SELECT datname FROM pg_database WHERE oid = $o") == lr_drop_$o ]] && echo "     (cut left tombstone lr_drop_$o)"
+  # precondition: the cut left this script's tombstone (otherwise the next command is a plain fresh drop)
+  tomb=$(q -c "SELECT datname || ',' || datallowconn || ',' || coalesce(shobj_description(oid, 'pg_database'), '-') FROM pg_database WHERE oid = $o")
   sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1
-  if [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $o") == 0 ]] && [[ $(tail -1 "$base/out") == "DB.result|dropped|oid=$o" ]]; then pass=$((pass + 1)); echo "PASS interrupted-drop-resumes"; else failed=$((failed + 1)); echo "FAIL interrupted-drop-resumes"; fi
+  if [[ $tomb == "lr_drop_$o,false,legacy-retirement drop: original=manure_nex249_before_20261105a oid=$o at="* ]] && [[ $(q -c "SELECT count(*) FROM pg_database WHERE oid = $o") == 0 ]] && [[ $(tail -1 "$base/out") == "DB.result|dropped|oid=$o" ]]; then pass=$((pass + 1)); echo "PASS interrupted-drop-resumes"; else failed=$((failed + 1)); echo "FAIL interrupted-drop-resumes (state after the cut: $tomb)"; fi
   # 13. "dropped but not confirmed": the same command again reports the OID as already gone (distinct result, exit 0)
   sh "$script" drop --drop manure_nex249_before_20261105a --confirm-database manure_nex249_before_20261105a --expect-oid "$o" --sample-seconds 2 "${bindings[@]}" >"$base/out" 2>&1; rc=$?
   if [[ $rc -eq 0 && $(tail -1 "$base/out") == "DB.result|already-gone|oid=$o" ]]; then pass=$((pass + 1)); echo "PASS already-gone-reported"; else failed=$((failed + 1)); echo "FAIL already-gone-reported (rc=$rc last=$(tail -1 "$base/out"))"; fi
