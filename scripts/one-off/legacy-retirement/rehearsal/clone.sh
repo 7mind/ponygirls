@@ -7,7 +7,8 @@
 #       SOURCE_PG_DUMP is the complete pg_dump command line AT THE SOURCE without the database argument, for example
 #       an exec into the database pod (`kubectl … exec -i POD -c CONTAINER -- pg_dump -h SOCKETDIR -U ROLE`).
 #       Default: `pg_dump` with the PG* variables. CLONE_COMPRESS (default 1) is pg_dump's --compress value.
-#   clone.sh init-cluster --dir DIR        initdb + start a scratch PostgreSQL in DIR (unix socket only, no TCP)
+#   clone.sh init-cluster --dir DIR        initdb + start a scratch PostgreSQL in DIR: unix socket for psql, and
+#                                          127.0.0.1:${CLONE_PORT:-54329} with a generated password for the binary
 #   clone.sh restore --dir DIR [--jobs N] DATABASE [DATABASE...]      createdb + pg_restore into that cluster
 #   clone.sh env --dir DIR                 prints the PGHOST/PGPORT/PGUSER lines for run.sh against the clone
 #   clone.sh stop-cluster --dir DIR
@@ -17,7 +18,7 @@
 #
 # init-cluster/restore/stop-cluster need POSTGRES_HOME (PostgreSQL 18 with pgvector: `nix develop .#chronicle`).
 set -euo pipefail
-usage() { sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 fail() { printf 'clone: %s\n' "$1" >&2; exit 3; }
 [[ $# -ge 1 ]] || usage
 mode=$1; shift
@@ -41,7 +42,8 @@ private() {
   [[ $(stat -c '%a %u' "$dir") == "700 $(id -u)" ]] || fail "$dir must be mode 0700 and owned by the current user"
 }
 pg() { : "${POSTGRES_HOME:?POSTGRES_HOME required (nix develop .#chronicle)}"; local tool=$1; shift; "$POSTGRES_HOME/bin/$tool" "$@"; }
-socket=$dir/s; port=54329
+socket=$dir/s; port=${CLONE_PORT:-54329}
+[[ $port =~ ^[1-9][0-9]{3,4}$ ]] || fail 'CLONE_PORT must be a port number'
 case $mode in
   export)
     [[ ${#databases[@]} -ge 1 ]] || usage
@@ -60,10 +62,13 @@ case $mode in
     done ;;
   init-cluster)
     private; [[ ! -e $dir/pgdata ]] || fail 'the cluster already exists'
-    mkdir "$socket"   # the socket directory inherits 0700: only this user can connect, hence trust authentication
-    pg initdb -D "$dir/pgdata" -U postgres -A trust --no-locale --encoding=UTF8 >"$dir/initdb.log"
-    pg pg_ctl -D "$dir/pgdata" -l "$dir/server.log" -o "-c listen_addresses='' -k $socket -p $port -c max_wal_size=16GB -c maintenance_work_mem=2GB" -w start >/dev/null
-    echo "cluster started; socket $socket port $port" ;;
+    mkdir "$socket"
+    # Two ways in, both private: the unix socket in this 0700 directory (trust: only this user can reach it), and
+    # loopback TCP for the service binary's JDBC driver, which requires the generated password (scram-sha-256).
+    head -c 24 /dev/urandom | base64 | tr -d '/+=' >"$dir/password"
+    pg initdb -D "$dir/pgdata" -U postgres --auth-local=trust --auth-host=scram-sha-256 --pwfile="$dir/password" --no-locale --encoding=UTF8 >"$dir/initdb.log"
+    pg pg_ctl -D "$dir/pgdata" -l "$dir/server.log" -o "-c listen_addresses=127.0.0.1 -k $socket -p $port -c max_wal_size=16GB -c maintenance_work_mem=2GB" -w start >/dev/null
+    echo "cluster started; socket $socket; jdbc:postgresql://127.0.0.1:$port/<database> user postgres, password file $dir/password" ;;
   env)
     private; printf 'export PGHOST=%s PGPORT=%s PGUSER=postgres\n' "$socket" "$port" ;;
   restore)

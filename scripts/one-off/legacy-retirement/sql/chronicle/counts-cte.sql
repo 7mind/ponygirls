@@ -52,5 +52,7 @@ WITH legacy_spaces AS (
   UNION ALL SELECT 'info.unfinished_runs.accepted_checkpoints_to_discard', (SELECT count(*) FROM ch_index_checkpoints c JOIN unfinished u ON u.id = c.job_id AND u.run_id = c.run_id), 'info', false, false
   UNION ALL SELECT 'info.generations.current_format', (SELECT count(*) FROM ch_generations WHERE passage_format = 'ContextAwareProblems'), 'info', false, false
   UNION ALL SELECT 'info.sources.published', (SELECT count(*) FROM ch_sources WHERE published IS NOT NULL), 'info', false, false
+  UNION ALL SELECT 'info.jobs.queued', (SELECT count(*) FROM ch_jobs WHERE state = 'Queued'), 'info', false, false
+  UNION ALL SELECT 'info.jobs.failed_at_head_on_target', (SELECT count(*) FROM ch_jobs j JOIN ch_sources s ON s.id = j.session_id AND s.revision = j.revision AND NOT s.tombstone JOIN ch_owner_targets t ON t.owner = s.owner AND t.profile = j.profile WHERE j.state = 'Failed'), 'info', false, false
   UNION ALL SELECT 'info.jobs.running_live_lease', (SELECT count(*) FROM ch_jobs WHERE state = 'Running' AND lease_until > clock_timestamp()), 'info', false, false
 )
