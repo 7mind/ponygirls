@@ -12,9 +12,37 @@ import subprocess
 import sys
 import tempfile
 
+CHILD_TIMEOUT_SECONDS=3600
+CHILD_STOP_SECONDS=15
+EXIT_TIMEOUT=124
+TERMINATION_SIGNALS=(signal.SIGTERM,signal.SIGINT)
+
+
+class Terminated(Exception):
+    def __init__(self,signum):
+        super().__init__(signal.Signals(signum).name)
+        self.signum=signum
+
+
+def terminate(signum,frame):
+    # Cleanup below runs once and is bounded; a repeated signal must not interrupt it.
+    for termination in TERMINATION_SIGNALS: signal.signal(termination,signal.SIG_IGN)
+    raise Terminated(signum)
+
+
+def stop_child(child):
+    """The child runs in its own session: stop its whole process group."""
+    try: os.killpg(child.pid,signal.SIGTERM)
+    except ProcessLookupError: return
+    try: child.wait(timeout=CHILD_STOP_SECONDS)
+    except subprocess.TimeoutExpired:
+        os.killpg(child.pid,signal.SIGKILL);child.wait()
+
 
 def main():
     os.umask(0o077)
+    # TERM/INT unwind through the finally blocks: the child, the cluster and the private directory go with the wrapper.
+    for termination in TERMINATION_SIGNALS: signal.signal(termination,terminate)
     template=json.loads(Path(os.environ['PG_POLICY']).read_text())
     pg=os.environ['PG_BIN']
     with tempfile.TemporaryDirectory(prefix='ponygirls-owned-pg-') as name:
@@ -38,8 +66,8 @@ def main():
             subprocess.run(args,check=True,stdout=subprocess.DEVNULL,timeout=180)
         run(sys.executable,os.environ['PG_PROVIDER'],'init',str(manifest))
         data=str(root/'cluster'/'data')
-        run(pg+'/pg_ctl','-D',data,'-l',str(root/'postgres.log'),'-o',f'-c config_file={root}/postgresql.conf','-w','-t','30','start')
         try:
+            run(pg+'/pg_ctl','-D',data,'-l',str(root/'postgres.log'),'-o',f'-c config_file={root}/postgresql.conf','-w','-t','30','start')
             env=dict(os.environ,PONYGIRLS_OWNED_FIXTURE_ROOT=str(root))
             for key,d in template['databases'].items():
                 run(sys.executable,os.environ['PG_PROVIDER'],'provision',str(manifest),key)
@@ -57,15 +85,20 @@ def main():
                 MANURE_TEST_JDBC_PASSWORD_FILE=manure['passwordFile'],MANURE_TEST_ALLOW_CREATEDB='1')
             child=subprocess.Popen(sys.argv[1:],env=env,start_new_session=True)
             try:
-                return child.wait(timeout=3600)
+                return child.wait(timeout=CHILD_TIMEOUT_SECONDS)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid,signal.SIGTERM)
-                try: child.wait(timeout=15)
-                except subprocess.TimeoutExpired:
-                    os.killpg(child.pid,signal.SIGKILL);child.wait()
-                return 124
+                stop_child(child)
+                return EXIT_TIMEOUT
+            except Terminated:
+                stop_child(child)
+                raise
         finally:
-            run(pg+'/pg_ctl','-D',data,'-m','fast','-w','-t','30','stop')
+            # No pid file: the start was interrupted before a postmaster ran.
+            if (Path(data)/'postmaster.pid').exists():
+                run(pg+'/pg_ctl','-D',data,'-m','fast','-w','-t','30','stop')
 
 if __name__=='__main__':
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Terminated as terminated:
+        sys.exit(128+terminated.signum)
