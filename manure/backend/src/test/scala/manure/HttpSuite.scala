@@ -302,6 +302,9 @@ final class HttpSuite extends FunSuite:
         assertEquals(response.status.code,200)
         assertEquals(body,svg)
         assertEquals(response.headers.headers.find(_.name == CIString("Content-Type")).map(_.value),Some("image/svg+xml"))
+        val policy = response.headers.headers.find(_.name == CIString("Content-Security-Policy")).map(_.value).getOrElse("")
+        Vector("default-src 'self'","script-src 'self'","object-src 'none'","base-uri 'none'","frame-ancestors 'none'","form-action 'self'")
+          .foreach(directive => assert(policy.contains(directive),policy))
       }
       _ <- Vector("/account.js","/account.css").traverse_(path => h.app.run(request(Method.GET,path)).flatMap(r => IO(assertEquals(r.status.code,200))))
       _ <- Vector("/ui/tokens.css" -> "text/css; charset=utf-8","/ui/fonts/InterVariable.woff2" -> "font/woff2").traverse_ { (path,contentType) =>
