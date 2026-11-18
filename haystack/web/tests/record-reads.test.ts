@@ -1,7 +1,7 @@
 // The record page's reads as one state machine (record-reads.ts).
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { FLOOR_READS, NOWHERE, shows, step, type ReadEffect, type ReadEvent, type Reads } from "../src/record-reads.ts";
+import { FLOOR_READS, Flights, NOWHERE, RECORD_READ_TIMEOUT_MS, shows, step, type ReadEffect, type ReadEvent, type Reads } from "../src/record-reads.ts";
 import type { Item } from "../src/api.ts";
 
 const KEY = "p:a";
@@ -27,7 +27,7 @@ test("the record lane: one read at a time and one follow-up; below the floor a b
   assert.deepEqual(timedOut.effects, ["get 5", "abort 5", "fail timeout"], "the late answer of a read given up is discarded");
   const left = run(timedOut.state, { kind: "requested" }, { kind: "left" }, { kind: "entered", key: "p:b" },
     { kind: "answered", key: KEY, request: 6, item: item(2), floor: 0 }, { kind: "failed", key: KEY, request: 6, error: new Error("late") });
-  assert.deepEqual(left.effects, ["get 6", "get 7"], "answers for the record left are discarded");
+  assert.deepEqual(left.effects, ["get 6", "abort 6", "get 7"], "leaving gives the read up; its late answers are discarded");
 });
 
 test("ancillary answers apply only at their key and revision; a change announced while the editor is open is read once when it closes", () => {
@@ -54,4 +54,18 @@ test("a result never replaces a newer one already applied: an older answer relea
     { kind: "answered", key: KEY, request: 2, item: item(2), floor: 0 });
   assert.deepEqual(queued.effects, ["get 2", "apply 3", "ancillary 3", "get 3"], "the request made meanwhile is still read");
   assert.equal(queued.state.shown, 3);
+});
+
+test("a read in flight keeps one timer until it settles or is given up; giving it up aborts its request", () => {
+  const active = new Map<number, number>();
+  let handles = 0;
+  const flights = new Flights({ set: (_run, ms) => { active.set(++handles, ms); return handles; }, clear: (handle) => { active.delete(handle); } });
+  flights.start(1, () => {});
+  const given = flights.start(2, () => {});
+  assert.deepEqual([...active.values()], [RECORD_READ_TIMEOUT_MS, RECORD_READ_TIMEOUT_MS]);
+  flights.settled(1);
+  flights.abort(2);
+  assert.deepEqual([active.size, flights.size, given.aborted], [0, 0, true]);
+  flights.settled(2);
+  assert.throws(() => flights.abort(2), /not in flight/);
 });

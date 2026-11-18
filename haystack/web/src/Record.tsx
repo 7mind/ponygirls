@@ -4,7 +4,7 @@ import { useLiveUpdates } from "./Live";
 import { FieldsJson, FieldsView, type CopyText } from "./FieldsView";
 import { RecordEdit } from "./RecordEdit";
 import { drafts } from "./edit-drafts";
-import { NOWHERE, RECORD_READ_TIMEOUT_MS, shows, step, type ReadEffect, type ReadEvent, type Reads } from "./record-reads";
+import { Flights, NOWHERE, RECORD_READ_TIMEOUT_MS, shows, step, type ReadEffect, type ReadEvent, type Reads } from "./record-reads";
 import { UiIcon } from "./Masthead";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
@@ -121,7 +121,7 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const floor = useSyncExternalStore(drafts.subscribe, () => drafts.floor(itemKey));
   /** The page's reads (record-reads.ts), and each record read in flight until it settles or is given up. */
   const reads = useRef<Reads>(NOWHERE);
-  const inFlight = useRef(new Map<number, AbortController>());
+  const [flights] = useState(() => new Flights({ set: (run, ms) => window.setTimeout(run, ms), clear: (handle) => window.clearTimeout(handle) }));
 
   function dispatch(event: ReadEvent) {
     const { state, effects } = step(reads.current, event);
@@ -133,22 +133,15 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     switch (effect.kind) {
       case "get": {
         const { key, request } = effect;
-        const controller = new AbortController();
-        inFlight.current.set(request, controller);
-        const timer = setTimeout(() => dispatch({ kind: "timed-out", key, request }), RECORD_READ_TIMEOUT_MS);
-        const settle = () => { clearTimeout(timer); inFlight.current.delete(request); };
-        api.get(key, undefined, controller.signal).then(
-          (item) => { settle(); dispatch({ kind: "answered", key, request, item, floor: drafts.floor(key) }); },
-          (error: unknown) => { settle(); dispatch({ kind: "failed", key, request, error }); });
+        const signal = flights.start(request, () => dispatch({ kind: "timed-out", key, request }));
+        api.get(key, undefined, signal).then(
+          (item) => { flights.settled(request); dispatch({ kind: "answered", key, request, item, floor: drafts.floor(key) }); },
+          (error: unknown) => { flights.settled(request); dispatch({ kind: "failed", key, request, error }); });
         return;
       }
-      case "abort": {
-        const controller = inFlight.current.get(effect.request);
-        if (controller === undefined) throw new Error(`Record read ${effect.request} is not in flight`);
-        inFlight.current.delete(effect.request);
-        controller.abort();
+      case "abort":
+        flights.abort(effect.request);
         return;
-      }
       case "apply":
         latestItem.current = effect.item;
         setLoad({ kind: "ready", item: effect.item });

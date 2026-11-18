@@ -370,12 +370,23 @@ try {
       const hold = (about) => async (route) => {
         const body = route.request().postDataJSON();
         if (!about(body)) { await route.fallback(); return; }
-        const gate = new Promise((resolve) => { held.push({ body, resolve }); });
+        const gate = new Promise((resolve) => { held.push({ body, resolve, request: route.request() }); });
         heldChanged();
         const response = await route.fetch();
         await gate;
-        await route.fulfill({ response });
+        try { await route.fulfill({ response }); }
+        catch (error) { if (route.request().failure() === null) throw error; }
       };
+      /** Whether `request` was answered or given up by the page; fails after the same bound as a locator wait. */
+      const outcome = (request) => request.failure() !== null ? Promise.resolve("given up") : new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`${request.url()} had no outcome`)), WAIT_MS);
+        const settle = (name) => (settled) => {
+          if (settled !== request) return;
+          clearTimeout(timer); page.off("requestfinished", answered); page.off("requestfailed", given); resolve(name);
+        };
+        const answered = settle("answered"), given = settle("given up");
+        page.on("requestfinished", answered); page.on("requestfailed", given);
+      });
       /** Resolves once `count` requests are held; fails after the same bound as a locator wait. */
       const holding = (count) => new Promise((resolve, reject) => {
         const timer = setTimeout(() => reject(new Error(`${count} held requests did not happen`)), WAIT_MS);
@@ -383,21 +394,14 @@ try {
         heldChanged();
       });
       const about = (key) => (body) => JSON.stringify(body).includes(key);
-      /** Answers the held requests about `key`, and lets the page apply whatever it would. */
+      /** Answers the held requests about `key`, lets the page apply whatever it would, and returns their outcomes. */
       const release = async (key) => {
         const releasing = held.filter((entry) => about(key)(entry.body));
-        const finished = new Promise((resolve, reject) => {
-          let pending = releasing.length;
-          const timer = setTimeout(() => reject(new Error(`the held answers about ${key} did not arrive`)), WAIT_MS);
-          const finish = (request) => {
-            if (!/\/api\/v1\/(get|history|search)$/.test(request.url()) || !about(key)(request.postDataJSON()) || --pending > 0) return;
-            clearTimeout(timer); page.off("requestfinished", finish); resolve();
-          };
-          page.on("requestfinished", finish);
-        });
+        const outcomes = releasing.map((entry) => outcome(entry.request));
         for (const entry of releasing) { held.splice(held.indexOf(entry), 1); entry.resolve(); }
-        await finished;
+        const settled = await Promise.all(outcomes);
         await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+        return settled;
       };
       const visit = (key) => page.evaluate((hash) => { location.hash = hash; }, `#/item/${encodeURIComponent(key)}`);
       const arrived = async () => {
@@ -414,16 +418,16 @@ try {
       await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
       await page.locator('[aria-label="Incoming links"]').getByText("No record links here.", { exact: true }).waitFor();
       await holding(2);
-      await release(left);
+      assert.deepEqual(await release(left), ["answered", "answered"]);
       await arrived();
-      // The record left answers while the next one is still being read.
+      // The record left is given up while the next one is still being read; were its answer to arrive, it would be discarded.
       await page.route("**/api/v1/get", hold((body) => body.key === left || body.key === next));
       await visit(left);
       await page.locator('[data-record="loading"]').waitFor();
       await visit(next);
       await holding(2);
-      await release(left);
-      await release(next);
+      assert.deepEqual(await release(left), ["given up"]);
+      assert.deepEqual(await release(next), ["answered"]);
       await page.getByRole("heading", { name: "Arrived at", exact: true }).waitFor();
       await page.getByRole("region", { name: "History", exact: true }).getByText("1 revision", { exact: true }).waitFor();
       await arrived();

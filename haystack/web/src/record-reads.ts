@@ -7,7 +7,8 @@
 //   only while the page still shows the key and revision it was started for (`shows`).
 // - A change announced while the editor is open is remembered and read once when the editor closes, however it closes.
 // - Every answer carries the key and request it belongs to; one for a record the page has left, or for a read the lane
-//   gave up, is discarded.
+//   gave up, is discarded. Leaving gives the read in flight up (aborts it and stops its timer: `Flights`).
+// - A record older than the one shown (an answer read before the editor's conflict result, say) is never applied.
 //
 // State: lane idle | reading(request, queued, below); key (null: left); shown revision (null: none yet); editing;
 // invalidated. "read" below means: idle → reading(next request, not queued, below 0) with effect get; reading → queued.
@@ -15,7 +16,8 @@
 // | Event               | Condition                                       | Transition                                | Effects            |
 // |---------------------|-------------------------------------------------|-------------------------------------------|--------------------|
 // | entered(key)        |                                                 | at key, nothing shown, not editing; read  | get                |
-// | left                |                                                 | key null, lane idle                       | —                  |
+// | left                | reading r                                       | key null, lane idle                       | abort(r)           |
+// | left                | idle                                            | key null                                  | —                  |
 // | requested           | at a key                                        | read                                      | get or none        |
 // | announced           | editing                                         | invalidated                               | —                  |
 // | announced           | not editing                                     | read                                      | get or none        |
@@ -24,13 +26,14 @@
 // | editor-closed(f)    | editing                                         | not editing, not invalidated; read if it  | get or none        |
 // |                     |                                                 | was invalidated or shown < f              |                    |
 // | answered(r, item)   | not the lane's request r at the key             | unchanged                                 | —                  |
+// | answered(r, item)   | revision < shown                                | queued ? read : idle                      | get if queued      |
 // | answered(r, item)   | revision < floor, below + 1 < FLOOR_READS       | reading(next request, below + 1)          | get                |
 // | answered(r, item)   | revision < floor, otherwise                     | idle                                      | fail(below-floor)  |
 // | answered(r, item)   | revision ≥ floor                                | shown = revision; queued ? read : idle    | apply, ancillary,  |
 // |                     |                                                 |                                           | get if queued      |
 // | failed(r, error)    | the lane's request r at the key                 | idle                                      | fail(error)        |
 // | timed-out(r)        | the lane's request r at the key                 | idle                                      | abort(r), fail     |
-// | offered(item)       | at a key, revision ≥ floor                      | shown = revision                          | apply, ancillary   |
+// | offered(item)       | at a key, revision ≥ floor and ≥ shown          | shown = revision                          | apply, ancillary   |
 import type { Item } from "./api.ts";
 
 /** Answers in a row below the record's confirmed-revision floor before the page stops and offers Retry. */
@@ -117,6 +120,9 @@ function applied(state: At, item: Item): Step {
   return { state: { ...state, shown: item.revision }, effects: [{ kind: "apply", item }, { kind: "ancillary", key: state.key, item }] };
 }
 
+/** `item` is older than the record the page shows. */
+const older = (state: Reads, item: Item): boolean => state.shown !== null && item.revision < state.shown;
+
 /** The answer belongs to the lane's read in flight at the page's key. */
 const current = (state: Reads, key: string, request: number): state is At & { readonly lane: Reading } =>
   state.key === key && state.lane.kind === "reading" && state.lane.request === request;
@@ -126,7 +132,7 @@ export function step(state: Reads, event: ReadEvent): Step {
     case "entered":
       return read({ ...NOWHERE, key: event.key, issued: state.issued });
     case "left":
-      return unchanged({ ...state, key: null, lane: IDLE });
+      return { state: { ...state, key: null, lane: IDLE }, effects: state.lane.kind === "reading" ? [{ kind: "abort", request: state.lane.request }] : [] };
     case "requested":
       return read(state);
     case "announced":
@@ -143,6 +149,7 @@ export function step(state: Reads, event: ReadEvent): Step {
     case "answered": {
       if (!current(state, event.key, event.request)) return unchanged(state);
       const { lane } = state;
+      if (older(state, event.item)) return lane.queued ? next({ ...state, lane: IDLE }, 0, []) : unchanged({ ...state, lane: IDLE });
       if (event.item.revision < event.floor) {
         if (lane.below + 1 < FLOOR_READS) return next(state, lane.below + 1, []);
         return { state: { ...state, lane: IDLE }, effects: [{ kind: "fail", failure: { kind: "below-floor", floor: event.floor }, initial: state.shown === null }] };
@@ -158,6 +165,42 @@ export function step(state: Reads, event: ReadEvent): Step {
       return { state: { ...state, lane: IDLE },
         effects: [{ kind: "abort", request: event.request }, { kind: "fail", failure: { kind: "timeout" }, initial: state.shown === null }] };
     case "offered":
-      return state.key !== null && event.item.revision >= event.floor ? applied({ ...state, key: state.key }, event.item) : unchanged(state);
+      return state.key !== null && event.item.revision >= event.floor && !older(state, event.item) ? applied({ ...state, key: state.key }, event.item) : unchanged(state);
   }
+}
+
+/** Timers of the page's window, injected so that the bookkeeping is testable. */
+export interface Timers {
+  set(run: () => void, ms: number): number;
+  clear(handle: number): void;
+}
+
+/** The record reads in flight, each with its abort controller and its timeout, from `start` until it settles or is aborted. */
+export class Flights {
+  private readonly timers: Timers;
+  private readonly flights = new Map<number, { readonly controller: AbortController; readonly timer: number }>();
+  constructor(timers: Timers) { this.timers = timers; }
+  /** Tracks read `request`; `onTimeout` runs if it is still in flight after RECORD_READ_TIMEOUT_MS. Returns its abort signal. */
+  start(request: number, onTimeout: () => void): AbortSignal {
+    const controller = new AbortController();
+    this.flights.set(request, { controller, timer: this.timers.set(onTimeout, RECORD_READ_TIMEOUT_MS) });
+    return controller.signal;
+  }
+  /** Read `request` has its outcome (an aborted read settles too, after `abort`). */
+  settled(request: number): void {
+    const flight = this.flights.get(request);
+    if (flight === undefined) return;
+    this.timers.clear(flight.timer);
+    this.flights.delete(request);
+  }
+  /** Gives read `request` up: its timer stops and its request is aborted. */
+  abort(request: number): void {
+    const flight = this.flights.get(request);
+    if (flight === undefined) throw new Error(`Record read ${request} is not in flight`);
+    this.timers.clear(flight.timer);
+    this.flights.delete(request);
+    flight.controller.abort();
+  }
+  /** Reads in flight. */
+  get size(): number { return this.flights.size; }
 }
