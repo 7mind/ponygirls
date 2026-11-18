@@ -11,7 +11,7 @@ class McpTestLimitsTest extends munit.FunSuite {
   import McpTestFixtures.*
   override val munitTimeout = 120.seconds
   private def runtime(tools: McpRunTools,model: McpTestModel,auth: RunAuthorization,clock: McpRunClock,encoder: McpRunPageEncoding): Resource[IO,McpTestRuns] =
-    McpTestRuns.resource(tools,model,auth,clock,Set("a","b"),encoder,IO(UUID.randomUUID()))
+    McpTestRuns.resource(tools,model,auth,clock,encoder,IO(UUID.randomUUID()))
   private def code(result: Either[Throwable,?]): String = result.left.toOption match {
     case Some(error: DomainError) => error.code
     case Some(error) => throw error

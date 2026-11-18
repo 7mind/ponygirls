@@ -88,7 +88,7 @@ class BrowserWebSocketTest extends munit.FunSuite {
     app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
     protocol=new VersionedWire
     wire=new McpTestWire(protocol)
-    runs <- McpTestRuns.resource(tools,model,wrap(new PostgresRunAuthorization(db,auth)),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
+    runs <- McpTestRuns.resource(tools,model,wrap(new PostgresRunAuthorization(db,auth)),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),wire,IO(UUID.randomUUID()))
   } yield Fixture(config,db,auth,app,archive,protocol,wire,runs)
 
   private def server(fixture: Fixture): Resource[IO,String] = for {

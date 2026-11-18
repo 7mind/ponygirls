@@ -40,7 +40,7 @@ class VersionedSearchTest extends munit.FunSuite {
     (for {
       tools <- Resource.eval(McpTestFixtures.ordinaryTools)
       model <- Resource.eval(McpTestFixtures.model(_ => IO.pure(McpTestFixtures.finalReply("unused by protocol compatibility checks"))))
-      runs <- McpTestRuns.resource(tools,model,new PostgresRunAuthorization(db,auth),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
+      runs <- McpTestRuns.resource(tools,model,new PostgresRunAuthorization(db,auth),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),wire,IO(UUID.randomUUID()))
       controls <- BrowserControlAdmission.resource
     } yield new Http(config,auth,app,archive,new Mcp(app),logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(app,runs,wire),controls)).use { http =>
     Semaphore[IO](2).flatMap { gate =>

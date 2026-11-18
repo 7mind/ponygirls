@@ -179,7 +179,7 @@ class McpTestModelTest extends munit.FunSuite {
       val usage=Json.obj("prompt_tokens"->Json.fromInt(11),"completion_tokens"->Json.fromInt(7),"completion_tokens_details"->Json.obj("reasoning_tokens"->Json.fromInt(3)))
       val app: HttpApp[IO]=cats.data.Kleisli(_ => IO.pure(Response[IO](Status.Ok).withEntity(finalReply("synthetic response").mapObject(_.add("usage",usage)).noSpaces)))
       for {
-        store <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),Set(identity.user.id,"other"))
+        store <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]))
         admission <- ModelAdmission.make(IndexingCapacity.defaults)
         model=new OpenAIMcpTestModel(new ModelHttp(Client.fromHttpApp(app),store,admission),config.copy(credentialFile=file))
         _ <- model.complete(identity.user.id,model.request(initial,definitions),definitions)

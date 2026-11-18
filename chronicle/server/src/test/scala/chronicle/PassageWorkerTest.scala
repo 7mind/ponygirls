@@ -101,7 +101,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       val archive=new Recording(delegate); val request=source((0 until 160).map(i => s"A substep $i").toList); archive.ingest("a",request)
       val embedding=new Embeddings; val requests=ListBuffer.empty[Json]
       val clock=new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO])
-      val store=ModelTelemetry.make(clock,Set("a")).unsafeRunSync()
+      val store=ModelTelemetry.make(clock).unsafeRunSync()
       val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
       val app: HttpApp[IO]=cats.data.Kleisli { req => req.as[String].map { body =>
         val payload=Wire.parse(body)

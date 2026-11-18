@@ -18,7 +18,7 @@ object ChroniclePlugin extends PluginDef {
   make[ActivityIndex].from[PostgresActivity]
   make[cats.effect.kernel.Clock[IO]].fromValue(cats.effect.Clock[IO])
   make[ModelTelemetryClock].from[JavaModelTelemetryClock]
-  make[ModelTelemetry].fromEffect { (clock: ModelTelemetryClock,config: Config) => ModelTelemetry.make(clock,config.users.map(_.id).toSet) }
+  make[ModelTelemetry].fromEffect { (clock: ModelTelemetryClock) => ModelTelemetry.make(clock) }
   make[ModelAdmission].fromEffect { (config: Config) => ModelAdmission.make(config.indexing) }
   make[IndexingSettings].from { (config: Config) =>
     val capacity=config.indexing
