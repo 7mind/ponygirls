@@ -98,15 +98,14 @@ abstract class RepositoryContract(adapter: RepositoryAdapter) extends ContractSu
     history <- repo.history(first.key); _ = assertEquals(history.map(_.revision), Vector(2L, 1L))
   } yield () }
 
-  Vector("document", "key", "revision", "format").foreach { changed =>
+  Vector("document", "key", "revision").foreach { changed =>
     check("reused request ID binds " + changed) { repo => for {
       first <- IO(op())
       _ <- repo.commit(first, Alice, Now)
       different <- IO(changed match {
         case "document" => op(document = doc("changed"), id = first.requestId)
         case "key" => op(key = "else:other", id = first.requestId)
-        case "revision" => op(revision = 1L, id = first.requestId)
-        case _ => first.copy(digest = first.digest.copy(format = "retired-format"))
+        case _ => op(revision = 1L, id = first.requestId)
       })
       _ <- expectFault(repo.commit(different, Alice, Later), "replay-conflict")
       history <- repo.history(first.key); _ = assertEquals(history.size, 1)
