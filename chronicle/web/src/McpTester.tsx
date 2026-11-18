@@ -163,7 +163,7 @@ export function McpTester({ tester }: { tester: McpTesterState }) {
   const running = handle !== null && active(handle.state), blocked = tester.starting || tester.cancelling || !tester.connected || running;
   let bytes: number | null = null; try { bytes = scalarUtf8Bytes(tester.prompt); } catch { /* Invalid scalar input is explained at the boundary below. */ }
   const rows = traceRows(traceItems(tester.events));
-  return <main className="page page-narrow stack-lg" aria-label="MCP tester">
+  return <main className="page page-narrow stack-lg mcp-page" aria-label="MCP tester">
     <div className="page-head">
       <div><h1 className="page-title">MCP tester</h1><p className="page-sub">Run one fresh prompt against the search tools exactly as an MCP client would, and inspect the trace.</p></div>
       {catalog !== null && <Anchored className="" buttonClassName="btn" buttonState={undefined} ariaLabel={undefined} describedBy={undefined} panel="dialog" panelClassName="popover mcp-popover" panelLabel={undefined} label={<><Glyph name="info"/>Runtime limits</>}>

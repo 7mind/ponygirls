@@ -7,14 +7,17 @@
 .card[data-group-id] .table th:nth-child(1){width:40%}
 .card[data-group-id] .table th:nth-child(3){width:200px}
 .card[data-group-id] .table td:nth-child(3) .btn{max-width:100%}
-.card-foot .xs{margin-left:var(--space-2)}
+.access-page .card-foot .xs{margin-left:var(--space-2)}
 @media(max-width:720px){
-  .page-head{flex-wrap:wrap}
-  .card-head{flex-wrap:wrap}
+  .access-page .page-head{flex-wrap:wrap}
+  .access-page .page-head>:first-child{flex-basis:100%}
+  .access-page .card-head{flex-wrap:wrap}
+  .access-page .card-head>.grow{flex-basis:100%}
   .card[data-group-id] .table th:nth-child(1){width:auto}
   .card[data-group-id] .table th:nth-child(2){width:84px}
   .card[data-group-id] .table th:nth-child(3){width:96px}
-  .card-foot{flex-wrap:wrap}
+  .access-page .card-foot{flex-wrap:wrap}
   .access-invite-input{max-width:none;flex:1 1 100%}
   .access-invitation{flex-wrap:wrap}
+  .access-invitation>.grow{flex-basis:100%}
 }

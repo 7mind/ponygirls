@@ -52,7 +52,7 @@ export function Access({ connection, stats, user, actions }: { connection: Chron
     if (await actions.run(new Operation_Invite(group.id, String(new FormData(form).get('target')).trim()), 'Invite member')) form.reset();
   }
   const invitations = groups.data?.invitations ?? [], memberships = groups.data?.groups ?? [];
-  return <main className="page page-narrow stack-lg" aria-label="Access management">
+  return <main className="page page-narrow stack-lg access-page" aria-label="Access management">
     <div className="page-head">
       <div><h1 className="page-title">Access</h1><p className="page-sub">Sharing groups give every member read access to the other members' sessions. API access tokens live in <a href="#account/tokens">Account → Access tokens</a>.</p></div>
       <button type="button" className="btn btn-primary" aria-expanded={creating} aria-controls={formId} onClick={() => setCreating(open => !open)}><Glyph name="plus"/>New group</button>

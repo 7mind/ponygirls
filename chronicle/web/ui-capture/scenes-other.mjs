@@ -11,34 +11,6 @@ export function registerOther(scenario) {
       await shot('login', 'error', 'Login error under the card heading', 'submit wrong password', { file: 'account-login-error-1440.png' });
     });
   });
-  // ---- access, mcp
-  for (const [key, variant] of Object.entries(VARIANTS)) {
-    scenario(`access-${key}`, async ctx => {
-      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, shot }) => {
-        await gotoTab(page, 'access'); await page.getByText('Sharing groups').waitFor(); await page.locator('.group-card').first().waitFor(); await settle(page, 500);
-        await shot('access', 'first-render', 'Access tab: access-token pointer (left) and sharing groups with warning, create form, invitations and group cards (right)', 'click nav "access"');
-        await shot('access', 'first-render', 'Access, whole document (full-page capture)', 'same, full-page', { full: true });
-        await inspect(page, ctx.recorder, `access-${key}`);
-        if (!variant.deep) return;
-        await page.getByLabel('New group name').fill('Design review guild'); await page.getByRole('button', { name: 'Create group' }).click(); await page.getByRole('region', { name: 'Notifications' }).waitFor(); await settle(page, 300);
-        await shot('access', 'group-created-toast', 'Toast after creating a group (bottom of the viewport, auto-dismisses after 6 s)', 'create group form submit');
-      });
-    });
-    scenario(`mcp-${key}`, async ctx => {
-      await withScene(ctx, variant, { fixture: seededFixture() }, async ({ page, shot }) => {
-        await gotoTab(page, 'mcp'); await page.getByLabel('Fresh prompt').waitFor(); await page.getByText(/maximum output tokens/).waitFor(); await settle(page, 500);
-        await shot('mcp', 'first-render', 'MCP tester: catalog line, tool-schema disclosure, prompt box and run button', 'click nav "mcp"');
-        await inspect(page, ctx.recorder, `mcp-${key}`);
-        if (!variant.deep) return;
-        await page.getByText(/Tool schemas/).click(); await settle(page, 500);
-        await shot('mcp', 'tool-schemas-open', 'Tool schemas disclosure expanded', 'click "Tool schemas"');
-        await page.getByLabel('Fresh prompt').fill('Search the archive for sessions about the lock_timeout migration fix and summarise the three most relevant ones.');
-        await page.getByRole('button', { name: 'Run fresh prompt' }).click(); await page.locator('.mcp-trace article').first().waitFor({ timeout: 30000 }); await page.waitForTimeout(3500); await settle(page, 500);
-        await shot('mcp', 'run-complete', 'Completed run: run controls, state, and the trace of tool call / result / response items', 'type a prompt + Run fresh prompt');
-        await shot('mcp', 'run-complete', 'Completed run, whole document (full-page capture)', 'same, full-page', { full: true });
-      });
-    });
-  }
   // ---- masthead / chrome / global states
   scenario('chrome', async ctx => {
     await withScene(ctx, VARIANTS.deep, { fixture: seededFixture() }, async ({ page, shot }) => {

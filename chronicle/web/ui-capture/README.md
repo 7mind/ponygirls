@@ -45,4 +45,4 @@ sticky elements, table column widths, contrast / font-size / target-size audit, 
 4. `await inspect(page, recorder, 'name')` dumps scroll containers / sticky elements / tables / audit.
 5. For the three variants use `VARIANTS` (`deep` runs everything, others should only take first-render shots: `if (!variant.deep) return;`).
 
-Limits: native `window.confirm` dialogs (group delete in Access) are not part of a page screenshot. Token revoke is an in-app dialog of the shared account module.
+Limits: the in-app confirmation dialogs (Access group delete/leave/join, token revoke) are modal `dialog` elements and appear in page screenshots; no native `window.confirm` is left. The MCP scenes use the goal50 fixture (the archive fixture has no MCP endpoints).

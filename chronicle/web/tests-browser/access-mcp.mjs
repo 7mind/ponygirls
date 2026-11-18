@@ -23,9 +23,10 @@ async function open(context, page, fixture, url, view, name) {
   await nav(page).getByRole('link', { name: view, exact: true }).click(); await page.getByRole('main', { name, exact: true }).waitFor();
   return { context, page, fixture };
 }
-async function accessScene(viewport, originUrl = origin) {
+async function accessScene(viewport, originUrl = origin, fixture = new ChronicleFixture()) {
   const context = await browser.newContext({ viewport }), page = await context.newPage();
-  return open(context, page, new ChronicleFixture(), `${originUrl}/tests-browser/harness.html`, 'Access', 'Access management');
+  await page.clock.install();
+  return open(context, page, fixture, `${originUrl}/tests-browser/harness.html`, 'Access', 'Access management');
 }
 /** The MCP tester page; the catalogue may still be pending (a case can hold it). */
 async function mcpPage(configure, viewport) {
@@ -68,8 +69,8 @@ function stayRunning(fixture) {
   fixture.readResult = operation => {
     const result = original(operation);
     if (!(result instanceof api.Result_McpTestRun)) return result;
-    const first = result.result.events.slice(0, 1);
-    return new api.Result_McpTestRun(new api.McpTestSnapshot(result.result.instanceId, result.result.runId, api.McpTestState.Running, result.result.observedAt, first, BigInt(first.length), false, undefined));
+    const first = operation.afterSequence === 0n ? result.result.events.slice(0, 1) : [];
+    return new api.Result_McpTestRun(new api.McpTestSnapshot(result.result.instanceId, result.result.runId, api.McpTestState.Running, result.result.observedAt, first, 1n, false, undefined));
   };
 }
 try {
@@ -123,6 +124,20 @@ try {
     await dismissed(del, 'Escape'); await dismissed(del, 'Cancel'); await dismissed(del, 'backdrop');
     await del(); await dialog.getByRole('button', { name: 'Delete group', exact: true }).click(); await article('Synthetic group').waitFor({ state: 'detached' });
     for (const Operation of [api.Operation_CreateGroup, api.Operation_Invite, api.Operation_AcceptInvite, api.Operation_RemoveMember, api.Operation_LeaveGroup, api.Operation_DeleteGroup]) assert.equal(calls(fixture, Operation).length, 1, `${Operation.name} was sent exactly once`);
+    await context.close();
+  });
+  await group('a rejected group mutation is a persistent notice in the shell, not a toast; the form keeps the name and nothing was replayed', async () => {
+    const fixture = new ChronicleFixture(), original = fixture.goal50Operation;
+    fixture.goal50Operation = (operation, envelope, send, entry) => {
+      if (!(operation instanceof api.Operation_CreateGroup)) return original?.(operation, envelope, send, entry) ?? false;
+      send(new api.Result_Error(new api.Failure('forbidden', 'Group creation denied'))); return true;
+    };
+    const { context, page } = await accessScene({ width: 1440, height: 1000 }, origin, fixture);
+    await page.getByRole('button', { name: 'New group', exact: true }).click(); await page.getByLabel('Group name', { exact: true }).fill('Denied group'); await page.getByRole('button', { name: 'Create group', exact: true }).click();
+    const alert = page.getByRole('alert').filter({ hasText: 'Group creation denied' }); await alert.waitFor();
+    await page.clock.runFor(MCP_POLL_MS * 5); assert.equal(await alert.isVisible(), true, 'an error never expires');
+    assert.equal(await notifications(page).count(), 0); assert.equal(await page.getByLabel('Group name', { exact: true }).inputValue(), 'Denied group');
+    assert.equal(await page.getByRole('button', { name: 'Create group', exact: true }).isEnabled(), true); assert.equal(calls(fixture, api.Operation_CreateGroup).length, 1);
     await context.close();
   });
   await group('non-loopback insecure HTTP: group mutations carry UUID request ids without randomUUID', async () => {
