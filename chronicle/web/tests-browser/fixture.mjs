@@ -5,7 +5,7 @@ import { connectionConfig } from '../src/transport/types.ts';
 const context = BaboonCodecContext.Default;
 /**
  * Query string of one fixture page load (harness.html, goal50.html) that replaces the named production connection settings
- * (parsed by connection-timing.ts). Pages load with production timing by default.
+ * (parsed by connection-timing.tsx). Pages load with production timing by default.
  */
 export function connectionTiming(settings) {
   for (const [name, value] of Object.entries(settings)) if (!Object.hasOwn(connectionConfig, name) || !Number.isSafeInteger(value) || value <= 0) throw new Error(`Invalid fixture connection setting ${name}=${value}`);

@@ -2,7 +2,7 @@ import { createRoot } from 'react-dom/client';
 import { App } from '../src/App.tsx';
 import { browserTheme } from '../src/theme.ts';
 import { createBrowserManager } from '../src/transport/browser.ts';
-import { fixtureConnectionConfig } from './connection-timing.ts';
+import { fixtureConnectionConfig } from './connection-timing.tsx';
 const root = document.getElementById('root');
 if (root === null) throw new Error('Synthetic goal50 root missing');
 const connection = createBrowserManager(window, document, fixtureConnectionConfig(window.location.search));
