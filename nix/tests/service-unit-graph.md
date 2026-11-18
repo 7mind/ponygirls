@@ -9,7 +9,10 @@ sharing, bridge/TAP or production connection is accepted.
 The package option is overridden by an explicitly synthetic test CLI. It reads
 the actual generated connection configuration, authenticates, checks finite
 least-privileged role/extension prerequisites, and exposes SQL reconnect evidence
-via a test-only process signal. It implements **no application HTTP API**, model,
+via a test-only process signal. It accepts exactly the server commands the
+modules invoke; `check-config`, the Haystack and Manure migration units'
+`ExecStartPre`, only parses the generated configuration (no credential read, no
+database connection). It implements **no application HTTP API**, model,
 backend or protocol. Native application, migration semantics, auth, files and
 browser behavior require their separate real-service gates. This VM establishes
 NixOS lifecycle semantics, not HM runtime acceptance.
