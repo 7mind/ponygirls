@@ -290,6 +290,7 @@ async function runActivityTableCases({ browser, origin, run, errors }) {
     const retained = await page.locator('.activity-job-row[data-scroll-anchor="00000000-0000-4000-8000-000000000008"] [data-column="LeaseState"]').innerText();
     await filter(page, 'Indexing job', 'lease:unleased'); await until(async () => await page.locator('.activity-job-row').count() === 1, 'unleased metadata filter did not return the queued row');
     await page.locator('.activity-job-table th[data-sort="LeaseState"] button:not([role="separator"])').click(); await until(() => fixture.calls.some(call => call.operation instanceof api.Operation_ActivityJobs && call.operation.query.expression === 'lease:unleased' && call.operation.query.sort === api.ActivityJobSort.LeaseState), 'lease sort did not keep the metadata predicate');
+    await until(async () => JSON.stringify(await rowIds(page, '.activity-job-row')) === JSON.stringify([id]), 'lease-sorted rows did not render');
     assert.deepEqual({ cellBefore: before, detailsUnleased: details.startsWith('Unleased'), retainedNonRunningLease: retained, filteredIds: await rowIds(page, '.activity-job-row'), cellAfter: await row.locator('[data-column="LeaseState"]').innerText() }, { cellBefore: 'Unleased', detailsUnleased: true, retainedNonRunningLease: 'Inactive', filteredIds: [id], cellAfter: 'Unleased' });
     await context.close();
   });
