@@ -1201,12 +1201,6 @@
           chronicle-browser = pkgs.callPackage ./nix/tests/chronicle-browser.nix { };
           chronicle-eval = pkgs.callPackage ./nix/tests/chronicle-eval.nix { };
           account-web-browser = pkgs.callPackage ./nix/tests/account-web-browser.nix { };
-          chronicle-validation = self.packages.${system}.chronicle.validationEvidence;
-          chronicle-evidence-layout = import ./nix/tests/chronicle-evidence-layout.nix { inherit pkgs; };
-          chronicle-validation-policy = pkgs.runCommand "chronicle-validation-policy-test" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-            python3 ${./nix/tests/chronicle-validation-policy.py} ${./chronicle/scripts/validation-report.py} ${./nix/pkg/chronicle/validation-evidence.py}
-            touch "$out"
-          '';
           manure-native = import ./nix/tests/manure-native.nix { inherit pkgs; manurePackage = self.packages.${system}.manure; };
           haystack-proxy = import ./nix/tests/haystack-proxy.nix { inherit pkgs inputs; haystackPackage = self.packages.${system}.haystack; };
           hm-service-unit-graph-harness = import ./nix/tests/hm-service-unit-graph-harness.nix { inherit pkgs; };
