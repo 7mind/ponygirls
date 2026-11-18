@@ -200,6 +200,8 @@ await check("confirmed logout clears owner/query fragment and next login does no
   assert.equal(page.url().includes("ux-public"), false, "logout must remove query from URL");
   await signIn(page);
   assert.equal(await page.locator("#filter-text").inputValue(), "", "new login clears expression");
+  // Sign-in reloads the page; the catalogue read waits for the capabilities read of the new page.
+  await page.waitForFunction(() => / loaded|No matches/.test(document.querySelector("#list-status").textContent));
   assert.ok(await page.evaluate(() => window.__ux.readCommands.length > 0), "reloaded dashboard must load an authenticated catalogue");
   assert.equal(await page.evaluate(() => window.__ux.readCommands.some(c => c.mode !== "catalogue")), false, "no retrieval replay across logout/login");
 });
