@@ -363,7 +363,8 @@ try {
     assert.deepEqual(errors, [], 'no page error in the error state');
     fixture.archiveFailure = null; fixture.archiveRows = undefined; fixture.archiveRowCount = 3;
     await notice.getByRole('button', { name: 'Retry', exact: true }).click(); await rows(page).first().waitFor(); await idle(page);
-    for (const viewport of [LAPTOP, PHONE]) { await page.setViewportSize(viewport); await main(page).waitFor(); assert.equal(await horizontalOverflow(page), false, `${viewport.width}px: the table follows the viewport after Retry`); }
+    // The column layout follows its container through a ResizeObserver, one rendering step after the viewport changes.
+    for (const viewport of [LAPTOP, PHONE]) { await page.setViewportSize(viewport); await main(page).waitFor(); await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth); assert.equal(await horizontalOverflow(page), false, `${viewport.width}px: the table follows the viewport after Retry`); }
     assert.equal(await table(page).locator('thead th').count(), 2);
     await context.close();
   });
