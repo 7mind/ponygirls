@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type Ref } from "react";
 import { api, ApiError, AuthError, NetworkError, buildDocumentJson, uuidv7, summaryKey, type DocumentBody, type Item, type RevisionMeta, type Summary } from "./api";
 import { useLiveUpdates } from "./Live";
 import { FieldsJson, FieldsView, type CopyText } from "./FieldsView";
 import { RecordEdit } from "./RecordEdit";
+import { drafts } from "./edit-drafts";
 import { UiIcon } from "./Masthead";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { browseHash, DEFAULT_SORT, PRESETS, type Preset } from "./browse-state";
@@ -106,6 +107,9 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
   const [restoring, setRestoring] = useState(false);
   const [rawFields, setRawFields] = useState(false);
   const [editing, setEditing] = useState(false);
+  /** The unsaved draft of this record that an earlier visit of the editor left behind (see edit-drafts.ts). */
+  const draft = useSyncExternalStore(drafts.subscribe, () => drafts.get(itemKey));
+  const [discardingDraft, setDiscardingDraft] = useState(false);
   const live = useLiveUpdates();
   const openedAt = useRef(live.version);
   const links = useRef<HTMLElement>(null);
@@ -284,6 +288,10 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
       onLatest={showLatest} onRestore={() => setRestoring(true)} />}
     <div className="page"><div className="page-narrow with-rail">
       <div className="record-main">
+        {draft !== undefined && <div className="notice notice-row" role="note"><UiIcon name="edit" /><div className="grow">
+          <span className="notice-title">You have an unsaved draft of this record</span> · started from revision {draft.baseRevision}.</div>
+          <button type="button" className="btn btn-sm btn-primary" onClick={onEdit}>Continue editing</button>
+          <button type="button" className="btn btn-sm" onClick={() => setDiscardingDraft(true)}>Discard</button></div>}
         {failure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div>
           <button type="button" className="btn btn-sm btn-ghost btn-icon" aria-label="Dismiss" onClick={() => setFailure(null)}><UiIcon name="x" /></button></div>}
         {refreshFailure !== null && <div className="notice notice-danger notice-row" role="alert"><UiIcon name="alert" /><div className="grow">{refreshFailure}</div>
@@ -310,6 +318,10 @@ export function RecordPage({ itemKey, edit, origin, onBack, onEdit, onEditDone, 
     </div></div>
     {restoring && snapshot !== null && <RestoreDialog latest={latest} revision={snapshot.item} busy={busy}
       onConfirm={() => void restore(latest, snapshot.item)} onCancel={() => setRestoring(false)} />}
+    {discardingDraft && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft" cancelLabel="Keep my draft" danger busy={false}
+      onConfirm={() => { setDiscardingDraft(false); drafts.drop(itemKey); }} onCancel={() => setDiscardingDraft(false)}>
+      <p>Your unsaved changes to <span className="mono nowrap">{itemKey}</span> are dropped. Nothing of the draft was saved.</p>
+    </ConfirmDialog>}
     {toasts}
   </div>;
 }

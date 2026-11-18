@@ -351,6 +351,23 @@ export const scenarios = [
         await ctx.close();
       }
       {
+        // A draft survives leaving the editor by history; the record offers it, the editor restores it.
+        const { ctx, page } = await open(env);
+        await page.goto(`${env.base}/#/browse`);
+        await page.goto(`${env.base}/#/item/${enc(h.fact.key)}`);
+        await page.locator('[data-record="ready"]').waitFor();
+        await page.getByRole("button", { name: "Edit", exact: true }).click();
+        await page.locator('[data-record="editing"]').waitFor();
+        await page.getByLabel("Title", { exact: true }).fill(`${h.fact.document.title} (draft kept)`);
+        await page.evaluate(() => history.go(-2));
+        await page.getByRole("note").filter({ hasText: "unsaved draft" }).waitFor(); await page.waitForTimeout(300);
+        await rec.shot(page, "edit-draft-record", { file: "haystack-detail-draft-1440.png", desc: "The record page after leaving the editor by history with unsaved changes: 'You have an unsaved draft of this record' with Continue editing / Discard", how: "Edit, change the title, history.go(-2)", expect: ["[role=note]"] });
+        await page.getByRole("button", { name: "Continue editing", exact: true }).click();
+        await page.getByRole("status").filter({ hasText: "Unsaved draft restored" }).waitFor(); await page.waitForTimeout(300);
+        await rec.shot(page, "edit-restored", { file: "haystack-edit-restored-1440.png", desc: "The editor restored from the kept draft: 'Unsaved draft restored — started from revision N' with Discard draft", how: "Continue editing", expect: [".edit-page [role=status]"] });
+        await ctx.close();
+      }
+      {
         // Unconfirmed write: the server commits, the response is lost.
         const { ctx, page } = await open(env);
         await edit(page, h.fact2.key);

@@ -41,6 +41,9 @@ try {
   await writePasswordHash(path.join(dir, "human.password"), password);
   const agentToken = randomBytes(32).toString("base64url");
   await writeFile(path.join(dir, "agent.sha"), createHash("sha256").update(agentToken, "ascii").digest("hex") + "\n");
+  const alicePassword = randomBytes(32).toString("base64url");
+  await writePasswordHash(path.join(dir, "alice.password"), alicePassword);
+  await writeFile(path.join(dir, "alice.sha"), createHash("sha256").update(randomBytes(32).toString("base64url"), "ascii").digest("hex") + "\n");
   await writeFile(path.join(dir, "human.sha"), createHash("sha256").update(randomBytes(32).toString("base64url"), "ascii").digest("hex") + "\n");
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
@@ -48,6 +51,7 @@ try {
     activityProjectId: "agent-activity",
     users: [
       { id: "op", type: "human", displayName: "Op", enabled: true, login: "op", passwordHashFile: path.join(dir, "human.password"), tokens: [{ id: "browser", hashFile: path.join(dir, "human.sha") }] },
+      { id: "alice", type: "human", displayName: "Alice", enabled: true, login: "alice", passwordHashFile: path.join(dir, "alice.password"), tokens: [{ id: "browser", hashFile: path.join(dir, "alice.sha") }] },
       { id: "agent", type: "agent", displayName: "Agent", tokens: [{ id: "default", hashFile: path.join(dir, "agent.sha") }] },
     ],
     cookieSecure: true, allowedHosts: ["127.0.0.1"], allowedOrigins: [base], insecureHttpOrigins: [base], rateLimit: { windowMs: 60000, max: 600 },
@@ -75,6 +79,8 @@ try {
   await put("ui:uncertain", docOf({ title: "Uncertain fixture" }), 0);
   await put("ui:conflict", docOf({ title: "Conflict fixture" }), 0);
   await put("ui:discard", docOf({ title: "Discard fixture" }), 0);
+  for (const key of ["ui:draft-typed", "ui:draft-raw", "ui:draft-moved", "ui:draft-user"])
+    await put(key, withFields({ title: `Draft fixture ${key}` }, '{"n":1,"note":{"type":"md","content":"# Note"}}'), 0);
   await put("ui:histnav", docOf({ title: "History navigation fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture" }), 0);
   await put("ui:guard", docOf({ title: "Guard fixture, revised" }), 1);
@@ -96,8 +102,8 @@ try {
   await signIn.close();
 
   /** A signed-in page; native dialogs and page errors are recorded and asserted absent by `quiet()`. */
-  async function open(viewport = DESKTOP) {
-    const context = await browser.newContext({ viewport, storageState });
+  async function open(viewport = DESKTOP, signedIn = true) {
+    const context = await browser.newContext({ viewport, storageState: signedIn ? storageState : undefined });
     await context.addInitScript(() => {
       window.nativeDialogs = [];
       for (const name of ["alert", "confirm", "prompt"]) window[name] = (...args) => { window.nativeDialogs.push([name, ...args]); return null; };
@@ -416,6 +422,9 @@ try {
       await confirm.waitFor();
       assert.match(page.url(), /#\/item\/ui%3Ahistnav\/edit$/, "the route did not change");
       assert.equal(await title.inputValue(), "Changed by the history case", "the editor is still mounted with its draft");
+      await browserTraversal(page, -1);
+      assert.equal(await confirm.count(), 1, "Back again with the dialog open keeps one dialog");
+      assert.match(page.url(), /#\/item\/ui%3Ahistnav\/edit$/);
       await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
       await confirm.waitFor({ state: "detached" });
       // Staying keeps the guard: the next Back asks again.
@@ -442,76 +451,159 @@ try {
     } finally { await context.close(); }
   });
 
-  await check("browser history: repeated Back with the dialog open and traversals of several entries keep the editor, route and draft until the reader confirms", async () => {
+  const recordHash = (key) => `#/item/${encodeURIComponent(key)}`;
+  const draftNote = (page) => page.getByRole("note").filter({ hasText: "You have an unsaved draft of this record" });
+  const restoredNotice = (page) => page.getByRole("status").filter({ hasText: "Unsaved draft restored" });
+
+  await check("a draft survives leaving by a traversal of several entries (no Navigation API): the record offers it, the editor restores it exactly, and saving uses the original base revision", async () => {
     const { context, page } = await open();
     try {
-      const route = /#\/item\/ui%3Ahistnav\/edit$/;
-      const confirm = dialog(page, "Discard unsaved changes?");
-      const title = page.getByLabel("Title", { exact: true });
-      const stays = async (what) => {
-        assert.match(page.url(), route, `${what}: the route did not change`);
-        assert.equal(await title.inputValue(), "Draft under history traversal", `${what}: the editor is mounted with its draft`);
-        assert.equal(await page.evaluate(() => location.hash.endsWith("/edit")), true);
-      };
+      await context.addInitScript(() => { Object.defineProperty(window, "navigation", { value: undefined }); });
+      const key = "ui:draft-typed";
       await page.goto(`${base}/#/browse`);
-      await page.goto(`${base}/#/item/${encodeURIComponent("ui:histnav")}`);
+      await page.goto(`${base}/${recordHash(key)}`);
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await page.locator('[data-record="editing"]').waitFor();
-      await title.fill("Draft under history traversal");
-      // The Back button, again and again with the dialog open.
-      await browserTraversal(page, -1);
-      await confirm.waitFor();
-      await stays("Back");
-      await browserTraversal(page, -1);
-      await browserTraversal(page, -1);
-      await stays("repeated Back");
-      assert.equal(await confirm.count(), 1, "one dialog");
-      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
-      await stays("Keep editing");
-      // Several entries at once: the list and record routes are never shown.
-      await page.evaluate(() => history.go(-2));
-      await confirm.waitFor();
-      await stays("history.go(-2)");
-      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
-      await stays("Keep editing after history.go(-2)");
-      await browserTraversal(page, -3);
-      await confirm.waitFor();
-      await stays("three entries back from the history menu");
-      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
-      await stays("Keep editing after the history menu");
-      // Confirming leaves for the entry that was asked for.
-      await browserTraversal(page, -3);
-      await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
+      await page.getByLabel("Title", { exact: true }).fill("Draft title");
+      await page.getByLabel("Content: note", { exact: true }).fill("# Draft note");
+      await page.getByLabel("Value: n", { exact: true }).fill("2");
+      // browse, record, editor and its guard entry: three entries back is the list. No dialog, no editor.
+      await page.evaluate(() => history.go(-3));
       await page.waitForFunction(() => location.hash === "#/browse");
+      assert.equal(await page.locator('[data-record="editing"]').count(), 0);
+      assert.equal(await page.getByRole("dialog").count(), 0, "a traversal that cannot be held asks nothing");
+      await page.goto(`${base}/${recordHash(key)}`);
+      await page.locator('[data-record="ready"]').waitFor();
+      await draftNote(page).getByText("started from revision 1", { exact: false }).waitFor();
+      await draftNote(page).getByRole("button", { name: "Continue editing", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await restoredNotice(page).getByText("started from revision 1", { exact: false }).waitFor();
+      assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), "Draft title");
+      assert.equal(await page.getByLabel("Content: note", { exact: true }).inputValue(), "# Draft note");
+      assert.equal(await page.getByLabel("Value: n", { exact: true }).inputValue(), "2");
+      await save(page).click();
+      await page.getByText("Saved as revision 2", { exact: true }).waitFor();
+      assert.equal(page.puts[0].expectedRevision, 1, "the draft saves with the revision it started from");
+      const saved = await stored(key);
+      assert.deepEqual([saved.document.title, saved.document.fields.n, saved.document.fields.note.content], ["Draft title", 2, "# Draft note"]);
+      assert.equal(await draftNote(page).count(), 0, "a saved draft is gone");
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await restoredNotice(page).count(), 0);
+      await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("a draft in raw JSON mode survives leaving the editor by history and is restored in raw mode; Discard removes it", async () => {
+    const { context, page } = await open();
+    try {
+      const key = "ui:draft-raw";
+      await page.goto(`${base}/${recordHash(key)}`);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await page.getByRole("button", { name: "Raw JSON", exact: true }).click();
+      const text = '{"n": 41, "added": true}';
+      await page.getByLabel("Fields JSON", { exact: true }).fill(text);
+      await page.evaluate(() => history.go(-2));
+      await page.locator('[data-record="ready"]').waitFor();
+      assert.equal(await page.locator('[data-record="editing"]').count(), 0);
+      await draftNote(page).getByRole("button", { name: "Continue editing", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await page.getByRole("button", { name: "Raw JSON", exact: true }).getAttribute("aria-pressed"), "true", "the mode is restored");
+      assert.equal(await page.getByLabel("Fields JSON", { exact: true }).inputValue(), text, "the text is restored exactly");
+      await restoredNotice(page).getByRole("button", { name: "Discard draft", exact: true }).click();
+      await dialog(page, "Discard your draft?").getByRole("button", { name: "Discard draft and reload", exact: true }).click();
+      await page.locator('[data-record="ready"]').waitFor();
+      assert.equal(await draftNote(page).count(), 0);
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await restoredNotice(page).count(), 0, "a discarded draft does not come back");
+      assert.equal(await page.getByRole("button", { name: "Typed content", exact: true }).getAttribute("aria-pressed"), "true");
       assert.equal(page.puts.length, 0);
       await page.quiet();
     } finally { await context.close(); }
   });
 
-  await check("browser history without the Navigation API: Back and repeated Back are guarded by the history entry, and confirmed Back lands on the record", async () => {
+  await check("a draft of a record that moved on is restored into the remote-change and conflict presentation; Discard on the record page removes a draft", async () => {
     const { context, page } = await open();
     try {
-      await context.addInitScript(() => { Object.defineProperty(window, "navigation", { value: undefined }); });
-      const confirm = dialog(page, "Discard unsaved changes?");
+      const key = "ui:draft-moved";
       const title = page.getByLabel("Title", { exact: true });
-      await page.goto(`${base}/#/item/${encodeURIComponent("ui:histnav")}`);
-      assert.equal(await page.evaluate(() => window.navigation), undefined, "the Navigation API is absent");
+      await page.goto(`${base}/${recordHash(key)}`);
       await page.getByRole("button", { name: "Edit", exact: true }).click();
       await page.locator('[data-record="editing"]').waitFor();
-      await title.fill("Draft under history traversal");
-      for (let back = 0; back < 3; back++) {
-        await page.goBack();
-        await confirm.waitFor();
-        assert.match(page.url(), /#\/item\/ui%3Ahistnav\/edit$/);
-        assert.equal(await title.inputValue(), "Draft under history traversal");
-      }
-      await confirm.getByRole("button", { name: "Keep editing", exact: true }).click();
-      await page.goBack();
-      await confirm.getByRole("button", { name: "Discard changes", exact: true }).click();
-      await page.getByRole("button", { name: "Edit", exact: true }).waitFor();
-      assert.match(page.url(), /#\/item\/ui%3Ahistnav$/);
-      assert.equal(page.puts.length, 0);
+      await title.fill("First draft");
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).waitFor();
+      await draftNote(page).getByRole("button", { name: "Discard", exact: true }).click();
+      await dialog(page, "Discard your draft?").getByRole("button", { name: "Discard draft", exact: true }).click();
+      await draftNote(page).waitFor({ state: "detached" });
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await title.inputValue(), `Draft fixture ${key}`, "the discarded draft is gone");
+      await title.fill("My draft");
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).waitFor();
+      await put(key, docOf({ title: "Their change" }), 1);
+      await page.getByRole("heading", { name: "Their change", exact: true }).waitFor();
+      await draftNote(page).getByRole("button", { name: "Continue editing", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await page.getByRole("status").filter({ hasText: "Revision 2 was saved elsewhere." }).waitFor();
+      assert.equal(await title.inputValue(), "My draft", "the draft is not rebased");
+      await save(page).click();
+      const conflict = page.getByRole("alert").filter({ hasText: "was saved by agent while you were editing" });
+      await conflict.waitFor();
+      assert.equal(page.puts[0].expectedRevision, 1, "the original base revision is what the server decides on");
+      assert.equal(await title.inputValue(), "My draft", "nothing is lost");
+      assert.equal((await stored(key)).revision, 2);
+      await conflict.getByRole("button", { name: "Discard mine", exact: true }).click();
+      await dialog(page, "Discard your draft?").getByRole("button", { name: "Discard draft and reload", exact: true }).click();
+      await page.getByRole("heading", { name: "Their change", exact: true }).waitFor();
+      assert.equal(await draftNote(page).count(), 0);
       await page.quiet();
+    } finally { await context.close(); }
+  });
+
+  await check("a draft does not outlive the signed-in identity: when the account changes under an open page, the record offers no draft", async () => {
+    // Its own session: signing out ends the session on the server, which the shared sign-in of the other cases must not lose.
+    const { context, page } = await open(DESKTOP, false);
+    try {
+      const key = "ui:draft-user";
+      const anyDraftNote = page.locator('[role="note"]', { hasText: "You have an unsaved draft of this record" });
+      await page.goto(`${base}/${recordHash(key)}`);
+      await page.getByLabel("Username", { exact: true }).fill("op");
+      await page.getByLabel("Password", { exact: true }).fill(password);
+      await page.getByRole("button", { name: "Sign in", exact: true }).click();
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      await page.getByLabel("Title", { exact: true }).fill("Op's draft");
+      await page.evaluate(() => history.go(-2));
+      await draftNote(page).waitFor();
+      // The shared account page is open, as the module re-reads its authority when the window is focused.
+      await page.getByRole("button", { name: "op", exact: true }).click();
+      await page.getByRole("menuitem", { name: "Account settings", exact: true }).click();
+      await page.waitForFunction(() => location.hash.startsWith("#account"));
+      await page.evaluate(() => { window.pageMarker = "same document"; });
+      // In another tab of the same browser alice signs in over op's session cookie (op's session itself stays valid on the server).
+      const other = await context.newPage();
+      await context.clearCookies();
+      await other.goto(base);
+      await other.getByLabel("Username", { exact: true }).fill("alice");
+      await other.getByLabel("Password", { exact: true }).fill(alicePassword);
+      await other.getByRole("button", { name: "Sign in", exact: true }).click();
+      await other.getByRole("button", { name: "alice", exact: true }).waitFor();
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      // Behind the account page: attached, not visible.
+      await page.locator('[role="status"]', { hasText: "Signed-in identity changed" }).waitFor({ state: "attached" });
+      // The views are rebuilt for the new identity (at the list): open the record again, in the same document.
+      await page.evaluate((hash) => { location.hash = hash; }, recordHash(key));
+      await page.locator('[data-record="ready"]').waitFor();
+      assert.equal(await page.evaluate(() => window.pageMarker), "same document", "the page was not reloaded: only the end of the identity can have removed the draft");
+      assert.equal(await anyDraftNote.count(), 0, "another identity is not offered op's draft");
+      await page.getByRole("button", { name: "Edit", exact: true }).click();
+      await page.locator('[data-record="editing"]').waitFor();
+      assert.equal(await page.getByLabel("Title", { exact: true }).inputValue(), `Draft fixture ${key}`);
+      assert.equal(page.puts.length, 0);
     } finally { await context.close(); }
   });
 
@@ -540,5 +632,5 @@ try {
   });
 } finally { await cleanup(); }
 console.log(`# ${results.length} checks; ${results.filter((line) => line.startsWith("FAIL")).length} failures; 0 skipped`);
-assert.equal(results.length, 10);
+assert.equal(results.length, 12);
 process.exit(process.exitCode ?? 0);

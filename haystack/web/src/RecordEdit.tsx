@@ -7,6 +7,7 @@ import { FieldsEditor } from "./FieldsEditor";
 import { LinksEditor } from "./LinksEditor";
 import { HistoryCard, MetadataCard } from "./RecordEditRail";
 import { PRESETS, type Preset } from "./browse-state";
+import { drafts } from "./edit-drafts";
 import { changedParts, documentJsonOf, draftOf, isRemoteChange, problemsOf, type Draft } from "./edit-draft";
 import { useLeaveGuard } from "./leave-guard";
 import { itemHash } from "./router";
@@ -49,13 +50,16 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   onDiscard: () => void;
   onAuthLost: () => void;
 }) {
-  const lastId = useRef(0);
+  // A draft left behind by an earlier visit (the router unmounts the editor however the reader left) is restored.
+  const [restored] = useState(() => drafts.get(itemKey));
+  const lastId = useRef(restored === undefined ? 0 : restored.lastId);
   const nextId = useCallback(() => ++lastId.current, []);
-  const [base] = useState<Draft>(() => draftOf(item, nextId));
-  const [draft, setDraft] = useState<Draft>(() => draftOf(item, nextId));
-  const [baseRevision, setBaseRevision] = useState(item.revision);
+  const [base] = useState<Draft>(() => restored === undefined ? draftOf(item, nextId) : restored.base);
+  const [draft, setDraft] = useState<Draft>(() => restored === undefined ? draftOf(item, nextId) : restored.draft);
+  const [baseRevision, setBaseRevision] = useState(restored === undefined ? item.revision : restored.baseRevision);
   const [conflict, setConflict] = useState<Conflict | null>(null);
-  const [remote, setRemote] = useState<{ revision: number | null } | null>(null);
+  // The record moved on while the draft was away: the remote-change presentation, never a silent rebase.
+  const [remote, setRemote] = useState<{ revision: number | null } | null>(() => restored !== undefined && item.revision > restored.baseRevision ? { revision: item.revision } : null);
   const [failure, setFailure] = useState<string | null>(null);
   const [reconciled, setReconciled] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
@@ -81,6 +85,12 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
     if (isRemoteChange(live, { key: itemKey, revision: item.revision }, pending)) setRemote({ revision: live.revision });
   }, [live.version]);
 
+  // Written through on every change; nothing removes it but a confirmed save or an explicit discard (not unmounting).
+  useEffect(() => {
+    if (dirty) drafts.put(itemKey, { base, draft, baseRevision, lastId: lastId.current });
+    else drafts.drop(itemKey);
+  }, [dirty, draft, baseRevision]);
+
   useEffect(() => {
     if (focusId === null) return;
     const control = document.getElementById(focusId);
@@ -90,7 +100,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
   }, [focusId]);
 
   // Every way out first removes the guard's history entry, so that the router's own history arithmetic is undisturbed.
-  const guard = useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }), (steps) => setLeaving({ run: () => history.go(steps) }));
+  const guard = useLeaveGuard(dirty, unconfirmed !== undefined, (hash) => leave(() => { location.hash = hash; }), () => setLeaving({ run: () => history.back() }));
   const exit = (action: () => void) => { void guard.release().then(action); };
   const leave = (action: () => void) => { if (dirty) setLeaving({ run: action }); else exit(action); };
 
@@ -99,6 +109,7 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
     try {
       // The fields text is spliced raw into the document: edited big integers never round-trip.
       const out = await api.put(item.key, documentJsonOf(draft), revision, uuidv7());
+      drafts.drop(itemKey);
       await guard.release();
       await onSaved(out.revision);
     } catch (error) {
@@ -164,6 +175,9 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
           Nothing was sent to the server. Fix {problems.length === 1 ? "it" : "these"} and save again:
           <ul className="error-list">{problems.map((problem, index) => <li key={index}>
             <button type="button" className="link-button" onClick={() => setFocusId(problem.anchor)}>{problem.where}: {problem.message}</button></li>)}</ul></div></div>}
+        {restored !== undefined && <div className="notice notice-row" role="status"><UiIcon name="info" /><div className="grow">
+          <span className="notice-title">Unsaved draft restored — started from revision {restored.baseRevision}.</span> It was kept when this page was left.</div>
+          <button type="button" className="btn btn-sm" onClick={() => setDiscarding(true)}>Discard draft</button></div>}
         {failure !== null && unconfirmed === undefined && <div className="notice notice-danger" role="alert"><UiIcon name="alert" /><div className="grow">{failure}</div></div>}
         {remote !== null && conflict === null && <div className="notice" role="status"><UiIcon name="info" /><div className="grow">
           <span className="notice-title">{remote.revision === null ? "This record may have changed elsewhere." : `Revision ${remote.revision} was saved elsewhere.`}</span>{" "}
@@ -202,11 +216,11 @@ export function RecordEdit({ itemKey, item, revisions, origin, onItem, onSaved, 
       </aside>
     </div></div>
     {leaving !== null && <ConfirmDialog title="Discard unsaved changes?" confirmLabel="Discard changes" cancelLabel="Keep editing" danger busy={false}
-      onConfirm={() => { const { run } = leaving; setLeaving(null); exit(run); }} onCancel={() => setLeaving(null)}>
+      onConfirm={() => { const { run } = leaving; setLeaving(null); drafts.drop(itemKey); exit(run); }} onCancel={() => setLeaving(null)}>
       <p>You changed <strong>{listOf(parts)}</strong> of <span className="mono nowrap">{itemKey}</span>. Leaving now loses these changes; nothing has been saved.</p>
     </ConfirmDialog>}
     {discarding && <ConfirmDialog title="Discard your draft?" confirmLabel="Discard draft and reload" cancelLabel="Keep my draft" danger busy={false}
-      onConfirm={() => { setDiscarding(false); exit(onDiscard); }} onCancel={() => setDiscarding(false)}>
+      onConfirm={() => { setDiscarding(false); drafts.drop(itemKey); exit(onDiscard); }} onCancel={() => setDiscarding(false)}>
       <p>Your changes to <span className="mono nowrap">{itemKey}</span> are dropped and revision {item.revision} is loaded. Nothing of your draft was saved.</p>
     </ConfirmDialog>}
   </div>;
