@@ -26,14 +26,15 @@ frozen old validator + ItemService and then acknowledged/read in real PG tests.
 | live.test.ts + mixed-http live: commits/no duplicate, nonce/invalid frames, origins, logout/revocation | generated current WS tests, per-token8, admitted idle REAL30second revocation + healthy peer across TWO REAL30second intervals | upgraded-stream resource owns slots; failed/non-upgrades consume none; Pong frames reach nonce validation; bounded queue/caps, reauth delivery, reconnect/editor CAS |
 | mcp.test.ts official SDK: initialize/tools/get/put/search/version/errors | tests-current/mcp-live.test.mjs official SDK1.32.1 | actual external JSON-RPC; no Baboon-wrapped MCP and no Node backend |
 | runtime.test.ts: child SIGTERM clean exit0 | tests-current/runtime-model.test.mjs real child executable | Resource-owned POSIX signal/drain; no forced-kill acceptance |
-| executable ownership and acceptance fixtures | server ownership.test.mjs + browser controlled occupied-listener regression | bind-preflight and fresh selected-child ready marker before any health/auth probe; a prior child's ready line is not evidence for restart; paired least-privilege helper has strict bounded responses/no fallback |
+| executable ownership and acceptance fixtures | server fixture-safety.test.mjs | bind-preflight and fresh selected-child ready marker before any health/auth probe; a prior child's ready line is not evidence for restart; paired least-privilege helper has strict bounded responses/no fallback |
 | full current browser lossless/editor/CAS/browse/presentation/connection | web atomic suites + all existing browser journeys ported to generated API/public seeding | no TS ItemService/createApp dependency; uncertain operations freeze original IDs |
 | pure GitHub artifact identity / activity namespace | GithubIdentityTest + actual whoami | pure helper only; no new GitHub integration; protected accounting helper opt-in, generic agents still read/write all |
 | retrieval/new shared seam | ProjectionTransactionTest + controlled actual model HTTP executable case + shared library suites | approved metadata/string leaves only, transactional generations/outbox, shared lease worker, strict profile/policy/space, explicit outage |
 
 Old Node import-dependent tests and production entrypoint are retired after moving
-these assertions. Only inert/frozen admission characterization remains under
-`characterization/node`, with no listener/MCP/PG adapter. Real server/client gates
+these assertions. The frozen admission characterization (`characterization/node`)
+and its fixture generators were deleted after the port; the committed fixture
+bytes and manifests remain under `server/src/test/resources`. Real server/client gates
 are `scripts/test-postgres-scala.sh`, `scripts/test-current.sh` (exact inventory,
 JUnit/TAP and artifact hashes), web typecheck/tests/browser. Build/health/pure tests
 are not substitutes for native/browser/PG acceptance. Reports state exact inputs,

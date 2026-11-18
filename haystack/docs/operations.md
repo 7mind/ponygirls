@@ -202,7 +202,6 @@ proxy/restart/SIGTERM/model-provider gate, with official SDK, full static invent
 TAP+JUnit+source and exact ELF/JAR hashes. See server/README for all required env,
 least-privilege provision/drop helper and deadlines. It is not a health smoke.
 
-`haystack/tests-deploy/local-boot.sh PACKAGE` selects that same full native gate.
 No Node or JVM fallback counts as native acceptance. Browser harnesses launch the
 selected actual executable, seed through generated current public API, preserve
 all original security/UI/editor/connection assertions, and require independent

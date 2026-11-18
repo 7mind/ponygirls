@@ -72,8 +72,16 @@ describe('current generated WS invalidations heartbeat and session security',()=
   const cookie=await login(f);
   for(const [payload,code,binary] of [['{',1007,false],[JSON.stringify({kind:'ping'}),1007,false],['binary',1003,true],['x'.repeat(1025),1009,false]]){const live=await open(f,cookie);const closed=once(live.socket,'close');live.socket.send(payload,{binary});assert.equal((await closed)[0],code);}
  });
- it('per-token live capacity is8 and overflow is retryable1013 without evicting established sessions',async()=>{
+ it('per-token live capacity is8, failed handshakes and closed sockets release it, and overflow is retryable1013 without evicting established sessions',async()=>{
   const cookie=await login(f);const established=[];try{
+   for(let i=0;i<16;i++){const failed=await f.call('/api/v1/live',undefined,{method:'GET',headers:{Origin:f.base,Cookie:cookie}});assert.equal(failed.status,426);assert.equal(failed.headers.get('cache-control'),'no-store');}
+   for(const extra of [{'Sec-WebSocket-Key':'invalid','Sec-WebSocket-Version':'13'},{'Sec-WebSocket-Key':'dGhlIHNhbXBsZSBub25jZQ==','Sec-WebSocket-Version':'12'}])for(let i=0;i<8;i++){
+    const failed=await f.call('/api/v1/live',undefined,{method:'GET',headers:{Host:'127.0.0.1:'+f.port,Origin:f.base,Cookie:cookie,Connection:'Upgrade',Upgrade:'websocket',...extra}});assert.equal(failed.status,400);assert.equal(failed.headers.get('cache-control'),'no-store');
+   }
+   for(let i=0;i<12;i++){
+    const live=await open(f,cookie);live.socket.send(JSON.stringify(encode(api.LiveFrame,new api.LiveFrame('ping',undefined,undefined,'lifetime-'+i,123,undefined))));
+    await waitFor(()=>live.messages.some(value=>value.kind==='pong'&&value.nonce==='lifetime-'+i));await close(live.socket);
+   }
    for(let i=0;i<8;i++)established.push(await open(f,cookie));
    const excess=new WebSocket(f.base.replace('http:','ws:')+'/api/v1/live',{headers:{Origin:f.base,Cookie:cookie}});excess.on('error',()=>{});assert.equal((await once(excess,'close'))[0],1013);
    assert.ok(established.every(live=>live.socket.readyState===WebSocket.OPEN));

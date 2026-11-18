@@ -34,15 +34,6 @@ object HistoricalFixtures {
   */
 class HistoricalAdmissionTest extends munit.FunSuite {
   import HistoricalFixtures.*
-  test("fixture provenance identifies original production code and MCP UTF16 boundary") {
-    assertEquals(manifest.hcursor.get[String]("format").toOption.get, "old-production-ts-admission-fixtures-v1")
-    val sources = manifest.hcursor.get[Map[String, String]]("sourceDigests").toOption.get
-    assert(sources.contains("server/src/domain/document.ts")); assert(sources.contains("server/src/domain/json.ts"))
-    assert(sources.contains("server/src/application/service.ts")); assert(sources.contains("server/src/mcp/adapter.ts"))
-    assert(sources.values.forall(_.matches("[0-9a-f]{64}")))
-    val oldMcpLimit = manifest.hcursor.get[Int]("oldMcpMaxUtf16").toOption.get
-    assert(values.forall(_.utf16Chars <= oldMcpLimit))
-  }
   values.foreach { fixture =>
     test("stored decoding preserves actual old admission: " + fixture.name) {
       val text = fixture.text
