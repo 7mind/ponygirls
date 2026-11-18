@@ -77,7 +77,9 @@ export function createUpload(ctx, catalogue) {
   function settingsSummary(settings) {
     var parts = [ACCESS_LABEL[settings.access]];
     var choice = $("upload-expiry").value;
-    parts.push(choice === "never" ? "no expiry" : "expires in " + settings.expiresInSeconds / SECONDS_PER_DAY + (settings.expiresInSeconds === SECONDS_PER_DAY ? " day" : " days"));
+    if (choice === "never") { parts.push("no expiry"); }
+    else if (settings.expiresInSeconds === null) { parts.push("expiry not set"); }
+    else { parts.push("expires in " + settings.expiresInSeconds / SECONDS_PER_DAY + (settings.expiresInSeconds === SECONDS_PER_DAY ? " day" : " days")); }
     if (settings.tags.length > 0) { parts.push("tags " + settings.tags.join(", ")); }
     return parts.join(" · ");
   }
