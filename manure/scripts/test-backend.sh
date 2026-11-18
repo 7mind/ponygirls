@@ -12,14 +12,47 @@ find build.sbt project manure/backend manure/server manure/models manure/generat
 git rev-parse HEAD > "$report/git-head"
 "$POSTGRES_HOME/bin/postgres" --version > "$report/postgres-version"
 java -version 2> "$report/java-version"
+# Suites run in groups, one forked test JVM and one owned PostgreSQL cluster per group
+# (MANURE_TEST_GROUPS=1 is the serial fallback).
+max_groups=16
+if [[ -v MANURE_TEST_GROUPS ]]; then
+  groups=$MANURE_TEST_GROUPS
+else
+  cores=${NIX_BUILD_CORES:-0}
+  if (( cores == 0 )); then cores=$(nproc); fi
+  groups=$(( cores < max_groups ? cores : max_groups ))
+fi
+if [[ ! "$groups" =~ ^[1-9][0-9]*$ ]]; then echo 'MANURE_TEST_GROUPS must be a positive integer' >&2; exit 2; fi
 base=$(mktemp -d "${TMPDIR:-/tmp}/manure-backend-pg.XXXXXXXX")
-port=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
-trap '"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -m immediate -w stop >/dev/null 2>&1 || true; rm -rf "$base"' EXIT
+stop_clusters() {
+  for data in "$base"/data*; do "$POSTGRES_HOME/bin/pg_ctl" -D "$data" -m immediate -w stop >/dev/null 2>&1 || true; done
+  rm -rf "$base"
+}
+trap stop_clusters EXIT
+read -r -a ports <<<"$(python3 -c 'import socket,sys
+s=[socket.socket() for _ in range(int(sys.argv[1]))]
+for x in s: x.bind(("127.0.0.1",0))
+print(" ".join(str(x.getsockname()[1]) for x in s))' "$groups")"
 printf '%s\n' manure-test-password > "$base/password"
 chmod 600 "$base/password"
+# One initdb, copied per group. The clusters are discarded on exit, so they skip crash durability ("Non-Durable Settings"
+# in the PostgreSQL manual); scram_iterations=1 keeps the verifiers of the per-case runtime roles cheap.
+fixture_settings='-c fsync=off -c synchronous_commit=off -c full_page_writes=off -c scram_iterations=1'
 "$POSTGRES_HOME/bin/initdb" -D "$base/data" -U postgres -A scram-sha-256 --pwfile="$base/password" --no-locale --encoding=UTF8 > "$base/init.log"
-"$POSTGRES_HOME/bin/pg_ctl" -D "$base/data" -l "$base/server.log" -o "-h 127.0.0.1 -p $port -k $base" -w start
-export MANURE_TEST_JDBC_URL="jdbc:postgresql://127.0.0.1:$port/postgres"
+urls=()
+starts=()
+for (( i = 0; i < groups; i++ )); do
+  (
+    cp -a "$base/data" "$base/data$i"
+    "$POSTGRES_HOME/bin/pg_ctl" -D "$base/data$i" -l "$base/server$i.log" -o "-h 127.0.0.1 -p ${ports[i]} -k $base $fixture_settings" -w start >/dev/null
+  ) &
+  starts+=($!)
+  urls+=("jdbc:postgresql://127.0.0.1:${ports[i]}/postgres")
+done
+for start in "${starts[@]}"; do wait "$start"; done
+# Every group JVM receives its own MANURE_TEST_JDBC_URL from the sbt grouping.
+export MANURE_TEST_GROUP_JDBC="${urls[*]}"
+unset MANURE_TEST_JDBC_URL
 export MANURE_TEST_JDBC_USER=postgres MANURE_TEST_JDBC_PASSWORD_FILE="$base/password" MANURE_TEST_ALLOW_CREATEDB=1
 export MANURE_SOURCE_ROOT="$PWD"
 cc -std=c11 -Wall -Wextra -Werror -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Wstrict-prototypes -Wmissing-prototypes -fPIC -shared \

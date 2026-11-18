@@ -1,4 +1,5 @@
-import sbt.TestDefinition
+import sbt.*
+import sbt.Keys.*
 
 /** A suite that gets a test group of its own while groups remain; `reason` records why it is slow. */
 final case class IsolatedSuite(name: String, reason: String)
@@ -33,4 +34,32 @@ object TestGroups {
     require(grouped.sorted == names.sorted, "test groups must contain every discovered suite exactly once")
     groups
   }
+}
+
+/** Settings that run `Test` as concurrent forked groups: group i is one test JVM whose environment variable `databaseVariable`
+  * is `grouping.databases(i)`. Suites inside a group stay serial. A group holding a `serial` suite runs while no other task runs
+  * (for suites whose own deadlines are CPU-bound, such as a child JVM that must finish within seconds). */
+object TestGroupSettings {
+  private val ExclusiveGroup = Tags.Tag("exclusive-test-group")
+
+  def apply(grouping: TestGrouping, groupPrefix: String, isolated: Seq[IsolatedSuite], serial: Seq[IsolatedSuite], databaseVariable: String): Seq[Setting[?]] = Seq(
+    Test / testGrouping := Def.uncached {
+      val tests = (Test / definedTests).value
+      val fork = (Test / forkOptions).value
+      val log = streams.value.log
+      val groups = TestGroups.assign(tests, isolated, grouping.databases.size, grouping.seed)
+      def exclusive(group: Seq[TestDefinition]) = group.exists(test => serial.exists(_.name == test.name))
+      val (alone, concurrent) = groups.partition(exclusive)
+      (concurrent ++ alone).zipWithIndex.map { case (group, i) =>
+        val name = groupPrefix + "-g" + i
+        log.info(name + ": " + group.map(_.name).mkString(" "))
+        val tags = if (exclusive(group)) Seq(ExclusiveGroup -> 1) else Nil
+        Tests.Group(name, group, Tests.SubProcess(fork.withEnvVars(fork.envVars.updated(databaseVariable, grouping.databases(i)))), tags)
+      }
+    },
+    Test / parallelExecution := true,
+    Test / testForkedParallel := false,
+    // sbt 2.0.12 defaultRestrictions with the forked-test-group limit (default 1) raised to the group count.
+    Global / concurrentRestrictions := Seq(Tags.limitAll(EvaluateTask.SystemProcessors), Tags.limit(Tags.ForkedTestGroup, grouping.databases.size), Tags.exclusiveGroup(Tags.Clean), Tags.exclusive(ExclusiveGroup))
+  )
 }

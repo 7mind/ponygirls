@@ -65,9 +65,16 @@ lazy val manureTestChildSettings = Seq(
 lazy val losslessJson = project.in(file("shared/lossless-json")).settings(scala3LibrarySettings).settings(
   name := "lossless-json"
 )
+// Set by manure/scripts/test-backend.sh: MANURE_TEST_GROUP_JDBC lists one JDBC URL per group (one owned cluster each).
+// Unset (plain sbt test/testOnly): sbt's single forked group against MANURE_TEST_JDBC_URL.
+lazy val manureTestGrouping: Option[TestGrouping] = sys.env.get("MANURE_TEST_GROUP_JDBC").map { databases =>
+  TestGrouping(databases.split(' ').toSeq, sys.env.get("MANURE_TEST_GROUP_SEED").fold(0L)(_.toLong))
+}
+def manureTestGroupingSettings(isolated: Seq[IsolatedSuite], serial: Seq[IsolatedSuite]): Seq[Setting[?]] =
+  manureTestGrouping.toSeq.flatMap(grouping => TestGroupSettings(grouping, "manure", isolated, serial, "MANURE_TEST_JDBC_URL"))
 lazy val manureStorage = project.in(file("manure/server")).settings(scala3LibrarySettings ++ manureTestChildSettings).settings(
   name := "manure-storage"
-)
+).settings(manureTestGroupingSettings(Nil, Nil))
 lazy val serviceDependencies = Seq(
   "io.7mind.izumi" %% "distage-core" % "1.2.25",
   "io.7mind.izumi" %% "distage-extension-plugins" % "1.2.25",
@@ -139,12 +146,24 @@ lazy val haystackServer = project.in(file("haystack/server")).dependsOn(haystack
   assembly / mainClass := Some("haystack.Main"),
   assembly / assemblyJarName := "haystack-server.jar"
 )
+// Suites that run while no other test group runs: each of its 17 child JVMs must finish within 2 s, which failed in 2 of 11
+// grouped runs (CPU contention from the other groups) and is marginal even serially (1.5 s observed).
+lazy val manureSerialSuites = Seq(
+  IsolatedSuite("manure.CheckConfigSuite", "17 child JVMs, each with a 2 s deadline; 19 s")
+)
+// Suites that get a group (and cluster) of their own: slow ones bound the grouped wall time.
+lazy val manureIsolatedSuites = manureSerialSuites ++ Seq(
+  IsolatedSuite("manure.HttpSuite", "34 cases, one PostgreSQL fixture each; 30 s"),
+  IsolatedSuite("manure.RootAuthoritySuite", "TLS loopback authority fixture per case; 13 s"),
+  IsolatedSuite("manure.PostgresCatalogueSuite", "33 cases, one PostgreSQL fixture each; 16 s"),
+  IsolatedSuite("manure.RootMigrationSuite", "PostgreSQL and payload-root migration cases; 15 s")
+)
 lazy val manureServer = project.in(file("manure/backend")).dependsOn(manureContracts, manureStorage, serviceRuntime, serviceAuth % "compile->compile;test->test", modelHttp, retrievalCore, retrievalPostgres).settings(serviceSettings ++ baboonAssemblySettings ++ manureTestChildSettings).settings(
   name := "manure-server",
   Compile / mainClass := Some("manure.Main"),
   assembly / mainClass := Some("manure.Main"),
   assembly / assemblyJarName := "manure-server.jar"
-)
+).settings(manureTestGroupingSettings(manureIsolatedSuites, manureSerialSuites))
 lazy val ritesServer = project.in(file("rites/server")).dependsOn(ritesContracts, serviceRuntime).settings(serviceSettings ++ baboonAssemblySettings).settings(
   name := "rites-server",
   Compile / unmanagedResourceDirectories += baseDirectory.value.getParentFile / "migrations",
