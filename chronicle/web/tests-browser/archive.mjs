@@ -148,16 +148,17 @@ try {
     await context.close();
   });
 
-  await run('loaded rows, scroll and the originating row focus survive opening a conversation, Back, a tab round trip and an address without the query', async () => {
+  await run('loaded rows, scroll and the originating row focus survive opening and closing a conversation, a tab round trip and an address without the query', async () => {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 180; });
     await appendUntil(page, 3 * PAGE_SIZE);
     await page.evaluate(() => window.scrollTo(0, 2000)); await quiesce(page);
     const scrollY = await page.evaluate(() => window.scrollY), reads = archiveQueries(fixture).length;
     const opened = await rows(page).evaluateAll(items => items.find(item => item.getBoundingClientRect().top > 300).dataset.rowId), link = table(page).locator(`tr[data-row-id="${opened}"]`).getByRole('link');
-    await link.click(); await page.waitForURL(url => url.hash === `#/session/${opened}`); await quiesce(page);
-    await page.goBack(); await page.waitForURL(url => url.hash === '#/archive'); await main(page).waitFor(); await page.getByRole('dialog').waitFor({ state: 'detached' }); await quiesce(page);
-    assert.equal(await rows(page).count(), 3 * PAGE_SIZE, 'Back keeps the loaded rows');
-    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrollY) <= SCROLL_TOLERANCE, 'Back restores the document scroll');
+    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true });
+    await link.click(); await dialog.waitFor(); assert.equal(await page.evaluate(() => location.hash), '#/archive', 'the source dialog keeps the list route');
+    await page.keyboard.press('Escape'); await dialog.waitFor({ state: 'detached' }); await quiesce(page);
+    assert.equal(await rows(page).count(), 3 * PAGE_SIZE, 'closing keeps the loaded rows');
+    assert.ok(Math.abs(await page.evaluate(() => window.scrollY) - scrollY) <= SCROLL_TOLERANCE, 'closing restores the document scroll');
     assert.equal(await link.evaluate(element => element === document.activeElement), true, 'focus returns to the originating row');
     await navLink(page, 'Search').click(); await page.getByRole('main', { name: 'Search', exact: true }).waitFor();
     await navLink(page, 'Archive').click(); await main(page).waitFor(); await quiesce(page);
@@ -203,10 +204,10 @@ try {
 
   await run('a conversation opened from the list closes when an authorized refresh stops listing it', async () => {
     const { context, page, fixture } = await scene(fixture => { fixture.archiveRowCount = 3; });
-    const [opened] = await rowIds(page); await table(page).locator(`tr[data-row-id="${opened}"]`).getByRole('link').click(); await page.waitForURL(url => url.hash === `#/session/${opened}`);
+    const dialog = page.getByRole('dialog', { name: 'Source conversation', exact: true });
+    const [opened] = await rowIds(page); await table(page).locator(`tr[data-row-id="${opened}"]`).getByRole('link').click(); await dialog.waitFor();
     fixture.archiveExcluded.add(opened); await button(page, 'Refresh archive').evaluate(element => element.click());
-    await page.waitForURL(url => url.hash === '#/archive'); await table(page).locator(`tr[data-row-id="${opened}"]`).waitFor({ state: 'detached' });
-    assert.equal(await page.getByRole('dialog').count(), 0, 'no session view of the revoked conversation remains');
+    await dialog.waitFor({ state: 'detached' }); await table(page).locator(`tr[data-row-id="${opened}"]`).waitFor({ state: 'detached' });
     await context.close();
   });
 
@@ -333,6 +334,36 @@ try {
     await page.keyboard.press('Escape'); await menu.waitFor({ state: 'hidden' }); assert.equal(await trigger.evaluate(element => element === document.activeElement), true, 'Escape returns focus to the trigger');
     await trigger.click(); await menu.waitFor(); await query(page).focus(); await menu.waitFor({ state: 'hidden' });
     await quiesce(page); assert.equal(fixture.calls.slice(before).filter(call => !(call.operation instanceof api.Operation_Ping)).length, 0, 'presentation controls read nothing');
+    await context.close();
+  });
+
+  await run('phone widths start with two columns and still offer every column with its server sort', async () => {
+    const { context, page, fixture } = await sceneAt(PHONE, 'light', fixture => { fixture.archiveRowCount = 60; }); await rows(page).first().waitFor(); await idle(page);
+    assert.equal(await table(page).locator('thead th').count(), 2); assert.equal(await horizontalOverflow(page), false);
+    const menu = await tableOptions(page);
+    for (const name of ['Producer', 'Index status']) await menu.getByRole('menuitemcheckbox', { name, exact: true }).click();
+    await page.keyboard.press('Escape'); assert.equal(await table(page).locator('thead th').count(), 4);
+    const sent = await archiveRead(page, fixture, () => button(page, 'Sort by Producer').click());
+    assert.equal(sent.sort, api.ArchiveSort.Producer); assert.equal(sent.cursor, undefined);
+    assert.equal(await table(page).locator(`th[data-column-id="${api.ArchiveSort.Producer}"]`).getAttribute('aria-sort'), 'ascending');
+    await rows(page).first().locator(`td[data-column-id="${api.ArchiveSort.Producer}"]`).getByText(fixture.archiveResult(sent).rows[0].head.metadata.producer, { exact: true }).waitFor();
+    await page.reload(); await main(page).waitFor(); await rows(page).first().waitFor();
+    assert.equal(await table(page).locator('thead th').count(), 4, 'the phone column choice is remembered');
+    await page.setViewportSize(DESKTOP); assert.equal(await table(page).locator('thead th').count(), 6, 'the wide column choice is separate');
+    await context.close();
+  });
+
+  await run('empty and error states open the existing search syntax help and connection details', async () => {
+    const { context, page, fixture } = await scene(undefined);
+    fixture.archiveRows = []; await submit(page, 'project:"atlantis"'); await listState(page, 'empty').waitFor();
+    assert.equal(await main(page).getByRole('button', { name: 'Search syntax', exact: true }).count(), 1, 'one Search syntax control');
+    await listState(page, 'empty').getByRole('button', { name: 'Show search syntax', exact: true }).click();
+    assert.match(await page.locator('.expression-help-content:visible').innerText(), /NOT text/); await page.keyboard.press('Escape');
+    fixture.archiveFailure = 'Synthetic archive outage'; await button(page, 'Refresh archive').click();
+    const notice = main(page).getByRole('alert').filter({ hasText: 'Synthetic archive outage' }); await notice.waitFor();
+    await notice.getByRole('button', { name: 'Connection details', exact: true }).click();
+    await page.getByRole('dialog', { name: 'Connection details', exact: true }).waitFor();
+    await page.keyboard.press('Escape'); await page.getByRole('dialog', { name: 'Connection details', exact: true }).waitFor({ state: 'hidden' });
     await context.close();
   });
 

@@ -12,8 +12,10 @@ import { FilterBar } from './FilterShortcuts.tsx';
 import { useStoredTableColumns, browserColumnChoices, ColumnMenu, TableColumnGroup, ColumnResize } from './TableColumns.tsx';
 import type { TableColumnSpec } from './table-widths.ts';
 import type { SessionFindReadGate } from './session-find.ts';
+import { Dialog } from './Dialog.tsx';
+import { Conversation } from './Conversation.tsx';
 import { Icon } from './Icon.tsx';
-import { RouteStateContext, formatRoute, parseFragment, routeSlot, sessionIdOf, sessionRoute, useRouteState } from './router.ts';
+import { RouteStateContext, formatRoute, routeSlot, sessionRoute } from './router.ts';
 import type { ManagerStats } from './transport/types.ts';
 import './archive.css';
 const ARCHIVE_PAGE_SIZE = 50;
@@ -23,30 +25,22 @@ const ARCHIVE_DEBOUNCE_MS = 350;
 const ARCHIVE_CHAIN_LIMIT = 8;
 const ARCHIVE_CHAINS = routeSlot('archive-chains', () => new SettledChainCache<ArchiveRow, ArchiveResult, string>(ARCHIVE_CHAIN_LIMIT));
 const ARCHIVE_CHAINS_INSTANCE = 'archive';
-const COLUMN_CHOICES_KEY = 'chronicle.archive.columns';
+const COLUMN_CHOICES_KEY = 'chronicle.archive.columns', NARROW_COLUMN_CHOICES_KEY = 'chronicle.archive.columns.narrow';
 const SKELETON_ROWS = 12;
 const MINUTE_MS = 60_000, HOUR_MS = 60 * MINUTE_MS, DAY_MS = 24 * HOUR_MS;
 const PLACEHOLDER = 'Filter conversations — text, or project:chronicle AND NOT tag:archived';
-// Phone widths (the shared 720 px breakpoint) show Conversation and Last activity only, fitted to the viewport: no sideways
-// document scroll at 390 px (spec §8 item 9). Column choice and resizing apply from that width up.
+// Phone widths (the shared 720 px breakpoint) start with Conversation and Last activity, fitted to the viewport (no sideways
+// document scroll at 390 px, spec §8 item 9); their column choice is separate from the wide one and offers every column.
 const NARROW_QUERY = '(max-width: 720px)';
-const NARROW_COLUMNS: readonly ArchiveSort[] = [ArchiveSort.Title, ArchiveSort.LastTimestamp];
+const NARROW_DEFAULT_COLUMNS: readonly string[] = [ArchiveSort.Title, ArchiveSort.LastTimestamp];
 function useNarrow(): boolean {
   const query = useMemo(() => window.matchMedia(NARROW_QUERY), []);
   return useSyncExternalStore(listener => { query.addEventListener('change', listener); return () => query.removeEventListener('change', listener); }, () => query.matches);
 }
-/**
- * The conversation last opened from the Archive: its latest authorized row and the Archive's refresh count. A session view of
- * that conversation reads it (owner's route cache, instance ARCHIVE_OPENED_INSTANCE) for the row's HEAD, its matched or
- * published view as the initial view, and the refresh count to revalidate with the list, as the Archive's dialog did.
- */
-export interface OpenedArchiveRow { readonly row: ArchiveRow; readonly refresh: number }
-export const ARCHIVE_OPENED = routeSlot<OpenedArchiveRow | null>('archive-opened', () => null);
-export const ARCHIVE_OPENED_INSTANCE = 'archive';
 // sort/direction are the remembered column order; the server applies relevance only when preferRelevance is set and the expression has positive text.
-// `selection` is the conversation last opened from the list: focus returns to its row when the list is shown again.
-export interface ArchiveState { submitted: string; sort: ArchiveSort; direction: SortDirection; preferRelevance: boolean; selection: string | null }
-export function emptyArchive(): ArchiveState { return { submitted: '', sort: ArchiveSort.LastTimestamp, direction: SortDirection.Desc, preferRelevance: true, selection: null }; }
+// `selection` is the conversation shown in the source dialog; `lastOpened` the row focus returns to when the list is shown again.
+export interface ArchiveState { submitted: string; sort: ArchiveSort; direction: SortDirection; preferRelevance: boolean; selection: string | null; selectionKey: number; lastOpened: string | null }
+export function emptyArchive(): ArchiveState { return { submitted: '', sort: ArchiveSort.LastTimestamp, direction: SortDirection.Desc, preferRelevance: true, selection: null, selectionKey: 0, lastOpened: null }; }
 interface When { absolute: string; relative: string }
 function when(value: string | undefined, now: number): When | null {
   if (value === undefined) return null;
@@ -70,7 +64,7 @@ interface ArchiveColumn { sort: ArchiveSort; label: string; cell: string | undef
 const columns: readonly ArchiveColumn[] = [
   { sort: ArchiveSort.LastTimestamp, label: 'Last activity', cell: undefined, title: row => row.lastTimestamp, render: (row, now) => { const time = when(row.lastTimestamp, now); return time === null ? 'Not recorded' : <><time dateTime={row.lastTimestamp}>{time.absolute}</time><span className="when-rel">{time.relative}</span></>; } },
   { sort: ArchiveSort.Title, label: 'Conversation', cell: 'col-pin', title: row => `${row.head.metadata.title}\nHEAD r${row.head.revision} · ${row.publishedView === undefined ? 'Not indexed' : `published r${row.publishedView.revision}`}`, render: (row, _now, open) => <>
-    <a className="cell-title table-title" href={formatRoute(sessionRoute(row.head.id))} onClick={() => open(row.head.id)}>{row.head.metadata.title || 'Untitled conversation'}</a>
+    <a className="cell-title table-title" href={formatRoute(sessionRoute(row.head.id))} onClick={event => { if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return; event.preventDefault(); open(row.head.id); }}>{row.head.metadata.title || 'Untitled conversation'}</a>
     <div className="cell-sub row-tags" title={row.tags.join(', ')}>{tagPreview(row.tags)}<span className="cell-sep">{row.head.metadata.producer}</span></div>
   </> },
   { sort: ArchiveSort.Owner, label: 'User', cell: undefined, title: row => row.head.ownerId, render: row => row.head.ownerId },
@@ -92,14 +86,15 @@ const OTHER_COLUMN = { min: 80, ideal: 140, max: 240 };
 const DEFAULT_COLUMNS: readonly ArchiveSort[] = [ArchiveSort.LastTimestamp, ArchiveSort.Title, ArchiveSort.Project, ArchiveSort.Branch, ArchiveSort.Status, ArchiveSort.MessageCount];
 const archiveColumns: readonly TableColumnSpec[] = columns.map(column => ({ id: column.sort, label: column.label, ...(COLUMN_WIDTHS[column.sort] ?? OTHER_COLUMN),
   grow: column.sort === ArchiveSort.Title, required: column.sort === ArchiveSort.Title, compact: DEFAULT_COLUMNS.includes(column.sort) }));
+const narrowArchiveColumns: readonly TableColumnSpec[] = archiveColumns.map(spec => ({ ...spec, compact: NARROW_DEFAULT_COLUMNS.includes(spec.id) }));
 const columnLabel = (sort: ArchiveSort) => columns.find(column => column.sort === sort)!.label;
 const plural = (count: bigint, noun: string) => `${count.toLocaleString()} ${noun}${count === 1n ? '' : 's'}`;
-export function Archive({ connection, requests, stats, user, draft, setDraft, archive, setArchive }: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; draft: string; setDraft: (value: string) => void; archive: ArchiveState; setArchive: Dispatch<SetStateAction<ArchiveState>> }) {
-  const [refresh, setRefresh] = useState(0), [composing, setComposing] = useState(false);
-  const [readScope] = useState(() => Symbol('Archive mount')), mounted = useRef(true), timer = useRef<number | null>(null), input = useRef<HTMLInputElement>(null), main = useRef<HTMLElement>(null);
+export function Archive({ connection, requests, findReads, stats, user, draft, setDraft, archive, setArchive }: { connection: ChronicleConnection; requests: ArchiveReadLane; findReads: SessionFindReadGate; stats: ManagerStats; user: UserInfo; draft: string; setDraft: (value: string) => void; archive: ArchiveState; setArchive: Dispatch<SetStateAction<ArchiveState>> }) {
+  const [refresh, setRefresh] = useState(0), [composing, setComposing] = useState(false), [relatedSelection, setRelatedSelection] = useState<string | null>(null);
+  const [readScope] = useState(() => Symbol('Archive mount')), mounted = useRef(true), timer = useRef<number | null>(null), input = useRef<HTMLInputElement>(null), main = useRef<HTMLElement>(null), sortline = useRef<HTMLDivElement>(null);
   const cache = useContext(RouteStateContext);
   if (cache === null) throw new Error('Archive requires a RouteStateContext provider');
-  const chains = cache.read(ARCHIVE_CHAINS, ARCHIVE_CHAINS_INSTANCE), choices = useMemo(() => browserColumnChoices(window.localStorage, COLUMN_CHOICES_KEY), []);
+  const chains = cache.read(ARCHIVE_CHAINS, ARCHIVE_CHAINS_INSTANCE), choices = useMemo(() => browserColumnChoices(window.localStorage, COLUMN_CHOICES_KEY), []), narrowChoices = useMemo(() => browserColumnChoices(window.localStorage, NARROW_COLUMN_CHOICES_KEY), []);
   const queryStamp = JSON.stringify([user.id, stats.generation, stats.activeId, archive.submitted, archive.sort, archive.direction, archive.preferRelevance]);
   const currentQuery = useRef(queryStamp); currentQuery.current = queryStamp;
   const liveStamp = JSON.stringify([queryStamp, draft, composing]), currentLive = useRef(liveStamp); currentLive.current = liveStamp;
@@ -121,42 +116,46 @@ export function Archive({ connection, requests, stats, user, draft, setDraft, ar
     const result = await requests.request(readScope, () => mounted.current && currentQuery.current === queryStamp, () => read(connection, new Operation_Archive(query), value => value instanceof Result_Archive ? value.result : null));
     return { items: result.rows, next: result.nextCursor, previous: undefined, meta: result };
   }, row => row.head.id);
-  const narrow = useNarrow(), table = useStoredTableColumns(choices, archiveColumns, results.items.length, !narrow);
-  const shownColumns = narrow ? NARROW_COLUMNS.map(sort => columns.find(column => column.sort === sort)!) : columns.filter(column => table.columns.some(item => item.spec.id === column.sort));
-  useLayoutEffect(() => { const element = table.table.current; if (element !== null) element.style.setProperty('width', narrow ? '100%' : `${table.width}px`); });
-  const colgroup = narrow ? <colgroup><col/><col className="archive-col-when"/></colgroup> : <TableColumnGroup layout={table}/>;
+  const narrow = useNarrow(), wideTable = useStoredTableColumns(choices, archiveColumns, results.items.length, !narrow), narrowTable = useStoredTableColumns(narrowChoices, narrowArchiveColumns, results.items.length, narrow);
+  const table = narrow ? narrowTable : wideTable, shownColumns = columns.filter(column => table.columns.some(item => item.spec.id === column.sort));
+  useLayoutEffect(() => { const element = table.table.current; if (element !== null) element.style.setProperty('width', `${table.width}px`); });
+  const colgroup = <TableColumnGroup layout={table}/>;
   const relevanceOrdered = results.meta !== null && results.meta.relevanceOrdered, columnOrdered = !relevanceOrdered;
   const failed = results.error !== null && results.appendError === null;
   const sentinel = useInfiniteSentinel<HTMLDivElement>(results.hasMore && results.error === null, results.loadingMore || results.refreshing, results.loadMore);
-  // Focus returns to the row last opened when the list is shown again (Back from the session page, a tab round trip): the
+  // Focus returns to the row last opened when the list is shown again (a tab round trip; the source dialog restores it itself): the
   // shell hides a retained view (`hidden` on an ancestor) and renders it again when it is shown.
   const shown = useRef(false);
   useLayoutEffect(() => {
     const element = main.current;
     if (element === null) throw new Error('Archive main element missing');
-    const visible = element.closest('[hidden]') === null, id = archive.selection;
+    const visible = element.closest('[hidden]') === null, id = archive.lastOpened;
     if (visible && !shown.current && id !== null && !element.contains(document.activeElement)) {
       const link = element.querySelector<HTMLAnchorElement>(`tr[data-row-id="${CSS.escape(id)}"] a.cell-title`);
       if (link !== null) link.focus({ preventScroll: true });
     }
     shown.current = visible;
   });
-  // The list is the access fence of a conversation opened from it: when a settled refresh no longer lists that conversation
-  // (access revoked), its session view is left as Back would (the entry was pushed from this list).
+  // The source dialog is bound to its row: it closes when an authorized refresh no longer lists the conversation.
+  const selected = results.items.find(row => row.head.id === archive.selection);
   useEffect(() => {
-    const id = archive.selection;
-    if (id === null || results.meta === null || results.loading || results.refreshing || results.error !== null || results.items.some(row => row.head.id === id)) return;
-    const fragment = parseFragment(window.location.hash);
-    if (fragment.kind === 'route' && fragment.route.view === 'session' && sessionIdOf(fragment.route) === id) window.history.back();
-    setArchive(value => value.selection === id ? { ...value, selection: null } : value);
-  }, [archive.selection, results.items, results.meta, results.loading, results.refreshing, results.error]);
-  const [, setOpened] = useRouteState(ARCHIVE_OPENED, ARCHIVE_OPENED_INSTANCE);
-  useEffect(() => {
-    const row = archive.selection === null ? undefined : results.items.find(item => item.head.id === archive.selection);
-    setOpened(row === undefined ? null : { row, refresh });
-  }, [archive.selection, results.items, refresh, setOpened]);
-  function open(id: string) { setArchive(value => ({ ...value, selection: id })); }
-  function submit(expression: string) { cancelTimer(); if (expression !== archive.submitted) requests.cancel(readScope); else refreshArchive(); setArchive(value => ({ ...value, submitted: expression, selection: null })); }
+    if (archive.selection !== null && results.meta !== null && selected === undefined) { setArchive(value => ({ ...value, selection: null })); setRelatedSelection(null); }
+  }, [archive.selection, results.meta, selected, setArchive]);
+  function open(id: string) { setRelatedSelection(null); setArchive(value => ({ ...value, selection: id, selectionKey: value.selectionKey + 1, lastOpened: id })); }
+  function close() { setRelatedSelection(null); setArchive(value => ({ ...value, selection: null })); }
+  // Secondary actions of the empty and error states open the existing controls (one Search syntax help, the masthead's
+  // connection details) instead of second copies of them.
+  function showSyntax() {
+    const trigger = sortline.current === null ? null : sortline.current.querySelector<HTMLButtonElement>('button[popovertarget]');
+    if (trigger === null) throw new Error('Search syntax control missing');
+    trigger.focus(); trigger.click();
+  }
+  function showConnection() {
+    const trigger = document.querySelector<HTMLButtonElement>('.connection-widget button[aria-haspopup="dialog"]');
+    if (trigger === null) throw new Error('Connection indicator missing');
+    trigger.focus(); trigger.click();
+  }
+  function submit(expression: string) { cancelTimer(); if (expression !== archive.submitted) requests.cancel(readScope); else refreshArchive(); setArchive(value => ({ ...value, submitted: expression, selection: null })); setRelatedSelection(null); }
   function sortBy(sort: ArchiveSort) { setArchive(value => ({ ...value, sort, direction: columnOrdered && value.sort === sort ? value.direction === SortDirection.Asc ? SortDirection.Desc : SortDirection.Asc : sort === ArchiveSort.LastTimestamp ? SortDirection.Desc : SortDirection.Asc, preferRelevance: false, selection: null })); }
   // The order toggle is offered for queries with text (the server orders them by relevance) and while a manual column order
   // replaces relevance; it stays while a changed order is read.
@@ -176,34 +175,35 @@ export function Archive({ connection, requests, stats, user, draft, setDraft, ar
       <QueryBar inputRef={input} label="Archive search" placeholder={PLACEHOLDER} value={draft} applied={archive.submitted} change={change} submit={submit} disabled={stats.activeId === null} completion={{ connection, stats, owner: user.id, target: new ExpressionHintTarget_Archive() }} compositionChange={compositionChange} composing={composing} submission="live"/>
       <div className="viewbar-meta" role="status" aria-label="Archive status">{counter}</div>
       <button type="button" className="btn btn-ghost btn-icon" aria-label="Refresh archive" title="Refresh" onClick={refreshArchive}><Icon name="refresh" small={false}/></button>
-      {!narrow && <ColumnMenu name="Conversations" layout={table}/>}
+      <ColumnMenu name="Conversations" layout={table}/>
     </div>
-    <FilterBar expression={draft} change={change} input={input} fields={archiveFields} metadata={false} presets={conversationPresets(user.id)} trailing={<div className="sortline">
+    <FilterBar expression={draft} change={change} input={input} fields={archiveFields} metadata={false} presets={conversationPresets(user.id)} trailing={<div className="sortline" ref={sortline}>
       {orderShown && <><span aria-hidden="true">Order</span><div className="segmented" role="group" aria-label="Result order">
         <button type="button" aria-pressed={archive.preferRelevance} title="Order expressions with positive text by relevance. Metadata-only expressions keep the column order." onClick={() => setArchive(value => value.preferRelevance ? value : { ...value, preferRelevance: true, selection: null })}>Relevance</button>
         <button type="button" aria-pressed={!archive.preferRelevance} onClick={() => setArchive(value => value.preferRelevance ? { ...value, preferRelevance: false, selection: null } : value)}>{columnLabel(archive.sort)}</button>
       </div></>}
       <SyntaxHelp extra={boundedHelp}/>
     </div>}/>
-    {failed && <div className="page archive-notice"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">Conversations could not be loaded</div>{results.error} No fallback search was used.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={refreshArchive}>Retry</button></div></div></div></div>}
+    {failed && <div className="page archive-notice"><div className="notice notice-danger" role="alert"><Icon name="alert" small={false}/><div><div className="notice-title">Conversations could not be loaded</div>{results.error} No fallback search was used.<div className="notice-actions"><button type="button" className="btn btn-sm" onClick={refreshArchive}>Retry</button><button type="button" className="btn btn-sm btn-ghost" onClick={showConnection}>Connection details</button></div></div></div></div>}
     {results.updateAvailable && <div className="update-pill"><button type="button" onClick={results.applyUpdates}><Icon name="arrow-up" small={true}/>Updates available · show latest</button></div>}
     {!failed && <ScrollAnchor><div className="archive-table-frame" ref={table.container} data-scroll-container="">
       <table className="table table-2line archive-table" ref={table.table} aria-label="Conversations" data-list="archive" aria-busy={results.loading || results.refreshing}>{colgroup}
         <thead><tr>{shownColumns.map(column => { const sorted = columnOrdered && archive.sort === column.sort; return <th key={column.sort} className={column.cell === 'col-mono' ? undefined : column.cell} data-column-id={column.sort} scope="col" aria-sort={sorted ? archive.direction === SortDirection.Asc ? 'ascending' : 'descending' : undefined}>
-          <button type="button" className="th-sort" onClick={() => sortBy(column.sort)} aria-label={`Sort by ${column.label}`}>{column.label}</button>{!narrow && <ColumnResize column={table.columns.find(item => item.spec.id === column.sort)!} layout={table}/>}
+          <button type="button" className="th-sort" onClick={() => sortBy(column.sort)} aria-label={`Sort by ${column.label}`}>{column.label}</button><ColumnResize column={table.columns.find(item => item.spec.id === column.sort)!} layout={table}/>
         </th>; })}</tr></thead>
-        <tbody>{results.items.map(row => { const href = formatRoute(sessionRoute(row.head.id)); return <tr className="archive-row" key={row.head.id} data-row-id={row.head.id} data-scroll-anchor={row.head.id} onClick={event => { if ((event.target as Element).closest('button,a,input,select,summary') === null) { open(row.head.id); window.location.hash = href; } }}>
+        <tbody>{results.items.map(row => <tr className="archive-row" key={row.head.id} data-row-id={row.head.id} data-scroll-anchor={row.head.id} onClick={event => { if ((event.target as Element).closest('button,a,input,select,summary') === null) open(row.head.id); }}>
           {shownColumns.map(column => <td key={column.sort} className={column.cell} data-column-id={column.sort} title={column.title(row)}>{column.render(row, now, open)}</td>)}
-        </tr>; })}</tbody>
+        </tr>)}</tbody>
       </table>
       {results.loading && results.items.length === 0 && <table className="table table-2line archive-skeleton" aria-hidden="true">{colgroup}<tbody>{Array.from({ length: SKELETON_ROWS }, (_, index) => <tr key={index}>{shownColumns.map(column => <td key={column.sort}><span className={column.sort === ArchiveSort.Title || column.sort === ArchiveSort.LastTimestamp ? 'skeleton sk-60' : 'skeleton'}/>{column.sort === ArchiveSort.Title && <span className="skeleton sk-30"/>}</td>)}</tr>)}</tbody></table>}
       {results.meta !== null && results.items.length === 0 && !results.updateAvailable && <div className="empty" data-list-state="empty"><Icon name="search" small={false}/><h2>No matching conversations</h2>
         <p>{archive.submitted === '' ? 'No conversations are archived for you yet.' : <>Nothing matches <code>{archive.submitted}</code>. Check the spelling of field values or remove a condition.</>}</p>
-        {archive.submitted !== '' && <div className="row"><button type="button" className="btn" onClick={() => { change(''); submit(''); }}>Clear filter</button></div>}</div>}
+        <div className="row">{archive.submitted !== '' && <button type="button" className="btn" onClick={() => { change(''); submit(''); }}>Clear filter</button>}<button type="button" className="btn btn-ghost" onClick={showSyntax}>Show search syntax</button></div></div>}
       {results.meta !== null && results.items.length > 0 && (results.appendError !== null
         ? <div className="list-foot" data-list-state="append-error"><span role="alert">Could not load more conversations: {results.appendError}</span><button type="button" className="btn btn-sm" onClick={results.retryAppend}>Retry</button></div>
         : results.hasMore ? <div className="list-foot" ref={sentinel} data-list-state="more"><span className="spinner" aria-hidden="true"/>Loading {remaining.toLocaleString()} more…<span className="list-foot-count">({results.items.length.toLocaleString()} of {total!.toLocaleString()})</span></div>
         : <div className="list-foot list-end" data-list-state="end">End of list · {plural(total!, 'conversation')}</div>)}
     </div></ScrollAnchor>}
+    {selected !== undefined && <div className="legacy-view"><Dialog title="Source conversation" close={close}><Conversation key={`${relatedSelection ?? selected.head.id}:${archive.selectionKey}`} connection={connection} stats={stats} user={user} sessionId={relatedSelection ?? selected.head.id} initialView={relatedSelection === null ? selected.matchedView ?? selected.publishedView ?? selected.head.view : undefined} archiveHead={relatedSelection === null ? selected : null} select={setRelatedSelection} refresh={refresh} findReads={findReads}/></Dialog></div>}
   </main>;
 }
