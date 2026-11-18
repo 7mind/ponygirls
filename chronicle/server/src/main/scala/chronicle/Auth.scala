@@ -2,15 +2,114 @@ package chronicle
 import chronicle.api.*
 import java.util.UUID
 import java.time.Instant
-import java.sql.Connection
-import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson}
+import java.sql.{Connection,SQLException}
+import java.nio.file.Path
+import cats.effect.{IO,Resource}
+import ponygirls.auth.{AccountOrigin,AccountUser,AccountToken,AccountIssued,AccountJson,AccountCredential,AccountSession,AccountSessions,AccountFailure,AccountOutcome,AccountRejection,AttemptLimiter,CredentialGate,DeclaredDirectory,FailurePath,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,LoginDecision,PasswordHasher,TotpVault}
+
+/** Outcome of the legacy `POST /api/login` while imperative accounts are on. A rejection is a value: the
+  * transaction that counted the failed attempt commits before the route answers. */
+enum LegacyLogin {
+  case Established(response: LoginResponse,secret: String)
+  case Rejected(reason: AccountRejection,locked: Option[FailurePath])
+}
+/** Imperative accounts of this process; exists exactly while the master switch `accounts.enabled` is on.
+  * Holds the settings with the TOTP key, the configured users (static until restart, like the rest of the
+  * configuration) and the in-memory limits of the unauthenticated account endpoints. */
+final class AccountPlane private (val settings: ImperativeSettings,val declared: DeclaredDirectory,val limiter: AttemptLimiter,val gate: CredentialGate) {
+  val api = new ImperativeAccountApi(limiter,gate)
+}
+object AccountPlane {
+  private def settings(config: Config,accounts: AccountsConfig): ImperativeSettings =
+    try {
+      val keyFile=accounts.keyFile.getOrElse(throw AccountFailure("config"))
+      val issuer=accounts.issuer.getOrElse(s"Chronicle (${java.net.URI.create(config.allowedOrigin).getHost})")
+      ImperativeSettings(AccountsConfig.service,accounts.signup.enabled,accounts.signup.requireApproval,accounts.enrollment.enabled,accounts.signup.maxUsers,
+        java.time.Duration.ofSeconds(accounts.enrollment.ttlSeconds.toLong),issuer,accounts.reservedUsernames.toSet,TotpVault.load(Path.of(keyFile),AccountsConfig.service))
+    } catch { case AccountFailure(_) => throw DomainError("config","invalid accounts settings or key file") }
+  def resource(config: Config): Resource[IO,Option[AccountPlane]] = config.accounts.filter(_.enabled) match {
+    case None => Resource.pure(None)
+    case Some(accounts) => for {
+      loaded <- Resource.eval(IO.blocking((settings(config,accounts),DeclaredUsers.directory(DeclaredUsers.load(config)))))
+      gate <- CredentialGate.resource
+    } yield Some(new AccountPlane(loaded._1,loaded._2,new AttemptLimiter(AttemptLimiter.Capacity,java.time.Clock.systemUTC()),gate))
+  }
+}
+object DeclaredUsers {
+  /** The configured users with the password hashes of their hash files. */
+  def load(config: Config): List[(UserConfig,String)] = config.users.map { user =>
+    val credential = Config.credential(user.passwordHashFile)
+    Check(ponygirls.auth.Password.validHash(credential),"config","invalid password hash")
+    user -> credential
+  }
+  def directory(configured: List[(UserConfig,String)]): DeclaredDirectory = DeclaredDirectory(
+    configured.map { case (user,credential) => AccountUser(user.id,"human",user.login,Some(user.login),Some(credential),user.enabled,AccountOrigin.Declarative) }.toVector,
+    configured.collect { case (user,_) if user.admin => user.id }.toSet)
+}
+
+/** Chronicle's ports of the shared imperative-account core, on the caller's transaction. `ch_sessions` holds the
+  * browser sessions; `ch_users` is the effective directory, so an imperative account that has been active has a
+  * projection row there, and every row of it — configured, disabled or removed from configuration — is a
+  * retained identity that no new account may take. */
+private final class AccountStore(c: Connection,profile: String) extends AccountSessions with IdentityHistory {
+  import AccountStore.*
+  def lockOwners(declarative: Vector[String],imperative: Vector[String]): Unit =
+    (declarative.sorted++imperative.sorted).foreach(owner => Sql.lock(c,s"mutation:$owner"))
+  def sessionOwner(secret: String): Option[String] = Sql.one(c,"SELECT owner FROM ch_sessions WHERE hash=?",Wire.hash(secret))(_.getString(1))
+  def live(session: AccountCredential): Boolean =
+    Sql.one(c,s"SELECT 1 FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND s.owner=? AND $liveSession",session.digest,session.userId)(_ => true).nonEmpty
+  def establish(user: AccountUser,replaced: Option[String]): AccountSession = {
+    val secret=Wire.secret(); val hash=Wire.hash(secret)
+    exactlyOne(Sql.exec(c,"INSERT INTO ch_sessions(hash,owner) SELECT ?,id FROM ch_users WHERE id=? AND enabled",hash,user.id))
+    replaced.foreach(previous => Sql.exec(c,s"DELETE FROM ch_sessions s USING ch_users u WHERE s.hash=? AND u.id=s.owner AND $liveSession",Wire.hash(previous)))
+    AccountSession(AccountStore.credential(user.id,hash),secret)
+  }
+  // Startup takes `ch_users` rows before `ch_sessions` rows; so does every deletion here.
+  private def lockUser(id: String): Option[String] = Sql.one(c,"SELECT credential FROM ch_users WHERE id=? FOR NO KEY UPDATE",id)(_.getString(1))
+  def revokeSessions(userId: String,keep: Option[AccountCredential]): Unit = {
+    lockUser(userId)
+    keep.filter(_.userId==userId) match {
+      case Some(kept) => Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=? AND hash<>?",userId,kept.digest)
+      case None => Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=?",userId)
+    }
+    ()
+  }
+  /** Issued tokens are kept: a disabled owner's tokens are refused by the `ch_users.enabled` gate. */
+  def revokeTokens(userId: String): Unit = ()
+  /** Insert only, never an upsert: an existing id or login aborts the transaction, so nothing is ever adopted. */
+  def activated(user: AccountUser): Unit = {
+    try Sql.exec(c,"INSERT INTO ch_users(id,login,enabled,credential) VALUES(?,?,true,?)",user.id,required(user.login),required(user.passwordHash))
+    catch { case failure: SQLException if failure.getSQLState==uniqueViolation => throw AccountFailure("username-unavailable") }
+    Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) VALUES(?,?)",user.id,profile)
+    ()
+  }
+  /** Update only, exactly the projection row; a changed credential or a disabled account loses its sessions. */
+  def updated(user: AccountUser): Unit = {
+    val credential=required(user.passwordHash)
+    val previous=required(lockUser(user.id))
+    if(!user.enabled || previous!=credential) Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=?",user.id)
+    exactlyOne(Sql.exec(c,"UPDATE ch_users SET credential=?,enabled=? WHERE id=?",credential,user.enabled,user.id))
+  }
+  def retained(username: String): Boolean =
+    Sql.one(c,s"SELECT 1 FROM ch_users WHERE ${asciiLower("id")}=? OR ${asciiLower("login")}=? LIMIT 1",username,username)(_ => true).nonEmpty
+}
+private object AccountStore {
+  val uniqueViolation = "23505"
+  val liveSession = "(s.expires IS NULL OR s.expires>clock_timestamp()) AND u.enabled"
+  // ASCII folding independent of the database locale, as `ImperativePolicy.fold` compares names.
+  def asciiLower(column: String): String = s"translate($column,'ABCDEFGHIJKLMNOPQRSTUVWXYZ','abcdefghijklmnopqrstuvwxyz')"
+  def credential(owner: String,hash: String): AccountCredential = AccountCredential(owner,"human",hash,hash,true)
+  def required[A](value: Option[A]): A = value.getOrElse(throw AccountFailure("unavailable"))
+  def exactlyOne(count: Int): Unit = if(count!=1) throw AccountFailure("unavailable")
+}
 
 final class Auth(db: Database, config: Config) {
   private val allScopes = List(Scope.Ingest,Scope.Read,Scope.Raw)
   def login(r: LoginRequest): (LoginResponse,String) = db.transaction(c => login(c,r))
   private def login(c: Connection,r: LoginRequest): (LoginResponse,String) = {
     Check.text(r.login,128); Check.text(r.password,1024)
-    val user = Sql.one(c,"SELECT id,credential FROM ch_users WHERE login=? AND enabled",r.login)(x => (x.getString(1),x.getString(2)))
+    // An account that has been active imperatively is authenticated by the imperative core only (password counters, TOTP).
+    val user = Sql.one(c,"SELECT id,credential FROM ch_users WHERE login=? AND enabled AND NOT EXISTS(SELECT 1 FROM ponygirls_imperative_users i WHERE i.id=ch_users.id AND i.status<>'pending')",r.login)(x => (x.getString(1),x.getString(2)))
     val valid = user.exists(u => Password.verify(r.password.toCharArray,u._2))
     if(user.isEmpty) Password.verify(r.password.toCharArray,Password.hash("dummy".toCharArray))
     Check(valid,"unauthorized","invalid credentials")
@@ -22,8 +121,34 @@ final class Auth(db: Database, config: Config) {
     val (response,secret)=login(c,LoginRequest(loginName,password))
     (accountUser(c,Identity(response.user,true,Wire.hash(secret))),secret)
   }
-  private def browserHash(c: Connection,hash: String): Identity =
-    Sql.one(c,"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND (s.expires IS NULL OR s.expires>clock_timestamp()) AND u.enabled",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash)).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
+  private def imperative(c: Connection,plane: AccountPlane): ImperativeAccounts = {
+    val store=new AccountStore(c,db.profiles.preferred.profile)
+    ImperativeAccountSql.accounts(c,Some(plane.settings),plane.declared,store,store,PasswordHasher.Pbkdf2,java.time.Clock.systemUTC())
+  }
+  /** One transaction per call, committed whatever `work` returns: a rejection may carry a failure counter. */
+  def imperative(plane: AccountPlane): ImperativeTransactions = new ImperativeTransactions {
+    def run[A](work: ImperativeAccounts => A): IO[A] = IO.blocking(db.transaction(c => work(imperative(c,plane))))
+  }
+  /** The live browser session of the presented cookie, as the account plane names it. */
+  def accountSession(secret: String): Option[AccountCredential] =
+    if(secret.isEmpty) None else db.transaction(c => liveBrowser(c,Wire.hash(secret))).map(identity => AccountStore.credential(identity.user.id,identity.credentialHash))
+  /** Legacy login while imperative accounts are on. A configured login takes the unchanged statement; any other
+    * login is decided by the imperative core. The legacy request cannot carry a TOTP code, so an account that
+    * requires one is refused. */
+  def login(plane: AccountPlane,r: LoginRequest,previous: Option[String]): LegacyLogin = db.transaction { c =>
+    imperative(c,plane).login(r.login,r.password,None,previous) match {
+      case LoginDecision.NotImperative =>
+        val (response,secret)=login(c,r)
+        LegacyLogin.Established(response,secret)
+      case LoginDecision.Imperative(AccountOutcome.Completed(signedIn)) =>
+        LegacyLogin.Established(LoginResponse(UserInfo(signedIn.user.id,signedIn.user.login.getOrElse(signedIn.user.id),allScopes),Wire.versions),signedIn.session.secret)
+      case LoginDecision.Imperative(AccountOutcome.Rejected(AccountRejection.TotpRequired,_)) => LegacyLogin.Rejected(AccountRejection.Unauthorized,None)
+      case LoginDecision.Imperative(AccountOutcome.Rejected(reason,locked)) => LegacyLogin.Rejected(reason,locked)
+    }
+  }
+  private def liveBrowser(c: Connection,hash: String): Option[Identity] =
+    Sql.one(c,s"SELECT u.id,u.login FROM ch_sessions s JOIN ch_users u ON u.id=s.owner WHERE s.hash=? AND ${AccountStore.liveSession}",hash)(r => Identity(UserInfo(r.getString(1),r.getString(2),allScopes),true,hash))
+  private def browserHash(c: Connection,hash: String): Identity = liveBrowser(c,hash).getOrElse(throw DomainError("unauthorized","session expired or revoked"))
   def browser(secret: String): Identity = db.transaction(c => browserHash(c,Wire.hash(secret)))
   def refreshBrowser(secret: String): UserInfo = db.transaction { c =>
     val hash=Wire.hash(secret)
@@ -54,7 +179,7 @@ final class Auth(db: Database, config: Config) {
   def tokens(i: Identity): TokensResult = { i.requireBrowser(); db.transaction { c => currentBrowser(c,i); TokensResult(listedTokens(c,i.user.id)) } }
   private def accountUser(c: Connection,i: Identity): AccountUser = {
     val hash=Sql.one(c,"SELECT credential FROM ch_users WHERE id=? AND enabled",i.user.id)(_.getString(1)).getOrElse(throw DomainError("unauthorized","session revoked"))
-    AccountUser(i.user.id,"human",i.user.login,Some(i.user.login),Some(hash),true,AccountOrigin.Declarative)
+    AccountUser(i.user.id,"human",i.user.login,Some(i.user.login),Some(hash),true,if(config.users.exists(_.id==i.user.id)) AccountOrigin.Declarative else AccountOrigin.Imperative)
   }
   private def accountToken(token: ListedToken): AccountToken = {
     val t=token.info

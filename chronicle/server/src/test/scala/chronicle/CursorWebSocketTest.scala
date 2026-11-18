@@ -132,7 +132,7 @@ final class CursorWebSocketTest extends munit.FunSuite {
   }
   test("Behavioral-Blackbox GoodCommunication regression: admitted long owner identities do not expand cursor context beyond the WebSocket frame bound") { database { c =>
     val owner="x"*50000
-    val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true))
+    val configured=c.config.copy(users=c.config.users:+UserConfig(owner,"long-owner",c.config.users.head.passwordHashFile,true,false))
     configured.validate()
     val db=Fixtures.database(configured,IndexProfileCatalog.legacyOnly(configured)); db.initialize()
     val auth=new Auth(db,configured)

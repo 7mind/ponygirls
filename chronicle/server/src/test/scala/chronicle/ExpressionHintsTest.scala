@@ -293,7 +293,7 @@ final class ExpressionHintsPostgresTest extends ExpressionHintsContract {
   private def database(seed: Seed)(f: (HintFixture,Database) => Unit): Unit = {
     Check(sys.env.contains("CHRONICLE_TEST_JDBC"),"test","PostgreSQL is required for expression hint contracts")
     val base=Fixtures.config()
-    val config=base.copy(users=seed.users.zipWithIndex.map { case (id,n) => UserConfig(id,"hint-login-"+n,base.users.head.passwordHashFile,true) })
+    val config=base.copy(users=seed.users.zipWithIndex.map { case (id,n) => UserConfig(id,"hint-login-"+n,base.users.head.passwordHashFile,true,false) })
     val admin=Fixtures.database(config,IndexProfileCatalog.legacyOnly(config))
     val schema="hint_test_"+UUID.randomUUID().toString.replace("-","")
     admin.transaction { c => Sql.exec(c,"CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public"); Sql.exec(c,"CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public"); Sql.exec(c,s"CREATE SCHEMA $schema") }

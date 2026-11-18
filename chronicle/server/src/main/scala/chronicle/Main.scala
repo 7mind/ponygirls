@@ -46,11 +46,20 @@ object Main extends IOApp {
   }
   private[chronicle] def background(workersEnabled: Boolean,worker: => IO[Unit]): IO[Unit] =
     if(workersEnabled) worker else IO.never[Unit]
-  private def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean): IO[Nothing] = for {
+  private def reportAccounts(s: RuntimeServices,accounts: Option[AccountPlane]): IO[Unit] = accounts match {
+    case None => IO.blocking(s.database.transaction(Database.activeImperativeAccounts)).flatMap { suspended =>
+      IO(if(suspended>0) s.logger.warn(s"accounts.enabled is off: imperative accounts are suspended, their rows and tokens are kept suspended=$suspended"))
+    }
+    case Some(plane) => IO.blocking(s.database.transaction(Database.imperativeAccountsSealedByAnotherKey(_,plane.settings.vault.keyId))).flatMap { sealedByAnotherKey =>
+      IO(if(sealedByAnotherKey>0) s.logger.warn(s"imperative accounts whose TOTP secret another key sealed need an administrator reset sealedByAnotherKey=$sealedByAnotherKey"))
+    }
+  }
+  private def serve(config: Config,s: RuntimeServices,workersEnabled: Boolean): IO[Nothing] = AccountPlane.resource(config).use { accounts => for {
+    _ <- reportAccounts(s,accounts)
     gate <- Semaphore[IO](2)
-    _ <- EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw DomainError("config","invalid listenHost"))).withPort(Port.fromInt(config.listenPort).getOrElse(throw DomainError("config","invalid port"))).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server =>
+    _ <- EmberServerBuilder.default[IO].withHost(Host.fromString(config.listenHost).getOrElse(throw DomainError("config","invalid listenHost"))).withPort(Port.fromInt(config.listenPort).getOrElse(throw DomainError("config","invalid port"))).withMaxConnections(128).withMaxHeaderSize(16384).withHttpWebSocketApp(ws => s.http.routes(ws,gate,accounts).orNotFound).build.use { server =>
       IO(s.logger.info(s"chronicle listening address=${server.address} workersEnabled=$workersEnabled")) *> background(workersEnabled,s.worker.run)
     }
     never <- IO.never[Nothing]
-  } yield never
+  } yield never }
 }

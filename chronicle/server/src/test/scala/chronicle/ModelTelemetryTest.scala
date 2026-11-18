@@ -315,7 +315,7 @@ class ModelTelemetryTest extends munit.FunSuite {
     val longOwner="x"*50000
     val owners=List("",longOwner,longOwner+"y","opaque-🙂é\t\n\u0001\u000b","same-é","same-e\u0301")
     val base=Fixtures.config()
-    val users=owners.zipWithIndex.map { case (owner,index) => UserConfig(owner,s"opaque-login-$index",base.users.head.passwordHashFile,true) }
+    val users=owners.zipWithIndex.map { case (owner,index) => UserConfig(owner,s"opaque-login-$index",base.users.head.passwordHashFile,true,false) }
     base.copy(users=users).validate()
     (for {
       manual <- clock()
