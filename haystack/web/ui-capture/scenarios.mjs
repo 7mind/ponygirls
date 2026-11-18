@@ -38,7 +38,7 @@ export async function gotoBrowse(page, env, hash = "#/browse") {
   await settle(page);
 }
 export async function settle(page) {
-  await page.waitForFunction(() => { const v = document.querySelector(".browse-view"); return v === null || v.getAttribute("aria-busy") === "false"; });
+  await page.waitForFunction(() => [...document.querySelectorAll(".browse-view, section.browse")].filter((v) => v.getClientRects().length > 0).every((v) => v.getAttribute("aria-busy") === "false"));
   await page.waitForTimeout(250);
 }
 export async function nonBlank(page, what) {
@@ -771,7 +771,107 @@ export const scenarios = [
       }
     },
   },
+  {
+    // UX-H2 (Browse and presets): every state of haystack-browse.html, named like the mockup shots (spec §8 item 10).
+    name: "browse-h2", title: "UX-H2 Browse: presets, query states, list states, widths and theme",
+    async run(env) {
+      const { rec } = env;
+      const shot = (page, state, how, expect) => rec.shot(page, `h2-${state}`, { file: `haystack-browse-${state}.png`, desc: `Browse: ${state}`, how, expect });
+      const rows = "section.browse:not([hidden] *) tbody tr[data-row-id]";
+      const shown = (page) => page.locator("section.browse").filter({ visible: true });
+      const atEnd = (page) => page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+      const loaded = (page, n) => page.waitForFunction((count) => [...document.querySelectorAll("section.browse")].some((v) => v.getClientRects().length > 0 && v.querySelectorAll("tbody tr[data-row-id]").length >= count), n);
+      for (const [viewport, width] of [[DESKTOP, 1440], [SMALL, 1024], [MOBILE, 390]]) for (const dark of [false, true]) {
+        if (dark && width !== 1440) continue;
+        const { ctx, page } = await open(env, { viewport, dark });
+        await gotoBrowse(page, env);
+        await shot(page, `${dark ? "dark-" : ""}${width}`, "open /#/browse", [rows]);
+        await ctx.close();
+      }
+      let { ctx, page } = await open(env);
+      await gotoBrowse(page, env);
+      for (let batch = 2; batch <= 5; batch++) { await atEnd(page); await loaded(page, 20 * batch); await settle(page); }
+      await page.evaluate(() => window.scrollTo(0, 2600));
+      await shot(page, "scrolled-1440", "load five batches by scrolling the document, window.scrollTo(0, 2600)", [rows]);
+      await rec.dump(page, "h2-scrolled");
+      const target = env.corpus.find((d) => d.document.status === "actual" && d.document.type === "note") ?? env.corpus.find((d) => d.document.status === "actual");
+      await page.evaluate(() => window.scrollTo(0, 900));
+      await bump(env, target, { description: target.document.description + " (live change)" });
+      await page.getByRole("button", { name: "Records changed · Show", exact: true }).waitFor();
+      await shot(page, "updates-1440", "five batches loaded, scrolled to 900, another user saves a record", [".update-pill button"]);
+      await ctx.close();
+      ({ ctx, page } = await open(env));
+      for (const [state, label] of [["inbox", "Inbox"], ["upstream", "Upstream"], ["skills", "Skill drafts"], ["archive", "Archive"]]) {
+        await gotoBrowse(page, env, `#/${state}`);
+        await shot(page, `${state}-1440`, `open the ${label} preset (#/${state})`, [rows]);
+      }
+      await gotoBrowse(page, env);
+      const input = shown(page).getByRole("combobox", { name: "Query", exact: true });
+      await input.fill("type:");
+      await shown(page).getByRole("option").first().waitFor();
+      await shot(page, "completions-1440", "type 'type:' in the query bar (draft, completions from the server)", ["[role=listbox]"]);
+      await page.keyboard.press("Escape");
+      await input.fill("type:todo AND (");
+      await shown(page).getByRole("button", { name: "Search", exact: true }).click();
+      await shown(page).getByRole("list", { name: "Search errors" }).waitFor(); await settle(page);
+      await shot(page, "invalid-1440", "submit 'type:todo AND ('", ["[role=alert]"]);
+      await input.fill('project:atlantis tag:"machine learning"');
+      await shown(page).getByRole("button", { name: "Search", exact: true }).click();
+      await shown(page).getByRole("heading", { name: "No matching records", exact: true }).waitFor();
+      await shot(page, "empty-1440", "submit a query that matches nothing", [".empty"]);
+      await input.fill("type:decision");
+      await shown(page).getByRole("button", { name: "Search", exact: true }).click();
+      await settle(page);
+      for (let guard = 0; await shown(page).locator("[data-list-end]").count() === 0; guard++) {
+        if (guard > 20) throw new Error("the filtered list did not end");
+        const before = await page.locator(rows).count();
+        await atEnd(page);
+        await page.waitForFunction((count) => [...document.querySelectorAll("section.browse")].some((v) => v.getClientRects().length > 0 &&
+          (v.querySelector("[data-list-end]") !== null || v.querySelectorAll("tbody tr[data-row-id]").length > count)), before);
+        await settle(page);
+      }
+      await atEnd(page);
+      await shot(page, "end-1440", "submit 'type:decision', scroll the document to the end of the list", ["[data-list-end]"]);
+      await shown(page).getByRole("button", { name: "Query syntax", exact: true }).click();
+      await page.getByRole("dialog", { name: "Query syntax" }).waitFor();
+      await shot(page, "syntax-1440", "click 'Query syntax' in the filter row", ["dialog[open]"]);
+      await ctx.close();
+
+      const fault = { status: 500, contentType: "application/json", body: JSON.stringify({ code: "internal", message: "search-unavailable", spans: [], currentRevision: null }) };
+      ({ ctx, page } = await open(env));
+      await page.route("**/api/v1/search", (route) => route.request().postDataJSON().limit === 20 ? route.fulfill(fault) : route.continue());
+      await gotoBrowse(page, env);
+      await shown(page).getByRole("alert").waitFor();
+      await shot(page, "error-1440", "fulfill the list's search with HTTP 500", ["[role=alert]"]);
+      await ctx.close();
+      ({ ctx, page } = await open(env));
+      await page.route("**/api/v1/search", (route) => route.request().postDataJSON().cursor ? route.fulfill(fault) : route.continue());
+      await gotoBrowse(page, env);
+      await atEnd(page);
+      await shown(page).getByRole("button", { name: "Retry loading records", exact: true }).waitFor();
+      await atEnd(page);
+      await shot(page, "append-error-1440", "first batch loads, the next batch fails (HTTP 500); scroll to the end", ["[role=alert]"]);
+      await ctx.close();
+      ({ ctx, page } = await open(env));
+      await page.route("**/api/v1/search", (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ items: [], cursor: null }) }));
+      await gotoBrowse(page, env, "#/inbox");
+      await shown(page).getByRole("heading", { name: "Inbox zero", exact: true }).waitFor();
+      await shot(page, "inbox-empty-1440", "open #/inbox with every search answered by an empty page", [".empty"]);
+      await ctx.close();
+      ({ ctx, page } = await open(env));
+      let release;
+      const held = new Promise((resolve) => { release = resolve; });
+      await page.route("**/api/v1/search", async (route) => { if (route.request().postDataJSON().limit === 20) await held; await route.continue(); });
+      await page.goto(`${env.base}/#/browse`);
+      await page.locator("section.browse [data-skeleton]").first().waitFor();
+      await shot(page, "loading-1440", "hold the list's first search", ["[data-skeleton]"]);
+      release();
+      await ctx.close();
+    },
+  },
 ];
+
+
 
 import os from "node:os";
 function os_load() { return os.loadavg()[0].toFixed(0); }
