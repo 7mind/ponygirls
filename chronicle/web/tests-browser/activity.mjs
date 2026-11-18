@@ -113,7 +113,7 @@ try {
     const report = new api.CollectorProgressUpdate('alice-private-collector', 9007199254740993n, '00000000-0000-4000-8000-000000000090', api.CollectorPhase.Discovering, '2026-10-26T01:00:00Z', new api.CollectorCounters(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0n), 0n, 0n, undefined, undefined);
     const { context, page, fixture } = await scene(rig, { route: '/activity/collectors', configure: fixture => { fixture.collectors = [new api.CollectorStatus(report, '2026-10-26T01:01:00Z', false)]; } });
     const id = 'alice-private-collector', details = await expand(page, 'collectors', id);
-    await details.getByText('Discovering · Recent report', { exact: true }).waitFor();
+    await details.getByText('Discovering · Recent report', { exact: true }).waitFor(); await details.getByText('Per-run collector counters', { exact: true }).click();
     assert.match(await details.innerText(), /sequence 9007199254740993/);
     const counter = label => details.locator(`[data-counter="${label}"] dd`);
     assert.equal(await counter('Scanned / discovered sessions').innerText(), '0 / 0');
@@ -454,12 +454,12 @@ try {
       const usage = region(page, 'Model usage'), table = usage.getByRole('table', { name: 'Completed model call usage', exact: true }); await table.waitFor();
       assert.equal(await table.locator('tbody tr').count(), 4);
       const purpose = name => table.locator(`tbody tr[data-purpose="${name}"]`), cells = name => purpose(name).locator('td');
-      assert.match(await purpose(api.ModelPurpose.Annotation).locator('th').innerText(), /Annotation\s+0 reported \/ 0 unknown calls · last reported sample age 51586 ms/, 'an old last sample stays visible while the window has no reports');
+      assert.match(await purpose(api.ModelPurpose.Annotation).locator('th').innerText(), /Annotation\s+0 reported calls · last sample 51586 ms ago/, 'an old last sample stays visible while the window has no reports');
       assert.equal(await cells(api.ModelPurpose.Annotation).first().innerText(), '2', 'requests in flight now are counted although the window has no reports');
       assert.match(await cells(api.ModelPurpose.Annotation).nth(1).innerText(), /—\s+No reports in this window/, 'no reports is not an unknown or zero rate');
       assert.match(await cells(api.ModelPurpose.DocumentEmbedding).nth(1).innerText(), /^Unknown/); assert.equal(await cells(api.ModelPurpose.DocumentEmbedding).nth(2).innerText(), 'n/a');
       assert.match(await cells(api.ModelPurpose.QueryEmbedding).nth(1).innerText(), /^0 TPS/);
-      assert.match(await cells(api.ModelPurpose.McpTest).nth(1).innerText(), /9007199254740993 known tokens · 1 unknown calls/, 'i64 token counts keep every digit');
+      assert.match(await cells(api.ModelPurpose.McpTest).nth(1).innerText(), /9007199254740993 tokens · 1 unknown/, 'i64 token counts keep every digit');
       assert.match(await usage.innerText(), /covered 9990 ms/); assert.doesNotMatch(await usage.innerText(), /In flight counts|Unknown is unavailable/, 'the measurement reference is optional, not a banner before the data');
       await usage.getByRole('heading', { name: 'Indexing settings', exact: true }).waitFor(); assert.equal(await usage.locator('input').count(), 0);
       assert.match(await usage.locator('dl').innerText(), /Annotation sessions\s+2\s+Embedding requests\s+3\s+Embedding batch size\s+8/);

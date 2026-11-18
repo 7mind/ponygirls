@@ -44,12 +44,16 @@
 .progress[data-state=complete]>span{background:var(--ok-fg)}
 .progress[data-state=failed]>span{background:var(--danger-fg)}
 .activity-reason{overflow:hidden;text-overflow:ellipsis}
+/* Count links in table cells (failed jobs) keep the 24 px inline target of spec §8 item 6. */
+.activity-view td>a.status-danger{display:inline-block;min-width:24px;line-height:24px;text-align:right}
 /* Row details expand in place (spec §3.1 V7). */
 .activity-detail{display:flex;align-items:flex-start;justify-content:space-between;gap:var(--space-5);font-size:var(--text-sm)}
 .activity-detail-main{flex:1;min-width:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-3) var(--space-6);align-items:start}
 .activity-detail-main>p{grid-column:1/-1}
 .activity-detail-list{grid-template-columns:120px minmax(0,1fr);gap:var(--space-1) var(--space-4)}
 .activity-detail-actions{flex:none}
+.activity-run-counters>summary{cursor:pointer;color:var(--accent);font-size:var(--text-sm)}
+.activity-run-counters[open]>summary{margin-bottom:var(--space-2)}
 .activity-counters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--space-0) var(--space-5);font-size:var(--text-xs)}
 .activity-counters>div{display:flex;flex-wrap:wrap;justify-content:space-between;gap:0 var(--space-2);min-width:0}
 .activity-counters dt{color:var(--text-muted)}
@@ -78,9 +82,11 @@ a.attention-item:focus-visible{outline:2px solid var(--focus);outline-offset:-2p
 
 /* Model usage */
 .usage-table td,.usage-table tbody th{height:var(--row-h-2);white-space:normal}
-.usage-table .col-purpose{width:24%}
+.usage-table .col-purpose{width:26%}
+.usage-table .when-rel{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.activity-view .table-inset tr:last-child th{border-bottom:0}
 .usage-table tbody th{font-weight:var(--weight-regular);color:var(--text);text-align:left}
-.usage-main{display:block;font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums}
+.usage-main{display:block;white-space:nowrap;font-weight:var(--weight-semibold);font-variant-numeric:tabular-nums}
 .usage-settings{grid-template-columns:200px minmax(0,1fr)}
 
 /* Maintenance */

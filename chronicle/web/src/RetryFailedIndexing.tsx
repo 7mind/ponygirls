@@ -24,6 +24,14 @@ export function RetryFailedCountsTable({ counts, caption }: { counts: RetryFaile
   return <table className="retry-failed-counts"><caption>{caption}</caption><thead><tr><th scope="col">Population</th><th scope="col">Jobs</th></tr></thead><tbody>{rows.map(row => <tr key={row.label}><th scope="row">{row.label}</th><td>{row.count.toString()}</td></tr>)}</tbody></table>;
 }
 
+// The preview's populations as the dialog's definition list: every count of the plan, grouped as the mockup groups them.
+function RetryFailedPreviewCounts({ counts }: { counts: RetryFailedCounts }) {
+  return <dl className="dl retry-failed-preview" aria-label="Retry preview populations">
+    <dt>Will be re-queued</dt><dd><strong>{counts.eligibleCurrentFailed.toString()}</strong> eligible current failed jobs</dd>
+    <dt>Excluded</dt><dd>historical failed: {counts.supersededRevisionFailed.toString()} superseded revision · {counts.obsoleteProfileFailed.toString()} obsolete profile · {counts.supersededRevisionAndProfileFailed.toString()} superseded revision and profile</dd>
+    <dt>Unchanged</dt><dd>current: {counts.unchangedQueued.toString()} Queued · {counts.unchangedRunning.toString()} Running · {counts.unchangedComplete.toString()} Complete</dd>
+  </dl>;
+}
 /** Maintenance card "Retry failed indexing jobs" (spec §3.1): a read-only preview in a confirmation dialog, then one explicit Apply. */
 export function RetryFailedIndexing(props: RetryFailedIndexingProps) {
   return <OwnerRetryFailedIndexing key={JSON.stringify([props.user.id, props.stats.activeId, props.stats.generation, props.user.scopes.includes(Scope.Read)])} {...props}/>;
@@ -89,7 +97,7 @@ function OwnerRetryFailedIndexing({ connection, stats, user, actions, summary }:
       {conflict && <p role="status">The selection or target profile changed. Review a fresh preview and confirm again; the previous selection has not been resubmitted.</p>}
       {loading && <p role="status">Loading read-only retry preview…</p>}{applying && <p role="status">Applying the confirmed indexing retry…</p>}
       {error !== null && <div className="notice notice-danger" role="alert">{error}</div>}
-      {plan !== null && <><p>Target profile <code>{plan.targetProfile}</code></p><RetryFailedCountsTable counts={plan.counts} caption="Read-only preview · all your indexing jobs"/>
+      {plan !== null && <><p>Read-only preview of all your indexing jobs under target profile <code>{plan.targetProfile}</code>.</p><RetryFailedPreviewCounts counts={plan.counts}/>
         {plan.counts.eligibleCurrentFailed === 0n && <p>No current failed jobs are eligible in this preview. Historical failures are excluded.</p>}
         <label className="check"><input type="checkbox" checked={confirmed} disabled={blocked || plan.counts.eligibleCurrentFailed <= 0n} onChange={event => setConfirmed(event.target.checked)}/>I confirm retrying all {plan.counts.eligibleCurrentFailed.toString()} eligible current failed indexing jobs under this target profile.</label></>}
       {!loading && !applying && plan === null && error === null && !conflict && <p>Request a new preview before confirming another retry.</p>}

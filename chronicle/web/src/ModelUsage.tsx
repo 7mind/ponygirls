@@ -5,6 +5,7 @@ import type { ManagerStats } from './transport/types.ts';
 import { validateModelUsage } from './model-usage.ts';
 import { Anchored } from './Popover.tsx';
 import { Glyph } from './Glyph.tsx';
+import { clockTime } from './activity/time.tsx';
 const USAGE_POLL_MS = 4_000;
 const purposes = [ModelPurpose.Annotation, ModelPurpose.DocumentEmbedding, ModelPurpose.QueryEmbedding, ModelPurpose.McpTest] as const;
 const PURPOSE_LABELS: Readonly<Record<ModelPurpose, string>> = { [ModelPurpose.Annotation]: 'Annotation', [ModelPurpose.DocumentEmbedding]: 'Document embedding', [ModelPurpose.QueryEmbedding]: 'Query embedding', [ModelPurpose.McpTest]: 'MCP test' };
@@ -41,19 +42,20 @@ function Rate({ value }: { value: TokenRateWindow | undefined }) {
   if (value === undefined) return <span className="muted">n/a</span>;
   if (value.reportedCalls === 0n && value.unknownCalls === 0n) return <><span className="usage-main muted">—</span><span className="when-rel">No reports in this window</span></>;
   return <><span className="usage-main">{value.tokensPerSecond === undefined ? 'Unknown' : `${value.tokensPerSecond.toLocaleString(undefined, { maximumFractionDigits: RATE_DIGITS })} TPS`}</span>
-    <span className="when-rel">{value.knownTokens.toString()} known tokens{value.unknownCalls > 0n && ` · ${value.unknownCalls.toString()} unknown calls`}</span></>;
+    <span className="when-rel">{value.knownTokens.toString()} tokens{value.unknownCalls > 0n && ` · ${value.unknownCalls.toString()} unknown`}</span></>;
 }
+function Clock({ value }: { value: string }) { return <time dateTime={value} title={value}>{clockTime(value)}</time>; }
 // The purpose's sub-line: reports behind its input rate and the age of the last one (it may be older than the window).
 function reports(value: TokenRateWindow): string {
-  return `${value.reportedCalls.toString()} reported / ${value.unknownCalls.toString()} unknown calls · last reported sample age ${value.sampleAgeMillis === undefined ? 'unavailable' : `${value.sampleAgeMillis.toString()} ms`}`;
+  return `${value.reportedCalls.toString()} reported calls · last sample ${value.sampleAgeMillis === undefined ? 'age unavailable' : `${value.sampleAgeMillis.toString()} ms ago`}`;
 }
 /** The Model usage sub-view (spec §3.1): the measures per purpose as a table, the explanation in a popover, the settings as a list. */
 export function ModelUsageView({ usage, connected }: { usage: ModelUsageState; connected: boolean }) {
   const data = usage.data;
   return <div className="stack-lg">
-    <div className="page-head"><div><h1 className="page-title">Model usage</h1><p className="page-sub">{data === null ? 'Completed model calls reported by providers.' : <>Observed {data.observedAt} · window {data.windowStartAt} – {data.windowEndAt} · covered {data.coveredMillis} ms · basis {data.basis} · process started {data.processStartedAt}</>}</p></div>
+    <div className="page-head"><div><h1 className="page-title">Model usage</h1><p className="page-sub">{data === null ? 'Completed model calls reported by providers.' : <>Observed <Clock value={data.observedAt}/> · window <Clock value={data.windowStartAt}/> – <Clock value={data.windowEndAt}/> · covered {data.coveredMillis} ms · basis {data.basis} · process started <Clock value={data.processStartedAt}/></>}</p></div>
       <Anchored className="usage-about" buttonClassName="btn" buttonState={undefined} label={<><Glyph name="info"/>About usage measurements</>} ariaLabel={undefined} describedBy={undefined} panel="dialog" panelClassName="popover usage-about-panel" panelLabel="About usage measurements">
-        <p>In flight counts local requests now. Tokens and rates use provider reports from completed attempts in the displayed window, not live throughput or billing totals. Reasoning is included in output.</p>
+        <p>In flight counts local requests now. Tokens and rates use provider reports from completed attempts in the displayed window, not live throughput or billing totals. Token counts are the known (provider-reported) tokens; calls reported without usage are counted as unknown and make the rate Unknown. Reasoning is included in output.</p>
         <p>Finished includes failed and cancelled calls. Invalid usage means malformed provider usage, not annotation validation. Unknown is unavailable, not zero; N/A is not applicable. No reports means no usage samples in the window. Last reported samples may be older than the window.</p>
       </Anchored></div>
     {usage.error !== null && <div className="notice notice-danger" role="alert"><Glyph name="alert"/><div>{usage.error}</div></div>}

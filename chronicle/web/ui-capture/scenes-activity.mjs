@@ -9,7 +9,7 @@ const main = page => page.getByRole('main', { name: 'Activity', exact: true });
 const section = (page, name) => main(page).getByRole('region', { name, exact: true });
 const tab = (page, name) => main(page).getByRole('navigation', { name: 'Activity sections', exact: true }).getByRole('link', { name: new RegExp(`^${name}`) });
 const rows = (page, list) => main(page).locator(`table[data-list="${list}"] tbody tr[data-row-id]`);
-const idle = (page, list) => main(page).locator(`table[data-list="${list}"][aria-busy="false"]`).waitFor();
+const idle = (page, list) => main(page).locator(`table[data-list="${list}"][aria-busy="false"]`).waitFor({ state: 'attached' });
 // Expressions the Overview and the cross-links apply (Overview.tsx, Collectors.tsx): the scripted server answers them.
 const FAILED = 'status:"failed"', RUNNING = 'status:"running"', COLLECTOR = 'ci-runner-02';
 function scripted(fixture) {

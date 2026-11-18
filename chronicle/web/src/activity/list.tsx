@@ -14,30 +14,32 @@ import type { ListState } from './state.ts';
 export interface ColumnWidth { readonly min: number; readonly ideal: number; readonly max: number }
 export interface Column<Row, S extends string> {
   readonly sort: S; readonly label: string; readonly cell: 'col-num' | 'col-mono' | undefined; readonly width: ColumnWidth;
-  /** Shown by default on wide viewports / on phones; `required` columns cannot be hidden. */
-  readonly compact: boolean; readonly narrow: boolean; readonly required: boolean;
+  /** Shown by default on wide viewports, at the 1100 px breakpoint and on phones; `required` columns cannot be hidden. */
+  readonly compact: boolean; readonly medium: boolean; readonly narrow: boolean; readonly required: boolean;
   title(row: Row): string | undefined; render(row: Row, now: number): ReactNode;
 }
 const ACTIONS_COLUMN = 'actions';
-// Phone widths (the shared 720 px breakpoint) start with their own short column choice, fitted to the viewport (spec §8 item 9).
-const NARROW_QUERY = '(max-width: 720px)';
+// Laptop widths (the shared 1100 px breakpoint) and phone widths (720 px) start with their own shorter column choices, fitted to
+// the viewport (spec §8 item 9; the mockup hides Reason below 1100 px).
+const MEDIUM_QUERY = '(max-width: 1100px)', NARROW_QUERY = '(max-width: 720px)';
+type Width = 'wide' | 'medium' | 'narrow';
 const SKELETON_ROWS = 10;
-function useNarrow(): boolean {
-  const query = useMemo(() => window.matchMedia(NARROW_QUERY), []);
+function useMedia(text: string): boolean {
+  const query = useMemo(() => window.matchMedia(text), [text]);
   return useSyncExternalStore(listener => { query.addEventListener('change', listener); return () => query.removeEventListener('change', listener); }, () => query.matches);
 }
-function specs<Row, S extends string>(columns: readonly Column<Row, S>[], actions: ColumnWidth, narrow: boolean): TableColumnSpec[] {
-  return [...columns.map(column => ({ id: column.sort, label: column.label, ...column.width, grow: column.required, required: column.required, compact: narrow ? column.narrow : column.compact })),
+function specs<Row, S extends string>(columns: readonly Column<Row, S>[], actions: ColumnWidth, width: Width): TableColumnSpec[] {
+  return [...columns.map(column => ({ id: column.sort, label: column.label, ...column.width, grow: column.required, required: column.required, compact: width === 'narrow' ? column.narrow : width === 'medium' ? column.medium : column.compact })),
     { id: ACTIONS_COLUMN, label: 'Actions', ...actions, grow: false, required: true, compact: true }];
 }
 export interface ListTableLayout<Row, S extends string> { readonly layout: TableLayout; readonly shown: readonly Column<Row, S>[] }
-/** Column layout of a list, with the visible columns remembered per browser (spec §5 rule 8), separately for phones; `actions` fits the row actions. */
+/** Column layout of a list, with the visible columns remembered per browser (spec §5 rule 8), separately per width class; `actions` fits the row actions. */
 export function useListTable<Row, S extends string>(columns: readonly Column<Row, S>[], storageKey: string, actions: ColumnWidth, rowCount: number): ListTableLayout<Row, S> {
-  const narrow = useNarrow();
-  const choices = useMemo(() => browserColumnChoices(window.localStorage, storageKey), [storageKey]), narrowChoices = useMemo(() => browserColumnChoices(window.localStorage, `${storageKey}.narrow`), [storageKey]);
-  const wideSpecs = useMemo(() => specs(columns, actions, false), [columns, actions]), narrowSpecs = useMemo(() => specs(columns, actions, true), [columns, actions]);
-  const wide = useStoredTableColumns(choices, wideSpecs, rowCount, !narrow), phone = useStoredTableColumns(narrowChoices, narrowSpecs, rowCount, narrow);
-  const layout = narrow ? phone : wide;
+  const medium = useMedia(MEDIUM_QUERY), narrow = useMedia(NARROW_QUERY), width: Width = narrow ? 'narrow' : medium ? 'medium' : 'wide';
+  const choices = useMemo(() => browserColumnChoices(window.localStorage, storageKey), [storageKey]), mediumChoices = useMemo(() => browserColumnChoices(window.localStorage, `${storageKey}.medium`), [storageKey]), narrowChoices = useMemo(() => browserColumnChoices(window.localStorage, `${storageKey}.narrow`), [storageKey]);
+  const wideSpecs = useMemo(() => specs(columns, actions, 'wide'), [columns, actions]), mediumSpecs = useMemo(() => specs(columns, actions, 'medium'), [columns, actions]), narrowSpecs = useMemo(() => specs(columns, actions, 'narrow'), [columns, actions]);
+  const wide = useStoredTableColumns(choices, wideSpecs, rowCount, width === 'wide'), laptop = useStoredTableColumns(mediumChoices, mediumSpecs, rowCount, width === 'medium'), phone = useStoredTableColumns(narrowChoices, narrowSpecs, rowCount, width === 'narrow');
+  const layout = width === 'narrow' ? phone : width === 'medium' ? laptop : wide;
   return { layout, shown: columns.filter(column => layout.columns.some(item => item.spec.id === column.sort)) };
 }
 
@@ -46,15 +48,15 @@ export interface ListTableProps<Row, S extends string> {
   rowState(row: Row): string | undefined; state: ListState<S>; sortBy(sort: S): void; toggle(id: string): void;
   detail(row: Row): ReactNode; actions(row: Row): ReactNode; empty: ReactNode; noun(count: bigint): string; total: bigint | null; pageSize: number;
 }
-export function ListTable<Row, S extends string>({ name, list, twoLine, table, resource, rowId, rowClass, rowState, state, sortBy, toggle, detail, actions, empty, noun, total, pageSize }: ListTableProps<Row, S>) {
+export function ListTable<Row, S extends string>({ name, list, twoLine, table, resource, rowId, rowClass, rowState, state, sortBy, toggle, detail, actions, empty: emptyState, noun, total, pageSize }: ListTableProps<Row, S>) {
   const { layout, shown } = table;
   useLayoutEffect(() => { const element = layout.table.current; if (element !== null) element.style.setProperty('width', `${layout.width}px`); });
-  const failed = resource.error !== null && resource.appendError === null;
+  const failed = resource.error !== null && resource.appendError === null, empty = resource.meta !== null && resource.items.length === 0 && !resource.updateAvailable;
   const sentinel = useInfiniteSentinel<HTMLDivElement>(resource.hasMore && resource.error === null, resource.loadingMore || resource.refreshing, resource.loadMore);
   const colgroup = <TableColumnGroup layout={layout}/>, span = shown.length + 1, now = Date.now();
   const remaining = total === null ? 0 : Math.min(pageSize, Number(total) - resource.items.length);
   return <ScrollAnchor><div className="activity-table-frame" ref={layout.container} data-scroll-container="">
-    <table className={twoLine ? 'table table-2line activity-table' : 'table activity-table'} ref={layout.table} aria-label={name} data-list={list} aria-busy={resource.loading || resource.refreshing || resource.loadingMore} hidden={failed}>{colgroup}
+    <table className={twoLine ? 'table table-2line activity-table' : 'table activity-table'} ref={layout.table} aria-label={name} data-list={list} aria-busy={resource.loading || resource.refreshing || resource.loadingMore} hidden={failed || empty}>{colgroup}
       <thead><tr>{shown.map(column => { const sorted = state.sort === column.sort; return <th key={column.sort} scope="col" className={column.cell === 'col-num' ? 'col-num' : undefined} data-column-id={column.sort} data-sort={column.sort} aria-sort={sorted ? state.direction === SortDirection.Asc ? 'ascending' : 'descending' : undefined}>
         <button type="button" className="th-sort" onClick={() => sortBy(column.sort)} aria-label={`Sort by ${column.label}`}>{column.label}</button><ColumnResize column={layout.columns.find(item => item.spec.id === column.sort)!} layout={layout}/>
       </th>; })}<th scope="col" className="col-actions" data-column-id={ACTIONS_COLUMN}><span className="sr-only">Actions</span></th></tr></thead>
@@ -71,7 +73,7 @@ export function ListTable<Row, S extends string>({ name, list, twoLine, table, r
       })}</tbody>
     </table>
     {resource.loading && resource.items.length === 0 && <table className={twoLine ? 'table table-2line activity-skeleton' : 'table activity-skeleton'} aria-hidden="true">{colgroup}<tbody>{Array.from({ length: SKELETON_ROWS }, (_, index) => <tr key={index}>{shown.map(column => <td key={column.sort}><span className="skeleton sk-60"/></td>)}<td/></tr>)}</tbody></table>}
-    {resource.meta !== null && resource.items.length === 0 && !resource.updateAvailable && !failed && empty}
+    {empty && !failed && emptyState}
     {resource.meta !== null && resource.items.length > 0 && total !== null && (resource.appendError !== null
       ? <div className="list-foot" data-list-state="append-error"><span role="alert">Could not load more: {resource.appendError}</span><button type="button" className="btn btn-sm" onClick={resource.retryAppend}>Retry</button></div>
       : resource.hasMore ? <div className="list-foot" ref={sentinel} data-list-state="more"><span className="spinner" aria-hidden="true"/>Loading {remaining.toLocaleString()} more…<span className="list-foot-count">({resource.items.length.toLocaleString()} of {total.toLocaleString()})</span></div>

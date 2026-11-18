@@ -58,7 +58,8 @@ export const row = (page, kind, id) => table(page, kind).locator(`tbody tr[data-
 export const detail = (page, kind, id) => table(page, kind).locator(`tbody tr[data-detail-for="${id}"]`);
 export const cell = (page, kind, id, column) => row(page, kind, id).locator(`td[data-column-id="${column}"]`);
 export const rowIds = (page, kind) => rows(page, kind).evaluateAll(items => items.map(item => item.dataset.rowId));
-export const idle = (page, kind) => main(page).locator(`table[data-list="${LISTS[kind].list}"][aria-busy="false"]`).waitFor();
+// Attached, not visible: an empty or failed list keeps its (hidden) table so that the column layout can measure it.
+export const idle = (page, kind) => main(page).locator(`table[data-list="${LISTS[kind].list}"][aria-busy="false"]`).waitFor({ state: 'attached' });
 export const listState = (page, kind, state) => region(page, LISTS[kind].region).locator(`[data-list-state="${state}"]`);
 export const status = (page, kind) => region(page, LISTS[kind].region).getByRole('status', { name: `${LISTS[kind].region} status`, exact: true });
 export const combobox = (page, kind) => region(page, LISTS[kind].region).getByRole('combobox', { name: `Search ${LISTS[kind].editor.toLowerCase()} metadata`, exact: true });

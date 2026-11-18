@@ -40,7 +40,9 @@ const retryResult = page => page.getByRole('region', { name: 'Indexing retry res
 const progress = page => page.getByRole('region', { name: 'Archive rebuild progress', exact: true });
 const countOf = (scope, label) => scope.getByRole('row').filter({ has: scope.page().getByRole('rowheader', { name: label, exact: true }) }).locator('td');
 const calls = (fixture, Type) => fixture.calls.filter(call => call.operation instanceof Type);
-const POPULATIONS = [['Eligible current failed jobs', 'eligibleCurrentFailed'], ['Historical failed · superseded revision (excluded)', 'supersededRevisionFailed'], ['Historical failed · obsolete profile (excluded)', 'obsoleteProfileFailed'], ['Historical failed · superseded revision and profile (excluded)', 'supersededRevisionAndProfileFailed'], ['Current Queued (unchanged)', 'unchangedQueued'], ['Current Running (unchanged)', 'unchangedRunning'], ['Current Complete (unchanged)', 'unchangedComplete']];
+// The retry preview's populations (RetryFailedIndexing.tsx) as text: every count of the plan, in full digits.
+const populations = async dialog => (await dialog.getByRole('definition').allTextContents()).join(' | ');
+const expectedPopulations = counts => [`${counts.eligibleCurrentFailed} eligible current failed jobs`, `historical failed: ${counts.supersededRevisionFailed} superseded revision · ${counts.obsoleteProfileFailed} obsolete profile · ${counts.supersededRevisionAndProfileFailed} superseded revision and profile`, `current: ${counts.unchangedQueued} Queued · ${counts.unchangedRunning} Running · ${counts.unchangedComplete} Complete`].join(' | ');
 async function previewRetry(page) { await retryTrigger(page).click(); const dialog = retryDialog(page); await dialog.getByRole('checkbox').waitFor(); return dialog; }
 async function applyRetry(page) { const dialog = await previewRetry(page); await dialog.getByRole('checkbox').check(); await confirmRetry(dialog).click(); return dialog; }
 async function previewRebuild(page) { await rebuildTrigger(page).click(); const dialog = rebuildDialog(page); await dialog.getByRole('checkbox').waitFor(); return dialog; }
@@ -57,8 +59,8 @@ try {
     const { context, page, fixture } = await scene(rig, { route: '/activity/jobs', configure: largeFixture });
     await idle(page, 'jobs'); await button(region(page, 'Jobs'), 'History').click(); fixture.jobExpressions.set('tag:"does-not-exist"', []); await filter(page, 'jobs', 'tag:"does-not-exist"');
     await region(page, 'Jobs').getByRole('heading', { name: 'No matching historical jobs', exact: true }).waitFor();
-    await open(page, 'Maintenance'); const dialog = await previewRetry(page), counts = fixture.retryPlan().counts;
-    for (const [label, field] of POPULATIONS) assert.equal(await countOf(dialog, label).innerText(), counts[field].toString());
+    await open(page, 'Maintenance'); const dialog = await previewRetry(page);
+    assert.equal(await populations(dialog), expectedPopulations(fixture.retryPlan().counts), 'the preview states every population of the plan');
     assert.equal(await dialog.getByRole('checkbox').isChecked(), false); assert.equal(await confirmRetry(dialog).isDisabled(), true);
     assert.equal(await button(dialog, 'Cancel').evaluate(element => element === document.activeElement), true, 'Cancel is focused by default');
     await button(dialog, 'Cancel').click(); await dialog.waitFor({ state: 'detached' });
@@ -67,7 +69,7 @@ try {
     await context.close();
     const huge = 9007199254740993n, formatted = await maintenanceScene({ configure: fixture => { fixture.retryCountsOverride = new api.RetryFailedCounts(huge, huge + 1n, huge + 2n, huge + 3n, huge + 4n, huge + 5n, huge + 6n); } });
     const exact = await previewRetry(formatted.page);
-    assert.deepEqual(await exact.locator('tbody td').allTextContents(), Array.from({ length: 7 }, (_, index) => (huge + BigInt(index)).toString()));
+    assert.equal(await populations(exact), expectedPopulations(formatted.fixture.retryCountsOverride), 'i64 counts keep every digit');
     await button(exact, 'Cancel').click(); assert.equal(formatted.fixture.bulkApplyExecutions, 0); await formatted.context.close();
   });
 
@@ -155,10 +157,10 @@ try {
   await rig.run('an open retry preview keeps its confirmation through a device theme change and sends nothing', async () => {
     const { context, page, fixture } = await maintenanceScene({ configure: largeFixture });
     const dialog = await previewRetry(page); await dialog.getByRole('checkbox').check();
-    const node = await dialog.elementHandle(), counts = await dialog.locator('table').innerText(), sent = fixture.calls.length;
+    const node = await dialog.elementHandle(), counts = await populations(dialog), sent = fixture.calls.length;
     await page.emulateMedia({ colorScheme: 'dark' }); await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark'); await quiesce(page);
     assert.equal(await dialog.getByRole('checkbox').isChecked(), true); assert.equal(await node.evaluate(element => element.isConnected && element.open), true);
-    assert.equal(await dialog.locator('table').innerText(), counts); assert.equal(await confirmRetry(dialog).isEnabled(), true);
+    assert.equal(await populations(dialog), counts); assert.equal(await confirmRetry(dialog).isEnabled(), true);
     assert.equal(fixture.calls.length, sent, 'a theme change queues no application or mutation request');
     await button(dialog, 'Cancel').click(); assert.equal(calls(fixture, api.Operation_ApplyRetryFailed).length, 0);
     await context.close();
