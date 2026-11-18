@@ -34,6 +34,11 @@ mockup shot it is compared with (`manure-catalogue-<state>-<width>[-dark].png`,
 nix develop .#chronicle --command bash manure/web/ui-capture/run.sh /abs/out --scenes m1 --count 40
 ```
 
+`--scenes m2` captures the Upload page and CLI view (unit UX-M2): every state is reached through the real upload
+protocol (chunk requests are held or aborted at the network layer for progress, stopped and failed), named
+`manure-upload-<state>-<width>[-dark].png`, plus the drop overlay and the hand-off (`manure-catalogue-drop-1440.png`,
+`manure-upload-handoff-1440.png`).
+
 The default run is `auth`, `m1`, `unlock`, `viewer`. The scenes `login`, `catalogue`, `upload`, `detail`,
 `account`, `keyboard` and `dark` drive the pre-redesign dashboard (its ids, the account dialog and native
 confirms) and only record how the "before" captures were made; they no longer run against this dashboard.
