@@ -6,7 +6,7 @@ import java.security.{MessageDigest, SecureRandom}
 import java.util.Base64
 import java.sql.Connection
 import cats.effect.IO
-import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountSession,AccountSql,AccountToken,AccountUser,Password}
+import ponygirls.auth.{AccountCredential,AccountIssued,AccountJson,AccountLogin,AccountOrigin,AccountReply,AccountRequest,AccountSession,AccountSql,AccountToken,AccountUser,AttemptLimiter,CredentialGate,DeclarativeLogin,DeclaredDirectory,IdentityHistory,ImperativeAccountApi,ImperativeAccountSql,ImperativeAccounts,ImperativeSettings,ImperativeTransactions,Password,PasswordHasher,SharedAccountSessions,SignedIn,TotpVault}
 
 object SecretCodec:
   private val random = new SecureRandom()
@@ -38,7 +38,7 @@ object SecretCodec:
 
 final case class TokenRef(id: String, hashFile: Path)
 final case class UserConfig(id: String, userType: String, tokens: Vector[TokenRef], displayName: String,
-  enabled: Boolean = true, login: Option[String] = None, passwordHashFile: Option[Path] = None)
+  enabled: Boolean = true, login: Option[String] = None, passwordHashFile: Option[Path] = None, admin: Boolean = false)
 object UserConfig:
   def validate(users: Vector[UserConfig]): Unit =
     Require(users.nonEmpty && users.map(_.id).distinct.size == users.size, "bad-envelope")
@@ -48,6 +48,8 @@ object UserConfig:
         user.login.nonEmpty == user.passwordHashFile.nonEmpty &&
         (user.login.isEmpty || user.userType == "human" && user.login.exists(v => v.nonEmpty && v.length <= 128 && !v.exists(_.isControl))) &&
         (user.tokens.nonEmpty || user.login.nonEmpty) &&
+        // Admin ids are recorded in the text provenance columns of imperative accounts, which cannot hold NUL.
+        (!user.admin || user.login.nonEmpty && !user.id.contains('\u0000')) &&
         user.tokens.map(_.id).distinct.size == user.tokens.size && user.tokens.forall(t => t.id.nonEmpty && t.hashFile.toString.nonEmpty), "bad-envelope")
     }
 final case class Credential(identity: Identity, hashFile: Path)
@@ -56,9 +58,18 @@ final case class Credential(identity: Identity, hashFile: Path)
   * Runtime file revocation/rotation therefore cannot leave cached grants live.
   * Plain tokens never enter object identity, logs, exception messages or storage.
   */
-final class Auth(users: Vector[UserConfig]):
+final class Auth(users: Vector[UserConfig], accounts: Option[AccountsConfig]):
+  /** Declarative users only, imperative accounts switched off. */
+  def this(users: Vector[UserConfig]) = this(users,None)
   UserConfig.validate(users)
   users.foreach(_.passwordHashFile.foreach(Password.readHash))
+  /** Present exactly while the master switch is on; acquisition reads the key file, like the hash files above. */
+  val imperative: Option[ImperativeSettings] = accounts.filter(_.enabled).map { a =>
+    val key = a.keyFile.getOrElse(throw DomainError("bad-envelope"))
+    ImperativeSettings(Auth.Service,a.signup.enabled,a.signup.requireApproval,a.enrollment.enabled,a.signup.maxUsers,
+      java.time.Duration.ofSeconds(a.enrollment.ttlSeconds),a.issuer,a.reservedUsernames.toSet,TotpVault.load(key,Auth.Service))
+  }
+  private val admins = users.filter(_.admin).map(_.id).toSet
   // Startup validation includes duplicate digest ambiguity.
   private val initial = users.flatMap(u => u.tokens.map(t => SecretCodec.readHash(t.hashFile)))
   Require(initial.distinct.size == initial.size, "bad-envelope")
@@ -83,10 +94,19 @@ final class Auth(users: Vector[UserConfig]):
     }
     AccountUser(u.id,u.userType,u.displayName,u.login,hash,u.enabled,AccountOrigin.Declarative)
   }
+  def declared(snapshot: Vector[AccountUser]): DeclaredDirectory = DeclaredDirectory(snapshot,admins)
+  def declared: DeclaredDirectory = declared(accountUsers)
+  /** Startup: the declarative directory is installed under the directory lock after the collision check. */
+  def install(tx: AuthTxn): Unit =
+    val snapshot = accountUsers
+    tx.installDeclared(declared(snapshot))(tx.reconcile(snapshot))
+  /** Reconciles the declarative snapshot (a lock-free read when it is unchanged) and returns the merged directory:
+    * the declarative users plus, while the master switch is on, the active imperative users (one more read, no lock).
+    */
   def current(tx: AuthTxn): Vector[AccountUser] =
     val snapshot = accountUsers
     tx.reconcile(snapshot)
-    snapshot
+    tx.directory(imperative,declared(snapshot))
   def identity(credential: AccountCredential): Identity =
     Identity(credential.userId,credential.userType,credential.tokenId,credential.digest)
   def bearer(tx: AuthTxn,secret: String): Option[Identity] =
@@ -106,9 +126,20 @@ final class Auth(users: Vector[UserConfig]):
     AccountToken(token.id,token.id,"configured",None,false,Vector("api"))
   }
 
+object Auth:
+  /** Service name bound into the associated data of encrypted TOTP secrets. */
+  val Service = "manure"
+
 trait AuthTxn:
   def initialize(): Unit
   def reconcile(users: Vector[AccountUser]): Unit
+  /** Declarative users plus, with `settings`, the active imperative ones; a declared/imperative collision is a fault. */
+  def directory(settings: Option[ImperativeSettings],declared: DeclaredDirectory): Vector[AccountUser]
+  def installDeclared(declared: DeclaredDirectory)(reconcile: => Unit): Unit
+  /** The imperative core in this transaction. Its identity history is every fingerprint row (live or tombstoned)
+    * and every artifact creator: a name that ever owned data here is never registered again.
+    */
+  def imperative(settings: Option[ImperativeSettings],declared: DeclaredDirectory,hasher: PasswordHasher,clock: java.time.Clock): ImperativeAccounts
   def loginReplacing(users: Vector[AccountUser],login: String,password: String,previous: Option[String]): AccountLogin
   def browser(users: Vector[AccountUser],secret: String): Option[AccountCredential]
   def bearer(users: Vector[AccountUser],secret: String): Option[AccountCredential]
@@ -129,8 +160,19 @@ private[manure] final class PostgresAuthTxn(c: Connection) extends AuthTxn:
   private def stored(credential: AccountCredential): AccountCredential = credential.copy(userId=key(credential.userId))
   private def exposed(users: Vector[AccountUser],credential: AccountCredential): AccountCredential =
     credential.copy(userId=users.find(u => key(u.id) == credential.userId).getOrElse(throw DomainError("unavailable")).id)
-  def initialize(): Unit = AccountSql.initialize(c)
+  def initialize(): Unit =
+    AccountSql.initialize(c)
+    ImperativeAccountSql.initialize(c)
   def reconcile(users: Vector[AccountUser]): Unit = AccountSql.reconcile(c,directory(users))
+  def directory(settings: Option[ImperativeSettings],declared: DeclaredDirectory): Vector[AccountUser] =
+    ImperativeAccountSql.directory(c,settings,declared)
+  def installDeclared(declared: DeclaredDirectory)(reconcile: => Unit): Unit = ImperativeAccountSql.installDeclared(c,declared)(reconcile)
+  def imperative(settings: Option[ImperativeSettings],declared: DeclaredDirectory,hasher: PasswordHasher,clock: java.time.Clock): ImperativeAccounts =
+    val sessions = new SharedAccountSessions(c,key,() => directory(settings,declared))
+    val history = new IdentityHistory:
+      def retained(username: String): Boolean = sessions.retained(username) ||
+        Jdbc.rows(c,"SELECT EXISTS(SELECT 1 FROM manure.artifacts WHERE created_by_user=?)",Exact.utf8(username))(_.getBoolean(1)).head
+    ImperativeAccountSql.accounts(c,settings,declared,sessions,history,hasher,clock)
   def loginReplacing(users: Vector[AccountUser],login: String,password: String,previous: Option[String]): AccountLogin =
     val result = AccountSql.loginReplacing(c,directory(users),login,password,previous)
     result.copy(session=result.session.copy(credential=exposed(users,result.session.credential)),
@@ -147,9 +189,11 @@ private[manure] final class PostgresAuthTxn(c: Connection) extends AuthTxn:
   * grant revocation and credential invalidation commit together.
   */
 final class Accounts(metadata: Metadata,auth: Auth):
-  def initialize(): IO[Unit] = metadata.transaction { tx => tx.accounts.initialize(); auth.current(tx.accounts); () }
+  def initialize(): IO[Unit] = metadata.transaction { tx => tx.accounts.initialize(); auth.install(tx.accounts) }
   def bearer(secret: String): IO[Option[Identity]] = metadata.transaction(tx => auth.bearer(tx.accounts,secret))
   def browser(secret: String): IO[Option[Identity]] = metadata.transaction(tx => auth.browser(tx.accounts,secret))
+  /** The live browser session of the merged directory that `secret` names. */
+  def session(secret: String): IO[Option[AccountCredential]] = metadata.transaction(tx => tx.accounts.browser(auth.current(tx.accounts),secret))
   def login(login: String,password: String,previous: Option[String]): IO[(AccountUser,AccountSession)] = metadata.transaction { tx =>
     val users = auth.current(tx.accounts)
     val result = tx.accounts.loginReplacing(users,login,password,previous)
@@ -189,6 +233,33 @@ final class Accounts(metadata: Metadata,auth: Auth):
     AccountJson.requireActor(actor,principal.userId)
     endSession(tx,users,principal,secret)
   }
+
+/** The account endpoints added for imperative accounts (shared `ImperativeAccountApi`), each operation in one
+  * root-protected metadata transaction that commits whatever the operation returns (design D27). The service
+  * boundary, cookie serialization and event logging stay in `Http`.
+  */
+final class AccountPlane(metadata: Metadata,auth: Auth,accounts: Accounts,gate: CredentialGate,hasher: PasswordHasher,clock: DomainClock):
+  private val instants: java.time.Clock = new java.time.Clock:
+    def getZone: java.time.ZoneId = java.time.ZoneOffset.UTC
+    override def withZone(zone: java.time.ZoneId): java.time.Clock = this
+    def instant(): java.time.Instant =
+      val now = clock.now
+      val seconds = math.floor(now)
+      java.time.Instant.ofEpochSecond(seconds.toLong,((now-seconds)*AccountPlane.NanosPerSecond).toLong)
+  private val api = new ImperativeAccountApi(new AttemptLimiter(AttemptLimiter.Capacity,instants),gate)
+  private val declarative = new DeclarativeLogin:
+    def login(login: String,password: String,previous: Option[String]): IO[SignedIn] =
+      accounts.login(login,password,previous).map((user,session) => SignedIn(user,session))
+  private def transactions(declared: DeclaredDirectory): ImperativeTransactions = new ImperativeTransactions:
+    def run[A](work: ImperativeAccounts => A): IO[A] =
+      metadata.transaction(tx => work(tx.accounts.imperative(auth.imperative,declared,hasher,instants)))
+  def handle(request: AccountRequest): IO[AccountReply] =
+    IO.blocking(auth.declared).flatMap(declared => api.handle(auth.imperative,declared,transactions(declared),request))
+  /** `POST /login` while the master switch is on: declared logins take `Accounts.login`, others the imperative core. */
+  def login(settings: ImperativeSettings,request: AccountRequest): IO[AccountReply] =
+    IO.blocking(auth.declared).flatMap(declared => api.login(settings,declared,transactions(declared),declarative,request))
+object AccountPlane:
+  private val NanosPerSecond = 1e9
 
 object Cookies:
   /** First name wins; credential values are deliberately not trimmed/unquoted. */

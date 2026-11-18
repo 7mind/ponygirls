@@ -178,6 +178,7 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     val query=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
     assertEquals(search.search("a",query,Some(List(1.0,0.0,0.0))).total,2,"old publication remains available during owner-only reprocessing")
     publish(a.claim(catalog.knownProfiles,ClaimScope.Owner("a"),300).get)
+    assertEquals(search.search("a",query.copy(query="",mode=SearchMode.Hybrid),Some(List(1.0,0.0,0.0))).total,2,"hybrid search accepts empty query text")
     List(SearchMode.Semantic,SearchMode.Hybrid).foreach { mode =>
       assertEquals(search.search("a",query.copy(mode=mode),Some(List(1.0,0.0,0.0))).total,2)
       assertEquals(search.searchLegacy("a",query.copy(mode=mode),Some(List(1.0,0.0,0.0))).total,2)
@@ -206,5 +207,14 @@ final class OwnerProfilePostgresTest extends munit.FunSuite {
     db.transaction(x => Sql.exec(x,"UPDATE ch_owner_targets SET profile='unresolved-retained' WHERE owner='a'"))
     assertEquals(new PostgresOwnerReindex(db).preview("a").targetProfile,catalog.preferred.profile)
     assertEquals(intercept[DomainError](a.ingest("a",Fixtures.snapshot())).code,"unavailable")
+  }}
+  test("regression: annotation-only profile changes must not disable compatible semantic reads") { OwnerProfilePostgres.withDatabase { (c,db,a,catalog) =>
+    val out=a.ingest("a",Fixtures.snapshot())
+    val claim=a.claim(Set(c.profile),ClaimScope.AllOwners,300).get
+    val chunk=Fragments.split(claim.snapshot.messages).head.copy(sessionId=out.sessionId)
+    assert(a.publish(claim,List(IndexedChunk(chunk,List(1.0,0.0,0.0)))))
+    val next=c.copy(annotation=c.annotation.copy(revision="owner-new-policy"))
+    val q=SearchQuery("archive",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)
+    assertEquals(new PostgresSearch(db,a,next).search("a",q,Some(List(1.0,0.0,0.0))).total,1)
   }}
 }

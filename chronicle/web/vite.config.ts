@@ -29,4 +29,7 @@ function sharedAssets(): Plugin {
     },
   };
 }
-export default defineConfig({ cacheDir: '.cache/vite', plugins: [react(), sharedAssets()], server: { fs: { allow: ['..'] } } });
+const DEFAULT_CACHE_DIR = '.cache/vite';
+// Pre-bundled at server start: lazy discovery in a cold cache reloads the page in the middle of a browser test.
+const PREBUNDLED_DEPENDENCIES = ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-dom', 'react-dom/client'];
+export default defineConfig({ cacheDir: process.env.CHRONICLE_VITE_CACHE_DIR === undefined ? DEFAULT_CACHE_DIR : process.env.CHRONICLE_VITE_CACHE_DIR, optimizeDeps: { include: PREBUNDLED_DEPENDENCIES }, plugins: [react(), sharedAssets()], server: { fs: { allow: ['..'] } } });

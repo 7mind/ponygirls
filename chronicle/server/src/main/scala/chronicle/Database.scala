@@ -4,6 +4,7 @@ import scala.util.Using
 import java.util.UUID
 import chronicle.api.*
 import io.circe.Json
+import ponygirls.auth.{AccountFailure,ImperativeAccountSql}
 
 final class Database private (config: Config,val profiles: IndexProfileCatalog,runtime: ponygirls.runtime.BlockingJdbcDatabase) extends AutoCloseable {
   def this(config: Config, profiles: IndexProfileCatalog) = this(config,profiles,new ponygirls.runtime.BlockingJdbcDatabase(config.jdbcConfig))
@@ -25,12 +26,24 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
     profiles.register(c)
     // Pre-owner-target archives retain their historical opaque target; only genuinely new configured users seed current.
     Sql.exec(c,"INSERT INTO ch_owner_targets(owner,profile) SELECT u.id,p.target FROM ch_users u CROSS JOIN ch_profile p WHERE p.singleton ON CONFLICT DO NOTHING")
-    Sql.exec(c,"UPDATE ch_users SET enabled=false")
-    config.users.foreach { u =>
-      val credential = Config.credential(u.passwordHashFile)
-      Check(ponygirls.auth.Password.validHash(credential),"config","invalid password hash")
-      Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=? AND EXISTS(SELECT 1 FROM ch_users WHERE id=? AND credential<>?)",u.id,u.id,credential)
-      Sql.exec(c,"INSERT INTO ch_users(id,login,enabled,credential) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET login=excluded.login,enabled=excluded.enabled,credential=excluded.credential",u.id,u.login,u.enabled,credential)
+    val configured=DeclaredUsers.load(config)
+    try {
+      ImperativeAccountSql.initialize(c)
+      // A configured id or login equal to an imperative account that has been active fails closed, with the
+      // master switch on or off, before the upsert below could adopt that account's row.
+      ImperativeAccountSql.installDeclared(c,DeclaredUsers.directory(configured)) {
+        Sql.exec(c,"UPDATE ch_users SET enabled=false")
+        configured.foreach { case (u,credential) =>
+          Sql.exec(c,"DELETE FROM ch_sessions WHERE owner=? AND EXISTS(SELECT 1 FROM ch_users WHERE id=? AND credential<>?)",u.id,u.id,credential)
+          Sql.exec(c,"INSERT INTO ch_users(id,login,enabled,credential) VALUES(?,?,?,?) ON CONFLICT(id) DO UPDATE SET login=excluded.login,enabled=excluded.enabled,credential=excluded.credential",u.id,u.login,u.enabled,credential)
+        }
+      }
+    } catch { case failure: AccountFailure => throw DomainError(failure.code,"configured users conflict with imperative accounts or their schema") }
+    // Master switch off: the projections stay disabled by the statement above (suspended; rows, tokens and data kept).
+    if(config.accountsEnabled) {
+      Check(Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users i WHERE i.status='active' AND NOT EXISTS(SELECT 1 FROM ch_users u WHERE u.id=i.id)")(_.getInt(1)).contains(0),"internal","active imperative account without a user row")
+      // Update only: a projection is created by the activating transaction, never here.
+      Sql.exec(c,"UPDATE ch_users u SET enabled=true,credential=i.password_hash FROM ponygirls_imperative_users i WHERE i.id=u.id AND i.status='active'")
     }
     StaticTokens.reconcile(c,config)
     Sql.exec(c,"DELETE FROM ch_sessions WHERE owner IN(SELECT id FROM ch_users WHERE NOT enabled) OR expires <= clock_timestamp()")
@@ -44,6 +57,10 @@ final class Database private (config: Config,val profiles: IndexProfileCatalog,r
   }
 }
 object Database {
+  /** Startup diagnostics of imperative accounts: the active ones, which are suspended while the master switch
+    * is off, and the rows whose TOTP secret was sealed with a key other than `keyId`. */
+  def activeImperativeAccounts(c: Connection): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE status='active'")(_.getInt(1)).getOrElse(0)
+  def imperativeAccountsSealedByAnotherKey(c: Connection,keyId: String): Int = Sql.one(c,"SELECT count(*) FROM ponygirls_imperative_users WHERE totp_key_id<>?",keyId)(_.getInt(1)).getOrElse(0)
   /** Explicit runtime injection for trusted JDBC probes; ownership transfers to Database. */
   def withRuntime(config: Config, profiles: IndexProfileCatalog, runtime: ponygirls.runtime.BlockingJdbcDatabase): Database =
     new Database(config,profiles,runtime)

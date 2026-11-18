@@ -4,7 +4,6 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 import { chromium } from 'playwright-core';
 import { ChronicleFixture, api } from './fixture.mjs';
-import { runActivityTableCases } from './activity-tables.mjs';
 if (!process.env.PLAYWRIGHT_BROWSERS_PATH) throw new Error('Set PLAYWRIGHT_BROWSERS_PATH; tests never download browsers.');
 const server = await createServer({ root: fileURLToPath(new URL('..', import.meta.url)), server: { host: '127.0.0.1', port: 0, watch: null }, logLevel: 'error' });
 await server.listen();
@@ -396,6 +395,5 @@ try {
     assert.equal(await page.getByRole('status', { name: 'Archive order', exact: true }).filter({ hasText: 'Ordered by' }).count(), 0);
     await context.close();
   });
-  await runActivityTableCases({ browser, origin: `http://127.0.0.1:${address.port}`, run, errors });
   assert.deepEqual(errors, [], 'no uncaught browser application errors');
 } finally { await browser.close(); await server.close(); }

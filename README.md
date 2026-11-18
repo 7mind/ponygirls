@@ -147,7 +147,7 @@ The common sbt build and pinned dependency lock live at repository root:
 ```bash
 nix develop .#backend --command bash scripts/backend-sbt.sh 'chronicleServer/compile' 'haystackServer/compile' 'manureServer/compile'
 nix develop .#backend --command bash shared/service-runtime/scripts/test-postgres.sh
-nix build .#checks.x86_64-linux.backend-foundation
+nix build .#checks.x86_64-linux.shared-jvm
 nix build .#checks.x86_64-linux.manure-posix-acceptance .#checks.x86_64-linux.manure-direct-jni
 ```
 

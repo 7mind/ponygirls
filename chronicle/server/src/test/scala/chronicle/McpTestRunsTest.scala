@@ -12,20 +12,27 @@ class McpTestRunsTest extends munit.FunSuite {
   override val munitTimeout = 120.seconds
 
   private def runtime(tools: McpRunTools,model: McpTestModel,auth: RunAuthorization,clock: McpRunClock): Resource[IO,McpTestRuns] =
-    McpTestRuns.resource(tools,model,auth,clock,Set("a","b"),encoding,IO(UUID.randomUUID()))
+    McpTestRuns.resource(tools,model,auth,clock,encoding,IO(UUID.randomUUID()))
   private def code(result: Either[Throwable,?]): String = result.left.toOption match {
     case Some(error: DomainError) => error.code
     case Some(error) => throw error
     case None => fail("expected a domain error")
   }
 
-  test("BG: valid empty-owner deployments allocate an inert runner without broadening read authorization") {
+  test("BG: owner admission is the live authorization, so an owner outside any startup set is admitted and a revoked one is not") {
     (for {
       _ <- IO(Fixtures.config().copy(users=Nil).validate())
       auth <- authorization; time <- clock; tools <- ordinaryTools
       llm <- model(_ => IO.pure(finalReply("not callable")))
-      _ <- McpTestRuns.resource(tools,llm,auth,time,Set.empty,encoding,IO(UUID.randomUUID())).use { runner =>
-        runner.catalog(identity).attempt.map(result => assertEquals(code(result),"unauthorized"))
+      unlisted=identity.copy(user=identity.user.copy(id="unlisted"))
+      _ <- runtime(tools,llm,auth,time).use { runner =>
+        for {
+          admitted <- runner.catalog(unlisted)
+          _ <- IO(assertEquals(admitted.tools,tools.definitions))
+          _ <- auth.enabled(false)
+          revoked <- runner.catalog(unlisted).attempt
+          _ <- IO(assertEquals(code(revoked),"unauthorized"))
+        } yield ()
       }
       requests <- llm.requests.get
       _ <- IO(assertEquals(requests.size,0))

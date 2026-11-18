@@ -27,7 +27,7 @@ class StaticAssetsHttpTest extends ContractSuite {
       _<-Migrations.initialize(db,TestSupport.Activity)
       hub<-LiveHub.create
       retrieval=new HaystackRetrieval(db,ProjectionPolicy("static-test",true,Vector.empty,4096),new PostgresRetrieval("static-test",None),None,4)
-      http=new Http(()=>auth,new ItemService(new PostgresItemRepository(db),(_,_)=>IO.unit),hub,Some(root),retrieval,new AccountService(db,()=>auth))
+      http=new Http(()=>auth,new ItemService(new PostgresItemRepository(db),(_,_)=>IO.unit),hub,Some(root),retrieval,new AccountService(db,()=>auth,imperative))
       ws<-WebSocketBuilder2[IO]
       _<-check(http.routes(ws).orNotFound,root)
     } yield ()

@@ -13,7 +13,6 @@ import json
 import math
 import os
 from pathlib import Path
-import socket
 import subprocess
 import tempfile
 import threading
@@ -25,6 +24,9 @@ from manure import auth as A,current_protocol as cp
 from manure.client import ManureClient,ManureError
 from target_server import OwnedDatabase,TargetServer
 import browser_fixtures as bf
+
+# Below the slow query's five-second model delay, above its start latency.
+EXPIRY_LEAD_S=4
 
 
 class ControlledEmbedding:
@@ -78,12 +80,11 @@ class TargetSearchTests(unittest.TestCase):
             token=A.generate_token();hashfile=root/'operator.digest';hashfile.write_text(A.sha256_hex(token)+'\n');hashfile.chmod(0o600)
             credential=root/'empty-model-credential';credential.write_text('');credential.chmod(0o600)
             model=ControlledEmbedding();database=OwnedDatabase(tmp)
-            sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
             endpoint={'operationUrl':model.url,'model':'fixture-model','revision':'immutable-v1','dimensions':3,'sendDimensions':True,
                 'documentPrefix':'doc: ','queryPrefix':'query: ','normalization':'cosine','credentialFile':str(credential),
                 'deadlineMs':10000,'maxResponseBytes':65536,'maxBatch':8,'maxInputBytes':16384,'maxRequestBytes':65536,
                 'maxConcurrent':2,'maxQueued':4,'batchSize':1,'leaseSeconds':3,'pollIntervalMs':500}
-            config={'data_dir':str(data),'api_origin':f'http://127.0.0.1:{port}','listen_address':'127.0.0.1','port':port,
+            config={'data_dir':str(data),'api_origin':'http://127.0.0.1:0','listen_address':'127.0.0.1','port':0,
                 'content_mode':'path','content_suffix':'','loopback_dev':True,'chunk_bytes':262144,'sweep_interval_s':3600,
                 'dashboard_dir':None,'unlock_shell_dir':None,'embedding':endpoint,
                 'users':[{'id':'search-manager','type':'human','tokens':[{'id':'primary','hashFile':str(hashfile)}]}]}
@@ -193,7 +194,7 @@ class TargetSearchTests(unittest.TestCase):
                     self.assertNotIn(secret,encoded)
                 self.assertTrue(all(call['authorization'] is None for call in model.snapshot()))
                 # Unauthenticated management search must reject BEFORE model IO.
-                count=len(model.snapshot());rid=uuid4();connection=http.client.HTTPConnection('127.0.0.1',port,timeout=10)
+                count=len(model.snapshot());rid=uuid4();connection=http.client.HTTPConnection('127.0.0.1',server.bound_port,timeout=10)
                 try:
                     command=cp.Command_Search(cp.SearchQuery('hayneedle',cp.SearchMode.Semantic,cp.SearchFilter(None,None,None,[],None,None),20,None))
                     connection.request('POST','/api/current',cp.dumps(cp.ClientEnvelope(rid,cp.API_VERSION,command)),{'Content-Type':'application/json'})
@@ -219,12 +220,11 @@ class TargetSearchTests(unittest.TestCase):
                 self.assertNotEqual(replacement['embedding_space'],hit['embedding_space'])
                 self.assertNotEqual(replacement['generation_id'],hit['generation_id'])
                 self.assertEqual(replacement['source_version'],hit['source_version'])
-                # Real API TTL (minimum sixty seconds), real elapsed wall time:
-                # no metadata/projection mutation or fake service clock. Read the
-                # exact owned timestamp only to schedule a model call spanning it.
-                expires=float(database.runtime_sql(f"SELECT expires_at_s_value FROM manure.artifacts WHERE id=convert_to('{aid}','UTF8')"))
-                remaining=expires-time.time();self.assertGreater(remaining,3);self.assertLessEqual(remaining,60)
-                time.sleep(max(0,remaining-3))
+                # The API's minimum TTL is sixty seconds: store an expiry a few
+                # seconds ahead through the owned database (row and retrieval
+                # projection) so that one slow model call spans it.
+                expires=int(time.time())+EXPIRY_LEAD_S
+                database.set_artifact_expiry(aid,expires)
                 model.query_started.clear();model.slow_query_once=5;delivered=[]
                 def expiring_query():
                     try:delivered.append(client.search('hayneedle','semantic'))
@@ -250,12 +250,11 @@ class TargetSearchTests(unittest.TestCase):
             credential=root/'empty-model-credential';credential.write_text('');credential.chmod(0o600)
             model=ControlledEmbedding();model.slow_document_once=0
             database=OwnedDatabase(tmp)
-            sock=socket.socket();sock.bind(('127.0.0.1',0));port=sock.getsockname()[1];sock.close()
             endpoint={'operationUrl':model.url,'model':'fixture-model','revision':'immutable-browser-v1','dimensions':3,'sendDimensions':True,
                 'documentPrefix':'doc: ','queryPrefix':'query: ','normalization':'cosine','credentialFile':str(credential),
                 'deadlineMs':10000,'maxResponseBytes':65536,'maxBatch':8,'maxInputBytes':16384,'maxRequestBytes':65536,
                 'maxConcurrent':2,'maxQueued':4,'batchSize':1,'leaseSeconds':3,'pollIntervalMs':500}
-            config={'data_dir':str(data),'api_origin':f'http://127.0.0.1:{port}','listen_address':'127.0.0.1','port':port,
+            config={'data_dir':str(data),'api_origin':'http://127.0.0.1:0','listen_address':'127.0.0.1','port':0,
                 'content_mode':'path','content_suffix':'','loopback_dev':True,'chunk_bytes':262144,'sweep_interval_s':3600,
                 'dashboard_dir':str(Path(__file__).resolve().parents[1]/'web/dashboard'),'unlock_shell_dir':None,'embedding':endpoint,
                 'users':[{'id':'search-manager','type':'human','enabled':True,'login':identity.login,

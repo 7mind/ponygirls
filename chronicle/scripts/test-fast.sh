@@ -14,4 +14,4 @@ done
 unset CHRONICLE_TEST_JDBC
 export CHRONICLE_REQUIRE_POSTGRES=1
 printf 'FAST SUBSET: %s explicitly selected parser/codec/pure/dummy suites; NOT full validation.\n' "${#suites[@]}"
-./scripts/sbt.sh 'Test / validationInventory' "testOnly ${suites[*]}"
+./scripts/sbt.sh "testOnly ${suites[*]}"

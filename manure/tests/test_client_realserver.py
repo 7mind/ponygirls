@@ -660,7 +660,8 @@ class TestRealServer(unittest.TestCase):
         """A2: limit/cursor exhausts; state/include_expired discriminate.
 
         Fixtures: 1 uploading (init-only), 2 ready live, 1 ready expired
-        (real 60-second TTL through public API, unswept).
+        (valid TTL through the public API, then a past expiry stored through
+        the owned database; unswept).
         Ignoring state or include_expired must fail."""
         from manure.client import ManureClient
         import time as _time
@@ -683,19 +684,13 @@ class TestRealServer(unittest.TestCase):
                     Path(p).write_bytes(b"x-" + vis.encode())
                     r = c.upload_path(p, access=vis, fresh=True)
                     aids_live[vis] = r["artifact_id"]
-                # Ready expired fixture (real minimum TTL, no private DB mutation).
+                # Ready expired fixture: the API's minimum TTL is 60 s, so the
+                # past expiry is stored through the owned database.
                 p_exp = os.path.join(td, "x.txt")
                 Path(p_exp).write_bytes(b"expired-bytes")
                 r_exp = c.upload_path(p_exp, access="internal", fresh=True, expires_in_s=60)
                 aid_exp = r_exp["artifact_id"]
-                deadline=_time.monotonic()+75
-                while True:
-                    try:c.get_artifact(aid_exp)
-                    except Exception as error:
-                        if getattr(error,"code",None)=="expired":break
-                        raise
-                    if _time.monotonic()>=deadline:self.fail("real TTL authorization cutoff missed")
-                    _time.sleep(0.2)
+                server.database.set_artifact_expiry(aid_exp, int(_time.time()) - 1)
                 # Paginate live (exclude expired) limit=1 until exhausted.
                 seen: list[str] = []
                 cursor: str | None = None

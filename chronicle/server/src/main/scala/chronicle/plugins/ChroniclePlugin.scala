@@ -18,7 +18,7 @@ object ChroniclePlugin extends PluginDef {
   make[ActivityIndex].from[PostgresActivity]
   make[cats.effect.kernel.Clock[IO]].fromValue(cats.effect.Clock[IO])
   make[ModelTelemetryClock].from[JavaModelTelemetryClock]
-  make[ModelTelemetry].fromEffect { (clock: ModelTelemetryClock,config: Config) => ModelTelemetry.make(clock,config.users.map(_.id).toSet) }
+  make[ModelTelemetry].fromEffect { (clock: ModelTelemetryClock) => ModelTelemetry.make(clock) }
   make[ModelAdmission].fromEffect { (config: Config) => ModelAdmission.make(config.indexing) }
   make[IndexingSettings].from { (config: Config) =>
     val capacity=config.indexing
@@ -29,6 +29,7 @@ object ChroniclePlugin extends PluginDef {
   make[ModelHttp]
   make[ProblemPassageAnnotator].from[OpenAIProblemPassageAnnotator]
   make[Embedder].from[OpenAIEmbedder]
+  make[Worker.FailureBackoff].fromValue(Worker.FailureBackoff.production)
   make[Worker]
   make[java.time.Clock].fromValue(java.time.Clock.systemUTC())
   make[CollectorProgressStore].from[PostgresCollectorProgressStore]
@@ -40,6 +41,7 @@ object ChroniclePlugin extends PluginDef {
   make[ModelConfig].from { (config: Config) => config.annotation }
   make[McpTestModel].from[OpenAIMcpTestModel]
   make[McpRunClock].from[SystemMcpRunClock]
+  make[Http.SocketLiveness].fromValue(Http.SocketLiveness.production)
   make[Http.WebRoot].from { () => Http.WebRoot(sys.env.get("CHRONICLE_WEB_ROOT")) }
   make[VersionedWire]
   make[McpTestWire]

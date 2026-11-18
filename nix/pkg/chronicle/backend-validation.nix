@@ -15,10 +15,13 @@ in runCommand "chronicle-fast-backend-validation" {
   ${environment.setup}
   bash chronicle/scripts/test-fast.sh
   cd chronicle
-  mkdir -p "$out"
-  python3 scripts/validation-report.py --inventory target/validation-inventory.txt \
-    --selected-suites scripts/fast-suites.txt --reports target/test-reports --runtime-source ${sources.server} \
-    --test-source ${sources.backendTests} --output "$out/backend.json"
-  cp -r target/test-reports "$out/"
-  cp target/validation-inventory.txt scripts/fast-suites.txt "$out/"
+  # One gate directory per selected suite: a suite that sbt testOnly silently skipped (a misspelt or deleted name)
+  # leaves its directory without test cases, which the gate rejects.
+  mkdir -p "$out/test-reports" gate
+  while IFS= read -r suite; do
+    mkdir "gate/$suite"
+    if [[ -f "target/test-reports/TEST-$suite.xml" ]]; then cp "target/test-reports/TEST-$suite.xml" "gate/$suite/"; fi
+  done < scripts/fast-suites.txt
+  python3 ${../../../scripts/junit-gate.py} --counts "$out/counts.json" gate/*
+  cp target/test-reports/*.xml "$out/test-reports/"
 ''

@@ -26,14 +26,17 @@ let
   manure = [ "manure/server/src" "manure/server/native-image" ];
   manureScripts = [ "scripts/manure-native-image.sh" "scripts/manure-probe-classpath.sh" ];
   # Web assets the JVM HTTP suites serve from MANURE_SOURCE_ROOT.
+  # The shared in-memory imperative-account store, reused by Manure's test dummy (sbt test->test dependency).
+  manureSharedTestFixtures = [ "shared/service-auth/src/test/scala/ponygirls/auth/MemoryImperativeUsers.scala" ];
   manureServedAssets = [ "manure/web/dashboard/index.html" "manure/web/dashboard/favicon.svg" "manure/web/dashboard/current"
     "manure/web/unlock" "manure/web/viewer/index.html" "manure/web/viewer/styles.css" ];
   runtime = common ++ shared ++ [ "chronicle/generated/scala" "chronicle/server/src/main" "chronicle/migrations" ];
   webEntries = [ "package.json" "web" "generated/typescript" "tests/archive-expression-cases.json" "tests/recorded-yolo-profile-cases.json" ];
   tests = [ "chronicle/server/src/test" "chronicle/tests" "chronicle/models" "chronicle/config.example.json" "chronicle/scripts" ];
-  sharedTests = [ "shared/lossless-json/src/test" "shared/baboon-runtime/src/test"
+  sharedModuleTests = [ "shared/lossless-json/src/test"
     "shared/service-runtime/src/test" "shared/service-auth/src/test" "shared/model-http/src/test"
     "shared/retrieval-core/src/test" "shared/retrieval-postgres/src/test" ];
+  sharedTests = [ "shared/baboon-runtime/src/test" ] ++ sharedModuleTests;
   ontologyRuntime = [ "ontology/generated/scala" "ontology/generated/wire"
     "ontology/server/src/main" "ontology/migrations" ];
   ontologyTests = [ "ontology/server/src/test" "ontology/models" "ontology/scripts"
@@ -59,14 +62,21 @@ in {
   haystackServer = backendSource "haystack-native-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/models" "haystack/server/src/main" "haystack/migrations" ]);
   manureServer = backendSource "manure-native-source" (common ++ shared ++ [ "manure/generated/scala" "manure/models" "manure/migration/schema.sql" "manure/backend/src/main" "manure/migrations" "manure/server/src/main" "manure/server/native-image" ]);
   haystackTests = backendSource "haystack-native-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/migrations" "haystack/tests" "haystack/server/tests-current" "haystack/scripts" "haystack/docs/scala-config.example.json" "haystack/generated/typescript" "haystack/package.json" "haystack/package-lock.json" "haystack/web/package.json" "haystack/server/package.json" ]);
+  # haystack/generated/typescript: the runner's input audit lists it.
+  haystackJvmTests = backendSource "haystack-jvm-tests-source" (common ++ shared ++ [ "haystack/generated/scala" "haystack/generated/typescript"
+    "haystack/models" "haystack/server/src" "haystack/migrations" "haystack/scripts/test-postgres-scala.sh" ]);
   haystackBrowserTests = backendSource "haystack-browser-tests-source" (common ++ shared ++ [ "haystack" "shared/account-web" "shared/ui-web" ]);
   manureTargetTests = backendSource "manure-target-tests-source" (common ++ shared ++ [
     "manure/tests" "manure/manure" "manure/scripts" "manure/web" "manure/models" "manure/generated/typescript"
     "manure/pyproject.toml" "shared/account-web" "shared/ui-web" ]);
-  manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureServedAssets ++ [
+  manureJvmTests = backendSource "manure-jvm-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ manureServedAssets ++ [
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migration/schema.sql" "manure/models/fixtures" ]);
-  manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
+  manureTests = backendSource "manure-native-tests-source" (common ++ shared ++ manureSharedTestFixtures ++ [ "manure/generated/scala" "manure/backend/src" "manure/migrations" "manure/server/src" "manure/server/native-image" "manure/tests" ]);
   backendTests = backendSource "chronicle-backend-tests-source" (runtime ++ tests);
+  sharedJvmTests = backendSource "shared-jvm-tests-source" (common ++ shared ++ sharedModuleTests);
+  # The account browser test loads playwright-core from the Chronicle dashboard's locked dependencies.
+  accountWebBrowserTests = backendSource "account-web-browser-tests-source" [ "shared/account-web" "shared/ui-web"
+    "chronicle/web/package.json" "chronicle/web/package-lock.json" ];
   manurePosix = backendSource "manure-posix-source" [ "manure/server/src/main/c"
     "manure/server/src/main/java/manure/storage/PosixNative.java"
     "manure/server/src/main/java/manure/storage/NativeFailure.java" ];
@@ -78,7 +88,6 @@ in {
     "manure/server/native-tests/NativeSelfTest.java"
   ];
   manureAcceptance = backendSource "manure-posix-acceptance-source" (common ++ manure ++ manureScripts);
-  foundation = backendSource "backend-foundation-source" (common ++ shared ++ [ "shared/lossless-json/src/test" "manure/server/src" "scripts/backend-foundation-report.py" ]);
   backendDevelopment = backendSource "backend-development-source" (runtime ++ tests ++ sharedTests ++ ontologyRuntime ++ ontologyTests ++ [
     "haystack/generated/scala" "haystack/server/src" "haystack/migrations"
     "manure/generated/scala" "manure/backend/src" "manure/server/src" "manure/migrations"
@@ -97,6 +106,8 @@ in {
   };
   # theme-retry.mjs compares the dashboard CSP with the server's Http.scala.
   webBrowserTests = source "chronicle-web-browser-tests-source" (webEntries ++ [ "server/src/main/scala/chronicle/Http.scala" ]);
+  # test_source_observations_v3.py reads Core.scala.
+  eval = source "chronicle-eval-source" [ "eval/relevance" "server/src/main/scala/chronicle/Core.scala" ];
   collector = source "chronicle-collector-source" [ "package.json" "collector" "generated/typescript" ];
   documentation = source "chronicle-documentation-source" [ "README.md" "models" "migrations" ];
   development = lib.cleanSourceWith { name = "chronicle-development-source"; src = chronicle; filter = clean; };

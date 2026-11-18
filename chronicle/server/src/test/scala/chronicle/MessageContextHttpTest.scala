@@ -21,10 +21,10 @@ class MessageContextHttpTest extends munit.FunSuite {
     (for {
       tools <- Resource.eval(McpTestFixtures.ordinaryTools)
       model <- Resource.eval(McpTestFixtures.model(_ => IO.raiseError(new AssertionError("HTTP context test must not call a provider"))))
-      runs <- McpTestRuns.resource(tools,model,new PostgresRunAuthorization(f.db,auth),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),f.config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
+      runs <- McpTestRuns.resource(tools,model,new PostgresRunAuthorization(f.db,auth),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),wire,IO(UUID.randomUUID()))
       controls <- BrowserControlAdmission.resource
       gate <- Resource.eval(Semaphore[IO](2))
-      http=new Http(f.config,auth,f.app,f.archive,f.mcp,logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(f.app,runs,wire),controls)
+      http=new Http(f.config,auth,f.app,f.archive,f.mcp,logstage.IzLogger(),Http.WebRoot(None),protocol,new BrowserRpc(f.app,runs,wire),controls,Http.SocketLiveness.production)
       server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build
       client <- EmberClientBuilder.default[IO].build
     } yield (client,s"http://127.0.0.1:${server.address.getPort}/mcp")).use { (client,url) => use(client,url) }

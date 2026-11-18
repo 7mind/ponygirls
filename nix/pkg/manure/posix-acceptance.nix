@@ -18,11 +18,6 @@ in runCommand "manure-posix-jvm-static-musl-acceptance" {
   mkdir -p "$out"
   bash scripts/manure-probe-classpath.sh "$PWD/classpath"
   classpath=$(cat classpath)
-  java --enable-native-access=ALL-UNNAMED -cp "$classpath" \
-    manure.storage.FilesystemCapabilityProbe --shared "$MANURE_POSIX_LIBRARY" > "$out/jvm.log" 2>&1 || {
-    cat "$out/jvm.log"; exit 1;
-  }
-  cat "$out/jvm.log"
   bash scripts/manure-native-image.sh "$classpath" "$out/manure-posix-probe" > "$out/build.log" 2>&1 || {
     cat "$out/build.log"; exit 1;
   }
@@ -35,12 +30,6 @@ in runCommand "manure-posix-jvm-static-musl-acceptance" {
     cat "$out/native.log"; exit 1;
   }
   cat "$out/native.log"
-  # Validation code is separate from the native executable's filtered sources.
-  python3 ${../../../scripts/manure-acceptance-report.py} \
-    --jvm "$out/jvm.log" --native "$out/native.log" --source '${source}' \
-    --toolchain '${environment.tools.graal}' --artifact "$out/manure-posix-probe" \
-    --artifact "$MANURE_POSIX_LIBRARY" --artifact "$MANURE_POSIX_STATIC/libmanure_posix.a" \
-    --output "$out/acceptance.json"
   sha256sum "$out/manure-posix-probe" "$MANURE_POSIX_LIBRARY" \
     "$MANURE_POSIX_STATIC/libmanure_posix.a" > "$out/artifacts.sha256"
   printf '%s\n' '${source}' > "$out/acceptance-source"

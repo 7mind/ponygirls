@@ -146,10 +146,12 @@ object ModelTelemetry {
   private final case class Slice(buckets: Map[Long,Totals],latest: Latest)
   private final case class State(nextTicket: Long,active: Map[Long,Active],slices: Map[ModelCallContext,Slice],elapsedMillis: Long)
 
-  def make(clock: ModelTelemetryClock,owners: Set[String]): IO[ModelTelemetry] = for {
+  private val emptySlice = Slice(Map.empty,Latest(None,None,None))
+
+  // Slices are created by `begin`; owner legitimacy is established by the callers that build contexts.
+  def make(clock: ModelTelemetryClock): IO[ModelTelemetry] = for {
     started <- clock.read
-    slices=owners.toList.flatMap(owner => ModelWorkload.values.toList.map(purpose => ModelCallContext(owner,purpose)->Slice(Map.empty,Latest(None,None,None)))).toMap
-    state <- Ref.of[IO,State](State(0L,Map.empty,slices,0L))
+    state <- Ref.of[IO,State](State(0L,Map.empty,Map.empty,0L))
   } yield new InMemory(clock,started,state,new Identity)
 
   private def plus(left: Long,right: Long): Long = try Math.addExact(left,right) catch {
@@ -168,15 +170,13 @@ object ModelTelemetry {
     private def elapsed(time: ModelTelemetryTime): Long = try {
       Math.subtractExact(time.monotonicNanos,started.monotonicNanos).max(0L)/nanosPerMilli
     } catch { case _: ArithmeticException => throw DomainError(invariantCode,"telemetry monotonic interval overflow") }
-    private def configured(state: State,context: ModelCallContext): Unit = Check(state.slices.contains(context),invariantCode,"telemetry owner is not configured")
 
     def begin(context: ModelCallContext): IO[ModelCallTicket] = IO.uncancelable { _ => clock.read.flatMap { time =>
       state.modify { previous =>
-        configured(previous,context)
         val current=recent(previous,elapsed(time))
         val sequence=plus(current.nextTicket,1L)
         val ticket=Ticket(context,sequence,identity)
-        (current.copy(nextTicket=sequence,active=current.active.updated(sequence,Active(context,current.elapsedMillis))),ticket)
+        (current.copy(nextTicket=sequence,active=current.active.updated(sequence,Active(context,current.elapsedMillis)),slices=if(current.slices.contains(context)) current.slices else current.slices.updated(context,emptySlice)),ticket)
       }
     }}
 
@@ -203,7 +203,6 @@ object ModelTelemetry {
 
     def snapshot(ownerId: String): IO[ModelUsageSnapshot] = clock.read.flatMap { time =>
       state.modify { previous =>
-        configured(previous,ModelCallContext(ownerId,ModelWorkload.IndexAnnotation))
         val current=recent(previous,elapsed(time))
         val end=current.elapsedMillis
         val start=windowStart(end)
@@ -214,7 +213,7 @@ object ModelTelemetry {
         }
         val samples=ModelWorkload.values.toList.map { purpose =>
           val context=ModelCallContext(ownerId,purpose)
-          val slice=current.slices(context)
+          val slice=current.slices.getOrElse(context,emptySlice)
           val counts=total(slice.buckets.values)
           ModelWorkloadUsage(purpose,current.active.valuesIterator.count(_.context==context),counts.finished,counts.failed,counts.cancelled,counts.invalid,counter(counts.input,slice.latest.input),if(purpose.hasOutput) Some(counter(counts.output,slice.latest.output)) else None,if(purpose.hasOutput) Some(counter(counts.reasoning,slice.latest.reasoning)) else None)
         }

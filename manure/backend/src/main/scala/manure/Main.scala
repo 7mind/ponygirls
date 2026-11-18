@@ -7,6 +7,7 @@ import com.comcast.ip4s.{Host,Port}
 import distage.*
 import manure.plugins.{ManurePlugin,RuntimeServices}
 import manure.storage.{ConfinedDirectory,RelativeName,RootLease,RootLocked}
+import ponygirls.auth.CredentialGate
 import ponygirls.runtime.{CatsIOInjector,JdbcDatabase,Migration}
 import ponygirls.retrieval.{EmbeddingClient,EmbeddingTelemetry}
 import org.http4s.ember.server.EmberServerBuilder
@@ -96,6 +97,7 @@ object Main extends IOApp:
     database <- JdbcDatabase.resource(config.database)
     models <- if recover then embedding(config) else Resource.pure[IO,Option[EmbeddingClient]](None)
     gate <- Resource.eval(Semaphore[IO](1L))
+    credentials <- CredentialGate.resource
     graph <- Resource.make(IO.pure(CatsIOInjector().produceGet[RuntimeServices](new ModuleDef {
       include(ManurePlugin)
       make[Config].fromValue(config)
@@ -104,6 +106,7 @@ object Main extends IOApp:
       make[JdbcDatabase].fromValue(database)
       make[Option[EmbeddingClient]].fromValue(models)
       make[Semaphore[IO]].fromValue(gate)
+      make[CredentialGate].fromValue(credentials)
     })))(_ => IO.unit)
     // distage Lifecycle remains scoped inside the outer resource ownership graph.
     services <- Resource.make(stage("wiring",graph.acquire))(graph.release).evalMap(inner => stage("wiring",graph.extract(inner).fold(identity,IO.pure)))
@@ -149,6 +152,7 @@ object Main extends IOApp:
         }
       services.projection.initialize(c)
       ponygirls.auth.AccountSql.initialize(c)
+      ponygirls.auth.ImperativeAccountSql.initialize(c)
     })
     _ <- Resource.eval(stage("auth",if recover then services.accounts.initialize() else IO.unit))
     _ <- Resource.eval(stage("reconcile",if recover then services.artifacts.initialize() else IO.unit))

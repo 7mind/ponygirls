@@ -6,6 +6,7 @@ import cats.effect.unsafe.implicits.global
 import io.circe.Json
 import java.util.UUID
 import scala.collection.mutable.ListBuffer
+import scala.concurrent.duration.*
 
 final case class WorkerEvidence(claims: Int,reservations: Int,rejections: Int)
 trait ContextWorkerFixture {
@@ -23,8 +24,9 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
     original.copy(messages=messages,files=List(RawFile("source.jsonl",Wire.hash(raw),raw)),digest=Wire.hash(raw))
   }
   private def worker(f: ContextWorkerFixture,model: ProblemPassageAnnotator,embedding: Embedder): Worker = worker(f.archive(),f.config,model,embedding)
-  private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder): Worker =
-    new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger())
+  private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder): Worker = worker(archive,config,model,embedding,ModelFixtures.failureBackoff)
+  private def worker(archive: SessionArchive,config: Config,model: ProblemPassageAnnotator,embedding: Embedder,backoff: Worker.FailureBackoff): Worker =
+    new Worker(archive,model,embedding,config,IndexProfileCatalog.current(config),ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),backoff)
   private class ForwardingArchive(delegate: SessionArchive) extends SessionArchive {
     def checkpointNamespace(c: Claim,space: String): CheckpointNamespace=delegate.checkpointNamespace(c,space)
     def knownProfiles: Set[String]=delegate.knownProfiles
@@ -44,6 +46,25 @@ abstract class ContextWorkerRecoveryContract extends munit.FunSuite {
   }
   private def one(window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): ProblemPassages.Decision =
     ProblemPassages.Decision(Vector(ProblemPassages.Part(ProblemPassages.Point(0,0),window.terminal,previous.nonEmpty,"synthetic goal",Nil)))
+  test("BG/GoodCommunication: a worker lane stays idle for the failure back-off after the failed job is recorded, and not shorter") { withFixture { f =>
+    val backoff=Worker.FailureBackoff(300.millis)
+    @volatile var recordedAt=0L
+    val recording=new ForwardingArchive(f.archive()) {
+      override def fail(c: Claim,code: String,stage: IndexingStage): Unit = { super.fail(c,code,stage); recordedAt=System.nanoTime() }
+    }
+    val receipt=recording.ingest("a",request(List("user"->"synthetic task")))
+    val model=new ProblemPassageAnnotator {
+      def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(DomainError("model-timeout","model deadline exceeded"))
+    }
+    val embedding=new Embedder {
+      def query(owner: String,text: String): IO[List[Double]] = IO.raiseError(new AssertionError("unexpected embedding"))
+      def documents(owner: String,text: List[String]): IO[List[List[Double]]] = IO.raiseError(new AssertionError("unexpected embedding"))
+    }
+    assert(worker(recording,f.config,model,embedding,backoff).once.unsafeRunSync())
+    val idle=(System.nanoTime()-recordedAt).nanos
+    assertEquals(f.stage(receipt.jobId),Some(IndexingStage.Annotation))
+    assert(idle>=backoff.delay,s"worker lane resumed $idle after the failure was recorded")
+  }}
   List(IndexingStage.Annotation,IndexingStage.Embedding).foreach { failureStage =>
     test(s"BG/GoodCommunication: durable current-policy prefix survives later $failureStage failure and a fresh worker/archive connection") { withFixture { f =>
       val archive=f.archive()

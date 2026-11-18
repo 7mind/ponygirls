@@ -77,10 +77,61 @@ final class CheckConfigSuite extends FunSuite:
         Json.obj("mode" -> Json.fromString("strict"),"extra" -> Json.True)).foreach { invalid =>
         assert(!run(config.mapObject(_.add("root_binding",invalid)),1).contains("MANURE_CONFIG_OK"))
       }
+      val admin = passwordOnly.mapObject(_.add("admin",Json.True))
+      val accounts = Json.obj("enabled" -> Json.True,"key_file" -> Json.fromString(fifo.toString),
+        "signup" -> Json.obj("enabled" -> Json.True,"require_approval" -> Json.True,"max_users" -> Json.fromInt(100)))
+      assert(run(config.mapObject(_.add("users",Json.arr(admin)).add("accounts",accounts)),0).contains("MANURE_CONFIG_OK"))
       val duplicate=config.mapObject(_.add("allowed_api_origins",Json.arr(Json.fromString("https://api.example.test:8443"))))
       assert(!run(duplicate,1).contains("MANURE_CONFIG_OK"))
       assert(!Files.exists(directory.resolve("nonexistent-data")))
     finally
       mkfifo.destroyForcibly()
       Files.deleteIfExists(directory.resolve("config.json"));Files.deleteIfExists(fifo);Files.deleteIfExists(directory)
+  }
+
+  test("accounts and users[].admin are closed key sets; creation flags never imply the master switch") {
+    val directory=Files.createTempDirectory("manure-accounts-config-")
+    val path=directory.resolve("config.json")
+    val limits=Json.obj("maxConnections" -> Json.fromInt(1),"maxQueued" -> Json.fromInt(1)).deepMerge(Json.obj(Vector("queueTimeoutMs",
+      "connectTimeoutMs","statementTimeoutMs","lockTimeoutMs","idleTransactionTimeoutMs","socketTimeoutMs").map(_ -> Json.fromInt(5000))*))
+    val admin=Json.obj("id" -> Json.fromString("operator"),"type" -> Json.fromString("human"),"login" -> Json.fromString("operator"),
+      "passwordHashFile" -> Json.fromString("/run/secrets/operator"),"admin" -> Json.True)
+    val base=Json.obj("data_dir" -> Json.fromString("/var/lib/manure"),"api_origin" -> Json.fromString("https://artifacts.example.test"),
+      "content_mode" -> Json.fromString("path"),
+      "users" -> Json.arr(admin),"database" -> Json.obj("jdbcUrl" -> Json.fromString("jdbc:postgresql://127.0.0.1:1/x"),
+        "user" -> Json.fromString("manure"),"passwordFile" -> Json.fromString("/run/secrets/db"),"limits" -> limits))
+    val accounts=Json.obj("enabled" -> Json.True,"key_file" -> Json.fromString("/run/credentials/accounts-key"),
+      "signup" -> Json.obj("enabled" -> Json.True,"require_approval" -> Json.False,"max_users" -> Json.fromInt(7)),
+      "enrollment" -> Json.obj("enabled" -> Json.True,"ttl_s" -> Json.fromInt(600)),
+      "issuer" -> Json.fromString("Manure (artifacts)"),"reserved_usernames" -> Json.arr(Json.fromString("boss")))
+    def load(json: Json): Option[Config] =
+      Files.writeString(path,json.noSpaces)
+      try Some(Config.load(path)) catch case _: DomainError => None
+    def withAccounts(value: Json): Json = base.mapObject(_.add("accounts",value))
+    def nested(key: String,field: String,value: Json): Json = withAccounts(accounts.mapObject(_.add(key,accounts.hcursor.downField(key).focus.get.mapObject(_.add(field,value)))))
+    try
+      assertEquals(load(base).map(c => (c.accounts,c.users.map(_.admin))),Some((None,Vector(true))))
+      assertEquals(load(withAccounts(accounts)).flatMap(_.accounts),Some(AccountsConfig(true,Some(Path.of("/run/credentials/accounts-key")),
+        AccountSignupConfig(true,false,7),AccountEnrollmentConfig(true,600),"Manure (artifacts)",Vector("boss"))))
+      assertEquals(load(withAccounts(Json.obj("enabled" -> Json.False))).flatMap(_.accounts),Some(AccountsConfig(false,None,
+        AccountsConfig.defaultSignup,AccountsConfig.defaultEnrollment,"Manure (artifacts.example.test)",Vector.empty)))
+      Vector(
+        withAccounts(accounts.mapObject(_.add("keyFile",Json.fromString("/run/k")))),
+        nested("signup","requireApproval",Json.True),
+        nested("enrollment","ttlSeconds",Json.fromInt(600)),
+        base.mapObject(_.add("users",Json.arr(admin.mapObject(_.add("isAdmin",Json.True))))),
+        withAccounts(accounts.mapObject(_.add("enabled",Json.False))),
+        withAccounts(accounts.mapObject(_.remove("key_file"))),
+        withAccounts(accounts.mapObject(_.add("key_file",Json.fromString("relative/key")))),
+        withAccounts(accounts.mapObject(_.add("key_file",Json.fromString("/nix/store/key")))),
+        withAccounts(accounts.mapObject(_.remove("enabled"))),
+        nested("signup","max_users",Json.fromInt(1001)),
+        withAccounts(accounts.mapObject(_.add("issuer",Json.fromString("a:b")))),
+        base.mapObject(_.add("users",Json.arr(admin.mapObject(_.add("admin",Json.False))))).mapObject(_.add("accounts",accounts)),
+        base.mapObject(_.add("users",Json.arr(admin.mapObject(_.add("id",Json.fromString("operator\u0000")))))),
+        base.mapObject(_.add("users",Json.arr(admin.mapObject(_.remove("login").remove("passwordHashFile")
+          .add("tokens",Json.arr(Json.obj("id" -> Json.fromString("t"),"hashFile" -> Json.fromString("/run/t"))))))))
+      ).foreach(json => assertEquals(load(json),None,clue(json.noSpaces)))
+    finally
+      Files.deleteIfExists(path);Files.deleteIfExists(directory)
   }

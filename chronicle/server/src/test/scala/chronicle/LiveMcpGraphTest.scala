@@ -113,7 +113,7 @@ final class LiveMcpGraphTest extends munit.FunSuite {
     (for {
       entered <- Deferred[IO,Unit]
       cancelled <- Deferred[IO,Unit]
-      telemetry <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet)
+      telemetry <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]))
       provider: HttpApp[IO]=cats.data.Kleisli(_ => entered.complete(()).void *> IO.never[Response[IO]].onCancel(cancelled.complete(()).void))
       production: Module=_root_.chronicle.plugins.ChroniclePlugin
       module=production.overriddenBy(new ModuleDef {

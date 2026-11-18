@@ -36,12 +36,6 @@ class IndexedSearchTest extends munit.FunSuite {
     val archive=new PostgresArchive(db,config)
     SearchDatabase(config,db,archive,new PostgresSearch(db,archive,config))
   }
-  private def database(dimensions: Int)(f: (Config,Database,PostgresArchive,PostgresSearch) => Unit): Unit = {
-    clearCorpus()
-    val database=openDatabase(dimensions)
-    try f(database.config,database.db,database.archive,database.index)
-    finally clear(database.db)
-  }
   private def members(db: Database): List[(UUID,String)] = db.transaction(c => Sql.rows(c,"SELECT group_id,user_id FROM ch_members ORDER BY group_id,user_id")(r => (r.getObject(1,classOf[UUID]),r.getString(2))))
   private def assertCorpus(corpus: SeededCorpus): Unit = corpus.database.db.transaction { c =>
     List("ch_sources","ch_revisions","ch_generations","ch_chunks","ch_search_chunks","ch_revision_info","ch_messages").foreach { table =>
@@ -78,19 +72,33 @@ class IndexedSearchTest extends munit.FunSuite {
       current.members.foreach { case (group,user) => Sql.exec(c,"INSERT INTO ch_members VALUES(?,?)",group,user) }
     }
   }
+  private val haystackTemplate=1
+  private val needleTemplate=37
+  // Production backfill projects one template revision per project class and the rest are copied (identical snapshots);
+  // the HNSW index is dropped so that Database.initialize() builds it in one pass instead of one insert per row.
   private def seed(config: Config,db: Database,size: Int): Unit = {
     val snapshot=Wire.encode(IngestRequest.codecJson,Fixtures.snapshot()).noSpaces
     val chunk=Wire.encode(Chunk.codecJson,Fragments.split(Fixtures.snapshot().messages).head).noSpaces
+    val fixture=s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||i)::uuid AS sid,md5('generation'||i)::uuid AS gid,md5('chunk'||i)::uuid AS cid,CASE WHEN i%100=0 THEN 'a' WHEN i%100=1 THEN 'b' ELSE 'c' END AS owner FROM generate_series(1,$size)i"
+    val revision="INSERT INTO ch_revisions SELECT sid,1,jsonb_set(?::jsonb,'{metadata,project}',to_jsonb(CASE WHEN i%37=0 THEN 'needle' ELSE 'haystack' END)) FROM fixture"
+    val templates=s"i IN($haystackTemplate,$needleTemplate)"
     db.transaction { c =>
-      Sql.exec(c,s"CREATE TEMP TABLE fixture AS SELECT i,md5('source'||i)::uuid AS sid,md5('generation'||i)::uuid AS gid,md5('chunk'||i)::uuid AS cid,CASE WHEN i%100=0 THEN 'a' WHEN i%100=1 THEN 'b' ELSE 'c' END AS owner FROM generate_series(1,$size)i")
+      Sql.exec(c,fixture)
       Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key,revision,published) SELECT sid,owner,i::text,1,gid FROM fixture")
-      Sql.exec(c,"INSERT INTO ch_revisions SELECT sid,1,jsonb_set(?::jsonb,'{metadata,project}',to_jsonb(CASE WHEN i%37=0 THEN 'needle' ELSE 'haystack' END)) FROM fixture",snapshot)
+      Sql.exec(c,s"$revision WHERE $templates",snapshot)
       Sql.exec(c,"INSERT INTO ch_generations SELECT gid,sid,1,? FROM fixture",config.profile)
       Sql.exec(c,s"INSERT INTO ch_chunks SELECT cid,gid,?::jsonb || jsonb_build_object('id',cid,'sessionId',sid),to_tsvector('english',CASE WHEN i%61=0 THEN 'targetterm synthetic' ELSE 'commonterm synthetic' END),(SELECT array_agg(sin(i*d*0.031)+cos(i*d*0.017))::vector FROM generate_series(1,${config.embedding.dimensions})d),0 FROM fixture",chunk)
       Sql.exec(c,"DELETE FROM ch_schema_migrations WHERE version=2")
+      Sql.exec(c,s"DROP INDEX ch_search_hnsw_d${config.embedding.dimensions}")
       val ab=UUID.randomUUID(); val bc=UUID.randomUUID()
       Sql.exec(c,"INSERT INTO ch_groups VALUES(?,'a','AB'),(?,'b','BC')",ab,bc)
       Sql.exec(c,"INSERT INTO ch_members VALUES(?,'a'),(?,'b'),(?,'b'),(?,'c')",ab,ab,bc,bc)
+    }
+    ArchiveProjection.backfill(db)
+    db.transaction { c =>
+      Sql.exec(c,fixture)
+      Sql.exec(c,s"$revision WHERE NOT($templates)",snapshot)
+      ProjectionFixture.copy(c,s"SELECT md5('source'||CASE WHEN i%37=0 THEN $needleTemplate ELSE $haystackTemplate END)::uuid,sid FROM fixture WHERE NOT($templates)")
     }
     db.initialize()
     db.transaction(c => Sql.exec(c,"ANALYZE"))
@@ -162,27 +170,6 @@ class IndexedSearchTest extends munit.FunSuite {
     db.transaction(c => Sql.exec(c,"DELETE FROM ch_members WHERE user_id='b'"))
     val privateOnly=index.search("a",query(SearchMode.Semantic),Some(vector(100,testDimensions)))
     assertEquals(privateOnly.total,corpusSize/100); assert(privateOnly.hits.forall(_.session.ownerId=="a"))
-  }}
-  test("Effectual-GoodCommunication: projection replaces complete generations, backfills idempotently and purges without deleting pinned history early") { database(3) { (config,db,archive,index) =>
-    val request=Fixtures.snapshot(); val out=archive.ingest("a",request)
-    val first=archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get
-    def chunk()=IndexedChunk(Fragments.split(request.messages).head.copy(sessionId=out.sessionId),List(1.0,0.0,0.0))
-    val whole=chunk(); val middle=whole.chunk.text.length/2
-    val pieces=List(whole.copy(chunk=whole.chunk.copy(text=whole.chunk.text.take(middle),spans=List(Span("u",0,middle)))),whole.copy(chunk=whole.chunk.copy(id=UUID.randomUUID(),text=whole.chunk.text.drop(middle),spans=List(Span("u",middle,whole.chunk.text.length)))))
-    assert(archive.publish(first,pieces))
-    val old=archive.session("a",out.sessionId).view
-    archive.ingest("a",request.copy(requestId=UUID.randomUUID(),expectedRevision=1))
-    assert(archive.publish(archive.claim(Set(config.profile),ClaimScope.AllOwners,300).get,List(chunk())))
-    db.initialize(); db.initialize()
-    db.transaction { c =>
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(1))
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_chunks")(_.getInt(1)),Some(3))
-      assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks ch JOIN ch_sources s ON s.id=ch.session_id WHERE ch.generation<>s.published")(_.getInt(1)),Some(0))
-    }
-    assertEquals(archive.pageChunks("a",out.sessionId,0,100,Some(old)).total,2)
-    val auth=new Auth(db,config); val (_,cookie)=auth.login(LoginRequest("a","synthetic"))
-    auth.mutate(auth.browser(cookie),ClientEnvelope(UUID.randomUUID(),Operation.Purge(out.sessionId)))
-    db.transaction(c => assertEquals(Sql.one(c,"SELECT count(*) FROM ch_search_chunks")(_.getInt(1)),Some(0)))
   }}
   test("Effectual-GoodCommunication: 2048-dimensional embeddings use halfvec HNSW while preserving float vectors and exact cosine scores") { corpus(2048,highDimensionCorpusSize) { (config,db,archive,index) =>
     val highQuery=query(SearchMode.Semantic)

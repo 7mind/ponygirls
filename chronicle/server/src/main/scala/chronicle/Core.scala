@@ -29,7 +29,18 @@ object Wire {
   def canonical(j: Json): String = j.deepDropNullValues.noSpacesSortKeys
   def secret(): String = { val b = new Array[Byte](32); new SecureRandom().nextBytes(b); Base64.getUrlEncoder.withoutPadding.encodeToString(b) }
 }
-final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean)
+final case class UserConfig(id: String, login: String, passwordHashFile: String, enabled: Boolean, admin: Boolean)
+final case class SignupConfig(enabled: Boolean, requireApproval: Boolean, maxUsers: Int)
+final case class EnrollmentConfig(enabled: Boolean, ttlSeconds: Int)
+/** Imperative accounts (self-signup, admin enrollment). `enabled` is the master switch: it is never derived from the
+  * creation flags, and turning it off suspends the accounts without revoking anything. */
+final case class AccountsConfig(enabled: Boolean, keyFile: Option[String], signup: SignupConfig, enrollment: EnrollmentConfig, issuer: Option[String], reservedUsernames: List[String])
+object AccountsConfig {
+  val service = "chronicle"
+  val defaultRequireApproval = true
+  val defaultMaxUsers = 100
+  val defaultEnrollmentTtlSeconds = 86400
+}
 object TokenPolicy { val maximumPerOwner = 100 }
 final case class StaticTokenConfig(id: UUID, userId: String, name: String, scopes: List[Scope], tokenFile: String)
 final case class ModelConfig(endpoint: String, model: String, revision: String, credentialFile: String, timeoutSeconds: Int, maxResponseBytes: Int, requestPolicy: AnnotationRequestPolicy)
@@ -42,13 +53,21 @@ final case class IndexingCapacity(annotationSessions: Int,embeddingRequests: Int
   }
 }
 object IndexingCapacity { val defaults = IndexingCapacity(4,8,16) }
-final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits) {
+final case class Config(listenHost: String, listenPort: Int, allowedOrigin: String, secureCookies: Boolean, jdbcUrl: String, databaseUser: String, databasePasswordFile: String, users: List[UserConfig], maxBodyBytes: Int, maxFiles: Int, maxFileBytes: Int, maxMessages: Int, sessionTtlSeconds: Int, annotation: ModelConfig, embedding: EmbeddingConfig, allowInsecureHttp: Boolean, staticTokens: List[StaticTokenConfig],indexing: IndexingCapacity,databaseLimits: JdbcLimits,accounts: Option[AccountsConfig]) {
+  def accountsEnabled: Boolean = accounts.exists(_.enabled)
   def jdbcConfig: JdbcConfig = JdbcConfig(jdbcUrl,databaseUser,Path.of(databasePasswordFile),databaseLimits)
   def profile: String = IndexProfileCatalog.current(this).preferred.profile
   def validate(): Unit = {
     indexing.validate()
     try jdbcConfig.validate() catch { case _: IllegalArgumentException => throw DomainError("config","invalid database configuration") }
     Check(users.map(_.id).distinct.size == users.size && users.map(_.login).distinct.size == users.size, "config", "duplicate users")
+    accounts.foreach { a =>
+      Check(a.enabled || !(a.signup.enabled || a.enrollment.enabled),"config","accounts.signup and accounts.enrollment require accounts.enabled")
+      if(a.enabled) {
+        Check(a.keyFile.map(Path.of(_)).exists(path => path.isAbsolute && !path.normalize().startsWith(Path.of("/nix/store"))),"config","accounts require a runtime key file")
+        Check(users.exists(u => u.enabled && u.admin),"config","accounts require an enabled administrator")
+      }
+    }
     Check(staticTokens.map(_.id).distinct.size==staticTokens.size,"config","duplicate static token IDs")
     Check(staticTokens.groupBy(_.userId).values.forall(_.size<=TokenPolicy.maximumPerOwner),"config","static token owner limit")
     staticTokens.foreach { t =>
@@ -70,7 +89,37 @@ final case class Config(listenHost: String, listenPort: Int, allowedOrigin: Stri
 }
 object Config {
   val maximumBodyBytes = 512*1024*1024
-  given Decoder[UserConfig] = Decoder.forProduct4("id","login","passwordHashFile","enabled")(UserConfig.apply)
+  // An omitted member is absent; an explicit null is rejected, as for the other optional members.
+  private def present[A: Decoder](cursor: io.circe.HCursor,field: String): Decoder.Result[Option[A]] =
+    if(cursor.downField(field).focus.isEmpty) Right(None) else cursor.get[A](field).map(Some(_))
+  private def optional[A: Decoder](cursor: io.circe.HCursor,field: String,omitted: A): Decoder.Result[A] = present[A](cursor,field).map(_.getOrElse(omitted))
+  private val omittedAdmin = false
+  given Decoder[UserConfig] = Decoder.instance { cursor => for {
+    id <- cursor.get[String]("id")
+    login <- cursor.get[String]("login")
+    passwordHashFile <- cursor.get[String]("passwordHashFile")
+    enabled <- cursor.get[Boolean]("enabled")
+    admin <- optional(cursor,"admin",omittedAdmin)
+  } yield UserConfig(id,login,passwordHashFile,enabled,admin) }
+  private val omittedCreation = false
+  given Decoder[SignupConfig] = Decoder.instance { cursor => for {
+    enabled <- optional(cursor,"enabled",omittedCreation)
+    requireApproval <- optional(cursor,"requireApproval",AccountsConfig.defaultRequireApproval)
+    maxUsers <- optional(cursor,"maxUsers",AccountsConfig.defaultMaxUsers)
+  } yield SignupConfig(enabled,requireApproval,maxUsers) }
+  given Decoder[EnrollmentConfig] = Decoder.instance { cursor => for {
+    enabled <- optional(cursor,"enabled",omittedCreation)
+    ttlSeconds <- optional(cursor,"ttlSeconds",AccountsConfig.defaultEnrollmentTtlSeconds)
+  } yield EnrollmentConfig(enabled,ttlSeconds) }
+  // The master switch is a required member of a present `accounts` object; everything else defaults to off.
+  given Decoder[AccountsConfig] = Decoder.instance { cursor => for {
+    enabled <- cursor.get[Boolean]("enabled")
+    keyFile <- present[String](cursor,"keyFile")
+    signup <- optional(cursor,"signup",SignupConfig(omittedCreation,AccountsConfig.defaultRequireApproval,AccountsConfig.defaultMaxUsers))
+    enrollment <- optional(cursor,"enrollment",EnrollmentConfig(omittedCreation,AccountsConfig.defaultEnrollmentTtlSeconds))
+    issuer <- present[String](cursor,"issuer")
+    reservedUsernames <- optional(cursor,"reservedUsernames",List.empty[String])
+  } yield AccountsConfig(enabled,keyFile,signup,enrollment,issuer,reservedUsernames) }
   given Decoder[StaticTokenConfig] = Decoder.instance { cursor => for {
     id <- cursor.get[UUID]("id")
     owner <- cursor.get[String]("userId")
@@ -139,7 +188,8 @@ object Config {
     embedding <- cursor.get[EmbeddingConfig]("embedding")
     allowInsecureHttp <- if(cursor.downField("allowInsecureHttp").focus.isEmpty) Right(false) else cursor.get[Boolean]("allowInsecureHttp")
     indexing <- if(cursor.downField("indexing").focus.isEmpty) Right(IndexingCapacity.defaults) else cursor.get[IndexingCapacity]("indexing")
-  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits) }
+    accounts <- present[AccountsConfig](cursor,"accounts")
+  } yield Config(listenHost,listenPort,allowedOrigin,secureCookies,jdbcUrl,databaseUser,databasePasswordFile,users,maxBodyBytes,maxFiles,maxFileBytes,maxMessages,sessionTtlSeconds,annotation,embedding,allowInsecureHttp,staticTokens,indexing,databaseLimits,accounts) }
   def load(path: String): Config = { val c = Wire.parse(Files.readString(Path.of(path))).as[Config].fold(_ => throw DomainError("config", "invalid configuration"), identity); c.validate(); c }
   def credential(path: String): String = BoundedSecretFile.read(Path.of(path),16384).stripTrailing()
 }

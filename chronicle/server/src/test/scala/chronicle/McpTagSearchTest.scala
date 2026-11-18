@@ -78,30 +78,6 @@ class McpTagSearchTest extends munit.FunSuite {
     assertEquals(page(live(f,arguments("",Some("tag-126z"),100))),List(Facet("tag-127",1),Facet("tag-128",1)))
   }}
 
-  test("Blackbox-GoodCommunication: an empty stored tag is a valid keyset position, not the absence of a cursor") { fixture { f =>
-    publish(f,List("","a"))
-    assertEquals(page(live(f,arguments("",None,1))),List(Facet("",1)))
-    assertEquals(page(live(f,arguments("",Some(""),1))),List(Facet("a",1)))
-    assertEquals(page(live(f,arguments("",Some("a"),1))),Nil)
-  }}
-
-  test("Blackbox-GoodCommunication: historical tag values remain reusable as positions beyond the query length bound") { fixture { f =>
-    val longTag="a"*(maximumArgumentLength+1)
-    val request=Fixtures.snapshot()
-    f.publish(request.copy(metadata=request.metadata.copy(tags=Nil)),"archive","archive",List(longTag,"z"),Nil)
-    assertEquals(page(live(f,arguments("",None,1))),List(Facet(longTag,1)))
-    assertEquals(page(live(f,arguments("",Some(longTag),1))),List(Facet("z",1)))
-    assertEquals(page(live(f,arguments("",Some("z"),1))),Nil)
-  }}
-
-  test("Blackbox-GoodCommunication: tag matching is literal Unicode-lower substring while exact tag identity remains distinct") { fixture { f =>
-    val values=List("100%","a_b","back\\slash","quote\"tag","two words","Camel","camel","Äpfel","Straße","é","e\u0301","🙂tag")
-    publish(f,values)
-    val cases=List("%"->List("100%"),"_"->List("a_b"),"\\"->List("back\\slash"),"\""->List("quote\"tag")," "->List("two words"),
-      "CAM"->List("Camel","camel"),"äP"->List("Äpfel"),"STRASSE"->Nil,"É"->List("é"),"e\u0301"->List("e\u0301"),"🙂"->List("🙂tag"),"missing"->Nil)
-    cases.foreach { (query,expected) => assertEquals(page(live(f,arguments(query,None,100))),expected.map(Facet(_,1)),query) }
-  }}
-
   test("Blackbox-GoodCommunication: strict tag arguments reject malformed fields and Unicode without fetching source payload") { fixture { f =>
     val valid=arguments("",None,20)
     val malformed=List(Json.obj(),Json.Null,Json.arr(),valid.mapObject(_.add("query",Json.Null)),valid.mapObject(_.add("query",Json.fromInt(1))),

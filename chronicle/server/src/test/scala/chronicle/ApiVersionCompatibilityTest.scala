@@ -26,4 +26,16 @@ class ApiVersionCompatibilityTest extends munit.FunSuite {
     assertEquals(intercept[DomainError](protocol.decodeClient("1.8.0",io.circe.Json.Null)).code,"version-mismatch")
     assertEquals(intercept[DomainError](protocol.decodeClient("1.9.0",io.circe.Json.Null)).code,"invalid")
   }
+
+  test("BA specified: version info advertises exactly the generated current API") {
+    assertEquals(ClientEnvelope.baboonDomainVersion,"1.9.0")
+    assertEquals(Wire.versions,VersionInfo("1.9.0","1.9.0",List("1.9.0")))
+    assertEquals(Wire.negotiate(List("1.0.0","1.9.0","2.0.0")),"1.9.0")
+  }
+
+  test("BA specified: negotiation rejects all removed versions and future-only offers") {
+    ((0 to 8).map(minor => List(s"1.$minor.0")) ++ List(List("2.0.0"),Nil)).foreach { offered =>
+      assertEquals(intercept[DomainError](Wire.negotiate(offered)).code,"version-mismatch")
+    }
+  }
 }

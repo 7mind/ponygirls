@@ -6,9 +6,7 @@ import cats.effect.unsafe.implicits.global
 import cats.syntax.all.*
 import io.circe.Json
 import java.time.{Clock as JavaClock,Instant,ZoneOffset}
-import java.nio.charset.StandardCharsets.UTF_8
 import scala.concurrent.duration.*
-import scala.util.Using
 
 class ModelTelemetryTest extends munit.FunSuite {
   private val anchor=Instant.parse("2026-01-01T00:00:00Z")
@@ -21,7 +19,7 @@ class ModelTelemetryTest extends munit.FunSuite {
   private def clock(): IO[ManualClock] = Ref.of[IO,ModelTelemetryTime](ModelTelemetryTime(0L,anchor)).map(new ManualClock(_))
   private def fixture(): IO[(ManualClock,ModelTelemetry)] = for {
     manual <- clock()
-    telemetry <- ModelTelemetry.make(manual,Set("alice","bob"))
+    telemetry <- ModelTelemetry.make(manual)
   } yield (manual,telemetry)
   private def parsed(text: String,purpose: ModelWorkload): ProviderUsage = ProviderUsage.parse(io.circe.parser.parse(text).fold(error => throw error,identity),purpose)
   private def reported(input: Long,output: Long,reasoning: Long): ProviderUsage = ProviderUsage.parse(Json.obj("usage"->Json.obj("prompt_tokens"->Json.fromLong(input),"completion_tokens"->Json.fromLong(output),"completion_tokens_details"->Json.obj("reasoning_tokens"->Json.fromLong(reasoning)))),ModelWorkload.IndexAnnotation)
@@ -118,7 +116,7 @@ class ModelTelemetryTest extends munit.FunSuite {
   test("BA specified: finish is exactly once, including concurrent terminals and foreign-store tickets") {
     (for {
       (manual,telemetry) <- fixture()
-      foreign <- ModelTelemetry.make(manual,Set("alice"))
+      foreign <- ModelTelemetry.make(manual)
       ticket <- telemetry.begin(alice)
       wrong <- foreign.finish(ticket,ModelCallOutcome.Complete,reported(3L,1L,0L)).attempt
       terminals <- List.fill(2)(telemetry.finish(ticket,ModelCallOutcome.Complete,reported(3L,1L,0L)).attempt).parSequence
@@ -317,18 +315,13 @@ class ModelTelemetryTest extends munit.FunSuite {
     val longOwner="x"*50000
     val owners=List("",longOwner,longOwner+"y","opaque-🙂é\t\n\u0001\u000b","same-é","same-e\u0301")
     val base=Fixtures.config()
-    val users=owners.zipWithIndex.map { case (owner,index) => UserConfig(owner,s"opaque-login-$index",base.users.head.passwordHashFile,true) }
+    val users=owners.zipWithIndex.map { case (owner,index) => UserConfig(owner,s"opaque-login-$index",base.users.head.passwordHashFile,true,false) }
     base.copy(users=users).validate()
-    val migration=getClass.getClassLoader.getResourceAsStream("001.sql")
-    assert(migration!=null,"retained user schema is available")
-    val schema=Using.resource(migration)(stream => new String(stream.readAllBytes(),UTF_8))
-    val userTable=schema.linesIterator.find(_.startsWith("CREATE TABLE IF NOT EXISTS ch_users(")).getOrElse(fail("retained user table is missing"))
-    assertEquals(userTable,"CREATE TABLE IF NOT EXISTS ch_users(id text PRIMARY KEY, login text UNIQUE NOT NULL, enabled boolean NOT NULL, credential text NOT NULL);")
     (for {
       manual <- clock()
-      telemetry <- ModelTelemetry.make(manual,owners.toSet).attempt.flatMap {
+      telemetry <- ModelTelemetry.make(manual).attempt.flatMap {
         case Right(value) => IO.pure(value)
-        case Left(error: DomainError) => IO(fail(s"Config.validate and retained user DDL accept opaque IDs; telemetry rejected ${error.code}: ${error.detail}"))
+        case Left(error: DomainError) => IO(fail(s"Config.validate accepts opaque IDs; telemetry rejected ${error.code}: ${error.detail}"))
         case Left(error) => IO.raiseError(error)
       }
       _ <- owners.traverse_ { owner =>
@@ -350,16 +343,21 @@ class ModelTelemetryTest extends munit.FunSuite {
       }
     } yield ()).unsafeRunSync()
   }
-  test("BA specified: configured owners bound the state; invalid contexts fail without allocating an active call") {
+  test("BA specified: an owner unknown at startup reads an empty snapshot and gets slices on first use, isolated from other owners") {
     (for {
       (_,telemetry) <- fixture()
-      begin <- telemetry.begin(ModelCallContext("unconfigured",alice.purpose)).attempt
-      read <- telemetry.snapshot("unconfigured").attempt
-      snapshot <- telemetry.snapshot("alice")
+      before <- telemetry.snapshot("late")
+      ticket <- telemetry.begin(ModelCallContext("late",alice.purpose))
+      active <- telemetry.snapshot("late")
+      _ <- telemetry.finish(ticket,ModelCallOutcome.Complete,reported(3L,1L,0L))
+      after <- telemetry.snapshot("late")
+      other <- telemetry.snapshot("alice")
       _ <- IO {
-        assert(begin.left.exists { case error: DomainError => error.code=="model-telemetry-invariant"; case _ => false })
-        assert(read.left.exists { case error: DomainError => error.code=="model-telemetry-invariant"; case _ => false })
-        assert(snapshot.samples.forall(_.inFlight==0))
+        assertEquals(before.samples.map(_.purpose),ModelWorkload.values.toList)
+        assert(before.samples.forall(value => value.inFlight==0 && value.finishedCalls==0L))
+        assertEquals(slice(active,alice.purpose).inFlight,1)
+        assertEquals(slice(after,alice.purpose).finishedCalls,1L); assertEquals(slice(after,alice.purpose).input.knownTokens,3L)
+        assert(other.samples.forall(value => value.inFlight==0 && value.finishedCalls==0L))
       }
     } yield ()).unsafeRunSync()
   }
@@ -367,12 +365,12 @@ class ModelTelemetryTest extends munit.FunSuite {
     (for {
       manual <- clock()
       _ <- manual.setTime(ModelTelemetryTime(-1000000000L,anchor))
-      telemetry <- ModelTelemetry.make(manual,Set("alice"))
+      telemetry <- ModelTelemetry.make(manual)
       _ <- manual.setTime(ModelTelemetryTime(-950000000L,anchor.plusMillis(50L)))
       snapshot <- telemetry.snapshot("alice")
       _ <- IO(assertEquals(snapshot.coveredMillis,50L))
       _ <- manual.setTime(ModelTelemetryTime(Long.MinValue,anchor))
-      overflowing <- ModelTelemetry.make(manual,Set("alice"))
+      overflowing <- ModelTelemetry.make(manual)
       _ <- manual.setTime(ModelTelemetryTime(Long.MaxValue,anchor))
       invalid <- overflowing.snapshot("alice").attempt
       _ <- IO(assert(invalid.left.exists { case error: DomainError => error.code=="model-telemetry-invariant"; case _ => false }))
@@ -381,7 +379,7 @@ class ModelTelemetryTest extends munit.FunSuite {
   private def clockContract(clock: ModelTelemetryClock): IO[Unit] = for {
     first <- clock.read
     second <- clock.read
-    telemetry <- ModelTelemetry.make(clock,Set("alice"))
+    telemetry <- ModelTelemetry.make(clock)
     _ <- record(telemetry,alice,ModelCallOutcome.Complete,reported(1L,0L,0L))
     snapshot <- telemetry.snapshot("alice")
     _ <- IO {
@@ -395,7 +393,7 @@ class ModelTelemetryTest extends munit.FunSuite {
       _ <- clockContract(manual)
       production=new JavaModelTelemetryClock(JavaClock.fixed(anchor,ZoneOffset.UTC),cats.effect.Clock[IO])
       _ <- clockContract(production)
-      telemetry <- ModelTelemetry.make(production,Set("alice"))
+      telemetry <- ModelTelemetry.make(production)
       _ <- IO.sleep(20.millis)
       snapshot <- telemetry.snapshot("alice")
       _ <- IO { assert(snapshot.coveredMillis>0L); assertEquals(snapshot.windowEndAt,anchor.plusMillis(snapshot.coveredMillis)) }

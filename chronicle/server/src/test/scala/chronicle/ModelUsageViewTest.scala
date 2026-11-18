@@ -17,7 +17,7 @@ final class ModelUsageViewTest extends munit.FunSuite {
   private def fixture(f: (Ref[IO,Long],ModelTelemetry,ModelUsageView) => IO[Unit]): Unit = (for {
     millis <- Ref.of[IO,Long](0L)
     clock=new ModelTelemetryClock { def read: IO[ModelTelemetryTime] = millis.get.map(value => ModelTelemetryTime(value*1000000L,started.plusMillis(value))) }
-    telemetry <- ModelTelemetry.make(clock,Set("","a","b"))
+    telemetry <- ModelTelemetry.make(clock)
     _ <- f(millis,telemetry,new ModelUsageView(telemetry,settings))
   } yield ()).unsafeRunSync()
 

@@ -1,4 +1,4 @@
-{ lib, stdenv, callPackage, zlib, python3, squishLib, service }:
+{ lib, stdenv, callPackage, zlib, squishLib, service }:
 assert builtins.elem service [ "haystack" "manure" ];
 let
   environment = callPackage ../chronicle/sbt-environment.nix { inherit squishLib; };
@@ -10,7 +10,7 @@ in stdenv.mkDerivation {
   pname = "${service}-native-artifact";
   version = "0.1.0";
   src = sources."${service}Server";
-  nativeBuildInputs = [ environment.tools.graal python3 ];
+  nativeBuildInputs = [ environment.tools.graal ];
   buildInputs = [ zlib ];
   LANG = "C.UTF-8";
   LC_ALL = "C.UTF-8";
@@ -26,7 +26,7 @@ in stdenv.mkDerivation {
     find . -type f -print0 | sort -z | xargs -0 sha256sum > ../compiled-inputs.sha256
     ${environment.setup}
     read -r -a sbtJavaOpts <<< "$SBT_JAVA_OPTS"
-    java "''${sbtJavaOpts[@]}" -jar ${environment.tools.launcher} ${project}/assembly${lib.optionalString (service == "manure") "\n    python3 ${./verify-manure-assembly.py} ${jar} ../assembly-inputs.json"}
+    java "''${sbtJavaOpts[@]}" -jar ${environment.tools.launcher} ${project}/assembly
     threads=$NIX_BUILD_CORES
     if (( threads > 8 )); then threads=8; fi
     ${lib.optionalString (service == "manure") ''
@@ -56,7 +56,7 @@ in stdenv.mkDerivation {
   installPhase = ''
     install -Dm755 ${service}-server "$out/libexec/${service}-server"
     install -Dm644 ../compiled-inputs.sha256 "$out/share/${service}/compiled-inputs-full.sha256"
-    install -Dm644 ../compiled-inputs.sha256 "$out/share/${service}/compiled-inputs.sha256"${lib.optionalString (service == "manure") "\n    install -Dm644 ../assembly-inputs.json \"$out/share/manure/assembly-inputs.json\""}
+    install -Dm644 ../compiled-inputs.sha256 "$out/share/${service}/compiled-inputs.sha256"
     printf '%s\n' '${sources."${service}Server"}' > "$out/share/${service}/runtime-source"
     printf '%s\n' '${environment.tools.graal}' > "$out/share/${service}/toolchain"
   '';

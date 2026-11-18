@@ -14,6 +14,7 @@ import org.http4s.ember.client.EmberClientBuilder
 import org.http4s.ember.server.EmberServerBuilder
 import org.http4s.implicits.*
 import org.typelevel.ci.CIString
+import ponygirls.auth.Totp
 import scala.concurrent.duration.*
 
 class AccountHttpTest extends munit.FunSuite {
@@ -33,8 +34,29 @@ class AccountHttpTest extends munit.FunSuite {
     def login(name: String): IO[Reply]=request(Method.POST,root+"/login",None,s"""{"login":"$name","password":"synthetic"}""",Nil)
     def get(cookie: String): IO[Reply]=request(Method.GET,root,Some(cookie),"",Nil)
     def post(owner: String,path: String,cookie: String,body: String): IO[Reply]=request(Method.POST,root+path,Some(cookie),body,List("X-Account-Actor"->ponygirls.auth.AccountJson.actor(owner)))
+    def signup(name: String,requireTotp: Boolean): IO[Reply] = IO(Totp.code(Totp.decodeSecret(totpSecret).get,Totp.stepAt(java.time.Instant.now()))).flatMap { code =>
+      request(Method.POST,root+"/signup",None,s"""{"username":"$name","email":"$name@example.test","password":"$imperativePassword","totpSecret":"$totpSecret","totpCode":"$code","requireTotp":$requireTotp}""",Nil)
+    }
+    def legacyLogin(name: String,password: String): IO[Reply]=request(Method.POST,"/api/login",None,Wire.encode(LoginRequest.codecJson,LoginRequest(name,password)).noSpaces,Nil)
+    def restart(config: Config): Unit = { val database=new Database(config,services.database.profiles); try database.initialize() finally database.close() }
   }
-  private def fixture: Resource[IO,Fixture] = for {
+  private val imperativePassword="synthetic imperative"
+  private val totpSecret="GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ"
+  private def username(): String="u"+java.util.UUID.randomUUID().toString.take(8)
+  private def imperativeAccounts(requireApproval: Boolean): AccountsConfig = {
+    val key=java.nio.file.Files.createTempFile("chronicle-accounts-",".key")
+    java.nio.file.Files.setPosixFilePermissions(key,java.nio.file.attribute.PosixFilePermissions.fromString("rw-------"))
+    java.nio.file.Files.writeString(key,Wire.secret())
+    AccountsConfig(true,Some(key.toString),SignupConfig(true,requireApproval,AccountsConfig.defaultMaxUsers),EnrollmentConfig(false,AccountsConfig.defaultEnrollmentTtlSeconds),None,Nil)
+  }
+  // Removes the accounts a case created together with their projections, so no later suite sees them.
+  private def clearImperative(database: Database): Unit = database.transaction { c =>
+    List("ch_sessions","ch_tokens","ch_owner_targets").foreach(table => Sql.exec(c,s"DELETE FROM $table WHERE owner IN(SELECT id FROM ponygirls_imperative_users)"))
+    Sql.exec(c,"DELETE FROM ch_users WHERE id IN(SELECT id FROM ponygirls_imperative_users)")
+    Sql.exec(c,"DELETE FROM ponygirls_imperative_users")
+  }
+  private def fixture: Resource[IO,Fixture] = fixture(None)
+  private def fixture(accounts: Option[AccountsConfig]): Resource[IO,Fixture] = for {
     config <- Resource.eval(IO {
       if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
       Fixtures.config()
@@ -46,7 +68,7 @@ class AccountHttpTest extends munit.FunSuite {
       java.nio.file.Files.writeString(file,secret)
       StaticTokenConfig(java.util.UUID.randomUUID(),"a","configured",List(Scope.Ingest),file.toString)
     })
-    actual=config.copy(staticTokens=List(token))
+    actual=config.copy(staticTokens=List(token),accounts=accounts,users=config.users.map(user => user.copy(admin=accounts.nonEmpty && user.id=="a")))
     runtimeClient <- EmberClientBuilder.default[IO].build
     services <- {
       val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(actual); make[Client[IO]].fromValue(runtimeClient) }
@@ -57,8 +79,10 @@ class AccountHttpTest extends munit.FunSuite {
       services.database.transaction(c => Sql.exec(c,"TRUNCATE ch_tokens,ch_sessions,ch_mutations CASCADE"))
       services.database.initialize()
     })
+    _ <- if(accounts.isEmpty) Resource.unit[IO] else Resource.make(IO.blocking(clearImperative(services.database)))(_ => IO.blocking(clearImperative(services.database)))
+    plane <- services.http.accountPlane
     gate <- Resource.eval(Semaphore[IO](2))
-    server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => services.http.routes(ws,gate).orNotFound).build
+    server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => services.http.routes(ws,gate,plane).orNotFound).build
     client <- EmberClientBuilder.default[IO].build
   } yield Fixture(actual,services,client,s"http://127.0.0.1:${server.address.getPort}",token,secret)
 
@@ -138,6 +162,9 @@ class AccountHttpTest extends munit.FunSuite {
       valid <- f.get(logged.cookie)
       badLogin <- f.request(Method.POST,root+"/login",None,"""{"login":"a","password":"wrong synthetic"}""",Nil)
       _ <- IO { assertEquals(valid.status,Status.Ok); assertEquals(badLogin.status,Status.Unauthorized); assertEquals(badLogin.code,"unauthorized") }
+      // Without `accounts.enabled` no imperative-account route is registered.
+      unregistered <- List(f.request(Method.GET,root+"/policy",None,"",Nil),f.request(Method.POST,root+"/signup",None,"{}",Nil)).sequence
+      _ <- IO(unregistered.foreach(reply => assertEquals(reply.status,Status.NotFound)))
     } yield () }.unsafeRunSync()
   }
 
@@ -243,5 +270,167 @@ class AccountHttpTest extends munit.FunSuite {
       login <- f.login("a")
       _ <- IO(List(settings,login).foreach { reply => assertEquals(reply.status,Status.ServiceUnavailable); assertEquals(reply.code,"unavailable") })
     } yield () }.unsafeRunSync()
+  }
+
+  test("BG GoodCommunication specified: imperative signup approval login profile and logout project the approved account into ch_users and ch_owner_targets") {
+    fixture(Some(imperativeAccounts(true))).use { f => for {
+      name <- IO(username())
+      applied <- f.signup(name,false)
+      _ <- IO.blocking {
+        assertEquals(applied.status,Status.Accepted)
+        assertEquals(applied.headers.get(CIString("Set-Cookie")),None)
+        assertEquals(f.services.database.transaction(c => Sql.one(c,"SELECT count(*) FROM ch_users WHERE id=?",name)(_.getInt(1))),Some(0))
+      }
+      admin <- f.login("a")
+      approved <- f.post("a",s"/admin/users/$name/approve",admin.cookie,"{}")
+      _ <- IO.blocking {
+        assertEquals(approved.status,Status.Ok)
+        f.services.database.transaction { c =>
+          assertEquals(Sql.one(c,"SELECT u.login,u.enabled,u.credential=i.password_hash FROM ch_users u JOIN ponygirls_imperative_users i ON i.id=u.id WHERE u.id=?",name)(r => (r.getString(1),r.getBoolean(2),r.getBoolean(3))),Some((name,true,true)))
+          assertEquals(Sql.one(c,"SELECT profile FROM ch_owner_targets WHERE owner=?",name)(_.getString(1)),Some(f.services.database.profiles.preferred.profile))
+        }
+      }
+      logged <- f.request(Method.POST,root+"/login",None,s"""{"login":"$name","password":"$imperativePassword"}""",Nil)
+      profile <- f.request(Method.GET,root+"/profile",Some(logged.cookie),"",Nil)
+      settings <- f.get(logged.cookie)
+      logout <- f.post(name,"/logout",logged.cookie,"{}")
+      replay <- f.request(Method.GET,root+"/profile",Some(logged.cookie),"",Nil)
+      _ <- IO {
+        assertEquals(logged.status,Status.Ok)
+        assertEquals(logged.json.hcursor.downField("user").get[String]("id").toOption,Some(name))
+        assertEquals(profile.status,Status.Ok)
+        assertEquals(profile.json.hcursor.get[String]("source").toOption,Some("imperative"))
+        assertEquals(profile.json.hcursor.get[Boolean]("admin").toOption,Some(false))
+        assertEquals(profile.json.hcursor.get[String]("email").toOption,Some(s"$name@example.test"))
+        assertEquals(settings.json.hcursor.downField("user").get[String]("login").toOption,Some(name))
+        assertEquals(logout.status,Status.Ok)
+        assertEquals(replay.status,Status.Unauthorized)
+      }
+    } yield () }.unsafeRunSync()
+  }
+
+  test("BG GoodCommunication specified: a retained ch_users id or login cannot be registered and its row archive and tokens stay unchanged") {
+    fixture(Some(imperativeAccounts(false))).use { f =>
+      val suffix=username()
+      val removed=UserConfig("Kept-"+suffix,"Mail-"+suffix,f.config.users.head.passwordHashFile,true,false)
+      val source=java.util.UUID.randomUUID(); val token=java.util.UUID.randomUUID()
+      def retained: (Option[String],Option[String],Option[String],Option[Int]) = f.services.database.transaction { c => (
+        Sql.one(c,"SELECT login||' '||enabled||' '||credential FROM ch_users WHERE id=?",removed.id)(_.getString(1)),
+        Sql.one(c,"SELECT owner FROM ch_sources WHERE id=?",source)(_.getString(1)),
+        Sql.one(c,"SELECT owner||' '||hash||' '||revoked FROM ch_tokens WHERE id=?",token)(_.getString(1)),
+        Sql.one(c,"SELECT (SELECT count(*) FROM ch_users)+(SELECT count(*) FROM ponygirls_imperative_users)")(_.getInt(1))) }
+      Resource.make(IO.blocking {
+        // Configured, used, then removed from configuration: the row stays, disabled.
+        f.restart(f.config.copy(users=f.config.users:+removed))
+        f.services.database.transaction { c =>
+          Sql.exec(c,"INSERT INTO ch_sources(id,owner,source_key) VALUES(?,?,?)",source,removed.id,"retained")
+          Sql.exec(c,"INSERT INTO ch_tokens(id,owner,hash,info) VALUES(?,?,?,?::jsonb)",token,removed.id,Wire.hash(Wire.secret()),Wire.encode(TokenInfo.codecJson,TokenInfo(token,"retained",List(Scope.Read),java.time.Instant.now().toString,false)).noSpaces)
+        }
+        f.restart(f.config)
+        retained
+      })(_ => IO.blocking(f.services.database.transaction { c =>
+        List("ch_sources","ch_tokens","ch_owner_targets").foreach(table => Sql.exec(c,s"DELETE FROM $table WHERE owner=?",removed.id))
+        Sql.exec(c,"DELETE FROM ch_users WHERE id=?",removed.id); ()
+      })).use { before => for {
+        refused <- List(removed.id,removed.login).traverse(taken => f.signup(taken.toLowerCase,false))
+        after <- IO.blocking(retained)
+        _ <- IO {
+          assertEquals(before._1,Some(s"${removed.login} false ${Config.credential(removed.passwordHashFile)}"))
+          assertEquals(before._2,Some(removed.id))
+          refused.foreach { reply => assertEquals(reply.status,Status.Conflict); assertEquals(reply.code,"username-unavailable"); assertEquals(reply.headers.get(CIString("Set-Cookie")),None) }
+          assertEquals(after,before)
+        }
+      } yield () }
+    }.unsafeRunSync()
+  }
+
+  test("BG GoodCommunication specified: restart keeps an active imperative account enabled with accounts on suspends it with accounts off and leaves its token intact") {
+    fixture(Some(imperativeAccounts(false))).use { f => for {
+      name <- IO(username())
+      signed <- f.signup(name,false)
+      issued <- f.post(name,"/tokens",signed.cookie,"""{"name":"runtime","scopes":["Read"]}""")
+      _ <- IO { assertEquals(signed.status,Status.Ok); assertEquals(issued.status,Status.Ok) }
+      secret=issued.json.hcursor.get[String]("secret").toOption.get
+      _ <- IO.blocking {
+        val auth=new Auth(f.services.database,f.config)
+        // enabled projection, live browser sessions, stored token state, bearer accepted
+        def state: (Option[Boolean],Option[Int],Option[String],Boolean) = {
+          val stored=f.services.database.transaction { c => (
+            Sql.one(c,"SELECT enabled FROM ch_users WHERE id=?",name)(_.getBoolean(1)),
+            Sql.one(c,"SELECT count(*) FROM ch_sessions WHERE owner=?",name)(_.getInt(1)),
+            Sql.one(c,"SELECT t.hash||' '||t.revoked||' '||i.status FROM ch_tokens t JOIN ponygirls_imperative_users i ON i.id=t.owner WHERE t.owner=?",name)(_.getString(1))) }
+          (stored._1,stored._2,stored._3,scala.util.Try(auth.bearer(secret)).isSuccess)
+        }
+        val token=Some(s"${Wire.hash(secret)} false active")
+        val suspended=(Some(false),Some(0),token,false)
+        // The master switch is explicit: a creation flag without it, no key file or no enabled administrator is a configuration fault.
+        val on=f.config.accounts.get
+        f.config.validate()
+        List(f.config.copy(accounts=Some(on.copy(enabled=false))),f.config.copy(accounts=Some(on.copy(keyFile=None))),f.config.copy(users=f.config.users.map(_.copy(admin=false))))
+          .foreach(invalid => assertEquals(intercept[DomainError](invalid.validate()).code,"config"))
+        assertEquals(Wire.parse("""{"enabled":true,"keyFile":"/run/accounts-key"}""").as[AccountsConfig](using Config.given_Decoder_AccountsConfig).toOption,
+          Some(AccountsConfig(true,Some("/run/accounts-key"),SignupConfig(false,true,100),EnrollmentConfig(false,86400),None,Nil)))
+        f.restart(f.config)
+        assertEquals(state,(Some(true),Some(1),token,true))
+        f.restart(f.config.copy(accounts=None))
+        assertEquals(state,suspended)
+        f.services.database.transaction { c =>
+          assertEquals(Database.activeImperativeAccounts(c),1)
+          assertEquals(Database.imperativeAccountsSealedByAnotherKey(c,ponygirls.auth.TotpVault.load(java.nio.file.Path.of(on.keyFile.get),AccountsConfig.service).keyId),0)
+          assertEquals(Database.imperativeAccountsSealedByAnotherKey(c,"another key"),1)
+        }
+        // A configured login equal to the suspended account fails closed and writes nothing.
+        val colliding=f.config.copy(accounts=None,users=f.config.users:+UserConfig("declared-"+name,name.toUpperCase,f.config.users.head.passwordHashFile,true,false))
+        assertEquals(intercept[DomainError](f.restart(colliding)).code,"config")
+        assertEquals(state,suspended)
+        f.restart(f.config)
+        assertEquals(state,(Some(true),Some(0),token,true))
+      }
+    } yield () }.unsafeRunSync()
+  }
+
+  test("BG GoodCommunication specified: legacy login refuses a mandatory-TOTP imperative account commits its wrong-password failure and signs in other accounts") {
+    fixture(Some(imperativeAccounts(false))).use { f =>
+      def failures(name: String): IO[Option[Int]] = IO.blocking(f.services.database.transaction(c => Sql.one(c,"SELECT password_failures FROM ponygirls_imperative_users WHERE id=?",name)(_.getInt(1))))
+      for {
+        strict <- IO(username())
+        plain <- IO(username())
+        _ <- f.signup(strict,true)
+        _ <- f.signup(plain,false)
+        refused <- f.legacyLogin(strict,imperativePassword)
+        clean <- failures(strict)
+        wrong <- f.legacyLogin(strict,"wrong "+imperativePassword)
+        counted <- failures(strict)
+        accepted <- f.legacyLogin(plain,imperativePassword)
+        configured <- f.legacyLogin("a","synthetic")
+        account <- f.get(accepted.cookie)
+        // The login methods behind both routes decide an imperative login themselves and raise its rejection only after the counting transaction committed.
+        _ <- IO.blocking {
+          val auth=new Auth(f.services.database,f.config)
+          def failed: Option[Int] = f.services.database.transaction(c => Sql.one(c,"SELECT password_failures FROM ponygirls_imperative_users WHERE id=?",plain)(_.getInt(1)))
+          assertEquals(intercept[DomainError](auth.login(LoginRequest(plain,"wrong "+imperativePassword))).code,"unauthorized")
+          assertEquals(failed,Some(1))
+          assertEquals(intercept[DomainError](auth.accountLogin(plain,"wrong "+imperativePassword)).code,"unauthorized")
+          assertEquals(failed,Some(2))
+          assertEquals(auth.browser(auth.login(LoginRequest(plain,imperativePassword))._2).user.id,plain)
+          val (user,secret)=auth.accountLogin(plain,imperativePassword)
+          assertEquals((user.id,auth.browser(secret).user.id),(plain,plain))
+          assertEquals(failed,Some(0))
+          assertEquals(intercept[DomainError](auth.accountLogin(strict,imperativePassword)).code,"totp-required")
+        }
+        _ <- IO {
+          List(refused,wrong).foreach { reply =>
+            assertEquals(reply.status,Status.Unauthorized)
+            assertEquals(reply.json.hcursor.get[String]("code").toOption,Some("unauthorized"))
+            assertEquals(reply.headers.get(CIString("Set-Cookie")),None)
+          }
+          assertEquals(clean,Some(0))
+          assertEquals(counted,Some(1))
+          assertEquals(accepted.status,Status.Ok)
+          assertEquals(account.json.hcursor.downField("user").get[String]("id").toOption,Some(plain))
+          assertEquals(configured.status,Status.Ok)
+        }
+      } yield ()
+    }.unsafeRunSync()
   }
 }

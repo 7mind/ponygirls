@@ -64,6 +64,8 @@ class BrowserWebSocketTest extends munit.FunSuite {
     })(s => IO(s.ws.abort()))
   } yield connection
 
+  // Production hello and ping schedule; only the session recheck is quickened.
+  private val TestLiveness=Http.SocketLiveness.production.copy(tick=100.millis)
   private final case class Fixture(config: Config,db: Database,auth: Auth,app: Application,archive: PostgresArchive,protocol: VersionedWire,wire: McpTestWire,runs: McpTestRuns)
   private def fixture(embedder: Embedder,model: McpTestModel,tools: McpRunTools,wrap: RunAuthorization => RunAuthorization): Resource[IO,Fixture] = for {
     config <- Resource.eval(IO(Fixtures.config()))
@@ -88,14 +90,14 @@ class BrowserWebSocketTest extends munit.FunSuite {
     app=new Application(archive,new PostgresSearch(db,archive,config),embedder,auth,db,new CollectorProgress(new PostgresCollectorProgressStore(db),java.time.Clock.systemUTC()),new PostgresArchiveIndex(db,archive,config),new PostgresActivity(db,java.time.Clock.systemUTC()),new PostgresExpressionHintIndex(db,archive,java.time.Clock.systemUTC()),ModelFixtures.usage(config))
     protocol=new VersionedWire
     wire=new McpTestWire(protocol)
-    runs <- McpTestRuns.resource(tools,model,wrap(new PostgresRunAuthorization(db,auth)),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet,wire,IO(UUID.randomUUID()))
+    runs <- McpTestRuns.resource(tools,model,wrap(new PostgresRunAuthorization(db,auth)),new SystemMcpRunClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),wire,IO(UUID.randomUUID()))
   } yield Fixture(config,db,auth,app,archive,protocol,wire,runs)
 
   private def server(fixture: Fixture): Resource[IO,String] = for {
     gate <- Resource.eval(Semaphore[IO](2))
     controls <- BrowserControlAdmission.resource
     rpc=new BrowserRpc(fixture.app,fixture.runs,fixture.wire)
-    http=new Http(fixture.config,fixture.auth,fixture.app,fixture.archive,new Mcp(fixture.app),logstage.IzLogger(),Http.WebRoot(None),fixture.protocol,rpc,controls)
+    http=new Http(fixture.config,fixture.auth,fixture.app,fixture.archive,new Mcp(fixture.app),logstage.IzLogger(),Http.WebRoot(None),fixture.protocol,rpc,controls,TestLiveness)
     server <- EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => http.routes(ws,gate).orNotFound).build
   } yield s"ws://127.0.0.1:${server.address.getPort}/api/ws"
 
@@ -207,14 +209,14 @@ class BrowserWebSocketTest extends munit.FunSuite {
               hello <- client.request(Operation.Hello(List(Wire.versions.current)))
               _ <- IO(assert(hello.isInstanceOf[Result.Hello]))
               before <- expires
-              _ <- IO.sleep(1200.millis)
+              _ <- IO.sleep(TestLiveness.tick*4)
               after <- expires
               _ <- IO(assertEquals(after,before,"heartbeat authentication must remain read-only"))
               _ <- IO(assertEquals(before,null,"new sessions have no server deadline to extend"))
               request=Request[IO](Method.POST,Uri.unsafeFromString(url.replace("ws://","http://").stripSuffix("/api/ws")+"/api/session/refresh"))
                 .putHeaders(Header.Raw(org.typelevel.ci.CIString("Origin"),f.config.allowedOrigin),Header.Raw(org.typelevel.ci.CIString("Cookie"),s"chronicle_session=$secret"))
               _ <- httpClient.run(request).use { response => IO(assertEquals(response.status,Status.Ok)) *> response.body.compile.drain }
-              _ <- IO.sleep(4.seconds)
+              _ <- IO.sleep(TestLiveness.tick*8)
               current <- client.request(Operation.Whoami())
               _ <- IO { assert(current.isInstanceOf[Result.Whoami]); assert(!client.closed.isDone) }
               _ <- IO.blocking {

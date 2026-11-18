@@ -17,7 +17,7 @@ abstract class ModelAccountingContract extends munit.FunSuite {
     val base=Fixtures.config()
     base.copy(annotation=base.annotation.copy(timeoutSeconds=900,requestPolicy=AnnotationRequestPolicy.GlmMaxReasoning),indexing=IndexingCapacity(2,1,2))
   }
-  private def telemetry(config: Config): IO[ModelTelemetry] = ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),config.users.map(_.id).toSet)
+  private def telemetry(config: Config): IO[ModelTelemetry] = ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]))
   private def row(value: ModelUsageSnapshot,purpose: ModelWorkload): ModelWorkloadUsage = value.samples.find(_.purpose==purpose).get
   private val usage=Json.obj("prompt_tokens"->Json.fromInt(11),"completion_tokens"->Json.fromInt(7),"completion_tokens_details"->Json.obj("reasoning_tokens"->Json.fromInt(3)))
   private def reply(finish: String,content: String): Json = Json.obj("usage"->usage,"choices"->Json.arr(Json.obj("finish_reason"->Json.fromString(finish),"message"->Json.obj("content"->Json.fromString(content)))))
@@ -202,7 +202,7 @@ class InProcessModelAccountingTest extends ModelAccountingContract {
   test("BG: cancellation during ticket acquisition installs its terminal finalizer before releasing admission") {
     val config=Fixtures.config().copy(indexing=IndexingCapacity(1,1,1))
     (for {
-      real <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),Set("a"))
+      real <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]))
       acquired <- Deferred[IO,Unit]
       release <- Deferred[IO,Unit]
       calls <- Ref.of[IO,Int](0)
@@ -234,7 +234,7 @@ class InProcessModelAccountingTest extends ModelAccountingContract {
     (for {
       releasing <- Deferred[IO,Unit]
       release <- Deferred[IO,Unit]
-      store <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]),Set("a"))
+      store <- ModelTelemetry.make(new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO]))
       admission <- ModelAdmission.make(config.indexing)
       response=Response[IO](Status.Ok).withEntity("""{"usage":{"prompt_tokens":9,"completion_tokens":4}}""")
       client=Client[IO](_ => Resource.make(IO.pure(response))(_ => releasing.complete(()).void *> release.get))

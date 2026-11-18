@@ -192,7 +192,7 @@ class McpTextPresentationTest extends munit.FunSuite {
         val results=request.hcursor.get[Vector[Json]]("messages").toOption.get.filter(_.hcursor.get[String]("role").toOption.contains("tool"))
         IO.pure(if(results.isEmpty) toolReply(List(("who","whoami",Json.obj("responseFormat"->s("text")))),None) else finalReply("complete"))
       }
-      _ <- McpTestRuns.resource(f.tools,llm,auth,time,Set("a"),encoding,IO(UUID.randomUUID())).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
+      _ <- McpTestRuns.resource(f.tools,llm,auth,time,encoding,IO(UUID.randomUUID())).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
         for {
           catalog <- runner.catalog(McpTestFixtures.identity); id <- IO(UUID.randomUUID())
           _ <- runner.start(McpTestFixtures.identity,connection,catalog.instanceId,id,"who am I")
@@ -275,7 +275,7 @@ class McpTextPresentationTest extends munit.FunSuite {
         val size=request.hcursor.get[Vector[Json]]("messages").toOption.get.size
         IO.pure(if(size==2) toolReply(List(("who","whoami",Json.obj("responseFormat"->s("text")))),None) else finalReply("must not run"))
       }
-      _ <- McpTestRuns.resource(delayed,llm,auth,time,Set("a"),encoding,IO(UUID.randomUUID())).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
+      _ <- McpTestRuns.resource(delayed,llm,auth,time,encoding,IO(UUID.randomUUID())).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
         for {
           catalog <- runner.catalog(McpTestFixtures.identity); id <- IO(UUID.randomUUID())
           _ <- runner.start(McpTestFixtures.identity,connection,catalog.instanceId,id,"cancel text")

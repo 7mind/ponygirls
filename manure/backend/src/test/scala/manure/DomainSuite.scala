@@ -25,7 +25,7 @@ final class DomainSuite extends FunSuite:
     assert(Exact.matching("Straße").contains("strasse")) // Normative full fold, not ROOT lowercase.
   }
   test("manifest canonical path and topology bounds reject every traversal form") {
-    Vector("","/x","C:x","a\\b","a//b","a/",".","..","a/../b","a/./b","api/x","__manure/x","a\u0000b","a\nb","a\u007fb",("x/"*64)+"x").foreach(v => intercept[DomainError](Manifest.path(v)))
+    Vector("","/x","C:x","a\\b","a//b","a/",".","..","a/../b","a/./b","api","__manure","api/x","__manure/x","a\u0000b","a\nb","a\u007fb",("x/"*64)+"x").foreach(v => intercept[DomainError](Manifest.path(v)))
     Manifest.path("résumé/馬💩.txt"); Manifest.path("%2e%2e")
     val limits = Limits()
     val file = ManifestEntry("f",false,1,"a"*64)

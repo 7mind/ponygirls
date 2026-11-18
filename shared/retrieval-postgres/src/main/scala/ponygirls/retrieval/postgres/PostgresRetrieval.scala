@@ -37,8 +37,11 @@ object PostgresRetrieval {
   * in that same transaction. Principal authentication/revocation is app-owned; this
   * is not a cache of a previously computed allowed-ID list.
   */
-final class PostgresRetrieval(val namespace: String,val profile: Option[RetrievalProfile]) {
+final class PostgresRetrieval(val namespace: String,val profile: Option[RetrievalProfile],private[postgres] val candidatesPerLeg: Int) {
   import Jdbc.*
+  def this(namespace: String,profile: Option[RetrievalProfile]) = this(namespace,profile,CandidatePolicy.candidatesPerLeg)
+  RetrievalChecks(candidatesPerLeg>0,"config","candidate window must be positive")
+  private def rankingLimit(mode: RetrievalMode): Int = if(mode==RetrievalMode.Hybrid) candidatesPerLeg*2 else candidatesPerLeg
   RetrievalChecks.text(namespace,128)
   profile.foreach(_.validate())
   private val ns=key(namespace)
@@ -219,7 +222,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
     transaction(c)
     RetrievalChecks(query.principal.nonEmpty && query.text.length<=2048 && query.offset>=0 && query.limit>=1 && query.filters.size<=PostgresRetrieval.MaxFilters,"invalid","invalid retrieval query")
     val semantic=query.mode!=RetrievalMode.Lexical
-    RetrievalChecks(!semantic || query.offset<CandidatePolicy.rankingLimit(query.mode),"invalid","offset exceeds candidate ranking window")
+    RetrievalChecks(!semantic || query.offset<rankingLimit(query.mode),"invalid","offset exceeds candidate ranking window")
     val (scope,scopeArgs)=authorization(query)
     val (sql,args)=if(!semantic) {
       val matches=if(query.text.nonEmpty) " AND ch.document @@ websearch_to_tsquery('english',?)" else ""
@@ -238,9 +241,9 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       val authorized=s"(SELECT true FROM pony_retrieval_sources s WHERE s.namespace=ch.namespace AND s.id=ch.source_id AND s.published=ch.generation AND $scope OFFSET 0)"
       val base=s"ch.namespace=? AND vector_dims(ch.embedding)=${p.space.dimensions} AND ch.profile=? AND $authorized"
       val baseArgs=List[Value](ns,p.id)++scopeArgs
-      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base ORDER BY ${CandidateSql.annDistance(p.space.dimensions,"ch.embedding")} LIMIT ${CandidatePolicy.candidatesPerLeg})"
+      val ann=s"ann AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base ORDER BY ${CandidateSql.annDistance(p.space.dimensions,"ch.embedding")} LIMIT $candidatesPerLeg)"
       val (legs,legArgs)=if(query.mode==RetrievalMode.Hybrid && query.text.nonEmpty) {
-        (s",lexical AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base AND ch.document @@ websearch_to_tsquery('english',?) ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT ${CandidatePolicy.candidatesPerLeg}),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",baseArgs++List[Value](query.text,query.text))
+        (s",lexical AS MATERIALIZED(SELECT $fields FROM pony_retrieval_chunks ch JOIN pony_retrieval_generations g ON g.namespace=ch.namespace AND g.id=ch.generation WHERE $base AND ch.document @@ websearch_to_tsquery('english',?) ORDER BY ts_rank_cd(ch.document,websearch_to_tsquery('english',?)) DESC,ch.id LIMIT $candidatesPerLeg),candidates AS(SELECT * FROM ann UNION SELECT * FROM lexical)",baseArgs++List[Value](query.text,query.text))
       } else (",candidates AS(SELECT * FROM ann)",Nil)
       (s"WITH $ann$legs,"+CandidateSql.rerankCtes(query.mode,"source_id"),baseArgs++List[Value](v)++legArgs++List[Value](query.text,query.text,v))
     }
@@ -254,7 +257,7 @@ final class PostgresRetrieval(val namespace: String,val profile: Option[Retrieva
       val hit=Option(r.getString("source_id")).map { id => RetrievalHit(unkey(id),unkey(r.getString("version")),r.getString("generation"),Option(r.getString("profile")),Option(r.getString("space")),readChunk(r),r.getDouble("score")) }
       (r.getLong("total"),hit)
     }
-    RetrievalPage(result.flatMap(_._2),result.head._1,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(CandidatePolicy.rankingLimit(query.mode)) else None)
+    RetrievalPage(result.flatMap(_._2),result.head._1,if(semantic) CountScope.CandidateWindow else CountScope.ExactMatches,if(semantic) Some(rankingLimit(query.mode)) else None)
   }
   /** Delivery-time reauthorization on a fresh transaction; never relabel a pinned old hit. */
   def visible(c: Connection,query: RetrievalQuery,id: String): Boolean = {

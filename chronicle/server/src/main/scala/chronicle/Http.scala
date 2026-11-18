@@ -10,11 +10,11 @@ import org.http4s.server.websocket.WebSocketBuilder2
 import org.http4s.websocket.WebSocketFrame
 import org.typelevel.ci.CIString
 import java.util.UUID
-import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie}
+import ponygirls.auth.{AccountJson,AccountFailure,PersistentCookie,AccountCredential,AccountEvent,AccountEventKind,AccountRejection,AccountReply,AccountRequest,AccountSession,ClientAddress,CookieEffect,CredentialEndpoint,DeclarativeLogin,ImperativeAccountApi,ImperativePolicy,SignedIn}
 import java.nio.file.{Files,Path}
 import scala.concurrent.duration.*
 
-final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission) {
+final class Http(config: Config,auth: Auth,app: Application,archive: SessionArchive,mcp: Mcp,logger: logstage.IzLogger,webRoot: Http.WebRoot,protocol: VersionedWire,rpc: BrowserRpc,controls: BrowserControlAdmission,liveness: Http.SocketLiveness) {
   private val socketQueueCapacity = 32
   private val retryableCloseCode = 1013
   private val normalCloseCode = 1000
@@ -31,7 +31,7 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
   private def json(status: Status,j: io.circe.Json): Response[IO] = Response[IO](status).withEntity(j.noSpaces).putHeaders(Header.Raw(CIString("Content-Type"),"application/json"),Header.Raw(CIString("Cache-Control"),"no-store"))
   private def sessionCookie(secret: String,maxAge: Long): ResponseCookie = ResponseCookie("chronicle_session",secret,path=Some("/"),maxAge=Some(maxAge),secure=config.secureCookies,httpOnly=true,sameSite=Some(SameSite.Strict))
   private def failure(d: DomainError): Response[IO] = {
-    val status = d.code match { case "unauthorized" => Status.Unauthorized; case "forbidden" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" => Status.Conflict; case "gone" => Status.Gone; case "too-large" => Status.PayloadTooLarge; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
+    val status = d.code match { case "unauthorized" | "totp-required" => Status.Unauthorized; case "forbidden" | "pending-approval" => Status.Forbidden; case "not-found" => Status.NotFound; case "conflict" => Status.Conflict; case "gone" => Status.Gone; case "too-large" => Status.PayloadTooLarge; case "rate-limited" => Status.TooManyRequests; case "unavailable" => Status.ServiceUnavailable; case _ => Status.BadRequest }
     val r = json(status,Wire.encode(Failure.codecJson,Failure(d.code,d.detail)))
     if(status==Status.Unauthorized) r.putHeaders(Header.Raw(CIString("WWW-Authenticate"),"Bearer realm=\"chronicle\"")) else r
   }
@@ -57,14 +57,92 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     case a: AccountFailure => IO.pure(json(failure(DomainError(a.code,"")).status,AccountJson.failure(a.code)))
     case _ => IO(logger.error("account request failed")) *> IO.pure(json(Status.ServiceUnavailable,AccountJson.failure("unavailable")))
   }
-  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO]): HttpRoutes[IO] = HttpRoutes.of[IO] {
-    case r @ POST -> Root / "api" / "account" / "v1" / "login" => handleAccount {
-      IO(accountBoundary(r,true)) *> loginGate.permit.use { _ =>
-        accountBody(r).flatMap { j => IO.blocking {
-          val (login,password)=AccountJson.decodeLogin(j)
-          val (user,secret)=auth.accountLogin(login,password)
-          json(Status.Ok,io.circe.Json.obj("user"->AccountJson.user(user))).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
-        }}
+  // The socket peer, or the right-most X-Forwarded-For element when that peer is the local reverse proxy.
+  private def clientAddress(r: Request[IO]): String =
+    ClientAddress.resolve(r.remote.map(_.host.toString).getOrElse(Http.unknownPeer),r.headers.headers.filter(_.name==CIString("X-Forwarded-For")).map(_.value).toVector,Http.loopback)
+  private def presentedSession(r: Request[IO]): Option[String] = Some(cookie(r)).filter(_.nonEmpty)
+  private def retryAfter(response: Response[IO],seconds: Long): Response[IO] = response.putHeaders(Header.Raw(CIString("Retry-After"),seconds.toString))
+  private def audit(event: AccountEvent): Unit = {
+    val fields=event.fields.map { case (name,value) => s"$name=$value" }.mkString(" ")
+    logger.info(s"account security ${fields -> "fields" -> null}")
+  }
+  private def accountReply(reply: AccountReply): Response[IO] = {
+    val response=json(Status.fromInt(reply.status).fold(throw _,identity),reply.body)
+    val delayed=reply.retryAfterSeconds.fold(response)(retryAfter(response,_))
+    reply.cookie match {
+      case CookieEffect.Set(secret) => delayed.addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+      case CookieEffect.Keep => delayed
+    }
+  }
+  // The existing password login, for the configured logins the shared dispatcher hands back.
+  private val declarativeLogin: DeclarativeLogin = new DeclarativeLogin {
+    def login(login: String,password: String,previous: Option[String]): IO[SignedIn] = IO.blocking {
+      val (user,secret)=auth.configuredAccountLogin(login,password)
+      val hash=Wire.hash(secret)
+      SignedIn(user,AccountSession(AccountCredential(user.id,user.userType,hash,hash,true),secret))
+    }.adaptError { case d: DomainError => AccountFailure(d.code) }
+  }
+  /** A request to the account plane of imperative accounts: the existing account boundary, then the shared
+    * dispatcher; the audit events are logged after its transaction committed. */
+  private def imperativeAccount(r: Request[IO])(dispatch: AccountRequest => IO[AccountReply]): IO[Response[IO]] = {
+    val mutating=r.method!=Method.GET
+    val answered=handleAccount {
+      IO(accountBoundary(r,mutating)) *> (if(mutating) accountBody(r).map(Some(_)) else IO.pure(None)).flatMap { body =>
+        IO.blocking(auth.accountSession(cookie(r))).flatMap { session =>
+          dispatch(AccountRequest(r.method.name,r.uri.path.renderString.stripPrefix(Http.accountPrefix),body,accountActors(r),session,presentedSession(r),clientAddress(r)))
+        }
+      }.flatMap(reply => IO(reply.events.foreach(audit)).as(accountReply(reply)))
+    }
+    // Every 503 of these endpoints carries Retry-After, also one raised outside the dispatcher (the session lookup).
+    answered.map(response => if(response.status==Status.ServiceUnavailable && response.headers.get(CIString("Retry-After")).isEmpty) retryAfter(response,ImperativeAccountApi.UnavailableRetryAfterSeconds) else response)
+  }
+  // The legacy request cannot carry a TOTP code; it shares the address window and the credential gate of account login.
+  private def legacyLogin(r: Request[IO],plane: AccountPlane): IO[Response[IO]] = {
+    val address=clientAddress(r)
+    def rejected(code: String,detail: String): Response[IO] = failure(DomainError(code,detail))
+    IO(plane.limiter.request(address,CredentialEndpoint.Login)).flatMap {
+      case Some(wait) => IO.pure(retryAfter(rejected("rate-limited","too many login attempts"),Http.retryAfterSeconds(wait)))
+      case None => plane.gate.run(boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap { raw =>
+        val request=Wire.decode(LoginRequest.codecJson,Wire.parse(raw))
+        IO.blocking(auth.legacyLogin(request,presentedSession(r))).map(request.login -> _)
+      }).flatMap {
+        case None => IO.pure(retryAfter(rejected("unavailable","login capacity exhausted"),ImperativeAccountApi.UnavailableRetryAfterSeconds))
+        case Some((_,LoginOutcome.Established((response,secret)))) => IO.pure(json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)))
+        case Some((login,LoginOutcome.Rejected(reason,locked))) =>
+          val refused=failure(Auth.rejection(reason))
+          val answer=reason match {
+            case AccountRejection.RateLimited(wait) => retryAfter(refused,Http.retryAfterSeconds(wait))
+            case _ => refused
+          }
+          IO(locked.foreach(path => audit(AccountEvent(AccountEventKind.Locked,None,Some(ImperativePolicy.fold(login)),Some(path.text),address)))).as(answer)
+      }
+    }
+  }
+  /** Present exactly while the master switch `accounts.enabled` is on. */
+  def accountPlane: Resource[IO,Option[AccountPlane]] = AccountPlane.resource(auth.accounts)
+  /** The service without the account plane: none of the imperative-account endpoints, and no per-address login window. */
+  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO]): HttpRoutes[IO] = routes(ws,loginGate,None)
+  /** `accounts` is this service's `accountPlane`. */
+  def routes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[AccountPlane]): HttpRoutes[IO] = accounts match {
+    case None => declaredRoutes(ws,loginGate,None)
+    case Some(plane) => declaredRoutes(ws,loginGate,accounts) <+> HttpRoutes.of[IO] {
+      // After the routes above: the five existing account endpoints keep their handlers.
+      case r if r.uri.path.renderString.startsWith(Http.accountPrefix+"/") =>
+        imperativeAccount(r)(plane.api.handle(Some(plane.access.settings),plane.access.declared,auth.imperative(plane.access),_))
+    }
+  }
+  private def declaredRoutes(ws: WebSocketBuilder2[IO],loginGate: Semaphore[IO],accounts: Option[AccountPlane]): HttpRoutes[IO] = HttpRoutes.of[IO] {
+    case r @ POST -> Root / "api" / "account" / "v1" / "login" => accounts match {
+      case Some(plane) =>
+        imperativeAccount(r)(plane.api.login(plane.access.settings,plane.access.declared,auth.imperative(plane.access),declarativeLogin,_))
+      case None => handleAccount {
+        IO(accountBoundary(r,true)) *> loginGate.permit.use { _ =>
+          accountBody(r).flatMap { j => IO.blocking {
+            val (login,password)=AccountJson.decodeLogin(j)
+            val (user,secret)=auth.accountLogin(login,password)
+            json(Status.Ok,io.circe.Json.obj("user"->AccountJson.user(user))).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds))
+          }}
+        }
       }
     }
     case r @ GET -> Root / "api" / "account" / "v1" => handleAccount { IO.blocking {
@@ -98,9 +176,12 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
     }
     case r @ GET -> Root / "api" / "versions" => IO(json(Status.Ok,Wire.encode(VersionInfo.codecJson,Wire.versions)))
     case r @ POST -> Root / "api" / "login" => handle {
-      IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> loginGate.permit.use { _ =>
-        boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)) }
-      }
+      IO { noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only") } *> (accounts match {
+        case Some(plane) => legacyLogin(r,plane)
+        case None => loginGate.permit.use { _ =>
+          boundedBody(r,math.min(config.maxBodyBytes,Http.loginBodyBytes)).flatMap(raw => IO.blocking(auth.login(Wire.decode(LoginRequest.codecJson,Wire.parse(raw))))).map { case (response,secret) => json(Status.Ok,Wire.encode(LoginResponse.codecJson,response)).addCookie(sessionCookie(secret,PersistentCookie.maxAgeSeconds)) }
+        }
+      })
     }
     case r @ POST -> Root / "api" / "session" / "refresh" => handle { IO.blocking {
       noUrlSecrets(r); origin(r,true); Check(header(r,"Authorization").isEmpty,"forbidden","browser cookie transport only")
@@ -239,19 +320,19 @@ final class Http(config: Config,auth: Auth,app: Application,archive: SessionArch
         case _ => error(new UUID(0,0),DomainError("protocol-error","text JSON frames required"))
       }
     })
-    tick = Stream.awakeEvery[IO](1.second).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
+    tick = Stream.awakeEvery[IO](liveness.tick).evalMap { _ => closed.get.ifM(IO.unit,IO.monotonic.flatMap { now =>
       IO.blocking(auth.browser(cookie(r))).attempt.flatMap {
         case Left(d: DomainError) if d.code=="unauthorized" => error(new UUID(0,0),d)
         case Left(_) =>
           // A bare retryable close cannot overtake Hello with an ordinary, not-yet-negotiated error frame.
           IO(logger.error("session verification failed")) *> close(retryableCloseCode,None)
         case Right(_) => negotiated.get.flatMap { ready =>
-          if(ready.isEmpty && now-opened>10.seconds) close(retryableCloseCode,None)
+          if(ready.isEmpty && now-opened>liveness.hello) close(retryableCloseCode,None)
           else if(ready.isEmpty) IO.unit
           else heartbeat.get.flatMap {
             case Some((_,_,deadline)) if now>deadline => close(retryableCloseCode,None)
             case Some(_) => IO.unit
-            case None => if((now-opened).toSeconds%20==0) { val id=UUID.randomUUID(); val nonce=Wire.secret(); heartbeat.set(Some((id,nonce,now+10.seconds))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit
+            case None => if(liveness.pingWindow(now-opened)) { val id=UUID.randomUUID(); val nonce=Wire.secret(); heartbeat.set(Some((id,nonce,now+liveness.pongWithin))) *> send(ServerEnvelope(id,Result.Ping(nonce))) } else IO.unit
           }
         }
       }
@@ -297,7 +378,22 @@ object Http {
   val loginBodyBytes = 16*1024
   val mcpBodyBytes = 64*1024
   val socketFrameBytes = 64*1024
+  val accountPrefix = "/api/account/v1"
+  // Bucket of requests whose socket peer is unknown: they share one address window.
+  val unknownPeer = "unknown"
+  /** The reverse proxy in front of Chronicle is local: only a loopback peer may name the client address. */
+  def loopback(peer: String): Boolean = try java.net.InetAddress.ofLiteral(peer).isLoopbackAddress catch { case _: IllegalArgumentException => false }
+  def retryAfterSeconds(wait: java.time.Duration): Long = math.max(1L,wait.getSeconds+(if(wait.getNano>0) 1L else 0L))
   final case class WebRoot(path: Option[String])
+  /** `hello` bounds the wait for Hello, a Ping is due every `pingEvery` and its Pong within `pongWithin`; the session is rechecked every `tick`. */
+  final case class SocketLiveness(hello: FiniteDuration,pingEvery: FiniteDuration,pongWithin: FiniteDuration,tick: FiniteDuration) {
+    require(tick.toNanos>0 && pingEvery.toNanos%tick.toNanos==0,"pingEvery must be a whole number of ticks")
+    /** A Ping is eligible during the tick-wide window that starts at each multiple of `pingEvery` after the connection opened. */
+    def pingWindow(sinceOpened: FiniteDuration): Boolean = sinceOpened.toNanos/tick.toNanos%(pingEvery.toNanos/tick.toNanos)==0
+  }
+  object SocketLiveness {
+    val production: SocketLiveness = SocketLiveness(10.seconds,20.seconds,10.seconds,1.second)
+  }
   private enum SocketOutput {
     case Reply(value: BrowserReply)
     case Frame(value: WebSocketFrame)

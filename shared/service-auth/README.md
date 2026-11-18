@@ -80,6 +80,86 @@ reconcile the token list, revoke a newly created token whose secret was lost,
 then explicitly issue a replacement. The common browser UI preserves this
 uncertainty and never stores secrets in browser storage.
 
+### Imperative accounts (additions to v1)
+
+Accounts created at runtime (self-signup, admin enrollment) add the endpoints
+below under the same prefix and rules; the five endpoints above keep their exact
+shapes. `ImperativeAccountApi.handle` dispatches every new path and
+`ImperativeAccountApi.login` decides `POST /login` while the master switch is
+on; the service keeps its boundary, cookie serialization, logging and
+transactions. Availability: **M** = `accounts.enable` (master switch), **S** = M
+and `signup.enable`, **E** = M and `enrollment.enable`. With the master switch
+off every new path answers `404 not-found` and `/login` is unchanged.
+
+Unauthenticated (they ignore `X-Account-Actor`):
+
+| Method/path | Exists | Input | Output | Failures |
+|---|---|---|---|---|
+| GET `/policy` | M | none | `{signup,approval,enrollment,reset,issuer,username:{pattern},password:{minLength,maxLength},totp:{algorithm,digits,period,secretBytes}}` | — |
+| POST `/signup` | S | `{username,email,password,totpSecret,totpCode,requireTotp}` | approval: `202 {status:"pending"}`, cookie untouched; otherwise `{status:"active",user}` plus session cookie | 400 `invalid`/`weak-password`/`totp-mismatch`; 409 `username-unavailable`; 403 `forbidden` (user cap); 429; 503 |
+| POST `/enrollments/inspect` | M | `{code}` | `{username,kind:"invite"\|"reset",expiresAt}` | 404 (unknown, expired, revoked, or an invitation while E is off); 429 |
+| POST `/enrollments/redeem` | M | `{code,password,totpSecret,totpCode,requireTotp}`, plus `email` exactly for an invitation | `{user}` plus session cookie | 404; 400 as signup; 409 `username-unavailable`; 429; 503 |
+| POST `/recover` | M | `{username,totp,password}` | `{user}` plus session cookie; other sessions deleted, tokens kept | 401 `unauthorized` (unknown, pending, disabled, declarative or wrong code); 400 `weak-password`; 429; 503 |
+| POST `/login` | always | `{login,password}`; also `{login,password,totp}` when M | `{user}` plus session cookie | as before, plus 401 `totp-required`, 403 `pending-approval`, 429 |
+
+Authenticated (browser session; every POST needs exactly one `X-Account-Actor`
+naming the session owner: missing or malformed `400 invalid`, another owner
+`409 conflict`):
+
+| Method/path | Exists | Input | Output | Who |
+|---|---|---|---|---|
+| GET `/profile` | M | none | `{user,source,admin,email,totp:{required,state:"ok"\|"unavailable"\|"none"},manage:{email,password,totp,users,enrollment,reset}}` | any; declarative: `email:null`, `state:"none"`, `manage.email/password/totp:false` |
+| POST `/profile/email` | M | `{email}` | `{ok:true}` | imperative self |
+| POST `/profile/password` | M | `{currentPassword,newPassword}` | `{ok:true}` plus a replacement session cookie; other sessions deleted | imperative self |
+| POST `/profile/totp` | M | `{currentPassword,totpSecret,totpCode}`, plus `currentTotp` exactly while TOTP is required | `{ok:true}` | imperative self |
+| POST `/profile/totp-required` | M | `{required,totp}` | `{ok:true}`; enabling deletes the other sessions | imperative self |
+| GET `/admin/users` | M | none | `{users:[{id,login,displayName,type,source,status,admin,email,createdAt,createdVia,createdBy,approvedBy,totpRequired,totpState,locked,pendingEnrollment}]}` | admin |
+| POST `/admin/users/{id}/approve` | M | `{}` | `{ok:true}` | admin; pending target; 409 if the name is now claimed |
+| POST `/admin/users/{id}/reject` | M | `{}` | `{ok:true}`; the application is deleted | admin; pending target |
+| POST `/admin/users/{id}/enabled` | M | `{enabled}` | `{ok:true}` | admin; imperative target other than self |
+| POST `/admin/users/{id}/admin` | M | `{admin,currentPassword}` | `{ok:true}` | admin; imperative target other than self; fresh proof |
+| POST `/admin/users/{id}/reset` | M | `{currentPassword}` | `{enrollment,code}` | admin; active imperative target other than self; fresh proof |
+| GET `/admin/enrollments` | M | none | `{enrollments:[{id,username,kind,createdBy,createdAt,expiresAt}]}` (invitations only while E) | admin |
+| POST `/admin/enrollments` | E | `{username}` | `{enrollment,code}`; replaces a pending invitation for the name | admin |
+| POST `/admin/enrollments/{id}/revoke` | M | `{}` | `{ok:true}` | admin |
+
+Non-admins get `403 forbidden`, a declarative session on self-service `403
+forbidden`, a wrong `currentPassword` or code on these endpoints `403
+proof-rejected` (not 401: the session is alive). Path ids are imperative
+usernames (`/admin/users/{username}/…`) or `enrollment-<lower-case uuid>`
+(`/admin/enrollments/{enrollment}/revoke`); any other segment is `404` before
+anything is read or logged. New error codes: `totp-required` (401),
+`pending-approval` (403), `proof-rejected` (403), `weak-password` (400),
+`totp-mismatch` (400), `username-unavailable` (409). Every 429 and 503 carries
+`Retry-After` (seconds). Codes and secrets are returned once and never logged.
+
+Enumeration posture: login answers an unknown, disabled or wrong-password
+account with the same `401` after one password verification; a pending
+applicant learns `pending-approval` only with the correct password. A locked
+account, pending ones included, answers `429` until its lock lapses, whereas an
+unknown name never does: a locked name exists. Recovery treats pending like
+unknown.
+
+Limits, all in memory and only while the master switch is on
+(`AttemptLimiter`, `CredentialGate`): 10 requests per minute per client address
+for each of login, signup, recovery, inspection and redemption; 5 successful
+signups per address and day and 20 per hour in total; 5 failed admin proofs per
+quarter hour for a declarative admin (imperative admins have a persistent
+counter). Signups and declarative proofs take their slot when they start and
+return it unless they succeed (signup) or fail (proof), also when the request is
+cancelled, so concurrent attempts cannot overrun a window. PBKDF2 work of login,
+signup, redemption and recovery runs through 2 slots with a queue of 16, beyond
+which the answer is `503`; a waiting request leaves the queue when it is
+cancelled (for example by the server's request timeout). Every map is
+bounded; a new key that does not fit is refused. `ClientAddress.resolve` takes
+the right-most `X-Forwarded-For` element only from a trusted peer, otherwise the
+socket peer.
+
+A reply with a failure status is a normal value: failure counters and consumed
+TOTP steps are committed before it is sent. The adapter logs `AccountReply.events`
+after commit with the field allowlist `event, actor, target, outcome,
+clientAddress`; events never contain secrets, e-mail addresses, codes or bodies.
+
 ## Verification
 
 ```bash

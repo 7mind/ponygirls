@@ -59,10 +59,12 @@ object BackendFixture:
       execute("CREATE EXTENSION IF NOT EXISTS vector; REVOKE ALL ON DATABASE " + database + " FROM PUBLIC; GRANT CONNECT ON DATABASE " + database + " TO " + user + "; REVOKE CREATE ON SCHEMA public FROM PUBLIC; CREATE SCHEMA manure; GRANT USAGE,CREATE ON SCHEMA public,manure TO " + user)
     Resource.make(acquire.as((user,file)))(_ => execute("DROP OWNED BY " + user + " CASCADE; DROP ROLE " + user))
 
+  /** PBKDF2 at the production iteration count costs about 0.2 s of CPU; every fixture verifies the same fixture password. */
+  private lazy val fixturePasswordHash: String = ponygirls.auth.Password.hash("fixture-password".toCharArray)
   def config(path: Path,url: String,token: String,otherToken: String,quota: Long): Config =
     val hash = path.resolve("owner.hash"); Files.writeString(hash,SecretCodec.sha256(token)+"\n")
     val otherHash = path.resolve("other.hash"); Files.writeString(otherHash,SecretCodec.sha256(otherToken)+"\n")
-    val passwordHash = path.resolve("owner-password.hash"); Files.writeString(passwordHash,ponygirls.auth.Password.hash("fixture-password".toCharArray)+"\n")
+    val passwordHash = path.resolve("owner-password.hash"); Files.writeString(passwordHash,fixturePasswordHash+"\n")
     val configFile = path.resolve("config.json")
     val root = Files.createDirectory(path.resolve("payloads"))
     val password = sys.env.getOrElse("MANURE_TEST_JDBC_PASSWORD_FILE",path.resolve("dummy-password").toString)

@@ -16,6 +16,8 @@ let
         options.smind.hm.dev.llm.yolo.validatedSessionVariables = lib.mkOption { type = lib.types.attrsOf lib.types.str; default = { }; };
         options.systemd.user.services = lib.mkOption { type = lib.types.attrsOf lib.types.anything; default = { }; };
       })
+      # The module's wiring is under test, not the collector build: a collector edit must not re-run this check.
+      ({ pkgs, ... }: { smind.hm.dev.llm.chronicle.collector.package = pkgs.writeShellScriptBin "chronicle-collector" "exit 0"; })
       extra
     ];
   }).config;

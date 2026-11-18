@@ -15,7 +15,7 @@ class MessageContextFailureTest extends munit.FunSuite {
         calls <- Ref.of[IO,Vector[(String,Json)]](Vector.empty)
         contextTools=new BehavioralTools(List(McpRunToolDefinition("read_message_context","synthetic bounded context",schema,true)),calls,(_,_,_,_) => IO.raiseError(DomainError(code,"PRIVATE_POISON")))
         llm <- model(_ => IO.pure(toolReply(List(("context-read","read_message_context",Json.obj())),None)))
-        _ <- McpTestRuns.resource(contextTools,llm,auth,time,Set("a"),encoding,IO(UUID.randomUUID())).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
+        _ <- McpTestRuns.resource(contextTools,llm,auth,time,encoding,IO(UUID.randomUUID())).use { runner => runner.connection(UUID.randomUUID()).use { connection =>
           for {
             catalog <- runner.catalog(identity)
             id <- IO(UUID.randomUUID())

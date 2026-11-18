@@ -135,8 +135,9 @@ baseline evidence, not a blocker imposed on this explicit POSIX implementation.
 ## Integrated native acceptance
 
 The pinned Nix check now builds the glibc shared JNI library and musl static archive,
-compares regenerated JNI headers with the Java ABI, and executes the same **26
-contracts on both the JVM and the actual static-musl ELF**, with zero required skips.
+compares regenerated JNI headers with the Java ABI, and executes the `FilesystemBehavior`
+contracts on the actual static-musl ELF; `ConfinedDirectorySuite` runs the same contracts on the
+JVM in `manure-backend`.
 The parent independently reran the final ELF outside the builder, exit 0:
 `da94bbff8e7af38c8d5ce8314da78e84fb714873d05670691035c24ff2971302`.
 Its program headers contain no interpreter and its dynamic section has no dependency.
@@ -145,16 +146,13 @@ A separate Nix check runs **1,257 direct JNI assertions** against the production
 library with `-Xcheck:jni`. Parent strict and ASan/UBSan runs also passed 1,257 assertions
 each. An additional owned-device `mknod` fixture was unavailable (observed exit 1);
 mandatory existing-device rejection uses `/dev/null` and passed on both runtimes.
-The acceptance parser rejects empty/duplicate/mismatched inventories and failure/skip
-markers; summary lines are not individual cases. Build-only hosted registration is
-isolated behind an exact Graal CE 25.4.4.1.1 guard and invokes that Java home's tools.
+Build-only hosted registration is isolated behind an exact Graal CE 25.4.4.1.1 guard and
+invokes that Java home's tools.
 
 ```sh
 nix build .#checks.x86_64-linux.manure-posix-acceptance
 nix build .#checks.x86_64-linux.manure-direct-jni
-nix build .#checks.x86_64-linux.manure-toolchain-routing .#checks.x86_64-linux.manure-acceptance-policy
 ```
 
-Receipts bind source, toolchain, runtime inventories and artifact digests. This proves
-these primitives on the tested filesystem/runtime, not complete publish durability,
-PostgreSQL coordination, deployment acceptance or support on every mount.
+This proves these primitives on the tested filesystem/runtime, not complete publish
+durability, PostgreSQL coordination, deployment acceptance or support on every mount.

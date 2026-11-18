@@ -8,6 +8,11 @@ import java.util.Base64
 import scala.jdk.CollectionConverters.*
 
 private[haystack] object AuthFixtures {
+  /** The production clock and PBKDF2, shared by the suites like the one runtime of a server; its gate has no finalizer. */
+  lazy val imperative: ImperativeRuntime = {
+    import cats.effect.unsafe.implicits.global
+    ImperativeRuntime.resource(java.time.Clock.systemUTC(), ponygirls.auth.PasswordHasher.Pbkdf2).allocated.unsafeRunSync()._1
+  }
   val AliceToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(1))
   val BotToken: String = Base64.getUrlEncoder.withoutPadding.encodeToString(Array.fill[Byte](32)(2))
   val AlicePassword = "synthetic-account-password-not-a-secret"

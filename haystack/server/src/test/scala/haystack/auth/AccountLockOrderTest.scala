@@ -25,12 +25,15 @@ class AccountLockOrderTest extends ContractSuite {
   }
   test("cross-owner password login replacement and sorted directory reconciliation cannot deadlock") { directory { dir=>
     val cfg=passwordConfig(dir)
-    val auth=Auth.load(cfg.copy(users=cfg.users :+ UserConfig("bob","human","Bob",Vector.empty,Some("bob"),cfg.users.head.passwordHashFile,true)))
+    val users=cfg.users :+ UserConfig("bob","human","Bob",Vector.empty,Some("bob"),cfg.users.head.passwordHashFile,true)
+    val auth=Auth.load(cfg.copy(users=users))
+    // Reconciliation is change-driven: only a changed directory takes the directory and owner locks.
+    val changed=Auth.load(cfg.copy(users=users.map(user=>if(user.id=="bot")user.copy(enabled=false)else user)))
     val gateHeld=new CountDownLatch(1);val release=new CountDownLatch(1)
     run(TestSupport.emptyDatabase.use { db=>for{
       _<-Migrations.initialize(db,TestSupport.Activity)
-      accounts=new AccountService(db,()=>auth)
-      _<-accounts.reconcile(auth)
+      accounts=new AccountService(db,()=>auth,imperative)
+      _<-accounts.install(auth)
       old<-accounts.login("alice",AlicePassword,None)
       _<-db.transaction { c=>
         val statement=c.createStatement()
@@ -48,8 +51,10 @@ class AccountLockOrderTest extends ContractSuite {
       _<-IO.blocking(assert(gateHeld.await(2,TimeUnit.SECONDS)))
       login<-accounts.login("bob",AlicePassword,Some(old.session.secret)).attempt.start
       _<-waitFor(db,s"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND classid=0 AND objid=$GateLock)")
-      reconcile<-accounts.reconcile(auth).attempt.start
-      _<-waitFor(db,s"SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND (classid<>0 OR objid<>$GateLock))")
+      reconcile<-accounts.install(changed).attempt.start
+      // Blocked on an owner lock that the waiting login holds, not merely on the directory lock or the gate.
+      _<-waitFor(db,s"""SELECT EXISTS(SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted AND objsubid=1 AND
+        ((classid::bigint<<32)|objid::bigint) IN (hashtextextended('ponygirls-account:alice',71393723),hashtextextended('ponygirls-account:bob',71393723)))""")
       _<-IO(release.countDown())
       outcomes<-(login.joinWithNever,reconcile.joinWithNever).tupled.timeout(8.seconds)
       _<-holder.joinWithNever

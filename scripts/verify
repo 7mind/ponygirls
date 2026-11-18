@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Full verification (Tier F): builds the exact-input checks of `verify-<service>`; a cached check is the same proof.
+# Prints which member checks were built in this run and which were reused, and the counts.json of the built ones.
+set -euo pipefail
+usage='Usage: scripts/verify <chronicle|haystack|manure|all>'
+if (( $# != 1 )); then echo "$usage" >&2; exit 2; fi
+case "$1" in chronicle | haystack | manure | all) service=$1 ;; *) echo "$usage" >&2; exit 2 ;; esac
+cd "$(git rev-parse --show-toplevel)"
+# Flake builds see tracked files only: an untracked source file would silently be left out of the verified inputs.
+source_roots=(build.sbt deps.lock.json lockfile-config.json flake.nix flake.lock project nix scripts shared chronicle haystack manure
+  ontology rites)
+untracked=$(git status --porcelain --untracked-files=all -- "${source_roots[@]}" | sed -n 's/^?? //p')
+if [[ -n "$untracked" ]]; then
+  printf 'Refusing to verify: untracked files under source roots are invisible to flake builds (git add or remove them):\n%s\n' \
+    "$untracked" >&2
+  exit 2
+fi
+# One evaluation; the member outputs are classified before the build and resolved through the aggregate's links after it.
+aggregate=$(nix path-info --derivation ".#verify-$service")
+references=$(nix-store --query --references "$aggregate")
+mapfile -t inputs < <(grep '\.drv$' <<<"$references")
+output_list=$(nix-store --query --outputs "${inputs[@]}")
+mapfile -t outputs <<<"$output_list"
+invalid=$(nix-store --check-validity --print-invalid "${outputs[@]}")
+declare -A missing=()
+while IFS= read -r path; do if [[ -n "$path" ]]; then missing[$path]=1; fi; done <<<"$invalid"
+result=$(nix build -L --no-link --print-out-paths "$aggregate^out")
+built=() reused=()
+for link in "$result"/*; do
+  if [[ -v missing[$(readlink "$link")] ]]; then built+=("$link"); else reused+=("$link"); fi
+done
+printf 'verify-%s: %d member checks built, %d reused\n' "$service" "${#built[@]}" "${#reused[@]}"
+for link in "${reused[@]}"; do printf '  reused  %s\n' "$(basename "$link")"; done
+for link in "${built[@]}"; do
+  if [[ -f "$link/counts.json" ]]; then
+    printf '  built   %s  %s\n' "$(basename "$link")" "$(tr -d ' \n' < "$link/counts.json")"
+  else
+    printf '  built   %s\n' "$(basename "$link")"
+  fi
+done

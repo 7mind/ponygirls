@@ -49,7 +49,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     }
   }
   private def worker(archive: SessionArchive,config: Config,catalog: IndexProfileCatalog,model: ProblemPassageAnnotator,embedder: Embedder): Worker =
-    new Worker(archive,model,embedder,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger())
+    new Worker(archive,model,embedder,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff)
 
   test("BG/GoodCommunication: actual passage Worker carries one problem, embeds each prefix in batches, coalesces spans and publishes final metadata") { withArchive { (config,catalog,delegate,_) =>
     val archive=new Recording(delegate)
@@ -101,7 +101,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
       val archive=new Recording(delegate); val request=source((0 until 160).map(i => s"A substep $i").toList); archive.ingest("a",request)
       val embedding=new Embeddings; val requests=ListBuffer.empty[Json]
       val clock=new JavaModelTelemetryClock(java.time.Clock.systemUTC(),cats.effect.Clock[IO])
-      val store=ModelTelemetry.make(clock,Set("a")).unsafeRunSync()
+      val store=ModelTelemetry.make(clock).unsafeRunSync()
       val admission=ModelAdmission.make(config.indexing).unsafeRunSync()
       val app: HttpApp[IO]=cats.data.Kleisli { req => req.as[String].map { body =>
         val payload=Wire.parse(body)
@@ -119,7 +119,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         Response[IO](Status.Ok).withEntity(response.noSpaces)
       }}
       val model=new OpenAIProblemPassageAnnotator(new ModelHttp(Client.fromHttpApp(app),store,admission),config)
-      val worked4=new Worker(archive,model,embedding,config,catalog,admission,logstage.IzLogger()).once.unsafeRunSync(); assert(worked4)
+      val worked4=new Worker(archive,model,embedding,config,catalog,admission,logstage.IzLogger(),ModelFixtures.failureBackoff).once.unsafeRunSync(); assert(worked4)
       if(exhaust) {
         assertEquals(requests.size,6); assertEquals(embedding.batches.flatten.size,64); assertEquals(archive.publications.size,0)
         assertEquals(archive.progressCalls.toList,List((0,3),(1,3)))
@@ -212,7 +212,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
     val forbidden=new ProblemPassageAnnotator {
       def annotate(owner: String,window: ProblemPassages.Window,previous: Option[ProblemPassages.Carry]): IO[ProblemPassages.Decision] = IO.raiseError(new AssertionError("unconfigured claim called current model"))
     }
-    assert(!new Worker(archive,forbidden,new Embeddings,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger()).once.unsafeRunSync())
+    assert(!new Worker(archive,forbidden,new Embeddings,config,catalog,ModelAdmission.make(config.indexing).unsafeRunSync(),logstage.IzLogger(),ModelFixtures.failureBackoff).once.unsafeRunSync())
     assertEquals(archive.publications.size,0); assertEquals(delegate.session("a",receipt.sessionId).indexedRevision,None)
     assertEquals(archive.progressCalls.toList,Nil)
   }}
@@ -252,7 +252,7 @@ abstract class PassageWorkerContract extends munit.FunSuite {
         def checkpoint(c: Claim,key: CheckpointKey): Option[Json] = delegate.checkpoint(c,key)
         def checkpoint(c: Claim,key: CheckpointKey,value: Json): Unit = delegate.checkpoint(c,key,value)
       }
-      fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger()).run.start
+      fiber <- new Worker(archive,model,embedder,config,catalog,admission,logstage.IzLogger(),ModelFixtures.failureBackoff).run.start
       _ <- blocked.get.timeout(3.seconds)
       _ <- published.get.timeout(3.seconds)
       _ <- IO { assertEquals(delegate.session("a",a.sessionId).indexedRevision,None); assertEquals(delegate.session("b",b.sessionId).indexedRevision,Some(1)) }

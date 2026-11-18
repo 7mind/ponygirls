@@ -10,7 +10,7 @@ import java.net.{URI, URLDecoder, URLEncoder}
 import java.nio.file.{Files, Path}
 import java.util.UUID
 import scala.concurrent.duration.*
-import ponygirls.auth.{AccountFailure,AccountJson,PersistentCookie}
+import ponygirls.auth.{AccountCredential,AccountEvent,AccountFailure,AccountJson,AccountReply,AccountRequest,ClientAddress,CookieEffect,PersistentCookie}
 
 final class Throttle(capacity: Int, clock: DomainClock):
   private val entries = scala.collection.mutable.Map.empty[String,(Double,Int)]
@@ -27,7 +27,7 @@ final class Throttle(capacity: Int, clock: DomainClock):
 /** Domain HTTP adapter. Raw bytes are NEVER put in generated JSON or read as an
   * entire file. Security context is resolved before route/body/domain effects.
   */
-final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, auth: Auth, clock: DomainClock, search: Search, accounts: Accounts):
+final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, auth: Auth, clock: DomainClock, search: Search, accounts: Accounts, plane: AccountPlane):
   @volatile private var boundPort = config.port
   def setBoundPort(value: Int): Unit = boundPort = value
   private val throttle = new Throttle(config.rateMapMaxEntries,clock)
@@ -166,6 +166,47 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
       body(req,math.min(AccountJson.maxBodyBytes,config.limits.maxRequestBodyBytes)).map(AccountJson.parseUtf8)
   private def emptyAccountBody(req: Request[IO]): IO[Unit] = accountJson(req).flatMap(value =>
     IO(Require(value.asObject.exists(_.isEmpty), "bad-envelope")))
+  /** Empty exactly when the request carried no body bytes. */
+  private def optionalAccountJson(req: Request[IO]): IO[Option[io.circe.Json]] =
+    body(req,math.min(AccountJson.maxBodyBytes,config.limits.maxRequestBodyBytes)).flatMap { bytes =>
+      if bytes.isEmpty then IO.pure(None)
+      else IO {
+        Require(header(req,"Content-Type").exists(_.split(";",2)(0).trim == "application/json"), "bad-envelope")
+        Some(AccountJson.parseUtf8(bytes))
+      }
+    }
+  /** The socket peer, or the right-most `X-Forwarded-For` element when the peer is a trusted proxy. */
+  private def clientAddress(req: Request[IO]): String =
+    val forwarded = req.headers.headers.filter(_.name == CIString("X-Forwarded-For")).map(_.value).toVector
+    ClientAddress.resolve(peer(req),forwarded,p => com.comcast.ip4s.IpAddress.fromString(p).nonEmpty && config.trustedProxies.exists(_.contains(p)))
+  private val accountPrefix = "/api/account/v1"
+  private def accountRequest(req: Request[IO],body: Option[io.circe.Json],session: Option[AccountCredential],secret: Option[String]): AccountRequest =
+    AccountRequest(req.method.name,req.uri.path.renderString.stripPrefix(accountPrefix),body,accountActors(req),session,secret,clientAddress(req))
+  /** Security events after commit, one JSON line each, with the allowlisted fields only. */
+  private def audit(events: Vector[AccountEvent]): IO[Unit] = events.traverse_ { event =>
+    IO.println("MANURE_ACCOUNT_EVENT " + io.circe.Json.fromFields(event.fields.map((k,v) => k -> io.circe.Json.fromString(v))).noSpaces)
+  }
+  private def accountReply(ctx: Context,reply: AccountReply): IO[Response[IO]] =
+    val response = json(reply.body,reply.status)
+    val cookie = reply.cookie match
+      case CookieEffect.Set(secret) => response.putHeaders(raw("Set-Cookie",sessionCookie(ctx,secret,false)))
+      case CookieEffect.Keep => response
+    audit(reply.events).as(reply.retryAfterSeconds.fold(cookie)(seconds => cookie.putHeaders(raw("Retry-After",seconds.toString))))
+  /** The five endpoints that exist with the master switch off. */
+  private def declarativeAccountPath(method: Method,path: String): Boolean =
+    method == Method.GET && path == accountPrefix || method == Method.POST && (path == accountPrefix + "/logout" ||
+      path == accountPrefix + "/tokens" || path.startsWith(accountPrefix + "/tokens/") && path.endsWith("/revoke"))
+  /** Every other account path while the master switch is on: cookie-only, never a bearer credential. */
+  private def imperativeAccount(req: Request[IO],ctx: Context): IO[Response[IO]] =
+    IO {
+      Require(header(req,"Authorization").isEmpty, "ambiguous-credentials")
+      Cookies.credential(header(req,"Cookie"),Cookies.sessionName(config.loopbackDev,ctx.insecure))
+    }.flatMap { secret => for
+      body <- optionalAccountJson(req)
+      session <- secret.flatTraverse(accounts.session)
+      reply <- plane.handle(accountRequest(req,body,session,secret))
+      response <- accountReply(ctx,reply)
+    yield response }
   private def account(req: Request[IO],ctx: Context): IO[Response[IO]] = IO {
     Require(!ctx.content, "not-found")
     Require(!req.uri.renderString.contains("?"), "bad-envelope")
@@ -179,11 +220,15 @@ final class Http(config: Config, artifacts: Artifacts, catalogue: Catalogue, aut
         val previous = Cookies.credential(header(req,"Cookie"),Cookies.sessionName(config.loopbackDev,ctx.insecure))
         Require(throttle.allow("login:" + peer(req),config.loginRatePerMinutePerIp), "rate-limited")
         previous
-      }.flatMap { previous => accountJson(req).flatMap(value => IO(AccountJson.decodeLogin(value))).flatMap { (login,password) =>
-        accounts.login(login,password,previous).map { (user,session) =>
-          json(io.circe.Json.obj("user" -> AccountJson.user(user))).putHeaders(raw("Set-Cookie",sessionCookie(ctx,session.secret,false)))
+      }.flatMap { previous => auth.imperative match
+        case Some(settings) => accountJson(req).flatMap(value => plane.login(settings,accountRequest(req,Some(value),None,previous))).flatMap(accountReply(ctx,_))
+        case None => accountJson(req).flatMap(value => IO(AccountJson.decodeLogin(value))).flatMap { (login,password) =>
+          accounts.login(login,password,previous).map { (user,session) =>
+            json(io.circe.Json.obj("user" -> AccountJson.user(user))).putHeaders(raw("Set-Cookie",sessionCookie(ctx,session.secret,false)))
+          }
         }
-      }}
+      }
+    else if auth.imperative.nonEmpty && !declarativeAccountPath(req.method,path) then imperativeAccount(req,ctx)
     else credentials(req,ctx,false).flatMap { c =>
       IO {
         Require(c.kind == "cookie", "unauthorized")

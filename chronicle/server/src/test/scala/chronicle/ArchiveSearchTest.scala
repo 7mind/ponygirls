@@ -23,6 +23,13 @@ class ArchiveSearchTest extends munit.FunSuite {
       val parsed=ArchiveExpression.parse(q.expression)
       index.browse(reader,q,parsed,vectors(parsed))
     }
+    /** The same database read through a connection pool whose statement timeout is `timeout`; writes and locks stay on this fixture's database. */
+    def withStatementTimeout(timeout: FiniteDuration): Fixture = {
+      val bounded=config.copy(databaseLimits=config.databaseLimits.copy(statementTimeout=timeout))
+      val boundedDb=Fixtures.database(bounded,IndexProfileCatalog.current(bounded))
+      val boundedArchive=new PostgresArchive(boundedDb,bounded)
+      Fixture(bounded,boundedDb,boundedArchive,new PostgresArchiveIndex(boundedDb,boundedArchive,bounded))
+    }
   }
   private def database(run: Fixture => Unit): Unit = {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
@@ -101,7 +108,7 @@ class ArchiveSearchTest extends munit.FunSuite {
     }
   }}
   test("positive literal evidence is query-local exact original UTF8, including expansion, contextual sigma and huge late matches") { database { f =>
-    val text="x"*(2*1024*1024)+"🙂İΣΑ ΟΣ K e\u0301 late-needle %_\\ end"
+    val text="x"*(2*ArchiveProjection.fragmentBytes)+"🙂İΣΑ ΟΣ K e\u0301 late-needle %_\\ end"
     val out=f.archive.ingest("a",snapshot(List(text)))
     val suffix=text.indexOf("🙂")
     val cases=List("i"->"İ","\u0307"->"İ","i\u0307"->"İ","σ"->"Σ","ος"->"ΟΣ","ς"->"Σ","k"->"K","🙂"->"🙂","e\u0301"->"e\u0301","late-needle"->"late-needle","%_\\"->"%_\\")
@@ -212,34 +219,38 @@ class ArchiveSearchTest extends munit.FunSuite {
       assertEquals(Sql.one(c,"SHOW work_mem")(_.getString(1)),Some(original))
     }
   }}
-  test("archive search tolerates a six-second database wait without exceeding its finite statement budget") { database { f =>
+  test("archive search tolerates a database wait shorter than its finite statement budget") { database { f =>
+    val lockHold=1500.millis; val budget=3.seconds
     f.archive.ingest("a",snapshot(List("needle")))
     val locked=new CompletableFuture[Boolean]
     val lock=CompletableFuture.runAsync(() => f.db.transaction { c =>
       Sql.exec(c,"LOCK TABLE ch_archive_fragments IN ACCESS EXCLUSIVE MODE")
       locked.complete(true)
-      Thread.sleep(6000)
+      Thread.sleep(lockHold.toMillis)
     })
     locked.get(5,TimeUnit.SECONDS)
     try {
+      val bounded=f.withStatementTimeout(budget)
       val start=System.nanoTime()
-      assertEquals(f.search(query("mode:lexical needle"),"a").page.total,1L)
+      assertEquals(bounded.search(query("mode:lexical needle"),"a").page.total,1L)
       val elapsed=(System.nanoTime()-start)/1000000
-      assert(elapsed>=5000 && elapsed<15000,s"unexpected database wait duration: $elapsed ms")
+      assert(elapsed>=lockHold.toMillis*4/5 && elapsed<budget.toMillis,s"unexpected database wait duration: $elapsed ms")
     } finally lock.get(15,TimeUnit.SECONDS)
   }}
-  test("default archive search deadline expires after thirty seconds and remains observable") { database { f =>
+  test("archive search deadline expires at the configured statement timeout and remains observable") { database { f =>
+    val budget=1.second; val slack=5.seconds
     f.archive.ingest("a",snapshot(List("needle")))
+    val bounded=f.withStatementTimeout(budget)
     f.db.transaction { c =>
       Sql.exec(c,"LOCK TABLE ch_archive_fragments IN ACCESS EXCLUSIVE MODE")
       val start=System.nanoTime()
       val waiting=CompletableFuture.supplyAsync(() => {
-        try { f.search(query("mode:lexical needle"),"a"); None }
+        try { bounded.search(query("mode:lexical needle"),"a"); None }
         catch { case error: DomainError => Some(error.code) }
       })
-      assertEquals(waiting.get(35,TimeUnit.SECONDS),Some("deadline"))
+      assertEquals(waiting.get((budget+slack).toSeconds,TimeUnit.SECONDS),Some("deadline"))
       val elapsed=(System.nanoTime()-start)/1000000
-      assert(elapsed>=29000 && elapsed<35000,s"unexpected default statement deadline: $elapsed ms")
+      assert(elapsed>=budget.toMillis && elapsed<(budget+slack).toMillis,s"unexpected statement deadline: $elapsed ms")
     }
   }}
   test("stricter inherited SQL deadlines cover witness lock waits and remain observable") { database { f =>

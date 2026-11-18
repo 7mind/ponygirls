@@ -15,26 +15,6 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
       catch { case error: Throwable => c.rollback(); throw error }
     }
   }
-  test("Effectual GoodCommunication regression: raw ILIKE GIN omits Kelvin under C locale; folded GIN agrees with original scan") { database { c =>
-    Sql.exec(c,"CREATE TEMP TABLE literal_raw(value text COLLATE pg_unicode_fast)")
-    Sql.exec(c,"INSERT INTO literal_raw VALUES(?)","x"*314+"K"*512+"z"*2246)
-    Sql.exec(c,"CREATE INDEX literal_raw_gin ON literal_raw USING gin(value gin_trgm_ops)")
-    Sql.exec(c,"SET LOCAL enable_seqscan=off")
-    val p=pattern("k"*512)
-    val rawSql="SELECT count(*) FROM literal_raw WHERE value ILIKE ? ESCAPE '\\'"
-    val rawPlan=Sql.rows(c,"EXPLAIN "+rawSql,p)(_.getString(1)).mkString("\n")
-    assert(rawPlan.contains("Bitmap Index Scan on literal_raw_gin"),rawPlan)
-    assertEquals(Sql.one(c,rawSql,p)(_.getInt(1)),Some(0))
-    Sql.exec(c,"SET LOCAL enable_indexscan=off"); Sql.exec(c,"SET LOCAL enable_bitmapscan=off"); Sql.exec(c,"SET LOCAL enable_seqscan=on")
-    assertEquals(Sql.one(c,rawSql,p)(_.getInt(1)),Some(1))
-    Sql.exec(c,"DROP INDEX literal_raw_gin")
-    Sql.exec(c,"CREATE INDEX literal_folded_gin ON literal_raw USING gin((lower(value COLLATE pg_unicode_fast)) gin_trgm_ops)")
-    Sql.exec(c,"SET LOCAL enable_indexscan=on"); Sql.exec(c,"SET LOCAL enable_bitmapscan=on"); Sql.exec(c,"SET LOCAL enable_seqscan=off")
-    val folded=s"SELECT count(*) FROM literal_raw WHERE lower(value $unicode) LIKE lower(? $unicode) ESCAPE '\\'"
-    val plan=Sql.rows(c,"EXPLAIN "+folded,p)(_.getString(1)).mkString("\n")
-    assert(plan.contains("Bitmap Index Scan on literal_folded_gin"),plan)
-    assertEquals(Sql.one(c,folded,p)(_.getInt(1)),Some(1))
-  }}
   test("GoodCommunication specified: pinned Unicode lowercase expansion fits the literal-byte/scalar-overlap bound") { database { c =>
     val violations=Sql.one(c,"WITH scalars AS MATERIALIZED(SELECT CASE WHEN cp BETWEEN 55296 AND 57343 THEN NULL ELSE chr(cp) END AS value FROM generate_series(1,1114111) cp) SELECT count(*) FROM scalars WHERE value IS NOT NULL AND char_length(lower(value COLLATE pg_unicode_fast))>octet_length(value)")(_.getLong(1)).get
     assertEquals(violations,0L)
@@ -75,7 +55,7 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
     }
     println(s"UNICODE LOWER FIXED POINT cases=${literalCases.size} fragments=$fragmentCount scalars=1112063")
   }}
-  test("Effectual GoodCommunication specified: stored LIKE GIN, old lower predicate and whole-field scan agree over Unicode case samples and fragment boundaries") { database { c =>
+  test("Effectual GoodCommunication specified: stored LIKE GIN and whole-field scan agree over Unicode case samples and fragment boundaries") { database { c =>
     val cases=literalCases
     Sql.exec(c,"CREATE TEMP TABLE lexical_original(case_id integer,value text COLLATE pg_unicode_fast)")
     Sql.exec(c,"CREATE TEMP TABLE lexical_fragments(case_id integer,value text COLLATE pg_unicode_fast)")
@@ -87,7 +67,6 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
     Sql.exec(c,"CREATE INDEX lexical_stored_gin ON lexical_fragments USING gin(value gin_trgm_ops)")
     Sql.exec(c,"ANALYZE lexical_fragments")
     val stored=s"SELECT DISTINCT case_id FROM lexical_fragments WHERE value LIKE lower(? $unicode) ESCAPE '\\' ORDER BY case_id"
-    val folded=s"SELECT DISTINCT case_id FROM lexical_fragments WHERE lower(value $unicode) LIKE lower(? $unicode) ESCAPE '\\' ORDER BY case_id"
     val gold="SELECT case_id FROM lexical_original WHERE value ILIKE ? ESCAPE '\\' ORDER BY case_id"
     val selective=pattern(cases.last._2)
     Sql.exec(c,"SET LOCAL enable_seqscan=off")
@@ -99,12 +78,10 @@ class ArchiveLexicalIndexTest extends munit.FunSuite {
       val indexed=Sql.rows(c,stored,p)(_.getInt(1))
       Sql.exec(c,"SET LOCAL enable_indexscan=off"); Sql.exec(c,"SET LOCAL enable_bitmapscan=off"); Sql.exec(c,"SET LOCAL enable_seqscan=on")
       val scan=Sql.rows(c,stored,p)(_.getInt(1))
-      val oldPredicate=Sql.rows(c,folded,p)(_.getInt(1))
       val original=Sql.rows(c,gold,p)(_.getInt(1))
       assertEquals(indexed,scan,s"stored-value LIKE query=$query")
-      assertEquals(indexed,oldPredicate,s"old lower(value) LIKE query=$query")
       assertEquals(indexed,original,s"original-value ILIKE query=$query")
     }
-    println(s"UNICODE LITERAL DIFFERENTIAL cases=${cases.size} predicate=stored-value+LIKE index=gin(value gin_trgm_ops) oracles=stored-scan,old-lower,whole-field-ILIKE")
+    println(s"UNICODE LITERAL DIFFERENTIAL cases=${cases.size} predicate=stored-value+LIKE index=gin(value gin_trgm_ops) oracles=stored-scan,whole-field-ILIKE")
   }}
 }

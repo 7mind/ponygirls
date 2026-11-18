@@ -23,9 +23,9 @@ IDs are `contracts` (Scala2 generated code), `losslessJson`, `manureStorage`, an
 `nix develop .#backend --command bash scripts/backend-sbt.sh testFull` for aggregate
 JVM tests or pass `losslessJson/testFull` and `manureStorage/testFull` for the foundation
 modules. In sbt2, `test` is incremental; `testFull` executes every suite.
-`nix build .#checks.x86_64-linux.backend-foundation` runs complete
-foundation-module tests offline with nonempty inventory-bound reports; its
-receipt is separate from Chronicle's fast subset and is not native acceptance.
+`nix build .#checks.x86_64-linux.shared-jvm` runs the complete shared-module
+suites (including `losslessJson`) offline on an owned PostgreSQL cluster;
+`manureStorage` runs in `manure-backend`.
 Chronicle tests fork with `chronicle/` as their working directory so existing
 fixture/config paths retain their meaning.
 
@@ -43,22 +43,20 @@ prerequisites are failures to report, not reasons to skip suites.
 
 ### Fast Nix checks and full agent verification
 
-Routine Nix builds use the 13 explicitly named parser/codec/pure/dummy suites
+Routine Nix builds use the explicitly named parser/codec/pure/dummy suites
 in `scripts/fast-suites.txt`, not the full PostgreSQL/concurrency/deadline suite.
 The fast command is `nix develop .#chronicle --command bash chronicle/scripts/test-fast.sh`
 from the repository root. It clears the PostgreSQL URL and makes accidental
-PostgreSQL use fail rather than silently skip. Selected-suite reports must be
-nonempty, match the allowlist/discovered inventory, and contain no failures,
-errors or skips. Their scope is explicitly a fast subset, not full validation.
+PostgreSQL use fail rather than silently skip. The Nix check requires a report
+with test cases for every selected suite and rejects any failure, error or skip
+(`scripts/junit-gate.py`). Its scope is explicitly a fast subset, not full validation.
 
 ```bash
 # Fast backend subset:
 nix build .#checks.x86_64-linux.chronicle-backend
-# Complete fast sole current1.9.0 generated TypeScript codec checks (17 fixture groups):
+# Complete fast sole current 1.9.0 generated TypeScript codec checks:
 nix build .#checks.x86_64-linux.chronicle-protocol
-# Exact-artifact receipt for fast backend + single-version codec checks:
-nix build .#checks.x86_64-linux.chronicle-validation
-# Native package + fast checked dashboard + scoped evidence:
+# Native package + fast checked dashboard; builds only after both checks above pass:
 nix build .#chronicle
 # Compile-only artifact; no test pass implied:
 nix build .#chronicle-native-dev
@@ -66,11 +64,9 @@ nix build .#chronicle-native-dev
 
 Dashboard packaging retains typechecking, bundling and its complete fast Node
 suite; Chromium is run separately, not on ordinary Nix rebuilds. Collector
-packaging retains its fast tests. The package receipt at
-`share/chronicle/validation.json` binds immutable runtime/test and validation
-identities to the final post-fixup ELF, but explicitly claims only the selected
-backend subset and single-version codec coverage. It is not evidence that the
-full backend or browser suites passed, nor native behavioral equivalence.
+packaging retains its fast tests. The package depends on the fast backend and
+protocol checks at build time; a built package is not evidence that the full
+backend or browser suites passed, nor native behavioral equivalence.
 
 Full-suite execution is an agent responsibility, documented in repository-root
 [`AGENTS.md`](../AGENTS.md), rather than a mandatory Nix release gate. Before
@@ -85,8 +81,7 @@ routine builds faster.
 
 Nix reuses checks only for matching input identities. UI-only changes reuse
 native/backend checks; collector changes do not rebuild the server; test-only
-changes reuse native compilation. Missing or malformed scoped evidence and
-failing fast checks still fail closed. Nix trusted-builder/cache assumptions
+changes reuse native compilation. Failing fast checks still fail closed. Nix trusted-builder/cache assumptions
 apply; arbitrary explicit service-package overrides remain the operator's
 responsibility. See [the cache contract and historical measurements](docs/drafts/20261028-build-validation-cache.md).
 
@@ -151,9 +146,11 @@ For deliberately trusted private-network HTTP, set the exact external Origin and
 
 `allowInsecureHttp` defaults to `false` when omitted. Without it, non-Secure cookies remain restricted to HTTP with both a loopback listener and loopback Origin. The opt-in does not restrict hosts to RFC1918 addresses: the operator must ensure the network is private/trusted. Plaintext exposes passwords, session cookies, tokens and archived data to network observers; prefer TLS. `chronicle_session` has no HTTPS-only name prefix and retains HttpOnly and SameSite=Strict, but must omit Secure for HTTP. Exact-Origin/CSRF and cookie/bearer separation remain enforced. For NixOS use `smind.services.chronicle.allowInsecureHttp = true` with an `http://` `publicUrl`; the module selects non-Secure cookies only for HTTP, retains a loopback backend and opens no firewall ports. Existing `loopbackDevelopment` remains loopback-only. Rebuild the packaged native server from patched sources before deploying this new field; changing JSON alone cannot update an old binary.
 
-Users are stable IDs/logins in config, no registration. Password hashes use the shared `ponygirls.auth.Password` format; Chronicle's CLI remains compatible. Restart applies config changes, persistently removes browser sessions for disabled/removed users or changed password hashes, and live enabled checks prevent disabled users' data being shared. Browser sessions and hashed agent tokens survive ordinary server restarts. **New browser sessions have no server-side idle/absolute expiration**; `sessionTtlSeconds` remains a legacy JSON/constructor compatibility input and does not control authorization lifetime. The host-only HttpOnly cookie uses the shared400-day browser persistence interval and refreshes on authenticated settings/use; a browser can still cap/evict it. `/api/session/refresh` only revalidates and refreshes that cookie, not a server TTL. Migration020 deletes expired legacy sessions before promoting still-live ones to nonexpiring sessions; expired/logged-out sessions require fresh sign-in and are never revived by restart or refresh.
+Users are stable IDs/logins in config; runtime registration exists only as the opt-in imperative accounts below. Password hashes use the shared `ponygirls.auth.Password` format; Chronicle's CLI remains compatible. Restart applies config changes, persistently removes browser sessions for disabled/removed users or changed password hashes, and live enabled checks prevent disabled users' data being shared. Browser sessions and hashed agent tokens survive ordinary server restarts. **New browser sessions have no server-side idle/absolute expiration**; `sessionTtlSeconds` remains a legacy JSON/constructor compatibility input and does not control authorization lifetime. The host-only HttpOnly cookie uses the shared400-day browser persistence interval and refreshes on authenticated settings/use; a browser can still cap/evict it. `/api/session/refresh` only revalidates and refreshes that cookie, not a server TTL. Migration020 deletes expired legacy sessions before promoting still-live ones to nonexpiring sessions; expired/logged-out sessions require fresh sign-in and are never revived by restart or refresh.
 
 The common login/settings boundary is `/api/account/v1` ([contract](CONTRACT.md#account-http-v1-independent-of-baboon-domain-version)). Settings lists immutable configured tokens and lets the owner issue/revoke runtime tokens using Chronicle's `Ingest`, `Read`, `Raw` scopes; Raw requires Read. Browser sessions never authenticate as bearer tokens, and bearer tokens cannot access settings. Both HTTP and existing WS token mutations share the owner mutation lock and enforce current session/user authority. Account mutations also bind the displayed user’s `actor` to the cookie owner through `X-Account-Actor`, preventing a different-tab account switch from redirecting an action. Issued secrets are returned once, never recovered from list/receipt responses. Do not automatically retry HTTP mint after a lost acknowledgement: refresh the list, revoke the uncertain token, and deliberately issue a replacement. WS request-ID receipt/replay semantics remain unchanged. Login concurrency is bounded; deployment proxy should additionally rate-limit login attempts by client address. The proxy must preserve the external Host header matching `allowedOrigin` for account routes.
+
+**Imperative accounts (off by default).** `accounts.enabled` in the server configuration ([keys](CONTRACT.md#server-json-config), [routes and semantics](CONTRACT.md#imperative-accounts-self-signup-admin-enrollment)) is the explicit master switch for accounts created at runtime: self-signup (`accounts.signup.enabled`; with `requireApproval`, the default, an application has no access until an administrator approves it), administrator invitations (`accounts.enrollment.enabled`), TOTP-based password recovery, optional TOTP at login, and administration by users with `users[].admin` or an imperative admin flag. Configured users are unchanged: their credentials stay in configuration and they cannot be edited through the API. An imperative user is a regular Chronicle user — own archive, tokens, group invitations by its username — so enabling signup without approval admits everyone who can reach the origin; an administrator should confirm an applicant's identity out of band, because username and e-mail are self-asserted and never verified. Usernames are permanent and never reused, including ids and logins of users removed from configuration; a configured id/login that collides with an existing imperative account fails startup. **Master off suspends**: imperative users cannot sign in, their sessions are deleted at the next start and their tokens are refused but kept; switching it on again restores them. Setting only `signup.enabled`/`enrollment.enabled` to false stops new accounts and invitations and leaves existing accounts working. To destroy an account's access rather than suspend it, disable it in user management. The CLI `login` cannot supply a TOTP code, so an account that requires TOTP at login uses API tokens for the CLI. Operational notes: the key file (`accounts.keyFile`; the Home Manager module provisions `credentials/accounts.key`, the NixOS module loads `accounts.keyFile` as a systemd credential) is a runtime secret like the password-hash files; the reverse proxy must set `X-Forwarded-For` for per-address limits (the Nix modules do); rolling back to a server older than this feature disables imperative users until the newer server starts again.
 
 ## Durability and authorization
 
@@ -183,7 +180,7 @@ Changes to model/revision/dimensions/sendDimensions/prefixes/prompt/window/schem
 
 A rebuild replaces ALL selected live owner HEADs, including already-current/Running work (`alreadyCurrent=0`). `GetReindexStatus(requestId)` observes the fixed captured cohort, never a moving HEAD scan; complete/superseded/failed/pending sum to its immutable total. Prior publication/search remains until accepted atomic replacement. Retirement consent is one-shot per selected source/target epoch/profile: a superseding revision can fulfill retirement without completing the old exact member, and future ordinary history is not repeatedly retired. There is no ownership transfer, automatic raw redaction or attachment fetching.
 
-Back up the entire PostgreSQL database (raw revisions, receipts, users/auth, groups, index, profiles/jobs together), plus protected config/credential files separately. Restore both before starting collectors. The service applies idempotent SQL migrations at startup under an advisory lock; Baboon codec evolution is separate from database migration. Migration002 backfills a dedicated published-search projection exactly once from current non-tombstoned generations. Publication replaces that source's complete projection in the same transaction as its generation-pointer swap; ordinary historical chunks/generations remain available to pinned reads but are not ANN indexed; explicitly retired derived pins fail with `indexed-view-retired`. Purge cascades into the projection. Startup creates the configured dimension's partial expression HNSW index under that lock; large existing deployments need a maintenance/startup budget for backfill/index construction (not concurrent DDL). Different dimension profiles may temporarily coexist during explicit owner rebuilds, but dimension/profile predicates fence semantic candidates. Existing profile-specific dimension indexes can be retained for reuse; no historical generation is backfilled into ANN. Native resource metadata includes all SQL migration resources. Monitor sanitized job state/attempt/error codes and indexing lag (`indexedRevision` versus archive revision); logs exclude transcripts, passwords and token plaintext.
+Back up the entire PostgreSQL database (raw revisions, receipts, users/auth, groups, index, profiles/jobs together), plus protected config/credential files separately. With imperative accounts the dump also holds their PBKDF2 password hashes, e-mail addresses (pending applicants included) and *encrypted* TOTP secrets; the accounts key file is not in it and must be backed up separately and no less carefully — a dump together with the key allows recovery of every imperative account, and without the key TOTP (recovery, TOTP login) is unavailable for the affected accounts until an administrator reset re-keys them. Restore both before starting collectors. The service applies idempotent SQL migrations at startup under an advisory lock; Baboon codec evolution is separate from database migration. Migration002 backfills a dedicated published-search projection exactly once from current non-tombstoned generations. Publication replaces that source's complete projection in the same transaction as its generation-pointer swap; ordinary historical chunks/generations remain available to pinned reads but are not ANN indexed; explicitly retired derived pins fail with `indexed-view-retired`. Purge cascades into the projection. Startup creates the configured dimension's partial expression HNSW index under that lock; large existing deployments need a maintenance/startup budget for backfill/index construction (not concurrent DDL). Different dimension profiles may temporarily coexist during explicit owner rebuilds, but dimension/profile predicates fence semantic candidates. Existing profile-specific dimension indexes can be retained for reuse; no historical generation is backfilled into ANN. Native resource metadata includes all SQL migration resources. Monitor sanitized job state/attempt/error codes and indexing lag (`indexedRevision` versus archive revision); logs exclude transcripts, passwords and token plaintext.
 
 ### Shutdown policy
 

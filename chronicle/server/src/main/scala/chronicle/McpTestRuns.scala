@@ -72,12 +72,12 @@ object McpTestRuns {
   private val partEnvelopeReserveBytes = 1024
   private val maintenanceInterval = 1.second
 
-  def resource(tools: McpRunTools,model: McpTestModel,authorization: RunAuthorization,clock: McpRunClock,configuredOwners: Set[String],encoding: McpRunPageEncoding,newInstanceId: IO[UUID]): Resource[IO,McpTestRuns] = for {
+  def resource(tools: McpRunTools,model: McpTestModel,authorization: RunAuthorization,clock: McpRunClock,encoding: McpRunPageEncoding,newInstanceId: IO[UUID]): Resource[IO,McpTestRuns] = for {
     _ <- Resource.eval(IO(McpToolModelCodec.catalog(tools.definitions)))
     instance <- Resource.eval(newInstanceId)
     state <- Resource.eval(Ref.of[IO,Registry](Registry(instance,Map.empty,Set.empty,Map.empty,0L)))
     supervisor <- Supervisor[IO](await=false)
-    runner = new McpTestRuns(instance,tools,model,authorization,clock,configuredOwners,encoding,state,supervisor,newInstanceId)
+    runner = new McpTestRuns(instance,tools,model,authorization,clock,encoding,state,supervisor,newInstanceId)
     _ <- Resource.make(supervisor.supervise((clock.sleep(maintenanceInterval) *> runner.maintain).foreverM))(_.cancel)
     _ <- Resource.onFinalize(runner.eraseAll)
   } yield runner
@@ -85,7 +85,7 @@ object McpTestRuns {
 
 final class McpTestRuns private (
   componentId: UUID,tools: McpRunTools,model: McpTestModel,authorization: RunAuthorization,
-  clock: McpRunClock,configuredOwners: Set[String],encoding: McpRunPageEncoding,
+  clock: McpRunClock,encoding: McpRunPageEncoding,
   registry: Ref[IO,McpTestRuns.Registry],supervisor: Supervisor[IO],newInstanceId: IO[UUID]
 ) {
   import McpTestRuns.*
@@ -105,7 +105,6 @@ final class McpTestRuns private (
   private def freshCaller(identity: Identity): IO[RunAuthority] = IO {
     identity.requireBrowser()
     identity.requireScope(chronicle.api.Scope.Read)
-    Check(configuredOwners.contains(identity.user.id),"unauthorized","owner is unavailable")
   } *> authorization.capture(identity)
 
   private def uncertain(): Nothing = throw DomainError("mcp-run-uncertain","run is unknown or no longer retained; original execution cannot be determined")

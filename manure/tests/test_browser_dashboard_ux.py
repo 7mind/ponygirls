@@ -32,7 +32,7 @@ class DashboardUXTests(unittest.TestCase):
         cls.password = protected["external_password"]
         cls.public = bf.upload_fixture(cls.fix, name="ux-public", kind="dir", visibility="public", files={"index.html": b"<h1>Public preview</h1>"})["artifact_id"]
         cls.hostile = bf.upload_fixture(cls.fix, name='<img src=x onerror=alert("xss")> ux-hostile', kind="file", visibility="internal", files={"note.txt": b"inert"})["artifact_id"]
-        bf.wait_for_expiry(cls.fix,cls.expired)
+        bf.expire_artifact(cls.fix,cls.expired)
 
     @classmethod
     def tearDownClass(cls):

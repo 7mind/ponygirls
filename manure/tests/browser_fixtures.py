@@ -44,7 +44,10 @@ SIBLING_API_HOST = "dashboard.artifacts.localhost"
 SEPARATE_SUFFIX = "manure-files.localhost"
 SEPARATE_API_HOST = "127.0.0.1"
 
+# Fixture servers listen on 127.0.0.1 only; plain `localhost` would otherwise
+# reach any process on [::1] with the same port number.
 HOST_RESOLVER_RULES = (
+    "MAP localhost 127.0.0.1, "
     "MAP dashboard.artifacts.localhost 127.0.0.1, "
     "MAP *.artifacts.localhost 127.0.0.1, "
     "MAP *.manure-files.localhost 127.0.0.1"
@@ -368,7 +371,7 @@ def start_server(*, suffix_mode: str = "sibling", unlock_shell: str | None = "de
       explicit directory path.
     """
     if now_fn is not None:
-        raise ValueError("target fixtures use real TTL waits, not a production clock hook")
+        raise ValueError("target fixtures store expiries through the owned database, not a production clock hook")
 
     _install_test_dns()
     tmp = tempfile.TemporaryDirectory(prefix="manure-browser-")
@@ -733,7 +736,7 @@ def start_https_server(*, config_overrides=None, now_fn=None) -> HttpsFixture:
     127.0.0.1:<same port>; api https://manure-api.test:<port> with a
     separate-domain content suffix. loopback_dev=False throughout."""
     if now_fn is not None:
-        raise ValueError("target fixtures use real TTL waits, not a production clock hook")
+        raise ValueError("target fixtures store expiries through the owned database, not a production clock hook")
     openssl = find_openssl()
     _install_test_dns()
     tmp = tempfile.TemporaryDirectory(prefix="manure-tls-")
@@ -785,16 +788,9 @@ def content_url_for(fix: ServerFixture, artifact_id: str) -> str:
     return info.json()["content_url"]
 
 
-def wait_for_expiry(fix, artifact_id, *, timeout_s=75):
-    """Real authorization-immediate TTL check; no backend clock override."""
-    deadline=time.monotonic()+timeout_s
-    while time.monotonic()<deadline:
-        result=fix.http.current(fix.api_base,cp.Command_GetArtifact(artifact_id),
-            headers={"Authorization":f"Bearer {fix.identity.token}"})
-        if result.status==410:return
-        if result.status!=200:raise AssertionError(f"unexpected expiry probe status: {result.status}")
-        time.sleep(0.2)
-    raise AssertionError("real TTL did not expire before fixture deadline")
+def expire_artifact(fix, artifact_id):
+    """Store an already-passed expiry through the fixture-owned database."""
+    fix.server.database.set_artifact_expiry(artifact_id, int(time.time()) - 1)
 
 
 def init_command(body):

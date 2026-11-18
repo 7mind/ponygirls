@@ -296,6 +296,15 @@ class ArchiveIndexTest extends munit.FunSuite {
     assertEquals(count("NOT (project:target AND foo)"),1101L)
     assertEquals(count("foo OR NOT foo"),1101L)
     assertEquals(count("foo AND NOT foo"),0L)
+    // Candidate fragments of a multi-trigram literal are matched once, in a plan node of their own, before the corpus join; single-key patterns keep their per-session probe.
+    def candidateScanFirst(operand: String): Boolean = {
+      val literal=query("mode:lexical \""+operand+"\"",ArchiveSort.LastTimestamp,SortDirection.Desc,None,10)
+      val statement=exactIndex.statement("a",literal,ArchiveExpression.parse(literal.expression),Nil,None)
+      val plan=exactDb.transaction(c => Sql.rows(c,"EXPLAIN "+statement.text,statement.args*)(_.getString(1))).map(_.trim)
+      plan.zip(plan.drop(1)).exists { case (header,node) => header.startsWith("CTE ") && node.contains("ch_archive_fragments") }
+    }
+    assert(candidateScanFirst("abcd"),"multi-trigram literal must scan head candidates before the corpus join")
+    assert(!candidateScanFirst("aaaa"),"single-trigram literal must keep the per-session probe")
   }}
   test("Perf GoodCommunication: empty metadata projection does not touch100MiB raw snapshot or message payloads") { database { (config,db,archive,index) =>
     val out=archive.ingest("a",snapshot(List("tiny visible message")))

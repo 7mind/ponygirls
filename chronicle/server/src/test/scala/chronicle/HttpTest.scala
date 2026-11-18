@@ -16,13 +16,20 @@ import java.util.concurrent.{LinkedBlockingQueue,TimeUnit,CompletionStage,Comple
 import scala.concurrent.duration.*
 class HttpTest extends munit.FunSuite {
   override val munitTimeout = 90.seconds
+  private val SlowModelLiveness=_root_.chronicle.Http.SocketLiveness(10.seconds,300.millis,1.second,50.millis)
+  private val ShortLiveness=_root_.chronicle.Http.SocketLiveness(2.seconds,800.millis,800.millis,100.millis)
+  private val SlowModelDelay=2500.millis
+  private def withLiveness(c: Config,client: org.http4s.client.Client[IO],liveness: _root_.chronicle.Http.SocketLiveness): Module = {
+    val production: Module=_root_.chronicle.plugins.ChroniclePlugin
+    production.overriddenBy(new ModuleDef { make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client); make[_root_.chronicle.Http.SocketLiveness].fromValue(liveness) })
+  }
   test("BG-GoodCommunication regression: valid slow semantic query does not prevent correlated server Pong processing") {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
-    val model: HttpApp[IO]=cats.data.Kleisli(_ => IO.sleep(17.seconds).as(Response[IO](Status.Ok).withEntity("""{"data":[{"index":0,"embedding":[1,0,0]}]}""")))
+    val model: HttpApp[IO]=cats.data.Kleisli(_ => IO.sleep(SlowModelDelay).as(Response[IO](Status.Ok).withEntity("""{"data":[{"index":0,"embedding":[1,0,0]}]}""")))
     EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpApp(model).build.use { endpoint =>
-      val original=Fixtures.config(); val c=original.copy(embedding=original.embedding.copy(endpoint=s"http://127.0.0.1:${endpoint.address.getPort}/embedding",timeoutSeconds=25))
+      val original=Fixtures.config(); val c=original.copy(embedding=original.embedding.copy(endpoint=s"http://127.0.0.1:${endpoint.address.getPort}/embedding",timeoutSeconds=10))
       EmberClientBuilder.default[IO].build.use { client =>
-        val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
+        val module=withLiveness(c,client,SlowModelLiveness)
         ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
           IO.blocking { s.database.initialize(); s.database.transaction { x => Sql.exec(x,"TRUNCATE ch_sources CASCADE"); Sql.exec(x,"UPDATE ch_profile SET active=?,target=?,maintenance=false",c.profile,c.profile); Sql.exec(x,"UPDATE ch_owner_targets SET profile=?,epoch=0",c.profile) } } *> Semaphore[IO](2).flatMap { gate =>
             EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
@@ -48,18 +55,16 @@ class HttpTest extends munit.FunSuite {
                 }
               }
               val ws=jclient.newWebSocketBuilder().header("Origin",c.allowedOrigin).header("Cookie",s"chronicle_session=$secret").buildAsync(URI.create(s"ws://127.0.0.1:${server.address.getPort}/api/ws"),listener).get(10,TimeUnit.SECONDS)
-              val opened=System.nanoTime()
               def send(op: Operation): Unit= { ws.sendText(Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),op)).noSpaces,true).get(10,TimeUnit.SECONDS); () }
               def receive(): Result= { val envelope=inbox.poll(25,TimeUnit.SECONDS); assert(envelope!=null,s"response missing; close=${closed.getNow(0)}"); envelope.result }
               try {
                 send(Operation.Hello(List("1.9.0"))); assert(receive().isInstanceOf[Result.Hello])
-                val delay=19.seconds.toNanos-(System.nanoTime()-opened)
-                if(delay>0) TimeUnit.NANOSECONDS.sleep(delay)
+                val pingsBefore=pings.get()
                 send(Operation.Search(SearchQuery("slow model",SearchMode.Semantic,SearchFilter(None,None,None,None,Nil),20,0)))
                 send(Operation.Ping("during-query")); assertEquals(receive(),Result.Pong("during-query"))
                 val result=receive()
                 assert(result.isInstanceOf[Result.Search],s"valid slow query lost despite immediate correlated Pongs: result=$result close=${closed.getNow(0)}")
-                assert(pings.get()>0,"query must cross an actual server heartbeat deadline")
+                assert(pings.get()>pingsBefore,"query must cross an actual server heartbeat deadline")
                 send(Operation.Ping("after-query")); assertEquals(receive(),Result.Pong("after-query"))
                 assert(!closed.isDone,"socket remains live after query completion")
               } finally { ws.abort(); jclient.close() }
@@ -73,14 +78,14 @@ class HttpTest extends munit.FunSuite {
     if(!sys.env.contains("CHRONICLE_TEST_JDBC")) { Check(!sys.env.contains("CHRONICLE_REQUIRE_POSTGRES"),"test","PostgreSQL required"); assume(false,"PostgreSQL explicitly skipped: use scripts/test-postgres.sh") }
     val c=Fixtures.config().copy(maxBodyBytes=256*1024*1024)
     EmberClientBuilder.default[IO].build.use { client =>
-      val module=new ModuleDef { include(_root_.chronicle.plugins.ChroniclePlugin); make[Config].fromValue(c); make[org.http4s.client.Client[IO]].fromValue(client) }
+      val module=withLiveness(c,client,ShortLiveness)
       ChronicleInjector().produceGet[RuntimeServices](module).use { s =>
         IO.blocking(s.database.initialize()) *> Semaphore[IO](2).flatMap { gate =>
           EmberServerBuilder.default[IO].withHost(Host.fromString("127.0.0.1").get).withPort(Port.fromInt(0).get).withHttpWebSocketApp(ws => s.http.routes(ws,gate).orNotFound).build.use { server => IO.blocking {
             val (_,secret)=new Auth(s.database,c).login(LoginRequest("a","synthetic"))
             val jclient=JClient.newHttpClient(); val pings=new java.util.concurrent.atomic.AtomicInteger()
             val sockets=List("hello-timeout","pong-timeout","malformed","version","oversized").map { mode =>
-              val closed=new CompletableFuture[Int]()
+              val closed=new CompletableFuture[Int](); val connecting=System.nanoTime(); val closedAt=new java.util.concurrent.atomic.AtomicLong()
               val listener=new WebSocket.Listener {
                 private val text=new java.lang.StringBuilder()
                 override def onOpen(ws: WebSocket): Unit=ws.request(1)
@@ -92,19 +97,22 @@ class HttpTest extends munit.FunSuite {
                   }
                   ws.request(1); CompletableFuture.completedFuture(null)
                 }
-                override def onClose(ws: WebSocket,code: Int,reason: String): CompletionStage[?] = { closed.complete(code); CompletableFuture.completedFuture(null) }
+                override def onClose(ws: WebSocket,code: Int,reason: String): CompletionStage[?] = { closedAt.set(System.nanoTime()); closed.complete(code); CompletableFuture.completedFuture(null) }
               }
               val ws=jclient.newWebSocketBuilder().header("Origin",c.allowedOrigin).header("Cookie",s"chronicle_session=$secret").buildAsync(URI.create(s"ws://127.0.0.1:${server.address.getPort}/api/ws"),listener).get(10,TimeUnit.SECONDS)
               if(mode!="hello-timeout") {
                 val payload=if(mode=="malformed") "{}" else if(mode=="oversized") " "*65537+Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List("1.9.0")))).noSpaces else Wire.encode(ClientEnvelope.codecJson,ClientEnvelope(UUID.randomUUID(),Operation.Hello(List(if(mode=="version") "unsupported" else "1.9.0")))).noSpaces
                 ws.sendText(payload,true).get(10,TimeUnit.SECONDS)
               }
-              (mode,ws,closed)
+              (mode,ws,closed,() => (closedAt.get()-connecting).nanos)
             }
             try {
-              val codes=sockets.map { case (mode,_,closed) => mode -> closed.get(40,TimeUnit.SECONDS) }.toMap
+              val codes=sockets.map { case (mode,_,closed,_) => mode -> closed.get(40,TimeUnit.SECONDS) }.toMap
               assertEquals(codes,Map("hello-timeout"->1013,"pong-timeout"->1013,"malformed"->4400,"version"->4406,"oversized"->4400))
               assert(pings.get()>0,"the negotiated client must withhold an actual server Ping until expiry")
+              val lived=sockets.map { case (mode,_,_,lived) => mode -> lived() }.toMap
+              assert(lived("hello-timeout")>=ShortLiveness.hello,s"closed before the Hello wait expired: ${lived("hello-timeout")}")
+              assert(lived("pong-timeout")>=ShortLiveness.pingEvery+ShortLiveness.pongWithin,s"closed before the Pong wait expired: ${lived("pong-timeout")}")
             } finally { sockets.foreach(_._2.abort()); jclient.close() }
           }}
         }
