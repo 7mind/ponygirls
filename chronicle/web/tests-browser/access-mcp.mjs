@@ -117,6 +117,9 @@ try {
     await dismissed(remove, 'Escape'); await dismissed(remove, 'Cancel');
     await remove(); await dialog.getByRole('button', { name: 'Remove member', exact: true }).click();
     await article('Systems workshop').getByRole('button', { name: 'Remove bob from Systems workshop', exact: true }).waitFor({ state: 'detached' });
+    const circle = article('Research circle'), roster = circle.getByRole('table', { name: 'Members of Research circle', exact: true });
+    assert.equal(await roster.count(), 0, 'a group of another owner lists its members on request');
+    await circle.getByRole('button', { name: '2 members', exact: true }).click(); await roster.getByRole('row', { name: /^bob Owner/ }).waitFor();
     const leave = () => article('Research circle').getByRole('button', { name: 'Leave group…', exact: true }).click();
     await dismissed(leave, 'Escape');
     await leave(); await dialog.getByRole('button', { name: 'Leave group', exact: true }).click(); await article('Research circle').waitFor({ state: 'detached' });

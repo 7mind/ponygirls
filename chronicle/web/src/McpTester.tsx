@@ -140,10 +140,10 @@ function TraceText({ item, label }: { item: TraceItem; label: string }) {
   return <div className="mcp-text"><div className="xs muted">{label}</div><pre className="code-block">{folded ? lines.slice(0, TRACE_FOLD_LINES).join('\n') : item.text}</pre>
     {folded && <p className="xs muted">… {lines.length - TRACE_FOLD_LINES} more lines · <button type="button" className="link-button" onClick={() => setAll(true)}>Show all</button></p>}</div>;
 }
-function ToolRow({ row, open }: { row: Extract<TraceRow, { kind: 'tool' }>; open: boolean }) {
+function ToolRow({ row, ordinal, open }: { row: Extract<TraceRow, { kind: 'tool' }>; ordinal: number; open: boolean }) {
   const args = row.call?.text;
   return <details className="mcp-call" open={open} data-trace-item={row.key}>
-    <summary><span className="mcp-call-tool">{row.tool ?? 'Tool result'}</span><code className="mcp-call-args">{args === undefined ? 'arguments not received' : args === null ? 'receiving arguments…' : args.replace(/\s+/g, ' ')}</code><span className="mcp-call-meta">call {row.callId}</span></summary>
+    <summary><span className="mcp-call-tool">{row.tool ?? 'Tool result'}</span><code className="mcp-call-args">{args === undefined ? 'arguments not received' : args === null ? 'receiving arguments…' : args.replace(/\s+/g, ' ')}</code><span className="mcp-call-meta" title={`Call id ${row.callId}`}>call {ordinal}</span></summary>
     <div className="mcp-call-body">
       {row.call !== null && <TraceText item={row.call} label="Arguments"/>}
       {row.result === null ? <p className="xs muted">No result yet.</p> : <TraceText item={row.result} label="Result"/>}
@@ -152,7 +152,7 @@ function ToolRow({ row, open }: { row: Extract<TraceRow, { kind: 'tool' }>; open
 }
 function Trace({ rows }: { rows: readonly TraceRow[] }) {
   const calls = rows.filter(row => row.kind === 'tool');
-  return <>{calls.length > 0 && <div className="mcp-tool-group">{calls.map((row, index) => <ToolRow key={row.key} row={row} open={index === 0}/>)}</div>}{rows.map(row => row.kind === 'tool' ? null
+  return <>{calls.length > 0 && <div className="mcp-tool-group">{calls.map((row, index) => <ToolRow key={row.key} row={row} ordinal={index + 1} open={index === 0}/>)}</div>}{rows.map(row => row.kind === 'tool' ? null
     : <article key={row.key} className="mcp-response" data-trace-item="response"><div className="mcp-response-head">Response</div>
       {row.response.text === null ? <p className="xs muted" role="status">Receiving complete item · {row.response.received} / {row.response.total} parts. No partial item is presented as complete.</p> : <div className="mcp-response-text">{row.response.text}</div>}</article>)}</>;
 }
